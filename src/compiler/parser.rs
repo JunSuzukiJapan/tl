@@ -32,13 +32,24 @@ fn sp<'a, E: nom::error::ParseError<&'a str>>(input: &'a str) -> IResult<&'a str
 }
 
 // --- Identifiers ---
+use nom::combinator::verify;
+
 fn identifier(input: &str) -> IResult<&str, String> {
-    map(
-        recognize(pair(
-            alt((alpha1, tag("_"))),
-            take_while(|c: char| c.is_alphanumeric() || c == '_'),
-        )),
-        |s: &str| s.to_string(),
+    verify(
+        map(
+            recognize(pair(
+                alt((alpha1, tag("_"))),
+                take_while(|c: char| c.is_alphanumeric() || c == '_'),
+            )),
+            |s: &str| s.to_string(),
+        ),
+        |s: &String| {
+            let keywords = vec![
+                "fn", "struct", "impl", "let", "if", "else", "return", "for", "in", "true",
+                "false", "f32", "f64", "i32", "i64", "bool", "usize", "void", "Tensor",
+            ];
+            !keywords.contains(&s.as_str())
+        },
     )(input)
 }
 
@@ -111,7 +122,25 @@ fn parse_variable(input: &str) -> IResult<&str, Expr> {
 
 // --- Blocks ---
 fn parse_block(input: &str) -> IResult<&str, Vec<Stmt>> {
-    delimited(ws(char('{')), nom::multi::many0(parse_stmt), ws(char('}')))(input)
+    let (input, _) = ws(char('{'))(input)?;
+    let (input, mut stmts) = nom::multi::many0(parse_stmt)(input)?;
+
+    // Optional trailing expression without semicolon
+    // But parse_stmt includes parse_expr_stmt which forces semicolon.
+    // So here we look for raw parse_expr.
+    let (input, trailing) = opt(parse_expr)(input)?;
+
+    let (input, _) = ws(char('}'))(input)?;
+
+    if let Some(expr) = trailing {
+        stmts.push(Stmt::Expr(expr));
+    }
+
+    Ok((input, stmts))
+}
+
+fn parse_block_expr(input: &str) -> IResult<&str, Expr> {
+    map(parse_block, Expr::Block)(input)
 }
 
 // --- Control Flow ---
@@ -146,6 +175,7 @@ fn parse_primary(input: &str) -> IResult<&str, Expr> {
         parse_if_expr,
         parse_tensor_literal,
         parse_variable,
+        parse_block_expr,
         delimited(ws(char('(')), parse_expr, ws(char(')'))),
     )))(input)
 }
@@ -464,6 +494,13 @@ fn parse_expr_stmt(input: &str) -> IResult<&str, Stmt> {
     Ok((input, Stmt::Expr(expr)))
 }
 
+fn parse_block_stmt(input: &str) -> IResult<&str, Stmt> {
+    // block expression used as statement (optional semicolon)
+    let (input, block) = parse_block_expr(input)?;
+    let (input, _) = opt(ws(char(';')))(input)?;
+    Ok((input, Stmt::Expr(block)))
+}
+
 fn parse_stmt(input: &str) -> IResult<&str, Stmt> {
     ws(alt((
         parse_let_stmt,
@@ -471,6 +508,7 @@ fn parse_stmt(input: &str) -> IResult<&str, Stmt> {
         parse_return_stmt,
         parse_if_stmt,
         parse_for_stmt,
+        parse_block_stmt,
         parse_expr_stmt,
     )))(input)
 }
@@ -492,12 +530,9 @@ fn parse_fn(input: &str) -> IResult<&str, FunctionDef> {
     )(input)?;
 
     let (input, ret_type) = opt(preceded(ws(tag("->")), ws(parse_type)))(input)?;
-    let (input, _) = ws(char('{'))(input)?;
 
-    // Body
-    let (input, body) = nom::multi::many0(parse_stmt)(input)?;
-
-    let (input, _) = ws(char('}'))(input)?;
+    // Body logic reused from parse_block
+    let (input, body) = parse_block(input)?;
 
     Ok((
         input,

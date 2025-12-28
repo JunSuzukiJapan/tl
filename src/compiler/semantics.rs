@@ -1,6 +1,6 @@
 // src/compiler/semantics.rs
 use crate::compiler::ast::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -145,9 +145,9 @@ impl SemanticAnalyzer {
         self.enter_scope();
 
         // Register arguments
-        for arg in &func.args {
-            // self.declare_variable(arg.name.clone(), arg.ty.clone())?; // AST arg needs definition
-            // TODO: Update AST to have args. For now assuming empty or manually injecting for testing
+        // Register arguments
+        for (name, ty) in &func.args {
+            self.declare_variable(name.clone(), ty.clone())?;
         }
 
         for stmt in &func.body {
@@ -168,29 +168,66 @@ impl SemanticAnalyzer {
                 type_annotation,
                 value,
             } => {
-                let val_type = self.check_expr(value)?;
-
-                // If indices are present (e.g. let A[i, j] = ...),
-                // we treat the declared variable as a Tensor of rank = indices.len().
-                // The value Expression usually evaluates to the element type (e.g. f32).
                 let inferred_type = if let Some(idxs) = indices {
-                    // If val_type is scalar, promote to Tensor.
-                    // If val_type is already Tensor (e.g. from function call returning Tensor),
-                    // checking might be more complex (broadcasting?), but basic definition
-                    // let A[i] = 1.0 implies A is Tensor<f32, 1>.
-                    match val_type {
-                        Type::Tensor(_, _) => {
-                            // If RHS is tensor, usually we are just assigning/aliasing?
-                            // But A[i] = B[i] means element-wise assignment.
-                            // For now, let's assume if we define with indices, we wrap the scalar type.
-                            // But wait, if RHS is a[i, k] * b[k, j] -> it evaluates to f32 (scalar).
-                            // So yes, wrap it.
-                            Type::Tensor(Box::new(val_type), idxs.len()) // Nested tensor? Unlikely.
+                    // Tensor Equation Logic
+                    self.enter_scope();
+
+                    // 1. Declare LHS indices
+                    // let C[i, k] = ... -> i, k are valid indices (I64/Usize)
+                    let mut lhs_indices = HashSet::new();
+                    for idx in idxs {
+                        if lhs_indices.contains(idx) {
+                            return Err(SemanticError::DuplicateDefinition(idx.clone()));
                         }
-                        _ => Type::Tensor(Box::new(val_type), idxs.len()),
+                        lhs_indices.insert(idx.clone());
+                        self.declare_variable(idx.clone(), Type::I64)?;
                     }
+
+                    // 2. Discover RHS indices
+                    // Scan value for IndexAccess identifiers.
+                    // If not in LHS and not in outer scope, declare as reduction index.
+                    let mut used_indices = HashSet::new();
+                    self.collect_indices(value, &mut used_indices);
+
+                    for idx in used_indices {
+                        // Check if already declared (LHS or Outer Scope)
+                        // If lookup succeeds, it's defined.
+                        // But wait, if it is defined in outer scope, is it an index or variable?
+                        // If it's used in IndexAccess, it's an index.
+                        // If we are in "Tensor Equation Mode", we might want to capture outer variables too?
+                        // Design decision: Implicit reduction indices must NOT be defined in outer scope to avoid ambiguity?
+                        // Or shadowing: if not in LHS, check if defined. If defined, it's a constant/param.
+                        // If NOT defined, it's a local reduction index (dummy var).
+
+                        if lhs_indices.contains(&idx) {
+                            continue;
+                        }
+
+                        if self.lookup_variable(&idx).is_ok() {
+                            // Defined in outer scope (or earlier in THIS scope provided we shadowed LHS).
+                            // It's a parameter (e.g. constant index, or outer loop var).
+                            // Do nothing.
+                        } else {
+                            // Not in LHS, not in Outer. Treat as reduction index.
+                            self.declare_variable(idx, Type::I64)?;
+                        }
+                    }
+
+                    // 3. Check RHS expression
+                    // It should evaluate to a Scalar type (f32, i64, bool) usually,
+                    // or a Tensor if we are building a Tensor of Tensors (rare).
+                    // Example: A[i, j] -> f32.
+                    // A[i, j] * B[j, k] -> f32.
+                    let rhs_type = self.check_expr(value)?;
+
+                    self.exit_scope();
+
+                    // 4. Construct Result Type
+                    // Tensor<rhs_type, rank=idxs.len()>
+                    // We assume dense tensor for now.
+                    Type::Tensor(Box::new(rhs_type), idxs.len())
                 } else {
-                    val_type
+                    self.check_expr(value)?
                 };
 
                 let final_type = if let Some(ann) = type_annotation {
@@ -207,15 +244,77 @@ impl SemanticAnalyzer {
 
                 self.declare_variable(name.clone(), final_type)?;
             }
-            Stmt::Assign { name, value, .. } => {
+            Stmt::Assign {
+                name,
+                indices,
+                op: _, // check type compatibility regarding op?
+                value,
+            } => {
                 let var_type = self.lookup_variable(name)?;
-                let val_type = self.check_expr(value)?;
 
-                if !self.are_types_compatible(&var_type, &val_type) {
-                    return Err(SemanticError::TypeMismatch {
-                        expected: var_type,
-                        found: val_type,
-                    });
+                if let Some(idxs) = indices {
+                    // Indexed assignment: C[i, k] += ...
+                    // Similar logic to Let, but we check against var_type element type.
+
+                    // Verify var_type is Tensor
+                    let (inner_type, rank) = match &var_type {
+                        Type::Tensor(inner, r) => (inner, *r),
+                        _ => {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::Tensor(Box::new(Type::Void), 0),
+                                found: var_type,
+                            })
+                        }
+                    };
+
+                    if idxs.len() != rank {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: rank,
+                            found: idxs.len(),
+                        });
+                    }
+
+                    self.enter_scope();
+                    let mut lhs_indices = HashSet::new();
+                    for idx in idxs {
+                        if lhs_indices.contains(idx) {
+                            return Err(SemanticError::DuplicateDefinition(idx.clone()));
+                        }
+                        lhs_indices.insert(idx.clone());
+                        self.declare_variable(idx.clone(), Type::I64)?;
+                    }
+
+                    let mut used_indices = HashSet::new();
+                    self.collect_indices(value, &mut used_indices);
+                    for idx in used_indices {
+                        if !lhs_indices.contains(&idx) {
+                            if self.lookup_variable(&idx).is_err() {
+                                // Reduction / Contraction index
+                                self.declare_variable(idx, Type::I64)?;
+                            }
+                        }
+                    }
+
+                    let rhs_type = self.check_expr(value)?;
+                    self.exit_scope();
+
+                    // rhs_type must match inner_type
+                    if !self.are_types_compatible(inner_type, &rhs_type) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: *inner_type.clone(),
+                            found: rhs_type,
+                        });
+                    }
+                } else {
+                    // Standard assignment
+                    let val_type = self.check_expr(value)?;
+                    if !self.are_types_compatible(&var_type, &val_type) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: var_type,
+                            found: val_type,
+                        });
+                    }
                 }
             }
             Stmt::Return(expr) => {
@@ -310,6 +409,42 @@ impl SemanticAnalyzer {
                     }
                     self.check_expr(&args[0])?;
                     return Ok(Type::Void);
+                } else if name == "slice" {
+                    if args.len() != 3 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 3,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&args[0])?;
+                    let t1 = self.check_expr(&args[1])?;
+                    let t2 = self.check_expr(&args[2])?;
+
+                    // Arg 0 must be Tensor
+                    match t0 {
+                        Type::Tensor(_, _) => {}
+                        _ => {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::Tensor(Box::new(Type::Void), 0),
+                                found: t0,
+                            })
+                        }
+                    }
+                    // Arg 1, 2 must be Int
+                    if t1 != Type::I64 {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::I64,
+                            found: t1,
+                        });
+                    }
+                    if t2 != Type::I64 {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::I64,
+                            found: t2,
+                        });
+                    }
+                    return Ok(t0); // Returns same tensor type
                 }
 
                 let func = self
@@ -369,12 +504,179 @@ impl SemanticAnalyzer {
                     }),
                 }
             }
-            _ => Ok(Type::Void), // TOD: Blocks, IfExpr, etc.
+            Expr::UnOp(op, inner) => {
+                let t = self.check_expr(inner)?;
+                match op {
+                    UnOp::Neg => {
+                        // Neg supports Int, Float, Tensor<Int/Float>
+                        match t {
+                            Type::I64 | Type::F32 => Ok(t),
+                            Type::Tensor(ref inner, _) => match **inner {
+                                Type::I64 | Type::F32 => Ok(t),
+                                _ => Err(SemanticError::TypeMismatch {
+                                    expected: Type::F32,
+                                    found: t,
+                                }),
+                            },
+                            _ => Err(SemanticError::TypeMismatch {
+                                expected: Type::F32,
+                                found: t,
+                            }),
+                        }
+                    }
+                    UnOp::Not => {
+                        // Not supports Bool, Tensor<Bool>
+                        match t {
+                            Type::Bool => Ok(t),
+                            Type::Tensor(ref inner, _) => match **inner {
+                                Type::Bool => Ok(t),
+                                _ => Err(SemanticError::TypeMismatch {
+                                    expected: Type::Bool,
+                                    found: t,
+                                }),
+                            },
+                            _ => Err(SemanticError::TypeMismatch {
+                                expected: Type::Bool,
+                                found: t,
+                            }),
+                        }
+                    }
+                }
+            }
+            Expr::Block(stmts) => {
+                self.enter_scope();
+                let mut ret_type = Type::Void;
+                for (i, stmt) in stmts.iter().enumerate() {
+                    if i == stmts.len() - 1 {
+                        // If last statement is an expression without semicolon (Expr::Expr), it's the return value
+                        if let Stmt::Expr(e) = stmt {
+                            ret_type = self.check_expr(e)?;
+                        } else {
+                            self.check_stmt(stmt)?;
+                            ret_type = Type::Void;
+                        }
+                    } else {
+                        self.check_stmt(stmt)?;
+                    }
+                }
+                self.exit_scope();
+                Ok(ret_type)
+            }
+            Expr::IfExpr(cond, then_block, else_block) => {
+                let cond_type = self.check_expr(cond)?;
+                if cond_type != Type::Bool {
+                    // Warning or Error? Strict for now.
+                }
+
+                // Check Then Block (expr block)
+                self.enter_scope();
+                let mut then_type = Type::Void;
+                // Wait, IfExpr in AST uses Vec<Stmt> for blocks, reusing ParseBlock Logic.
+                // But ParseBlock returns Vec<Stmt>.
+                // So we need to evaluate the block stmts similar to Expr::Block logic above.
+                // Refactor Block Logic?
+
+                // Inline logic for now
+                for (i, stmt) in then_block.iter().enumerate() {
+                    if i == then_block.len() - 1 {
+                        if let Stmt::Expr(e) = stmt {
+                            then_type = self.check_expr(e)?;
+                        } else {
+                            self.check_stmt(stmt)?;
+                        }
+                    } else {
+                        self.check_stmt(stmt)?;
+                    }
+                }
+                self.exit_scope();
+
+                if let Some(else_stmts) = else_block {
+                    self.enter_scope();
+                    let mut else_type = Type::Void;
+                    for (i, stmt) in else_stmts.iter().enumerate() {
+                        if i == else_stmts.len() - 1 {
+                            if let Stmt::Expr(e) = stmt {
+                                else_type = self.check_expr(e)?;
+                            } else {
+                                self.check_stmt(stmt)?;
+                            }
+                        } else {
+                            self.check_stmt(stmt)?;
+                        }
+                    }
+                    self.exit_scope();
+
+                    if then_type != else_type {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: then_type,
+                            found: else_type,
+                        });
+                    }
+                    Ok(then_type)
+                } else {
+                    // If no else, must return Void
+                    if then_type != Type::Void {
+                        // error? or just imply void? Rust implies mismatch with () if else missing.
+                        // We'll enforce Void.
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Void,
+                            found: then_type,
+                        });
+                    }
+                    Ok(Type::Void)
+                }
+            }
+            Expr::FieldAccess(_, _) => Ok(Type::Void), // TODO
+            Expr::MethodCall(_, _, _) => Ok(Type::Void), // TODO
+            _ => Ok(Type::Void),                       // TOD: Blocks, IfExpr, etc.
         }
     }
 
     fn are_types_compatible(&self, t1: &Type, t2: &Type) -> bool {
         // Strict equality for now
         t1 == t2
+    }
+
+    fn collect_indices(&self, expr: &Expr, indices: &mut HashSet<String>) {
+        match expr {
+            Expr::IndexAccess(target, idxs) => {
+                self.collect_indices(target, indices);
+                for idx in idxs {
+                    indices.insert(idx.clone());
+                }
+            }
+            Expr::BinOp(left, _, right) => {
+                self.collect_indices(left, indices);
+                self.collect_indices(right, indices);
+            }
+            Expr::UnOp(_, inner) => {
+                self.collect_indices(inner, indices);
+            }
+            Expr::FnCall(_, args) => {
+                for arg in args {
+                    self.collect_indices(arg, indices);
+                }
+            }
+            Expr::MethodCall(obj, _, args) => {
+                self.collect_indices(obj, indices);
+                for arg in args {
+                    self.collect_indices(arg, indices);
+                }
+            }
+            Expr::IfExpr(cond, then_block, else_block) => {
+                self.collect_indices(cond, indices);
+                // Recurse into blocks? Stmts might have exprs.
+                // But IndexAccess usually in expressions.
+                // This is simple helper. Ideally we traverse fully.
+                // For now, assume indexes strictly inside the logic.
+                // Blocks contain Stmts. Need Stmt traversal?
+                // Probably overkill for simple Equations.
+                // Let's postpone block traversal inside equation.
+            }
+            Expr::Block(_) => {
+                // Skip blocks for now
+            }
+            _ => {}
+        }
     }
 }

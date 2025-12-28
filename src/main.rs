@@ -93,8 +93,7 @@ fn main() -> Result<()> {
             let mut codegen = CodeGenerator::new(&context, "main");
             codegen.compile_module(&ast).unwrap();
 
-            // Debug dump
-            // codegen.dump_llvm_ir();
+            // Debug: dump LLVM IR\n            // codegen.dump_llvm_ir();"
 
             println!("Executing main...");
             match codegen.jit_execute("main") {
