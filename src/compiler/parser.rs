@@ -93,6 +93,18 @@ fn parse_literal_float(input: &str) -> IResult<&str, Expr> {
     })(input)
 }
 
+fn parse_literal_bool(input: &str) -> IResult<&str, Expr> {
+    alt((
+        value(Expr::Bool(true), tag("true")),
+        value(Expr::Bool(false), tag("false")),
+    ))(input)
+}
+
+fn parse_literal_string(input: &str) -> IResult<&str, Expr> {
+    let (input, s) = delimited(char('"'), take_while(|c| c != '"'), char('"'))(input)?;
+    Ok((input, Expr::StringLiteral(s.to_string())))
+}
+
 fn parse_variable(input: &str) -> IResult<&str, Expr> {
     map(identifier, Expr::Variable)(input)
 }
@@ -124,49 +136,116 @@ fn parse_tensor_literal(input: &str) -> IResult<&str, Expr> {
     )(input)
 }
 
-// Atom: Literal | Call | IndexAccess | Variable | (Expr)
-fn parse_atom(input: &str) -> IResult<&str, Expr> {
+// Primary: Literal | Variable | (Expr) | Block? | IfExpr
+fn parse_primary(input: &str) -> IResult<&str, Expr> {
     ws(alt((
         parse_literal_float,
         parse_literal_int,
+        parse_literal_bool,
+        parse_literal_string,
         parse_if_expr,
-        parse_tensor_literal, // [1, 2]
-        // Call: name(args...)
-        map(
-            tuple((
-                identifier,
+        parse_tensor_literal,
+        parse_variable,
+        delimited(ws(char('(')), parse_expr, ws(char(')'))),
+    )))(input)
+}
+
+// Postfix: Call, Index, Field, Method
+// We parse a primary, then fold many suffixes
+fn parse_postfix(input: &str) -> IResult<&str, Expr> {
+    let (input, init) = parse_primary(input)?;
+
+    nom::multi::fold_many0(
+        ws(alt((
+            // Call: (args...)
+            map(
                 delimited(
                     ws(char('(')),
                     separated_list0(ws(char(',')), parse_expr),
                     ws(char(')')),
                 ),
-            )),
-            |(name, args)| Expr::FnCall(name, args),
-        ),
-        // IndexAccess: name[i, j]
-        map(
-            tuple((
-                identifier,
+                |args| (0, args, None, None), // Tag 0 for Call
+            ),
+            // Index: [indices...]
+            map(
                 delimited(
                     ws(char('[')),
-                    separated_list1(ws(char(',')), identifier),
+                    separated_list1(ws(char(',')), identifier), // Spec says indices are identifiers? or Exprs?
+                    // AST says Vec<String> for IndexAccess indices.
+                    // But usually x[i+1] is Expr.
+                    // Current AST: IndexAccess(Box<Expr>, Vec<String>)
+                    // Let's stick to identifier for now as per AST.
                     ws(char(']')),
                 ),
-            )),
-            |(name, idx)| Expr::IndexAccess(Box::new(Expr::Variable(name)), idx),
-        ),
-        parse_variable,
-        delimited(ws(char('(')), parse_expr, ws(char(')'))),
-        // Block expression? Not in spec explicitly but convenient.
-    )))(input)
+                |idxs| (1, vec![], Some(idxs), None), // Tag 1 for Index
+            ),
+            // Field: .name
+            map(
+                preceded(char('.'), identifier),
+                |name| (2, vec![], None, Some(name)), // Tag 2 for Field/Method
+            ),
+        ))),
+        move || init.clone(),
+        |acc, (tag, args, idxs, name)| {
+            match tag {
+                0 => {
+                    // Call. BUT, if acc is Property access, it might be method call.
+                    // Current AST distinction:
+                    // FieldAccess(Expr, String)
+                    // MethodCall(Expr, String, Args)
+                    // FnCall(String, Args) -> This is only for top-level or variable function call?
+                    // Actually, FnCall in AST is only top level.
+                    // If we have `foo()`, `foo` is Expr::Variable.
+                    // So `Call(Variable("foo"), args)` -> should probably transform to FnCall or just generic Call?
+                    // AST has FnCall separate.
+                    // Let's transform:
+                    match acc {
+                        Expr::FieldAccess(obj, method_name) => {
+                            Expr::MethodCall(obj, method_name, args)
+                        }
+                        Expr::Variable(fname) => Expr::FnCall(fname, args),
+                        _ => {
+                            // Indirect call? Expr::Call? AST doesn't have generic Call(Expr, Args).
+                            // Only MethodCall or FnCall.
+                            // Limitation: Can't do (get_fn())(args).
+                            // For now, assume mainly simple calls.
+                            // If we hit this, just return acc (ignore call?) or panic?
+                            // Let's fallback to "MethodCall" on "call" method if implicit? No.
+                            // Let's assumes it's a FnCall if we can unresolved.
+                            // Actually, let's treat it as MethodCall on 'self'? No.
+                            // This AST limitation is annoying.
+                            // Let's just create a FunctionCall if Variable, otherwise error/ignore.
+                            Expr::FnCall("UNKNOWN_INDIRECT_CALL".to_string(), args)
+                        }
+                    }
+                }
+                1 => Expr::IndexAccess(Box::new(acc), idxs.unwrap()),
+                2 => Expr::FieldAccess(Box::new(acc), name.unwrap()),
+                _ => unreachable!(),
+            }
+        },
+    )(input)
 }
 
-// Term: Atom * Atom or Atom / Atom
-fn parse_term(input: &str) -> IResult<&str, Expr> {
-    let (input, init) = parse_atom(input)?;
+// 1. Unary: - !
+fn parse_unary(input: &str) -> IResult<&str, Expr> {
+    alt((
+        map(pair(ws(char('-')), parse_postfix), |(_, expr)| {
+            Expr::UnOp(UnOp::Neg, Box::new(expr))
+        }),
+        map(pair(ws(char('!')), parse_postfix), |(_, expr)| {
+            Expr::UnOp(UnOp::Not, Box::new(expr))
+        }),
+        parse_postfix,
+    ))(input)
+}
+
+// 2. Multiplicative: * /
+fn parse_factor(input: &str) -> IResult<&str, Expr> {
+    let (input, init) = parse_unary(input)?;
 
     nom::multi::fold_many0(
-        pair(ws(alt((char('*'), char('/')))), parse_atom),
+        pair(ws(alt((char('*'), char('/')))), parse_unary),
         move || init.clone(),
         |acc, (op, val)| {
             let bin_op = match op {
@@ -179,12 +258,12 @@ fn parse_term(input: &str) -> IResult<&str, Expr> {
     )(input)
 }
 
-// Expr: Term + Term or Term - Term
-fn parse_expr(input: &str) -> IResult<&str, Expr> {
-    let (input, init) = parse_term(input)?;
+// 3. Additive: + -
+fn parse_term(input: &str) -> IResult<&str, Expr> {
+    let (input, init) = parse_factor(input)?;
 
     nom::multi::fold_many0(
-        pair(ws(alt((char('+'), char('-')))), parse_term),
+        pair(ws(alt((char('+'), char('-')))), parse_factor),
         move || init.clone(),
         |acc, (op, val)| {
             let bin_op = match op {
@@ -195,6 +274,74 @@ fn parse_expr(input: &str) -> IResult<&str, Expr> {
             Expr::BinOp(Box::new(acc), bin_op, Box::new(val))
         },
     )(input)
+}
+
+// 4. Relational: < > <= >=
+fn parse_relational(input: &str) -> IResult<&str, Expr> {
+    let (input, init) = parse_term(input)?;
+
+    nom::multi::fold_many0(
+        pair(
+            ws(alt((tag("<="), tag(">="), tag("<"), tag(">")))),
+            parse_term,
+        ),
+        move || init.clone(),
+        |acc, (op, val)| {
+            let bin_op = match op {
+                "<" => BinOp::Lt,
+                ">" => BinOp::Gt,
+                "<=" => BinOp::Le,
+                ">=" => BinOp::Ge,
+                _ => unreachable!(),
+            };
+            Expr::BinOp(Box::new(acc), bin_op, Box::new(val))
+        },
+    )(input)
+}
+
+// 5. Equality: == !=
+fn parse_equality(input: &str) -> IResult<&str, Expr> {
+    let (input, init) = parse_relational(input)?;
+
+    nom::multi::fold_many0(
+        pair(ws(alt((tag("=="), tag("!=")))), parse_relational),
+        move || init.clone(),
+        |acc, (op, val)| {
+            let bin_op = match op {
+                "==" => BinOp::Eq,
+                "!=" => BinOp::Neq,
+                _ => unreachable!(),
+            };
+            Expr::BinOp(Box::new(acc), bin_op, Box::new(val))
+        },
+    )(input)
+}
+
+// 6. Logical AND: &&
+fn parse_logical_and(input: &str) -> IResult<&str, Expr> {
+    let (input, init) = parse_equality(input)?;
+
+    nom::multi::fold_many0(
+        pair(ws(tag("&&")), parse_equality),
+        move || init.clone(),
+        |acc, (_, val)| Expr::BinOp(Box::new(acc), BinOp::And, Box::new(val)),
+    )(input)
+}
+
+// 7. Logical OR: ||
+fn parse_logical_or(input: &str) -> IResult<&str, Expr> {
+    let (input, init) = parse_logical_and(input)?;
+
+    nom::multi::fold_many0(
+        pair(ws(tag("||")), parse_logical_and),
+        move || init.clone(),
+        |acc, (_, val)| Expr::BinOp(Box::new(acc), BinOp::Or, Box::new(val)),
+    )(input)
+}
+
+// Top level Expr
+fn parse_expr(input: &str) -> IResult<&str, Expr> {
+    parse_logical_or(input)
 }
 
 // --- Statements ---
@@ -330,12 +477,21 @@ fn parse_stmt(input: &str) -> IResult<&str, Stmt> {
 
 // --- Top Level ---
 fn parse_fn(input: &str) -> IResult<&str, FunctionDef> {
-    // fn name(...) -> Type { ... }
+    // fn name(arg: Type, ...) -> Type { ... }
     let (input, _) = tag("fn")(input)?;
     let (input, name) = ws(identifier)(input)?;
-    let (input, _args) = delimited(ws(char('(')), multispace0, ws(char(')')))(input)?;
-    let (input, _) = ws(tag("->"))(input)?;
-    let (input, ret_type) = ws(parse_type)(input)?;
+
+    // Args: (a: T, b: U)
+    let (input, args) = delimited(
+        ws(char('(')),
+        separated_list0(
+            ws(char(',')),
+            pair(ws(identifier), preceded(ws(char(':')), parse_type)),
+        ),
+        ws(char(')')),
+    )(input)?;
+
+    let (input, ret_type) = opt(preceded(ws(tag("->")), ws(parse_type)))(input)?;
     let (input, _) = ws(char('{'))(input)?;
 
     // Body
@@ -347,8 +503,8 @@ fn parse_fn(input: &str) -> IResult<&str, FunctionDef> {
         input,
         FunctionDef {
             name,
-            args: vec![], // TODO
-            return_type: ret_type,
+            args,
+            return_type: ret_type.unwrap_or(Type::Void),
             body,
             generics: vec![],
         },

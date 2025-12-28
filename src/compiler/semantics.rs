@@ -300,6 +300,18 @@ impl SemanticAnalyzer {
                 }
             }
             Expr::FnCall(name, args) => {
+                if name == "print" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    self.check_expr(&args[0])?;
+                    return Ok(Type::Void);
+                }
+
                 let func = self
                     .functions
                     .get(name)

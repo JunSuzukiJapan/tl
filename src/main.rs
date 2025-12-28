@@ -1,9 +1,12 @@
 // src/main.rs
 mod compiler;
+mod runtime;
 
+use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::semantics::SemanticAnalyzer;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use inkwell::context::Context as InkwellContext;
 use std::fs;
 use std::path::PathBuf;
 
@@ -31,6 +34,9 @@ enum Commands {
     Build {
         /// Input file
         file: PathBuf,
+        /// Output file
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
     },
 }
 
@@ -63,15 +69,75 @@ fn main() -> Result<()> {
         }
         Commands::Run { file } => {
             println!("Running file: {:?}", file);
-            let content = fs::read_to_string(file)
+            let content = fs::read_to_string(&file)
                 .with_context(|| format!("Failed to read file {:?}", file))?;
-            let _ast = compiler::parser::parse(&content)?;
-            // TODO: Codegen and JIT
-            println!("(JIT execution not implemented yet)");
+
+            // 1. Parser
+            let ast = match compiler::parser::parse(&content) {
+                Ok(ast) => ast,
+                Err(e) => {
+                    eprintln!("Parse error: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            // 2. Semantics
+            let mut analyzer = SemanticAnalyzer::new();
+            if let Err(e) = analyzer.check_module(&ast) {
+                eprintln!("Semantic error: {}", e);
+                std::process::exit(1);
+            }
+
+            // 3. Codegen & JIT
+            let context = InkwellContext::create();
+            let mut codegen = CodeGenerator::new(&context, "main");
+            codegen.compile_module(&ast).unwrap();
+
+            // Debug dump
+            // codegen.dump_llvm_ir();
+
+            println!("Executing main...");
+            match codegen.jit_execute("main") {
+                Ok(ret) => println!("Program returned: {}", ret),
+                Err(e) => println!("Execution failed: {}", e),
+            }
         }
-        Commands::Build { file } => {
+        Commands::Build { file, output } => {
             println!("Building file: {:?}", file);
-            // TODO: Codegen to binary
+            let content = fs::read_to_string(&file)
+                .with_context(|| format!("Failed to read file {:?}", file))?;
+
+            // 1. Parser
+            let ast = match compiler::parser::parse(&content) {
+                Ok(ast) => ast,
+                Err(e) => {
+                    eprintln!("Parse error: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            // 2. Semantics
+            let mut analyzer = SemanticAnalyzer::new();
+            if let Err(e) = analyzer.check_module(&ast) {
+                eprintln!("Semantic error: {}", e);
+                std::process::exit(1);
+            }
+
+            // 3. Codegen
+            let context = InkwellContext::create();
+            let mut codegen = CodeGenerator::new(&context, "main");
+            if let Err(e) = codegen.compile_module(&ast) {
+                eprintln!("Codegen error: {}", e);
+                std::process::exit(1);
+            }
+
+            // Debug: print IR
+            codegen.dump_llvm_ir();
+
+            // 4. Output (simplified for now to IR dumping or validation)
+            // Ideally we'd compile to object file and link.
+            // For now, let's just confirm it runs through codegen.
+            println!("Codegen finished. IR dumped to stderr.");
         }
     }
 
