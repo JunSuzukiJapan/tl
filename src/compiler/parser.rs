@@ -2,7 +2,7 @@
 use crate::compiler::ast::*;
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_while},
+    bytes::complete::{tag, take_while, take_while1},
     character::complete::{alpha1, char, digit1, multispace0},
     combinator::{map, map_res, opt, recognize, value},
     multi::{separated_list0, separated_list1},
@@ -12,13 +12,23 @@ use nom::{
 // removed unused std::str::FromStr
 
 // --- Whitespace & Comments ---
+// --- Whitespace & Comments ---
 fn ws<'a, F: 'a, O, E: nom::error::ParseError<&'a str>>(
     inner: F,
 ) -> impl FnMut(&'a str) -> IResult<&'a str, O, E>
 where
     F: FnMut(&'a str) -> IResult<&'a str, O, E>,
 {
-    delimited(multispace0, inner, multispace0)
+    delimited(sp, inner, sp)
+}
+
+fn sp<'a, E: nom::error::ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
+    let chars = " \t\r\n";
+    // Consumes whitespace or comments recursively
+    recognize(nom::multi::many0(alt((
+        take_while1(move |c| chars.contains(c)),
+        preceded(tag("//"), take_while(|c| c != '\n')),
+    ))))(input)
 }
 
 // --- Identifiers ---

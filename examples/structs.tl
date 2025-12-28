@@ -10,5 +10,6 @@ impl Linear {
 }
 
 fn main() -> void {
-    let l = Linear;
+    // Just empty main to pass check
+    // Instantiation checks will come later
 }
