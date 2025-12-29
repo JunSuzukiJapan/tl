@@ -3,5 +3,6 @@ pub mod ast;
 pub mod codegen;
 pub mod inference;
 pub mod parser;
+pub mod type_infer;
 
 pub mod semantics;

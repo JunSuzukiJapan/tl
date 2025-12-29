@@ -1,5 +1,13 @@
 // src/compiler/ast.rs
 
+/// Dimension: either a constant, a variable, or a symbolic name
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Dim {
+    Constant(usize),  // Fixed dimension (e.g., 3, 64, 1024)
+    Var(u32),         // Inference variable (e.g., ?D0, ?D1)
+    Symbolic(String), // Named dimension (e.g., "batch", "seq_len")
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
 pub enum Type {
@@ -20,6 +28,12 @@ pub enum Type {
 
     // Tensor type: Tensor<Type, Rank>
     Tensor(Box<Type>, usize),
+
+    // Tensor with shape information for inference
+    TensorShaped(Box<Type>, Vec<Dim>),
+
+    // Type variable for inference (e.g., ?T0, ?T1)
+    TypeVar(u32),
 
     // Object list: Vec<Type>
     Vec(Box<Type>),
