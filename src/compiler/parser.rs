@@ -631,7 +631,7 @@ fn parse_relation_decl(input: &str) -> IResult<&str, RelationDecl> {
 }
 
 fn parse_atom(input: &str) -> IResult<&str, Atom> {
-    // Name(arg, ...)
+    // Name(arg, ...) - parentheses required but can be empty for nilary
     let (input, predicate) = ws(identifier)(input)?;
     let (input, args) = delimited(
         ws(char('(')),
@@ -639,6 +639,14 @@ fn parse_atom(input: &str) -> IResult<&str, Atom> {
         ws(char(')')),
     )(input)?;
     Ok((input, Atom { predicate, args }))
+}
+
+fn parse_fact(input: &str) -> IResult<&str, Rule> {
+    // Fact: Head(args). - no body, just period terminated
+    let (input, head) = parse_atom(input)?;
+    let (input, _) = ws(char('.'))(input)?;
+
+    Ok((input, Rule { head, body: vec![] }))
 }
 
 fn parse_rule(input: &str) -> IResult<&str, Rule> {
@@ -733,11 +741,14 @@ pub fn parse(input: &str) -> anyhow::Result<Module> {
         } else if let Ok((next, r)) = ws(parse_relation_decl)(remaining) {
             relations.push(r);
             remaining = next;
-        } else if let Ok((next, q)) = ws(parse_query)(remaining) {
-            queries.push(q);
+        } else if let Ok((next, r)) = ws(parse_fact)(remaining) {
+            rules.push(r);
             remaining = next;
         } else if let Ok((next, r)) = ws(parse_rule)(remaining) {
             rules.push(r);
+            remaining = next;
+        } else if let Ok((next, q)) = ws(parse_query)(remaining) {
+            queries.push(q);
             remaining = next;
         } else {
             return Err(anyhow::anyhow!("Parse error at: {:.30}...", remaining));

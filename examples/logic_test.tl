@@ -1,8 +1,8 @@
-
-relation edge(src: i64, dst: i64);
-relation path(src: i64, dst: i64);
-
+edge(1, 2).
+edge(2, 3).
+edge(3, 4).
 path(x, y) :- edge(x, y);
 path(x, z) :- edge(x, y), path(y, z);
-
 ?- path(1, 2);
+?- path(1, 3);
+?- path(1, 4);
