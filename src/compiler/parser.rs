@@ -62,6 +62,7 @@ fn parse_primitive_type(input: &str) -> IResult<&str, Type> {
         value(Type::I64, tag("i64")),
         value(Type::Bool, tag("bool")),
         value(Type::Usize, tag("usize")),
+        value(Type::Entity, tag("entity")),
         value(Type::Void, tag("void")),
     ))(input)
 }
@@ -580,6 +581,77 @@ fn parse_struct(input: &str) -> IResult<&str, StructDef> {
     ))
 }
 
+// --- New Top Level Parsers ---
+fn parse_tensor_decl(input: &str) -> IResult<&str, Stmt> {
+    // tensor name: Type = Expr;
+    let (input, _) = tag("tensor")(input)?;
+    let (input, name) = ws(identifier)(input)?;
+    let (input, _) = ws(char(':'))(input)?;
+    let (input, type_annotation) = ws(parse_type)(input)?;
+
+    let (input, init) = opt(preceded(ws(char('=')), parse_expr))(input)?;
+    let (input, _) = opt(ws(char(';')))(input)?; // Optional semicolon
+
+    Ok((
+        input,
+        Stmt::TensorDecl {
+            name,
+            type_annotation,
+            init,
+        },
+    ))
+}
+
+fn parse_relation_decl(input: &str) -> IResult<&str, RelationDecl> {
+    // relation Name(arg: Type, ...)
+    let (input, _) = tag("relation")(input)?;
+    let (input, name) = ws(identifier)(input)?;
+    let (input, args) = delimited(
+        ws(char('(')),
+        separated_list0(
+            ws(char(',')),
+            pair(ws(identifier), preceded(ws(char(':')), parse_type)),
+        ),
+        ws(char(')')),
+    )(input)?;
+    let (input, _) = opt(ws(char(';')))(input)?;
+
+    Ok((input, RelationDecl { name, args }))
+}
+
+fn parse_atom(input: &str) -> IResult<&str, Atom> {
+    // Name(arg, ...)
+    let (input, predicate) = ws(identifier)(input)?;
+    let (input, args) = delimited(
+        ws(char('(')),
+        separated_list0(ws(char(',')), parse_expr),
+        ws(char(')')),
+    )(input)?;
+    Ok((input, Atom { predicate, args }))
+}
+
+fn parse_rule(input: &str) -> IResult<&str, Rule> {
+    // Head(args) <- Body(args), ...
+    // Note: Ambiguity with function call if we don't look ahead for `<-`
+    // Using peek could be messy. For now strict order in top level loop or use verify.
+    // Parser combinator `tuple` will fail if `<-` is missing.
+    let (input, head) = parse_atom(input)?;
+    let (input, _) = ws(tag("<-"))(input)?;
+    let (input, body) = separated_list1(ws(char(',')), parse_atom)(input)?;
+
+    let (input, _) = opt(ws(char(';')))(input)?;
+
+    Ok((input, Rule { head, body }))
+}
+
+fn parse_query(input: &str) -> IResult<&str, Expr> {
+    // query Expr
+    let (input, _) = tag("query")(input)?;
+    let (input, expr) = parse_expr(input)?;
+    let (input, _) = opt(ws(char(';')))(input)?;
+    Ok((input, expr))
+}
+
 // --- Impls ---
 fn parse_impl(input: &str) -> IResult<&str, ImplBlock> {
     // impl<T> Name<T> { fn ... }
@@ -627,10 +699,14 @@ pub fn parse(input: &str) -> anyhow::Result<Module> {
     let mut structs = vec![];
     let mut impls = vec![];
     let mut functions = vec![];
+    let mut tensor_decls = vec![];
+    let mut relations = vec![];
+    let mut rules = vec![];
+    let mut queries = vec![];
     let mut remaining = input;
 
     while !remaining.trim().is_empty() {
-        // Try struct, then impl, then fn
+        // Try struct, then impl, then fn, then others
         if let Ok((next, s)) = ws(parse_struct)(remaining) {
             structs.push(s);
             remaining = next;
@@ -639,6 +715,18 @@ pub fn parse(input: &str) -> anyhow::Result<Module> {
             remaining = next;
         } else if let Ok((next, f)) = ws(parse_fn)(remaining) {
             functions.push(f);
+            remaining = next;
+        } else if let Ok((next, t)) = ws(parse_tensor_decl)(remaining) {
+            tensor_decls.push(t);
+            remaining = next;
+        } else if let Ok((next, r)) = ws(parse_relation_decl)(remaining) {
+            relations.push(r);
+            remaining = next;
+        } else if let Ok((next, q)) = ws(parse_query)(remaining) {
+            queries.push(q);
+            remaining = next;
+        } else if let Ok((next, r)) = ws(parse_rule)(remaining) {
+            rules.push(r);
             remaining = next;
         } else {
             return Err(anyhow::anyhow!("Parse error at: {:.30}...", remaining));
@@ -649,5 +737,9 @@ pub fn parse(input: &str) -> anyhow::Result<Module> {
         structs,
         impls,
         functions,
+        tensor_decls,
+        relations,
+        rules,
+        queries,
     })
 }

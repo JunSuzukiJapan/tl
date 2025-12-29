@@ -343,6 +343,31 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         match stmt {
+            Stmt::TensorDecl {
+                name,
+                type_annotation: _,
+                init,
+            } => {
+                if let Some(expr) = init {
+                    let (val_ir, val_ty) = self.compile_expr(expr)?;
+                    let fn_val = self
+                        .builder
+                        .get_insert_block()
+                        .unwrap()
+                        .get_parent()
+                        .unwrap();
+                    let ptr = self.create_entry_block_alloca(fn_val, name, &val_ty);
+                    self.builder
+                        .build_store(ptr, val_ir)
+                        .map_err(|e| e.to_string())?;
+
+                    self.variables
+                        .last_mut()
+                        .unwrap()
+                        .insert(name.clone(), (ptr.into(), val_ty));
+                }
+                Ok(())
+            }
             Stmt::Let {
                 name,
                 indices,
@@ -374,12 +399,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .last_mut()
                     .unwrap()
                     .insert(name.clone(), (alloca.into(), val.1)); // Store pointer and type
+                Ok(())
             }
             Stmt::Return(expr) => {
                 let val = self.compile_expr(expr)?;
                 self.builder
                     .build_return(Some(&val.0))
                     .map_err(|e| e.to_string())?;
+                Ok(())
             }
             Stmt::Assign {
                 name,
@@ -481,6 +508,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder
                     .build_store(var_ptr.into_pointer_value(), final_val)
                     .map_err(|e| e.to_string())?;
+                Ok(())
             }
             Stmt::If {
                 cond,
@@ -539,6 +567,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Merge
                 self.builder.position_at_end(merge_bb);
+                Ok(())
             }
             Stmt::For {
                 loop_var,
@@ -650,12 +679,13 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // --- End Block ---
                 self.builder.position_at_end(end_block);
+                Ok(())
             }
             Stmt::Expr(expr) => {
                 self.compile_expr(expr)?;
+                Ok(())
             }
         }
-        Ok(())
     }
 
     // Helper for BinOp

@@ -163,6 +163,18 @@ impl SemanticAnalyzer {
 
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), SemanticError> {
         match stmt {
+            Stmt::TensorDecl {
+                name,
+                type_annotation,
+                init,
+            } => {
+                if let Some(expr) = init {
+                    let _ = self.check_expr(expr)?;
+                }
+                self.declare_variable(name.clone(), type_annotation.clone())?;
+                Ok(())
+            }
+
             Stmt::Let {
                 name,
                 indices,
@@ -244,6 +256,7 @@ impl SemanticAnalyzer {
                 };
 
                 self.declare_variable(name.clone(), final_type)?;
+                Ok(())
             }
             Stmt::Assign {
                 name,
@@ -307,6 +320,7 @@ impl SemanticAnalyzer {
                             found: rhs_type,
                         });
                     }
+                    Ok(())
                 } else {
                     // Standard assignment
                     let val_type = self.check_expr(value)?;
@@ -316,14 +330,17 @@ impl SemanticAnalyzer {
                             found: val_type,
                         });
                     }
+                    Ok(())
                 }
             }
             Stmt::Return(expr) => {
                 let _ = self.check_expr(expr)?;
                 // TODO: Check against function return type (need access to current function context)
+                Ok(())
             }
             Stmt::Expr(expr) => {
                 self.check_expr(expr)?;
+                Ok(())
             }
             Stmt::If {
                 cond,
@@ -351,6 +368,7 @@ impl SemanticAnalyzer {
                     }
                     self.exit_scope();
                 }
+                Ok(())
             }
             Stmt::For {
                 loop_var,
@@ -367,9 +385,9 @@ impl SemanticAnalyzer {
                     self.check_stmt(s)?;
                 }
                 self.exit_scope();
+                Ok(())
             }
         }
-        Ok(())
     }
 
     fn check_expr(&mut self, expr: &Expr) -> Result<Type, SemanticError> {

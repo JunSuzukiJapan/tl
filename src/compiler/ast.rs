@@ -16,6 +16,7 @@ pub enum Type {
     U16,
     U32,
     Usize,
+    Entity, // Logic Entity
 
     // Tensor type: Tensor<Type, Rank>
     Tensor(Box<Type>, usize),
@@ -57,6 +58,11 @@ pub struct ImplBlock {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
+    TensorDecl {
+        name: String,
+        type_annotation: Type,
+        init: Option<Expr>,
+    },
     Let {
         name: String,
         indices: Option<Vec<String>>, // For let x[i, j] = ...
@@ -141,8 +147,30 @@ pub enum UnOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Atom {
+    pub predicate: String,
+    pub args: Vec<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RelationDecl {
+    pub name: String,
+    pub args: Vec<(String, Type)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Rule {
+    pub head: Atom,
+    pub body: Vec<Atom>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Module {
     pub structs: Vec<StructDef>,
     pub impls: Vec<ImplBlock>,
     pub functions: Vec<FunctionDef>,
+    pub tensor_decls: Vec<Stmt>, // Stmt::TensorDecl
+    pub relations: Vec<RelationDecl>,
+    pub rules: Vec<Rule>,
+    pub queries: Vec<Expr>,
 }
