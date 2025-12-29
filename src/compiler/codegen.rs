@@ -1518,6 +1518,243 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
 
+            Expr::Aggregation {
+                op,
+                expr,
+                var,
+                range,
+                condition,
+            } => {
+                // For now, implement a simple version:
+                // Assume range is a tensor/array and we iterate over its length
+                // sum(arr[i] for i in arr) -> loop over arr indices
+
+                let function = self
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_parent()
+                    .unwrap();
+
+                // Get range expression to determine loop bounds
+                let (range_val, range_ty) = self.compile_expr(range)?;
+
+                // For Tensor types, get the length from the first dimension
+                let loop_count = match &range_ty {
+                    Type::Tensor(_, _) => {
+                        let len_fn = self
+                            .module
+                            .get_function("tl_tensor_len")
+                            .ok_or("tl_tensor_len not found")?;
+                        let call = self
+                            .builder
+                            .build_call(len_fn, &[range_val.into()], "len")
+                            .map_err(|e| e.to_string())?;
+                        match call.try_as_basic_value() {
+                            ValueKind::Basic(v) => v.into_int_value(),
+                            _ => return Err("Failed to get tensor length".into()),
+                        }
+                    }
+                    _ => return Err("Aggregation range must be a tensor".into()),
+                };
+
+                // Create blocks for the loop
+                let preheader_bb = self.builder.get_insert_block().unwrap();
+                let loop_bb = self.context.append_basic_block(function, "agg_loop");
+                let body_bb = self.context.append_basic_block(function, "agg_body");
+                let after_bb = self.context.append_basic_block(function, "agg_after");
+
+                // Initialize accumulator based on op (0 for sum, etc.)
+                let f64_type = self.context.f64_type();
+                let init_val = match op {
+                    AggregateOp::Sum | AggregateOp::Avg => f64_type.const_float(0.0),
+                    AggregateOp::Max => f64_type.const_float(f64::NEG_INFINITY),
+                    AggregateOp::Min => f64_type.const_float(f64::INFINITY),
+                    AggregateOp::Count => f64_type.const_float(0.0),
+                };
+
+                // Branch to loop
+                self.builder
+                    .build_unconditional_branch(loop_bb)
+                    .map_err(|e| e.to_string())?;
+
+                // Loop header with phi nodes
+                self.builder.position_at_end(loop_bb);
+                let i64_type = self.context.i64_type();
+                let counter_phi = self
+                    .builder
+                    .build_phi(i64_type, "i")
+                    .map_err(|e| e.to_string())?;
+                let acc_phi = self
+                    .builder
+                    .build_phi(f64_type, "acc")
+                    .map_err(|e| e.to_string())?;
+
+                counter_phi.add_incoming(&[(&i64_type.const_int(0, false), preheader_bb)]);
+                acc_phi.add_incoming(&[(&init_val, preheader_bb)]);
+
+                let current_i = counter_phi.as_basic_value().into_int_value();
+                let current_acc = acc_phi.as_basic_value().into_float_value();
+
+                // Check if i < loop_count
+                let cond = self
+                    .builder
+                    .build_int_compare(inkwell::IntPredicate::SLT, current_i, loop_count, "cond")
+                    .map_err(|e| e.to_string())?;
+                self.builder
+                    .build_conditional_branch(cond, body_bb, after_bb)
+                    .map_err(|e| e.to_string())?;
+
+                // Body: compute expression with var = i
+                self.builder.position_at_end(body_bb);
+                self.enter_scope();
+
+                // Store the loop variable
+                let var_alloca = self.create_entry_block_alloca(function, var, &Type::I64);
+                self.builder
+                    .build_store(var_alloca, current_i)
+                    .map_err(|e| e.to_string())?;
+                self.variables
+                    .last_mut()
+                    .unwrap()
+                    .insert(var.clone(), (var_alloca.into(), Type::I64));
+
+                // Compile the aggregated expression
+                let (expr_val, _expr_ty) = self.compile_expr(expr)?;
+
+                // Check condition if present
+                let should_include = if let Some(cond_expr) = condition {
+                    let (cond_val, _) = self.compile_expr(cond_expr)?;
+                    cond_val.into_int_value()
+                } else {
+                    self.context.bool_type().const_int(1, false)
+                };
+
+                self.exit_scope();
+
+                // Update accumulator based on op
+                let expr_f64 = if expr_val.is_float_value() {
+                    self.builder
+                        .build_float_ext(expr_val.into_float_value(), f64_type, "ext")
+                        .map_err(|e| e.to_string())?
+                } else if expr_val.is_int_value() {
+                    self.builder
+                        .build_signed_int_to_float(expr_val.into_int_value(), f64_type, "itof")
+                        .map_err(|e| e.to_string())?
+                } else {
+                    return Err("Aggregation expression must be numeric".into());
+                };
+
+                let new_acc = match op {
+                    AggregateOp::Sum | AggregateOp::Avg => {
+                        let add_val = self
+                            .builder
+                            .build_float_add(current_acc, expr_f64, "add")
+                            .map_err(|e| e.to_string())?;
+                        // Select based on condition
+                        self.builder
+                            .build_select(should_include, add_val, current_acc, "sel")
+                            .map_err(|e| e.to_string())?
+                            .into_float_value()
+                    }
+                    AggregateOp::Count => {
+                        let one = f64_type.const_float(1.0);
+                        let add_val = self
+                            .builder
+                            .build_float_add(current_acc, one, "inc")
+                            .map_err(|e| e.to_string())?;
+                        self.builder
+                            .build_select(should_include, add_val, current_acc, "sel")
+                            .map_err(|e| e.to_string())?
+                            .into_float_value()
+                    }
+                    AggregateOp::Max => {
+                        let is_greater = self
+                            .builder
+                            .build_float_compare(
+                                inkwell::FloatPredicate::OGT,
+                                expr_f64,
+                                current_acc,
+                                "gt",
+                            )
+                            .map_err(|e| e.to_string())?;
+                        let max_val = self
+                            .builder
+                            .build_select(is_greater, expr_f64, current_acc, "max")
+                            .map_err(|e| e.to_string())?
+                            .into_float_value();
+                        self.builder
+                            .build_select(should_include, max_val, current_acc, "sel")
+                            .map_err(|e| e.to_string())?
+                            .into_float_value()
+                    }
+                    AggregateOp::Min => {
+                        let is_less = self
+                            .builder
+                            .build_float_compare(
+                                inkwell::FloatPredicate::OLT,
+                                expr_f64,
+                                current_acc,
+                                "lt",
+                            )
+                            .map_err(|e| e.to_string())?;
+                        let min_val = self
+                            .builder
+                            .build_select(is_less, expr_f64, current_acc, "min")
+                            .map_err(|e| e.to_string())?
+                            .into_float_value();
+                        self.builder
+                            .build_select(should_include, min_val, current_acc, "sel")
+                            .map_err(|e| e.to_string())?
+                            .into_float_value()
+                    }
+                };
+
+                // Increment counter
+                let next_i = self
+                    .builder
+                    .build_int_add(current_i, i64_type.const_int(1, false), "next_i")
+                    .map_err(|e| e.to_string())?;
+
+                // Branch back to loop header
+                let body_end_bb = self.builder.get_insert_block().unwrap();
+                self.builder
+                    .build_unconditional_branch(loop_bb)
+                    .map_err(|e| e.to_string())?;
+
+                // Add incoming edges to phi nodes
+                counter_phi.add_incoming(&[(&next_i, body_end_bb)]);
+                acc_phi.add_incoming(&[(&new_acc, body_end_bb)]);
+
+                // After loop
+                self.builder.position_at_end(after_bb);
+
+                // For avg, divide by count
+                let result = if matches!(op, AggregateOp::Avg) {
+                    let count_f64 = self
+                        .builder
+                        .build_signed_int_to_float(loop_count, f64_type, "count")
+                        .map_err(|e| e.to_string())?;
+                    self.builder
+                        .build_float_div(
+                            acc_phi.as_basic_value().into_float_value(),
+                            count_f64,
+                            "avg",
+                        )
+                        .map_err(|e| e.to_string())?
+                } else {
+                    acc_phi.as_basic_value().into_float_value()
+                };
+
+                // Convert back to f32 for consistency
+                let result_f32 = self
+                    .builder
+                    .build_float_trunc(result, self.context.f32_type(), "trunc")
+                    .map_err(|e| e.to_string())?;
+
+                Ok((result_f32.into(), Type::F32))
+            }
+
             _ => Err("Unsupported expression".into()),
         }
     }

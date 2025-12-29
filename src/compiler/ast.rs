@@ -126,6 +126,24 @@ pub enum Expr {
     // Control
     IfExpr(Box<Expr>, Vec<Stmt>, Option<Vec<Stmt>>),
     Block(Vec<Stmt>),
+
+    // Aggregation: sum(expr for var in range where condition)
+    Aggregation {
+        op: AggregateOp,
+        expr: Box<Expr>,
+        var: String,
+        range: Box<Expr>,             // e.g., 0..n or a collection
+        condition: Option<Box<Expr>>, // where clause
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AggregateOp {
+    Sum,
+    Max,
+    Min,
+    Avg,
+    Count,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -166,6 +184,7 @@ pub struct RelationDecl {
 pub struct Rule {
     pub head: Atom,
     pub body: Vec<Atom>,
+    pub weight: Option<f64>, // Optional probability/weight for probabilistic rules
 }
 
 #[derive(Debug, Clone, PartialEq)]

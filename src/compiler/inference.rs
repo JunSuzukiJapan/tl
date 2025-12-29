@@ -280,6 +280,55 @@ pub fn forward_chain(initial_facts: HashSet<GroundAtom>, rules: &[Rule]) -> Hash
     facts
 }
 
+/// A ground atom with an associated probability/weight (for probabilistic inference)
+#[derive(Debug, Clone)]
+pub struct WeightedGroundAtom {
+    pub atom: GroundAtom,
+    pub weight: f64,
+}
+
+/// Probabilistic forward chaining with max-product propagation.
+/// Returns facts with their maximum probability weights.
+pub fn probabilistic_forward_chain(
+    initial_facts: HashMap<GroundAtom, f64>,
+    rules: &[Rule],
+) -> HashMap<GroundAtom, f64> {
+    let mut facts = initial_facts;
+    let mut changed = true;
+
+    while changed {
+        changed = false;
+        for rule in rules {
+            let rule_weight = rule.weight.unwrap_or(1.0);
+
+            // Convert to HashSet for evaluate_rule
+            let fact_set: HashSet<GroundAtom> = facts.keys().cloned().collect();
+            let new_atoms = evaluate_rule(rule, &fact_set);
+
+            for new_atom in new_atoms {
+                // Calculate the weight of this derivation
+                // For max-product: weight = rule_weight * product of body weights
+                // Since we don't track the exact derivation path, use rule_weight
+                // as a simplification (full implementation would track derivations)
+                let new_weight = rule_weight;
+
+                // Update if not present or if new weight is higher (max-product)
+                let should_update = match facts.get(&new_atom) {
+                    Some(&existing_weight) => new_weight > existing_weight,
+                    None => true,
+                };
+
+                if should_update {
+                    facts.insert(new_atom, new_weight);
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    facts
+}
+
 /// Check if a predicate is a built-in (comparison or numeric function)
 fn is_builtin_predicate(name: &str) -> bool {
     matches!(
@@ -455,6 +504,7 @@ mod tests {
                         Expr::Variable("Y".to_string()),
                     ],
                 }],
+                weight: None,
             },
             Rule {
                 head: Atom {
@@ -480,6 +530,7 @@ mod tests {
                         ],
                     },
                 ],
+                weight: None,
             },
         ];
 
@@ -529,6 +580,7 @@ mod tests {
                     args: vec![Expr::Variable("v".to_string()), Expr::Int(8)],
                 },
             ],
+            weight: None,
         }];
 
         let result = forward_chain(facts, &rules);

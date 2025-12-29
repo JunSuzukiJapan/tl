@@ -166,7 +166,48 @@ fn parse_tensor_literal(input: &str) -> IResult<&str, Expr> {
     )(input)
 }
 
-// Primary: Literal | Variable | (Expr) | Block? | IfExpr
+// Aggregation: sum(expr for var in range) or sum(expr for var in range where cond)
+fn parse_aggregation(input: &str) -> IResult<&str, Expr> {
+    // Parse: sum|max|min|avg|count ( expr for var in range [where cond] )
+    let (input, op_str) = ws(alt((
+        tag("sum"),
+        tag("max"),
+        tag("min"),
+        tag("avg"),
+        tag("count"),
+    )))(input)?;
+
+    let op = match op_str {
+        "sum" => AggregateOp::Sum,
+        "max" => AggregateOp::Max,
+        "min" => AggregateOp::Min,
+        "avg" => AggregateOp::Avg,
+        "count" => AggregateOp::Count,
+        _ => unreachable!(),
+    };
+
+    let (input, _) = ws(char('('))(input)?;
+    let (input, expr) = parse_expr(input)?;
+    let (input, _) = ws(tag("for"))(input)?;
+    let (input, var) = ws(identifier)(input)?;
+    let (input, _) = ws(tag("in"))(input)?;
+    let (input, range) = parse_expr(input)?;
+    let (input, condition) = opt(preceded(ws(tag("where")), parse_expr))(input)?;
+    let (input, _) = ws(char(')'))(input)?;
+
+    Ok((
+        input,
+        Expr::Aggregation {
+            op,
+            expr: Box::new(expr),
+            var,
+            range: Box::new(range),
+            condition: condition.map(Box::new),
+        },
+    ))
+}
+
+// Primary: Literal | Variable | (Expr) | Block? | IfExpr | Aggregation
 fn parse_primary(input: &str) -> IResult<&str, Expr> {
     ws(alt((
         parse_literal_float,
@@ -175,6 +216,7 @@ fn parse_primary(input: &str) -> IResult<&str, Expr> {
         parse_literal_string,
         parse_if_expr,
         parse_tensor_literal,
+        parse_aggregation, // Must come before parse_variable
         parse_variable,
         parse_block_expr,
         delimited(ws(char('(')), parse_expr, ws(char(')'))),
@@ -646,7 +688,14 @@ fn parse_fact(input: &str) -> IResult<&str, Rule> {
     let (input, head) = parse_atom(input)?;
     let (input, _) = ws(char('.'))(input)?;
 
-    Ok((input, Rule { head, body: vec![] }))
+    Ok((
+        input,
+        Rule {
+            head,
+            body: vec![],
+            weight: None,
+        },
+    ))
 }
 
 fn parse_rule(input: &str) -> IResult<&str, Rule> {
@@ -660,7 +709,14 @@ fn parse_rule(input: &str) -> IResult<&str, Rule> {
 
     let (input, _) = opt(ws(char(';')))(input)?;
 
-    Ok((input, Rule { head, body }))
+    Ok((
+        input,
+        Rule {
+            head,
+            body,
+            weight: None,
+        },
+    ))
 }
 
 fn parse_query(input: &str) -> IResult<&str, Expr> {

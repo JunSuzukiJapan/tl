@@ -812,6 +812,40 @@ impl SemanticAnalyzer {
                     Ok(Type::Void)
                 }
             }
+            Expr::Aggregation {
+                op: _,
+                expr,
+                var,
+                range,
+                condition,
+            } => {
+                // Type check the range expression
+                let _range_ty = self.check_expr(range)?;
+
+                // Declare the loop variable in a new scope
+                self.enter_scope();
+                self.declare_variable(var.clone(), Type::I64)?; // Assume integer index
+
+                // Check the aggregated expression
+                let expr_ty = self.check_expr(expr)?;
+
+                // Check condition if present
+                if let Some(cond) = condition {
+                    let cond_ty = self.check_expr(cond)?;
+                    if cond_ty != Type::Bool {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Bool,
+                            found: cond_ty,
+                        });
+                    }
+                }
+
+                self.exit_scope();
+
+                // Aggregation returns same type as the expression (for sum/avg)
+                // or I64 for count
+                Ok(expr_ty)
+            }
             Expr::FieldAccess(_, _) => Ok(Type::Void), // TODO
             Expr::MethodCall(_, _, _) => Ok(Type::Void), // TODO
         }
