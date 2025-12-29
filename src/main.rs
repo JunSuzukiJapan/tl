@@ -224,7 +224,7 @@ fn try_atom_to_ground(atom: &compiler::ast::Atom) -> Option<GroundAtom> {
     for expr in &atom.args {
         match expr {
             Expr::Int(n) => args.push(Value::Int(*n)),
-            Expr::Float(f) => args.push(Value::Float(f.to_string())),
+            Expr::Float(f) => args.push(Value::Float(*f)),
             Expr::StringLiteral(s) => args.push(Value::Str(s.clone())),
             _ => return None, // Contains variable or complex expression
         }
