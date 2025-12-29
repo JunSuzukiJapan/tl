@@ -101,7 +101,7 @@ fn main() -> Result<()> {
                 Err(e) => println!("Execution failed: {}", e),
             }
         }
-        Commands::Build { file, output } => {
+        Commands::Build { file, output: _ } => {
             println!("Building file: {:?}", file);
             let content = fs::read_to_string(&file)
                 .with_context(|| format!("Failed to read file {:?}", file))?;

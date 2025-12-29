@@ -111,55 +111,53 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.module.add_function("tl_tensor_neg", neg_type, None);
 
         // Map symbols
-        unsafe {
-            if let Some(f) = self.module.get_function("tl_tensor_new") {
-                self.execution_engine
-                    .add_global_mapping(&f, tl_tensor_new as usize);
-            }
-            if let Some(f) = self.module.get_function("tl_tensor_add") {
-                self.execution_engine
-                    .add_global_mapping(&f, tl_tensor_add as usize);
-            }
-            if let Some(f) = self.module.get_function("tl_tensor_mul") {
-                self.execution_engine
-                    .add_global_mapping(&f, tl_tensor_mul as usize);
-            }
-            if let Some(f) = self.module.get_function("tl_tensor_print") {
-                self.execution_engine
-                    .add_global_mapping(&f, tl_tensor_print as usize);
-            }
-            if let Some(f) = self.module.get_function("tl_print_i64") {
-                self.execution_engine
-                    .add_global_mapping(&f, tl_print_i64 as usize);
-            }
-            if let Some(f) = self.module.get_function("tl_print_f32") {
-                self.execution_engine
-                    .add_global_mapping(&f, tl_print_f32 as usize);
-            }
-            if let Some(f) = self.module.get_function("tl_tensor_len") {
-                self.execution_engine
-                    .add_global_mapping(&f, tl_tensor_len as usize);
-            }
-            if let Some(f) = self.module.get_function("tl_tensor_dim") {
-                self.execution_engine
-                    .add_global_mapping(&f, tl_tensor_dim as usize);
-            }
-            if let Some(f) = self.module.get_function("tl_tensor_get_f32_md") {
-                self.execution_engine
-                    .add_global_mapping(&f, tl_tensor_get_f32_md as usize);
-            }
-            if let Some(f) = self.module.get_function("tl_tensor_get") {
-                self.execution_engine
-                    .add_global_mapping(&f, tl_tensor_get as usize);
-            }
-            if let Some(f) = self.module.get_function("tl_tensor_neg") {
-                self.execution_engine
-                    .add_global_mapping(&f, tl_tensor_neg as usize);
-            }
-            if let Some(f) = self.module.get_function("tl_tensor_slice") {
-                self.execution_engine
-                    .add_global_mapping(&f, tl_tensor_slice as usize);
-            }
+        if let Some(f) = self.module.get_function("tl_tensor_new") {
+            self.execution_engine
+                .add_global_mapping(&f, tl_tensor_new as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_add") {
+            self.execution_engine
+                .add_global_mapping(&f, tl_tensor_add as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_mul") {
+            self.execution_engine
+                .add_global_mapping(&f, tl_tensor_mul as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_print") {
+            self.execution_engine
+                .add_global_mapping(&f, tl_tensor_print as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_print_i64") {
+            self.execution_engine
+                .add_global_mapping(&f, tl_print_i64 as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_print_f32") {
+            self.execution_engine
+                .add_global_mapping(&f, tl_print_f32 as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_len") {
+            self.execution_engine
+                .add_global_mapping(&f, tl_tensor_len as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_dim") {
+            self.execution_engine
+                .add_global_mapping(&f, tl_tensor_dim as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_get_f32_md") {
+            self.execution_engine
+                .add_global_mapping(&f, tl_tensor_get_f32_md as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_get") {
+            self.execution_engine
+                .add_global_mapping(&f, tl_tensor_get as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_neg") {
+            self.execution_engine
+                .add_global_mapping(&f, tl_tensor_neg as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_slice") {
+            self.execution_engine
+                .add_global_mapping(&f, tl_tensor_slice as usize);
         }
 
         // Register types for runtime functions (critical for FnCall)
@@ -389,7 +387,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 op,
                 value,
             } => {
-                if let Some(idxs) = indices {
+                if let Some(_idxs) = indices {
                     // Determine if this is a supported tensor equation assignment
                     if *op == AssignOp::Assign {
                         // C[i, k] = ...
@@ -656,7 +654,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             Stmt::Expr(expr) => {
                 self.compile_expr(expr)?;
             }
-            _ => {}
         }
         Ok(())
     }
@@ -892,12 +889,64 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.compile_bin_op(left.0, left.1, right.0, right.1, op.clone())
             }
             Expr::TensorLiteral(elements) => {
-                let rank = 1; // Simplify: rank 1 for flat list
-                let len = elements.len() as u64;
+                // Helper to flatten nested tensor literals
+                fn flatten_tensor(exprs: &[Expr]) -> Result<(Vec<f64>, Vec<usize>), String> {
+                    if exprs.is_empty() {
+                        return Ok((vec![], vec![0]));
+                    }
+
+                    // Check if elements are nested tensors or scalars
+                    let is_nested = matches!(exprs[0], Expr::TensorLiteral(_));
+
+                    if is_nested {
+                        let mut flat_data = Vec::new();
+                        let mut child_shapes = Vec::new();
+                        let mut first_shape = None;
+
+                        for e in exprs {
+                            if let Expr::TensorLiteral(children) = e {
+                                let (mut data, shape) = flatten_tensor(children)?;
+
+                                if let Some(ref s) = first_shape {
+                                    if s != &shape {
+                                        return Err("Ragged tensors not supported".into());
+                                    }
+                                } else {
+                                    first_shape = Some(shape.clone());
+                                }
+
+                                flat_data.append(&mut data);
+                                child_shapes.push(shape);
+                            } else {
+                                return Err("Mixed types in tensor literal".into());
+                            }
+                        }
+
+                        let mut shape = vec![exprs.len()];
+                        if let Some(s) = first_shape {
+                            shape.extend(s);
+                        }
+                        Ok((flat_data, shape))
+                    } else {
+                        // Leaf level (Scalars)
+                        let mut data = Vec::new(); // Use f64 for simplicity, convert later
+                        for e in exprs {
+                            match e {
+                                Expr::Float(f) => data.push(*f),
+                                Expr::Int(i) => data.push(*i as f64),
+                                _ => return Err("Tensor elements must be numbers".into()),
+                            }
+                        }
+                        Ok((data, vec![exprs.len()]))
+                    }
+                }
+
+                let (flat_data, shape) = flatten_tensor(elements)?;
+                let rank = shape.len();
+                let len = flat_data.len() as u64;
 
                 let f32_type = self.context.f32_type();
                 let i64_type = self.context.i64_type();
-                let f32_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
 
                 // 1. Alloca for data
                 let data_alloca = self
@@ -906,22 +955,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .unwrap();
 
                 // 2. Store elements
-                for (i, elem) in elements.iter().enumerate() {
-                    let (val, _) = self.compile_expr(elem)?;
-                    // Assume float
-                    let float_val = if val.is_float_value() {
-                        val.into_float_value()
-                    } else if val.is_int_value() {
-                        // Cast int to float
-                        self.builder
-                            .build_signed_int_to_float(val.into_int_value(), f32_type, "cast")
-                            .unwrap()
-                    } else {
-                        return Err("Tensor elements must be number".into());
-                    };
-
+                for (i, val) in flat_data.iter().enumerate() {
+                    let float_val = f32_type.const_float(*val);
                     unsafe {
-                        // GEP to index
                         let ptr = self
                             .builder
                             .build_in_bounds_gep(
@@ -938,21 +974,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // 3. Alloca for shape
                 let shape_alloca = self
                     .builder
-                    .build_array_alloca(i64_type, i64_type.const_int(1, false), "tensor_shape")
+                    .build_array_alloca(
+                        i64_type,
+                        i64_type.const_int(rank as u64, false),
+                        "tensor_shape",
+                    )
                     .unwrap();
-                unsafe {
-                    let ptr = self
-                        .builder
-                        .build_in_bounds_gep(
-                            i64_type,
-                            shape_alloca,
-                            &[i64_type.const_int(0, false)],
-                            "shape_0",
-                        )
-                        .unwrap();
-                    self.builder
-                        .build_store(ptr, i64_type.const_int(len, false))
-                        .unwrap();
+                for (i, dim) in shape.iter().enumerate() {
+                    unsafe {
+                        let ptr = self
+                            .builder
+                            .build_in_bounds_gep(
+                                i64_type,
+                                shape_alloca,
+                                &[i64_type.const_int(i as u64, false)],
+                                "shape_val",
+                            )
+                            .unwrap();
+                        self.builder
+                            .build_store(ptr, i64_type.const_int(*dim as u64, false))
+                            .unwrap();
+                    }
                 }
 
                 // 4. Call Runtime
@@ -967,7 +1009,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         f,
                         &[
                             data_alloca.into(),
-                            i64_type.const_int(rank, false).into(),
+                            i64_type.const_int(rank as u64, false).into(),
                             shape_alloca.into(),
                         ],
                         "new_tensor",
@@ -979,8 +1021,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     _ => return Err("Invalid call return".into()),
                 };
 
-                // Type is Tensor<f32, 1>
-                Ok((res, Type::Tensor(Box::new(Type::F32), 1)))
+                // Type is Tensor<f32, Rank>
+                Ok((res, Type::Tensor(Box::new(Type::F32), rank)))
             }
             Expr::FnCall(name, args) => {
                 if name == "print" && args.len() == 1 {

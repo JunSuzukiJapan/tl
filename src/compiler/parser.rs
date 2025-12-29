@@ -3,7 +3,7 @@ use crate::compiler::ast::*;
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_while, take_while1},
-    character::complete::{alpha1, char, digit1, multispace0},
+    character::complete::{alpha1, char, digit1},
     combinator::{map, map_res, opt, recognize, value},
     multi::{separated_list0, separated_list1},
     sequence::{delimited, pair, preceded, tuple},

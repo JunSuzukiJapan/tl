@@ -3,6 +3,7 @@ use lazy_static::lazy_static;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub enum DeviceType {
     Cpu,
     Metal,
@@ -11,6 +12,7 @@ pub enum DeviceType {
 
 pub struct DeviceManager {
     current_device: Device,
+    #[allow(dead_code)]
     device_type: DeviceType,
 }
 

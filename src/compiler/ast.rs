@@ -1,6 +1,7 @@
 // src/compiler/ast.rs
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum Type {
     // Primitive types
     F32,

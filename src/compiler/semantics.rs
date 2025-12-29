@@ -25,6 +25,7 @@ pub enum SemanticError {
 
 #[derive(Clone, Debug)]
 struct Symbol {
+    #[allow(dead_code)]
     name: String,
     ty: Type,
     // potentially more info like mutability, shape info (if constant)
@@ -356,7 +357,7 @@ impl SemanticAnalyzer {
                 iterator,
                 body,
             } => {
-                let iter_type = self.check_expr(iterator)?;
+                let _iter_type = self.check_expr(iterator)?;
                 // Assuming iter_type is iterable (e.g. Range or Tensor dimension)
                 // For now, let's assume it introduces a 'usize' or 'i32' variable.
 
@@ -389,8 +390,8 @@ impl SemanticAnalyzer {
                     // Allow promotion? e.g. f32 * f64 -> f64? or Tensor<f32> * f32 -> Tensor<f32>?
                     // For initial version, be strict or allow basic Tensor * Scalar
                     match (&left, &right) {
-                        (Type::Tensor(inner, rank), val) if **inner == *val => Ok(left), // Tensor * Scalar
-                        (val, Type::Tensor(inner, rank)) if **inner == *val => Ok(right), // Scalar * Tensor
+                        (Type::Tensor(inner, _rank), val) if **inner == *val => Ok(left), // Tensor * Scalar
+                        (val, Type::Tensor(inner, _rank)) if **inner == *val => Ok(right), // Scalar * Tensor
                         _ => Err(SemanticError::TypeMismatch {
                             expected: left,
                             found: right,
@@ -628,7 +629,6 @@ impl SemanticAnalyzer {
             }
             Expr::FieldAccess(_, _) => Ok(Type::Void), // TODO
             Expr::MethodCall(_, _, _) => Ok(Type::Void), // TODO
-            _ => Ok(Type::Void),                       // TOD: Blocks, IfExpr, etc.
         }
     }
 
@@ -663,7 +663,7 @@ impl SemanticAnalyzer {
                     self.collect_indices(arg, indices);
                 }
             }
-            Expr::IfExpr(cond, then_block, else_block) => {
+            Expr::IfExpr(cond, _then_block, _else_block) => {
                 self.collect_indices(cond, indices);
                 // Recurse into blocks? Stmts might have exprs.
                 // But IndexAccess usually in expressions.
