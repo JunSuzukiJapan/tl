@@ -1,4 +1,5 @@
 // src/compiler/type_infer.rs
+#![allow(dead_code)]
 //! Constraint-based type inference system with shape inference for tensors.
 
 use crate::compiler::ast::{Dim, Expr, FunctionDef, Module, Stmt, Type};

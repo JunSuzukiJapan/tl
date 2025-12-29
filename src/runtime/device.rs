@@ -18,27 +18,58 @@ pub struct DeviceManager {
 
 impl DeviceManager {
     pub fn new() -> Self {
-        // Priority: CPU -> Metal (Metal disabled for now due to JIT issues)
+        let requested_device = std::env::var("TL_DEVICE").unwrap_or_else(|_| "auto".to_string());
+
+        // Priority: CUDA -> Metal -> CPU if auto
+        if requested_device == "cuda"
+            || (requested_device == "auto" && candle_core::utils::cuda_is_available())
+        {
+            #[cfg(feature = "cuda")]
+            {
+                println!("Initializing Runtime: CUDA backend selected.");
+                match Device::new_cuda(0) {
+                    Ok(device) => {
+                        return DeviceManager {
+                            current_device: device,
+                            device_type: DeviceType::Cuda,
+                        }
+                    }
+                    Err(e) => eprintln!("Failed to initialize CUDA: {}. Falling back.", e),
+                }
+            }
+            #[cfg(not(feature = "cuda"))]
+            if requested_device == "cuda" {
+                eprintln!("CUDA requested but 'cuda' feature not enabled.");
+            }
+        }
+
+        if requested_device == "metal"
+            || (requested_device == "auto" && candle_core::utils::metal_is_available())
+        {
+            #[cfg(feature = "metal")]
+            {
+                println!("Initializing Runtime: Metal backend selected.");
+                match Device::new_metal(0) {
+                    Ok(device) => {
+                        return DeviceManager {
+                            current_device: device,
+                            device_type: DeviceType::Metal,
+                        }
+                    }
+                    Err(e) => eprintln!("Failed to initialize Metal: {}. Falling back.", e),
+                }
+            }
+            #[cfg(not(feature = "metal"))]
+            if requested_device == "metal" {
+                eprintln!("Metal requested but 'metal' feature not enabled.");
+            }
+        }
+
         println!("Initializing Runtime: CPU backend selected.");
         DeviceManager {
             current_device: Device::Cpu,
             device_type: DeviceType::Cpu,
         }
-        /*
-        // Check for Metal
-        if candle_core::utils::metal_is_available() {
-            println!("Initializing Runtime: Metal backend selected.");
-            match Device::new_metal(0) {
-                Ok(device) => {
-                    return DeviceManager {
-                        current_device: device,
-                        device_type: DeviceType::Metal,
-                    }
-                }
-                Err(e) => eprintln!("Failed to initialize Metal: {}. Falling back to CPU.", e),
-            }
-        }
-        */
     }
 
     pub fn device(&self) -> &Device {

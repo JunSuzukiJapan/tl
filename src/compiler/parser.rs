@@ -459,11 +459,18 @@ fn parse_assign_stmt(input: &str) -> IResult<&str, Stmt> {
         ws(char(']')),
     ))(input)?;
 
-    let (input, op_str) = ws(alt((tag("="), tag("+="), tag("max="), tag("avg="))))(input)?;
+    let (input, op_str) = ws(alt((
+        tag("="),
+        tag("+="),
+        tag("-="),
+        tag("max="),
+        tag("avg="),
+    )))(input)?;
 
     let op = match op_str {
         "=" => AssignOp::Assign,
         "+=" => AssignOp::AddAssign,
+        "-=" => AssignOp::SubAssign,
         "max=" => AssignOp::MaxAssign,
         "avg=" => AssignOp::AvgAssign,
         _ => unreachable!(),
@@ -707,7 +714,7 @@ fn parse_rule(input: &str) -> IResult<&str, Rule> {
     let (input, _) = ws(tag(":-"))(input)?;
     let (input, body) = separated_list1(ws(char(',')), parse_atom)(input)?;
 
-    let (input, _) = opt(ws(char(';')))(input)?;
+    let (input, _) = alt((ws(char('.')), ws(char(';'))))(input)?;
 
     Ok((
         input,
@@ -794,8 +801,8 @@ pub fn parse(input: &str) -> anyhow::Result<Module> {
         } else if let Ok((next, t)) = ws(parse_tensor_decl)(remaining) {
             tensor_decls.push(t);
             remaining = next;
-        } else if let Ok((next, l)) = ws(parse_let_stmt)(remaining) {
-            tensor_decls.push(l);
+        } else if let Ok((next, s)) = ws(parse_stmt)(remaining) {
+            tensor_decls.push(s);
             remaining = next;
         } else if let Ok((next, r)) = ws(parse_relation_decl)(remaining) {
             relations.push(r);

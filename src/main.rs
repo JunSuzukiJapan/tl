@@ -31,6 +31,9 @@ enum Commands {
     Run {
         /// Input file
         file: PathBuf,
+        /// Device (cpu, metal, cuda, auto)
+        #[arg(long, default_value = "auto")]
+        device: String,
     },
     /// Compile to executable
     Build {
@@ -69,7 +72,9 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Run { file } => {
+        Commands::Run { file, device } => {
+            // Set device environment variable
+            std::env::set_var("TL_DEVICE", device);
             println!("Running file: {:?}", file);
             let content = fs::read_to_string(&file)
                 .with_context(|| format!("Failed to read file {:?}", file))?;

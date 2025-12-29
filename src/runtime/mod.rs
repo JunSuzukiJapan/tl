@@ -9,7 +9,15 @@ use std::slice;
 // Opaque struct to represent a Tensor in C-ABI (LLVM IR)
 // In reality, this will be a raw pointer to a Heap-allocated Tensor.
 // For FFI safety, we use a wrapper.
+// Opaque struct to represent a Tensor in C-ABI (LLVM IR)
+// In reality, this will be a raw pointer to a Heap-allocated Tensor.
+// For FFI safety, we use a wrapper.
 pub struct OpaqueTensor(Tensor);
+
+// Thread-local storage for the latest gradients computed by backward()
+thread_local! {
+    static LATEST_GRADS: std::cell::RefCell<Option<candle_core::backprop::GradStore>> = std::cell::RefCell::new(None);
+}
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_new(
@@ -24,9 +32,67 @@ pub extern "C" fn tl_tensor_new(
 
     let device = get_device();
     // Create tensor from slice
-    let tensor = Tensor::from_slice(data_slice, shape_slice, &device).unwrap();
+    // Workaround: Create on CPU then move to device to ensure data upload works reliably
+    let t_cpu = Tensor::from_slice(data_slice, shape_slice, &candle_core::Device::Cpu).unwrap();
+    let tensor = if device.is_metal() || device.is_cuda() {
+        t_cpu.to_device(&device).unwrap()
+    } else {
+        t_cpu
+    };
 
     Box::into_raw(Box::new(OpaqueTensor(tensor)))
+}
+
+// Function to create a tensor that requires gradients (similar to Var, but returning Tensor)
+// Actually Var is a wrapper around Tensor. For backprop to work, we usually use Var or
+// create a tensor and then watch it? Candle's graph is dynamic.
+// `Tensor::new` creates a leaf.
+// To support `requires_grad`, we effectively need the tensor to be a variable in the graph.
+// In Candle, `Var` is for trainable weights.
+// Let's explicitly add a helper for creating vars.
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_randn(
+    rank: usize,
+    shape: *const usize,
+    requires_grad: bool,
+) -> *mut OpaqueTensor {
+    // Basic randn implementation
+    let shape_slice = unsafe { slice::from_raw_parts(shape, rank) };
+    let device = get_device();
+
+    // Create random tensor
+    let t = Tensor::randn(0.0f32, 1.0f32, shape_slice, &device).unwrap();
+
+    if requires_grad {
+        // In Candle, to track gradients for a leaf node, we use `Var`.
+        // But `Var` is a distinct type. `Var` derefs to `Tensor`.
+        // If we want backprop from this node, we should probably turn it into a Var,
+        // then take its tensor.
+        // BUT: Simply taking `var.as_tensor()` gives a tensor that tracks the id.
+        // The issue is keeping the `Var` alive.
+        // For simplicity in this FFI, let's cheat:
+        // We just return the tensor. If Candle requires `Var` struct to be kept alive, this leaks semantics.
+        // Checking Candle source: `Var` holds `Tensor` and shares an ID.
+        // `Tensor` itself doesn't naturally "require grad" unless it's an operation result or a Var.
+        // Actually, `Var` is what you want for weights.
+        // Let's create a Var, extract the Tensor, and rely on the fact that
+        // the Tensor copies the storage and ID.
+        // WAIT: If we drop the Var, does the ID persist in the graph?
+        // Candle's `Var` is basically `Arc<Mutex<SimpleVar>>`.
+        // If we drop it, the "variable-ness" might be lost if nothing else holds it.
+        // However, for `backward` to work, the graph is built forward.
+        // If we use the tensor in ops, the ops record the dependencies.
+        // So just returning `var.as_tensor().clone()` should start the graph.
+        let var = candle_core::Var::from_tensor(&t).unwrap();
+        let t_var = var.as_tensor().clone();
+        // We leak the Var? Use it just to start the trace?
+        // Actually `var.as_tensor()` returns a tensor linked to the Var's ID.
+        // If we perform ops on `t_var`, they get tracked.
+        Box::into_raw(Box::new(OpaqueTensor(t_var)))
+    } else {
+        Box::into_raw(Box::new(OpaqueTensor(t)))
+    }
 }
 
 #[no_mangle]
@@ -193,6 +259,81 @@ pub extern "C" fn tl_tensor_transpose(
         let tensor = &(*t).0;
         let result = tensor.transpose(dim0, dim1).unwrap();
         Box::into_raw(Box::new(OpaqueTensor(result)))
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_backward(t: *mut OpaqueTensor) {
+    unsafe {
+        let tensor = &(*t).0;
+        // Perform backpropagation
+        if let Ok(grads) = tensor.backward() {
+            // Store gradients in thread-local storage, replacing any previous ones
+            LATEST_GRADS.with(|g| {
+                *g.borrow_mut() = Some(grads);
+            });
+        } else {
+            // Error handling or fallback?
+            eprintln!(
+                "Runtime Error: backward() failed. Ensure the tensor behaves like a scalar loss."
+            );
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    unsafe {
+        let tensor = &(*t).0;
+        // Retrieve gradient for this tensor from LATEST_GRADS
+        let grad = LATEST_GRADS.with(|g| {
+            let borrow = g.borrow();
+            if let Some(store) = &*borrow {
+                store.get(tensor).cloned()
+            } else {
+                None
+            }
+        });
+
+        if let Some(g) = grad {
+            Box::into_raw(Box::new(OpaqueTensor(g)))
+        } else {
+            // Return null pointer if no gradient found
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_sum(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    unsafe {
+        let tensor = &(*t).0;
+        let result = tensor.sum_all().unwrap();
+        Box::into_raw(Box::new(OpaqueTensor(result)))
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_sub_assign(ref_t: *mut OpaqueTensor, val_t: *mut OpaqueTensor) {
+    // In-place subtraction: ref_t -= val_t
+    // Note: Candle Tensors are immutable, but Vars are mutable.
+    // However, we are using OpaqueTensor which wraps Tensor.
+    // If we want to support SGD update `w -= lr * g`, we ideally need `Var`.
+    // But for now, since our JIT pointers are mutable pointers to OpaqueTensor,
+    // we can update the content of OpaqueTensor to point to a new Tensor.
+    // This effectively effectively mutates the variable from the perspective of the JIT.
+    unsafe {
+        let t_dst = &(*ref_t).0;
+        let t_src = &(*val_t).0;
+
+        // Compute new value: dst - src
+        // Using broadcast_sub to be safe
+        let result = t_dst
+            .broadcast_sub(t_src)
+            .unwrap_or_else(|_| t_dst.sub(t_src).unwrap());
+
+        // Update the OpaqueTensor to hold the new tensor
+        (*ref_t).0 = result;
     }
 }
 

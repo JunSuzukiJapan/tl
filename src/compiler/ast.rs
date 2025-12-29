@@ -1,4 +1,5 @@
 // src/compiler/ast.rs
+#![allow(dead_code)]
 
 /// Dimension: either a constant, a variable, or a symbolic name
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -111,6 +112,7 @@ pub enum Stmt {
 pub enum AssignOp {
     Assign,
     AddAssign,
+    SubAssign,
     MaxAssign,
     AvgAssign,
 }

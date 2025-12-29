@@ -1,9 +1,10 @@
 // src/compiler/codegen.rs
 use crate::compiler::ast::*;
 use crate::runtime::{
-    tl_print_f32, tl_print_i64, tl_tensor_add, tl_tensor_clone, tl_tensor_dim, tl_tensor_free,
-    tl_tensor_get, tl_tensor_get_f32_md, tl_tensor_len, tl_tensor_mul, tl_tensor_neg,
-    tl_tensor_new, tl_tensor_print, tl_tensor_slice,
+    tl_print_f32, tl_print_i64, tl_tensor_add, tl_tensor_backward, tl_tensor_clone, tl_tensor_dim,
+    tl_tensor_free, tl_tensor_get, tl_tensor_get_f32_md, tl_tensor_grad, tl_tensor_len,
+    tl_tensor_mul, tl_tensor_neg, tl_tensor_new, tl_tensor_print, tl_tensor_randn, tl_tensor_slice,
+    tl_tensor_sub_assign, tl_tensor_sum,
 }; // Import runtime functions
 use inkwell::builder::Builder;
 use inkwell::context::Context;
@@ -28,7 +29,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let module = context.create_module(module_name);
         let builder = context.create_builder();
         let execution_engine = module
-            .create_jit_execution_engine(OptimizationLevel::None)
+            .create_jit_execution_engine(OptimizationLevel::Aggressive)
             .unwrap();
 
         let mut codegen = CodeGenerator {
@@ -135,10 +136,34 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.module
             .add_function("tl_tensor_reshape", reshape_type, None);
 
+        // tl_tensor_sum(t: *mut) -> *mut
+        let sum_type = void_ptr.fn_type(&[void_ptr.into()], false);
+        self.module.add_function("tl_tensor_sum", sum_type, None);
+
         // Map symbols
         if let Some(f) = self.module.get_function("tl_tensor_new") {
             self.execution_engine
                 .add_global_mapping(&f, tl_tensor_new as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_randn") {
+            self.execution_engine
+                .add_global_mapping(&f, tl_tensor_randn as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_backward") {
+            self.execution_engine
+                .add_global_mapping(&f, tl_tensor_backward as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_grad") {
+            self.execution_engine
+                .add_global_mapping(&f, tl_tensor_grad as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_sub_assign") {
+            self.execution_engine
+                .add_global_mapping(&f, tl_tensor_sub_assign as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_sum") {
+            self.execution_engine
+                .add_global_mapping(&f, tl_tensor_sum as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_add") {
             self.execution_engine
@@ -244,11 +269,54 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.fn_return_types
             .insert("tl_tensor_get".to_string(), Type::F32);
 
-        // tl_register_tensor(name: *const i8, tensor: *mut OpaqueTensor) -> void
         let i8_ptr = self.context.ptr_type(inkwell::AddressSpace::default());
         let register_type = void_type.fn_type(&[i8_ptr.into(), void_ptr.into()], false);
         self.module
             .add_function("tl_register_tensor", register_type, None);
+
+        // tl_tensor_randn(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor
+        let randn_type = void_ptr.fn_type(
+            &[
+                i64_type.into(),
+                usize_ptr.into(),
+                self.context.bool_type().into(),
+            ],
+            false,
+        );
+        self.module
+            .add_function("tl_tensor_randn", randn_type, None);
+
+        // tl_tensor_backward(t: *mut OpaqueTensor) -> void
+        let backward_type = void_type.fn_type(&[void_ptr.into()], false);
+        self.module
+            .add_function("tl_tensor_backward", backward_type, None);
+
+        // tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor
+        let grad_type = void_ptr.fn_type(&[void_ptr.into()], false);
+        self.module.add_function("tl_tensor_grad", grad_type, None);
+
+        // tl_tensor_sub_assign(ref_t: *mut, val: *mut) -> void
+        let sub_assign_type = void_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+        self.module
+            .add_function("tl_tensor_sub_assign", sub_assign_type, None);
+
+        // Register new return types
+        self.fn_return_types.insert(
+            "tl_tensor_randn".to_string(),
+            Type::Tensor(Box::new(Type::F32), 1),
+        );
+        self.fn_return_types.insert(
+            "tl_tensor_grad".to_string(),
+            Type::Tensor(Box::new(Type::F32), 1),
+        );
+        self.fn_return_types.insert(
+            "tl_tensor_sum".to_string(),
+            Type::Tensor(Box::new(Type::F32), 1),
+        );
+        self.fn_return_types
+            .insert("tl_tensor_backward".to_string(), Type::Void);
+        self.fn_return_types
+            .insert("tl_tensor_sub_assign".to_string(), Type::Void);
     }
 
     pub fn jit_execute(&self, function_name: &str) -> Result<u64, String> {
@@ -669,6 +737,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // So we MUST free `current_val` here before overwriting `var_ptr`.
 
                         if let Type::Tensor(_, _) = var_type {
+                            // For AddAssign on Tensor:
+                            // We need to free the OLD tensor because `tl_tensor_add` returns a NEW tensor.
+                            // The old tensor pointer `current_val` will be lost when we overwrite `var_ptr`.
+                            // So we free it here.
+
                             if let Some(free_fn) = self.module.get_function("tl_tensor_free") {
                                 self.builder
                                     .build_call(free_fn, &[current_val.into()], "")
@@ -684,6 +757,33 @@ impl<'ctx> CodeGenerator<'ctx> {
                             BinOp::Add,
                         )?;
                         op_res
+                    }
+                    AssignOp::SubAssign => {
+                        // SubAssign logic (In-Place for Tensor)
+                        if let Type::Tensor(_, _) = var_type {
+                            // Load current val
+                            let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                            let current_val = self
+                                .builder
+                                .build_load(
+                                    load_type,
+                                    var_ptr.into_pointer_value(),
+                                    &format!("{}_current", name),
+                                )
+                                .map_err(|e| e.to_string())?;
+
+                            // Call sub_assign
+                            let sub_assign_fn =
+                                self.module.get_function("tl_tensor_sub_assign").unwrap();
+                            self.builder
+                                .build_call(sub_assign_fn, &[current_val.into(), val.into()], "")
+                                .map_err(|e| e.to_string())?;
+
+                            // Return early to avoid store (in-place)
+                            return Ok(());
+                        } else {
+                            return Err("SubAssign -= only supported for Tensors currently via in-place optimization".into());
+                        }
                     }
                     _ => return Err(format!("Unsupported assignment op: {:?}", op)),
                 };
@@ -1316,6 +1416,66 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Type is Tensor<f32, Rank>
                 Ok((res, Type::Tensor(Box::new(Type::F32), rank)))
             }
+            Expr::MethodCall(obj, method, args) => {
+                let (obj_val, obj_ty) = self.compile_expr(obj)?;
+
+                match method.as_str() {
+                    "backward" => {
+                        let fn_val = self.module.get_function("tl_tensor_backward").unwrap();
+                        self.builder
+                            .build_call(fn_val, &[obj_val.into()], "backward_call")
+                            .map_err(|e| e.to_string())?;
+                        Ok((
+                            self.context.i64_type().const_int(0, false).into(),
+                            Type::Void,
+                        ))
+                    }
+                    "grad" => {
+                        let fn_val = self.module.get_function("tl_tensor_grad").unwrap();
+                        let call = self
+                            .builder
+                            .build_call(fn_val, &[obj_val.into()], "grad_res")
+                            .map_err(|e| e.to_string())?;
+                        let res = match call.try_as_basic_value() {
+                            ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid grad return".into()),
+                        };
+                        // Assuming grad has same rank as obj, but for now just opaque tensor
+                        Ok((res, obj_ty))
+                    }
+                    "reshape" => {
+                        if args.len() != 1 {
+                            return Err("reshape method requires 1 argument (shape)".into());
+                        }
+                        let (s_val, _) = self.compile_expr(&args[0])?;
+                        let reshape_fn = self.module.get_function("tl_tensor_reshape").unwrap();
+                        let call = self
+                            .builder
+                            .build_call(reshape_fn, &[obj_val.into(), s_val.into()], "reshape_res")
+                            .map_err(|e| e.to_string())?;
+                        let res = match call.try_as_basic_value() {
+                            ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid reshape return".into()),
+                        };
+                        Ok((res, obj_ty))
+                    }
+                    "sum" => {
+                        let fn_val = self.module.get_function("tl_tensor_sum").unwrap();
+                        let call = self
+                            .builder
+                            .build_call(fn_val, &[obj_val.into()], "sum_res")
+                            .map_err(|e| e.to_string())?;
+                        let res = match call.try_as_basic_value() {
+                            ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid sum return".into()),
+                        };
+                        // sum returns scalar tensor (rank 0 or 1 depending on impl).
+                        // Assuming it returns Tensor<f32, 0> or 1.
+                        Ok((res, obj_ty)) // Currently preserving type/rank info is hard, returning same opaque type
+                    }
+                    _ => Err(format!("Unknown method: {}", method)),
+                }
+            }
             Expr::FnCall(name, args) => {
                 match name.as_str() {
                     "print" => {
@@ -1417,6 +1577,122 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // Generic function call logic
                         let llvm_func_name = match name.as_str() {
                             "slice" => "tl_tensor_slice",
+                            "randn" => {
+                                // randn(shape, requires_grad)
+                                // Handle specially to pass rank/shape pointer and bool
+                                // args[0] must be tensor (shape) or literal?
+                                // Actually, user might pass [10, 10].
+                                // But `compile_expr` for TensorLiteral returns a Tensor pointer.
+                                // We need shape as generic array?
+                                // Existing `tl_tensor_new` logic handled parsing TensorLiteral manually to create C-array.
+                                // But here `args[0]` is an Expr.
+                                // If it's a TensorLiteral, we can do similar logic.
+                                // If it's a variable, it is a Tensor*.
+                                // `tl_tensor_randn` needs `rank, shape_ptr`.
+                                // Let's support only Literal Shape for now for simplicity, OR
+                                // use a version of randn that takes a shape TENSOR.
+                                // To match `tl_tensor_new`, we need raw shape.
+                                // Let's assume usage: let x = randn([10, 20], true);
+                                // The parser gives `TensorLiteral`.
+                                if args.is_empty() {
+                                    return Err("randn requires shape".into());
+                                }
+
+                                let shape_expr = &args[0];
+                                let (shape_data, rank) = if let Expr::TensorLiteral(el) = shape_expr
+                                {
+                                    // Flatten to get usize dims
+                                    let mut dims = Vec::new();
+                                    for e in el {
+                                        if let Expr::Int(i) = e {
+                                            dims.push(*i as usize);
+                                        } else {
+                                            return Err("Shape definition must be ints".into());
+                                        }
+                                    }
+                                    let rank = dims.len();
+                                    (dims, rank)
+                                } else {
+                                    return Err(
+                                        "randn currently requires integer array literal for shape"
+                                            .into(),
+                                    );
+                                };
+
+                                let requires_grad = if args.len() > 1 {
+                                    match &args[1] {
+                                        Expr::Bool(b) => *b,
+                                        _ => false,
+                                    }
+                                } else {
+                                    false
+                                };
+
+                                let i64_type = self.context.i64_type();
+                                let usize_type = self.context.i64_type(); // usize is 64-bit
+
+                                // Stack allocate shape array
+                                let current_block = self.builder.get_insert_block().unwrap();
+                                let entry = current_block
+                                    .get_parent()
+                                    .unwrap()
+                                    .get_first_basic_block()
+                                    .unwrap();
+                                self.builder.position_at_end(entry);
+
+                                let shape_array_type = usize_type.array_type(rank as u32);
+                                let shape_alloca = self
+                                    .builder
+                                    .build_alloca(shape_array_type, "shape_arr")
+                                    .unwrap();
+
+                                self.builder.position_at_end(current_block);
+
+                                // Store shape
+                                for (i, d) in shape_data.iter().enumerate() {
+                                    let ptr = unsafe {
+                                        self.builder
+                                            .build_in_bounds_gep(
+                                                shape_array_type,
+                                                shape_alloca,
+                                                &[
+                                                    i64_type.const_int(0, false),
+                                                    i64_type.const_int(i as u64, false),
+                                                ],
+                                                "dim_ptr",
+                                            )
+                                            .unwrap()
+                                    };
+                                    self.builder
+                                        .build_store(ptr, usize_type.const_int(*d as u64, false))
+                                        .unwrap();
+                                }
+
+                                let req_grad_val = self
+                                    .context
+                                    .bool_type()
+                                    .const_int(if requires_grad { 1 } else { 0 }, false);
+
+                                let f = self.module.get_function("tl_tensor_randn").unwrap();
+                                let call = self
+                                    .builder
+                                    .build_call(
+                                        f,
+                                        &[
+                                            i64_type.const_int(rank as u64, false).into(),
+                                            shape_alloca.into(),
+                                            req_grad_val.into(),
+                                        ],
+                                        "randn_res",
+                                    )
+                                    .map_err(|e| e.to_string())?;
+
+                                let res = match call.try_as_basic_value() {
+                                    ValueKind::Basic(v) => v,
+                                    _ => return Err("Invalid call return".into()),
+                                };
+                                return Ok((res, Type::Tensor(Box::new(Type::F32), rank)));
+                            }
                             _ => name,
                         };
 

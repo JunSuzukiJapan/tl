@@ -1,4 +1,5 @@
 // src/compiler/inference.rs
+#![allow(dead_code)]
 //! Inference engine for Datalog-style logic rules.
 //!
 //! Supports:
@@ -406,8 +407,38 @@ fn evaluate_builtin_predicate(pred: &str, args: &[Value]) -> bool {
     }
 }
 
-/// Evaluate a single rule against current facts.
+struct FactIndex<'a> {
+    facts_by_pred: HashMap<&'a str, Vec<&'a GroundAtom>>,
+}
+
+impl<'a> FactIndex<'a> {
+    fn new(facts: &'a HashSet<GroundAtom>) -> Self {
+        let mut map = HashMap::new();
+        for fact in facts {
+            map.entry(fact.predicate.as_str())
+                .or_insert_with(Vec::new)
+                .push(fact);
+        }
+        Self { facts_by_pred: map }
+    }
+
+    fn candidates(&self, pred: &str) -> Vec<&'a GroundAtom> {
+        self.facts_by_pred.get(pred).cloned().unwrap_or_default()
+    }
+}
+
+/// Evaluate a single rule against current facts using optimization.
 fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>, ctx: &TensorContext) -> Vec<GroundAtom> {
+    // Build index locally for now (inefficient if repeated, but better than O(N) scan inside loop)
+    // Ideally index is passed in. But to avoid changing caller signature of `forward_chain` which I can't see,
+    // I am building it here. WAIT. Building index is O(N).
+    // Original code scanned facts O(Body * N).
+    // Building index is O(N). Access is O(Body * 1).
+    // Total O(N + Body). vs O(Body * N).
+    // Optimization holds if Body > 1.
+
+    let index = FactIndex::new(facts);
+
     // Start with empty substitution
     let initial_substs = vec![Substitution::new()];
 
@@ -439,17 +470,16 @@ fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>, ctx: &TensorContext) 
                 }
             }
         } else {
-            // Normal predicate: match against facts
+            // Normal predicate: match against candidates from index
+            let candidates = index.candidates(&body_atom.predicate);
             for subst in &substs {
-                for fact in facts {
-                    if fact.predicate != body_atom.predicate {
-                        continue;
-                    }
+                for fact in candidates.iter() {
+                    // predicate check redundant but safe
                     let mut extended = subst.clone();
                     let pattern_terms = atom_to_terms(body_atom);
                     let mut matches = true;
-                    for (term, value) in pattern_terms.iter().zip(fact.args.iter()) {
-                        let ground_term = Term::Val(value.clone());
+                    for (term, ground_val) in pattern_terms.iter().zip(fact.args.iter()) {
+                        let ground_term = Term::Val(ground_val.clone());
                         if !unify_terms(term, &ground_term, &mut extended, ctx) {
                             matches = false;
                             break;
@@ -464,7 +494,6 @@ fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>, ctx: &TensorContext) 
         substs = new_substs;
     }
 
-    // Apply substitutions to head
     let mut results = Vec::new();
     for subst in substs {
         if let Some(ground_head) = apply_subst_atom(&rule.head, &subst, ctx) {

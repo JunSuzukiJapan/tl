@@ -1,0 +1,34 @@
+{
+  "name": "tensor-logic",
+  "displayName": "TensorLogic",
+  "description": "Language support for TensorLogic (.tl)",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "tl",
+        "aliases": [
+          "TensorLogic",
+          "tl"
+        ],
+        "extensions": [
+          ".tl"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "tl",
+        "scopeName": "source.tl",
+        "path": "./syntaxes/tl.tmLanguage.json"
+      }
+    ]
+  }
+}
