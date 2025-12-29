@@ -173,7 +173,7 @@ pub struct GroundAtom {
 pub type Substitution = HashMap<String, Value>;
 
 /// Apply substitution to a term.
-fn apply_subst_term(term: &Term, subst: &Substitution) -> Term {
+fn apply_subst_term(term: &Term, subst: &Substitution, ctx: &TensorContext) -> Term {
     match term {
         Term::Var(name) => {
             if let Some(val) = subst.get(name) {
@@ -184,8 +184,32 @@ fn apply_subst_term(term: &Term, subst: &Substitution) -> Term {
         }
         Term::Val(v) => Term::Val(v.clone()),
         Term::TensorAccess(name, indices) => {
-            let resolved_indices: Vec<Term> =
-                indices.iter().map(|t| apply_subst_term(t, subst)).collect();
+            let resolved_indices: Vec<Term> = indices
+                .iter()
+                .map(|t| apply_subst_term(t, subst, ctx))
+                .collect();
+
+            // Try to resolve tensor access if all indices are grounded integers
+            let mut integer_indices = Vec::new();
+            let mut all_ground_integers = true;
+
+            for idx in &resolved_indices {
+                if let Term::Val(Value::Int(i)) = idx {
+                    integer_indices.push(*i);
+                } else {
+                    all_ground_integers = false;
+                    break;
+                }
+            }
+
+            if all_ground_integers {
+                if let Some(tensor) = ctx.get(name) {
+                    if let Some(val) = tensor.get(&integer_indices) {
+                        return Term::Val(Value::Float(val));
+                    }
+                }
+            }
+
             Term::TensorAccess(name.clone(), resolved_indices)
         }
     }
@@ -197,9 +221,9 @@ fn atom_to_terms(atom: &Atom) -> Vec<Term> {
 }
 
 /// Try to unify two terms, extending the substitution.
-fn unify_terms(t1: &Term, t2: &Term, subst: &mut Substitution) -> bool {
-    let t1_resolved = apply_subst_term(t1, subst);
-    let t2_resolved = apply_subst_term(t2, subst);
+fn unify_terms(t1: &Term, t2: &Term, subst: &mut Substitution, ctx: &TensorContext) -> bool {
+    let t1_resolved = apply_subst_term(t1, subst, ctx);
+    let t2_resolved = apply_subst_term(t2, subst, ctx);
 
     match (&t1_resolved, &t2_resolved) {
         (Term::Val(v1), Term::Val(v2)) => v1 == v2,
@@ -215,14 +239,18 @@ fn unify_terms(t1: &Term, t2: &Term, subst: &mut Substitution) -> bool {
             }
             true
         }
-        // TensorAccess: cannot unify directly, treat as incompatible for now
+        // TensorAccess: cannot unify directly if not resolved to a value
         (Term::TensorAccess(_, _), _) | (_, Term::TensorAccess(_, _)) => false,
     }
 }
 
 /// Unify an atom pattern with a ground atom.
 /// Returns Some(substitution) if successful, None otherwise.
-pub fn unify_atom_with_ground(pattern: &Atom, ground: &GroundAtom) -> Option<Substitution> {
+pub fn unify_atom_with_ground(
+    pattern: &Atom,
+    ground: &GroundAtom,
+    ctx: &TensorContext,
+) -> Option<Substitution> {
     if pattern.predicate != ground.predicate || pattern.args.len() != ground.args.len() {
         return None;
     }
@@ -230,9 +258,9 @@ pub fn unify_atom_with_ground(pattern: &Atom, ground: &GroundAtom) -> Option<Sub
     let terms = atom_to_terms(pattern);
     let mut subst = Substitution::new();
 
-    for (term, value) in terms.iter().zip(ground.args.iter()) {
-        let ground_term = Term::Val(value.clone());
-        if !unify_terms(term, &ground_term, &mut subst) {
+    for (term, ground_val) in terms.iter().zip(ground.args.iter()) {
+        let ground_term = Term::Val(ground_val.clone());
+        if !unify_terms(term, &ground_term, &mut subst, ctx) {
             return None;
         }
     }
@@ -240,12 +268,12 @@ pub fn unify_atom_with_ground(pattern: &Atom, ground: &GroundAtom) -> Option<Sub
     Some(subst)
 }
 
-/// Apply substitution to an Atom, producing a GroundAtom if fully ground.
-pub fn apply_subst_atom(atom: &Atom, subst: &Substitution) -> Option<GroundAtom> {
+/// Apply substitution to an atom to produce a ground atom (if fully ground).
+fn apply_subst_atom(atom: &Atom, subst: &Substitution, ctx: &TensorContext) -> Option<GroundAtom> {
     let mut ground_args = Vec::new();
     for expr in &atom.args {
         let term = Term::from_expr(expr);
-        let resolved = apply_subst_term(&term, subst);
+        let resolved = apply_subst_term(&term, subst, ctx);
         match resolved {
             Term::Val(v) => ground_args.push(v),
             Term::Var(_) => return None,             // Not fully ground
@@ -259,7 +287,11 @@ pub fn apply_subst_atom(atom: &Atom, subst: &Substitution) -> Option<GroundAtom>
 }
 
 /// Forward chaining: derive new facts from rules until fixpoint.
-pub fn forward_chain(initial_facts: HashSet<GroundAtom>, rules: &[Rule]) -> HashSet<GroundAtom> {
+pub fn forward_chain(
+    initial_facts: HashSet<GroundAtom>,
+    rules: &[Rule],
+    ctx: &TensorContext,
+) -> HashSet<GroundAtom> {
     let mut facts = initial_facts;
     let mut changed = true;
 
@@ -267,7 +299,7 @@ pub fn forward_chain(initial_facts: HashSet<GroundAtom>, rules: &[Rule]) -> Hash
         changed = false;
         for rule in rules {
             // Find all substitutions that satisfy the body
-            let new_facts = evaluate_rule(rule, &facts);
+            let new_facts = evaluate_rule(rule, &facts, ctx);
             for fact in new_facts {
                 if !facts.contains(&fact) {
                     facts.insert(fact);
@@ -292,6 +324,7 @@ pub struct WeightedGroundAtom {
 pub fn probabilistic_forward_chain(
     initial_facts: HashMap<GroundAtom, f64>,
     rules: &[Rule],
+    ctx: &TensorContext,
 ) -> HashMap<GroundAtom, f64> {
     let mut facts = initial_facts;
     let mut changed = true;
@@ -303,7 +336,7 @@ pub fn probabilistic_forward_chain(
 
             // Convert to HashSet for evaluate_rule
             let fact_set: HashSet<GroundAtom> = facts.keys().cloned().collect();
-            let new_atoms = evaluate_rule(rule, &fact_set);
+            let new_atoms = evaluate_rule(rule, &fact_set, ctx);
 
             for new_atom in new_atoms {
                 // Calculate the weight of this derivation
@@ -374,7 +407,7 @@ fn evaluate_builtin_predicate(pred: &str, args: &[Value]) -> bool {
 }
 
 /// Evaluate a single rule against current facts.
-fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>) -> Vec<GroundAtom> {
+fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>, ctx: &TensorContext) -> Vec<GroundAtom> {
     // Start with empty substitution
     let initial_substs = vec![Substitution::new()];
 
@@ -392,7 +425,7 @@ fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>) -> Vec<GroundAtom> {
                 let mut all_ground = true;
                 for expr in &body_atom.args {
                     let term = Term::from_expr(expr);
-                    let resolved = apply_subst_term(&term, subst);
+                    let resolved = apply_subst_term(&term, subst, ctx);
                     match resolved {
                         Term::Val(v) => resolved_args.push(v),
                         _ => {
@@ -417,7 +450,7 @@ fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>) -> Vec<GroundAtom> {
                     let mut matches = true;
                     for (term, value) in pattern_terms.iter().zip(fact.args.iter()) {
                         let ground_term = Term::Val(value.clone());
-                        if !unify_terms(term, &ground_term, &mut extended) {
+                        if !unify_terms(term, &ground_term, &mut extended, ctx) {
                             matches = false;
                             break;
                         }
@@ -434,7 +467,7 @@ fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>) -> Vec<GroundAtom> {
     // Apply substitutions to head
     let mut results = Vec::new();
     for subst in substs {
-        if let Some(ground_head) = apply_subst_atom(&rule.head, &subst) {
+        if let Some(ground_head) = apply_subst_atom(&rule.head, &subst, ctx) {
             results.push(ground_head);
         }
     }
@@ -442,10 +475,10 @@ fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>) -> Vec<GroundAtom> {
 }
 
 /// Query: find all substitutions that make the goal true.
-pub fn query(goal: &Atom, facts: &HashSet<GroundAtom>) -> Vec<Substitution> {
+pub fn query(goal: &Atom, facts: &HashSet<GroundAtom>, ctx: &TensorContext) -> Vec<Substitution> {
     let mut results = Vec::new();
     for fact in facts {
-        if let Some(subst) = unify_atom_with_ground(goal, fact) {
+        if let Some(subst) = unify_atom_with_ground(goal, fact, ctx) {
             results.push(subst);
         }
     }
@@ -471,7 +504,8 @@ mod tests {
         };
         let ground = make_atom("edge", vec![1, 2]);
 
-        let result = unify_atom_with_ground(&pattern, &ground);
+        let ctx = TensorContext::new();
+        let result = unify_atom_with_ground(&pattern, &ground, &ctx);
         assert!(result.is_some());
         let subst = result.unwrap();
         assert_eq!(subst.get("X"), Some(&Value::Int(1)));
@@ -534,7 +568,8 @@ mod tests {
             },
         ];
 
-        let result = forward_chain(facts, &rules);
+        let ctx = TensorContext::new();
+        let result = forward_chain(facts, &rules, &ctx);
 
         assert!(result.contains(&make_atom("path", vec![1, 2])));
         assert!(result.contains(&make_atom("path", vec![2, 3])));
@@ -583,7 +618,8 @@ mod tests {
             weight: None,
         }];
 
-        let result = forward_chain(facts, &rules);
+        let ctx = TensorContext::new();
+        let result = forward_chain(facts, &rules, &ctx);
 
         // large(1) and large(2) should be derived
         assert!(result.contains(&GroundAtom {

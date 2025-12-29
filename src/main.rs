@@ -90,27 +90,39 @@ fn main() -> Result<()> {
                 std::process::exit(1);
             }
 
+            // 3. JIT Execution (First pass to setup tensors)
+            // We always run JIT to execute top-level statements (e.g. tensor definitions)
+            // This populates the global TensorContext via register callbacks.
+            use crate::runtime::registry;
+            registry::reset_global_context();
+
+            let context = InkwellContext::create();
+            let mut codegen = CodeGenerator::new(&context, "main");
+            codegen.compile_module(&ast).unwrap();
+
+            // codegen.dump_llvm_ir(); // Debug
+
+            println!("Executing main...");
+            match codegen.jit_execute("main") {
+                Ok(ret) => println!("Program returned: {}", ret),
+                Err(e) => println!("Execution failed: {}", e),
+            }
+
+            // 4. Logic Execution (Hybrid mode)
             // Check if this is a logic program
             let is_logic_program =
                 !ast.relations.is_empty() || !ast.rules.is_empty() || !ast.queries.is_empty();
 
             if is_logic_program {
-                // Execute as logic program
-                run_logic_program(&ast);
-            } else {
-                // 3. Codegen & JIT
-                let context = InkwellContext::create();
-                let mut codegen = CodeGenerator::new(&context, "main");
-                codegen.compile_module(&ast).unwrap();
+                // Get the context populated by JIT execution
+                let tensor_context = registry::get_global_context();
+                println!(
+                    "Tensor Context ({} tensors registered)",
+                    tensor_context.tensors.len()
+                );
 
-                // Debug: dump LLVM IR
-                // codegen.dump_llvm_ir();
-
-                println!("Executing main...");
-                match codegen.jit_execute("main") {
-                    Ok(ret) => println!("Program returned: {}", ret),
-                    Err(e) => println!("Execution failed: {}", e),
-                }
+                // Execute as logic program using the context
+                run_logic_program(&ast, &tensor_context);
             }
         }
         Commands::Build { file, output: _ } => {
@@ -156,7 +168,10 @@ fn main() -> Result<()> {
 }
 
 /// Execute a logic program using the inference engine.
-fn run_logic_program(module: &compiler::ast::Module) {
+fn run_logic_program(
+    module: &compiler::ast::Module,
+    ctx: &crate::compiler::inference::TensorContext,
+) {
     use crate::compiler::ast::{Atom, Expr};
 
     println!("Executing logic program...");
@@ -186,7 +201,7 @@ fn run_logic_program(module: &compiler::ast::Module) {
     println!("Rules: {}", rules.len());
 
     // 3. Run forward chaining
-    let derived_facts = forward_chain(initial_facts, &rules);
+    let derived_facts = forward_chain(initial_facts, &rules, ctx);
     println!("Derived facts: {}", derived_facts.len());
 
     // 4. Execute queries
@@ -199,7 +214,7 @@ fn run_logic_program(module: &compiler::ast::Module) {
             };
             println!("\nQuery: {}({:?})", pred, args);
 
-            let results = query(&query_atom, &derived_facts);
+            let results = query(&query_atom, &derived_facts, ctx);
             if results.is_empty() {
                 println!("  Result: false (no matches)");
             } else {

@@ -1,4 +1,5 @@
 pub mod device;
+pub mod registry;
 
 use crate::runtime::device::get_device;
 use candle_core::Tensor;

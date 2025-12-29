@@ -794,6 +794,9 @@ pub fn parse(input: &str) -> anyhow::Result<Module> {
         } else if let Ok((next, t)) = ws(parse_tensor_decl)(remaining) {
             tensor_decls.push(t);
             remaining = next;
+        } else if let Ok((next, l)) = ws(parse_let_stmt)(remaining) {
+            tensor_decls.push(l);
+            remaining = next;
         } else if let Ok((next, r)) = ws(parse_relation_decl)(remaining) {
             relations.push(r);
             remaining = next;

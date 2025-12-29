@@ -207,6 +207,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.execution_engine
                 .add_global_mapping(&f, tl_tensor_slice as usize);
         }
+        if let Some(f) = self.module.get_function("tl_register_tensor") {
+            self.execution_engine
+                .add_global_mapping(&f, crate::runtime::registry::tl_register_tensor as usize);
+        }
 
         // Register types for runtime functions (critical for FnCall)
         self.fn_return_types.insert(
@@ -239,6 +243,12 @@ impl<'ctx> CodeGenerator<'ctx> {
             .insert("tl_tensor_len".to_string(), Type::I64);
         self.fn_return_types
             .insert("tl_tensor_get".to_string(), Type::F32);
+
+        // tl_register_tensor(name: *const i8, tensor: *mut OpaqueTensor) -> void
+        let i8_ptr = self.context.ptr_type(inkwell::AddressSpace::default());
+        let register_type = void_type.fn_type(&[i8_ptr.into(), void_ptr.into()], false);
+        self.module
+            .add_function("tl_register_tensor", register_type, None);
     }
 
     pub fn jit_execute(&self, function_name: &str) -> Result<u64, String> {
@@ -291,14 +301,50 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // 1. Declare structs (types) - Placeholder
 
-        // 2. Declare functions (prototypes)
+        // Prepare functions list, potentially adding synthetic main
+        let mut synthetic_main = None;
+        let mut functions_refs = Vec::new();
+        let mut main_exists = false;
+
         for func in &ast_module.functions {
+            if func.name == "main" {
+                main_exists = true;
+            }
+            functions_refs.push(func);
+        }
+
+        if !main_exists && !ast_module.tensor_decls.is_empty() {
+            let syn_main = FunctionDef {
+                name: "main".to_string(),
+                args: vec![],
+                return_type: Type::Void,
+                body: vec![],
+                generics: vec![],
+            };
+            synthetic_main = Some(syn_main);
+            // We can't push reference to local variable easily here due to lifetimes.
+            // But we can iterate separately or handle logic below.
+        }
+
+        // 2. Declare functions (prototypes)
+        for func in &functions_refs {
+            self.compile_fn_proto(func)?;
+        }
+        if let Some(func) = &synthetic_main {
             self.compile_fn_proto(func)?;
         }
 
         // 3. Compile function bodies
-        for func in &ast_module.functions {
-            self.compile_fn(func)?;
+        for func in &functions_refs {
+            let extra: &[Stmt] = if func.name == "main" {
+                &ast_module.tensor_decls
+            } else {
+                &[]
+            };
+            self.compile_fn(func, extra)?;
+        }
+        if let Some(func) = &synthetic_main {
+            self.compile_fn(func, &ast_module.tensor_decls)?;
         }
 
         Ok(())
@@ -361,7 +407,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(val)
     }
 
-    fn compile_fn(&mut self, func: &FunctionDef) -> Result<(), String> {
+    fn compile_fn(&mut self, func: &FunctionDef, extra_stmts: &[Stmt]) -> Result<(), String> {
         let function = self
             .module
             .get_function(&func.name)
@@ -390,6 +436,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .last_mut()
                 .unwrap()
                 .insert(arg_name.clone(), (alloca.into(), arg_type.clone()));
+        }
+
+        // Compile extra statements (e.g. top-level tensor decls)
+        for stmt in extra_stmts {
+            self.compile_stmt(stmt)?;
         }
 
         // Compile body
@@ -472,7 +523,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.variables
                     .last_mut()
                     .unwrap()
-                    .insert(name.clone(), (alloca.into(), val.1)); // Store pointer and type
+                    .insert(name.clone(), (alloca.into(), val.1.clone())); // Store pointer and type
+
+                // Register tensor with runtime if it is a tensor
+                if let Type::Tensor(_, _) = val.1 {
+                    if let Some(register_fn) = self.module.get_function("tl_register_tensor") {
+                        // Create global string for name
+                        let name_global = self
+                            .builder
+                            .build_global_string_ptr(name, "tensor_name")
+                            .map_err(|e| e.to_string())?;
+                        // val.0 is pointer to tensor (OpaqueTensor*)
+                        // register call: tl_register_tensor(name_ptr, tensor_ptr)
+                        self.builder
+                            .build_call(
+                                register_fn,
+                                &[name_global.as_pointer_value().into(), val.0.into()],
+                                "",
+                            )
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
                 Ok(())
             }
             Stmt::Return(expr) => {
