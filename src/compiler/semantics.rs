@@ -261,7 +261,7 @@ impl SemanticAnalyzer {
             Stmt::Assign {
                 name,
                 indices,
-                op: _, // check type compatibility regarding op?
+                op,
                 value,
             } => {
                 let var_type = self.lookup_variable(name)?;
@@ -324,11 +324,63 @@ impl SemanticAnalyzer {
                 } else {
                     // Standard assignment
                     let val_type = self.check_expr(value)?;
-                    if !self.are_types_compatible(&var_type, &val_type) {
-                        return Err(SemanticError::TypeMismatch {
-                            expected: var_type,
-                            found: val_type,
-                        });
+
+                    match op {
+                        AssignOp::Assign => {
+                            if !self.are_types_compatible(&var_type, &val_type) {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: var_type,
+                                    found: val_type,
+                                });
+                            }
+                        }
+                        AssignOp::AddAssign => {
+                            // Check compatibility similar to BinOp
+                            // We allow:
+                            // 1. Same Type
+                            // 2. Broadcasting (Tensor += Scalar)
+                            // 3. Broadcasting (Tensor += Tensor of lower rank/compatible)
+
+                            // Simple Reuse of BinOp logic or manual check:
+                            let result_type = match (&var_type, &val_type) {
+                                (Type::Tensor(inner, _), val) if **inner == *val => {
+                                    Some(var_type.clone())
+                                } // Tensor += Scalar
+                                (Type::Tensor(inner1, rank1), Type::Tensor(inner2, rank2))
+                                    if inner1 == inner2 =>
+                                {
+                                    // Tensor += Tensor
+                                    // Result rank is max(rank1, rank2).
+                                    // For assignment, Result Rank MUST be equal to var_type rank (cannot change rank of variable in place).
+                                    // AND rank1 >= rank2 usually for +=?
+                                    // Actually A += B is valid if broadcast(A, B) shape is shape(A).
+                                    // This usually implies rank(A) >= rank(B).
+                                    if rank1 >= rank2 {
+                                        Some(var_type.clone())
+                                    } else {
+                                        None // Cannot assign higher rank tensor to lower rank variable (shape mismatch likely)
+                                    }
+                                }
+                                (t1, t2) if t1 == t2 => Some(t1.clone()), // Primitive += Primitive
+                                _ => None,
+                            };
+
+                            if result_type.is_none() {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: var_type,
+                                    found: val_type,
+                                });
+                            }
+                        }
+                        _ => {
+                            // Max/Avg etc not yet fully checked
+                            if !self.are_types_compatible(&var_type, &val_type) {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: var_type,
+                                    found: val_type,
+                                });
+                            }
+                        }
                     }
                     Ok(())
                 }
@@ -375,14 +427,39 @@ impl SemanticAnalyzer {
                 iterator,
                 body,
             } => {
-                let _iter_type = self.check_expr(iterator)?;
-                // Assuming iter_type is iterable (e.g. Range or Tensor dimension)
-                // For now, let's assume it introduces a 'usize' or 'i32' variable.
+                let iter_type = self.check_expr(iterator)?;
+
+                // For simplified MVP, allow iteration over Tensor<T, 1> or Array
+                // Assume iter_type gives element type
+                let elem_type = match iter_type {
+                    Type::Tensor(t, 1) => *t,
+                    _ => {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Tensor(Box::new(Type::F32), 1),
+                            found: iter_type,
+                        })
+                    }
+                };
 
                 self.enter_scope();
-                self.declare_variable(loop_var.clone(), Type::I64)?; // Default loop var type?
+                self.declare_variable(loop_var.clone(), elem_type)?;
                 for s in body {
                     self.check_stmt(s)?;
+                }
+                self.exit_scope();
+                Ok(())
+            }
+            Stmt::While { cond, body } => {
+                let cond_type = self.check_expr(cond)?;
+                if cond_type != Type::Bool {
+                    return Err(SemanticError::TypeMismatch {
+                        expected: Type::Bool,
+                        found: cond_type,
+                    });
+                }
+                self.enter_scope();
+                for stmt in body {
+                    self.check_stmt(stmt)?;
                 }
                 self.exit_scope();
                 Ok(())
@@ -397,19 +474,44 @@ impl SemanticAnalyzer {
             Expr::Bool(_) => Ok(Type::Bool),
             Expr::StringLiteral(_) => Ok(Type::UserDefined("String".to_string())), // Placeholder
             Expr::Variable(name) => self.lookup_variable(name),
-            Expr::BinOp(lhs, _op, rhs) => {
+            Expr::BinOp(lhs, op, rhs) => {
                 let left = self.check_expr(lhs)?;
                 let right = self.check_expr(rhs)?;
+
+                // Determine result type based on Op
+                let result_ty = match op {
+                    BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
+                        Type::Bool
+                    }
+                    BinOp::And | BinOp::Or => Type::Bool,
+                    _ => left.clone(), // Arith ops preserve type (or broadcast)
+                };
+
                 // Simple strict matching for now
-                // TODO: Tensor broadcasting logic / Type promotion
                 if left == right {
-                    Ok(left)
+                    Ok(result_ty)
                 } else {
-                    // Allow promotion? e.g. f32 * f64 -> f64? or Tensor<f32> * f32 -> Tensor<f32>?
-                    // For initial version, be strict or allow basic Tensor * Scalar
                     match (&left, &right) {
-                        (Type::Tensor(inner, _rank), val) if **inner == *val => Ok(left), // Tensor * Scalar
-                        (val, Type::Tensor(inner, _rank)) if **inner == *val => Ok(right), // Scalar * Tensor
+                        (Type::Tensor(inner, _rank), val) if **inner == *val => Ok(result_ty),
+                        (val, Type::Tensor(inner, _rank)) if **inner == *val => {
+                            // Scalar * Tensor -> Tensor
+                            // If comparison, Bool. If arithmetic, Tensor (right).
+                            if matches!(result_ty, Type::Bool) {
+                                Ok(Type::Bool)
+                            } else {
+                                Ok(right)
+                            }
+                        }
+                        (Type::Tensor(inner1, rank1), Type::Tensor(inner2, rank2))
+                            if inner1 == inner2 =>
+                        {
+                            if matches!(result_ty, Type::Bool) {
+                                Ok(Type::Bool)
+                            } else {
+                                // Arithmetic: max rank
+                                Ok(Type::Tensor(inner1.clone(), std::cmp::max(*rank1, *rank2)))
+                            }
+                        }
                         _ => Err(SemanticError::TypeMismatch {
                             expected: left,
                             found: right,
@@ -428,6 +530,71 @@ impl SemanticAnalyzer {
                     }
                     self.check_expr(&args[0])?;
                     return Ok(Type::Void);
+                } else if name == "transpose" {
+                    if args.len() != 3 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 3,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&args[0])?;
+                    let t1 = self.check_expr(&args[1])?;
+                    let t2 = self.check_expr(&args[2])?;
+
+                    match t0 {
+                        Type::Tensor(_, _) => {}
+                        _ => {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::Tensor(Box::new(Type::Void), 0),
+                                found: t0,
+                            })
+                        }
+                    }
+                    if t1 != Type::I64 {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::I64,
+                            found: t1,
+                        });
+                    }
+                    if t2 != Type::I64 {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::I64,
+                            found: t2,
+                        });
+                    }
+                    return Ok(t0); // Returns same tensor type (rank preserved)
+                } else if name == "reshape" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&args[0])?;
+                    let t1 = self.check_expr(&args[1])?;
+
+                    match t0 {
+                        Type::Tensor(_, _) => {}
+                        _ => {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::Tensor(Box::new(Type::Void), 0),
+                                found: t0,
+                            })
+                        }
+                    }
+                    // Arg 1 (shape) must be a Tensor (specifically Tensor<i64/f32, 1> or similar)
+                    match t1 {
+                        Type::Tensor(_, _) => {}
+                        _ => {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::Tensor(Box::new(Type::Void), 0),
+                                found: t1,
+                            })
+                        }
+                    }
+                    return Ok(t0); // Returns same tensor type (ignoring rank change needed for strict typing)
                 } else if name == "slice" {
                     if args.len() != 3 {
                         return Err(SemanticError::ArgumentCountMismatch {

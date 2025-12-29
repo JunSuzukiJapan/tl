@@ -478,6 +478,15 @@ fn parse_for_stmt(input: &str) -> IResult<&str, Stmt> {
     ))
 }
 
+fn parse_while_stmt(input: &str) -> IResult<&str, Stmt> {
+    // while expr { ... }
+    let (input, _) = tag("while")(input)?;
+    let (input, cond) = parse_expr(input)?;
+    let (input, body) = parse_block(input)?;
+
+    Ok((input, Stmt::While { cond, body }))
+}
+
 fn parse_return_stmt(input: &str) -> IResult<&str, Stmt> {
     let (input, _) = tag("return")(input)?;
     let (input, val) = parse_expr(input)?;
@@ -508,7 +517,9 @@ fn parse_stmt(input: &str) -> IResult<&str, Stmt> {
         parse_assign_stmt,
         parse_return_stmt,
         parse_if_stmt,
+        parse_if_stmt,
         parse_for_stmt,
+        parse_while_stmt,
         parse_block_stmt,
         parse_expr_stmt,
     )))(input)
@@ -631,12 +642,12 @@ fn parse_atom(input: &str) -> IResult<&str, Atom> {
 }
 
 fn parse_rule(input: &str) -> IResult<&str, Rule> {
-    // Head(args) <- Body(args), ...
-    // Note: Ambiguity with function call if we don't look ahead for `<-`
+    // Head(args) :- Body(args), ...
+    // Note: Ambiguity with function call if we don't look ahead for `:-`
     // Using peek could be messy. For now strict order in top level loop or use verify.
-    // Parser combinator `tuple` will fail if `<-` is missing.
+    // Parser combinator `tuple` will fail if `:-` is missing.
     let (input, head) = parse_atom(input)?;
-    let (input, _) = ws(tag("<-"))(input)?;
+    let (input, _) = ws(tag(":-"))(input)?;
     let (input, body) = separated_list1(ws(char(',')), parse_atom)(input)?;
 
     let (input, _) = opt(ws(char(';')))(input)?;
@@ -645,8 +656,8 @@ fn parse_rule(input: &str) -> IResult<&str, Rule> {
 }
 
 fn parse_query(input: &str) -> IResult<&str, Expr> {
-    // query Expr
-    let (input, _) = tag("query")(input)?;
+    // ?- Expr
+    let (input, _) = tag("?-")(input)?;
     let (input, expr) = parse_expr(input)?;
     let (input, _) = opt(ws(char(';')))(input)?;
     Ok((input, expr))

@@ -33,7 +33,9 @@ pub extern "C" fn tl_tensor_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
     unsafe {
         let t_a = &(*a).0;
         let t_b = &(*b).0;
-        let result = (t_a + t_b).unwrap();
+        let result = t_a
+            .broadcast_add(t_b)
+            .unwrap_or_else(|_| t_a.add(t_b).unwrap());
         Box::into_raw(Box::new(OpaqueTensor(result)))
     }
 }
@@ -43,7 +45,9 @@ pub extern "C" fn tl_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
     unsafe {
         let t_a = &(*a).0;
         let t_b = &(*b).0;
-        let result = (t_a * t_b).unwrap();
+        let result = t_a
+            .broadcast_mul(t_b)
+            .unwrap_or_else(|_| t_a.mul(t_b).unwrap());
         Box::into_raw(Box::new(OpaqueTensor(result)))
     }
 }
@@ -53,6 +57,24 @@ pub extern "C" fn tl_tensor_print(t: *mut OpaqueTensor) {
     unsafe {
         let tensor = &(*t).0;
         println!("{}", tensor);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
+    if !t.is_null() {
+        unsafe {
+            let _ = Box::from_raw(t);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
+    unsafe {
+        let tensor = &(*t).0;
+        let cloned = tensor.clone();
+        Box::into_raw(Box::new(OpaqueTensor(cloned)))
     }
 }
 
@@ -157,5 +179,37 @@ pub extern "C" fn tl_tensor_get_f32_md(
             .to_scalar()
             .unwrap();
         val
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_transpose(
+    t: *mut OpaqueTensor,
+    dim0: usize,
+    dim1: usize,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let tensor = &(*t).0;
+        let result = tensor.transpose(dim0, dim1).unwrap();
+        Box::into_raw(Box::new(OpaqueTensor(result)))
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_reshape(
+    t: *mut OpaqueTensor,
+    shape_tensor: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let tensor = &(*t).0;
+        let shape_t = &(*shape_tensor).0;
+        // Convert shape tensor to Vec<usize>
+        // Assuming shape tensor fits in memory and is 1D.
+        // We need to get data back to CPU if on GPU.
+        let shape_vec: Vec<f32> = shape_t.flatten_all().unwrap().to_vec1().unwrap();
+        let new_shape: Vec<usize> = shape_vec.iter().map(|&x| x as usize).collect();
+
+        let result = tensor.reshape(new_shape).unwrap();
+        Box::into_raw(Box::new(OpaqueTensor(result)))
     }
 }

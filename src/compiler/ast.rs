@@ -87,6 +87,10 @@ pub enum Stmt {
         iterator: Expr, // range or Vec
         body: Vec<Stmt>,
     },
+    While {
+        cond: Expr,
+        body: Vec<Stmt>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
