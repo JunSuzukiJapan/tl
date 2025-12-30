@@ -51,9 +51,13 @@ impl DeviceManager {
                 println!("Initializing Runtime: Metal backend selected.");
                 match Device::new_metal(0) {
                     Ok(device) => {
-                        return DeviceManager {
-                            current_device: device,
-                            device_type: DeviceType::Metal,
+                        if check_metal_health(&device) {
+                            return DeviceManager {
+                                current_device: device,
+                                device_type: DeviceType::Metal,
+                            };
+                        } else {
+                            eprintln!("WARNING: Metal backend failed self-test (returned incorrect results). Falling back to CPU.");
                         }
                     }
                     Err(e) => eprintln!("Failed to initialize Metal: {}. Falling back.", e),
@@ -74,6 +78,40 @@ impl DeviceManager {
 
     pub fn device(&self) -> &Device {
         &self.current_device
+    }
+}
+
+fn check_metal_health(device: &Device) -> bool {
+    let t_cpu = match candle_core::Tensor::new(&[1.0f32], &candle_core::Device::Cpu) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+
+    let t_metal = match t_cpu.to_device(device) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+
+    let t_res = match t_metal.add(&t_metal) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+
+    let t_back = match t_res.to_device(&candle_core::Device::Cpu) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+
+    let vals = match t_back.flatten_all().and_then(|t| t.to_vec1::<f32>()) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+
+    // 1.0 + 1.0 = 2.0
+    if vals.len() == 1 && (vals[0] - 2.0).abs() < 1e-5 {
+        true
+    } else {
+        false
     }
 }
 
