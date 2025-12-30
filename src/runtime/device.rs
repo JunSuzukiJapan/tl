@@ -81,6 +81,7 @@ impl DeviceManager {
     }
 }
 
+#[cfg(feature = "metal")]
 fn check_metal_health(device: &Device) -> bool {
     let t_cpu = match candle_core::Tensor::new(&[1.0f32], &candle_core::Device::Cpu) {
         Ok(t) => t,
