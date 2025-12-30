@@ -189,6 +189,22 @@ pub extern "C" fn tl_tensor_detach(t: *mut OpaqueTensor, req_grad: bool) -> *mut
 }
 
 #[no_mangle]
+pub extern "C" fn tl_tensor_enable_grad(t: *mut OpaqueTensor) {
+    unsafe {
+        let tensor = &(*t).0;
+        // detached copy
+        let detached = tensor.detach();
+        // Create var
+        let var = candle_core::Var::from_tensor(&detached).unwrap();
+        let t_var = var.as_tensor().clone();
+        std::mem::forget(var);
+
+        // Update pointer
+        (*t).0 = t_var;
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn tl_tensor_print(t: *mut OpaqueTensor) {
     unsafe {
         let tensor = &(*t).0;
@@ -407,6 +423,42 @@ pub extern "C" fn tl_tensor_sub_assign(ref_t: *mut OpaqueTensor, val_t: *mut Opa
 }
 
 #[no_mangle]
+pub extern "C" fn tl_tensor_mul_assign(ref_t: *mut OpaqueTensor, val_t: *mut OpaqueTensor) {
+    unsafe {
+        let t_dst = &(*ref_t).0;
+        let t_src = &(*val_t).0;
+        let result = t_dst
+            .broadcast_mul(t_src)
+            .unwrap_or_else(|_| t_dst.mul(t_src).unwrap());
+        (*ref_t).0 = result;
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_div_assign(ref_t: *mut OpaqueTensor, val_t: *mut OpaqueTensor) {
+    unsafe {
+        let t_dst = &(*ref_t).0;
+        let t_src = &(*val_t).0;
+        let result = t_dst
+            .broadcast_div(t_src)
+            .unwrap_or_else(|_| t_dst.div(t_src).unwrap());
+        (*ref_t).0 = result;
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_add_assign(ref_t: *mut OpaqueTensor, val_t: *mut OpaqueTensor) {
+    unsafe {
+        let t_dst = &(*ref_t).0;
+        let t_src = &(*val_t).0;
+        let result = t_dst
+            .broadcast_add(t_src)
+            .unwrap_or_else(|_| t_dst.add(t_src).unwrap());
+        (*ref_t).0 = result;
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn tl_tensor_reshape(
     t: *mut OpaqueTensor,
     shape_tensor: *mut OpaqueTensor,
@@ -442,6 +494,19 @@ pub extern "C" fn tl_tensor_exp(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
         let tensor = &(*t).0;
         let result = tensor.exp().unwrap();
+        Box::into_raw(Box::new(OpaqueTensor(result)))
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_pow(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    unsafe {
+        let t_a = &(*a).0;
+        let t_b = &(*b).0;
+        // Broadcasting pow
+        let result = t_a
+            .broadcast_pow(t_b)
+            .unwrap_or_else(|_| t_a.pow(t_b).unwrap());
         Box::into_raw(Box::new(OpaqueTensor(result)))
     }
 }

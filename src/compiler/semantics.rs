@@ -21,6 +21,13 @@ pub enum SemanticError {
         expected: usize,
         found: usize,
     },
+    #[error("Method not found: {method_name} on type {type_name}")]
+    MethodNotFound {
+        type_name: String,
+        method_name: String,
+    },
+    #[error("Unknown function: {0}")]
+    UnknownFunction(String),
 }
 
 #[derive(Clone, Debug)]
@@ -379,51 +386,82 @@ impl SemanticAnalyzer {
                                 });
                             }
                         }
-                        AssignOp::AddAssign => {
-                            // Check compatibility similar to BinOp
-                            // We allow:
-                            // 1. Same Type
-                            // 2. Broadcasting (Tensor += Scalar)
-                            // 3. Broadcasting (Tensor += Tensor of lower rank/compatible)
-
-                            // Simple Reuse of BinOp logic or manual check:
-                            let result_type = match (&var_type, &val_type) {
-                                (Type::Tensor(inner, _), val) if **inner == *val => {
-                                    Some(var_type.clone())
-                                } // Tensor += Scalar
-                                (Type::Tensor(inner1, rank1), Type::Tensor(inner2, rank2))
-                                    if inner1 == inner2 =>
-                                {
-                                    // Tensor += Tensor
-                                    // Result rank is max(rank1, rank2).
-                                    // For assignment, Result Rank MUST be equal to var_type rank (cannot change rank of variable in place).
-                                    // AND rank1 >= rank2 usually for +=?
-                                    // Actually A += B is valid if broadcast(A, B) shape is shape(A).
-                                    // This usually implies rank(A) >= rank(B).
-                                    if rank1 >= rank2 {
-                                        Some(var_type.clone())
-                                    } else {
-                                        None // Cannot assign higher rank tensor to lower rank variable (shape mismatch likely)
-                                    }
+                        op => {
+                            let method_name = match op {
+                                AssignOp::AddAssign => "add_assign",
+                                AssignOp::SubAssign => "sub_assign",
+                                AssignOp::MulAssign => "mul_assign",
+                                AssignOp::DivAssign => "div_assign",
+                                _ => {
+                                    return Err(SemanticError::UnknownFunction(format!(
+                                        "Unsupported assign op {:?}",
+                                        op
+                                    )))
                                 }
-                                (t1, t2) if t1 == t2 => Some(t1.clone()), // Primitive += Primitive
-                                _ => None,
                             };
 
-                            if result_type.is_none() {
-                                return Err(SemanticError::TypeMismatch {
-                                    expected: var_type,
-                                    found: val_type,
-                                });
-                            }
-                        }
-                        _ => {
-                            // Max/Avg etc not yet fully checked
-                            if !self.are_types_compatible(&var_type, &val_type) {
-                                return Err(SemanticError::TypeMismatch {
-                                    expected: var_type,
-                                    found: val_type,
-                                });
+                            // Check as method call: var.method_name(val)
+                            // We construct a synthetic method call check
+                            // Types: receiver = var_type, args = [val_type]
+
+                            // 1. Check if method exists on type
+                            // Reuse check_method_call logic? check_method_call expects AST nodes.
+                            // We have types. We can look up in self.impl_blocks or builtins.
+
+                            // For Tensor, we support these as builtins or via impl blocks?
+                            // Currently builtins are checked in check_method_call.
+                            // Let's implement a helper or inline simple lookup.
+
+                            match &var_type {
+                                Type::Tensor(_, _) => {
+                                    // Builtin tensor methods
+                                    // Just verify argument count (1) and type compatibility (Tensor or Scalar)
+                                    // Assume add_assign(self, other)
+
+                                    // Argument check: val_type must be compatible with var_type (broadcasting)
+                                    // Reuse are_types_compatible or specific logic?
+                                    // For now, allow if compatible.
+
+                                    // Actually, we want to allow Tensor += Scalar.
+                                    // check_method_call would handle this if we had it.
+
+                                    // Check if valid method name
+                                    match method_name {
+                                        "add_assign" | "sub_assign" | "mul_assign"
+                                        | "div_assign" => {
+                                            // OK
+                                        }
+                                        _ => {
+                                            return Err(SemanticError::MethodNotFound {
+                                                type_name: format!("{:?}", var_type),
+                                                method_name: method_name.to_string(),
+                                            })
+                                        }
+                                    }
+
+                                    // Check arg type.
+                                    // We allow Tensor op Tensor, or Tensor op Scalar.
+                                    let is_compat = match (&var_type, &val_type) {
+                                        (Type::Tensor(inner, _), val) if **inner == *val => true, // T += Scalar
+                                        (Type::Tensor(_, _), Type::Tensor(_, _)) => true, // T += T (assume broadcast compatible for now)
+                                        _ => false,
+                                    };
+
+                                    if !is_compat {
+                                        return Err(SemanticError::TypeMismatch {
+                                            expected: var_type.clone(),
+                                            found: val_type.clone(),
+                                        });
+                                    }
+                                }
+                                _ => {
+                                    // For other types, maybe Look up impl blocks?
+                                    // Not supported yet for primitives or structs.
+                                    return Err(SemanticError::MethodNotFound {
+                                        type_name: format!("{:?}", var_type),
+                                        method_name: method_name.to_string(),
+                                    });
+                                }
                             }
                         }
                     }
@@ -615,6 +653,75 @@ impl SemanticAnalyzer {
                     }
                     // Returns scalar tensor
                     return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                }
+                if name == "pow" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&args[0])?;
+                    let t1 = self.check_expr(&args[1])?;
+                    // Allow Tensor, F32, I64
+                    match &t0 {
+                        Type::Tensor(_, _) | Type::F32 | Type::I64 => {}
+                        _ => {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::Tensor(Box::new(Type::Void), 0),
+                                found: t0,
+                            })
+                        }
+                    }
+                    match &t1 {
+                        Type::Tensor(_, _) | Type::F32 | Type::I64 => {}
+                        _ => {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::Tensor(Box::new(Type::Void), 0),
+                                found: t1,
+                            })
+                        }
+                    }
+                    // Return type is same as first arg (preserving shape usually, or broadcasted)
+                    // For simplicity assume resulting type is similar to input or just Tensor
+                    // We can just return t0 type or verify broadcasting...
+                    // Let's return t0 for now.
+                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                }
+                if name == "sum" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&args[0])?;
+                    if !matches!(t0, Type::Tensor(_, _)) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Tensor(Box::new(Type::Void), 0),
+                            found: t0,
+                        });
+                    }
+                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                }
+                if name == "enable_grad" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: "enable_grad".into(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&args[0])?;
+                    if !matches!(t0, Type::Tensor(_, _)) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Tensor(Box::new(Type::Void), 0),
+                            found: t0,
+                        });
+                    }
+                    return Ok(t0);
                 }
                 if name == "print" {
                     if args.len() != 1 {

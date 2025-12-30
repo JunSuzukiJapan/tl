@@ -463,6 +463,8 @@ fn parse_assign_stmt(input: &str) -> IResult<&str, Stmt> {
         tag("="),
         tag("+="),
         tag("-="),
+        tag("*="),
+        tag("/="),
         tag("max="),
         tag("avg="),
     )))(input)?;
@@ -471,6 +473,8 @@ fn parse_assign_stmt(input: &str) -> IResult<&str, Stmt> {
         "=" => AssignOp::Assign,
         "+=" => AssignOp::AddAssign,
         "-=" => AssignOp::SubAssign,
+        "*=" => AssignOp::MulAssign,
+        "/=" => AssignOp::DivAssign,
         "max=" => AssignOp::MaxAssign,
         "avg=" => AssignOp::AvgAssign,
         _ => unreachable!(),
@@ -564,17 +568,37 @@ fn parse_field_assign(input: &str) -> IResult<&str, Stmt> {
     let (input, lhs) = parse_expr(input)?;
     match lhs {
         Expr::FieldAccess(obj, field) => {
-            let (input, _) = ws(char('='))(input)?;
+            let (input, op_str) =
+                ws(alt((tag("="), tag("+="), tag("-="), tag("*="), tag("/="))))(input)?;
+
             let (input, value) = parse_expr(input)?;
             let (input, _) = ws(char(';'))(input)?;
-            Ok((
-                input,
-                Stmt::FieldAssign {
-                    obj: *obj,
-                    field,
-                    value,
-                },
-            ))
+
+            if op_str == "=" {
+                Ok((
+                    input,
+                    Stmt::FieldAssign {
+                        obj: *obj,
+                        field,
+                        value,
+                    },
+                ))
+            } else {
+                // Desugar x.y += z to x.y.add_assign(z)
+                let method = match op_str {
+                    "+=" => "add_assign",
+                    "-=" => "sub_assign",
+                    "*=" => "mul_assign",
+                    "/=" => "div_assign",
+                    _ => unreachable!(),
+                };
+                let method_call = Expr::MethodCall(
+                    Box::new(Expr::FieldAccess(obj, field)),
+                    method.to_string(),
+                    vec![value],
+                );
+                Ok((input, Stmt::Expr(method_call)))
+            }
         }
         _ => Err(nom::Err::Error(nom::error::Error::new(
             input,

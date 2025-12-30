@@ -165,6 +165,20 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.module.add_function("tl_tensor_log", unary_type, None);
         self.module.add_function("tl_tensor_sqrt", unary_type, None);
 
+        // Binary ops: pow
+        self.module.add_function("tl_tensor_pow", bin_type, None);
+
+        // Assign ops: add_assign, sub_assign, mul_assign, div_assign (return void)
+        let assign_type = void_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+        self.module
+            .add_function("tl_tensor_add_assign", assign_type, None);
+        self.module
+            .add_function("tl_tensor_sub_assign", assign_type, None);
+        self.module
+            .add_function("tl_tensor_mul_assign", assign_type, None);
+        self.module
+            .add_function("tl_tensor_div_assign", assign_type, None);
+
         // Map symbols
         if let Some(f) = self.module.get_function("tl_tensor_new") {
             self.execution_engine
@@ -221,6 +235,26 @@ impl<'ctx> CodeGenerator<'ctx> {
         if let Some(f) = self.module.get_function("tl_tensor_matmul") {
             self.execution_engine
                 .add_global_mapping(&f, crate::runtime::tl_tensor_matmul as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_pow") {
+            self.execution_engine
+                .add_global_mapping(&f, crate::runtime::tl_tensor_pow as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_add_assign") {
+            self.execution_engine
+                .add_global_mapping(&f, crate::runtime::tl_tensor_add_assign as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_sub_assign") {
+            self.execution_engine
+                .add_global_mapping(&f, crate::runtime::tl_tensor_sub_assign as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_mul_assign") {
+            self.execution_engine
+                .add_global_mapping(&f, crate::runtime::tl_tensor_mul_assign as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_div_assign") {
+            self.execution_engine
+                .add_global_mapping(&f, crate::runtime::tl_tensor_div_assign as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_exp") {
             self.execution_engine
@@ -849,19 +883,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                     _ => return Err(format!("Field assignment on non-struct type {:?}", obj_ty)),
                 };
 
-                let struct_def = self
-                    .struct_defs
-                    .get(&struct_name)
-                    .ok_or(format!("Struct definition for {} not found", struct_name))?;
+                let (field_idx, field_type) = {
+                    let struct_def = self
+                        .struct_defs
+                        .get(&struct_name)
+                        .ok_or(format!("Struct definition for {} not found", struct_name))?;
 
-                let field_idx = struct_def
-                    .fields
-                    .iter()
-                    .position(|(n, _)| n == field)
-                    .ok_or(format!(
-                        "Field {} not found in struct {}",
-                        field, struct_name
-                    ))?;
+                    let idx = struct_def
+                        .fields
+                        .iter()
+                        .position(|(n, _)| n == field)
+                        .ok_or(format!(
+                            "Field {} not found in struct {}",
+                            field, struct_name
+                        ))?;
+                    (idx, struct_def.fields[idx].1.clone())
+                };
 
                 if !obj_val.is_pointer_value() {
                     return Err("Cannot assign field of non-pointer struct".into());
@@ -876,6 +913,22 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let (val, _) = self.compile_expr(value)?;
 
+                // Free old value if Tensor
+                if let Type::Tensor(_, _) = field_type {
+                    let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let current_val = self
+                        .builder
+                        .build_load(load_type, field_ptr, "old_field_val")
+                        .map_err(|e| e.to_string())?
+                        .into_pointer_value();
+
+                    if let Some(free_fn) = self.module.get_function("tl_tensor_free") {
+                        self.builder
+                            .build_call(free_fn, &[current_val.into()], "")
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+
                 self.builder
                     .build_store(field_ptr, val)
                     .map_err(|e| e.to_string())?;
@@ -888,21 +941,55 @@ impl<'ctx> CodeGenerator<'ctx> {
             } => {
                 if let Some(expr) = init {
                     let (val_ir, val_ty) = self.compile_expr(expr)?;
-                    let fn_val = self
-                        .builder
-                        .get_insert_block()
-                        .unwrap()
-                        .get_parent()
-                        .unwrap();
-                    let ptr = self.create_entry_block_alloca(fn_val, name, &val_ty);
-                    self.builder
-                        .build_store(ptr, val_ir)
-                        .map_err(|e| e.to_string())?;
+                    if self.variables.last().unwrap().contains_key(name) {
+                        // Start of double-free fix logic
+                        let (var_val, _, should_free) = &self.variables.last().unwrap()[name];
 
-                    self.variables
-                        .last_mut()
-                        .unwrap()
-                        .insert(name.clone(), (ptr.into(), val_ty, true));
+                        if *should_free {
+                            if let Type::Tensor(_, _) = val_ty {
+                                if let Some(free_fn) = self.module.get_function("tl_tensor_free") {
+                                    // Load ONLY if it's a pointer (alloca)
+                                    let ptr_val = var_val.into_pointer_value();
+                                    let load_type =
+                                        self.context.ptr_type(inkwell::AddressSpace::default());
+                                    let current_val = self
+                                        .builder
+                                        .build_load(load_type, ptr_val, "old_val")
+                                        .map_err(|e| e.to_string())?;
+                                    self.builder
+                                        .build_call(free_fn, &[current_val.into()], "")
+                                        .map_err(|e| e.to_string())?;
+                                }
+                            }
+                        }
+
+                        let ptr = self.variables.last().unwrap()[name].0.into_pointer_value();
+                        self.builder
+                            .build_store(ptr, val_ir)
+                            .map_err(|e| e.to_string())?;
+
+                        // Update variable map to mark as owned (should_free = true)
+                        self.variables
+                            .last_mut()
+                            .unwrap()
+                            .insert(name.clone(), (ptr.into(), val_ty, true));
+                    } else {
+                        let fn_val = self
+                            .builder
+                            .get_insert_block()
+                            .unwrap()
+                            .get_parent()
+                            .unwrap();
+                        let ptr = self.create_entry_block_alloca(fn_val, name, &val_ty);
+                        self.builder
+                            .build_store(ptr, val_ir)
+                            .map_err(|e| e.to_string())?;
+
+                        self.variables
+                            .last_mut()
+                            .unwrap()
+                            .insert(name.clone(), (ptr.into(), val_ty, true));
+                    }
                 }
                 Ok(())
             }
@@ -1996,6 +2083,35 @@ impl<'ctx> CodeGenerator<'ctx> {
                             // Assuming it returns Tensor<f32, 0> or 1.
                             Ok((res, obj_ty)) // Currently preserving type/rank info is hard, returning same opaque type
                         }
+                        "add_assign" | "sub_assign" | "mul_assign" | "div_assign" => {
+                            if args.len() != 1 {
+                                return Err(format!("{} requires 1 argument", method));
+                            }
+                            // Must use ensure_tensor for RHS
+                            let rhs_val = self.ensure_tensor_v2(&args[0], 0)?;
+
+                            let fn_name = match method.as_str() {
+                                "add_assign" => "tl_tensor_add_assign",
+                                "sub_assign" => "tl_tensor_sub_assign",
+                                "mul_assign" => "tl_tensor_mul_assign",
+                                "div_assign" => "tl_tensor_div_assign",
+                                _ => unreachable!(),
+                            };
+
+                            let fn_val = self
+                                .module
+                                .get_function(fn_name)
+                                .ok_or(format!("Runtime fn {} not found", fn_name))?;
+
+                            self.builder
+                                .build_call(fn_val, &[obj_val.into(), rhs_val.into()], "assign_res")
+                                .map_err(|e| e.to_string())?;
+
+                            Ok((
+                                self.context.i64_type().const_int(0, false).into(),
+                                Type::Void,
+                            ))
+                        }
                         _ => Err(format!("Unknown method: {}", method)),
                     }
                 }
@@ -2355,6 +2471,26 @@ impl<'ctx> CodeGenerator<'ctx> {
                         };
                         // Return type is Tensor (scalar)
                         return Ok((res, Type::Tensor(Box::new(Type::F32), 1)));
+                    }
+                    "pow" => {
+                        if args.len() != 2 {
+                            return Err("pow requires 2 arguments".into());
+                        }
+                        // Use ensure_tensor for both args
+                        let base_val = self.ensure_tensor_v2(&args[0], 0)?;
+                        let exp_val = self.ensure_tensor_v2(&args[1], 0)?;
+
+                        let fn_val = self.module.get_function("tl_tensor_pow").unwrap();
+                        let call = self
+                            .builder
+                            .build_call(fn_val, &[base_val.into(), exp_val.into()], "pow_res")
+                            .map_err(|e| e.to_string())?;
+
+                        let res = match call.try_as_basic_value() {
+                            ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid pow return".into()),
+                        };
+                        Ok((res, Type::Tensor(Box::new(Type::F32), 0)))
                     }
                     _ => {
                         // Generic function call logic
@@ -3288,5 +3424,72 @@ impl<'ctx> CodeGenerator<'ctx> {
         );
 
         Ok(())
+    }
+
+    // FIXED Helper to ensure an expression evaluates to a Tensor, converting scalars if needed
+    fn ensure_tensor_v2(
+        &mut self,
+        expr: &Expr,
+        _expected_dims: usize,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let (val, ty) = self.compile_expr(expr)?;
+
+        match ty {
+            Type::Tensor(_, _) => Ok(val),
+            Type::F32 | Type::I64 => {
+                let f32_type = self.context.f32_type();
+                let i64_type = self.context.i64_type();
+
+                // 1. Alloca for data
+                let data_ptr = self
+                    .builder
+                    .build_alloca(f32_type, "scalar_data")
+                    .map_err(|e| e.to_string())?;
+
+                // 2. Determine value to store
+                let cast_val = if let Type::I64 = ty {
+                    self.builder
+                        .build_signed_int_to_float(val.into_int_value(), f32_type, "cast_i64_f32")
+                        .map_err(|e| e.to_string())?
+                } else {
+                    val.into_float_value()
+                };
+
+                // 3. Store val
+                self.builder
+                    .build_store(data_ptr, cast_val)
+                    .map_err(|e| e.to_string())?;
+
+                // 4. Call tl_tensor_new(data, rank=0, shape=dummy_ptr)
+                let rank_val = i64_type.const_int(0, false);
+                // Allocate a dummy shape (i64) to provide non-null pointer for slice::from_raw_parts
+                let shape_ptr = self
+                    .builder
+                    .build_alloca(i64_type, "scalar_shape")
+                    .map_err(|e| e.to_string())?;
+
+                let tensor_new_fn = self
+                    .module
+                    .get_function("tl_tensor_new")
+                    .ok_or("tl_tensor_new not found")?;
+
+                let call_site_value = self
+                    .builder
+                    .build_call(
+                        tensor_new_fn,
+                        &[data_ptr.into(), rank_val.into(), shape_ptr.into()],
+                        "scalar_tensor",
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                let tensor_ptr = match call_site_value.try_as_basic_value() {
+                    ValueKind::Basic(v) => v,
+                    _ => return Err("tl_tensor_new failed".into()),
+                };
+
+                Ok(tensor_ptr)
+            }
+            _ => Err(format!("Cannot convert {:?} to Tensor", ty)),
+        }
     }
 }
