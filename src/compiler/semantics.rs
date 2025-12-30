@@ -124,6 +124,11 @@ impl SemanticAnalyzer {
             self.check_impl_block(i)?;
         }
 
+        // Check top-level statements (e.g. main script)
+        for s in &module.tensor_decls {
+            self.check_stmt(s)?;
+        }
+
         Ok(())
     }
 
@@ -560,6 +565,57 @@ impl SemanticAnalyzer {
                 }
             }
             Expr::FnCall(name, args) => {
+                if name == "softmax" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&args[0])?;
+                    let t1 = self.check_expr(&args[1])?;
+                    if !matches!(t0, Type::Tensor(_, _)) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Tensor(Box::new(Type::Void), 0),
+                            found: t0,
+                        });
+                    }
+                    if t1 != Type::I64 {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::I64,
+                            found: t1,
+                        });
+                    }
+                    return Ok(t0);
+                }
+                if name == "cross_entropy" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&args[0])?;
+                    let t1 = self.check_expr(&args[1])?;
+                    // Ensure both are tensors
+                    if !matches!(t0, Type::Tensor(_, _)) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Tensor(Box::new(Type::Void), 0),
+                            found: t0,
+                        });
+                    }
+                    // t1 is targets, also tensor
+                    if !matches!(t1, Type::Tensor(_, _)) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Tensor(Box::new(Type::Void), 0),
+                            found: t1,
+                        });
+                    }
+                    // Returns scalar tensor
+                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                }
                 if name == "print" {
                     if args.len() != 1 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -736,6 +792,52 @@ impl SemanticAnalyzer {
                         });
                     }
                     return Ok(Type::Void);
+                } else if name == "softmax" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&args[0])?;
+                    let t1 = self.check_expr(&args[1])?;
+                    if !matches!(t0, Type::Tensor(_, _)) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Tensor(Box::new(Type::Void), 0),
+                            found: t0,
+                        });
+                    }
+                    if t1 != Type::I64 {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::I64,
+                            found: t1,
+                        });
+                    }
+                    return Ok(t0);
+                } else if name == "cross_entropy" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&args[0])?;
+                    let t1 = self.check_expr(&args[1])?;
+                    if !matches!(t0, Type::Tensor(_, _)) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Tensor(Box::new(Type::Void), 0),
+                            found: t0,
+                        });
+                    }
+                    if !matches!(t1, Type::Tensor(_, _)) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Tensor(Box::new(Type::Void), 0),
+                            found: t1,
+                        });
+                    }
+                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
                 }
 
                 if let Some(func) = self.functions.get(name).cloned() {
@@ -993,6 +1095,7 @@ impl SemanticAnalyzer {
                 })
             }
             Expr::MethodCall(obj, method_name, args) => {
+                eprintln!("DEBUG: MethodCall '{}'", method_name);
                 let obj_type = self.check_expr(obj)?;
                 let type_name = match obj_type {
                     Type::UserDefined(name) => name,

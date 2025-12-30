@@ -186,6 +186,14 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.execution_engine
                 .add_global_mapping(&f, crate::runtime::tl_tensor_detach as usize);
         }
+        if let Some(f) = self.module.get_function("tl_tensor_softmax") {
+            self.execution_engine
+                .add_global_mapping(&f, crate::runtime::tl_tensor_softmax as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_cross_entropy") {
+            self.execution_engine
+                .add_global_mapping(&f, crate::runtime::tl_tensor_cross_entropy as usize);
+        }
         if let Some(f) = self.module.get_function("tl_tensor_sub_assign") {
             self.execution_engine
                 .add_global_mapping(&f, tl_tensor_sub_assign as usize);
@@ -354,6 +362,16 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.module
             .add_function("tl_tensor_detach", detach_type, None);
 
+        // tl_tensor_softmax(t: *mut, dim: i64) -> *mut
+        let softmax_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
+        self.module
+            .add_function("tl_tensor_softmax", softmax_type, None);
+
+        // tl_tensor_cross_entropy(logits: *mut, targets: *mut) -> *mut
+        let ce_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+        self.module
+            .add_function("tl_tensor_cross_entropy", ce_type, None);
+
         // tl_tensor_sub_assign(ref_t: *mut, val: *mut) -> void
         let sub_assign_type = void_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
         self.module
@@ -370,6 +388,14 @@ impl<'ctx> CodeGenerator<'ctx> {
         );
         self.fn_return_types.insert(
             "tl_tensor_detach".to_string(),
+            Type::Tensor(Box::new(Type::F32), 1),
+        );
+        self.fn_return_types.insert(
+            "tl_tensor_softmax".to_string(),
+            Type::Tensor(Box::new(Type::F32), 1),
+        );
+        self.fn_return_types.insert(
+            "tl_tensor_cross_entropy".to_string(),
             Type::Tensor(Box::new(Type::F32), 1),
         );
         self.fn_return_types.insert(
@@ -2126,6 +2152,61 @@ impl<'ctx> CodeGenerator<'ctx> {
                             _ => return Err("Invalid reshape return".into()),
                         };
                         Ok((res, t_ty)) // Returns same type (Tensor)
+                    }
+                    "softmax" => {
+                        if args.len() != 2 {
+                            return Err("softmax requires 2 arguments".into());
+                        }
+                        let (arg0_val, arg0_ty) = self.compile_expr(&args[0])?;
+                        let (arg1_val, _arg1_ty) = self.compile_expr(&args[1])?; // dim
+
+                        if !matches!(arg0_ty, Type::Tensor(_, _)) {
+                            return Err("softmax arg0 must be tensor".into());
+                        }
+                        // arg1 must be i64 (dim)
+
+                        let fn_val = self
+                            .module
+                            .get_function("tl_tensor_softmax")
+                            .ok_or("tl_tensor_softmax not found")?;
+                        let call = self
+                            .builder
+                            .build_call(fn_val, &[arg0_val.into(), arg1_val.into()], "softmax_res")
+                            .map_err(|e| e.to_string())?;
+                        let res = match call.try_as_basic_value() {
+                            ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid softmax return".into()),
+                        };
+                        Ok((res, arg0_ty))
+                    }
+                    "cross_entropy" => {
+                        if args.len() != 2 {
+                            return Err("cross_entropy requires 2 arguments".into());
+                        }
+                        let (arg0_val, arg0_ty) = self.compile_expr(&args[0])?;
+                        let (arg1_val, arg1_ty) = self.compile_expr(&args[1])?;
+
+                        if !matches!(arg0_ty, Type::Tensor(_, _)) {
+                            return Err("cross_entropy arg0 must be tensor".into());
+                        }
+                        if !matches!(arg1_ty, Type::Tensor(_, _)) {
+                            return Err("cross_entropy arg1 must be tensor".into());
+                        }
+
+                        let fn_val = self
+                            .module
+                            .get_function("tl_tensor_cross_entropy")
+                            .ok_or("tl_tensor_cross_entropy not found")?;
+                        let call = self
+                            .builder
+                            .build_call(fn_val, &[arg0_val.into(), arg1_val.into()], "ce_res")
+                            .map_err(|e| e.to_string())?;
+                        let res = match call.try_as_basic_value() {
+                            ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid cross_entropy return".into()),
+                        };
+                        // Returns scalar tensor (float)
+                        Ok((res, Type::Tensor(Box::new(Type::F32), 0)))
                     }
                     "exp" => {
                         if args.len() != 1 {

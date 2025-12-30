@@ -3,6 +3,7 @@ pub mod registry;
 
 use crate::runtime::device::get_device;
 use candle_core::Tensor;
+use candle_nn; // Import candle_nn
 use std::ffi::c_float;
 use std::slice;
 
@@ -130,6 +131,44 @@ pub extern "C" fn tl_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
             .broadcast_mul(t_b)
             .unwrap_or_else(|_| t_a.mul(t_b).unwrap());
         Box::into_raw(Box::new(OpaqueTensor(result)))
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_softmax(t: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
+    unsafe {
+        let tensor = &(*t).0;
+        // dim is i64, convert to usize or generic dim
+        // Support negative indexing if possible? Candle supports D::Minus1 etc but usually via specific Enums or usize.
+        // For now assume positive usize or handle -1 for last?
+        // Candle's softmax takes usize usually.
+        // Let's coerce to usize for now. User needs to pass positive.
+        let d = dim as usize;
+        let result = candle_nn::ops::softmax(tensor, d).unwrap();
+        Box::into_raw(Box::new(OpaqueTensor(result)))
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_cross_entropy(
+    logits: *mut OpaqueTensor,
+    targets: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let l = &(*logits).0;
+        let t = &(*targets).0;
+
+        // Expect targets to be F32 (0.0, 1.0, 2.0...) -> Cast to U32 for indices
+        let t_u32 = t.to_dtype(candle_core::DType::U32).unwrap();
+
+        // Log Softmax on last dim (-1)
+        // candle_nn::ops::log_softmax takes (tensor, dim)
+        let log_sm = candle_nn::ops::log_softmax(l, candle_core::D::Minus1).unwrap();
+
+        // NLL
+        let loss = candle_nn::loss::nll(&log_sm, &t_u32).unwrap();
+
+        Box::into_raw(Box::new(OpaqueTensor(loss)))
     }
 }
 
