@@ -90,6 +90,11 @@ pub enum Stmt {
         op: AssignOp, // =, +=, max=, avg=
         value: Expr,
     },
+    FieldAssign {
+        obj: Expr,
+        field: String,
+        value: Expr,
+    },
     Expr(Expr),
     Return(Expr),
     If {

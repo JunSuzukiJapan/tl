@@ -560,10 +560,34 @@ fn parse_block_stmt(input: &str) -> IResult<&str, Stmt> {
     Ok((input, Stmt::Expr(block)))
 }
 
+fn parse_field_assign(input: &str) -> IResult<&str, Stmt> {
+    let (input, lhs) = parse_expr(input)?;
+    match lhs {
+        Expr::FieldAccess(obj, field) => {
+            let (input, _) = ws(char('='))(input)?;
+            let (input, value) = parse_expr(input)?;
+            let (input, _) = ws(char(';'))(input)?;
+            Ok((
+                input,
+                Stmt::FieldAssign {
+                    obj: *obj,
+                    field,
+                    value,
+                },
+            ))
+        }
+        _ => Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        ))),
+    }
+}
+
 fn parse_stmt(input: &str) -> IResult<&str, Stmt> {
     ws(alt((
         parse_let_stmt,
         parse_assign_stmt,
+        parse_field_assign,
         parse_return_stmt,
         parse_if_stmt,
         parse_if_stmt,

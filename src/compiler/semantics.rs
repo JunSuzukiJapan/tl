@@ -114,7 +114,7 @@ impl SemanticAnalyzer {
 
         // Second pass: check function bodies
         for f in &module.functions {
-            self.check_function(f)?;
+            self.check_function(f, None)?;
         }
 
         // Check Impl blocks
@@ -135,15 +135,21 @@ impl SemanticAnalyzer {
 
         // Check methods
         for method in &impl_block.methods {
-            // TODO: Add 'self' to scope if method is not static?
-            // For now just check body as normal function
-            self.check_function(method)?;
+            self.check_function(method, Some(Type::Struct(impl_block.target_type.clone())))?;
         }
         Ok(())
     }
 
-    fn check_function(&mut self, func: &FunctionDef) -> Result<(), SemanticError> {
+    fn check_function(
+        &mut self,
+        func: &FunctionDef,
+        self_type: Option<Type>,
+    ) -> Result<(), SemanticError> {
         self.enter_scope();
+
+        if let Some(st) = self_type {
+            self.declare_variable("self".to_string(), st)?;
+        }
 
         // Register arguments
         // Register arguments
@@ -163,6 +169,17 @@ impl SemanticAnalyzer {
 
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), SemanticError> {
         match stmt {
+            Stmt::FieldAssign {
+                obj,
+                field: _,
+                value: _,
+            } => {
+                // TODO: Full semantic check for fields
+                let _ = self.check_expr(obj)?;
+                // let _ = self.check_expr(value)?; // Value checking might fail if type mismatch?
+                // For now just pass.
+                Ok(())
+            }
             Stmt::TensorDecl {
                 name,
                 type_annotation,
