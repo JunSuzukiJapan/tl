@@ -86,6 +86,8 @@ pub extern "C" fn tl_tensor_randn(
         // So just returning `var.as_tensor().clone()` should start the graph.
         let var = candle_core::Var::from_tensor(&t).unwrap();
         let t_var = var.as_tensor().clone();
+        // Leak the Var to ensure it stays alive for the graph
+        std::mem::forget(var);
         // We leak the Var? Use it just to start the trace?
         // Actually `var.as_tensor()` returns a tensor linked to the Var's ID.
         // If we perform ops on `t_var`, they get tracked.
@@ -108,6 +110,18 @@ pub extern "C" fn tl_tensor_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
 }
 
 #[no_mangle]
+pub extern "C" fn tl_tensor_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    unsafe {
+        let t_a = &(*a).0;
+        let t_b = &(*b).0;
+        let result = t_a
+            .broadcast_sub(t_b)
+            .unwrap_or_else(|_| t_a.sub(t_b).unwrap());
+        Box::into_raw(Box::new(OpaqueTensor(result)))
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn tl_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
         let t_a = &(*a).0;
@@ -116,6 +130,22 @@ pub extern "C" fn tl_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
             .broadcast_mul(t_b)
             .unwrap_or_else(|_| t_a.mul(t_b).unwrap());
         Box::into_raw(Box::new(OpaqueTensor(result)))
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_detach(t: *mut OpaqueTensor, req_grad: bool) -> *mut OpaqueTensor {
+    unsafe {
+        let tensor = &(*t).0;
+        let detached = tensor.detach();
+        if req_grad {
+            let var = candle_core::Var::from_tensor(&detached).unwrap();
+            let t_ref = var.as_tensor().clone();
+            std::mem::forget(var);
+            Box::into_raw(Box::new(OpaqueTensor(t_ref)))
+        } else {
+            Box::into_raw(Box::new(OpaqueTensor(detached)))
+        }
     }
 }
 

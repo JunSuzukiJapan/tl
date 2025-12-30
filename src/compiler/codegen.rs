@@ -86,9 +86,15 @@ impl<'ctx> CodeGenerator<'ctx> {
             .add_function("tl_tensor_get_f32_md", get_md_type, None);
 
         // tl_tensor_new(data: *const f32, rank: usize, shape: *const usize) -> *mut OpaqueTensor
+        let _new_type =
+            void_ptr.fn_type(&[f32_ptr.into(), i64_type.into(), usize_ptr.into()], false);
+        // tl_tensor_new(data: *const f32, rank: usize, shape: *const usize) -> *mut OpaqueTensor
         let new_type =
             void_ptr.fn_type(&[f32_ptr.into(), i64_type.into(), usize_ptr.into()], false);
         self.module.add_function("tl_tensor_new", new_type, None);
+
+        let binop_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+        self.module.add_function("tl_tensor_sub", binop_type, None);
 
         // tl_tensor_free(t: *mut) -> void
         let free_type = void_type.fn_type(&[void_ptr.into()], false);
@@ -148,6 +154,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // tl_tensor_div(a: *mut, b: *mut) -> *mut
         let bin_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
         self.module.add_function("tl_tensor_div", bin_type, None);
+        self.module.add_function("tl_tensor_sub", bin_type, None);
 
         // tl_tensor_matmul(a: *mut, b: *mut) -> *mut
         self.module.add_function("tl_tensor_matmul", bin_type, None);
@@ -175,6 +182,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.execution_engine
                 .add_global_mapping(&f, tl_tensor_grad as usize);
         }
+        if let Some(f) = self.module.get_function("tl_tensor_detach") {
+            self.execution_engine
+                .add_global_mapping(&f, crate::runtime::tl_tensor_detach as usize);
+        }
         if let Some(f) = self.module.get_function("tl_tensor_sub_assign") {
             self.execution_engine
                 .add_global_mapping(&f, tl_tensor_sub_assign as usize);
@@ -186,6 +197,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         if let Some(f) = self.module.get_function("tl_tensor_add") {
             self.execution_engine
                 .add_global_mapping(&f, tl_tensor_add as usize);
+        }
+        if let Some(f) = self.module.get_function("tl_tensor_sub") {
+            self.execution_engine
+                .add_global_mapping(&f, crate::runtime::tl_tensor_sub as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_mul") {
             self.execution_engine
@@ -333,6 +348,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         let grad_type = void_ptr.fn_type(&[void_ptr.into()], false);
         self.module.add_function("tl_tensor_grad", grad_type, None);
 
+        // tl_tensor_detach(t: *mut, req_grad: bool) -> *mut
+        let detach_type =
+            void_ptr.fn_type(&[void_ptr.into(), self.context.bool_type().into()], false);
+        self.module
+            .add_function("tl_tensor_detach", detach_type, None);
+
         // tl_tensor_sub_assign(ref_t: *mut, val: *mut) -> void
         let sub_assign_type = void_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
         self.module
@@ -345,6 +366,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         );
         self.fn_return_types.insert(
             "tl_tensor_grad".to_string(),
+            Type::Tensor(Box::new(Type::F32), 1),
+        );
+        self.fn_return_types.insert(
+            "tl_tensor_detach".to_string(),
             Type::Tensor(Box::new(Type::F32), 1),
         );
         self.fn_return_types.insert(
@@ -522,8 +547,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let fn_type = match &method.return_type {
                     Type::F32 => self.context.f32_type().fn_type(&param_types, false),
                     Type::I64 => self.context.i64_type().fn_type(&param_types, false),
+                    Type::Bool => self.context.bool_type().fn_type(&param_types, false),
                     Type::Void => self.context.void_type().fn_type(&param_types, false),
-                    Type::Tensor(_, _) => self
+                    Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => self
                         .context
                         .ptr_type(inkwell::AddressSpace::default())
                         .fn_type(&param_types, false),
@@ -685,7 +711,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Type::I64 => self.context.i64_type().into(),
                 Type::F32 => self.context.f32_type().into(),
                 Type::Bool => self.context.bool_type().into(),
-                Type::Tensor(_, _) => self
+                Type::Tensor(_, _) | Type::UserDefined(_) | Type::Struct(_) => self
                     .context
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
@@ -793,6 +819,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (obj_val, obj_ty) = self.compile_expr(obj)?;
                 let struct_name = match obj_ty {
                     Type::Struct(name) => name,
+                    Type::UserDefined(name) => name,
                     _ => return Err(format!("Field assignment on non-struct type {:?}", obj_ty)),
                 };
 
@@ -1364,6 +1391,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     BinOp::Add => "tl_tensor_add",
                     BinOp::Mul => "tl_tensor_mul",
                     BinOp::Div => "tl_tensor_div",
+                    BinOp::Sub => "tl_tensor_sub",
                     _ => return Err("Unsupported tensor op".into()),
                 };
 
@@ -1581,6 +1609,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (obj_val, obj_ty) = self.compile_expr(obj)?;
                 let struct_name = match obj_ty {
                     Type::Struct(name) => name,
+                    Type::UserDefined(name) => name,
                     _ => return Err(format!("Field access on non-struct type {:?}", obj_ty)),
                 };
 
@@ -1867,6 +1896,30 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let res = match call.try_as_basic_value() {
                                 ValueKind::Basic(v) => v,
                                 _ => return Err("Invalid clone return".into()),
+                            };
+                            Ok((res, obj_ty))
+                        }
+                        "detach" => {
+                            let fn_val = self
+                                .module
+                                .get_function("tl_tensor_detach")
+                                .ok_or("Runtime fn tl_tensor_detach not found")?;
+
+                            let mut compiled_args = Vec::with_capacity(args.len() + 1);
+                            compiled_args.push(obj_val.into());
+                            for arg in args {
+                                let (val, _) = self.compile_expr(arg)?;
+                                compiled_args.push(val.into());
+                            }
+
+                            let call = self
+                                .builder
+                                .build_call(fn_val, &compiled_args, "detach_res")
+                                .map_err(|e| e.to_string())?;
+
+                            let res = match call.try_as_basic_value() {
+                                ValueKind::Basic(v) => v,
+                                _ => return Err("Invalid detach return".into()),
                             };
                             Ok((res, obj_ty))
                         }
@@ -2204,10 +2257,29 @@ impl<'ctx> CodeGenerator<'ctx> {
                             Type::Void,
                         ));
                     }
+                    "sum" => {
+                        if args.len() != 1 {
+                            return Err("sum requires 1 argument".into());
+                        }
+                        let (arg_val, _arg_ty) = self.compile_expr(&args[0])?;
+                        let fn_val = self.module.get_function("tl_tensor_sum").unwrap();
+                        let call = self
+                            .builder
+                            .build_call(fn_val, &[arg_val.into()], "sum_res")
+                            .map_err(|e| e.to_string())?;
+
+                        let res = match call.try_as_basic_value() {
+                            ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid sum return".into()),
+                        };
+                        // Return type is Tensor (scalar)
+                        return Ok((res, Type::Tensor(Box::new(Type::F32), 1)));
+                    }
                     _ => {
                         // Generic function call logic
                         let llvm_func_name = match name.as_str() {
                             "slice" => "tl_tensor_slice",
+                            "sum" => "tl_tensor_sum",
                             "randn" => {
                                 // randn(shape, requires_grad)
                                 // Handle specially to pass rank/shape pointer and bool
@@ -2230,24 +2302,34 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 }
 
                                 let shape_expr = &args[0];
-                                let (shape_data, rank) = if let Expr::TensorLiteral(el) = shape_expr
+                                let (rank, shape_vals) = if let Expr::TensorLiteral(el) = shape_expr
                                 {
-                                    // Flatten to get usize dims
-                                    let mut dims = Vec::new();
+                                    let mut vals = Vec::new();
                                     for e in el {
-                                        if let Expr::Int(i) = e {
-                                            dims.push(*i as usize);
-                                        } else {
-                                            return Err("Shape definition must be ints".into());
-                                        }
+                                        // Compile each dimension expression
+                                        let (v, t) = self.compile_expr(e)?;
+                                        let int_val = match t {
+                                            Type::I64 => v.into_int_value(),
+                                            Type::I32 => self
+                                                .builder
+                                                .build_int_z_extend(
+                                                    v.into_int_value(),
+                                                    self.context.i64_type(),
+                                                    "dim_ext",
+                                                )
+                                                .map_err(|e| e.to_string())?,
+                                            _ => {
+                                                return Err(format!(
+                                                    "Dimension must be integer, found {:?}",
+                                                    t
+                                                ))
+                                            }
+                                        };
+                                        vals.push(int_val);
                                     }
-                                    let rank = dims.len();
-                                    (dims, rank)
+                                    (el.len(), vals)
                                 } else {
-                                    return Err(
-                                        "randn currently requires integer array literal for shape"
-                                            .into(),
-                                    );
+                                    return Err("randn currently requires array literal [dim, ...] for shape".into());
                                 };
 
                                 let requires_grad = if args.len() > 1 {
@@ -2275,28 +2357,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 let shape_alloca = self
                                     .builder
                                     .build_alloca(shape_array_type, "shape_arr")
-                                    .unwrap();
+                                    .map_err(|e| e.to_string())?;
 
                                 self.builder.position_at_end(current_block);
 
-                                // Store shape
-                                for (i, d) in shape_data.iter().enumerate() {
+                                // Store compiled shape values
+                                for (i, val) in shape_vals.iter().enumerate() {
                                     let ptr = unsafe {
-                                        self.builder
-                                            .build_in_bounds_gep(
-                                                shape_array_type,
-                                                shape_alloca,
-                                                &[
-                                                    i64_type.const_int(0, false),
-                                                    i64_type.const_int(i as u64, false),
-                                                ],
-                                                "dim_ptr",
-                                            )
-                                            .unwrap()
-                                    };
+                                        self.builder.build_in_bounds_gep(
+                                            shape_array_type,
+                                            shape_alloca,
+                                            &[
+                                                i64_type.const_int(0, false),
+                                                i64_type.const_int(i as u64, false),
+                                            ],
+                                            "shape_ptr_in",
+                                        )
+                                    }
+                                    .map_err(|e| e.to_string())?;
                                     self.builder
-                                        .build_store(ptr, usize_type.const_int(*d as u64, false))
-                                        .unwrap();
+                                        .build_store(ptr, *val)
+                                        .map_err(|e| e.to_string())?;
                                 }
 
                                 let req_grad_val = self

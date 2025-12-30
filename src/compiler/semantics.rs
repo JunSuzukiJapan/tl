@@ -138,7 +138,7 @@ impl SemanticAnalyzer {
         // Check methods
         // 1. Register methods
         {
-            let mut struct_methods = self
+            let struct_methods = self
                 .methods
                 .entry(impl_block.target_type.clone())
                 .or_insert_with(HashMap::new);
@@ -1005,6 +1005,9 @@ impl SemanticAnalyzer {
                             return Ok(obj_type);
                         } // grads have same shape
                         if method_name == "clone" {
+                            return Ok(obj_type);
+                        }
+                        if method_name == "detach" {
                             return Ok(obj_type);
                         }
                         return Ok(Type::Void); // Fallback
