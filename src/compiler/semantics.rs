@@ -52,9 +52,10 @@ impl Scope {
 }
 
 pub struct SemanticAnalyzer {
-    scopes: Vec<Scope>,                      // Stack of scopes
-    functions: HashMap<String, FunctionDef>, // Global function registry
-    structs: HashMap<String, StructDef>,     // Global struct registry
+    scopes: Vec<Scope>,                                     // Stack of scopes
+    functions: HashMap<String, FunctionDef>,                // Global function registry
+    structs: HashMap<String, StructDef>,                    // Global struct registry
+    methods: HashMap<String, HashMap<String, FunctionDef>>, // Struct methods
 }
 
 impl SemanticAnalyzer {
@@ -63,6 +64,7 @@ impl SemanticAnalyzer {
             scopes: vec![Scope::new()], // Global scope
             functions: HashMap::new(),
             structs: HashMap::new(),
+            methods: HashMap::new(),
         }
     }
 
@@ -134,8 +136,29 @@ impl SemanticAnalyzer {
         }
 
         // Check methods
+        // 1. Register methods
+        {
+            let mut struct_methods = self
+                .methods
+                .entry(impl_block.target_type.clone())
+                .or_insert_with(HashMap::new);
+            for method in &impl_block.methods {
+                if struct_methods.contains_key(&method.name) {
+                    return Err(SemanticError::DuplicateDefinition(format!(
+                        "{}::{}",
+                        impl_block.target_type, method.name
+                    )));
+                }
+                struct_methods.insert(method.name.clone(), method.clone());
+            }
+        }
+
+        // 2. Check function bodies
         for method in &impl_block.methods {
-            self.check_function(method, Some(Type::Struct(impl_block.target_type.clone())))?;
+            self.check_function(
+                method,
+                Some(Type::UserDefined(impl_block.target_type.clone())),
+            )?;
         }
         Ok(())
     }
@@ -612,6 +635,22 @@ impl SemanticAnalyzer {
                         }
                     }
                     return Ok(t0); // Returns same tensor type (ignoring rank change needed for strict typing)
+                } else if name == "len" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&args[0])?;
+                    if !matches!(t0, Type::Tensor(_, _)) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Tensor(Box::new(Type::Void), 0),
+                            found: t0,
+                        });
+                    }
+                    return Ok(Type::I64);
                 } else if name == "slice" {
                     if args.len() != 3 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -648,28 +687,97 @@ impl SemanticAnalyzer {
                         });
                     }
                     return Ok(t0); // Returns same tensor type
-                }
-
-                let func = self
-                    .functions
-                    .get(name)
-                    .ok_or_else(|| SemanticError::FunctionNotFound(name.clone()))?
-                    .clone();
-
-                if args.len() != func.args.len() {
-                    // func.args is empty in current AST parser stub, need to fix that first to check properly
-                    // For now, skip arg checking if definitions are empty
-                    if !func.args.is_empty() {
+                } else if name == "randn" {
+                    // randn(shape, requires_grad)
+                    // Attempt to infer rank from shape literal
+                    let mut rank = 1;
+                    if args.len() >= 1 {
+                        if let Expr::TensorLiteral(elements) = &args[0] {
+                            rank = elements.len();
+                        }
+                    }
+                    return Ok(Type::Tensor(Box::new(Type::F32), rank));
+                } else if name == "exp" || name == "log" || name == "sqrt" {
+                    if args.len() != 1 {
                         return Err(SemanticError::ArgumentCountMismatch {
                             name: name.clone(),
-                            expected: func.args.len(),
+                            expected: 1,
                             found: args.len(),
                         });
                     }
+                    let t0 = self.check_expr(&args[0])?;
+                    return Ok(t0);
+                } else if name == "matmul" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&args[0])?;
+                    return Ok(t0); // Propagate type
+                } else if name == "grad" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&args[0])?;
+                    return Ok(t0);
+                } else if name == "backward" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    return Ok(Type::Void);
                 }
 
-                // TODO: Check arg types
-                Ok(func.return_type.clone())
+                if let Some(func) = self.functions.get(name).cloned() {
+                    if args.len() != func.args.len() {
+                        // func.args is empty in current AST parser stub, need to fix that first to check properly
+                        // For now, skip arg checking if definitions are empty
+                        if !func.args.is_empty() {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: name.clone(),
+                                expected: func.args.len(),
+                                found: args.len(),
+                            });
+                        }
+                    }
+                    // TODO: Check arg types for function
+                    return Ok(func.return_type.clone());
+                }
+
+                if let Some(struct_def) = self.structs.get(name).cloned() {
+                    // Struct constructor
+                    if args.len() != struct_def.fields.len() {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: struct_def.fields.len(),
+                            found: args.len(),
+                        });
+                    }
+                    // Check field types
+                    for (i, arg) in args.iter().enumerate() {
+                        let arg_ty = self.check_expr(arg)?;
+                        let required_ty = &struct_def.fields[i].1;
+                        if !self.are_types_compatible(required_ty, &arg_ty) {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: required_ty.clone(),
+                                found: arg_ty,
+                            });
+                        }
+                    }
+                    return Ok(Type::UserDefined(name.clone()));
+                }
+
+                return Err(SemanticError::FunctionNotFound(name.clone()));
             }
             Expr::TensorLiteral(elements) => {
                 // Check all elements are same type
@@ -863,8 +971,75 @@ impl SemanticAnalyzer {
                 // or I64 for count
                 Ok(expr_ty)
             }
-            Expr::FieldAccess(_, _) => Ok(Type::Void), // TODO
-            Expr::MethodCall(_, _, _) => Ok(Type::Void), // TODO
+            Expr::FieldAccess(obj, field_name) => {
+                let obj_type = self.check_expr(obj)?;
+                if let Type::UserDefined(name) = obj_type {
+                    if let Some(struct_def) = self.structs.get(&name) {
+                        for (f_name, f_type) in &struct_def.fields {
+                            if f_name == field_name {
+                                return Ok(f_type.clone());
+                            }
+                        }
+                        return Err(SemanticError::VariableNotFound(format!(
+                            "Field {}",
+                            field_name
+                        )));
+                    }
+                    return Err(SemanticError::StructNotFound(name));
+                }
+                Err(SemanticError::TypeMismatch {
+                    expected: Type::UserDefined("Struct".into()),
+                    found: obj_type,
+                })
+            }
+            Expr::MethodCall(obj, method_name, args) => {
+                let obj_type = self.check_expr(obj)?;
+                let type_name = match obj_type {
+                    Type::UserDefined(name) => name,
+                    Type::Tensor(_, _) => {
+                        // Built-in tensor methods
+                        if method_name == "backward" {
+                            return Ok(Type::Void);
+                        }
+                        if method_name == "grad" {
+                            return Ok(obj_type);
+                        } // grads have same shape
+                        if method_name == "clone" {
+                            return Ok(obj_type);
+                        }
+                        return Ok(Type::Void); // Fallback
+                    }
+                    _ => {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::UserDefined("Struct".into()),
+                            found: obj_type,
+                        })
+                    }
+                };
+
+                let method_def = if let Some(methods) = self.methods.get(&type_name) {
+                    methods.get(method_name).cloned()
+                } else {
+                    None
+                };
+
+                if let Some(func) = method_def {
+                    if args.len() != func.args.len() {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: method_name.clone(),
+                            expected: func.args.len(),
+                            found: args.len(),
+                        });
+                    }
+                    // TODO: Check arg types
+                    Ok(func.return_type)
+                } else {
+                    Err(SemanticError::FunctionNotFound(format!(
+                        "{}::{}",
+                        type_name, method_name
+                    )))
+                }
+            }
         }
     }
 

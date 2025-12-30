@@ -355,3 +355,55 @@ pub extern "C" fn tl_tensor_reshape(
         Box::into_raw(Box::new(OpaqueTensor(result)))
     }
 }
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_div(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    unsafe {
+        let t_a = &(*a).0;
+        let t_b = &(*b).0;
+        let result = t_a
+            .broadcast_div(t_b)
+            .unwrap_or_else(|_| t_a.div(t_b).unwrap());
+        Box::into_raw(Box::new(OpaqueTensor(result)))
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_exp(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    unsafe {
+        let tensor = &(*t).0;
+        let result = tensor.exp().unwrap();
+        Box::into_raw(Box::new(OpaqueTensor(result)))
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_log(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    unsafe {
+        let tensor = &(*t).0;
+        let result = tensor.log().unwrap();
+        Box::into_raw(Box::new(OpaqueTensor(result)))
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_sqrt(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    unsafe {
+        let tensor = &(*t).0;
+        let result = tensor.sqrt().unwrap();
+        Box::into_raw(Box::new(OpaqueTensor(result)))
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_matmul(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let t_a = &(*a).0;
+        let t_b = &(*b).0;
+        let result = t_a.matmul(t_b).unwrap();
+        Box::into_raw(Box::new(OpaqueTensor(result)))
+    }
+}
