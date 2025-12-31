@@ -1274,8 +1274,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 for stmt in then_block {
                     self.compile_stmt(stmt)?;
                 }
-                // Branch to merge if not returned
-                if then_bb.get_terminator().is_none() {
+                // Branch to merge if current block has no terminator
+                // Use get_insert_block() because nested statements may have changed current block
+                let current_block = self.builder.get_insert_block().unwrap();
+                if current_block.get_terminator().is_none() {
                     self.builder.build_unconditional_branch(merge_bb).unwrap();
                 }
                 self.exit_scope();
@@ -1288,7 +1290,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                         self.compile_stmt(stmt)?;
                     }
                 }
-                if else_bb.get_terminator().is_none() {
+                // Check current block (not else_bb) since nested if may have changed it
+                let current_block = self.builder.get_insert_block().unwrap();
+                if current_block.get_terminator().is_none() {
                     self.builder.build_unconditional_branch(merge_bb).unwrap();
                 }
                 self.exit_scope();
@@ -1298,11 +1302,253 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(())
             }
             Stmt::For {
-                loop_var: _,
-                iterator: _,
-                body: _,
+                loop_var,
+                iterator,
+                body,
             } => {
-                return Err("For loop not yet fully implemented".into());
+                let parent = self
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_parent()
+                    .unwrap();
+
+                let i64_type = self.context.i64_type();
+
+                // Check if iterator is a range (BinOp with ".." conceptually - we detect 0..n pattern)
+                // Or if it's a tensor/variable
+                let (start_val, end_val, is_tensor_iter) = match iterator {
+                    Expr::FnCall(name, args) if name == "range" => {
+                        // range(start, end)
+                        if args.len() != 2 {
+                            return Err("range() requires 2 arguments".into());
+                        }
+                        let (s, _) = self.compile_expr(&args[0])?;
+                        let (e, _) = self.compile_expr(&args[1])?;
+                        (s.into_int_value(), e.into_int_value(), false)
+                    }
+                    Expr::Variable(_) | Expr::FieldAccess(_, _) => {
+                        // Assume it's a tensor iteration
+                        let (tensor_val, tensor_ty) = self.compile_expr(iterator)?;
+                        if !matches!(tensor_ty, Type::Tensor(_, _)) {
+                            return Err("For loop iterator must be a tensor or range".into());
+                        }
+                        // Get tensor length
+                        let len_fn = self
+                            .module
+                            .get_function("tl_tensor_len")
+                            .ok_or("tl_tensor_len not found")?;
+                        let len_call = self
+                            .builder
+                            .build_call(len_fn, &[tensor_val.into()], "tensor_len")
+                            .map_err(|e| e.to_string())?;
+                        let len = match len_call.try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                            _ => return Err("Invalid tensor_len return".into()),
+                        };
+
+                        // Store tensor pointer for use in body
+                        let tensor_ptr = tensor_val.into_pointer_value();
+                        let tensor_alloca = self
+                            .builder
+                            .build_alloca(
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "for_tensor",
+                            )
+                            .map_err(|e| e.to_string())?;
+                        self.builder
+                            .build_store(tensor_alloca, tensor_ptr)
+                            .map_err(|e| e.to_string())?;
+
+                        // Register tensor alloca for later use
+                        self.variables.last_mut().unwrap().insert(
+                            "__for_tensor__".to_string(),
+                            (tensor_alloca.into(), tensor_ty.clone(), false),
+                        );
+
+                        (i64_type.const_int(0, false), len, true)
+                    }
+                    _ => {
+                        // Try to compile as expression and check type
+                        let (iter_val, iter_ty) = self.compile_expr(iterator)?;
+                        if let Type::Tensor(_, _) = iter_ty {
+                            let len_fn = self
+                                .module
+                                .get_function("tl_tensor_len")
+                                .ok_or("tl_tensor_len not found")?;
+                            let len_call = self
+                                .builder
+                                .build_call(len_fn, &[iter_val.into()], "tensor_len")
+                                .map_err(|e| e.to_string())?;
+                            let len = match len_call.try_as_basic_value() {
+                                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                                _ => return Err("Invalid tensor_len return".into()),
+                            };
+
+                            let tensor_ptr = iter_val.into_pointer_value();
+                            let tensor_alloca = self
+                                .builder
+                                .build_alloca(
+                                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                                    "for_tensor",
+                                )
+                                .map_err(|e| e.to_string())?;
+                            self.builder
+                                .build_store(tensor_alloca, tensor_ptr)
+                                .map_err(|e| e.to_string())?;
+
+                            self.variables.last_mut().unwrap().insert(
+                                "__for_tensor__".to_string(),
+                                (tensor_alloca.into(), iter_ty.clone(), false),
+                            );
+
+                            (i64_type.const_int(0, false), len, true)
+                        } else {
+                            return Err("For loop iterator must be a tensor or range".into());
+                        }
+                    }
+                };
+
+                // Create basic blocks
+                let loop_header = self.context.append_basic_block(parent, "for_header");
+                let loop_body = self.context.append_basic_block(parent, "for_body");
+                let loop_end = self.context.append_basic_block(parent, "for_end");
+
+                // Branch to loop header
+                self.builder
+                    .build_unconditional_branch(loop_header)
+                    .map_err(|e| e.to_string())?;
+
+                // Loop header: PHI for index
+                self.builder.position_at_end(loop_header);
+                let current_block = self.builder.get_insert_block().unwrap();
+                let phi = self
+                    .builder
+                    .build_phi(i64_type, "for_idx")
+                    .map_err(|e| e.to_string())?;
+
+                // Add incoming from entry
+                let entry_block = current_block
+                    .get_previous_basic_block()
+                    .unwrap_or(current_block);
+                // We'll add proper incoming edges after building body
+
+                // Check condition: idx < end
+                let cond = self
+                    .builder
+                    .build_int_compare(
+                        inkwell::IntPredicate::SLT,
+                        phi.as_basic_value().into_int_value(),
+                        end_val,
+                        "for_cond",
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                self.builder
+                    .build_conditional_branch(cond, loop_body, loop_end)
+                    .map_err(|e| e.to_string())?;
+
+                // Get tensor alloca BEFORE entering new scope (it's in current scope)
+                let saved_tensor_alloca = if is_tensor_iter {
+                    // Search through all scopes to find __for_tensor__
+                    let mut found = None;
+                    for scope in self.variables.iter().rev() {
+                        if let Some((val, _, _)) = scope.get("__for_tensor__") {
+                            found = Some(val.into_pointer_value());
+                            break;
+                        }
+                    }
+                    found
+                } else {
+                    None
+                };
+
+                // Loop body
+                self.builder.position_at_end(loop_body);
+                self.enter_scope();
+
+                // Bind loop variable
+                let loop_var_val = if is_tensor_iter {
+                    // Get element from tensor - use saved alloca since we're in a new scope
+                    let tensor_alloca =
+                        saved_tensor_alloca.ok_or("Tensor alloca not found for for-loop")?;
+                    let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let tensor_ptr = self
+                        .builder
+                        .build_load(load_type, tensor_alloca, "tensor_ptr")
+                        .map_err(|e| e.to_string())?
+                        .into_pointer_value();
+
+                    let get_fn = self
+                        .module
+                        .get_function("tl_tensor_get")
+                        .ok_or("tl_tensor_get not found")?;
+                    let get_call = self
+                        .builder
+                        .build_call(
+                            get_fn,
+                            &[tensor_ptr.into(), phi.as_basic_value().into()],
+                            "elem_val",
+                        )
+                        .map_err(|e| e.to_string())?;
+                    match get_call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => (v, Type::F32),
+                        _ => return Err("Invalid tensor_get return".into()),
+                    }
+                } else {
+                    // Range iteration: loop var is the index
+                    (phi.as_basic_value(), Type::I64)
+                };
+
+                // Create alloca for loop var and store
+                let var_alloca = self.create_entry_block_alloca(parent, loop_var, &loop_var_val.1);
+                self.builder
+                    .build_store(var_alloca, loop_var_val.0)
+                    .map_err(|e| e.to_string())?;
+                self.variables
+                    .last_mut()
+                    .unwrap()
+                    .insert(loop_var.clone(), (var_alloca.into(), loop_var_val.1, false));
+
+                // Compile body
+                for stmt in body {
+                    self.compile_stmt(stmt)?;
+                }
+
+                self.exit_scope();
+
+                // Increment index
+                let body_end_block = self.builder.get_insert_block().unwrap();
+                let next_idx = self
+                    .builder
+                    .build_int_add(
+                        phi.as_basic_value().into_int_value(),
+                        i64_type.const_int(1, false),
+                        "next_idx",
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                // Branch back to header
+                if body_end_block.get_terminator().is_none() {
+                    self.builder
+                        .build_unconditional_branch(loop_header)
+                        .map_err(|e| e.to_string())?;
+                }
+
+                // Add PHI incoming edges
+                phi.add_incoming(&[(&start_val, entry_block), (&next_idx, body_end_block)]);
+
+                // Continue at loop end
+                self.builder.position_at_end(loop_end);
+
+                // Clean up temporary tensor reference
+                if is_tensor_iter {
+                    for scope in self.variables.iter_mut().rev() {
+                        scope.remove("__for_tensor__");
+                    }
+                }
+
+                Ok(())
             }
             Stmt::While { cond, body } => {
                 let parent = self
@@ -1715,9 +1961,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::Bool,
                 ))
             }
-            Expr::StringLiteral(_) => Err(
-                "String literals not yet supported in codegen (need runtime string type)".into(),
-            ),
+            Expr::StringLiteral(s) => {
+                // Create a global string constant and return pointer to it
+                let global_str = self
+                    .builder
+                    .build_global_string_ptr(s, "str_literal")
+                    .map_err(|e| e.to_string())?;
+                Ok((
+                    global_str.as_pointer_value().into(),
+                    Type::UserDefined("String".to_string()),
+                ))
+            }
             Expr::FieldAccess(obj, field) => {
                 let (obj_val, obj_ty) = self.compile_expr(obj)?;
                 let struct_name = match obj_ty {
@@ -1808,89 +2062,101 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.compile_bin_op(left.0, left.1, right.0, right.1, op.clone())
             }
             Expr::TensorLiteral(elements) => {
-                // Helper to flatten nested tensor literals
-                fn flatten_tensor(exprs: &[Expr]) -> Result<(Vec<f64>, Vec<usize>), String> {
+                let f32_type = self.context.f32_type();
+                let i64_type = self.context.i64_type();
+
+                // Check if all elements are static literals (for optimized path)
+                // or if we need dynamic compilation
+                fn count_elements(exprs: &[Expr]) -> (usize, Vec<usize>) {
                     if exprs.is_empty() {
-                        return Ok((vec![], vec![0]));
+                        return (0, vec![0]);
                     }
 
-                    // Check if elements are nested tensors or scalars
                     let is_nested = matches!(exprs[0], Expr::TensorLiteral(_));
-
                     if is_nested {
-                        let mut flat_data = Vec::new();
-                        let mut child_shapes = Vec::new();
+                        let mut total = 0;
                         let mut first_shape = None;
-
                         for e in exprs {
                             if let Expr::TensorLiteral(children) = e {
-                                let (mut data, shape) = flatten_tensor(children)?;
-
-                                if let Some(ref s) = first_shape {
-                                    if s != &shape {
-                                        return Err("Ragged tensors not supported".into());
-                                    }
-                                } else {
-                                    first_shape = Some(shape.clone());
+                                let (count, shape) = count_elements(children);
+                                total += count;
+                                if first_shape.is_none() {
+                                    first_shape = Some(shape);
                                 }
-
-                                flat_data.append(&mut data);
-                                child_shapes.push(shape);
-                            } else {
-                                return Err("Mixed types in tensor literal".into());
                             }
                         }
-
                         let mut shape = vec![exprs.len()];
                         if let Some(s) = first_shape {
                             shape.extend(s);
                         }
-                        Ok((flat_data, shape))
+                        (total, shape)
                     } else {
-                        // Leaf level (Scalars)
-                        let mut data = Vec::new(); // Use f64 for simplicity, convert later
-                        for e in exprs {
-                            match e {
-                                Expr::Float(f) => data.push(*f),
-                                Expr::Int(i) => data.push(*i as f64),
-                                _ => return Err("Tensor elements must be numbers".into()),
-                            }
-                        }
-                        Ok((data, vec![exprs.len()]))
+                        (exprs.len(), vec![exprs.len()])
                     }
                 }
 
-                let (flat_data, shape) = flatten_tensor(elements)?;
+                let (total_elements, shape) = count_elements(elements);
                 let rank = shape.len();
-                let len = flat_data.len() as u64;
 
-                let f32_type = self.context.f32_type();
-                let i64_type = self.context.i64_type();
-
-                // 1. Alloca for data
+                // Allocate buffer for elements
                 let data_alloca = self
                     .builder
-                    .build_array_alloca(f32_type, i64_type.const_int(len, false), "tensor_data")
-                    .unwrap();
+                    .build_array_alloca(
+                        f32_type,
+                        i64_type.const_int(total_elements as u64, false),
+                        "tensor_data",
+                    )
+                    .map_err(|e| e.to_string())?;
 
-                // 2. Store elements
-                for (i, val) in flat_data.iter().enumerate() {
-                    let float_val = f32_type.const_float(*val);
-                    unsafe {
-                        let ptr = self
+                // Helper to flatten and compile elements
+                fn flatten_exprs(exprs: &[Expr], result: &mut Vec<Expr>) {
+                    for e in exprs {
+                        if let Expr::TensorLiteral(children) = e {
+                            flatten_exprs(children, result);
+                        } else {
+                            result.push(e.clone());
+                        }
+                    }
+                }
+
+                let mut flat_exprs = Vec::new();
+                flatten_exprs(elements, &mut flat_exprs);
+
+                // Compile each element and store to buffer
+                for (i, expr) in flat_exprs.iter().enumerate() {
+                    let (val, val_ty) = self.compile_expr(expr)?;
+
+                    // Convert to f32 if necessary
+                    let f32_val = match val_ty {
+                        Type::F32 => val.into_float_value(),
+                        Type::I64 => self
                             .builder
+                            .build_signed_int_to_float(val.into_int_value(), f32_type, "i2f")
+                            .map_err(|e| e.to_string())?,
+                        _ => {
+                            return Err(format!("Tensor element must be numeric, got {:?}", val_ty))
+                        }
+                    };
+
+                    // Get pointer to element position
+                    let ptr = unsafe {
+                        self.builder
                             .build_in_bounds_gep(
                                 f32_type,
                                 data_alloca,
                                 &[i64_type.const_int(i as u64, false)],
                                 "elem_ptr",
                             )
-                            .unwrap();
-                        self.builder.build_store(ptr, float_val).unwrap();
-                    }
+                            .map_err(|e| e.to_string())?
+                    };
+
+                    // Store value
+                    self.builder
+                        .build_store(ptr, f32_val)
+                        .map_err(|e| e.to_string())?;
                 }
 
-                // 3. Alloca for shape
+                // Allocate and fill shape buffer
                 let shape_alloca = self
                     .builder
                     .build_array_alloca(
@@ -1898,34 +2164,34 @@ impl<'ctx> CodeGenerator<'ctx> {
                         i64_type.const_int(rank as u64, false),
                         "tensor_shape",
                     )
-                    .unwrap();
+                    .map_err(|e| e.to_string())?;
+
                 for (i, dim) in shape.iter().enumerate() {
-                    unsafe {
-                        let ptr = self
-                            .builder
+                    let ptr = unsafe {
+                        self.builder
                             .build_in_bounds_gep(
                                 i64_type,
                                 shape_alloca,
                                 &[i64_type.const_int(i as u64, false)],
-                                "shape_val",
+                                "shape_ptr",
                             )
-                            .unwrap();
-                        self.builder
-                            .build_store(ptr, i64_type.const_int(*dim as u64, false))
-                            .unwrap();
-                    }
+                            .map_err(|e| e.to_string())?
+                    };
+                    self.builder
+                        .build_store(ptr, i64_type.const_int(*dim as u64, false))
+                        .map_err(|e| e.to_string())?;
                 }
 
-                // 4. Call Runtime
-                let fn_name = "tl_tensor_new";
-                let f = self
+                // Call tl_tensor_new
+                let new_fn = self
                     .module
-                    .get_function(fn_name)
-                    .ok_or("Runtime fn not found")?;
+                    .get_function("tl_tensor_new")
+                    .ok_or("tl_tensor_new not found")?;
+
                 let call = self
                     .builder
                     .build_call(
-                        f,
+                        new_fn,
                         &[
                             data_alloca.into(),
                             i64_type.const_int(rank as u64, false).into(),
@@ -1937,10 +2203,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let res = match call.try_as_basic_value() {
                     ValueKind::Basic(v) => v,
-                    _ => return Err("Invalid call return".into()),
+                    _ => return Err("Invalid tl_tensor_new return".into()),
                 };
 
-                // Type is Tensor<f32, Rank>
                 Ok((res, Type::Tensor(Box::new(Type::F32), rank)))
             }
             Expr::MethodCall(obj, method, args) => {
@@ -3060,7 +3325,122 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok((result_f32.into(), Type::F32))
             }
 
-            _ => Err("Unsupported expression".into()),
+            Expr::IfExpr(cond, then_stmts, else_stmts) => {
+                let parent = self
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_parent()
+                    .unwrap();
+
+                let (cond_val, _) = self.compile_expr(cond)?;
+                let cond_int = self
+                    .builder
+                    .build_int_cast(
+                        cond_val.into_int_value(),
+                        self.context.bool_type(),
+                        "boolcast",
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                let then_bb = self.context.append_basic_block(parent, "if_then");
+                let else_bb = self.context.append_basic_block(parent, "if_else");
+                let merge_bb = self.context.append_basic_block(parent, "if_merge");
+
+                self.builder
+                    .build_conditional_branch(cond_int, then_bb, else_bb)
+                    .map_err(|e| e.to_string())?;
+
+                // Then branch
+                self.builder.position_at_end(then_bb);
+                self.enter_scope();
+                let mut then_val: Option<(BasicValueEnum<'ctx>, Type)> = None;
+                for (i, stmt) in then_stmts.iter().enumerate() {
+                    if i == then_stmts.len() - 1 {
+                        if let Stmt::Expr(e) = stmt {
+                            then_val = Some(self.compile_expr(e)?);
+                        } else {
+                            self.compile_stmt(stmt)?;
+                        }
+                    } else {
+                        self.compile_stmt(stmt)?;
+                    }
+                }
+                // Default value if no expression
+                let then_result = then_val.unwrap_or((
+                    self.context.i64_type().const_int(0, false).into(),
+                    Type::Void,
+                ));
+                let then_end_bb = self.builder.get_insert_block().unwrap();
+                if then_end_bb.get_terminator().is_none() {
+                    self.builder
+                        .build_unconditional_branch(merge_bb)
+                        .map_err(|e| e.to_string())?;
+                }
+                self.exit_scope();
+
+                // Else branch
+                self.builder.position_at_end(else_bb);
+                self.enter_scope();
+                let mut else_val: Option<(BasicValueEnum<'ctx>, Type)> = None;
+                if let Some(else_body) = else_stmts {
+                    for (i, stmt) in else_body.iter().enumerate() {
+                        if i == else_body.len() - 1 {
+                            if let Stmt::Expr(e) = stmt {
+                                else_val = Some(self.compile_expr(e)?);
+                            } else {
+                                self.compile_stmt(stmt)?;
+                            }
+                        } else {
+                            self.compile_stmt(stmt)?;
+                        }
+                    }
+                }
+                let else_result = else_val.unwrap_or((
+                    self.context.i64_type().const_int(0, false).into(),
+                    Type::Void,
+                ));
+                let else_end_bb = self.builder.get_insert_block().unwrap();
+                if else_end_bb.get_terminator().is_none() {
+                    self.builder
+                        .build_unconditional_branch(merge_bb)
+                        .map_err(|e| e.to_string())?;
+                }
+                self.exit_scope();
+
+                // Merge block with PHI
+                self.builder.position_at_end(merge_bb);
+
+                // Only create PHI if both branches return non-void values
+                if !matches!(then_result.1, Type::Void) && !matches!(else_result.1, Type::Void) {
+                    let llvm_ty: inkwell::types::BasicTypeEnum = match &then_result.1 {
+                        Type::I64 => self.context.i64_type().into(),
+                        Type::F32 => self.context.f32_type().into(),
+                        Type::Bool => self.context.bool_type().into(),
+                        Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => self
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
+                        _ => self.context.i64_type().into(),
+                    };
+
+                    let phi = self
+                        .builder
+                        .build_phi(llvm_ty, "if_result")
+                        .map_err(|e| e.to_string())?;
+                    phi.add_incoming(&[
+                        (&then_result.0, then_end_bb),
+                        (&else_result.0, else_end_bb),
+                    ]);
+
+                    Ok((phi.as_basic_value(), then_result.1))
+                } else {
+                    Ok((
+                        self.context.i64_type().const_int(0, false).into(),
+                        Type::Void,
+                    ))
+                }
+            }
         }
     }
 
