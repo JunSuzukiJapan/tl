@@ -560,6 +560,55 @@ impl<'ctx> CodeGenerator<'ctx> {
                         "clone" => {
                             let fn_val = self.module.get_function("tl_tensor_clone").unwrap();
                             let call = self
+                    "varbuilder_get" => {
+                        if args.len() != 2 {
+                            return Err("varbuilder_get requires 2 arguments".into());
+                        }
+                        let name_ptr = if let Expr::StringLiteral(s) = &args[0] {
+                            let global_str = self.create_global_string(s);
+                            global_str.as_pointer_value()
+                        } else {
+                            return Err("varbuilder_get expects string literal as first argument".into());
+                        };
+                        let (rank, shape_ptr) = if let Expr::ArrayLiteral(elements) = &args[1] {
+                            let rank = elements.len();
+                            let shape_values: Vec<_> = elements.iter().map(|e| { let (val, _) = self.compile_expr(e)?; Ok(val) }).collect::<Result<Vec<_>, CodeGenError>>()?;
+                            let i64_type = self.context.i64_type();
+                            let shape_alloca = self.builder.build_alloca(i64_type.array_type(rank as u32), "shape_arr").unwrap();
+                            for (i, val) in shape_values.iter().enumerate() {
+                                let idx = self.context.i64_type().const_int(i as u64, false);
+                                let ptr = unsafe { self.builder.build_in_bounds_gep(i64_type.array_type(rank as u32), shape_alloca, &[self.context.i64_type().const_zero(), idx], &format!("shape_elem_{}", i),).unwrap() };
+                                self.builder.build_store(ptr, val.into_int_value()).unwrap();
+                            }
+                            (rank, shape_alloca)
+                        } else {
+                            return Err("varbuilder_get expects array literal as second argument".into());
+                        };
+                        let fn_val = self.module.get_function("tl_varbuilder_get").unwrap();
+                        self.builder.build_call(fn_val, &[name_ptr.into(), self.context.i64_type().const_int(rank as u64, false).into(), shape_ptr.into()], "varbuilder_get_result",).unwrap().try_as_basic_value().left().unwrap()
+                    }
+                    "update_all_params" => {
+                        if args.len() != 1 {
+                            return Err("update_all_params requires 1 argument".into());
+                        }
+                        let (lr_val, _) = self.compile_expr(&args[0])?;
+                        let fn_val = self.module.get_function("tl_update_all_params").unwrap();
+                        self.builder.build_call(fn_val, &[lr_val.into()], "").unwrap();
+                        self.context.i64_type().const_int(0, false).into()
+                    }
+                    "varbuilder_grad" => {
+                        if args.len() != 1 {
+                            return Err("varbuilder_grad requires 1 argument".into());
+                        }
+                        let name_ptr = if let Expr::StringLiteral(s) = &args[0] {
+                            let global_str = self.create_global_string(s);
+                            global_str.as_pointer_value()
+                        } else {
+                            return Err("varbuilder_grad expects string literal as argument".into());
+                        };
+                        let fn_val = self.module.get_function("tl_varbuilder_grad").unwrap();
+                        self.builder.build_call(fn_val, &[name_ptr.into()], "varbuilder_grad_result",).unwrap().try_as_basic_value().left().unwrap()
+                    }
                                 .builder
                                 .build_call(fn_val, &[obj_val.into()], "clone_res")
                                 .map_err(|e| e.to_string())?;
@@ -1171,6 +1220,55 @@ impl<'ctx> CodeGenerator<'ctx> {
                             self.context.i64_type().const_int(0, false).into(),
                             Type::Void,
                         ));
+                    "varbuilder_get" => {
+                        if args.len() != 2 {
+                            return Err("varbuilder_get requires 2 arguments".into());
+                        }
+                        let name_ptr = if let Expr::StringLiteral(s) = &args[0] {
+                            let global_str = self.create_global_string(s);
+                            global_str.as_pointer_value()
+                        } else {
+                            return Err("varbuilder_get expects string literal as first argument".into());
+                        };
+                        let (rank, shape_ptr) = if let Expr::ArrayLiteral(elements) = &args[1] {
+                            let rank = elements.len();
+                            let shape_values: Vec<_> = elements.iter().map(|e| { let (val, _) = self.compile_expr(e)?; Ok(val) }).collect::<Result<Vec<_>, CodeGenError>>()?;
+                            let i64_type = self.context.i64_type();
+                            let shape_alloca = self.builder.build_alloca(i64_type.array_type(rank as u32), "shape_arr").unwrap();
+                            for (i, val) in shape_values.iter().enumerate() {
+                                let idx = self.context.i64_type().const_int(i as u64, false);
+                                let ptr = unsafe { self.builder.build_in_bounds_gep(i64_type.array_type(rank as u32), shape_alloca, &[self.context.i64_type().const_zero(), idx], &format!("shape_elem_{}", i),).unwrap() };
+                                self.builder.build_store(ptr, val.into_int_value()).unwrap();
+                            }
+                            (rank, shape_alloca)
+                        } else {
+                            return Err("varbuilder_get expects array literal as second argument".into());
+                        };
+                        let fn_val = self.module.get_function("tl_varbuilder_get").unwrap();
+                        self.builder.build_call(fn_val, &[name_ptr.into(), self.context.i64_type().const_int(rank as u64, false).into(), shape_ptr.into()], "varbuilder_get_result",).unwrap().try_as_basic_value().left().unwrap()
+                    }
+                    "update_all_params" => {
+                        if args.len() != 1 {
+                            return Err("update_all_params requires 1 argument".into());
+                        }
+                        let (lr_val, _) = self.compile_expr(&args[0])?;
+                        let fn_val = self.module.get_function("tl_update_all_params").unwrap();
+                        self.builder.build_call(fn_val, &[lr_val.into()], "").unwrap();
+                        self.context.i64_type().const_int(0, false).into()
+                    }
+                    "varbuilder_grad" => {
+                        if args.len() != 1 {
+                            return Err("varbuilder_grad requires 1 argument".into());
+                        }
+                        let name_ptr = if let Expr::StringLiteral(s) = &args[0] {
+                            let global_str = self.create_global_string(s);
+                            global_str.as_pointer_value()
+                        } else {
+                            return Err("varbuilder_grad expects string literal as argument".into());
+                        };
+                        let fn_val = self.module.get_function("tl_varbuilder_grad").unwrap();
+                        self.builder.build_call(fn_val, &[name_ptr.into()], "varbuilder_grad_result",).unwrap().try_as_basic_value().left().unwrap()
+                    }
                     }
                     "sum" => {
                         if args.len() == 1 {
