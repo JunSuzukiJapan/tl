@@ -63,6 +63,7 @@ pub struct SemanticAnalyzer {
     functions: HashMap<String, FunctionDef>,                // Global function registry
     structs: HashMap<String, StructDef>,                    // Global struct registry
     methods: HashMap<String, HashMap<String, FunctionDef>>, // Struct methods
+    current_return_type: Option<Type>, // Expected return type for current function
 }
 
 impl SemanticAnalyzer {
@@ -72,6 +73,7 @@ impl SemanticAnalyzer {
             functions: HashMap::new(),
             structs: HashMap::new(),
             methods: HashMap::new(),
+            current_return_type: None,
         }
     }
 
@@ -182,11 +184,13 @@ impl SemanticAnalyzer {
     ) -> Result<(), SemanticError> {
         self.enter_scope();
 
+        // Set expected return type for this function
+        self.current_return_type = Some(func.return_type.clone());
+
         if let Some(st) = self_type {
             self.declare_variable("self".to_string(), st)?;
         }
 
-        // Register arguments
         // Register arguments
         for (name, ty) in &func.args {
             self.declare_variable(name.clone(), ty.clone())?;
@@ -196,7 +200,8 @@ impl SemanticAnalyzer {
             self.check_stmt(stmt)?;
         }
 
-        // TODO: Check missing return?
+        // Clear return type context
+        self.current_return_type = None;
 
         self.exit_scope();
         Ok(())
@@ -204,15 +209,41 @@ impl SemanticAnalyzer {
 
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), SemanticError> {
         match stmt {
-            Stmt::FieldAssign {
-                obj,
-                field: _,
-                value: _,
-            } => {
-                // TODO: Full semantic check for fields
-                let _ = self.check_expr(obj)?;
-                // let _ = self.check_expr(value)?; // Value checking might fail if type mismatch?
-                // For now just pass.
+            Stmt::FieldAssign { obj, field, value } => {
+                // Check object type and verify it's a struct
+                let obj_type = self.check_expr(obj)?;
+                let struct_name = match obj_type {
+                    Type::UserDefined(name) => name,
+                    _ => {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::UserDefined("Struct".into()),
+                            found: obj_type,
+                        })
+                    }
+                };
+
+                // Verify struct and field exist
+                let struct_def = self
+                    .structs
+                    .get(&struct_name)
+                    .ok_or_else(|| SemanticError::StructNotFound(struct_name.clone()))?;
+
+                let field_type = struct_def
+                    .fields
+                    .iter()
+                    .find(|(name, _)| name == field)
+                    .map(|(_, ty)| ty.clone())
+                    .ok_or_else(|| SemanticError::VariableNotFound(format!("Field {}", field)))?;
+
+                // Check value type matches field type
+                let value_type = self.check_expr(value)?;
+                if !self.are_types_compatible(&field_type, &value_type) {
+                    return Err(SemanticError::TypeMismatch {
+                        expected: field_type,
+                        found: value_type,
+                    });
+                }
+
                 Ok(())
             }
             Stmt::TensorDecl {
@@ -469,8 +500,16 @@ impl SemanticAnalyzer {
                 }
             }
             Stmt::Return(expr) => {
-                let _ = self.check_expr(expr)?;
-                // TODO: Check against function return type (need access to current function context)
+                let return_type = self.check_expr(expr)?;
+                // Check against function return type
+                if let Some(ref expected) = self.current_return_type {
+                    if !self.are_types_compatible(expected, &return_type) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: expected.clone(),
+                            found: return_type,
+                        });
+                    }
+                }
                 Ok(())
             }
             Stmt::Expr(expr) => {
@@ -959,7 +998,19 @@ impl SemanticAnalyzer {
                             });
                         }
                     }
-                    // TODO: Check arg types for function
+                    // Check arg types for function
+                    for (i, arg) in args.iter().enumerate() {
+                        if i < func.args.len() {
+                            let arg_type = self.check_expr(arg)?;
+                            let expected_type = &func.args[i].1;
+                            if !self.are_types_compatible(expected_type, &arg_type) {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: expected_type.clone(),
+                                    found: arg_type,
+                                });
+                            }
+                        }
+                    }
                     return Ok(func.return_type.clone());
                 }
 
@@ -1244,7 +1295,19 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    // TODO: Check arg types
+                    // Check arg types for method
+                    for (i, arg) in args.iter().enumerate() {
+                        if i < func.args.len() {
+                            let arg_type = self.check_expr(arg)?;
+                            let expected_type = &func.args[i].1;
+                            if !self.are_types_compatible(expected_type, &arg_type) {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: expected_type.clone(),
+                                    found: arg_type,
+                                });
+                            }
+                        }
+                    }
                     Ok(func.return_type)
                 } else {
                     Err(SemanticError::FunctionNotFound(format!(

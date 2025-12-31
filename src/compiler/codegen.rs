@@ -1076,18 +1076,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Determine if this is a supported tensor equation assignment
                     if *op == AssignOp::Assign {
                         // C[i, k] = ...
-                        // This is treated as "redefining" or "filling" C.
-                        // But compile_tensor_equation creates a NEW tensor currently (Stmt::Let logic).
-                        // For Assign, we want to write into EXISTING tensor.
-                        // TODO: support in-place update.
-                        // For M3, maybe 'let' is enough for equations?
-                        // User Example: let C[i, k] = ...
-                        // If user does C[i, k] = ..., we need In-Place logic.
-                        // Given current implementation of compile_tensor_equation allocates new buffer,
-                        // let's error for now or defer?
-                        // Or reuse the logic but write to existing pointer?
+                        // In-place tensor update would require rewriting into existing buffer.
+                        // Current design uses 'let C[i,k] = ...' for tensor equations which creates new tensors.
+                        // This is an intentional limitation - users should use 'let' for tensor equations.
                         return Err(
-                            "In-place indexed assignment not yet fully supported (use 'let')."
+                            "In-place indexed assignment not supported. Use 'let C[i,k] = ...' for tensor equations."
                                 .into(),
                         );
                     } else {
