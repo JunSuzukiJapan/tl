@@ -34,3 +34,8 @@ cuda = ["candle-core/cuda"]
 opt-level = 3
 codegen-units = 1
 panic = "abort"
+
+[dev-dependencies]
+glob = "0.3"
+assert_cmd = "2.0"
+predicates = "3.0"
