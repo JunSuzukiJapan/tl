@@ -75,6 +75,7 @@ fn main() -> Result<()> {
         Commands::Run { file, device } => {
             // Set device environment variable
             std::env::set_var("TL_DEVICE", device);
+            crate::runtime::force_link();
             println!("Running file: {:?}", file);
             let content = fs::read_to_string(&file)
                 .with_context(|| format!("Failed to read file {:?}", file))?;

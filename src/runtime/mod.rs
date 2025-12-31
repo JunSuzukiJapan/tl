@@ -303,6 +303,10 @@ pub extern "C" fn tl_print_string(s: *const std::os::raw::c_char) {
     }
 }
 
+pub fn force_link() {
+    let _ = tl_print_string as *const ();
+}
+
 #[no_mangle]
 pub extern "C" fn tl_tensor_dim(t: *mut OpaqueTensor, dim_idx: usize) -> i64 {
     unsafe {

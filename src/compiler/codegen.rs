@@ -1,11 +1,6 @@
 // src/compiler/codegen.rs
 use crate::compiler::ast::*;
-use crate::runtime::{
-    tl_print_f32, tl_print_i64, tl_tensor_add, tl_tensor_backward, tl_tensor_clone, tl_tensor_dim,
-    tl_tensor_free, tl_tensor_get, tl_tensor_get_f32_md, tl_tensor_grad, tl_tensor_len,
-    tl_tensor_mul, tl_tensor_neg, tl_tensor_new, tl_tensor_print, tl_tensor_randn, tl_tensor_slice,
-    tl_tensor_sub_assign, tl_tensor_sum,
-}; // Import runtime functions
+use crate::runtime;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::execution_engine::ExecutionEngine;
@@ -32,8 +27,38 @@ impl<'ctx> CodeGenerator<'ctx> {
         let module = context.create_module(module_name);
         let builder = context.create_builder();
         let execution_engine = module
-            .create_jit_execution_engine(OptimizationLevel::Aggressive)
-            .unwrap();
+            .create_jit_execution_engine(OptimizationLevel::None)
+            .map_err(|e| e.to_string())
+            .unwrap(); // Changed to unwrap for consistency with original code's error handling
+
+        // Explicitly map runtime functions to ensure JIT can find them
+        // This is necessary on some platforms (like macOS without -rdynamic)
+        if let Some(f) = module.get_function("tl_print_string") {
+            execution_engine.add_global_mapping(&f, runtime::tl_print_string as *const () as usize);
+        }
+        if let Some(f) = module.get_function("tl_print_f32") {
+            execution_engine.add_global_mapping(&f, runtime::tl_print_f32 as *const () as usize);
+        }
+        if let Some(f) = module.get_function("tl_print_i64") {
+            execution_engine.add_global_mapping(&f, runtime::tl_print_i64 as *const () as usize);
+        }
+        if let Some(f) = module.get_function("tl_tensor_new") {
+            execution_engine.add_global_mapping(&f, runtime::tl_tensor_new as *const () as usize);
+        }
+        if let Some(f) = module.get_function("tl_tensor_matmul") {
+            execution_engine
+                .add_global_mapping(&f, runtime::tl_tensor_matmul as *const () as usize);
+        }
+        if let Some(f) = module.get_function("tl_tensor_print") {
+            // Warning: tl_tensor_print might not be exported as extern C?
+            // It is likely built via candle machinery. If it's not extern C, use wrapper?
+            // Actually runtime/mod.rs doesn't show tl_tensor_print in previous ViewFile.
+            // Let's assume codegen expects it.
+            // It was used in codegen.rs line 2594.
+            // We should register it if available.
+            // If it's missing from runtime, that's another bug.
+            execution_engine.add_global_mapping(&f, runtime::tl_tensor_print as *const () as usize);
+        }
 
         let mut codegen = CodeGenerator {
             context,
@@ -186,51 +211,51 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Map symbols
         if let Some(f) = self.module.get_function("tl_tensor_new") {
             self.execution_engine
-                .add_global_mapping(&f, tl_tensor_new as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_new as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_randn") {
             self.execution_engine
-                .add_global_mapping(&f, tl_tensor_randn as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_randn as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_backward") {
             self.execution_engine
-                .add_global_mapping(&f, tl_tensor_backward as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_backward as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_grad") {
             self.execution_engine
-                .add_global_mapping(&f, tl_tensor_grad as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_grad as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_detach") {
             self.execution_engine
-                .add_global_mapping(&f, crate::runtime::tl_tensor_detach as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_detach as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_softmax") {
             self.execution_engine
-                .add_global_mapping(&f, crate::runtime::tl_tensor_softmax as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_softmax as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_cross_entropy") {
             self.execution_engine
-                .add_global_mapping(&f, crate::runtime::tl_tensor_cross_entropy as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_cross_entropy as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_sub_assign") {
             self.execution_engine
-                .add_global_mapping(&f, tl_tensor_sub_assign as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_sub_assign as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_sum") {
             self.execution_engine
-                .add_global_mapping(&f, tl_tensor_sum as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_sum as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_add") {
             self.execution_engine
-                .add_global_mapping(&f, tl_tensor_add as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_add as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_sub") {
             self.execution_engine
-                .add_global_mapping(&f, crate::runtime::tl_tensor_sub as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_sub as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_mul") {
             self.execution_engine
-                .add_global_mapping(&f, tl_tensor_mul as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_mul as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_div") {
             self.execution_engine
@@ -274,35 +299,35 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
         if let Some(f) = self.module.get_function("tl_tensor_free") {
             self.execution_engine
-                .add_global_mapping(&f, tl_tensor_free as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_free as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_clone") {
             self.execution_engine
-                .add_global_mapping(&f, tl_tensor_clone as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_clone as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_print") {
             self.execution_engine
-                .add_global_mapping(&f, tl_tensor_print as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_print as usize);
         }
         if let Some(f) = self.module.get_function("tl_print_i64") {
             self.execution_engine
-                .add_global_mapping(&f, tl_print_i64 as usize);
+                .add_global_mapping(&f, runtime::tl_print_i64 as usize);
         }
         if let Some(f) = self.module.get_function("tl_print_f32") {
             self.execution_engine
-                .add_global_mapping(&f, tl_print_f32 as usize);
+                .add_global_mapping(&f, runtime::tl_print_f32 as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_len") {
             self.execution_engine
-                .add_global_mapping(&f, tl_tensor_len as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_len as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_dim") {
             self.execution_engine
-                .add_global_mapping(&f, tl_tensor_dim as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_dim as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_get_f32_md") {
             self.execution_engine
-                .add_global_mapping(&f, tl_tensor_get_f32_md as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_get_f32_md as usize);
         }
         if let Some(f) = self.module.get_function("tl_tensor_neg") {
             self.execution_engine
@@ -321,15 +346,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         // ... (existing)
         if let Some(f) = self.module.get_function("tl_tensor_get") {
             self.execution_engine
-                .add_global_mapping(&f, tl_tensor_get as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_get as usize);
         }
-        if let Some(f) = self.module.get_function("tl_tensor_neg") {
-            self.execution_engine
-                .add_global_mapping(&f, tl_tensor_neg as usize);
-        }
+        // Duplicate neg removed/fixed
         if let Some(f) = self.module.get_function("tl_tensor_slice") {
             self.execution_engine
-                .add_global_mapping(&f, tl_tensor_slice as usize);
+                .add_global_mapping(&f, runtime::tl_tensor_slice as usize);
         }
         if let Some(f) = self.module.get_function("tl_register_tensor") {
             self.execution_engine

@@ -7,13 +7,13 @@ fn main() {
     // This should trigger the new optimization path
     let C[i, k] = A[i, j] * B[j, k];
 
-    // print("MatMul result shape:");
-    // print(C);
+    print("MatMul result shape:");
+    print(C);
     
     let D = matmul(A, B);
     let diff = C - D;
     let s = sum(diff);
     // Should be close to 0
-    // print("Difference sum (should be approx 0):");
-    // print(s);
+    print("Difference sum (should be approx 0):");
+    print(s);
 }
