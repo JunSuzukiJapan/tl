@@ -8,7 +8,7 @@ use candle_nn; // Import candle_nn
 use std::cell::RefCell;
 use std::ffi::c_float;
 use std::slice;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 // Opaque struct to represent a Tensor in C-ABI (LLVM IR)
 // In reality, this will be a raw pointer to a Heap-allocated Tensor.
@@ -19,10 +19,16 @@ thread_local! {
     static LATEST_GRADS: RefCell<Option<candle_core::backprop::GradStore>> = RefCell::new(None);
 }
 
+// Global VarMap for tracking all trainable parameters
+lazy_static::lazy_static! {
+    static ref GLOBAL_VAR_MAP: Mutex<candle_nn::VarMap> = Mutex::new(candle_nn::VarMap::new());
+}
+
 /// OpaqueTensor wraps a Candle Tensor and optionally a Var for gradient tracking
 /// The Var is stored as Arc to allow sharing across clones while keeping the same variable alive
+/// The name is used to register the Var in the global VarMap
 #[repr(C)]
-pub struct OpaqueTensor(Tensor, Option<Arc<candle_core::Var>>);
+pub struct OpaqueTensor(Tensor, Option<Arc<candle_core::Var>>, Option<String>);
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_new(
@@ -45,7 +51,7 @@ pub extern "C" fn tl_tensor_new(
         t_cpu
     };
 
-    Box::into_raw(Box::new(OpaqueTensor(tensor, None)))
+    Box::into_raw(Box::new(OpaqueTensor(tensor, None, None)))
 }
 
 // Function to create a tensor that requires gradients (similar to Var, but returning Tensor)
@@ -77,9 +83,9 @@ pub extern "C" fn tl_tensor_randn(
 
         // Store Var in Arc so it can be shared across clones
         let var_arc = Arc::new(var);
-        Box::into_raw(Box::new(OpaqueTensor(t_var, Some(var_arc))))
+        Box::into_raw(Box::new(OpaqueTensor(t_var, Some(var_arc), None)))
     } else {
-        Box::into_raw(Box::new(OpaqueTensor(t, None)))
+        Box::into_raw(Box::new(OpaqueTensor(t, None, None)))
     }
 }
 
@@ -91,7 +97,7 @@ pub extern "C" fn tl_tensor_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
         let result = t_a
             .broadcast_add(t_b)
             .unwrap_or_else(|_| t_a.add(t_b).unwrap());
-        Box::into_raw(Box::new(OpaqueTensor(result, None)))
+        Box::into_raw(Box::new(OpaqueTensor(result, None, None)))
     }
 }
 
@@ -103,7 +109,7 @@ pub extern "C" fn tl_tensor_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
         let result = t_a
             .broadcast_sub(t_b)
             .unwrap_or_else(|_| t_a.sub(t_b).unwrap());
-        Box::into_raw(Box::new(OpaqueTensor(result, None)))
+        Box::into_raw(Box::new(OpaqueTensor(result, None, None)))
     }
 }
 
@@ -121,7 +127,7 @@ pub extern "C" fn tl_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
         let result = t_a
             .broadcast_mul(t_b)
             .unwrap_or_else(|_| t_a.mul(t_b).unwrap());
-        Box::into_raw(Box::new(OpaqueTensor(result, None)))
+        Box::into_raw(Box::new(OpaqueTensor(result, None, None)))
     }
 }
 
@@ -136,7 +142,7 @@ pub extern "C" fn tl_tensor_softmax(t: *mut OpaqueTensor, dim: i64) -> *mut Opaq
         // Let's coerce to usize for now. User needs to pass positive.
         let d = dim as usize;
         let result = candle_nn::ops::softmax(tensor, d).unwrap();
-        Box::into_raw(Box::new(OpaqueTensor(result, None)))
+        Box::into_raw(Box::new(OpaqueTensor(result, None, None)))
     }
 }
 
@@ -159,7 +165,7 @@ pub extern "C" fn tl_tensor_cross_entropy(
         // NLL
         let loss = candle_nn::loss::nll(&log_sm, &t_u32).unwrap();
 
-        Box::into_raw(Box::new(OpaqueTensor(loss, None)))
+        Box::into_raw(Box::new(OpaqueTensor(loss, None, None)))
     }
 }
 
@@ -172,9 +178,9 @@ pub extern "C" fn tl_tensor_detach(t: *mut OpaqueTensor, req_grad: bool) -> *mut
             let var = candle_core::Var::from_tensor(&detached).unwrap();
             let t_ref = var.as_tensor().clone();
             std::mem::forget(var);
-            Box::into_raw(Box::new(OpaqueTensor(t_ref, None)))
+            Box::into_raw(Box::new(OpaqueTensor(t_ref, None, None)))
         } else {
-            Box::into_raw(Box::new(OpaqueTensor(detached, None)))
+            Box::into_raw(Box::new(OpaqueTensor(detached, None, None)))
         }
     }
 }
@@ -222,7 +228,7 @@ pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
         // Clone the Arc<Var> if it exists to maintain gradient tracking
         let cloned_var = var_ref.as_ref().map(|v| Arc::clone(v));
 
-        Box::into_raw(Box::new(OpaqueTensor(cloned, cloned_var)))
+        Box::into_raw(Box::new(OpaqueTensor(cloned, cloned_var, None)))
     }
 }
 
@@ -231,7 +237,7 @@ pub extern "C" fn tl_tensor_neg(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
         let tensor = &(*t).0;
         let result = tensor.neg().unwrap();
-        Box::into_raw(Box::new(OpaqueTensor(result, None)))
+        Box::into_raw(Box::new(OpaqueTensor(result, None, None)))
     }
 }
 
@@ -273,7 +279,7 @@ pub extern "C" fn tl_tensor_slice(t: *mut OpaqueTensor, start: i64, len: i64) ->
         let tensor = &(*t).0;
         // Slice along first dimension
         let result = tensor.narrow(0, start as usize, len as usize).unwrap();
-        Box::into_raw(Box::new(OpaqueTensor(result, None)))
+        Box::into_raw(Box::new(OpaqueTensor(result, None, None)))
     }
 }
 
@@ -355,7 +361,7 @@ pub extern "C" fn tl_tensor_transpose(
     unsafe {
         let tensor = &(*t).0;
         let result = tensor.transpose(dim0, dim1).unwrap();
-        Box::into_raw(Box::new(OpaqueTensor(result, None)))
+        Box::into_raw(Box::new(OpaqueTensor(result, None, None)))
     }
 }
 
@@ -417,7 +423,7 @@ pub extern "C" fn tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 
         if let Some(g) = grad {
             println!("DEBUG: Grad FOUND from GradStore for tensor {:p}", t);
-            Box::into_raw(Box::new(OpaqueTensor(g, None)))
+            Box::into_raw(Box::new(OpaqueTensor(g, None, None)))
         } else {
             println!("DEBUG: Grad NOT found for tensor {:p} - returning NULL", t);
             std::ptr::null_mut()
@@ -430,7 +436,7 @@ pub extern "C" fn tl_tensor_sum(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
         let tensor = &(*t).0;
         let result = tensor.sum_all().unwrap();
-        Box::into_raw(Box::new(OpaqueTensor(result, None)))
+        Box::into_raw(Box::new(OpaqueTensor(result, None, None)))
     }
 }
 
@@ -509,7 +515,7 @@ pub extern "C" fn tl_tensor_reshape(
         let new_shape: Vec<usize> = shape_vec.iter().map(|&x| x as usize).collect();
 
         let result = tensor.reshape(new_shape).unwrap();
-        Box::into_raw(Box::new(OpaqueTensor(result, None)))
+        Box::into_raw(Box::new(OpaqueTensor(result, None, None)))
     }
 }
 
@@ -534,7 +540,7 @@ pub extern "C" fn tl_tensor_reshape_dims(
         // println!("DEBUG: new_shape={:?}", new_shape);
         // std::io::stdout().flush().unwrap();
         match tensor.reshape(new_shape) {
-            Ok(result) => Box::into_raw(Box::new(OpaqueTensor(result, None))),
+            Ok(result) => Box::into_raw(Box::new(OpaqueTensor(result, None, None))),
             Err(e) => {
                 println!("Error reshaping tensor: {}", e);
                 std::process::abort();
@@ -551,7 +557,7 @@ pub extern "C" fn tl_tensor_div(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
         let result = t_a
             .broadcast_div(t_b)
             .unwrap_or_else(|_| t_a.div(t_b).unwrap());
-        Box::into_raw(Box::new(OpaqueTensor(result, None)))
+        Box::into_raw(Box::new(OpaqueTensor(result, None, None)))
     }
 }
 
@@ -560,7 +566,7 @@ pub extern "C" fn tl_tensor_exp(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
         let tensor = &(*t).0;
         let result = tensor.exp().unwrap();
-        Box::into_raw(Box::new(OpaqueTensor(result, None)))
+        Box::into_raw(Box::new(OpaqueTensor(result, None, None)))
     }
 }
 
@@ -573,7 +579,7 @@ pub extern "C" fn tl_tensor_pow(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
         let result = t_a
             .broadcast_pow(t_b)
             .unwrap_or_else(|_| t_a.pow(t_b).unwrap());
-        Box::into_raw(Box::new(OpaqueTensor(result, None)))
+        Box::into_raw(Box::new(OpaqueTensor(result, None, None)))
     }
 }
 
@@ -582,7 +588,7 @@ pub extern "C" fn tl_tensor_log(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
         let tensor = &(*t).0;
         let result = tensor.log().unwrap();
-        Box::into_raw(Box::new(OpaqueTensor(result, None)))
+        Box::into_raw(Box::new(OpaqueTensor(result, None, None)))
     }
 }
 
@@ -592,28 +598,28 @@ pub extern "C" fn tl_tensor_log(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 pub extern "C" fn tl_tensor_sin(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     let res = t.sin().unwrap();
-    Box::into_raw(Box::new(OpaqueTensor(res, None)))
+    Box::into_raw(Box::new(OpaqueTensor(res, None, None)))
 }
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_cos(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     let res = t.cos().unwrap();
-    Box::into_raw(Box::new(OpaqueTensor(res, None)))
+    Box::into_raw(Box::new(OpaqueTensor(res, None, None)))
 }
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_relu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     let res = t.relu().unwrap();
-    Box::into_raw(Box::new(OpaqueTensor(res, None)))
+    Box::into_raw(Box::new(OpaqueTensor(res, None, None)))
 }
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_gelu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     let res = t.gelu().unwrap();
-    Box::into_raw(Box::new(OpaqueTensor(res, None)))
+    Box::into_raw(Box::new(OpaqueTensor(res, None, None)))
 }
 
 // Lower triangular mask (diagonal=0 includes the diagonal)
@@ -625,7 +631,7 @@ pub extern "C" fn tl_tensor_tril(t: *mut OpaqueTensor, diagonal: i32) -> *mut Op
     if len < 2 {
         // Scalar or 1D, return as is? Or convention?
         // Usually tril is for 2D+.
-        return Box::into_raw(Box::new(OpaqueTensor(t.clone(), None)));
+        return Box::into_raw(Box::new(OpaqueTensor(t.clone(), None, None)));
     }
     let h = dims[len - 2];
     let w = dims[len - 1];
@@ -659,7 +665,7 @@ pub extern "C" fn tl_tensor_tril(t: *mut OpaqueTensor, diagonal: i32) -> *mut Op
 
     let mask = mask.to_dtype(t.dtype()).unwrap();
     let res = t.broadcast_mul(&mask).unwrap();
-    Box::into_raw(Box::new(OpaqueTensor(res, None)))
+    Box::into_raw(Box::new(OpaqueTensor(res, None, None)))
 }
 
 #[no_mangle]
@@ -675,7 +681,7 @@ pub extern "C" fn tl_tensor_sum_dim(
     } else {
         t.sum(dim).unwrap()
     };
-    Box::into_raw(Box::new(OpaqueTensor(res, None)))
+    Box::into_raw(Box::new(OpaqueTensor(res, None, None)))
 }
 
 // Embedding: indices [B, S], weights [V, D] -> [B, S, D]
@@ -702,7 +708,7 @@ pub extern "C" fn tl_tensor_embedding(
 
     let res = gathered.reshape(new_shape).unwrap();
 
-    Box::into_raw(Box::new(OpaqueTensor(res, None)))
+    Box::into_raw(Box::new(OpaqueTensor(res, None, None)))
 }
 
 #[no_mangle]
@@ -710,7 +716,7 @@ pub extern "C" fn tl_tensor_sqrt(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
         let tensor = &(*t).0;
         let result = tensor.sqrt().unwrap();
-        Box::into_raw(Box::new(OpaqueTensor(result, None)))
+        Box::into_raw(Box::new(OpaqueTensor(result, None, None)))
     }
 }
 
@@ -729,6 +735,6 @@ pub extern "C" fn tl_tensor_matmul(
             // But let's unwrap and panic with message if fails.
             t_a.matmul(t_b).unwrap()
         });
-        Box::into_raw(Box::new(OpaqueTensor(result, None)))
+        Box::into_raw(Box::new(OpaqueTensor(result, None, None)))
     }
 }

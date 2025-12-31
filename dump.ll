@@ -366,13 +366,13 @@ entry:
   call void @tl_print_string(ptr @str_literal.72)
   %gw12 = load ptr, ptr %gw, align 8
   call void @tl_tensor_print(ptr %gw12)
-  %load_for_free = load ptr, ptr %loss, align 8
+  %load_for_free = load ptr, ptr %idx, align 8
   call void @tl_tensor_free(ptr %load_for_free)
-  %load_for_free13 = load ptr, ptr %idx, align 8
+  %load_for_free13 = load ptr, ptr %gw, align 8
   call void @tl_tensor_free(ptr %load_for_free13)
-  %load_for_free14 = load ptr, ptr %out, align 8
+  %load_for_free14 = load ptr, ptr %loss, align 8
   call void @tl_tensor_free(ptr %load_for_free14)
-  %load_for_free15 = load ptr, ptr %gw, align 8
+  %load_for_free15 = load ptr, ptr %out, align 8
   call void @tl_tensor_free(ptr %load_for_free15)
   ret void
 }
