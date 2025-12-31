@@ -364,6 +364,21 @@ pub fn declare_runtime_functions<'ctx>(
     );
     module.add_function("tl_tensor_randn", randn_type, None);
 
+    // VarBuilder-based parameter management (following Candle's official pattern)
+    // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize) -> *mut OpaqueTensor
+    let i8_ptr = context.ptr_type(AddressSpace::default());
+    let varbuilder_get_type =
+        void_ptr.fn_type(&[i8_ptr.into(), i64_type.into(), usize_ptr.into()], false);
+    module.add_function("tl_varbuilder_get", varbuilder_get_type, None);
+
+    // tl_update_all_params(learning_rate: f32) -> void
+    let update_params_type = void_type.fn_type(&[context.f32_type().into()], false);
+    module.add_function("tl_update_all_params", update_params_type, None);
+
+    // tl_varbuilder_grad(name: *const c_char) -> *mut OpaqueTensor
+    let varbuilder_grad_type = void_ptr.fn_type(&[i8_ptr.into()], false);
+    module.add_function("tl_varbuilder_grad", varbuilder_grad_type, None);
+
     // tl_tensor_backward(t: *mut OpaqueTensor) -> void
     let backward_type = void_type.fn_type(&[void_ptr.into()], false);
     module.add_function("tl_tensor_backward", backward_type, None);
@@ -406,6 +421,11 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_tensor_tril".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_sum_dim".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_embedding".to_string(), tensor_type.clone());
+
+    // VarBuilder-based parameter management
+    fn_return_types.insert("tl_varbuilder_get".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_update_all_params".to_string(), Type::Void);
+    fn_return_types.insert("tl_varbuilder_grad".to_string(), tensor_type.clone());
 
     // --- Standard Library Phase 1 ---
 
