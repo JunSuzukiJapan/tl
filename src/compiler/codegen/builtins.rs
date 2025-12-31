@@ -299,6 +299,9 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_embedding") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_embedding as usize);
     }
+    if let Some(f) = module.get_function("tl_tensor_reshape_dims") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_reshape_dims as usize);
+    }
 
     // Populate return types for lookups
     let tensor_type = Type::Tensor(Box::new(Type::F32), 1); // Common return type for many tensor ops
@@ -316,10 +319,30 @@ pub fn declare_runtime_functions<'ctx>(
     // Add missing types that were likely in the original file but I need to make sure are present
     fn_return_types.insert("tl_tensor_transpose".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_reshape".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_reshape_dims".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_sum_dim".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_matmul".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_sum".to_string(), Type::F32); // Or tensor 0D? Usually returns scalar in simple implementation
                                                                     // ... complete as needed based on original CodeGen
-                                                                    // tl_tensor_randn(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor
+                                                                    // tl_tensor_reshape_dims(tensor: *mut OpaqueTensor, dims: *const i64, num_dims: i64) -> *mut OpaqueTensor
+    let tensor_reshape_dims_type = void_ptr.fn_type(
+        &[
+            void_ptr.into(), // tensor
+            context
+                .i64_type()
+                .ptr_type(inkwell::AddressSpace::default())
+                .into(), // dims ptr
+            context.i64_type().into(), // num_dims
+        ],
+        false,
+    );
+    module.add_function("tl_tensor_reshape_dims", tensor_reshape_dims_type, None);
+
+    // tl_tensor_reshape(tensor: *mut OpaqueTensor, new_shape: *mut OpaqueTensor) -> *mut OpaqueTensor
+    let tensor_reshape_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    module.add_function("tl_tensor_reshape", tensor_reshape_type, None);
+
+    // tl_tensor_randn(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor
     let randn_type = void_ptr.fn_type(
         &[
             i64_type.into(),

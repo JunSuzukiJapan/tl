@@ -1043,35 +1043,55 @@ impl SemanticAnalyzer {
                     }
                     return Ok(t0); // Returns same tensor type (rank preserved)
                 } else if name == "reshape" {
-                    if args.len() != 2 {
+                    if args.len() < 2 {
                         return Err(SemanticError::ArgumentCountMismatch {
                             name: name.clone(),
                             expected: 2,
                             found: args.len(),
                         });
                     }
-                    let t0 = self.check_expr(&args[0])?;
-                    let t1 = self.check_expr(&args[1])?;
 
-                    match &t0 {
-                        Type::Tensor(_, _) => {} // Keep inner type, rank will be determined by shape
-                        _ => {
-                            return Err(SemanticError::TypeMismatch {
-                                expected: Type::Tensor(Box::new(Type::Void), 0),
-                                found: t0,
-                            })
+                    let t0 = self.check_expr(&args[0])?;
+                    if !matches!(t0, Type::Tensor(_, _)) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Tensor(Box::new(Type::Void), 0),
+                            found: t0,
+                        });
+                    }
+
+                    // Allow arg 1 to be tensor (old) OR args 1..N to be Int (new)
+                    if args.len() == 2 {
+                        let t1 = self.check_expr(&args[1])?;
+                        if matches!(t1, Type::Tensor(_, _)) {
+                            // Old behavior
+                        } else if matches!(t1, Type::I64 | Type::I32) {
+                            // New behavior (reshape to flat?)
+                        } else {
+                            // Error
                         }
                     }
-                    // Arg 1 (shape) must be a Tensor (specifically Tensor<i64/f32, 1> or similar)
-                    match t1 {
-                        Type::Tensor(_, _) => {}
-                        _ => {
-                            return Err(SemanticError::TypeMismatch {
-                                expected: Type::Tensor(Box::new(Type::Void), 0),
-                                found: t1,
-                            })
+
+                    // Validate remaining args are Int (if not using shape tensor)
+                    let t1 = self.check_expr(&args[1])?;
+                    if matches!(t1, Type::Tensor(_, _)) && args.len() == 2 {
+                        // OK
+                    } else {
+                        // Varargs mode: All remaining args must be Int
+                        for arg in &args[1..] {
+                            let t = self.check_expr(arg)?;
+                            if !matches!(t, Type::I64 | Type::I32) {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::I64,
+                                    found: t,
+                                });
+                            }
                         }
                     }
+
+                    if let Type::Tensor(inner, _) = t0 {
+                        return Ok(Type::Tensor(inner, 0));
+                    }
+                    unreachable!("t0 verified as tensor above");
                     // For reshape, return matched type with rank 0 (dynamic).
                     if let Type::Tensor(inner, _) = t0 {
                         return Ok(Type::Tensor(inner, 0));

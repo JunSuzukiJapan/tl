@@ -43,28 +43,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let (val, _) = self.compile_expr(value)?;
 
-                // If value comes from Variable or FieldAccess, it's an alias. We must clone it to separate ownership (refcount).
-                // Temporaries (implied by other exprs) are owned (fresh), so no clone.
-                let val = if matches!(value, Expr::Variable(_) | Expr::FieldAccess(_, _)) {
-                    if let Type::Tensor(_, _) = field_type {
-                        let clone_fn = self
-                            .module
-                            .get_function("tl_tensor_clone")
-                            .expect("tl_tensor_clone not found");
-                        let call = self
-                            .builder
-                            .build_call(clone_fn, &[val.into()], "cloned")
-                            .map_err(|e| e.to_string())?;
-                        match call.try_as_basic_value() {
-                            inkwell::values::ValueKind::Basic(v) => v,
-                            _ => return Err("Clone returned void".into()),
-                        }
-                    } else {
-                        val
-                    }
-                } else {
-                    val
-                };
+                // NOTE: Removed explicit tensor clone to preserve gradient graph.
+                // Candle's Arc-based tensors should handle aliasing safely.
+                // Memory management (freeing old values) is preserved below.
 
                 // Free old value if Tensor
                 if let Type::Tensor(_, _) = field_type {
@@ -95,27 +76,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if let Some(expr) = init {
                     let (val_ir, val_ty) = self.compile_expr(expr)?;
 
-                    // Clone if alias
-                    let val_ir = if matches!(expr, Expr::Variable(_) | Expr::FieldAccess(_, _)) {
-                        if let Type::Tensor(_, _) = val_ty {
-                            let clone_fn = self
-                                .module
-                                .get_function("tl_tensor_clone")
-                                .expect("tl_tensor_clone not found");
-                            let call = self
-                                .builder
-                                .build_call(clone_fn, &[val_ir.into()], "cloned")
-                                .map_err(|e| e.to_string())?;
-                            match call.try_as_basic_value() {
-                                inkwell::values::ValueKind::Basic(v) => v,
-                                _ => return Err("Clone returned void".into()),
-                            }
-                        } else {
-                            val_ir
-                        }
-                    } else {
-                        val_ir
-                    };
+                    // NOTE: Removed clone to preserve gradients
+
                     if self.variables.last().unwrap().contains_key(name) {
                         // Start of double-free fix logic
                         let (var_val, _, should_free) = &self.variables.last().unwrap()[name];
@@ -366,28 +328,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .map_err(|e| e.to_string())?;
                             }
                         }
+                        let (val_ir, _) = self.compile_expr(value)?;
 
-                        // Clone if alias
-                        if matches!(value, Expr::Variable(_) | Expr::FieldAccess(_, _)) {
-                            if let Type::Tensor(_, _) = val_type {
-                                let clone_fn = self
-                                    .module
-                                    .get_function("tl_tensor_clone")
-                                    .expect("tl_tensor_clone not found");
-                                let call = self
-                                    .builder
-                                    .build_call(clone_fn, &[val.into()], "cloned")
-                                    .map_err(|e| e.to_string())?;
-                                match call.try_as_basic_value() {
-                                    inkwell::values::ValueKind::Basic(v) => v,
-                                    _ => return Err("Clone returned void".into()),
-                                }
-                            } else {
-                                val
-                            }
-                        } else {
-                            val
-                        }
+                        // NOTE: Removed clone to preserve gradients
+                        val_ir
                     }
                     AssignOp::AddAssign => {
                         // Load current value

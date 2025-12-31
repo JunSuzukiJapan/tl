@@ -577,9 +577,34 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                             let mut compiled_args = Vec::with_capacity(args.len() + 1);
                             compiled_args.push(obj_val.into());
-                            for arg in args {
-                                let (val, _) = self.compile_expr(arg)?;
+
+                            // Check args. If arg provided, use it for req_grad. Default true for params?
+                            // detach() -> requires_grad=false.
+                            // detach(true) -> requires_grad=true.
+                            // But method sig in parser puts args in `args`.
+                            // If `args` has 1 element, use it.
+                            if args.len() >= 1 {
+                                let (val, _) = self.compile_expr(&args[0])?;
                                 compiled_args.push(val.into());
+                            } else {
+                                // Default false? step uses `(w - g*lr).detach()`.
+                                // We want the new weight to require grad for NEXT iter.
+                                // So default true?
+                                // Candle: `detach()` creates new tensor sharing storage. `requires_grad` is false.
+                                // We want to update parameter `self.W`.
+                                // Next iter `backward` needs `self.W` to require grad.
+                                // So we MUST set `req_grad=true`.
+                                // Let's make it mandatory or check logic.
+                                // In `train_add.tl`: `(self.W - g*lr).detach()`.
+                                // We likely want `detach(true)`.
+
+                                // Let's default to `true` for now in `tl` or enforce explicit?
+                                // Let's default to `true` because it's mostly used for param update.
+                                // Wait, usually `detach()` means "stop gradient".
+                                // But here we use it to "reset graph but keep leaf status".
+                                // So `true` makes sense for parameters.
+                                let true_val = self.context.bool_type().const_int(1, false);
+                                compiled_args.push(true_val.into());
                             }
 
                             let call = self
@@ -856,32 +881,111 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Ok((res, t_ty)) // Returns same type (Tensor)
                     }
                     "reshape" => {
-                        // reshape(tensor, shape_tensor)
-                        if args.len() != 2 {
-                            return Err("reshape requires 2 arguments: tensor, new_shape".into());
+                        if args.len() < 2 {
+                            return Err("reshape requires at least tensor and 1 dimension".into());
                         }
-                        let (t_val, t_ty) = self.compile_expr(&args[0])?;
-                        let (s_val, _s_ty) = self.compile_expr(&args[1])?;
 
+                        let (t_val, t_ty) = self.compile_expr(&args[0])?;
                         if !matches!(t_ty, Type::Tensor(_, _)) {
                             return Err("First argument to reshape must be a tensor".into());
                         }
 
-                        let reshape_fn = self
-                            .module
-                            .get_function("tl_tensor_reshape")
-                            .ok_or("tl_tensor_reshape not found")?;
+                        // Check if 2nd arg is Tensor (Old behavior)
+                        let (_, arg1_ty) = self.compile_expr(&args[1])?;
+                        if matches!(arg1_ty, Type::Tensor(_, _)) && args.len() == 2 {
+                            let (s_val, _) = self.compile_expr(&args[1])?;
+                            let reshape_fn = self
+                                .module
+                                .get_function("tl_tensor_reshape")
+                                .ok_or("tl_tensor_reshape not found")?;
+                            let call = self
+                                .builder
+                                .build_call(
+                                    reshape_fn,
+                                    &[t_val.into(), s_val.into()],
+                                    "reshape_res",
+                                )
+                                .map_err(|e| e.to_string())?;
+                            match call.try_as_basic_value() {
+                                ValueKind::Basic(v) => {
+                                    return Ok((v, Type::Tensor(Box::new(Type::Void), 0)))
+                                }
+                                _ => return Err("Invalid reshape return".into()),
+                            }
+                        }
+
+                        // New behavior: Varargs dims (arg 1..N are ints)
+                        let fn_val = self.module.get_function("tl_tensor_reshape_dims").unwrap();
+                        let num_dims = args.len() - 1;
+                        let i64_type = self.context.i64_type();
+
+                        // Allocate array for dims
+                        let dims_array_type = i64_type.array_type(num_dims as u32);
+                        let dims_alloca = self
+                            .builder
+                            .build_alloca(dims_array_type, "dims_alloca")
+                            .map_err(|e| e.to_string())?;
+
+                        // Store dims
+                        for (i, arg) in args[1..].iter().enumerate() {
+                            let (val, val_ty) = self.compile_expr(arg)?;
+                            let val_int = if val_ty == Type::I32 {
+                                self.builder
+                                    .build_int_z_extend(val.into_int_value(), i64_type, "ext")
+                                    .map_err(|e| e.to_string())?
+                            } else {
+                                val.into_int_value()
+                            };
+
+                            unsafe {
+                                let gep = self
+                                    .builder
+                                    .build_gep(
+                                        dims_array_type,
+                                        dims_alloca,
+                                        &[
+                                            i64_type.const_int(0, false),
+                                            i64_type.const_int(i as u64, false),
+                                        ],
+                                        "dim_ptr",
+                                    )
+                                    .map_err(|e| e.to_string())?;
+                                self.builder
+                                    .build_store(gep, val_int)
+                                    .map_err(|e| e.to_string())?;
+                            }
+                        }
+
+                        // Pass pointer to first element
+                        let first_elem_ptr = unsafe {
+                            self.builder
+                                .build_gep(
+                                    dims_array_type,
+                                    dims_alloca,
+                                    &[i64_type.const_int(0, false), i64_type.const_int(0, false)],
+                                    "dims_ptr",
+                                )
+                                .map_err(|e| e.to_string())?
+                        };
 
                         let call = self
                             .builder
-                            .build_call(reshape_fn, &[t_val.into(), s_val.into()], "reshape_res")
+                            .build_call(
+                                fn_val,
+                                &[
+                                    t_val.into(),
+                                    first_elem_ptr.into(),
+                                    i64_type.const_int(num_dims as u64, false).into(),
+                                ],
+                                "reshape_dims_res",
+                            )
                             .map_err(|e| e.to_string())?;
 
                         let res = match call.try_as_basic_value() {
                             ValueKind::Basic(v) => v,
-                            _ => return Err("Invalid reshape return".into()),
+                            _ => return Err("Invalid reshape_dims return".into()),
                         };
-                        Ok((res, t_ty)) // Returns same type (Tensor)
+                        return Ok((res, Type::Tensor(Box::new(Type::Void), 0)));
                     }
                     "softmax" => {
                         if args.len() != 2 {
