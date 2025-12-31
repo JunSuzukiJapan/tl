@@ -2,10 +2,18 @@
 source_filename = "main"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 
-@str_literal = private unnamed_addr constant [12 x i8] c"True Branch\00", align 1
-@str_literal.41 = private unnamed_addr constant [13 x i8] c"False Branch\00", align 1
-@str_literal.42 = private unnamed_addr constant [13 x i8] c"Wrong Branch\00", align 1
-@str_literal.43 = private unnamed_addr constant [13 x i8] c"False Branch\00", align 1
+@str_literal = private unnamed_addr constant [20 x i8] c"Testing File I/O...\00", align 1
+@str_literal.49 = private unnamed_addr constant [16 x i8] c"test_output.txt\00", align 1
+@str_literal.50 = private unnamed_addr constant [26 x i8] c"Hello TensorLogic StdLib!\00", align 1
+@str_literal.51 = private unnamed_addr constant [2 x i8] c"w\00", align 1
+@str_literal.52 = private unnamed_addr constant [2 x i8] c"r\00", align 1
+@str_literal.53 = private unnamed_addr constant [17 x i8] c"File I/O SUCCESS\00", align 1
+@str_literal.54 = private unnamed_addr constant [16 x i8] c"File I/O FAILED\00", align 1
+@str_literal.55 = private unnamed_addr constant [15 x i8] c"Testing Env...\00", align 1
+@str_literal.56 = private unnamed_addr constant [5 x i8] c"PATH\00", align 1
+@str_literal.57 = private unnamed_addr constant [1 x i8] zeroinitializer, align 1
+@str_literal.58 = private unnamed_addr constant [25 x i8] c"Env SUCCESS (PATH found)\00", align 1
+@str_literal.59 = private unnamed_addr constant [11 x i8] c"Env FAILED\00", align 1
 
 declare void @tl_print_i64(i64)
 
@@ -71,6 +79,8 @@ declare void @tl_tensor_div_assign(ptr, ptr)
 
 declare void @tl_register_tensor(ptr, ptr)
 
+declare i32 @strcmp(ptr, ptr)
+
 declare ptr @tl_tensor_randn(i64, ptr, i1)
 
 declare void @tl_tensor_backward(ptr)
@@ -84,6 +94,20 @@ declare ptr @tl_tensor_softmax(ptr, i64)
 declare ptr @tl_tensor_cross_entropy(ptr, ptr)
 
 declare void @tl_tensor_sub_assign.1(ptr, ptr)
+
+declare ptr @tl_file_open(ptr, ptr)
+
+declare ptr @tl_file_read_string(ptr)
+
+declare void @tl_file_write_string(ptr, ptr)
+
+declare void @tl_file_close(ptr)
+
+declare i1 @tl_http_download(ptr, ptr)
+
+declare ptr @tl_http_get(ptr)
+
+declare ptr @tl_env_get(ptr)
 
 declare void @tl_print_i64.2(i64)
 
@@ -149,49 +173,108 @@ declare void @tl_tensor_div_assign.32(ptr, ptr)
 
 declare void @tl_register_tensor.33(ptr, ptr)
 
-declare ptr @tl_tensor_randn.34(i64, ptr, i1)
+declare i32 @strcmp.34(ptr, ptr)
 
-declare void @tl_tensor_backward.35(ptr)
+declare ptr @tl_tensor_randn.35(i64, ptr, i1)
 
-declare ptr @tl_tensor_grad.36(ptr)
+declare void @tl_tensor_backward.36(ptr)
 
-declare ptr @tl_tensor_detach.37(ptr, i1)
+declare ptr @tl_tensor_grad.37(ptr)
 
-declare ptr @tl_tensor_softmax.38(ptr, i64)
+declare ptr @tl_tensor_detach.38(ptr, i1)
 
-declare ptr @tl_tensor_cross_entropy.39(ptr, ptr)
+declare ptr @tl_tensor_softmax.39(ptr, i64)
 
-declare void @tl_tensor_sub_assign.40(ptr, ptr)
+declare ptr @tl_tensor_cross_entropy.40(ptr, ptr)
 
-define void @main() {
+declare void @tl_tensor_sub_assign.41(ptr, ptr)
+
+declare ptr @tl_file_open.42(ptr, ptr)
+
+declare ptr @tl_file_read_string.43(ptr)
+
+declare void @tl_file_write_string.44(ptr, ptr)
+
+declare void @tl_file_close.45(ptr)
+
+declare i1 @tl_http_download.46(ptr, ptr)
+
+declare ptr @tl_http_get.47(ptr)
+
+declare ptr @tl_env_get.48(ptr)
+
+define void @test_file_io() {
 entry:
-  %x = alloca i64, align 8
-  store i64 10, ptr %x, align 8
-  %x1 = load i64, ptr %x, align 8
-  %gttmp = icmp sgt i64 %x1, 5
-  br i1 %gttmp, label %then, label %else
+  %read_content = alloca ptr, align 8
+  %f_r = alloca ptr, align 8
+  %f_w = alloca ptr, align 8
+  %content = alloca ptr, align 8
+  %path = alloca ptr, align 8
+  call void @tl_print_string(ptr @str_literal)
+  store ptr @str_literal.49, ptr %path, align 8
+  store ptr @str_literal.50, ptr %content, align 8
+  %path1 = load ptr, ptr %path, align 8
+  %call_tmp = call ptr @tl_file_open(ptr %path1, ptr @str_literal.51)
+  store ptr %call_tmp, ptr %f_w, align 8
+  %f_w2 = load ptr, ptr %f_w, align 8
+  %content3 = load ptr, ptr %content, align 8
+  call void @tl_file_write_string(ptr %f_w2, ptr %content3)
+  %f_w4 = load ptr, ptr %f_w, align 8
+  call void @tl_file_close(ptr %f_w4)
+  %path5 = load ptr, ptr %path, align 8
+  %call_tmp6 = call ptr @tl_file_open(ptr %path5, ptr @str_literal.52)
+  store ptr %call_tmp6, ptr %f_r, align 8
+  %f_r7 = load ptr, ptr %f_r, align 8
+  %call_method = call ptr @tl_file_read_string(ptr %f_r7)
+  store ptr %call_method, ptr %read_content, align 8
+  %f_r8 = load ptr, ptr %f_r, align 8
+  call void @tl_file_close(ptr %f_r8)
+  %read_content9 = load ptr, ptr %read_content, align 8
+  call void @tl_print_string(ptr %read_content9)
+  %read_content10 = load ptr, ptr %read_content, align 8
+  %content11 = load ptr, ptr %content, align 8
+  %strcmp_res = call i32 @strcmp(ptr %read_content10, ptr %content11)
+  %streq = icmp eq i32 %strcmp_res, 0
+  br i1 %streq, label %then, label %else
 
 then:                                             ; preds = %entry
-  call void @tl_print_string(ptr @str_literal)
+  call void @tl_print_string(ptr @str_literal.53)
   br label %merge
 
 else:                                             ; preds = %entry
-  call void @tl_print_string(ptr @str_literal.41)
+  call void @tl_print_string(ptr @str_literal.54)
   br label %merge
 
 merge:                                            ; preds = %else, %then
-  %x2 = load i64, ptr %x, align 8
-  %lttmp = icmp slt i64 %x2, 5
-  br i1 %lttmp, label %then3, label %else4
+  ret void
+}
 
-then3:                                            ; preds = %merge
-  call void @tl_print_string(ptr @str_literal.42)
-  br label %merge5
+define void @test_env() {
+entry:
+  %path_env = alloca ptr, align 8
+  call void @tl_print_string(ptr @str_literal.55)
+  %call_tmp = call ptr @tl_env_get(ptr @str_literal.56)
+  store ptr %call_tmp, ptr %path_env, align 8
+  %path_env1 = load ptr, ptr %path_env, align 8
+  %strcmp_res = call i32 @strcmp(ptr %path_env1, ptr @str_literal.57)
+  %strneq = icmp ne i32 %strcmp_res, 0
+  br i1 %strneq, label %then, label %else
 
-else4:                                            ; preds = %merge
-  call void @tl_print_string(ptr @str_literal.43)
-  br label %merge5
+then:                                             ; preds = %entry
+  call void @tl_print_string(ptr @str_literal.58)
+  br label %merge
 
-merge5:                                           ; preds = %else4, %then3
+else:                                             ; preds = %entry
+  call void @tl_print_string(ptr @str_literal.59)
+  br label %merge
+
+merge:                                            ; preds = %else, %then
+  ret void
+}
+
+define void @main() {
+entry:
+  call void @test_file_io()
+  call void @test_env()
   ret void
 }

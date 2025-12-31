@@ -1,5 +1,5 @@
-use crate::compiler::ast::*;
 use super::CodeGenerator;
+use crate::compiler::ast::*;
 use inkwell::values::*;
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -846,6 +846,42 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Ok((res, Type::F32))
                 }
             }
+            (Type::UserDefined(s1), Type::UserDefined(s2)) if s1 == "String" && s2 == "String" => {
+                let strcmp_fn = self
+                    .module
+                    .get_function("strcmp")
+                    .ok_or("strcmp not found")?;
+                let cmp = self
+                    .builder
+                    .build_call(strcmp_fn, &[lhs.into(), rhs.into()], "strcmp_res")
+                    .map_err(|e| e.to_string())?;
+
+                let cmp_val = match cmp.try_as_basic_value() {
+                    ValueKind::Basic(v) => v.into_int_value(),
+                    _ => return Err("Invalid strcmp return".into()),
+                };
+
+                let zero = self.context.i32_type().const_zero();
+                let res = match op {
+                    BinOp::Eq => self.builder.build_int_compare(
+                        inkwell::IntPredicate::EQ,
+                        cmp_val,
+                        zero,
+                        "streq",
+                    ),
+                    BinOp::Neq => self.builder.build_int_compare(
+                        inkwell::IntPredicate::NE,
+                        cmp_val,
+                        zero,
+                        "strneq",
+                    ),
+                    _ => return Err("Only == and != supported for Strings".into()),
+                }
+                .map_err(|e| e.to_string())?;
+
+                Ok((res.into(), Type::Bool))
+            }
+
             (Type::Bool, Type::Bool) => {
                 let l = lhs.into_int_value();
                 let r = rhs.into_int_value();
@@ -1045,5 +1081,4 @@ impl<'ctx> CodeGenerator<'ctx> {
             )),
         }
     }
-
 }

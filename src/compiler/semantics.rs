@@ -798,6 +798,134 @@ impl SemanticAnalyzer {
                     }
                     self.check_expr(&args[0])?;
                     return Ok(Type::Void);
+                }
+
+                // --- StdLib Phase 1 ---
+                // --- StdLib Static Methods ---
+                if name.contains("::") {
+                    let parts: Vec<&str> = name.split("::").collect();
+                    if parts.len() == 2 {
+                        match (parts[0], parts[1]) {
+                            ("File", "open") => {
+                                if args.len() != 2 {
+                                    return Err(SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 2,
+                                        found: args.len(),
+                                    });
+                                }
+                                self.check_expr(&args[0])?; // path
+                                self.check_expr(&args[1])?; // mode
+                                return Ok(Type::UserDefined("File".to_string()));
+                            }
+                            ("Env", "get") => {
+                                if args.len() != 1 {
+                                    return Err(SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 1,
+                                        found: args.len(),
+                                    });
+                                }
+                                self.check_expr(&args[0])?;
+                                return Ok(Type::UserDefined("String".to_string()));
+                            }
+                            ("Http", "download") => {
+                                if args.len() != 2 {
+                                    return Err(SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 2,
+                                        found: args.len(),
+                                    });
+                                }
+                                self.check_expr(&args[0])?;
+                                self.check_expr(&args[1])?;
+                                return Ok(Type::Bool);
+                            }
+                            ("Http", "get") => {
+                                if args.len() != 1 {
+                                    return Err(SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 1,
+                                        found: args.len(),
+                                    });
+                                }
+                                self.check_expr(&args[0])?;
+                                return Ok(Type::UserDefined("String".to_string()));
+                            }
+                            _ => return Err(SemanticError::FunctionNotFound(name.clone())),
+                        }
+                    }
+                }
+
+                // --- StdLib FFI (Legacy/Direct) ---
+                if name == "tl_file_open" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    let _t0 = self.check_expr(&args[0])?;
+                    let _t1 = self.check_expr(&args[1])?;
+                    return Ok(Type::UserDefined("File".to_string()));
+                }
+                if name == "tl_file_read_string" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    let _t0 = self.check_expr(&args[0])?;
+                    return Ok(Type::UserDefined("String".to_string()));
+                }
+                if name == "tl_file_write_string" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    self.check_expr(&args[0])?;
+                    self.check_expr(&args[1])?;
+                    return Ok(Type::Void);
+                }
+                if name == "tl_file_close" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    self.check_expr(&args[0])?;
+                    return Ok(Type::Void);
+                }
+                if name == "tl_env_get" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    let _t0 = self.check_expr(&args[0])?;
+                    return Ok(Type::UserDefined("String".to_string()));
+                }
+                if name == "tl_http_download" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    self.check_expr(&args[0])?;
+                    self.check_expr(&args[1])?;
+                    return Ok(Type::Bool);
                 } else if name == "transpose" {
                     if args.len() != 3 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -1276,7 +1404,6 @@ impl SemanticAnalyzer {
                 })
             }
             Expr::MethodCall(obj, method_name, args) => {
-                eprintln!("DEBUG: MethodCall '{}'", method_name);
                 let obj_type = self.check_expr(obj)?;
                 let type_name = match obj_type {
                     Type::UserDefined(name) => name,
@@ -1333,10 +1460,44 @@ impl SemanticAnalyzer {
                     }
                     Ok(func.return_type)
                 } else {
-                    Err(SemanticError::FunctionNotFound(format!(
-                        "{}::{}",
-                        type_name, method_name
-                    )))
+                    // Check StdLib methods
+                    match (type_name.as_str(), method_name.as_str()) {
+                        ("File", "read_string") => {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
+                            Ok(Type::UserDefined("String".to_string()))
+                        }
+                        ("File", "write_string") => {
+                            if args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 1,
+                                    found: args.len(),
+                                });
+                            }
+                            self.check_expr(&args[0])?;
+                            Ok(Type::Void)
+                        }
+                        ("File", "close") => {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
+                            Ok(Type::Void)
+                        }
+                        _ => Err(SemanticError::FunctionNotFound(format!(
+                            "{}::{}",
+                            type_name, method_name
+                        ))),
+                    }
                 }
             }
         }

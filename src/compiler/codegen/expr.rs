@@ -440,10 +440,19 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 if let Some(struct_name) = maybe_struct_name {
                     let mangled_name = format!("{}_{}", struct_name, method);
-                    let func_val = self.module.get_function(&mangled_name).ok_or(format!(
-                        "Method {} not found in struct {}",
-                        mangled_name, struct_name
-                    ))?;
+                    let stdlib_name = format!("tl_{}_{}", struct_name.to_lowercase(), method);
+
+                    let (func_val, final_name) =
+                        if let Some(f) = self.module.get_function(&mangled_name) {
+                            (f, mangled_name)
+                        } else if let Some(f) = self.module.get_function(&stdlib_name) {
+                            (f, stdlib_name)
+                        } else {
+                            return Err(format!(
+                                "Method {} not found in struct {} (checked {} and {})",
+                                method, struct_name, mangled_name, stdlib_name
+                            ));
+                        };
 
                     let mut compiled_args = Vec::with_capacity(args.len() + 1);
                     compiled_args.push(obj_val.into()); // self
@@ -460,7 +469,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                     let ret_ty = self
                         .fn_return_types
-                        .get(&mangled_name)
+                        .get(&final_name)
                         .unwrap_or(&Type::Void)
                         .clone();
                     if let Type::Void = ret_ty {
@@ -598,7 +607,51 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 Type::Void,
                             ))
                         }
-                        _ => Err(format!("Unknown method: {}", method)),
+                        _ => {
+                            // Generic method dispatch for UserDefined types calling runtime functions
+                            // e.g. File.read_string -> tl_file_read_string
+                            if let Type::UserDefined(type_name) = &obj_ty {
+                                let method_name = method.clone(); // e.g. read_string
+                                let runtime_fn_name =
+                                    format!("tl_{}_{}", type_name.to_lowercase(), method_name);
+
+                                let fn_val =
+                                    self.module.get_function(&runtime_fn_name).ok_or(format!(
+                                        "Method {} not found on type {} (checked {})",
+                                        method, type_name, runtime_fn_name
+                                    ))?;
+
+                                // Prepend object to args
+                                let mut compiled_args = Vec::with_capacity(args.len() + 1);
+                                compiled_args.push(obj_val.into());
+                                for arg in args {
+                                    let (val, _) = self.compile_expr(arg)?;
+                                    compiled_args.push(val.into());
+                                }
+
+                                let call = self
+                                    .builder
+                                    .build_call(fn_val, &compiled_args, "method_res")
+                                    .map_err(|e| e.to_string())?;
+
+                                // Determine return type from fn_return_types map
+                                let ret_type = self
+                                    .fn_return_types
+                                    .get(&runtime_fn_name)
+                                    .cloned()
+                                    .unwrap_or(Type::Void);
+
+                                match call.try_as_basic_value() {
+                                    ValueKind::Basic(v) => Ok((v, ret_type)),
+                                    _ => Ok((
+                                        self.context.i64_type().const_int(0, false).into(),
+                                        Type::Void,
+                                    )),
+                                }
+                            } else {
+                                Err(format!("Unknown method: {} on type {:?}", method, obj_ty))
+                            }
+                        }
                     }
                 }
             }
@@ -1128,10 +1181,24 @@ impl<'ctx> CodeGenerator<'ctx> {
                             _ => name,
                         };
 
-                        let func = self
-                            .module
-                            .get_function(llvm_func_name)
-                            .ok_or(format!("Function {} not found", name))?;
+                        // Handle static method syntax: Type::method -> tl_type_method
+                        let resolved_name = if llvm_func_name.contains("::") {
+                            let parts: Vec<&str> = llvm_func_name.split("::").collect();
+                            if parts.len() == 2 {
+                                let type_name = parts[0];
+                                let method = parts[1];
+                                format!("tl_{}_{}", type_name.to_lowercase(), method)
+                            } else {
+                                llvm_func_name.to_string()
+                            }
+                        } else {
+                            llvm_func_name.to_string()
+                        };
+
+                        let func = self.module.get_function(&resolved_name).ok_or(format!(
+                            "Function {} not found (resolved: {})",
+                            name, resolved_name
+                        ))?;
 
                         let mut compiled_args = Vec::new();
                         for arg in args {
@@ -1145,10 +1212,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .map_err(|e| e.to_string())?;
 
                         // Lookup return type
-                        let lookup_name = match name.as_str() {
-                            "slice" => "tl_tensor_slice",
-                            _ => name,
-                        };
+                        let lookup_name = resolved_name.as_str();
 
                         let ret_type = self
                             .fn_return_types

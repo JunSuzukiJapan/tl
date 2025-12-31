@@ -125,6 +125,12 @@ pub fn declare_runtime_functions<'ctx>(
     let register_type = void_type.fn_type(&[i8_ptr.into(), void_ptr.into()], false);
     module.add_function("tl_register_tensor", register_type, None);
 
+    // strcmp(s1: *const i8, s2: *const i8) -> i32
+    let strcmp_type = context
+        .i32_type()
+        .fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+    module.add_function("strcmp", strcmp_type, None);
+
     // --- Global Mappings ---
     // Mapping symbols is critical for JIT.
     // We do it here to keep CodeGenerator::new clean.
@@ -342,4 +348,85 @@ pub fn declare_runtime_functions<'ctx>(
     );
     fn_return_types.insert("tl_tensor_backward".to_string(), Type::Void);
     fn_return_types.insert("tl_tensor_sub_assign".to_string(), Type::Void);
+
+    // --- Standard Library Phase 1 ---
+
+    let i8_ptr = context.ptr_type(AddressSpace::default());
+
+    // File I/O
+    // tl_file_open(path: *const i8, mode: *const i8) -> *mut File
+    let file_open_type = void_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+    module.add_function("tl_file_open", file_open_type, None);
+
+    // tl_file_read_string(file: *mut File) -> *mut i8
+    let file_read_type = i8_ptr.fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_file_read_string", file_read_type, None);
+
+    // tl_file_write_string(file: *mut File, content: *const i8) -> void
+    let file_write_type = void_type.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
+    module.add_function("tl_file_write_string", file_write_type, None);
+
+    // tl_file_close(file: *mut File) -> void
+    let file_close_type = void_type.fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_file_close", file_close_type, None);
+
+    // Http
+    // tl_http_download(url: *const i8, dest: *const i8) -> bool
+    let http_dl_type = context
+        .bool_type()
+        .fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+    module.add_function("tl_http_download", http_dl_type, None);
+
+    // tl_http_get(url: *const i8) -> *mut i8
+    let http_get_type = i8_ptr.fn_type(&[i8_ptr.into()], false);
+    module.add_function("tl_http_get", http_get_type, None);
+
+    // Env
+    // tl_env_get(key: *const i8) -> *mut i8
+    let env_get_type = i8_ptr.fn_type(&[i8_ptr.into()], false);
+    module.add_function("tl_env_get", env_get_type, None);
+
+    // Mappings
+    if let Some(f) = module.get_function("tl_file_open") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_open as usize);
+    }
+    if let Some(f) = module.get_function("tl_file_read_string") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_read_string as usize);
+    }
+    if let Some(f) = module.get_function("tl_file_write_string") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_write_string as usize);
+    }
+    if let Some(f) = module.get_function("tl_file_close") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_close as usize);
+    }
+    if let Some(f) = module.get_function("tl_http_download") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_http_download as usize);
+    }
+    if let Some(f) = module.get_function("tl_http_get") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_http_get as usize);
+    }
+    if let Some(f) = module.get_function("tl_env_get") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_env_get as usize);
+    }
+
+    // Return types
+    fn_return_types.insert(
+        "tl_file_open".to_string(),
+        Type::UserDefined("File".to_string()),
+    );
+    fn_return_types.insert(
+        "tl_file_read_string".to_string(),
+        Type::UserDefined("String".to_string()),
+    );
+    fn_return_types.insert("tl_file_write_string".to_string(), Type::Void);
+    fn_return_types.insert("tl_file_close".to_string(), Type::Void);
+    fn_return_types.insert("tl_http_download".to_string(), Type::Bool);
+    fn_return_types.insert(
+        "tl_http_get".to_string(),
+        Type::UserDefined("String".to_string()),
+    );
+    fn_return_types.insert(
+        "tl_env_get".to_string(),
+        Type::UserDefined("String".to_string()),
+    );
 }

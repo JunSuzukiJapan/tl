@@ -35,14 +35,16 @@ fn sp<'a, E: nom::error::ParseError<&'a str>>(input: &'a str) -> IResult<&'a str
 use nom::combinator::verify;
 
 fn identifier(input: &str) -> IResult<&str, String> {
+    let segment = recognize(pair(
+        alt((alpha1, tag("_"))),
+        take_while(|c: char| c.is_alphanumeric() || c == '_'),
+    ));
+
+    // Allow usage of :: for namespaces (e.g. File::open)
     verify(
-        map(
-            recognize(pair(
-                alt((alpha1, tag("_"))),
-                take_while(|c: char| c.is_alphanumeric() || c == '_'),
-            )),
-            |s: &str| s.to_string(),
-        ),
+        map(recognize(separated_list1(tag("::"), segment)), |s: &str| {
+            s.to_string()
+        }),
         |s: &String| {
             let keywords = vec![
                 "fn", "struct", "impl", "let", "if", "else", "return", "for", "in", "true",
