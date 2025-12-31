@@ -1193,6 +1193,37 @@ impl SemanticAnalyzer {
                         });
                     }
                     return Ok(Type::Void);
+                } else if name == "varbuilder_get" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    let _name_type = self.check_expr(&args[0])?;
+                    let _shape_type = self.check_expr(&args[1])?;
+                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                } else if name == "update_all_params" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    let _lr_type = self.check_expr(&args[0])?;
+                    return Ok(Type::Void);
+                } else if name == "varbuilder_grad" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    let _name_type = self.check_expr(&args[0])?;
+                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
                 } else if name == "softmax" {
                     if args.len() != 2 {
                         return Err(SemanticError::ArgumentCountMismatch {
