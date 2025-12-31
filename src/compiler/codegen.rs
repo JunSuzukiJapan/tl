@@ -67,6 +67,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.module
             .add_function("tl_print_f32", print_f32_type, None);
 
+        let print_str_type = void_type.fn_type(&[void_ptr.into()], false);
+        self.module
+            .add_function("tl_print_string", print_str_type, None);
+
         // malloc(size: i64) -> *u8
         let malloc_type = void_ptr.fn_type(&[i64_type.into()], false);
         self.module.add_function("malloc", malloc_type, None);
@@ -2596,6 +2600,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .build_call(fn_val, &[arg_val.into()], "print_call")
                                     .map_err(|e| e.to_string())?;
                             }
+                            Type::UserDefined(s) if s == "String" => {
+                                let fn_val = self.module.get_function("tl_print_string");
+                                if let Some(f) = fn_val {
+                                    self.builder
+                                        .build_call(f, &[arg_val.into()], "print_call")
+                                        .map_err(|e| e.to_string())?;
+                                } else {
+                                    // If not declared, try to declare it (lazy) or error.
+                                    // Better to return error if not found, but it should be found if declared.
+                                    // For now, assume declared or error.
+                                    return Err("tl_print_string not found (add to init)".into());
+                                }
+                            }
                             _ => return Err(format!("Cannot print type {:?}", arg_type)),
                         }
                         return Ok((
@@ -3691,6 +3708,35 @@ impl<'ctx> CodeGenerator<'ctx> {
         let i64_type = self.context.i64_type();
         let f32_type = self.context.f32_type();
 
+        // 1. Try MatMul Optimization
+        if let Some(res_ptr) = self.try_compile_matmul(lhs_indices, value)? {
+            // Optimization successful, store result and return
+            // Register variable
+            let val = res_ptr;
+
+            // Correctly use ast::Type for alloca
+            let tensor_type = Type::Tensor(Box::new(Type::F32), lhs_indices.len());
+
+            let alloca = self.create_entry_block_alloca(
+                self.builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_parent()
+                    .unwrap(),
+                name,
+                &tensor_type,
+            );
+            self.builder
+                .build_store(alloca, val)
+                .map_err(|e| e.to_string())?;
+
+            self.variables
+                .last_mut()
+                .unwrap()
+                .insert(name.to_string(), (alloca.into(), tensor_type, false));
+            return Ok(());
+        }
+
         let mut index_bounds = HashMap::new();
         self.extract_index_bounds(value, &mut index_bounds)?;
 
@@ -4005,5 +4051,120 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             _ => Err(format!("Cannot convert {:?} to Tensor", ty)),
         }
+    }
+    // MatMul Optimization Helper
+    fn try_compile_matmul(
+        &mut self,
+        lhs_indices: &[String],
+        value: &Expr,
+    ) -> Result<Option<inkwell::values::PointerValue<'ctx>>, String> {
+        // Target Pattern: C[i, k] = A[i, j] * B[j, k]
+
+        // 1. Check constraints
+        if lhs_indices.len() != 2 {
+            return Ok(None);
+        }
+        let i_idx = &lhs_indices[0];
+        let k_idx = &lhs_indices[1];
+
+        // 2. Check binary operation (Mul)
+        let (lhs_op, rhs_op) = match value {
+            Expr::BinOp(lhs, op, rhs) if matches!(op, BinOp::Mul) => (lhs, rhs),
+            _ => return Ok(None),
+        };
+
+        // 3. Extract operands (A[...], B[...])
+        // Need to identify which is A and which is B based on indices
+        // A should be [i, j], B should be [j, k]
+
+        fn get_tensor_access_indices(expr: &Expr) -> Option<(String, Vec<String>)> {
+            match expr {
+                Expr::IndexAccess(inner, indices) => {
+                    if let Expr::Variable(name) = &**inner {
+                        Some((name.clone(), indices.clone()))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        }
+
+        let lhs_access = get_tensor_access_indices(lhs_op);
+        let rhs_access = get_tensor_access_indices(rhs_op);
+
+        if lhs_access.is_none() || rhs_access.is_none() {
+            return Ok(None);
+        }
+
+        let (a_name, a_indices) = lhs_access.unwrap();
+        let (b_name, b_indices) = rhs_access.unwrap();
+
+        // 4. Verify indices pattern for MatMul: [i, j] * [j, k] -> [i, k]
+        // or [i, j] * [k, j] (transpose) etc.
+        // For strict MatMul with tl_tensor_matmul: expects (M, K) * (K, N) -> (M, N)
+        // A indices: [i, j] -> i=M, j=K
+        // B indices: [j, k] -> j=K, k=N
+        // C indices: [i, k] -> i=M, k=N
+
+        if a_indices.len() != 2 || b_indices.len() != 2 {
+            return Ok(None);
+        }
+
+        if a_indices[0] == *i_idx
+            && b_indices[1] == *k_idx
+            && a_indices[1] == b_indices[0]
+            && a_indices[1] != *i_idx
+            && a_indices[1] != *k_idx
+        {
+            // Matched! A[i,j] * B[j,k]
+            // Lookup variables
+            let a_ptr = self.lookup_variable_ptr(&a_name)?;
+            let b_ptr = self.lookup_variable_ptr(&b_name)?;
+
+            // Call runtime
+            let mul_fn = self
+                .module
+                .get_function("tl_tensor_matmul")
+                .ok_or("tl_tensor_matmul not found")?;
+
+            let call = self
+                .builder
+                .build_call(mul_fn, &[a_ptr.into(), b_ptr.into()], "matmul_res")
+                .map_err(|e| e.to_string())?;
+
+            let res = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                _ => return Ok(None),
+            };
+            return Ok(Some(res));
+        }
+
+        Ok(None)
+    }
+
+    fn lookup_variable_ptr(
+        &self,
+        name: &str,
+    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        for scope in self.variables.iter().rev() {
+            if let Some((val, ty, _)) = scope.get(name) {
+                // val is the alloca (pointer to pointer for Tensor)
+                // We need to load the pointer
+                if let Type::Tensor(_, _) = ty {
+                    if val.is_pointer_value() {
+                        // Load the pointer from the alloca
+                        let ptr_to_ptr = val.into_pointer_value();
+                        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                        let loaded = self
+                            .builder
+                            .build_load(ptr_type, ptr_to_ptr, "load_tensor_ptr")
+                            .map_err(|e| e.to_string())?;
+                        return Ok(loaded.into_pointer_value());
+                    }
+                }
+            }
+        }
+        Err(format!("Variable {} not found or not a tensor", name))
     }
 }
