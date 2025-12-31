@@ -1139,39 +1139,43 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 "varbuilder_get expects string literal as first argument".into()
                             );
                         };
-                        let (rank, shape_ptr) = if let Expr::TensorLiteral(elements) = &args[1] {
-                            let rank = elements.len();
-                            let shape_values: Vec<_> = elements
-                                .iter()
-                                .map(|e| {
-                                    let (val, _) = self.compile_expr(e)?;
-                                    Ok(val)
-                                })
-                                .collect::<Result<Vec<_>, String>>()?;
-                            let i64_type = self.context.i64_type();
-                            let shape_alloca = self
-                                .builder
-                                .build_alloca(i64_type.array_type(rank as u32), "shape_arr")
-                                .unwrap();
-                            for (i, val) in shape_values.iter().enumerate() {
-                                let idx = self.context.i64_type().const_int(i as u64, false);
-                                let ptr = unsafe {
-                                    self.builder
-                                        .build_in_bounds_gep(
-                                            i64_type.array_type(rank as u32),
-                                            shape_alloca,
-                                            &[self.context.i64_type().const_zero(), idx],
-                                            &format!("shape_elem_{}", i),
-                                        )
-                                        .unwrap()
-                                };
-                                self.builder.build_store(ptr, val.into_int_value()).unwrap();
+                        let (rank, shape_ptr) = match &args[1] {
+                            Expr::TensorLiteral(elements) | Expr::TensorConstLiteral(elements) => {
+                                let rank = elements.len();
+                                let shape_values: Vec<_> = elements
+                                    .iter()
+                                    .map(|e| {
+                                        let (val, _) = self.compile_expr(e)?;
+                                        Ok(val)
+                                    })
+                                    .collect::<Result<Vec<_>, String>>()?;
+                                let i64_type = self.context.i64_type();
+                                let shape_alloca = self
+                                    .builder
+                                    .build_alloca(i64_type.array_type(rank as u32), "shape_arr")
+                                    .unwrap();
+                                for (i, val) in shape_values.iter().enumerate() {
+                                    let idx = self.context.i64_type().const_int(i as u64, false);
+                                    let ptr = unsafe {
+                                        self.builder
+                                            .build_in_bounds_gep(
+                                                i64_type.array_type(rank as u32),
+                                                shape_alloca,
+                                                &[self.context.i64_type().const_zero(), idx],
+                                                &format!("shape_elem_{}", i),
+                                            )
+                                            .unwrap()
+                                    };
+                                    self.builder.build_store(ptr, val.into_int_value()).unwrap();
+                                }
+                                (rank, shape_alloca)
                             }
-                            (rank, shape_alloca)
-                        } else {
-                            return Err(
-                                "varbuilder_get expects array literal as second argument".into()
-                            );
+                            _ => {
+                                return Err(
+                                    "varbuilder_get expects tensor literal as second argument"
+                                        .into(),
+                                );
+                            }
                         };
                         let fn_val = self.module.get_function("tl_varbuilder_get").unwrap();
                         let call = self
