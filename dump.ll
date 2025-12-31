@@ -2,12 +2,6 @@
 source_filename = "main"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 
-@tensor_name = private unnamed_addr constant [2 x i8] c"a\00", align 1
-@tensor_name.42 = private unnamed_addr constant [2 x i8] c"b\00", align 1
-@tensor_name.43 = private unnamed_addr constant [2 x i8] c"c\00", align 1
-@tensor_name.44 = private unnamed_addr constant [2 x i8] c"d\00", align 1
-@tensor_name.45 = private unnamed_addr constant [2 x i8] c"t\00", align 1
-
 declare void @tl_print_i64(i64)
 
 declare void @tl_print_f32(float)
@@ -166,144 +160,62 @@ declare void @tl_tensor_sub_assign.41(ptr, ptr)
 
 define void @main() {
 entry:
-  %x = alloca float, align 4
-  %t = alloca ptr, align 8
-  %not_val = alloca i64, align 8
-  %val = alloca i64, align 8
-  %d = alloca ptr, align 8
-  %c = alloca ptr, align 8
-  %b = alloca ptr, align 8
-  %a = alloca ptr, align 8
-  %tensor_data = alloca float, i64 2, align 4
-  %elem_ptr = getelementptr inbounds float, ptr %tensor_data, i64 0
-  store float 1.000000e+00, ptr %elem_ptr, align 4
-  %elem_ptr1 = getelementptr inbounds float, ptr %tensor_data, i64 1
-  store float 2.000000e+00, ptr %elem_ptr1, align 4
-  %tensor_shape = alloca i64, i64 1, align 8
-  %shape_ptr = getelementptr inbounds i64, ptr %tensor_shape, i64 0
-  store i64 2, ptr %shape_ptr, align 8
-  %new_tensor = call ptr @tl_tensor_new(ptr %tensor_data, i64 1, ptr %tensor_shape)
-  store ptr %new_tensor, ptr %a, align 8
-  call void @tl_register_tensor(ptr @tensor_name, ptr %new_tensor)
-  %tensor_data2 = alloca float, i64 2, align 4
-  %elem_ptr3 = getelementptr inbounds float, ptr %tensor_data2, i64 0
-  store float -1.000000e+00, ptr %elem_ptr3, align 4
-  %elem_ptr4 = getelementptr inbounds float, ptr %tensor_data2, i64 1
-  store float -2.000000e+00, ptr %elem_ptr4, align 4
-  %tensor_shape5 = alloca i64, i64 1, align 8
-  %shape_ptr6 = getelementptr inbounds i64, ptr %tensor_shape5, i64 0
-  store i64 2, ptr %shape_ptr6, align 8
-  %new_tensor7 = call ptr @tl_tensor_new(ptr %tensor_data2, i64 1, ptr %tensor_shape5)
-  store ptr %new_tensor7, ptr %b, align 8
-  call void @tl_register_tensor(ptr @tensor_name.42, ptr %new_tensor7)
-  %a8 = load ptr, ptr %a, align 8
-  %b9 = load ptr, ptr %b, align 8
-  %binop_res = call ptr @tl_tensor_add(ptr %a8, ptr %b9)
-  store ptr %binop_res, ptr %c, align 8
-  call void @tl_register_tensor(ptr @tensor_name.43, ptr %binop_res)
-  %c10 = load ptr, ptr %c, align 8
-  call void @tl_tensor_print(ptr %c10)
-  %a11 = load ptr, ptr %a, align 8
-  %neg = call ptr @tl_tensor_neg(ptr %a11)
-  store ptr %neg, ptr %d, align 8
-  call void @tl_register_tensor(ptr @tensor_name.44, ptr %neg)
-  store i1 true, ptr %val, align 1
-  %val12 = load i1, ptr %val, align 1
-  %nottmp = xor i1 %val12, true
-  store i1 %nottmp, ptr %not_val, align 1
-  %not_val13 = load i1, ptr %not_val, align 1
-  br i1 %not_val13, label %then, label %else
+  %val = alloca float, align 4
+  %b = alloca i64, align 8
+  %a = alloca i64, align 8
+  store i64 5, ptr %a, align 8
+  store i64 10, ptr %b, align 8
+  br i1 true, label %then, label %else
 
 then:                                             ; preds = %entry
-  %tensor_data14 = alloca float, i64 1, align 4
-  %elem_ptr15 = getelementptr inbounds float, ptr %tensor_data14, i64 0
-  store float 0.000000e+00, ptr %elem_ptr15, align 4
-  %tensor_shape16 = alloca i64, i64 1, align 8
-  %shape_ptr17 = getelementptr inbounds i64, ptr %tensor_shape16, i64 0
-  store i64 1, ptr %shape_ptr17, align 8
-  %new_tensor18 = call ptr @tl_tensor_new(ptr %tensor_data14, i64 1, ptr %tensor_shape16)
-  call void @tl_tensor_print(ptr %new_tensor18)
+  %a1 = load i64, ptr %a, align 8
+  call void @tl_print_i64(i64 %a1)
   br label %merge
 
 else:                                             ; preds = %entry
-  %tensor_data19 = alloca float, i64 1, align 4
-  %elem_ptr20 = getelementptr inbounds float, ptr %tensor_data19, i64 0
-  store float 1.000000e+00, ptr %elem_ptr20, align 4
-  %tensor_shape21 = alloca i64, i64 1, align 8
-  %shape_ptr22 = getelementptr inbounds i64, ptr %tensor_shape21, i64 0
-  store i64 1, ptr %shape_ptr22, align 8
-  %new_tensor23 = call ptr @tl_tensor_new(ptr %tensor_data19, i64 1, ptr %tensor_shape21)
-  call void @tl_tensor_print(ptr %new_tensor23)
+  %b2 = load i64, ptr %b, align 8
+  call void @tl_print_i64(i64 %b2)
   br label %merge
 
 merge:                                            ; preds = %else, %then
-  br i1 true, label %then24, label %else25
+  br i1 false, label %then3, label %else4
 
-then24:                                           ; preds = %merge
-  %tensor_data27 = alloca float, i64 1, align 4
-  %elem_ptr28 = getelementptr inbounds float, ptr %tensor_data27, i64 0
-  store float 1.000000e+02, ptr %elem_ptr28, align 4
-  %tensor_shape29 = alloca i64, i64 1, align 8
-  %shape_ptr30 = getelementptr inbounds i64, ptr %tensor_shape29, i64 0
-  store i64 1, ptr %shape_ptr30, align 8
-  %new_tensor31 = call ptr @tl_tensor_new(ptr %tensor_data27, i64 1, ptr %tensor_shape29)
-  call void @tl_tensor_print(ptr %new_tensor31)
-  br label %merge26
+then3:                                            ; preds = %merge
+  call void @tl_print_i64(i64 0)
+  br label %merge5
 
-else25:                                           ; preds = %merge
-  br label %merge26
+else4:                                            ; preds = %merge
+  br i1 true, label %then6, label %else7
 
-merge26:                                          ; preds = %else25, %then24
-  %tensor_data32 = alloca float, i64 3, align 4
-  %elem_ptr33 = getelementptr inbounds float, ptr %tensor_data32, i64 0
-  store float 1.000000e+01, ptr %elem_ptr33, align 4
-  %elem_ptr34 = getelementptr inbounds float, ptr %tensor_data32, i64 1
-  store float 2.000000e+01, ptr %elem_ptr34, align 4
-  %elem_ptr35 = getelementptr inbounds float, ptr %tensor_data32, i64 2
-  store float 3.000000e+01, ptr %elem_ptr35, align 4
-  %tensor_shape36 = alloca i64, i64 1, align 8
-  %shape_ptr37 = getelementptr inbounds i64, ptr %tensor_shape36, i64 0
-  store i64 3, ptr %shape_ptr37, align 8
-  %new_tensor38 = call ptr @tl_tensor_new(ptr %tensor_data32, i64 1, ptr %tensor_shape36)
-  store ptr %new_tensor38, ptr %t, align 8
-  call void @tl_register_tensor(ptr @tensor_name.45, ptr %new_tensor38)
-  %t39 = load ptr, ptr %t, align 8
-  %tensor_len = call i64 @tl_tensor_len(ptr %t39)
-  %for_tensor = alloca ptr, align 8
-  store ptr %t39, ptr %for_tensor, align 8
-  br label %for_header
-
-for_header:                                       ; preds = %for_body, %merge26
-  %for_idx = phi i64 [ 0, %merge26 ], [ %next_idx, %for_body ]
-  %for_cond = icmp slt i64 %for_idx, %tensor_len
-  br i1 %for_cond, label %for_body, label %for_end
-
-for_body:                                         ; preds = %for_header
-  %tensor_ptr = load ptr, ptr %for_tensor, align 8
-  %elem_val = call float @tl_tensor_get(ptr %tensor_ptr, i64 %for_idx)
-  store float %elem_val, ptr %x, align 4
-  %tensor_data40 = alloca float, i64 1, align 4
-  %x41 = load float, ptr %x, align 4
-  %elem_ptr42 = getelementptr inbounds float, ptr %tensor_data40, i64 0
-  store float %x41, ptr %elem_ptr42, align 4
-  %tensor_shape43 = alloca i64, i64 1, align 8
-  %shape_ptr44 = getelementptr inbounds i64, ptr %tensor_shape43, i64 0
-  store i64 1, ptr %shape_ptr44, align 8
-  %new_tensor45 = call ptr @tl_tensor_new(ptr %tensor_data40, i64 1, ptr %tensor_shape43)
-  call void @tl_tensor_print(ptr %new_tensor45)
-  %next_idx = add i64 %for_idx, 1
-  br label %for_header
-
-for_end:                                          ; preds = %for_header
-  %load_for_free = load ptr, ptr %d, align 8
-  call void @tl_tensor_free(ptr %load_for_free)
-  %load_for_free46 = load ptr, ptr %t, align 8
-  call void @tl_tensor_free(ptr %load_for_free46)
-  %load_for_free47 = load ptr, ptr %a, align 8
-  call void @tl_tensor_free(ptr %load_for_free47)
-  %load_for_free48 = load ptr, ptr %c, align 8
-  call void @tl_tensor_free(ptr %load_for_free48)
-  %load_for_free49 = load ptr, ptr %b, align 8
-  call void @tl_tensor_free(ptr %load_for_free49)
+merge5:                                           ; preds = %merge8, %then3
+  store float 4.200000e+01, ptr %val, align 4
+  %tensor_data = alloca float, i64 3, align 4
+  %val9 = load float, ptr %val, align 4
+  %elem_ptr = getelementptr inbounds float, ptr %tensor_data, i64 0
+  store float %val9, ptr %elem_ptr, align 4
+  %val10 = load float, ptr %val, align 4
+  %faddtmp = fadd float %val10, 1.000000e+00
+  %elem_ptr11 = getelementptr inbounds float, ptr %tensor_data, i64 1
+  store float %faddtmp, ptr %elem_ptr11, align 4
+  %val12 = load float, ptr %val, align 4
+  %fmultmp = fmul float %val12, 2.000000e+00
+  %elem_ptr13 = getelementptr inbounds float, ptr %tensor_data, i64 2
+  store float %fmultmp, ptr %elem_ptr13, align 4
+  %tensor_shape = alloca i64, i64 1, align 8
+  %shape_ptr = getelementptr inbounds i64, ptr %tensor_shape, i64 0
+  store i64 3, ptr %shape_ptr, align 8
+  %new_tensor = call ptr @tl_tensor_new(ptr %tensor_data, i64 1, ptr %tensor_shape)
+  call void @tl_tensor_print(ptr %new_tensor)
   ret void
+
+then6:                                            ; preds = %else4
+  call void @tl_print_i64(i64 200)
+  br label %merge8
+
+else7:                                            ; preds = %else4
+  call void @tl_print_i64(i64 300)
+  br label %merge8
+
+merge8:                                           ; preds = %else7, %then6
+  br label %merge5
 }

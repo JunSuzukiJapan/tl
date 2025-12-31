@@ -131,7 +131,8 @@ pub enum Expr {
     Int(i64),
     Bool(bool),
     StringLiteral(String),
-    TensorLiteral(Vec<Expr>), // Nested Arrays
+    TensorLiteral(Vec<Expr>),      // Dynamic tensor with expressions
+    TensorConstLiteral(Vec<Expr>), // Static tensor with only constants (optimized)
 
     // Variables & Access
     Variable(String),

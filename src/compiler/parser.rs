@@ -156,14 +156,30 @@ fn parse_if_expr(input: &str) -> IResult<&str, Expr> {
 }
 
 fn parse_tensor_literal(input: &str) -> IResult<&str, Expr> {
-    map(
-        delimited(
-            ws(char('[')),
-            separated_list0(ws(char(',')), parse_expr),
-            ws(char(']')),
-        ),
-        Expr::TensorLiteral,
-    )(input)
+    let (input, elements) = delimited(
+        ws(char('[')),
+        separated_list0(ws(char(',')), parse_expr),
+        ws(char(']')),
+    )(input)?;
+
+    // Check if all elements are constants (recursively)
+    fn is_const(expr: &Expr) -> bool {
+        match expr {
+            Expr::Float(_) | Expr::Int(_) | Expr::Bool(_) => true,
+            Expr::TensorLiteral(elems) | Expr::TensorConstLiteral(elems) => {
+                elems.iter().all(is_const)
+            }
+            _ => false,
+        }
+    }
+
+    let all_const = elements.iter().all(is_const);
+
+    if all_const {
+        Ok((input, Expr::TensorConstLiteral(elements)))
+    } else {
+        Ok((input, Expr::TensorLiteral(elements)))
+    }
 }
 
 // Aggregation: sum(expr for var in range) or sum(expr for var in range where cond)

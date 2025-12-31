@@ -2208,6 +2208,143 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 Ok((res, Type::Tensor(Box::new(Type::F32), rank)))
             }
+            Expr::TensorConstLiteral(elements) => {
+                // Optimized path for constant tensor literals - static extraction
+                fn flatten_const(exprs: &[Expr]) -> Result<(Vec<f64>, Vec<usize>), String> {
+                    if exprs.is_empty() {
+                        return Ok((vec![], vec![0]));
+                    }
+
+                    let is_nested = matches!(
+                        exprs[0],
+                        Expr::TensorConstLiteral(_) | Expr::TensorLiteral(_)
+                    );
+                    if is_nested {
+                        let mut flat_data = Vec::new();
+                        let mut first_shape = None;
+
+                        for e in exprs {
+                            let (children, shape) = match e {
+                                Expr::TensorConstLiteral(c) | Expr::TensorLiteral(c) => {
+                                    let (data, s) = flatten_const(c)?;
+                                    (data, s)
+                                }
+                                _ => return Err("Mixed types in const tensor".into()),
+                            };
+                            if let Some(ref s) = first_shape {
+                                if s != &shape {
+                                    return Err("Ragged tensors not supported".into());
+                                }
+                            } else {
+                                first_shape = Some(shape.clone());
+                            }
+                            flat_data.extend(children);
+                        }
+
+                        let mut shape = vec![exprs.len()];
+                        if let Some(s) = first_shape {
+                            shape.extend(s);
+                        }
+                        Ok((flat_data, shape))
+                    } else {
+                        let mut data = Vec::new();
+                        for e in exprs {
+                            match e {
+                                Expr::Float(f) => data.push(*f),
+                                Expr::Int(i) => data.push(*i as f64),
+                                _ => return Err("Const tensor must contain only literals".into()),
+                            }
+                        }
+                        Ok((data, vec![exprs.len()]))
+                    }
+                }
+
+                let (flat_data, shape) = flatten_const(elements)?;
+                let rank = shape.len();
+                let len = flat_data.len() as u64;
+
+                let f32_type = self.context.f32_type();
+                let i64_type = self.context.i64_type();
+
+                // Allocate and store static data
+                let data_alloca = self
+                    .builder
+                    .build_array_alloca(
+                        f32_type,
+                        i64_type.const_int(len, false),
+                        "const_tensor_data",
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                for (i, val) in flat_data.iter().enumerate() {
+                    let float_val = f32_type.const_float(*val);
+                    let ptr = unsafe {
+                        self.builder
+                            .build_in_bounds_gep(
+                                f32_type,
+                                data_alloca,
+                                &[i64_type.const_int(i as u64, false)],
+                                "const_elem_ptr",
+                            )
+                            .map_err(|e| e.to_string())?
+                    };
+                    self.builder
+                        .build_store(ptr, float_val)
+                        .map_err(|e| e.to_string())?;
+                }
+
+                // Allocate and store shape
+                let shape_alloca = self
+                    .builder
+                    .build_array_alloca(
+                        i64_type,
+                        i64_type.const_int(rank as u64, false),
+                        "const_tensor_shape",
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                for (i, dim) in shape.iter().enumerate() {
+                    let ptr = unsafe {
+                        self.builder
+                            .build_in_bounds_gep(
+                                i64_type,
+                                shape_alloca,
+                                &[i64_type.const_int(i as u64, false)],
+                                "const_shape_ptr",
+                            )
+                            .map_err(|e| e.to_string())?
+                    };
+                    self.builder
+                        .build_store(ptr, i64_type.const_int(*dim as u64, false))
+                        .map_err(|e| e.to_string())?;
+                }
+
+                // Call tl_tensor_new
+                let new_fn = self
+                    .module
+                    .get_function("tl_tensor_new")
+                    .ok_or("tl_tensor_new not found")?;
+
+                let call = self
+                    .builder
+                    .build_call(
+                        new_fn,
+                        &[
+                            data_alloca.into(),
+                            i64_type.const_int(rank as u64, false).into(),
+                            shape_alloca.into(),
+                        ],
+                        "new_const_tensor",
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                let res = match call.try_as_basic_value() {
+                    ValueKind::Basic(v) => v,
+                    _ => return Err("Invalid tl_tensor_new return".into()),
+                };
+
+                Ok((res, Type::Tensor(Box::new(Type::F32), rank)))
+            }
             Expr::MethodCall(obj, method, args) => {
                 let (obj_val, obj_ty) = self.compile_expr(obj)?;
 

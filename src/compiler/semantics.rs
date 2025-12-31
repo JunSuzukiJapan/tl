@@ -988,7 +988,7 @@ impl SemanticAnalyzer {
 
                 return Err(SemanticError::FunctionNotFound(name.clone()));
             }
-            Expr::TensorLiteral(elements) => {
+            Expr::TensorLiteral(elements) | Expr::TensorConstLiteral(elements) => {
                 // Check all elements are same type
                 if elements.is_empty() {
                     return Ok(Type::Tensor(Box::new(Type::F32), 1)); // Empty tensor?
