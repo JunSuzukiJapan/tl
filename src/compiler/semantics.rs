@@ -549,17 +549,43 @@ impl SemanticAnalyzer {
                 iterator,
                 body,
             } => {
-                let iter_type = self.check_expr(iterator)?;
+                // Check if iterator is range(start, end)
+                // This is a special case for the compiler intrinsic 'range'
+                let is_range = if let Expr::FnCall(name, args) = iterator {
+                    if name == "range" && args.len() == 2 {
+                        // Check arguments
+                        let start_type = self.check_expr(&args[0])?;
+                        let end_type = self.check_expr(&args[1])?;
+                        // expect integers
+                        if !matches!(start_type, Type::I64 | Type::I32)
+                            || !matches!(end_type, Type::I64 | Type::I32)
+                        {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::I64,
+                                found: start_type, // simplified error
+                            });
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
 
-                // For simplified MVP, allow iteration over Tensor<T, 1> or Array
-                // Assume iter_type gives element type
-                let elem_type = match iter_type {
-                    Type::Tensor(t, 1) => *t,
-                    _ => {
-                        return Err(SemanticError::TypeMismatch {
-                            expected: Type::Tensor(Box::new(Type::F32), 1),
-                            found: iter_type,
-                        })
+                let elem_type = if is_range {
+                    Type::I64
+                } else {
+                    let iter_type = self.check_expr(iterator)?;
+                    match iter_type {
+                        Type::Tensor(t, 1) => *t,
+                        Type::TensorShaped(t, _) => *t, // Allow iterating shaped tensors?
+                        _ => {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::Tensor(Box::new(Type::F32), 1),
+                                found: iter_type,
+                            })
+                        }
                     }
                 };
 
@@ -1136,18 +1162,15 @@ impl SemanticAnalyzer {
             Expr::IfExpr(cond, then_block, else_block) => {
                 let cond_type = self.check_expr(cond)?;
                 if cond_type != Type::Bool {
-                    // Warning or Error? Strict for now.
+                    return Err(SemanticError::TypeMismatch {
+                        expected: Type::Bool,
+                        found: cond_type,
+                    });
                 }
 
-                // Check Then Block (expr block)
+                // Check Then Block
                 self.enter_scope();
                 let mut then_type = Type::Void;
-                // Wait, IfExpr in AST uses Vec<Stmt> for blocks, reusing ParseBlock Logic.
-                // But ParseBlock returns Vec<Stmt>.
-                // So we need to evaluate the block stmts similar to Expr::Block logic above.
-                // Refactor Block Logic?
-
-                // Inline logic for now
                 for (i, stmt) in then_block.iter().enumerate() {
                     if i == then_block.len() - 1 {
                         if let Stmt::Expr(e) = stmt {
@@ -1161,13 +1184,14 @@ impl SemanticAnalyzer {
                 }
                 self.exit_scope();
 
-                if let Some(else_stmts) = else_block {
+                // Check Else Block
+                let else_type = if let Some(else_stmts) = else_block {
                     self.enter_scope();
-                    let mut else_type = Type::Void;
+                    let mut e_type = Type::Void;
                     for (i, stmt) in else_stmts.iter().enumerate() {
                         if i == else_stmts.len() - 1 {
                             if let Stmt::Expr(e) = stmt {
-                                else_type = self.check_expr(e)?;
+                                e_type = self.check_expr(e)?;
                             } else {
                                 self.check_stmt(stmt)?;
                             }
@@ -1176,26 +1200,25 @@ impl SemanticAnalyzer {
                         }
                     }
                     self.exit_scope();
+                    e_type
+                } else {
+                    Type::Void
+                };
 
-                    if then_type != else_type {
-                        return Err(SemanticError::TypeMismatch {
-                            expected: then_type,
-                            found: else_type,
-                        });
-                    }
+                // Merge types
+                if then_type == else_type {
                     Ok(then_type)
                 } else {
-                    // If no else, must return Void
-                    if then_type != Type::Void {
-                        // error? or just imply void? Rust implies mismatch with () if else missing.
-                        // We'll enforce Void.
-                        return Err(SemanticError::TypeMismatch {
-                            expected: Type::Void,
-                            found: then_type,
-                        });
-                    }
-                    Ok(Type::Void)
+                    // Simple compatibility check (e.g. F32 vs I64 casting?)
+                    // For strict semantics, error.
+                    // But if one is Void (e.g. if-without-else used as expr?), error.
+                    // If Expr::IfExpr is used, it expects a value. If else is missing, it returns Void?
+                    Err(SemanticError::TypeMismatch {
+                        expected: then_type,
+                        found: else_type,
+                    })
                 }
+                // End of Expr::IfExpr
             }
             Expr::Aggregation {
                 op: _,
