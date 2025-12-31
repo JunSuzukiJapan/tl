@@ -299,6 +299,17 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_embedding") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_embedding as usize);
     }
+
+    // VarBuilder-based parameter management
+    if let Some(f) = module.get_function("tl_varbuilder_get") {
+        execution_engine.add_global_mapping(&f, runtime::tl_varbuilder_get as usize);
+    }
+    if let Some(f) = module.get_function("tl_update_all_params") {
+        execution_engine.add_global_mapping(&f, runtime::tl_update_all_params as usize);
+    }
+    if let Some(f) = module.get_function("tl_varbuilder_grad") {
+        execution_engine.add_global_mapping(&f, runtime::tl_varbuilder_grad as usize);
+    }
     if let Some(f) = module.get_function("tl_tensor_reshape_dims") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_reshape_dims as usize);
     }

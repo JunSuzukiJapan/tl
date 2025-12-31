@@ -89,6 +89,107 @@ pub extern "C" fn tl_tensor_randn(
     }
 }
 
+// VarBuilder-based parameter management (following Candle's official pattern)
+// This allows proper gradient tracking for parameters stored in struct fields
+
+/// Create or retrieve a parameter from the global VarMap
+/// This is the key to proper gradient tracking - all trainable parameters
+/// must be created through this function to ensure they are registered in VarMap
+#[no_mangle]
+pub extern "C" fn tl_varbuilder_get(
+    name: *const std::os::raw::c_char,
+    rank: usize,
+    shape: *const usize,
+) -> *mut OpaqueTensor {
+    use std::ffi::CStr;
+
+    let name_str = unsafe { CStr::from_ptr(name).to_str().unwrap().to_string() };
+    let shape_slice = unsafe { slice::from_raw_parts(shape, rank) };
+
+    let varmap = GLOBAL_VAR_MAP.lock().unwrap();
+    let device = get_device();
+
+    // VarMap.data() returns &Mutex<HashMap<String, Var>>
+    let data = varmap.data();
+    let mut data_guard = data.lock().unwrap();
+
+    // Check if this parameter already exists
+    if !data_guard.contains_key(&name_str) {
+        // Create new parameter with random initialization
+        let tensor = Tensor::randn(0.0f32, 1.0f32, shape_slice, &device).unwrap();
+        let var = candle_core::Var::from_tensor(&tensor).unwrap();
+        data_guard.insert(name_str.clone(), var);
+    }
+
+    // Get the Var from VarMap
+    let var = data_guard.get(&name_str).unwrap().clone();
+    drop(data_guard); // Release lock
+    drop(varmap); // Release varmap lock
+
+    let tensor = var.as_tensor().clone();
+
+    // Store Var reference in Arc so it persists across clones
+    let var_arc = Arc::new(var);
+
+    Box::into_raw(Box::new(OpaqueTensor(
+        tensor,
+        Some(var_arc),
+        Some(name_str),
+    )))
+}
+
+/// Update all parameters in VarMap using SGD
+#[no_mangle]
+pub extern "C" fn tl_update_all_params(learning_rate: f32) {
+    let varmap = GLOBAL_VAR_MAP.lock().unwrap();
+    let data = varmap.data();
+    let data_guard = data.lock().unwrap();
+
+    LATEST_GRADS.with(|g| {
+        if let Some(grads) = &*g.borrow() {
+            for (name, var) in data_guard.iter() {
+                if let Some(grad) = grads.get(var.as_tensor()) {
+                    // SGD update: param = param - lr * grad
+                    let updated = (var.as_tensor() - (grad * learning_rate as f64).unwrap())
+                        .unwrap()
+                        .detach();
+
+                    // Update the Var with new value
+                    var.set(&updated).unwrap();
+
+                    println!("Updated param '{}': shape {:?}", name, updated.shape());
+                }
+            }
+        }
+    });
+}
+
+/// Get gradient for a specific parameter by name
+#[no_mangle]
+pub extern "C" fn tl_varbuilder_grad(name: *const std::os::raw::c_char) -> *mut OpaqueTensor {
+    use std::ffi::CStr;
+
+    let name_str = unsafe { CStr::from_ptr(name).to_str().unwrap() };
+
+    let varmap = GLOBAL_VAR_MAP.lock().unwrap();
+    let data = varmap.data();
+    let data_guard = data.lock().unwrap();
+
+    if let Some(var) = data_guard.get(name_str) {
+        let grad = LATEST_GRADS.with(|g| {
+            g.borrow()
+                .as_ref()
+                .and_then(|store| store.get(var.as_tensor()).cloned())
+        });
+
+        if let Some(g) = grad {
+            return Box::into_raw(Box::new(OpaqueTensor(g, None, None)));
+        }
+    }
+
+    std::ptr::null_mut()
+}
+
 #[no_mangle]
 pub extern "C" fn tl_tensor_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
