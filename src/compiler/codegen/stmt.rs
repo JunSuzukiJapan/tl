@@ -43,6 +43,29 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let (val, _) = self.compile_expr(value)?;
 
+                // If value comes from Variable or FieldAccess, it's an alias. We must clone it to separate ownership (refcount).
+                // Temporaries (implied by other exprs) are owned (fresh), so no clone.
+                let val = if matches!(value, Expr::Variable(_) | Expr::FieldAccess(_, _)) {
+                    if let Type::Tensor(_, _) = field_type {
+                        let clone_fn = self
+                            .module
+                            .get_function("tl_tensor_clone")
+                            .expect("tl_tensor_clone not found");
+                        let call = self
+                            .builder
+                            .build_call(clone_fn, &[val.into()], "cloned")
+                            .map_err(|e| e.to_string())?;
+                        match call.try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(v) => v,
+                            _ => return Err("Clone returned void".into()),
+                        }
+                    } else {
+                        val
+                    }
+                } else {
+                    val
+                };
+
                 // Free old value if Tensor
                 if let Type::Tensor(_, _) = field_type {
                     let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
@@ -71,6 +94,28 @@ impl<'ctx> CodeGenerator<'ctx> {
             } => {
                 if let Some(expr) = init {
                     let (val_ir, val_ty) = self.compile_expr(expr)?;
+
+                    // Clone if alias
+                    let val_ir = if matches!(expr, Expr::Variable(_) | Expr::FieldAccess(_, _)) {
+                        if let Type::Tensor(_, _) = val_ty {
+                            let clone_fn = self
+                                .module
+                                .get_function("tl_tensor_clone")
+                                .expect("tl_tensor_clone not found");
+                            let call = self
+                                .builder
+                                .build_call(clone_fn, &[val_ir.into()], "cloned")
+                                .map_err(|e| e.to_string())?;
+                            match call.try_as_basic_value() {
+                                inkwell::values::ValueKind::Basic(v) => v,
+                                _ => return Err("Clone returned void".into()),
+                            }
+                        } else {
+                            val_ir
+                        }
+                    } else {
+                        val_ir
+                    };
                     if self.variables.last().unwrap().contains_key(name) {
                         // Start of double-free fix logic
                         let (var_val, _, should_free) = &self.variables.last().unwrap()[name];
@@ -136,27 +181,82 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string());
                 }
 
-                let val = self.compile_expr(value)?;
-                // Verify stack allocation needed? For now simple register mapping
-                // But for mutable variables we need alloca.
-                // Let's use alloca for everything for simplicity.
+                let (val_ir, val_ty) = self.compile_expr(value)?;
+
+                // Clone if alias (initializing from variable or field)
+                let val_ir = if matches!(value, Expr::Variable(_) | Expr::FieldAccess(_, _)) {
+                    if let Type::Tensor(_, _) = val_ty {
+                        let clone_fn = self
+                            .module
+                            .get_function("tl_tensor_clone")
+                            .expect("tl_tensor_clone not found");
+                        let call = self
+                            .builder
+                            .build_call(clone_fn, &[val_ir.into()], "cloned")
+                            .map_err(|e| e.to_string())?;
+                        match call.try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(v) => v,
+                            _ => return Err("Clone returned void".into()),
+                        }
+                    } else {
+                        val_ir
+                    }
+                } else {
+                    val_ir
+                };
+
                 let current_function = self
                     .builder
                     .get_insert_block()
                     .unwrap()
                     .get_parent()
                     .unwrap();
-                let alloca = self.create_entry_block_alloca(current_function, name, &val.1);
+
+                // Check for shadowing in CURRENT scope
+                if let Some(scope) = self.variables.last_mut() {
+                    if let Some((old_ptr, old_ty, should_free)) = scope.get(name) {
+                        // If we are shadowing, and the old value effectively goes away (we overwrite the map entry),
+                        // we MUST free it if it's a tensor and we own it.
+                        // NOTE: In Rust, shadowing doesn't drop the old var immediately, it lives until end of scope.
+                        // BUT in our compiler, we only track variables by name in the map.
+                        // If we overwrite the map entry, we lose access to the old variable.
+                        // So for our language semantics, we treat shadowing as "replacing".
+                        // Use-case: `let x = ...; let x = ...;`
+                        if *should_free {
+                            if let Type::Tensor(_, _) = old_ty {
+                                if let Some(free_fn) = self.module.get_function("tl_tensor_free") {
+                                    let load_type =
+                                        self.context.ptr_type(inkwell::AddressSpace::default());
+                                    // old_ptr is the alloca. We load the OpaqueTensor* from it.
+                                    let current_val = self
+                                        .builder
+                                        .build_load(
+                                            load_type,
+                                            old_ptr.into_pointer_value(),
+                                            "old_shadow_val",
+                                        )
+                                        .map_err(|e| e.to_string())?;
+                                    self.builder
+                                        .build_call(free_fn, &[current_val.into()], "")
+                                        .map_err(|e| e.to_string())?;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let alloca = self.create_entry_block_alloca(current_function, name, &val_ty);
                 self.builder
-                    .build_store(alloca, val.0)
+                    .build_store(alloca, val_ir)
                     .map_err(|e| e.to_string())?;
+
                 self.variables
                     .last_mut()
                     .unwrap()
-                    .insert(name.clone(), (alloca.into(), val.1.clone(), true)); // Store pointer and type
+                    .insert(name.clone(), (alloca.into(), val_ty.clone(), true)); // Store pointer and type
 
                 // Register tensor with runtime if it is a tensor
-                if let Type::Tensor(_, _) = val.1 {
+                if let Type::Tensor(_, _) = val_ty {
                     if let Some(register_fn) = self.module.get_function("tl_register_tensor") {
                         // Create global string for name
                         let name_global = self
@@ -168,7 +268,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         self.builder
                             .build_call(
                                 register_fn,
-                                &[name_global.as_pointer_value().into(), val.0.into()],
+                                &[name_global.as_pointer_value().into(), val_ir.into()],
                                 "",
                             )
                             .map_err(|e| e.to_string())?;
@@ -266,7 +366,28 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .map_err(|e| e.to_string())?;
                             }
                         }
-                        val
+
+                        // Clone if alias
+                        if matches!(value, Expr::Variable(_) | Expr::FieldAccess(_, _)) {
+                            if let Type::Tensor(_, _) = val_type {
+                                let clone_fn = self
+                                    .module
+                                    .get_function("tl_tensor_clone")
+                                    .expect("tl_tensor_clone not found");
+                                let call = self
+                                    .builder
+                                    .build_call(clone_fn, &[val.into()], "cloned")
+                                    .map_err(|e| e.to_string())?;
+                                match call.try_as_basic_value() {
+                                    inkwell::values::ValueKind::Basic(v) => v,
+                                    _ => return Err("Clone returned void".into()),
+                                }
+                            } else {
+                                val
+                            }
+                        } else {
+                            val
+                        }
                     }
                     AssignOp::AddAssign => {
                         // Load current value
@@ -875,7 +996,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                         zero,
                         "strneq",
                     ),
-                    _ => return Err("Only == and != supported for Strings".into()),
+                    BinOp::Add => {
+                        let concat_fn = self
+                            .module
+                            .get_function("tl_string_concat")
+                            .ok_or("tl_string_concat not found")?;
+                        let res = self
+                            .builder
+                            .build_call(concat_fn, &[lhs.into(), rhs.into()], "strconcat")
+                            .map_err(|e| e.to_string())?;
+                        let res_val = match res.try_as_basic_value() {
+                            ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid string concat return".into()),
+                        };
+                        return Ok((res_val, Type::UserDefined("String".to_string())));
+                    }
+                    _ => return Err("Only ==, !=, and + supported for Strings".into()),
                 }
                 .map_err(|e| e.to_string())?;
 

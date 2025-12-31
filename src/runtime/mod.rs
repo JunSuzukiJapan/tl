@@ -537,6 +537,125 @@ pub extern "C" fn tl_tensor_log(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     }
 }
 
+// --- Transformer Support ---
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_sin(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    let res = t.sin().unwrap();
+    Box::into_raw(Box::new(OpaqueTensor(res)))
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_cos(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    let res = t.cos().unwrap();
+    Box::into_raw(Box::new(OpaqueTensor(res)))
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_relu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    let res = t.relu().unwrap();
+    Box::into_raw(Box::new(OpaqueTensor(res)))
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_gelu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    let res = t.gelu().unwrap();
+    Box::into_raw(Box::new(OpaqueTensor(res)))
+}
+
+// Lower triangular mask (diagonal=0 includes the diagonal)
+#[no_mangle]
+pub extern "C" fn tl_tensor_tril(t: *mut OpaqueTensor, diagonal: i32) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    let dims = t.dims();
+    let len = dims.len();
+    if len < 2 {
+        // Scalar or 1D, return as is? Or convention?
+        // Usually tril is for 2D+.
+        return Box::into_raw(Box::new(OpaqueTensor(t.clone())));
+    }
+    let h = dims[len - 2];
+    let w = dims[len - 1];
+    let dev = t.device();
+
+    // Create mask: col <= row + diagonal
+    let r = Tensor::arange(0u32, h as u32, dev)
+        .unwrap()
+        .unsqueeze(1)
+        .unwrap();
+    let c = Tensor::arange(0u32, w as u32, dev)
+        .unwrap()
+        .unsqueeze(0)
+        .unwrap();
+
+    // Convert to I64 for safe arithmetic
+    let r = r.to_dtype(candle_core::DType::I64).unwrap();
+    let c = c.to_dtype(candle_core::DType::I64).unwrap();
+    let diag = Tensor::new(diagonal as i64, dev).unwrap();
+
+    let boundary = r.broadcast_add(&diag).unwrap();
+
+    // Explicit broadcast for comparison [1, W] vs [H, 1] -> [H, W]
+    let h_dim = h as usize;
+    let w_dim = w as usize;
+    let target_shape = vec![h_dim, w_dim];
+
+    let c_b = c.broadcast_as(&target_shape[..]).unwrap();
+    let b_b = boundary.broadcast_as(&target_shape[..]).unwrap();
+    let mask = c_b.le(&b_b).unwrap();
+
+    let mask = mask.to_dtype(t.dtype()).unwrap();
+    let res = t.broadcast_mul(&mask).unwrap();
+    Box::into_raw(Box::new(OpaqueTensor(res)))
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_sum_dim(
+    t: *mut OpaqueTensor,
+    dim: usize,
+    keep_dim: bool,
+) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    // Candle sum: if keep_dim is true, it retains the dim.
+    let res = if keep_dim {
+        t.sum_keepdim(dim).unwrap()
+    } else {
+        t.sum(dim).unwrap()
+    };
+    Box::into_raw(Box::new(OpaqueTensor(res)))
+}
+
+// Embedding: indices [B, S], weights [V, D] -> [B, S, D]
+#[no_mangle]
+pub extern "C" fn tl_tensor_embedding(
+    indices: *mut OpaqueTensor,
+    weights: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    let indices = unsafe { &(*indices).0 };
+    let weights = unsafe { &(*weights).0 };
+
+    // Cast indices to U32 (required/safer for index_select)
+    // Input indices might be F32 if coming from literals.
+    let indices_u32 = indices.to_dtype(candle_core::DType::U32).unwrap();
+
+    // 1. Flatten indices to 1D
+    let flat_indices = indices_u32.flatten_all().unwrap();
+    // 2. Index Select on dim 0 of weights (gather)
+    let gathered = weights.index_select(&flat_indices, 0).unwrap();
+
+    // 3. Reshape result to [indices.shape, weights.dim(-1)]
+    let mut new_shape = indices.dims().to_vec();
+    new_shape.push(weights.dim(candle_core::D::Minus1).unwrap());
+
+    let res = gathered.reshape(new_shape).unwrap();
+
+    Box::into_raw(Box::new(OpaqueTensor(res)))
+}
+
 #[no_mangle]
 pub extern "C" fn tl_tensor_sqrt(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
@@ -554,7 +673,13 @@ pub extern "C" fn tl_tensor_matmul(
     unsafe {
         let t_a = &(*a).0;
         let t_b = &(*b).0;
-        let result = t_a.matmul(t_b).unwrap();
+        // Use broadcast_matmul to support [B, S, D] x [D, O] -> [B, S, O]
+        let result = t_a.broadcast_matmul(t_b).unwrap_or_else(|_| {
+            // Fallback to strict matmul if broadcast fails or if not needed?
+            // Actually broadcast_matmul typically covers strict matmul too.
+            // But let's unwrap and panic with message if fails.
+            t_a.matmul(t_b).unwrap()
+        });
         Box::into_raw(Box::new(OpaqueTensor(result)))
     }
 }

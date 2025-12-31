@@ -99,7 +99,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::I64 => self.context.i64_type().into(),
                     Type::F32 => self.context.f32_type().into(),
                     Type::Bool => self.context.bool_type().into(),
-                    Type::Tensor(_, _) | Type::Struct(_) => self
+                    Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => self
                         .context
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),
@@ -139,6 +139,65 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 }
                 Err(format!("Variable {} not found in scopes", name))
+            }
+            Expr::StaticMethodCall(type_name, method_name, args) => {
+                // 1. Resolve Mangled Name
+                let mangled_name = format!("tl_{}_{}", type_name, method_name);
+
+                // 2. Lookup Function
+                let func = self
+                    .module
+                    .get_function(&mangled_name)
+                    .or_else(|| {
+                        // Try fallback for stdlib mappings (lowercase)
+                        self.module.get_function(&format!(
+                            "tl_{}_{}",
+                            type_name.to_lowercase(),
+                            method_name
+                        ))
+                    })
+                    .ok_or(format!(
+                        "Static method {}::{} not found (mangled: {})",
+                        type_name, method_name, mangled_name
+                    ))?;
+
+                // 3. Compile Args
+                let mut compiled_args = Vec::new();
+                for arg in args {
+                    let (val, _) = self.compile_expr(arg)?;
+                    compiled_args.push(val.into());
+                }
+
+                // 4. Call
+                let call = self
+                    .builder
+                    .build_call(func, &compiled_args, "static_call")
+                    .map_err(|e| e.to_string())?;
+
+                // 5. Return Value
+                // Look up return type from semantic info?
+                // Or simplified: Just check what `try_as_basic_value` gives.
+                // But we need the Type enum for further compilation.
+                // We should really get this from the FunctionDef/StructDef.
+                // For now, let's rely on declared return types map or infer?
+                // `semantics.rs` already checked it.
+                // We need to know specific return Type to return (BasicValueEnum, Type).
+
+                // Hack: Look up in `self.fn_return_types` using mangled name?
+                // We should register these in `compile_module` when processing impls.
+                let ret_ty = self
+                    .fn_return_types
+                    .get(&mangled_name)
+                    .cloned()
+                    .unwrap_or(Type::Void);
+
+                match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => Ok((v, ret_ty)),
+                    _ => Ok((
+                        self.context.i64_type().const_int(0, false).into(),
+                        Type::Void,
+                    )),
+                }
             }
             Expr::BinOp(lhs, op, rhs) => {
                 let left = self.compile_expr(lhs)?;
@@ -439,7 +498,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
 
                 if let Some(struct_name) = maybe_struct_name {
-                    let mangled_name = format!("{}_{}", struct_name, method);
+                    // Try exact mangling first: tl_{Struct}_{Method}
+                    let mangled_name = format!("tl_{}_{}", struct_name, method);
+                    // Fallback to lowercase for stdlib compatibility (e.g. tl_file_open?)
+                    // Actually stdlib uses lowercase.
                     let stdlib_name = format!("tl_{}_{}", struct_name.to_lowercase(), method);
 
                     let (func_val, final_name) =
@@ -1007,21 +1069,132 @@ impl<'ctx> CodeGenerator<'ctx> {
                         ));
                     }
                     "sum" => {
+                        if args.len() == 1 {
+                            // Global sum
+                            let (arg_val, _arg_ty) = self.compile_expr(&args[0])?;
+                            let fn_val = self.module.get_function("tl_tensor_sum").unwrap();
+                            let call = self
+                                .builder
+                                .build_call(fn_val, &[arg_val.into()], "sum_res")
+                                .map_err(|e| e.to_string())?;
+
+                            let res = match call.try_as_basic_value() {
+                                ValueKind::Basic(v) => v,
+                                _ => return Err("Invalid sum return".into()),
+                            };
+                            // Return type is Tensor (scalar)
+                            return Ok((res, Type::Tensor(Box::new(Type::F32), 1)));
+                        } else if args.len() == 2 {
+                            // Sum over dim: sum(t, dim)
+                            let (t_val, _t_ty) = self.compile_expr(&args[0])?;
+                            let (dim_val, dim_ty) = self.compile_expr(&args[1])?;
+
+                            // Convert dim to i64 (usize)
+                            let dim_int = match dim_ty {
+                                Type::I64 => dim_val.into_int_value(),
+                                Type::I32 => self
+                                    .builder
+                                    .build_int_z_extend(
+                                        dim_val.into_int_value(),
+                                        self.context.i64_type(),
+                                        "dim_ext",
+                                    )
+                                    .map_err(|e| e.to_string())?,
+                                _ => return Err("sum dimension must be integer".into()),
+                            };
+
+                            // keep_dim = false (hardcoded for now, or could be optional arg)
+                            let keep_dim = self.context.bool_type().const_int(0, false);
+
+                            let fn_val = self.module.get_function("tl_tensor_sum_dim").unwrap();
+                            let call = self
+                                .builder
+                                .build_call(
+                                    fn_val,
+                                    &[t_val.into(), dim_int.into(), keep_dim.into()],
+                                    "sum_dim_res",
+                                )
+                                .map_err(|e| e.to_string())?;
+
+                            let res = match call.try_as_basic_value() {
+                                ValueKind::Basic(v) => v,
+                                _ => return Err("Invalid sum return".into()),
+                            };
+                            return Ok((res, Type::Tensor(Box::new(Type::F32), 1)));
+                        } else {
+                            return Err("sum requires 1 or 2 arguments".into());
+                        }
+                    }
+                    "sin" | "cos" | "relu" | "gelu" => {
                         if args.len() != 1 {
-                            return Err("sum requires 1 argument".into());
+                            return Err(format!("{} requires 1 argument", name).into());
                         }
                         let (arg_val, _arg_ty) = self.compile_expr(&args[0])?;
-                        let fn_val = self.module.get_function("tl_tensor_sum").unwrap();
+                        let func_name = format!("tl_tensor_{}", name);
+                        let fn_val = self
+                            .module
+                            .get_function(&func_name)
+                            .ok_or(format!("Function {} not found", func_name))?;
                         let call = self
                             .builder
-                            .build_call(fn_val, &[arg_val.into()], "sum_res")
+                            .build_call(fn_val, &[arg_val.into()], &format!("{}_res", name))
                             .map_err(|e| e.to_string())?;
-
                         let res = match call.try_as_basic_value() {
                             ValueKind::Basic(v) => v,
-                            _ => return Err("Invalid sum return".into()),
+                            _ => return Err(format!("Invalid {} return", name).into()),
                         };
-                        // Return type is Tensor (scalar)
+                        return Ok((res, Type::Tensor(Box::new(Type::F32), 1)));
+                    }
+                    "tril" => {
+                        if args.len() != 2 {
+                            return Err("tril requires 2 arguments".into());
+                        }
+                        let (t_val, _) = self.compile_expr(&args[0])?;
+                        let (diag_val, diag_ty) = self.compile_expr(&args[1])?;
+
+                        // Cast diag to i32
+                        let diag_i32 = match diag_ty {
+                            Type::I64 => {
+                                // Truncate i64 -> i32
+                                self.builder
+                                    .build_int_cast(
+                                        diag_val.into_int_value(),
+                                        self.context.i32_type(),
+                                        "diag_cast",
+                                    )
+                                    .map_err(|e| e.to_string())?
+                            }
+                            Type::I32 => diag_val.into_int_value(), // Should be this based on semantics
+                            _ => return Err("tril diagonal must be integer".into()),
+                        };
+
+                        let fn_val = self.module.get_function("tl_tensor_tril").unwrap();
+                        let call = self
+                            .builder
+                            .build_call(fn_val, &[t_val.into(), diag_i32.into()], "tril_res")
+                            .map_err(|e| e.to_string())?;
+                        let res = match call.try_as_basic_value() {
+                            ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid tril return".into()),
+                        };
+                        return Ok((res, Type::Tensor(Box::new(Type::F32), 1)));
+                    }
+                    "embedding" => {
+                        if args.len() != 2 {
+                            return Err("embedding requires 2 arguments".into());
+                        }
+                        let (idx_val, _) = self.compile_expr(&args[0])?;
+                        let (w_val, _) = self.compile_expr(&args[1])?;
+
+                        let fn_val = self.module.get_function("tl_tensor_embedding").unwrap();
+                        let call = self
+                            .builder
+                            .build_call(fn_val, &[idx_val.into(), w_val.into()], "emb_res")
+                            .map_err(|e| e.to_string())?;
+                        let res = match call.try_as_basic_value() {
+                            ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid embedding return".into()),
+                        };
                         return Ok((res, Type::Tensor(Box::new(Type::F32), 1)));
                     }
                     "pow" => {

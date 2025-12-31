@@ -123,14 +123,17 @@ impl SemanticAnalyzer {
             self.functions.insert(f.name.clone(), f.clone());
         }
 
+        // Check Impl blocks (Register and Verify methods)
+        // Note: Ideally we should separate "Register signatures" and "Check bodies"
+        // to support mutual recursion/out-of-order calls.
+        // For now, doing Impls first allows Functions (like main) to call methods.
+        for i in &module.impls {
+            self.check_impl_block(i)?;
+        }
+
         // Second pass: check function bodies
         for f in &module.functions {
             self.check_function(f, None)?;
-        }
-
-        // Check Impl blocks
-        for i in &module.impls {
-            self.check_impl_block(i)?;
         }
 
         // Check top-level statements (e.g. main script)
@@ -163,7 +166,18 @@ impl SemanticAnalyzer {
                         impl_block.target_type, method.name
                     )));
                 }
-                struct_methods.insert(method.name.clone(), method.clone());
+                struct_methods.insert(method.name.clone(), {
+                    let mut m = method.clone();
+                    // Resolve 'Self' in args to target_type
+                    for (_, arg_ty) in &mut m.args {
+                        if let Type::UserDefined(ref n) = arg_ty {
+                            if n == "Self" {
+                                *arg_ty = Type::UserDefined(impl_block.target_type.clone());
+                            }
+                        }
+                    }
+                    m
+                });
             }
         }
 
@@ -187,13 +201,23 @@ impl SemanticAnalyzer {
         // Set expected return type for this function
         self.current_return_type = Some(func.return_type.clone());
 
-        if let Some(st) = self_type {
-            self.declare_variable("self".to_string(), st)?;
-        }
-
         // Register arguments
         for (name, ty) in &func.args {
-            self.declare_variable(name.clone(), ty.clone())?;
+            let actual_ty = if let Type::UserDefined(ref type_name) = ty {
+                if type_name == "Self" {
+                    // Resolve Self -> Actual Type
+                    self_type.clone().ok_or_else(|| {
+                        SemanticError::VariableNotFound(
+                            "Self type not available in this context".into(),
+                        )
+                    })?
+                } else {
+                    ty.clone()
+                }
+            } else {
+                ty.clone()
+            };
+            self.declare_variable(name.clone(), actual_ty)?;
         }
 
         for stmt in &func.body {
@@ -668,30 +692,6 @@ impl SemanticAnalyzer {
                 }
             }
             Expr::FnCall(name, args) => {
-                if name == "softmax" {
-                    if args.len() != 2 {
-                        return Err(SemanticError::ArgumentCountMismatch {
-                            name: name.clone(),
-                            expected: 2,
-                            found: args.len(),
-                        });
-                    }
-                    let t0 = self.check_expr(&args[0])?;
-                    let t1 = self.check_expr(&args[1])?;
-                    if !matches!(t0, Type::Tensor(_, _)) {
-                        return Err(SemanticError::TypeMismatch {
-                            expected: Type::Tensor(Box::new(Type::Void), 0),
-                            found: t0,
-                        });
-                    }
-                    if t1 != Type::I64 {
-                        return Err(SemanticError::TypeMismatch {
-                            expected: Type::I64,
-                            found: t1,
-                        });
-                    }
-                    return Ok(t0);
-                }
                 if name == "cross_entropy" {
                     if args.len() != 2 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -754,23 +754,6 @@ impl SemanticAnalyzer {
                     // Let's return t0 for now.
                     return Ok(Type::Tensor(Box::new(Type::F32), 0));
                 }
-                if name == "sum" {
-                    if args.len() != 1 {
-                        return Err(SemanticError::ArgumentCountMismatch {
-                            name: name.clone(),
-                            expected: 1,
-                            found: args.len(),
-                        });
-                    }
-                    let t0 = self.check_expr(&args[0])?;
-                    if !matches!(t0, Type::Tensor(_, _)) {
-                        return Err(SemanticError::TypeMismatch {
-                            expected: Type::Tensor(Box::new(Type::Void), 0),
-                            found: t0,
-                        });
-                    }
-                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
-                }
                 if name == "enable_grad" {
                     if args.len() != 1 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -829,6 +812,17 @@ impl SemanticAnalyzer {
                                 self.check_expr(&args[0])?;
                                 return Ok(Type::UserDefined("String".to_string()));
                             }
+                            ("Path", "new") => {
+                                if args.len() != 1 {
+                                    return Err(SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 1,
+                                        found: args.len(),
+                                    });
+                                }
+                                self.check_expr(&args[0])?;
+                                return Ok(Type::UserDefined("Path".to_string()));
+                            }
                             ("Http", "download") => {
                                 if args.len() != 2 {
                                     return Err(SemanticError::ArgumentCountMismatch {
@@ -851,6 +845,39 @@ impl SemanticAnalyzer {
                                 }
                                 self.check_expr(&args[0])?;
                                 return Ok(Type::UserDefined("String".to_string()));
+                            }
+                            ("Env", "set") => {
+                                if args.len() != 2 {
+                                    return Err(SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 2,
+                                        found: args.len(),
+                                    });
+                                }
+                                self.check_expr(&args[0])?;
+                                self.check_expr(&args[1])?;
+                                return Ok(Type::Void);
+                            }
+                            ("System", "time") => {
+                                if !args.is_empty() {
+                                    return Err(SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 0,
+                                        found: args.len(),
+                                    });
+                                }
+                                return Ok(Type::F32);
+                            }
+                            ("System", "sleep") => {
+                                if args.len() != 1 {
+                                    return Err(SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 1,
+                                        found: args.len(),
+                                    });
+                                }
+                                self.check_expr(&args[0])?;
+                                return Ok(Type::Void);
                             }
                             _ => return Err(SemanticError::FunctionNotFound(name.clone())),
                         }
@@ -914,8 +941,7 @@ impl SemanticAnalyzer {
                     }
                     let _t0 = self.check_expr(&args[0])?;
                     return Ok(Type::UserDefined("String".to_string()));
-                }
-                if name == "tl_http_download" {
+                } else if name == "tl_http_download" {
                     if args.len() != 2 {
                         return Err(SemanticError::ArgumentCountMismatch {
                             name: name.clone(),
@@ -926,6 +952,62 @@ impl SemanticAnalyzer {
                     self.check_expr(&args[0])?;
                     self.check_expr(&args[1])?;
                     return Ok(Type::Bool);
+                } else if name == "softmax" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    self.check_expr(&args[0])?;
+                    self.check_expr(&args[1])?; // dim
+                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                } else if name == "sin" || name == "cos" || name == "relu" || name == "gelu" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    self.check_expr(&args[0])?;
+                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                } else if name == "tril" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    self.check_expr(&args[0])?; // tensor
+                    self.check_expr(&args[1])?; // diagonal (int)
+                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                } else if name == "embedding" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    self.check_expr(&args[0])?; // indices
+                    self.check_expr(&args[1])?; // weights
+                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                } else if name == "sum" {
+                    if args.len() != 1 && args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1, // or 2
+                            found: args.len(),
+                        });
+                    }
+                    self.check_expr(&args[0])?;
+                    if args.len() == 2 {
+                        self.check_expr(&args[1])?; // dim
+                    }
+                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
                 } else if name == "transpose" {
                     if args.len() != 3 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -971,8 +1053,8 @@ impl SemanticAnalyzer {
                     let t0 = self.check_expr(&args[0])?;
                     let t1 = self.check_expr(&args[1])?;
 
-                    match t0 {
-                        Type::Tensor(_, _) => {}
+                    match &t0 {
+                        Type::Tensor(_, _) => {} // Keep inner type, rank will be determined by shape
                         _ => {
                             return Err(SemanticError::TypeMismatch {
                                 expected: Type::Tensor(Box::new(Type::Void), 0),
@@ -990,7 +1072,11 @@ impl SemanticAnalyzer {
                             })
                         }
                     }
-                    return Ok(t0); // Returns same tensor type (ignoring rank change needed for strict typing)
+                    // For reshape, return matched type with rank 0 (dynamic).
+                    if let Type::Tensor(inner, _) = t0 {
+                        return Ok(Type::Tensor(inner, 0));
+                    }
+                    unreachable!("t0 verified as tensor above");
                 } else if name == "len" {
                     if args.len() != 1 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -1045,14 +1131,9 @@ impl SemanticAnalyzer {
                     return Ok(t0); // Returns same tensor type
                 } else if name == "randn" {
                     // randn(shape, requires_grad)
-                    // Attempt to infer rank from shape literal
-                    let mut rank = 1;
-                    if args.len() >= 1 {
-                        if let Expr::TensorLiteral(elements) = &args[0] {
-                            rank = elements.len();
-                        }
-                    }
-                    return Ok(Type::Tensor(Box::new(Type::F32), rank));
+                    // randn(shape, requires_grad)
+                    // Return rank 0 (dynamic) to be compatible with any target
+                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
                 } else if name == "exp" || name == "log" || name == "sqrt" {
                     if args.len() != 1 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -1380,7 +1461,92 @@ impl SemanticAnalyzer {
 
                 // Aggregation returns same type as the expression (for sum/avg)
                 // or I64 for count
+                // Aggregation returns same type as the expression (for sum/avg)
+                // or I64 for count
                 Ok(expr_ty)
+            }
+            Expr::StaticMethodCall(type_name, method_name, args) => {
+                // Check if type exists (built-in or user-defined struct)
+                // For now, only struct or built-in classes like File, Path, etc. use this.
+                // 1. Check if it is a built-in static method (e.g. File::open, Path::new)
+                //    This logic needs to be consistent with CodeGen.
+                // 2. Check if it is a user-defined struct method (e.g. Linear::new)
+
+                // Check arguments first
+                for arg in args {
+                    self.check_expr(arg)?;
+                }
+
+                let user_func = if let Some(methods_map) = self.methods.get(type_name) {
+                    methods_map.get(method_name).cloned()
+                } else {
+                    None
+                };
+
+                if let Some(func) = user_func {
+                    if func.args.len() != args.len() {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: format!("{}::{}", type_name, method_name),
+                            expected: func.args.len(),
+                            found: args.len(),
+                        });
+                    }
+                    for (_i, (arg_val, (_, arg_type))) in args.iter().zip(&func.args).enumerate() {
+                        let val_type = self.check_expr(arg_val)?;
+                        if !self.are_types_compatible(&val_type, arg_type) {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: arg_type.clone(),
+                                found: val_type,
+                            });
+                        }
+                    }
+                    return Ok(func.return_type);
+                }
+
+                // Fallback for builtins
+                match (type_name.as_str(), method_name.as_str()) {
+                    ("File", "open") => {
+                        if args.len() != 2 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: "File::open".into(),
+                                expected: 2,
+                                found: args.len(),
+                            });
+                        }
+                        return Ok(Type::UserDefined("File".to_string()));
+                    }
+                    ("Path", "new") => {
+                        if args.len() != 1 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: "Path::new".into(),
+                                expected: 1,
+                                found: args.len(),
+                            });
+                        }
+                        return Ok(Type::UserDefined("Path".to_string()));
+                    }
+                    ("System", "time") => {
+                        return Ok(Type::F64);
+                    }
+                    ("System", "sleep") => {
+                        return Ok(Type::Void);
+                    }
+                    ("Env", "get") => {
+                        return Ok(Type::UserDefined("String".into()));
+                    }
+                    ("Http", "get") => {
+                        return Ok(Type::UserDefined("String".into()));
+                    }
+                    ("Http", "download") => {
+                        return Ok(Type::Void);
+                    }
+                    _ => {
+                        return Err(SemanticError::FunctionNotFound(format!(
+                            "{}::{}",
+                            type_name, method_name
+                        )));
+                    }
+                }
             }
             Expr::FieldAccess(obj, field_name) => {
                 let obj_type = self.check_expr(obj)?;
@@ -1405,8 +1571,8 @@ impl SemanticAnalyzer {
             }
             Expr::MethodCall(obj, method_name, args) => {
                 let obj_type = self.check_expr(obj)?;
-                let type_name = match obj_type {
-                    Type::UserDefined(name) => name,
+                let type_name = match &obj_type {
+                    Type::UserDefined(name) => name.clone(),
                     Type::Tensor(_, _) => {
                         // Built-in tensor methods
                         if method_name == "backward" {
@@ -1438,24 +1604,40 @@ impl SemanticAnalyzer {
                 };
 
                 if let Some(func) = method_def {
-                    if args.len() != func.args.len() {
+                    let implicit_self = !func.args.is_empty() && func.args[0].0 == "self";
+                    let expected_arg_count = if implicit_self {
+                        func.args.len() - 1
+                    } else {
+                        func.args.len()
+                    };
+
+                    if args.len() != expected_arg_count {
                         return Err(SemanticError::ArgumentCountMismatch {
                             name: method_name.clone(),
-                            expected: func.args.len(),
+                            expected: expected_arg_count,
                             found: args.len(),
                         });
                     }
-                    // Check arg types for method
-                    for (i, arg) in args.iter().enumerate() {
-                        if i < func.args.len() {
-                            let arg_type = self.check_expr(arg)?;
-                            let expected_type = &func.args[i].1;
-                            if !self.are_types_compatible(expected_type, &arg_type) {
-                                return Err(SemanticError::TypeMismatch {
-                                    expected: expected_type.clone(),
-                                    found: arg_type,
-                                });
-                            }
+
+                    let mut func_arg_iter = func.args.iter();
+                    if implicit_self {
+                        let (_, self_type) = func_arg_iter.next().unwrap();
+                        if !self.are_types_compatible(self_type, &obj_type) {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: self_type.clone(),
+                                found: obj_type,
+                            });
+                        }
+                    }
+
+                    // Check remaining args
+                    for (arg_expr, (_, expected_type)) in args.iter().zip(func_arg_iter) {
+                        let arg_type = self.check_expr(arg_expr)?;
+                        if !self.are_types_compatible(expected_type, &arg_type) {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: expected_type.clone(),
+                                found: arg_type,
+                            });
                         }
                     }
                     Ok(func.return_type)
@@ -1493,6 +1675,67 @@ impl SemanticAnalyzer {
                             }
                             Ok(Type::Void)
                         }
+                        ("Path", "join") => {
+                            if args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 1,
+                                    found: args.len(),
+                                });
+                            }
+                            self.check_expr(&args[0])?;
+                            Ok(Type::UserDefined("Path".to_string()))
+                        }
+                        ("Path", "exists") => {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
+                            Ok(Type::Bool)
+                        }
+                        ("Path", "is_dir") => {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
+                            Ok(Type::Bool)
+                        }
+                        ("Path", "is_file") => {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
+                            Ok(Type::Bool)
+                        }
+                        ("Path", "to_string") => {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
+                            Ok(Type::UserDefined("String".to_string()))
+                        }
+                        ("Path", "free") => {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
+                            Ok(Type::Void)
+                        }
                         _ => Err(SemanticError::FunctionNotFound(format!(
                             "{}::{}",
                             type_name, method_name
@@ -1504,8 +1747,21 @@ impl SemanticAnalyzer {
     }
 
     fn are_types_compatible(&self, t1: &Type, t2: &Type) -> bool {
-        // Strict equality for now
-        t1 == t2
+        match (t1, t2) {
+            (Type::Tensor(i1, r1), Type::Tensor(i2, r2)) => {
+                // If inner types match
+                if i1 != i2 {
+                    return false;
+                }
+                // If either rank is 0, we treat it as dynamic/compatible
+                if *r1 == 0 || *r2 == 0 {
+                    return true;
+                }
+                // Otherwise strict match
+                r1 == r2
+            }
+            _ => t1 == t2,
+        }
     }
 
     fn collect_indices(&self, expr: &Expr, indices: &mut HashSet<String>) {

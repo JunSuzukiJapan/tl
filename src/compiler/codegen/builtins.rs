@@ -91,9 +91,43 @@ pub fn declare_runtime_functions<'ctx>(
         void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into()], false);
     module.add_function("tl_tensor_transpose", transpose_type, None);
 
-    // tl_tensor_reshape(t: *mut, shape: *mut) -> *mut
-    let reshape_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
-    module.add_function("tl_tensor_reshape", reshape_type, None);
+    // tl_tensor_pow(t: *mut Tensor, exponent: f32) -> *mut Tensor
+    let pow_type = void_ptr.fn_type(&[void_ptr.into(), f32_type.into()], false);
+    module.add_function("tl_tensor_pow", pow_type, None);
+
+    // tl_tensor_sqrt(t: *mut Tensor) -> *mut Tensor
+    let sqrt_type = void_ptr.fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_tensor_sqrt", sqrt_type, None);
+
+    // Transformer Ops
+    // tl_tensor_sin(t: *mut Tensor) -> *mut Tensor
+    module.add_function("tl_tensor_sin", sqrt_type, None); // Same signature as sqrt
+
+    // tl_tensor_cos(t: *mut Tensor) -> *mut Tensor
+    module.add_function("tl_tensor_cos", sqrt_type, None);
+
+    // tl_tensor_relu(t: *mut Tensor) -> *mut Tensor
+    module.add_function("tl_tensor_relu", sqrt_type, None);
+
+    // tl_tensor_gelu(t: *mut Tensor) -> *mut Tensor
+    module.add_function("tl_tensor_gelu", sqrt_type, None);
+
+    // tl_tensor_tril(t: *mut Tensor, diagonal: i32) -> *mut Tensor
+    let i32_type = context.i32_type();
+    let tril_type = void_ptr.fn_type(&[void_ptr.into(), i32_type.into()], false);
+    module.add_function("tl_tensor_tril", tril_type, None);
+
+    // tl_tensor_sum_dim(t: *mut Tensor, dim: usize, keep: bool) -> *mut Tensor
+    // usize -> i64 on 64-bit
+    let sum_dim_type = void_ptr.fn_type(
+        &[void_ptr.into(), i64_type.into(), context.bool_type().into()],
+        false,
+    );
+    module.add_function("tl_tensor_sum_dim", sum_dim_type, None);
+
+    // tl_tensor_embedding(indices: *mut Tensor, weights: *mut Tensor) -> *mut Tensor
+    let embedding_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    module.add_function("tl_tensor_embedding", embedding_type, None);
 
     // tl_tensor_sum(t: *mut) -> *mut
     let sum_type = void_ptr.fn_type(&[void_ptr.into()], false);
@@ -109,10 +143,10 @@ pub fn declare_runtime_functions<'ctx>(
     let unary_type = void_ptr.fn_type(&[void_ptr.into()], false);
     module.add_function("tl_tensor_exp", unary_type, None);
     module.add_function("tl_tensor_log", unary_type, None);
-    module.add_function("tl_tensor_sqrt", unary_type, None);
+    // module.add_function("tl_tensor_sqrt", unary_type, None); // Already declared above with specific type
 
     // Binary ops: pow
-    module.add_function("tl_tensor_pow", bin_type, None);
+    // module.add_function("tl_tensor_pow", bin_type, None); // Already declared above with specific type
 
     // Assign ops: add_assign, sub_assign, mul_assign, div_assign (return void)
     let assign_type = void_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
@@ -244,46 +278,45 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_sqrt") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_sqrt as usize);
     }
+    if let Some(f) = module.get_function("tl_tensor_sin") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_sin as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_cos") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_cos as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_relu") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_relu as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_gelu") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_gelu as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_tril") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_tril as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_sum_dim") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_sum_dim as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_embedding") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_embedding as usize);
+    }
 
     // Populate return types for lookups
-    fn_return_types.insert(
-        "tl_tensor_new".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    );
-    fn_return_types.insert(
-        "tl_tensor_add".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    );
-    fn_return_types.insert(
-        "tl_tensor_mul".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    );
-    fn_return_types.insert(
-        "tl_tensor_neg".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    );
-    fn_return_types.insert(
-        "tl_tensor_slice".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    );
+    let tensor_type = Type::Tensor(Box::new(Type::F32), 1); // Common return type for many tensor ops
+
+    fn_return_types.insert("tl_tensor_new".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_add".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_mul".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_neg".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_slice".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_print".to_string(), Type::Void);
     fn_return_types.insert("tl_print_i64".to_string(), Type::Void);
     fn_return_types.insert("tl_print_f32".to_string(), Type::Void);
     fn_return_types.insert("tl_tensor_len".to_string(), Type::I64);
     fn_return_types.insert("tl_tensor_get".to_string(), Type::F32);
     // Add missing types that were likely in the original file but I need to make sure are present
-    fn_return_types.insert(
-        "tl_tensor_transpose".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    );
-    fn_return_types.insert(
-        "tl_tensor_reshape".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    );
-    fn_return_types.insert(
-        "tl_tensor_matmul".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    );
+    fn_return_types.insert("tl_tensor_transpose".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_reshape".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_matmul".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_sum".to_string(), Type::F32); // Or tensor 0D? Usually returns scalar in simple implementation
                                                                     // ... complete as needed based on original CodeGen
                                                                     // tl_tensor_randn(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor
@@ -322,36 +355,31 @@ pub fn declare_runtime_functions<'ctx>(
     module.add_function("tl_tensor_sub_assign", sub_assign_type, None);
 
     // Register new return types
-    fn_return_types.insert(
-        "tl_tensor_randn".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    );
-    fn_return_types.insert(
-        "tl_tensor_grad".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    );
-    fn_return_types.insert(
-        "tl_tensor_detach".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    );
-    fn_return_types.insert(
-        "tl_tensor_softmax".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    );
-    fn_return_types.insert(
-        "tl_tensor_cross_entropy".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    );
-    fn_return_types.insert(
-        "tl_tensor_sum".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    );
+    fn_return_types.insert("tl_tensor_randn".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_grad".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_detach".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_softmax".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_cross_entropy".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_sum".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_backward".to_string(), Type::Void);
     fn_return_types.insert("tl_tensor_sub_assign".to_string(), Type::Void);
+    fn_return_types.insert("tl_tensor_pow".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_sqrt".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_sin".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_cos".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_relu".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_gelu".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_tril".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_sum_dim".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_embedding".to_string(), tensor_type.clone());
 
     // --- Standard Library Phase 1 ---
 
     let i8_ptr = context.ptr_type(AddressSpace::default());
+
+    // Strings
+    let str_concat_type = i8_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+    module.add_function("tl_string_concat", str_concat_type, None);
 
     // File I/O
     // tl_file_open(path: *const i8, mode: *const i8) -> *mut File
@@ -370,6 +398,35 @@ pub fn declare_runtime_functions<'ctx>(
     let file_close_type = void_type.fn_type(&[void_ptr.into()], false);
     module.add_function("tl_file_close", file_close_type, None);
 
+    // Path
+    // tl_path_new(path: *const i8) -> *mut Path
+    let path_new_type = void_ptr.fn_type(&[i8_ptr.into()], false);
+    module.add_function("tl_path_new", path_new_type, None);
+
+    // tl_path_join(base: *mut Path, part: *const i8) -> *mut Path
+    let path_join_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
+    module.add_function("tl_path_join", path_join_type, None);
+
+    // tl_path_exists(path: *mut Path) -> bool
+    let path_exists_type = context.bool_type().fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_path_exists", path_exists_type, None);
+
+    // tl_path_is_dir(path: *mut Path) -> bool
+    let path_is_dir_type = context.bool_type().fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_path_is_dir", path_is_dir_type, None);
+
+    // tl_path_is_file(path: *mut Path) -> bool
+    let path_is_file_type = context.bool_type().fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_path_is_file", path_is_file_type, None);
+
+    // tl_path_to_string(path: *mut Path) -> *mut i8
+    let path_to_str_type = i8_ptr.fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_path_to_string", path_to_str_type, None);
+
+    // tl_path_free(path: *mut Path) -> void
+    let path_free_type = void_type.fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_path_free", path_free_type, None);
+
     // Http
     // tl_http_download(url: *const i8, dest: *const i8) -> bool
     let http_dl_type = context
@@ -386,7 +443,23 @@ pub fn declare_runtime_functions<'ctx>(
     let env_get_type = i8_ptr.fn_type(&[i8_ptr.into()], false);
     module.add_function("tl_env_get", env_get_type, None);
 
+    // tl_env_set(key: *const i8, value: *const i8) -> void
+    let env_set_type = void_type.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+    module.add_function("tl_env_set", env_set_type, None);
+
+    // System
+    // tl_system_time() -> f32
+    let system_time_type = context.f32_type().fn_type(&[], false);
+    module.add_function("tl_system_time", system_time_type, None);
+
+    // tl_system_sleep(seconds: f32) -> void
+    let system_sleep_type = void_type.fn_type(&[context.f32_type().into()], false);
+    module.add_function("tl_system_sleep", system_sleep_type, None);
+
     // Mappings
+    if let Some(f) = module.get_function("tl_string_concat") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_concat as usize);
+    }
     if let Some(f) = module.get_function("tl_file_open") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_open as usize);
     }
@@ -399,6 +472,27 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_file_close") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_close as usize);
     }
+    if let Some(f) = module.get_function("tl_path_new") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_new as usize);
+    }
+    if let Some(f) = module.get_function("tl_path_join") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_join as usize);
+    }
+    if let Some(f) = module.get_function("tl_path_exists") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_exists as usize);
+    }
+    if let Some(f) = module.get_function("tl_path_is_dir") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_is_dir as usize);
+    }
+    if let Some(f) = module.get_function("tl_path_is_file") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_is_file as usize);
+    }
+    if let Some(f) = module.get_function("tl_path_to_string") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_to_string as usize);
+    }
+    if let Some(f) = module.get_function("tl_path_free") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_free as usize);
+    }
     if let Some(f) = module.get_function("tl_http_download") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_http_download as usize);
     }
@@ -408,8 +502,21 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_env_get") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_env_get as usize);
     }
+    if let Some(f) = module.get_function("tl_env_set") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_env_set as usize);
+    }
+    if let Some(f) = module.get_function("tl_system_time") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_system_time as usize);
+    }
+    if let Some(f) = module.get_function("tl_system_sleep") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_system_sleep as usize);
+    }
 
     // Return types
+    fn_return_types.insert(
+        "tl_string_concat".to_string(),
+        Type::UserDefined("String".to_string()),
+    );
     fn_return_types.insert(
         "tl_file_open".to_string(),
         Type::UserDefined("File".to_string()),
@@ -420,6 +527,22 @@ pub fn declare_runtime_functions<'ctx>(
     );
     fn_return_types.insert("tl_file_write_string".to_string(), Type::Void);
     fn_return_types.insert("tl_file_close".to_string(), Type::Void);
+    fn_return_types.insert(
+        "tl_path_new".to_string(),
+        Type::UserDefined("Path".to_string()),
+    );
+    fn_return_types.insert(
+        "tl_path_join".to_string(),
+        Type::UserDefined("Path".to_string()),
+    );
+    fn_return_types.insert("tl_path_exists".to_string(), Type::Bool);
+    fn_return_types.insert("tl_path_is_dir".to_string(), Type::Bool);
+    fn_return_types.insert("tl_path_is_file".to_string(), Type::Bool);
+    fn_return_types.insert(
+        "tl_path_to_string".to_string(),
+        Type::UserDefined("String".to_string()),
+    );
+    fn_return_types.insert("tl_path_free".to_string(), Type::Void);
     fn_return_types.insert("tl_http_download".to_string(), Type::Bool);
     fn_return_types.insert(
         "tl_http_get".to_string(),
@@ -429,4 +552,7 @@ pub fn declare_runtime_functions<'ctx>(
         "tl_env_get".to_string(),
         Type::UserDefined("String".to_string()),
     );
+    fn_return_types.insert("tl_env_set".to_string(), Type::Void);
+    fn_return_types.insert("tl_system_time".to_string(), Type::F32); // Using F32 as default float for now
+    fn_return_types.insert("tl_system_sleep".to_string(), Type::Void);
 }

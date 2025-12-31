@@ -280,34 +280,32 @@ fn parse_postfix(input: &str) -> IResult<&str, Expr> {
         |acc, (tag, args, idxs, name)| {
             match tag {
                 0 => {
-                    // Call. BUT, if acc is Property access, it might be method call.
-                    // Current AST distinction:
-                    // FieldAccess(Expr, String)
-                    // MethodCall(Expr, String, Args)
-                    // FnCall(String, Args) -> This is only for top-level or variable function call?
-                    // Actually, FnCall in AST is only top level.
-                    // If we have `foo()`, `foo` is Expr::Variable.
-                    // So `Call(Variable("foo"), args)` -> should probably transform to FnCall or just generic Call?
-                    // AST has FnCall separate.
-                    // Let's transform:
+                    // Call.
                     match acc {
                         Expr::FieldAccess(obj, method_name) => {
                             Expr::MethodCall(obj, method_name, args)
                         }
-                        Expr::Variable(fname) => Expr::FnCall(fname, args),
-                        _ => {
-                            // Indirect call? Expr::Call? AST doesn't have generic Call(Expr, Args).
-                            // Only MethodCall or FnCall.
-                            // Limitation: Can't do (get_fn())(args).
-                            // For now, assume mainly simple calls.
-                            // If we hit this, just return acc (ignore call?) or panic?
-                            // Let's fallback to "MethodCall" on "call" method if implicit? No.
-                            // Let's assumes it's a FnCall if we can unresolved.
-                            // Actually, let's treat it as MethodCall on 'self'? No.
-                            // This AST limitation is annoying.
-                            // Let's just create a FunctionCall if Variable, otherwise error/ignore.
-                            Expr::FnCall("UNKNOWN_INDIRECT_CALL".to_string(), args)
+                        Expr::Variable(fname) => {
+                            // Check if we have Type::method in variable name (from identifier parser)
+                            // The identifier parser allows "::".
+                            // So "File::open" is returned as identifier string.
+                            if fname.contains("::") {
+                                let parts: Vec<&str> = fname.split("::").collect();
+                                if parts.len() == 2 {
+                                    Expr::StaticMethodCall(
+                                        parts[0].to_string(),
+                                        parts[1].to_string(),
+                                        args,
+                                    )
+                                } else {
+                                    // Fallback or Error?
+                                    Expr::FnCall(fname, args)
+                                }
+                            } else {
+                                Expr::FnCall(fname, args)
+                            }
                         }
+                        _ => Expr::FnCall("UNKNOWN_INDIRECT_CALL".to_string(), args),
                     }
                 }
                 1 => Expr::IndexAccess(Box::new(acc), idxs.unwrap()),
@@ -649,10 +647,7 @@ fn parse_fn(input: &str) -> IResult<&str, FunctionDef> {
     // Args: (a: T, b: U)
     let (input, args) = delimited(
         ws(char('(')),
-        separated_list0(
-            ws(char(',')),
-            pair(ws(identifier), preceded(ws(char(':')), parse_type)),
-        ),
+        separated_list0(ws(char(',')), parse_fn_arg),
         ws(char(')')),
     )(input)?;
 
@@ -671,6 +666,26 @@ fn parse_fn(input: &str) -> IResult<&str, FunctionDef> {
             generics: vec![],
         },
     ))
+}
+
+fn parse_fn_arg(input: &str) -> IResult<&str, (String, Type)> {
+    let (input, name) = ws(identifier)(input)?;
+    let (input, ty) = opt(preceded(ws(char(':')), parse_type))(input)?;
+
+    match ty {
+        Some(t) => Ok((input, (name, t))),
+        None => {
+            if name == "self" {
+                Ok((input, (name, Type::UserDefined("Self".to_string()))))
+            } else {
+                // Fail if no type and not self
+                Err(nom::Err::Error(nom::error::Error::new(
+                    input,
+                    nom::error::ErrorKind::Tag,
+                )))
+            }
+        }
+    }
 }
 
 // --- Structs ---

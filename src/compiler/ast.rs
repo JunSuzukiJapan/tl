@@ -146,6 +146,7 @@ pub enum Expr {
     // Calls
     FnCall(String, Vec<Expr>),
     MethodCall(Box<Expr>, String, Vec<Expr>),
+    StaticMethodCall(String, String, Vec<Expr>), // Type::method(args)
 
     // Control
     IfExpr(Box<Expr>, Vec<Stmt>, Option<Vec<Stmt>>),

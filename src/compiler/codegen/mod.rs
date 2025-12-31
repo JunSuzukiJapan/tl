@@ -157,7 +157,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .context
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(), // OpaqueTensor*
-                    Type::Struct(name) => {
+                    Type::Struct(name) | Type::UserDefined(name) => {
                         if self.struct_types.contains_key(name) {
                             self.context
                                 .ptr_type(inkwell::AddressSpace::default())
@@ -188,31 +188,53 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     fn compile_impl_blocks(&mut self, impls: &[ImplBlock]) -> Result<(), String> {
         for imp in impls {
-            // Check if struct exists
-            let self_type_ptr = if self.struct_types.contains_key(&imp.target_type) {
-                self.context.ptr_type(inkwell::AddressSpace::default())
-            } else {
-                return Err(format!("Impl block for unknown struct {}", imp.target_type));
-            };
-
             for method in &imp.methods {
-                let mangled_name = format!("{}_{}", imp.target_type, method.name);
+                // Determine if static or instance based on first arg name "self"
+                // let is_instance = !method.args.is_empty() && method.args[0].0 == "self";
+                // (Unused for now, we just compile args as is)
+
+                // Mangle name: tl_{Struct}_{Method}
+                let mangled_name = format!("tl_{}_{}", imp.target_type, method.name);
+
+                // Mangle name: tl_{Struct}_{Method}
+                // Use lowercase struct name? Rust usually uses exact case.
+                // Let's use exact keys for now, but `expr.rs` used `to_lowercase()`.
+                // Mangle name: tl_{Struct}_{Method}
+                let _mangled_name = format!("tl_{}_{}", imp.target_type, method.name);
 
                 let mut param_types: Vec<BasicMetadataTypeEnum> = Vec::new();
-                // implicit self
-                param_types.push(self_type_ptr.into());
 
-                for (_, arg_ty) in &method.args {
-                    let ty: BasicMetadataTypeEnum = match arg_ty {
+                // If instance, ensure self ptr is compatible?
+                // The parser puts 'self' in args.
+                // Semantic check verified types.
+                // Here we map types.
+
+                for (_arg_name, arg_ty) in &method.args {
+                    let resolved_ty = if let Type::UserDefined(name) = arg_ty {
+                        if name == "Self" {
+                            Type::UserDefined(imp.target_type.clone())
+                        } else {
+                            arg_ty.clone()
+                        }
+                    } else {
+                        arg_ty.clone()
+                    };
+
+                    let ty: BasicMetadataTypeEnum = match &resolved_ty {
                         Type::F32 => self.context.f32_type().into(),
                         Type::I64 => self.context.i64_type().into(),
+                        Type::Bool => self.context.bool_type().into(),
                         Type::Tensor(_, _) => self
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
+                        Type::Struct(_) | Type::UserDefined(_) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
                         _ => self
                             .context
-                            .ptr_type(inkwell::AddressSpace::default())
+                            .ptr_type(inkwell::AddressSpace::default()) // Fallback for ptrs
                             .into(),
                     };
                     param_types.push(ty);
@@ -239,36 +261,35 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder.position_at_end(entry);
                 self.enter_scope();
 
-                // Add self
-                let self_val = function.get_nth_param(0).unwrap();
-                let self_alloca = self.create_entry_block_alloca(
-                    function,
-                    "self",
-                    &Type::Struct(imp.target_type.clone()),
-                );
-                self.builder
-                    .build_store(self_alloca, self_val)
-                    .map_err(|e| e.to_string())?;
-                self.variables.last_mut().unwrap().insert(
-                    "self".to_string(),
-                    (
-                        self_alloca.into(),
-                        Type::Struct(imp.target_type.clone()),
-                        false,
-                    ),
-                );
+                // Get params and store them
+                for (i, (arg_name, arg_ty)) in method.args.iter().enumerate() {
+                    let resolved_ty = if let Type::UserDefined(name) = arg_ty {
+                        if name == "Self" {
+                            Type::UserDefined(imp.target_type.clone())
+                        } else {
+                            arg_ty.clone()
+                        }
+                    } else {
+                        arg_ty.clone()
+                    };
 
-                for (i, (arg_name, arg_type)) in method.args.iter().enumerate() {
-                    let arg_val = function.get_nth_param((i + 1) as u32).unwrap();
-                    let arg_alloca = self.create_entry_block_alloca(function, arg_name, arg_type);
-                    self.builder
-                        .build_store(arg_alloca, arg_val)
-                        .map_err(|e| e.to_string())?;
-                    self.variables.last_mut().unwrap().insert(
-                        arg_name.clone(),
-                        (arg_alloca.into(), arg_type.clone(), false),
-                    );
+                    if let Some(param_val) = function.get_nth_param(i as u32) {
+                        param_val.set_name(arg_name);
+                        let alloca =
+                            self.create_entry_block_alloca(function, arg_name, &resolved_ty);
+                        self.builder.build_store(alloca, param_val).unwrap();
+
+                        // Register in scope
+                        self.variables
+                            .last_mut()
+                            .unwrap()
+                            .insert(arg_name.clone(), (alloca.into(), resolved_ty, false));
+                    }
                 }
+                // Old logic had specific `self` handling
+                // Now `self` is just an explicit argument `self: Struct`.
+                // So `self.variables.get("self")` works for `Expr::Variable("self")`.
+                // `Expr::FieldAccess` uses `Expr::Variable` if `obj` is `self`.
 
                 for stmt in &method.body {
                     self.compile_stmt(stmt)?;
