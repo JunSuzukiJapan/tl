@@ -2,13 +2,10 @@
 source_filename = "main"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 
-@tensor_name = private unnamed_addr constant [2 x i8] c"A\00", align 1
-@tensor_name.43 = private unnamed_addr constant [2 x i8] c"B\00", align 1
-@str_literal = private unnamed_addr constant [21 x i8] c"MatMul result shape:\00", align 1
-@tensor_name.44 = private unnamed_addr constant [2 x i8] c"D\00", align 1
-@tensor_name.45 = private unnamed_addr constant [5 x i8] c"diff\00", align 1
-@tensor_name.46 = private unnamed_addr constant [2 x i8] c"s\00", align 1
-@str_literal.47 = private unnamed_addr constant [37 x i8] c"Difference sum (should be approx 0):\00", align 1
+@str_literal = private unnamed_addr constant [12 x i8] c"True Branch\00", align 1
+@str_literal.43 = private unnamed_addr constant [13 x i8] c"False Branch\00", align 1
+@str_literal.44 = private unnamed_addr constant [13 x i8] c"Wrong Branch\00", align 1
+@str_literal.45 = private unnamed_addr constant [13 x i8] c"False Branch\00", align 1
 
 declare void @tl_print_i64(i64)
 
@@ -172,67 +169,33 @@ declare void @tl_tensor_sub_assign.42(ptr, ptr)
 
 define void @main() {
 entry:
-  %s = alloca ptr, align 8
-  %diff = alloca ptr, align 8
-  %D = alloca ptr, align 8
-  %C = alloca ptr, align 8
-  %B = alloca ptr, align 8
-  %A = alloca ptr, align 8
-  %N = alloca i64, align 8
-  store i64 256, ptr %N, align 8
-  %N1 = load i64, ptr %N, align 8
-  %N2 = load i64, ptr %N, align 8
-  %shape_arr = alloca [2 x i64], align 8
-  %shape_ptr_in = getelementptr inbounds [2 x i64], ptr %shape_arr, i64 0, i64 0
-  store i64 %N1, ptr %shape_ptr_in, align 8
-  %shape_ptr_in3 = getelementptr inbounds [2 x i64], ptr %shape_arr, i64 0, i64 1
-  store i64 %N2, ptr %shape_ptr_in3, align 8
-  %randn_res = call ptr @tl_tensor_randn(i64 2, ptr %shape_arr, i1 false)
-  store ptr %randn_res, ptr %A, align 8
-  call void @tl_register_tensor(ptr @tensor_name, ptr %randn_res)
-  %N4 = load i64, ptr %N, align 8
-  %N5 = load i64, ptr %N, align 8
-  %shape_arr6 = alloca [2 x i64], align 8
-  %shape_ptr_in7 = getelementptr inbounds [2 x i64], ptr %shape_arr6, i64 0, i64 0
-  store i64 %N4, ptr %shape_ptr_in7, align 8
-  %shape_ptr_in8 = getelementptr inbounds [2 x i64], ptr %shape_arr6, i64 0, i64 1
-  store i64 %N5, ptr %shape_ptr_in8, align 8
-  %randn_res9 = call ptr @tl_tensor_randn(i64 2, ptr %shape_arr6, i1 false)
-  store ptr %randn_res9, ptr %B, align 8
-  call void @tl_register_tensor(ptr @tensor_name.43, ptr %randn_res9)
-  %load_tensor_ptr = load ptr, ptr %A, align 8
-  %load_tensor_ptr10 = load ptr, ptr %B, align 8
-  %matmul_res = call ptr @tl_tensor_matmul(ptr %load_tensor_ptr, ptr %load_tensor_ptr10)
-  store ptr %matmul_res, ptr %C, align 8
+  %x = alloca i64, align 8
+  store i64 10, ptr %x, align 8
+  %x1 = load i64, ptr %x, align 8
+  %gttmp = icmp sgt i64 %x1, 5
+  br i1 %gttmp, label %then, label %else
+
+then:                                             ; preds = %entry
   call void @tl_print_string(ptr @str_literal)
-  %C11 = load ptr, ptr %C, align 8
-  call void @tl_tensor_print(ptr %C11)
-  %A12 = load ptr, ptr %A, align 8
-  %B13 = load ptr, ptr %B, align 8
-  %matmul_res14 = call ptr @tl_tensor_matmul(ptr %A12, ptr %B13)
-  store ptr %matmul_res14, ptr %D, align 8
-  call void @tl_register_tensor(ptr @tensor_name.44, ptr %matmul_res14)
-  %C15 = load ptr, ptr %C, align 8
-  %D16 = load ptr, ptr %D, align 8
-  %binop_res = call ptr @tl_tensor_sub(ptr %C15, ptr %D16)
-  store ptr %binop_res, ptr %diff, align 8
-  call void @tl_register_tensor(ptr @tensor_name.45, ptr %binop_res)
-  %diff17 = load ptr, ptr %diff, align 8
-  %sum_res = call ptr @tl_tensor_sum(ptr %diff17)
-  store ptr %sum_res, ptr %s, align 8
-  call void @tl_register_tensor(ptr @tensor_name.46, ptr %sum_res)
-  call void @tl_print_string(ptr @str_literal.47)
-  %s18 = load ptr, ptr %s, align 8
-  call void @tl_tensor_print(ptr %s18)
-  %load_for_free = load ptr, ptr %s, align 8
-  call void @tl_tensor_free(ptr %load_for_free)
-  %load_for_free19 = load ptr, ptr %diff, align 8
-  call void @tl_tensor_free(ptr %load_for_free19)
-  %load_for_free20 = load ptr, ptr %D, align 8
-  call void @tl_tensor_free(ptr %load_for_free20)
-  %load_for_free21 = load ptr, ptr %B, align 8
-  call void @tl_tensor_free(ptr %load_for_free21)
-  %load_for_free22 = load ptr, ptr %A, align 8
-  call void @tl_tensor_free(ptr %load_for_free22)
+  br label %merge
+
+else:                                             ; preds = %entry
+  call void @tl_print_string(ptr @str_literal.43)
+  br label %merge
+
+merge:                                            ; preds = %else, %then
+  %x2 = load i64, ptr %x, align 8
+  %lttmp = icmp slt i64 %x2, 5
+  br i1 %lttmp, label %then3, label %else4
+
+then3:                                            ; preds = %merge
+  call void @tl_print_string(ptr @str_literal.44)
+  br label %merge5
+
+else4:                                            ; preds = %merge
+  call void @tl_print_string(ptr @str_literal.45)
+  br label %merge5
+
+merge5:                                           ; preds = %else4, %then3
   ret void
 }
