@@ -563,54 +563,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .builder
                                 .build_call(fn_val, &[obj_val.into()], "clone_res")
                                 .map_err(|e| e.to_string())?;
-                            let res = match call.try_as_basic_value() {
-                                ValueKind::Basic(v) => v,
-                                _ => return Err("Invalid clone return".into()),
-                            };
-                            Ok((res, obj_ty))
-                        }
-                        "detach" => {
-                            let fn_val = self
-                                .module
-                                .get_function("tl_tensor_detach")
-                                .ok_or("Runtime fn tl_tensor_detach not found")?;
-
-                            let mut compiled_args = Vec::with_capacity(args.len() + 1);
-                            compiled_args.push(obj_val.into());
-
-                            // Check args. If arg provided, use it for req_grad. Default true for params?
-                            // detach() -> requires_grad=false.
-                            // detach(true) -> requires_grad=true.
-                            // But method sig in parser puts args in `args`.
-                            // If `args` has 1 element, use it.
-                            if args.len() >= 1 {
-                                let (val, _) = self.compile_expr(&args[0])?;
-                                compiled_args.push(val.into());
-                            } else {
-                                // Default false? step uses `(w - g*lr).detach()`.
-                                // We want the new weight to require grad for NEXT iter.
-                                // So default true?
-                                // Candle: `detach()` creates new tensor sharing storage. `requires_grad` is false.
-                                // We want to update parameter `self.W`.
-                                // Next iter `backward` needs `self.W` to require grad.
-                                // So we MUST set `req_grad=true`.
-                                // Let's make it mandatory or check logic.
-                                // In `train_add.tl`: `(self.W - g*lr).detach()`.
-                                // We likely want `detach(true)`.
-
-                                // Let's default to `true` for now in `tl` or enforce explicit?
-                                // Let's default to `true` because it's mostly used for param update.
-                                // Wait, usually `detach()` means "stop gradient".
-                                // But here we use it to "reset graph but keep leaf status".
-                                // So `true` makes sense for parameters.
-                                let true_val = self.context.bool_type().const_int(1, false);
-                                compiled_args.push(true_val.into());
-                            }
-
-                            let call = self
-                                .builder
-                                .build_call(fn_val, &compiled_args, "detach_res")
-                                .map_err(|e| e.to_string())?;
 
                             let res = match call.try_as_basic_value() {
                                 ValueKind::Basic(v) => v,
@@ -1171,32 +1123,74 @@ impl<'ctx> CodeGenerator<'ctx> {
                             self.context.i64_type().const_int(0, false).into(),
                             Type::Void,
                         ));
+                    }
                     "varbuilder_get" => {
                         if args.len() != 2 {
                             return Err("varbuilder_get requires 2 arguments".into());
                         }
                         let name_ptr = if let Expr::StringLiteral(s) = &args[0] {
-                            let global_str = self.create_global_string(s);
+                            let global_str = self
+                                .builder
+                                .build_global_string_ptr(s, "param_name")
+                                .unwrap();
                             global_str.as_pointer_value()
                         } else {
-                            return Err("varbuilder_get expects string literal as first argument".into());
+                            return Err(
+                                "varbuilder_get expects string literal as first argument".into()
+                            );
                         };
-                        let (rank, shape_ptr) = if let Expr::ArrayLiteral(elements) = &args[1] {
+                        let (rank, shape_ptr) = if let Expr::TensorLiteral(elements) = &args[1] {
                             let rank = elements.len();
-                            let shape_values: Vec<_> = elements.iter().map(|e| { let (val, _) = self.compile_expr(e)?; Ok(val) }).collect::<Result<Vec<_>, CodeGenError>>()?;
+                            let shape_values: Vec<_> = elements
+                                .iter()
+                                .map(|e| {
+                                    let (val, _) = self.compile_expr(e)?;
+                                    Ok(val)
+                                })
+                                .collect::<Result<Vec<_>, String>>()?;
                             let i64_type = self.context.i64_type();
-                            let shape_alloca = self.builder.build_alloca(i64_type.array_type(rank as u32), "shape_arr").unwrap();
+                            let shape_alloca = self
+                                .builder
+                                .build_alloca(i64_type.array_type(rank as u32), "shape_arr")
+                                .unwrap();
                             for (i, val) in shape_values.iter().enumerate() {
                                 let idx = self.context.i64_type().const_int(i as u64, false);
-                                let ptr = unsafe { self.builder.build_in_bounds_gep(i64_type.array_type(rank as u32), shape_alloca, &[self.context.i64_type().const_zero(), idx], &format!("shape_elem_{}", i),).unwrap() };
+                                let ptr = unsafe {
+                                    self.builder
+                                        .build_in_bounds_gep(
+                                            i64_type.array_type(rank as u32),
+                                            shape_alloca,
+                                            &[self.context.i64_type().const_zero(), idx],
+                                            &format!("shape_elem_{}", i),
+                                        )
+                                        .unwrap()
+                                };
                                 self.builder.build_store(ptr, val.into_int_value()).unwrap();
                             }
                             (rank, shape_alloca)
                         } else {
-                            return Err("varbuilder_get expects array literal as second argument".into());
+                            return Err(
+                                "varbuilder_get expects array literal as second argument".into()
+                            );
                         };
                         let fn_val = self.module.get_function("tl_varbuilder_get").unwrap();
-                        self.builder.build_call(fn_val, &[name_ptr.into(), self.context.i64_type().const_int(rank as u64, false).into(), shape_ptr.into()], "varbuilder_get_result",).unwrap().try_as_basic_value().left().unwrap()
+                        let call = self
+                            .builder
+                            .build_call(
+                                fn_val,
+                                &[
+                                    name_ptr.into(),
+                                    self.context.i64_type().const_int(rank as u64, false).into(),
+                                    shape_ptr.into(),
+                                ],
+                                "varbuilder_get_result",
+                            )
+                            .unwrap();
+                        let res = match call.try_as_basic_value() {
+                            ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid varbuilder_get return".into()),
+                        };
+                        return Ok((res, Type::Tensor(Box::new(Type::F32), 0)));
                     }
                     "update_all_params" => {
                         if args.len() != 1 {
@@ -1204,22 +1198,37 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                         let (lr_val, _) = self.compile_expr(&args[0])?;
                         let fn_val = self.module.get_function("tl_update_all_params").unwrap();
-                        self.builder.build_call(fn_val, &[lr_val.into()], "").unwrap();
-                        self.context.i64_type().const_int(0, false).into()
+                        self.builder
+                            .build_call(fn_val, &[lr_val.into()], "")
+                            .unwrap();
+                        return Ok((
+                            self.context.i64_type().const_int(0, false).into(),
+                            Type::Void,
+                        ));
                     }
                     "varbuilder_grad" => {
                         if args.len() != 1 {
                             return Err("varbuilder_grad requires 1 argument".into());
                         }
                         let name_ptr = if let Expr::StringLiteral(s) = &args[0] {
-                            let global_str = self.create_global_string(s);
+                            let global_str = self
+                                .builder
+                                .build_global_string_ptr(s, "param_name")
+                                .unwrap();
                             global_str.as_pointer_value()
                         } else {
                             return Err("varbuilder_grad expects string literal as argument".into());
                         };
                         let fn_val = self.module.get_function("tl_varbuilder_grad").unwrap();
-                        self.builder.build_call(fn_val, &[name_ptr.into()], "varbuilder_grad_result",).unwrap().try_as_basic_value().left().unwrap()
-                    }
+                        let call = self
+                            .builder
+                            .build_call(fn_val, &[name_ptr.into()], "varbuilder_grad_result")
+                            .unwrap();
+                        let res = match call.try_as_basic_value() {
+                            ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid varbuilder_grad return".into()),
+                        };
+                        return Ok((res, Type::Tensor(Box::new(Type::F32), 0)));
                     }
                     "sum" => {
                         if args.len() == 1 {
