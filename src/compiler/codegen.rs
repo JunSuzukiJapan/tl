@@ -2914,34 +2914,38 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 }
 
                                 let shape_expr = &args[0];
-                                let (rank, shape_vals) = if let Expr::TensorLiteral(el) = shape_expr
-                                {
-                                    let mut vals = Vec::new();
-                                    for e in el {
-                                        // Compile each dimension expression
-                                        let (v, t) = self.compile_expr(e)?;
-                                        let int_val = match t {
-                                            Type::I64 => v.into_int_value(),
-                                            Type::I32 => self
-                                                .builder
-                                                .build_int_z_extend(
-                                                    v.into_int_value(),
-                                                    self.context.i64_type(),
-                                                    "dim_ext",
-                                                )
-                                                .map_err(|e| e.to_string())?,
-                                            _ => {
-                                                return Err(format!(
-                                                    "Dimension must be integer, found {:?}",
-                                                    t
-                                                ))
-                                            }
-                                        };
-                                        vals.push(int_val);
+                                let (rank, shape_vals) = match shape_expr {
+                                    Expr::TensorLiteral(el) | Expr::TensorConstLiteral(el) => {
+                                        let mut vals = Vec::new();
+                                        for e in el {
+                                            // Compile each dimension expression
+                                            let (v, t) = self.compile_expr(e)?;
+                                            let int_val = match t {
+                                                Type::I64 => v.into_int_value(),
+                                                Type::I32 => self
+                                                    .builder
+                                                    .build_int_z_extend(
+                                                        v.into_int_value(),
+                                                        self.context.i64_type(),
+                                                        "dim_ext",
+                                                    )
+                                                    .map_err(|e| e.to_string())?,
+                                                _ => {
+                                                    return Err(format!(
+                                                        "Dimension must be integer, found {:?}",
+                                                        t
+                                                    ))
+                                                }
+                                            };
+                                            vals.push(int_val);
+                                        }
+                                        (el.len(), vals)
                                     }
-                                    (el.len(), vals)
-                                } else {
-                                    return Err("randn currently requires array literal [dim, ...] for shape".into());
+                                    _ => {
+                                        return Err(
+                                            "randn currently requires array literal [dim, ...] for shape".into(),
+                                        );
+                                    }
                                 };
 
                                 let requires_grad = if args.len() > 1 {

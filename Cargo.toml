@@ -29,3 +29,8 @@ default = ["accelerate"]
 accelerate = ["candle-core/accelerate"]
 metal = ["candle-core/metal"]
 cuda = ["candle-core/cuda"]
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+panic = "abort"
