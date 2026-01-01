@@ -1,0 +1,133 @@
+warning: unused imports: `DType`, `Device`, `Result as CandleResult`, and `Shape`
+ --> src/runtime/mod.rs:6:19
+  |
+6 | use candle_core::{DType, Device, Result as CandleResult, Shape, Tensor};
+  |                   ^^^^^  ^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^  ^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `std::io::Write`
+   --> src/runtime/mod.rs:525:13
+    |
+525 |         use std::io::Write;
+    |             ^^^^^^^^^^^^^^
+
+warning: use of deprecated method `inkwell::types::IntType::<'ctx>::ptr_type`: Starting from version 15.0, LLVM doesn't differentiate between pointer types. Use Context::ptr_type instead.
+   --> src/compiler/codegen/builtins.rs:371:18
+    |
+371 |                 .ptr_type(inkwell::AddressSpace::default())
+    |                  ^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: unreachable statement
+    --> src/compiler/semantics.rs:1162:21
+     |
+1160 |                       unreachable!("t0 verified as tensor above");
+     |                       ------------------------------------------- any code following this expression is unreachable
+1161 |                       // For reshape, return matched type with rank 0 (dynamic).
+1162 | /                     if let Type::Tensor(inner, _) = t0 {
+1163 | |                         return Ok(Type::Tensor(inner, 0));
+1164 | |                     }
+     | |_____________________^ unreachable statement
+     |
+     = note: `#[warn(unreachable_code)]` on by default
+
+warning: variable does not need to be mutable
+   --> src/runtime/mod.rs:934:21
+    |
+934 |                 let mut data_guard = data.lock().unwrap();
+    |                     ----^^^^^^^^^^
+    |                     |
+    |                     help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` on by default
+
+warning: field `param_counter` is never read
+  --> src/compiler/codegen/mod.rs:27:16
+   |
+18 | pub struct CodeGenerator<'ctx> {
+   |            ------------- field in this struct
+...
+27 |     pub(crate) param_counter: usize,
+   |                ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: `tl` (bin "tl") generated 6 warnings (run `cargo fix --bin "tl"` to apply 3 suggestions)
+    Finished `release` profile [optimized] target(s) in 0.21s
+     Running `target/release/tl run examples/train_add.tl`
+Running file: "examples/train_add.tl"
+Executing main...
+Initializing Runtime: CPU backend selected.
+Training 2-digit addition (0-99) - With memory monitoring
+Epoch:
+0
+Loss:
+[1.0030]
+Tensor[[], f32]
+Memory(MB):
+9085
+Epoch:
+1
+Loss:
+[1.2370]
+Tensor[[], f32]
+Memory(MB):
+18136
+Epoch:
+2
+Loss:
+[0.7101]
+Tensor[[], f32]
+Memory(MB):
+27188
+Epoch:
+3
+Loss:
+[0.8182]
+Tensor[[], f32]
+Memory(MB):
+36236
+Epoch:
+4
+Loss:
+[1.4124]
+Tensor[[], f32]
+Memory(MB):
+45290
+Epoch:
+5
+Loss:
+[1.0186]
+Tensor[[], f32]
+Memory(MB):
+11703
+Epoch:
+6
+Loss:
+[1.5944]
+Tensor[[], f32]
+Memory(MB):
+14024
+Epoch:
+7
+Loss:
+[1.3450]
+Tensor[[], f32]
+Memory(MB):
+16559
+Epoch:
+8
+Loss:
+[2.3117]
+Tensor[[], f32]
+Memory(MB):
+16188
+Epoch:
+9
+Loss:
+[0.4229]
+Tensor[[], f32]
+Memory(MB):
+15093

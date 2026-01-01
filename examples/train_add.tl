@@ -14,6 +14,11 @@ impl Block { fn new(d: i64) -> Block { return Block(LayerNorm::new(d), CausalSel
 struct GPT { w: Embedding, b: Block, l: LayerNorm, h: Linear }
 impl GPT { fn new(v: i64, d: i64) -> GPT { return GPT(Embedding::new(v, d), Block::new(d), LayerNorm::new(d), Linear::new(d, v)); } fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { return self.h.forward(self.l.forward(self.b.forward(self.w.forward(i)))); } fn step(self, lr: f32) -> GPT { let s = self; s.w = s.w.step(lr); s.b = s.b.step(lr); s.l = s.l.step(lr); s.h = s.h.step(lr); return s; } }
 
+// Wrapper for memory monitoring
+fn get_memory() -> i64 {
+    return tl_get_memory_mb();
+}
+
 // CRITICAL: Extract training loop into separate function to create new stack frame
 fn train_epoch(model: GPT, lr: f32, epoch: i64) -> GPT {
     let total_loss = pow(0.0, 1.0);
@@ -54,7 +59,12 @@ fn train_epoch(model: GPT, lr: f32, epoch: i64) -> GPT {
         }
     }
 
-    print("Epoch:"); print(epoch); print("Loss:"); print(total_loss);
+    // Memory logging every epoch
+    let mem_mb = get_memory();
+    print("Epoch:"); print(epoch); 
+    print("Loss:"); print(total_loss); 
+    print("Memory(MB):"); print(mem_mb);
+    
     return model;
 }
 
@@ -65,7 +75,7 @@ fn main() {
     let lr = 0.01; 
     let epochs = 50; 
 
-    print("Training 2-digit addition (0-99) - Function-separated version");
+    print("Training 2-digit addition (0-99) - With memory monitoring");
 
     for epoch in range(0, epochs) {
         model = train_epoch(model, lr, epoch);

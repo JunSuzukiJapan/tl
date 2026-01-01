@@ -1259,6 +1259,24 @@ impl SemanticAnalyzer {
                         });
                     }
                     return Ok(Type::Void);
+                } else if name == "save_all_params" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: "save_all_params".into(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    return Ok(Type::Void);
+                } else if name == "tl_get_memory_mb" {
+                    if args.len() != 0 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: "tl_get_memory_mb".into(),
+                            expected: 0,
+                            found: args.len(),
+                        });
+                    }
+                    return Ok(Type::I64);
                 } else if name == "varbuilder_get" {
                     if args.len() != 2 {
                         return Err(SemanticError::ArgumentCountMismatch {

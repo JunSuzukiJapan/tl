@@ -187,6 +187,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                     _ => return Err("malloc returned invalid value".into()),
                 };
 
+                // Register with memory manager for automatic cleanup
+                if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
+                    self.builder
+                        .build_call(register_fn, &[raw_ptr.into()], "")
+                        .map_err(|e| e.to_string())?;
+                }
+
                 // Cast to Struct Pointer (opaque pointer in modern LLVM, but typed for GEP)
                 let struct_ptr = self
                     .builder

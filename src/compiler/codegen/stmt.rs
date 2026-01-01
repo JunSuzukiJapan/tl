@@ -309,6 +309,71 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Handle assignment operator (e.g., +=, -=, =)
                 let final_val = match op {
                     AssignOp::Assign => {
+                        // NOTE: Struct cleanup disabled temporarily
+                        // TODO: Implement deep cleanup that frees struct fields (tensors) first
+                        // Simple free() causes segfault because struct fields aren't cleaned up
+                        /*
+                        // Free old value if it is a Struct (but check for null first)
+                        if matches!(var_type, Type::Struct(_) | Type::UserDefined(_)) {
+                            let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                            let current_val = self
+                                .builder
+                                .build_load(
+                                    load_type,
+                                    var_ptr.into_pointer_value(),
+                                    "old_struct_to_free",
+                                )
+                                .map_err(|e| e.to_string())?
+                                .into_pointer_value();
+
+                            // Only free if not null (i.e., this is a reassignment, not first assignment)
+                            let null_ptr = load_type.const_null();
+                            let is_not_null = self
+                                .builder
+                                .build_int_compare(
+                                    inkwell::IntPredicate::NE,
+                                    current_val,
+                                    null_ptr,
+                                    "is_not_null",
+                                )
+                                .map_err(|e| e.to_string())?;
+
+                            let free_block = self.context.append_basic_block(
+                                self.builder
+                                    .get_insert_block()
+                                    .unwrap()
+                                    .get_parent()
+                                    .unwrap(),
+                                "free_struct",
+                            );
+                            let continue_block = self.context.append_basic_block(
+                                self.builder
+                                    .get_insert_block()
+                                    .unwrap()
+                                    .get_parent()
+                                    .unwrap(),
+                                "continue_after_free",
+                            );
+
+                            self.builder
+                                .build_conditional_branch(is_not_null, free_block, continue_block)
+                                .map_err(|e| e.to_string())?;
+
+                            // Free block
+                            self.builder.position_at_end(free_block);
+                            if let Some(free_fn) = self.module.get_function("free") {
+                                self.builder
+                                    .build_call(free_fn, &[current_val.into()], "")
+                                    .map_err(|e| e.to_string())?;
+                            }
+                            self.builder
+                                .build_unconditional_branch(continue_block)
+                                .map_err(|e| e.to_string())?;
+
+                            // Continue block
+                            self.builder.position_at_end(continue_block);
+                        }
+                        */
                         // Free old value if it is a Tensor
                         if let Type::Tensor(_, _) = var_type {
                             let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
@@ -674,6 +739,14 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Loop body
                 self.builder.position_at_end(loop_body);
+
+                // Enter memory scope for iteration
+                if let Some(scope_enter) = self.module.get_function("tl_mem_enter_scope") {
+                    self.builder
+                        .build_call(scope_enter, &[], "")
+                        .map_err(|e| e.to_string())?;
+                }
+
                 self.enter_scope();
 
                 // Bind loop variable
@@ -725,6 +798,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
 
                 self.exit_scope();
+
+                // Exit memory scope before back-edge
+                if let Some(scope_exit) = self.module.get_function("tl_mem_exit_scope") {
+                    self.builder
+                        .build_call(scope_exit, &[], "")
+                        .map_err(|e| e.to_string())?;
+                }
 
                 // Increment index
                 let body_end_block = self.builder.get_insert_block().unwrap();
@@ -818,6 +898,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.compile_stmt(stmt)?;
                 }
                 self.exit_scope();
+
+                // Exit memory scope before back-edge
+                if let Some(scope_exit) = self.module.get_function("tl_mem_exit_scope") {
+                    self.builder
+                        .build_call(scope_exit, &[], "")
+                        .map_err(|e| e.to_string())?;
+                }
 
                 // Loop back to condition
                 if self

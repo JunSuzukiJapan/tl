@@ -1,4 +1,5 @@
 pub mod device;
+pub mod memory_manager;
 pub mod registry;
 pub mod stdlib; // Add this
 
@@ -52,7 +53,12 @@ pub extern "C" fn tl_tensor_new(
         t_cpu
     };
 
-    Box::into_raw(Box::new(OpaqueTensor(tensor, None, None)))
+    let tensor_ptr = Box::into_raw(Box::new(OpaqueTensor(tensor, None, None)));
+
+    // Register with memory manager for automatic cleanup
+    memory_manager::register_tensor_global(tensor_ptr);
+
+    tensor_ptr
 }
 
 // Function to create a tensor that requires gradients (similar to Var, but returning Tensor)
@@ -84,9 +90,19 @@ pub extern "C" fn tl_tensor_randn(
 
         // Store Var in Arc so it can be shared across clones
         let var_arc = Arc::new(var);
-        Box::into_raw(Box::new(OpaqueTensor(t_var, Some(var_arc), None)))
+        let tensor_ptr = Box::into_raw(Box::new(OpaqueTensor(t_var, Some(var_arc), None)));
+
+        // Register with memory manager
+        memory_manager::register_tensor_global(tensor_ptr);
+
+        tensor_ptr
     } else {
-        Box::into_raw(Box::new(OpaqueTensor(t, None, None)))
+        let tensor_ptr = Box::into_raw(Box::new(OpaqueTensor(t, None, None)));
+
+        // Register with memory manager
+        memory_manager::register_tensor_global(tensor_ptr);
+
+        tensor_ptr
     }
 }
 
@@ -189,6 +205,36 @@ pub extern "C" fn tl_varbuilder_grad(name: *const std::os::raw::c_char) -> *mut 
     }
 
     std::ptr::null_mut()
+}
+
+/// Get current process memory usage in MB
+/// Returns RSS (Resident Set Size) memory in megabytes
+#[no_mangle]
+pub extern "C" fn tl_get_memory_mb() -> i64 {
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+
+        let pid = std::process::id();
+        let output = Command::new("ps")
+            .args(&["-o", "rss=", "-p", &pid.to_string()])
+            .output();
+
+        if let Ok(output) = output {
+            if let Ok(s) = String::from_utf8(output.stdout) {
+                if let Ok(kb) = s.trim().parse::<i64>() {
+                    return kb / 1024; // Convert KB to MB
+                }
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Fallback: return -1 on unsupported platforms
+    }
+
+    -1
 }
 
 #[no_mangle]
@@ -976,5 +1022,25 @@ pub extern "C" fn tl_register_parameter(t: *mut OpaqueTensor) -> *mut OpaqueTens
         data_guard.insert(name, var_arc.as_ref().clone());
 
         t // Return same pointer
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::memory_manager;
+
+    #[test]
+    fn test_tensor_creation() {
+        // Need to enter scope to avoid warning/crash logic
+        memory_manager::tl_mem_enter_scope();
+        
+        let shape: Vec<usize> = vec![2, 2];
+        let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
+        let ptr = tl_tensor_new(data.as_ptr(), 2, shape.as_ptr());
+        
+        assert!(!ptr.is_null());
+        
+        memory_manager::tl_mem_exit_scope();
     }
 }

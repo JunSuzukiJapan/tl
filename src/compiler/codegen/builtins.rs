@@ -326,6 +326,33 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_varbuilder_get") {
         execution_engine.add_global_mapping(&f, runtime::tl_varbuilder_get as usize);
     }
+
+    if let Some(f) = module.get_function("tl_get_memory_mb") {
+        execution_engine.add_global_mapping(&f, runtime::tl_get_memory_mb as usize);
+    }
+
+    // Memory manager mappings
+    if let Some(f) = module.get_function("tl_mem_enter_scope") {
+        execution_engine
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_enter_scope as usize);
+    }
+    if let Some(f) = module.get_function("tl_mem_exit_scope") {
+        execution_engine
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_exit_scope as usize);
+    }
+    if let Some(f) = module.get_function("tl_mem_register_struct") {
+        execution_engine
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_register_struct as usize);
+    }
+    if let Some(f) = module.get_function("tl_mem_register_tensor") {
+        execution_engine
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_register_tensor as usize);
+    }
+    if let Some(f) = module.get_function("tl_mem_unregister") {
+        execution_engine
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_unregister as usize);
+    }
+
     if let Some(f) = module.get_function("tl_update_all_params") {
         execution_engine.add_global_mapping(&f, runtime::tl_update_all_params as usize);
     }
@@ -658,6 +685,41 @@ pub fn declare_runtime_functions<'ctx>(
         "tl_env_get".to_string(),
         Type::UserDefined("String".to_string()),
     );
+
+    // tl_get_memory_mb() -> i64
+    let get_memory_type = i64_type.fn_type(&[], false);
+    module.add_function("tl_get_memory_mb", get_memory_type, None);
+    fn_return_types.insert("tl_get_memory_mb".to_string(), Type::I64);
+
+    // Memory manager functions
+    let void_type = context.void_type();
+    let ptr_type = context.ptr_type(inkwell::AddressSpace::default());
+
+    // tl_mem_enter_scope() -> void
+    let mem_enter_type = void_type.fn_type(&[], false);
+    module.add_function("tl_mem_enter_scope", mem_enter_type, None);
+    fn_return_types.insert("tl_mem_enter_scope".to_string(), Type::Void);
+
+    // tl_mem_exit_scope() -> void
+    let mem_exit_type = void_type.fn_type(&[], false);
+    module.add_function("tl_mem_exit_scope", mem_exit_type, None);
+    fn_return_types.insert("tl_mem_exit_scope".to_string(), Type::Void);
+
+    // tl_mem_register_struct(ptr) -> void
+    let mem_register_struct_type = void_type.fn_type(&[ptr_type.into()], false);
+    module.add_function("tl_mem_register_struct", mem_register_struct_type, None);
+    fn_return_types.insert("tl_mem_register_struct".to_string(), Type::Void);
+
+    // tl_mem_register_tensor(ptr) -> void
+    let mem_register_tensor_type = void_type.fn_type(&[ptr_type.into()], false);
+    module.add_function("tl_mem_register_tensor", mem_register_tensor_type, None);
+    fn_return_types.insert("tl_mem_register_tensor".to_string(), Type::Void);
+
+    // tl_mem_unregister(ptr) -> void
+    let mem_unregister_type = void_type.fn_type(&[ptr_type.into()], false);
+    module.add_function("tl_mem_unregister", mem_unregister_type, None);
+    fn_return_types.insert("tl_mem_unregister".to_string(), Type::Void);
+
     fn_return_types.insert("tl_env_set".to_string(), Type::Void);
     fn_return_types.insert("tl_system_time".to_string(), Type::F32); // Using F32 as default float for now
     fn_return_types.insert("tl_system_sleep".to_string(), Type::Void);
