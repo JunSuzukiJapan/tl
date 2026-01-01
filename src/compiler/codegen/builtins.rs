@@ -38,6 +38,10 @@ pub fn declare_runtime_functions<'ctx>(
     let calloc_type = void_ptr.fn_type(&[i64_type.into(), i64_type.into()], false);
     module.add_function("calloc", calloc_type, None);
 
+    // free(ptr: *u8) -> void
+    let free_type = void_type.fn_type(&[void_ptr.into()], false);
+    module.add_function("free", free_type, None);
+
     // tl_tensor_dim(t: *mut OpaqueTensor, dim_idx: usize) -> i64
     let dim_type = i64_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
     module.add_function("tl_tensor_dim", dim_type, None);
@@ -91,8 +95,8 @@ pub fn declare_runtime_functions<'ctx>(
         void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into()], false);
     module.add_function("tl_tensor_transpose", transpose_type, None);
 
-    // tl_tensor_pow(t: *mut Tensor, exponent: f32) -> *mut Tensor
-    let pow_type = void_ptr.fn_type(&[void_ptr.into(), f32_type.into()], false);
+    // tl_tensor_pow(t: *mut Tensor, exponent: *mut Tensor) -> *mut Tensor
+    let pow_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     module.add_function("tl_tensor_pow", pow_type, None);
 
     // tl_tensor_sqrt(t: *mut Tensor) -> *mut Tensor

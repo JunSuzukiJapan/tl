@@ -1709,6 +1709,16 @@ impl SemanticAnalyzer {
                         if method_name == "detach" {
                             return Ok(obj_type);
                         }
+                        if method_name == "get" {
+                            if args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 1,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(Type::F32);
+                        }
                         return Ok(Type::Void); // Fallback
                     }
                     _ => {

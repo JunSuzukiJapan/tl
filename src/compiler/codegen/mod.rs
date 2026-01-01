@@ -99,6 +99,35 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
+    // Emit cleanup for the current scope (without popping).
+    // This is useful for loops where we want to free variables at the end of an iteration
+    // but the scope itself is popped by exit_scope() later or we need to reuse the scope map logic.
+    // Actually exit_scope() pops.
+    // We need a function that just emits the cleanup instructions for the TOP scope.
+    pub(crate) fn emit_top_scope_cleanup(&self) {
+        if let Some(scope) = self.variables.last() {
+            if let Some(free_fn) = self.module.get_function("tl_tensor_free") {
+                for (_name, (ptr, ty, should_free)) in scope {
+                    if *should_free {
+                        if let Type::Tensor(_, _) = ty {
+                            if ptr.is_pointer_value() {
+                                let ptr_val = ptr.into_pointer_value();
+                                let void_ptr_type =
+                                    self.context.ptr_type(inkwell::AddressSpace::default());
+                                if let Ok(loaded) =
+                                    self.builder
+                                        .build_load(void_ptr_type, ptr_val, "load_for_free")
+                                {
+                                    let _ = self.builder.build_call(free_fn, &[loaded.into()], "");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Exit the current scope
     fn exit_scope(&mut self) {
         // Only emit cleanup if the current block is NOT terminated
@@ -109,32 +138,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .unwrap_or(false);
 
         if !is_terminated {
-            // Emit free calls for all tensors in this scope
-            if let Some(scope) = self.variables.last() {
-                if let Some(free_fn) = self.module.get_function("tl_tensor_free") {
-                    for (_name, (ptr, ty, should_free)) in scope {
-                        // Only free Tensors if owned
-                        if *should_free {
-                            if let Type::Tensor(_, _) = ty {
-                                // ptr is the Alloca (Pointer to Pointer)
-                                // We need to Load the actual Tensor Pointer
-                                if ptr.is_pointer_value() {
-                                    let ptr_val = ptr.into_pointer_value();
-                                    let void_ptr_type =
-                                        self.context.ptr_type(inkwell::AddressSpace::default());
-                                    let loaded = self
-                                        .builder
-                                        .build_load(void_ptr_type, ptr_val, "load_for_free")
-                                        .unwrap();
-                                    self.builder
-                                        .build_call(free_fn, &[loaded.into()], "")
-                                        .unwrap();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            self.emit_top_scope_cleanup();
         }
         self.variables.pop();
     }
@@ -247,7 +251,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::I64 => self.context.i64_type().fn_type(&param_types, false),
                     Type::Bool => self.context.bool_type().fn_type(&param_types, false),
                     Type::Void => self.context.void_type().fn_type(&param_types, false),
-                    Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => self
+                    Type::Tensor(_, _) => self
+                        .context
+                        .ptr_type(inkwell::AddressSpace::default())
+                        .fn_type(&param_types, false),
+                    Type::Struct(_) | Type::UserDefined(_) => self
                         .context
                         .ptr_type(inkwell::AddressSpace::default())
                         .fn_type(&param_types, false),
@@ -288,6 +296,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .insert(arg_name.clone(), (alloca.into(), resolved_ty, false));
                     }
                 }
+                // ... (rest of method compilation)
+
+                // --- (Break to modifying compile_fn_proto separately since it is further down) ---
+                // Wait, replace_file_content doesn't support discontiguous blocks unless I use multi_replace.
+                // I should use multi_replace.
+                // I'll return invalid tool call if I try to mix patches.
+                // Actually I am viewing Lines 1 to 518. `compile_fn_proto` is at 394. `compile_impl_blocks` at 191.
+                // They are in the same file. I can use multi_replace.
+
                 // Old logic had specific `self` handling
                 // Now `self` is just an explicit argument `self: Struct`.
                 // So `self.variables.get("self")` works for `Expr::Variable("self")`.
@@ -399,7 +416,12 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::I64 => Some(self.context.i64_type().into()),
             Type::F32 => Some(self.context.f32_type().into()),
             Type::Bool => Some(self.context.bool_type().into()),
-            Type::Tensor(_, _) | Type::UserDefined(_) | Type::Struct(_) => Some(
+            Type::Tensor(_, _) => Some(
+                self.context
+                    .ptr_type(inkwell::AddressSpace::default())
+                    .into(),
+            ),
+            Type::Struct(_) | Type::UserDefined(_) => Some(
                 self.context
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
@@ -413,7 +435,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Type::I64 => self.context.i64_type().into(),
                 Type::F32 => self.context.f32_type().into(),
                 Type::Bool => self.context.bool_type().into(),
-                Type::Tensor(_, _) | Type::UserDefined(_) | Type::Struct(_) => self
+                Type::Tensor(_, _) => self
+                    .context
+                    .ptr_type(inkwell::AddressSpace::default())
+                    .into(),
+                Type::UserDefined(_) | Type::Struct(_) => self
                     .context
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),

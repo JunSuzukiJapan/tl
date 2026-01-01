@@ -328,10 +328,31 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .map_err(|e| e.to_string())?;
                             }
                         }
-                        let (val_ir, _) = self.compile_expr(value)?;
 
-                        // NOTE: Removed clone to preserve gradients
-                        val_ir
+                        // Clone if alias (assigning from variable or field) to prevent double-free
+                        let final_val =
+                            if matches!(value, Expr::Variable(_) | Expr::FieldAccess(_, _)) {
+                                if let Type::Tensor(_, _) = val_type {
+                                    let clone_fn = self
+                                        .module
+                                        .get_function("tl_tensor_clone")
+                                        .expect("tl_tensor_clone not found");
+                                    let call = self
+                                        .builder
+                                        .build_call(clone_fn, &[val.into()], "cloned_assign")
+                                        .map_err(|e| e.to_string())?;
+                                    match call.try_as_basic_value() {
+                                        inkwell::values::ValueKind::Basic(v) => v,
+                                        _ => return Err("Clone returned void".into()),
+                                    }
+                                } else {
+                                    val
+                                }
+                            } else {
+                                val
+                            };
+
+                        final_val
                     }
                     AssignOp::AddAssign => {
                         // Load current value
@@ -597,6 +618,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 };
 
+                // Capture preheader block (where we are jumping from)
+                let preheader_block = self.builder.get_insert_block().unwrap();
+
                 // Create basic blocks
                 let loop_header = self.context.append_basic_block(parent, "for_header");
                 let loop_body = self.context.append_basic_block(parent, "for_body");
@@ -609,17 +633,14 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Loop header: PHI for index
                 self.builder.position_at_end(loop_header);
-                let current_block = self.builder.get_insert_block().unwrap();
+                // let current_block = self.builder.get_insert_block().unwrap(); // No longer needed
                 let phi = self
                     .builder
                     .build_phi(i64_type, "for_idx")
                     .map_err(|e| e.to_string())?;
 
                 // Add incoming from entry
-                let entry_block = current_block
-                    .get_previous_basic_block()
-                    .unwrap_or(current_block);
-                // We'll add proper incoming edges after building body
+                // Use preheader_block captured above
 
                 // Check condition: idx < end
                 let cond = self
@@ -717,6 +738,24 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
 
                 // Branch back to header
+                // Note: We need to cleanup the loop scope variables before branching back!
+                // exit_scope() above already popped the scope from the compiler's tracking,
+                // BUT it only emitted cleanup if the block wasn't terminated.
+                // Here, we haven't terminated yet (we are about to branch).
+                // Wait. exit_scope() was called at line 727.
+                // If line 727 emitted cleanup, then we are fine?
+                // Line 727: self.exit_scope().
+                // exit_scope checks is_terminated.
+                // At line 727, are we terminated?
+                // self.compile_stmt(stmt) might have terminated (e.g. Return/Break).
+                // If body ended naturally, we are NOT terminated. So exit_scope() emitted cleanup.
+                // So cleanup logic IS there.
+
+                // Why stack overflow?
+
+                // Maybe the cleanup is emitted AFTER the branch?
+                // No, exit_scope is called BEFORE `next_idx` and BEFORE `build_unconditional_branch`.
+
                 if body_end_block.get_terminator().is_none() {
                     self.builder
                         .build_unconditional_branch(loop_header)
@@ -724,7 +763,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
 
                 // Add PHI incoming edges
-                phi.add_incoming(&[(&start_val, entry_block), (&next_idx, body_end_block)]);
+                phi.add_incoming(&[(&start_val, preheader_block), (&next_idx, body_end_block)]);
 
                 // Continue at loop end
                 self.builder.position_at_end(loop_end);

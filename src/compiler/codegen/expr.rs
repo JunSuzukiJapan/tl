@@ -101,9 +101,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::Struct(name) | Type::UserDefined(name) => {
-                            (*self.struct_types.get(name.as_str()).unwrap()).into()
-                        }
+                        Type::Struct(_) | Type::UserDefined(_) => self
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
                         _ => self.context.i64_type().into(), // Placeholder
                     };
 
@@ -137,9 +138,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .context
                                     .ptr_type(inkwell::AddressSpace::default())
                                     .into(),
-                                Type::Struct(name) | Type::UserDefined(name) => {
-                                    (*self.struct_types.get(name.as_str()).unwrap()).into()
-                                }
+                                Type::Struct(_) | Type::UserDefined(_) => self
+                                    .context
+                                    .ptr_type(inkwell::AddressSpace::default())
+                                    .into(),
                                 _ => self.context.i64_type().into(), // Fallback
                             };
                             let loaded = self
@@ -166,10 +168,33 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .ok_or(format!("Struct definition {} not found", name))?
                     .clone();
 
-                // Allocate struct on stack to initialize fields
-                let alloca = self
+                // Allocate struct on HEAP using malloc
+                let size = struct_type
+                    .size_of()
+                    .ok_or(format!("Cannot determine size of struct {}", name))?;
+                let malloc_fn = self
+                    .module
+                    .get_function("malloc")
+                    .ok_or("malloc not found (declare in builtins)")?;
+
+                let call = self
                     .builder
-                    .build_alloca(struct_type, &format!("init_{}", name))
+                    .build_call(malloc_fn, &[size.into()], "struct_malloc")
+                    .map_err(|e| e.to_string())?;
+
+                let raw_ptr = match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                    _ => return Err("malloc returned invalid value".into()),
+                };
+
+                // Cast to Struct Pointer (opaque pointer in modern LLVM, but typed for GEP)
+                let struct_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        raw_ptr,
+                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                        "struct_ptr",
+                    )
                     .map_err(|e| e.to_string())?;
 
                 for (field_name, field_expr) in fields {
@@ -185,7 +210,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .builder
                         .build_struct_gep(
                             struct_type,
-                            alloca,
+                            struct_ptr,
                             field_idx as u32,
                             &format!("{}.{}", name, field_name),
                         )
@@ -196,13 +221,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string())?;
                 }
 
-                // Load the constructed struct value to return
-                let val = self
-                    .builder
-                    .build_load(struct_type, alloca, &format!("val_{}", name))
-                    .map_err(|e| e.to_string())?;
-
-                Ok((val, Type::Struct(name.clone())))
+                // Return the pointer directly (no load)
+                Ok((struct_ptr.into(), Type::Struct(name.clone())))
             }
             Expr::StaticMethodCall(type_name, method_name, args) => {
                 // 1. Resolve Mangled Name
@@ -473,60 +493,82 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let f32_type = self.context.f32_type();
                 let i64_type = self.context.i64_type();
 
-                // Allocate and store static data
-                let data_alloca = self
+                // CRITICAL FIX: Use HEAP allocation (malloc) instead of STACK (alloca)
+                // to prevent stack overflow with many tensor literals
+
+                // Get malloc and free functions
+                let malloc_fn = self
+                    .module
+                    .get_function("malloc")
+                    .ok_or("malloc not found")?;
+                let free_fn = self.module.get_function("free").ok_or("free not found")?;
+
+                // Allocate data buffer on HEAP
+                let data_size_bytes = len * 4; // f32 = 4 bytes
+                let malloc_call = self
                     .builder
-                    .build_array_alloca(
-                        f32_type,
-                        i64_type.const_int(len, false),
-                        "const_tensor_data",
+                    .build_call(
+                        malloc_fn,
+                        &[i64_type.const_int(data_size_bytes, false).into()],
+                        "temp_data_heap",
                     )
                     .map_err(|e| e.to_string())?;
+                let data_ptr = match malloc_call.try_as_basic_value() {
+                    ValueKind::Basic(v) => v.into_pointer_value(),
+                    _ => return Err("malloc returned non-pointer".into()),
+                };
 
+                // Allocate shape buffer on HEAP
+                let shape_size_bytes = rank as u64 * 8; // i64 = 8 bytes
+                let shape_malloc_call = self
+                    .builder
+                    .build_call(
+                        malloc_fn,
+                        &[i64_type.const_int(shape_size_bytes, false).into()],
+                        "temp_shape_heap",
+                    )
+                    .map_err(|e| e.to_string())?;
+                let shape_ptr = match shape_malloc_call.try_as_basic_value() {
+                    ValueKind::Basic(v) => v.into_pointer_value(),
+                    _ => return Err("malloc returned non-pointer".into()),
+                };
+
+                // Populate data buffer
                 for (i, val) in flat_data.iter().enumerate() {
                     let float_val = f32_type.const_float(*val);
-                    let ptr = unsafe {
+                    let elem_ptr = unsafe {
                         self.builder
                             .build_in_bounds_gep(
                                 f32_type,
-                                data_alloca,
+                                data_ptr,
                                 &[i64_type.const_int(i as u64, false)],
-                                "const_elem_ptr",
+                                "data_elem",
                             )
                             .map_err(|e| e.to_string())?
                     };
                     self.builder
-                        .build_store(ptr, float_val)
+                        .build_store(elem_ptr, float_val)
                         .map_err(|e| e.to_string())?;
                 }
 
-                // Allocate and store shape
-                let shape_alloca = self
-                    .builder
-                    .build_array_alloca(
-                        i64_type,
-                        i64_type.const_int(rank as u64, false),
-                        "const_tensor_shape",
-                    )
-                    .map_err(|e| e.to_string())?;
-
+                // Populate shape buffer
                 for (i, dim) in shape.iter().enumerate() {
-                    let ptr = unsafe {
+                    let elem_ptr = unsafe {
                         self.builder
                             .build_in_bounds_gep(
                                 i64_type,
-                                shape_alloca,
+                                shape_ptr,
                                 &[i64_type.const_int(i as u64, false)],
-                                "const_shape_ptr",
+                                "shape_elem",
                             )
                             .map_err(|e| e.to_string())?
                     };
                     self.builder
-                        .build_store(ptr, i64_type.const_int(*dim as u64, false))
+                        .build_store(elem_ptr, i64_type.const_int(*dim as u64, false))
                         .map_err(|e| e.to_string())?;
                 }
 
-                // Call tl_tensor_new
+                // Call tl_tensor_new with heap-allocated buffers
                 let new_fn = self
                     .module
                     .get_function("tl_tensor_new")
@@ -537,9 +579,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .build_call(
                         new_fn,
                         &[
-                            data_alloca.into(),
+                            data_ptr.into(),
                             i64_type.const_int(rank as u64, false).into(),
-                            shape_alloca.into(),
+                            shape_ptr.into(),
                         ],
                         "new_const_tensor",
                     )
@@ -549,6 +591,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                     ValueKind::Basic(v) => v,
                     _ => return Err("Invalid tl_tensor_new return".into()),
                 };
+
+                // FREE heap-allocated buffers immediately after tl_tensor_new
+                // (tl_tensor_new copies the data internally via Candle's from_slice)
+                self.builder
+                    .build_call(free_fn, &[data_ptr.into()], "")
+                    .map_err(|e| e.to_string())?;
+                self.builder
+                    .build_call(free_fn, &[shape_ptr.into()], "")
+                    .map_err(|e| e.to_string())?;
 
                 Ok((res, Type::Tensor(Box::new(Type::F32), rank)))
             }
@@ -611,6 +662,38 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 } else {
                     match method.as_str() {
+                        "get" => {
+                            if args.len() != 1 {
+                                return Err("get requires 1 argument".into());
+                            }
+                            let (idx_val, idx_ty) = self.compile_expr(&args[0])?;
+
+                            // Ensure index is i64
+                            let idx_i64 = match idx_ty {
+                                Type::I64 => idx_val.into_int_value(),
+                                Type::I32 => self
+                                    .builder
+                                    .build_int_z_extend(
+                                        idx_val.into_int_value(),
+                                        self.context.i64_type(),
+                                        "idx_ext",
+                                    )
+                                    .map_err(|e| e.to_string())?,
+                                _ => return Err("Index must be integer".into()),
+                            };
+
+                            let fn_val = self.module.get_function("tl_tensor_get").unwrap();
+                            let call = self
+                                .builder
+                                .build_call(fn_val, &[obj_val.into(), idx_i64.into()], "get_res")
+                                .map_err(|e| e.to_string())?;
+
+                            let res = match call.try_as_basic_value() {
+                                ValueKind::Basic(v) => v,
+                                _ => return Err("Invalid get return".into()),
+                            };
+                            Ok((res, Type::F32))
+                        }
                         "backward" => {
                             let fn_val = self.module.get_function("tl_tensor_backward").unwrap();
                             self.builder

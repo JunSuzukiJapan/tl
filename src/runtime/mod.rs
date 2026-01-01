@@ -493,19 +493,19 @@ pub extern "C" fn tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
         let var_ref = &(*t).1;
 
         use std::io::Write;
-        println!(
-            "DEBUG: grad() for tensor {:p} shape={:?}",
-            t,
-            tensor.shape()
-        );
-        std::io::stdout().flush().unwrap();
+        // println!(
+        //     "DEBUG: grad() for tensor {:p} shape={:?}",
+        //     t,
+        //     tensor.shape()
+        // );
+        // std::io::stdout().flush().unwrap();
 
         // If this tensor has an associated Var, get the gradient from it directly
         // TODO: Candle's Var doesn't expose a direct grad() method
         // Need to investigate VarMap-based approach or alternative API
         if let Some(_var_arc) = var_ref {
-            println!("DEBUG: Tensor has Var, but cannot access grad() - API limitation");
-            std::io::stdout().flush().unwrap();
+            // println!("DEBUG: Tensor has Var, but cannot access grad() - API limitation");
+            // std::io::stdout().flush().unwrap();
 
             // Candle's Var API doesn't provide direct gradient access
             // Gradients must be retrieved through GradStore after backward()
@@ -524,11 +524,14 @@ pub extern "C" fn tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
         });
 
         if let Some(g) = grad {
-            println!("DEBUG: Grad FOUND from GradStore for tensor {:p}", t);
+            // println!("DEBUG: Grad FOUND from GradStore for tensor {:p}", t);
             Box::into_raw(Box::new(OpaqueTensor(g, None, None)))
         } else {
-            println!("DEBUG: Grad NOT found for tensor {:p} - returning NULL", t);
-            std::ptr::null_mut()
+            // println!("DEBUG: Grad NOT found for tensor {:p} - returning Zeros", t);
+            // Return Zeros instead of NULL to avoid panic in optimizer step.
+            // This handles cases where a parameter might not be used in the current batch.
+            let zeros = tensor.zeros_like().unwrap();
+            Box::into_raw(Box::new(OpaqueTensor(zeros, None, None)))
         }
     }
 }
