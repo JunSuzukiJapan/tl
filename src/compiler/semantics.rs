@@ -1185,11 +1185,6 @@ impl SemanticAnalyzer {
                         return Ok(Type::Tensor(inner, 0));
                     }
                     unreachable!("t0 verified as tensor above");
-                    // For reshape, return matched type with rank 0 (dynamic).
-                    if let Type::Tensor(inner, _) = t0 {
-                        return Ok(Type::Tensor(inner, 0));
-                    }
-                    unreachable!("t0 verified as tensor above");
                 } else if name == "len" {
                     if args.len() != 1 {
                         return Err(SemanticError::ArgumentCountMismatch {

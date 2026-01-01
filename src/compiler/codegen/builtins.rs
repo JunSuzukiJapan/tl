@@ -387,12 +387,9 @@ pub fn declare_runtime_functions<'ctx>(
                                                                     // tl_tensor_reshape_dims(tensor: *mut OpaqueTensor, dims: *const i64, num_dims: i64) -> *mut OpaqueTensor
     let tensor_reshape_dims_type = void_ptr.fn_type(
         &[
-            void_ptr.into(), // tensor
-            context
-                .i64_type()
-                .ptr_type(inkwell::AddressSpace::default())
-                .into(), // dims ptr
-            context.i64_type().into(), // num_dims
+            void_ptr.into(),                                           // tensor
+            context.ptr_type(inkwell::AddressSpace::default()).into(), // dims ptr
+            context.i64_type().into(),                                 // num_dims
         ],
         false,
     );

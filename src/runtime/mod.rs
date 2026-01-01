@@ -4,7 +4,7 @@ pub mod registry;
 pub mod stdlib; // Add this
 
 use crate::runtime::device::get_device;
-use candle_core::{DType, Device, Result as CandleResult, Shape, Tensor};
+use candle_core::Tensor;
 use candle_nn; // Import candle_nn
 use std::cell::RefCell;
 use std::ffi::c_float;
@@ -170,7 +170,7 @@ pub extern "C" fn tl_update_all_params(learning_rate: f32) {
 
     LATEST_GRADS.with(|g| {
         if let Some(grads) = &*g.borrow() {
-            for (name, var) in data_guard.iter() {
+            for (_name, var) in data_guard.iter() {
                 if let Some(grad) = grads.get(var.as_tensor()) {
                     // SGD update: param = param - lr * grad
                     let updated = (var.as_tensor() - (grad * learning_rate as f64).unwrap())
@@ -551,7 +551,6 @@ pub extern "C" fn tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
         let tensor = &(*t).0;
         let var_ref = &(*t).1;
 
-        use std::io::Write;
         // println!(
         //     "DEBUG: grad() for tensor {:p} shape={:?}",
         //     t,
@@ -975,7 +974,7 @@ pub extern "C" fn tl_load_all_params(path: *const std::os::raw::c_char) {
             Ok(tensors) => {
                 let varmap = GLOBAL_VAR_MAP.lock().unwrap();
                 let data = varmap.data();
-                let mut data_guard = data.lock().unwrap();
+                let data_guard = data.lock().unwrap();
 
                 let mut loaded_count = 0;
                 for (key, tensor) in tensors.iter() {

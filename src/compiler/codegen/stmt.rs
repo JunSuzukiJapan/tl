@@ -105,7 +105,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Free old value if Tensor
                 if let Type::Tensor(_, _) = field_type {
                     let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                    let current_val = self
+                    let _current_val = self
                         .builder
                         .build_load(load_type, field_ptr, "old_field_val")
                         .map_err(|e| e.to_string())?
@@ -132,7 +132,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                     if self.variables.last().unwrap().contains_key(name) {
                         // Start of double-free fix logic
-                        let (var_val, _, should_free) = &self.variables.last().unwrap()[name];
+                        let (_var_val, _, should_free) = &self.variables.last().unwrap()[name];
 
                         if *should_free {
                             // Free logic removed to prevent double-free with MemoryManager.
@@ -215,7 +215,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Check for shadowing in CURRENT scope
                 if let Some(scope) = self.variables.last_mut() {
-                    if let Some((old_ptr, old_ty, should_free)) = scope.get(name) {
+                    if let Some((_old_ptr, _old_ty, should_free)) = scope.get(name) {
                         // If we are shadowing, and the old value effectively goes away (we overwrite the map entry),
                         // we MUST free it if it's a tensor and we own it.
                         // NOTE: In Rust, shadowing doesn't drop the old var immediately, it lives until end of scope.
@@ -420,7 +420,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // Free old value if it is a Tensor
                         if let Type::Tensor(_, _) = var_type {
                             let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                            let current_val = self
+                            let _current_val = self
                                 .builder
                                 .build_load(load_type, var_ptr.into_pointer_value(), "old_val")
                                 .map_err(|e| e.to_string())?
@@ -432,7 +432,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .builder
                                 .build_int_compare(
                                     inkwell::IntPredicate::NE,
-                                    current_val,
+                                    _current_val,
                                     null_ptr,
                                     "is_not_null",
                                 )
