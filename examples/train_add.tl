@@ -54,8 +54,8 @@ fn train_epoch(model: GPT, lr: f32, epoch: i64) {
     // To safe time, we use a subset or full set?
     // Let's use full set for i, and subset for j to mix predictability and speed, or smaller ranges.
     // 30x30 = 900 steps per epoch. 50 epochs = 45000 steps.
-    for i in range(0, 30) { 
-        for j in range(0, 30) {
+    for i in range(0, 100) { 
+        for j in range(0, 100) {
             let sum = i + j;
             
             // Extract digits using simple division/modulo
@@ -105,7 +105,7 @@ fn main() {
     let model = GPT::new(vocab_size, d_model);
     let lr = 0.01; 
     let lr = 0.01; 
-    let epochs = 50; // Increased to 50 for actual learning
+    let epochs = 2; // Reduced to 2 for quick verification (20k steps)
 
     print("Training 2-digit addition (0-99) - With memory monitoring");
 

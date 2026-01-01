@@ -1773,6 +1773,16 @@ impl SemanticAnalyzer {
                                 _ => return Ok(obj_type.clone()),
                             }
                         }
+                        if method_name == "slice" {
+                            if args.len() != 2 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 2,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(obj_type.clone());
+                        }
                         return Ok(Type::Void); // Fallback
                     }
                     _ => {

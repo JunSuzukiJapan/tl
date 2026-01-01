@@ -67,40 +67,33 @@ fn main() {
     // Test cases: 12+34, 99+1, 5+5, 88+99
     // Indices: 0-3
     for t in range(0, 4) {
-        let i = 0.0;
-        let j = 0.0;
-        
-        let i_d1 = 0.0; let i_d2 = 0.0;
-        let j_d1 = 0.0; let j_d2 = 0.0;
-        
-        let i_len = 0;
-        let j_len = 0;
+        let i = 0;
+        let j = 0;
 
         if t == 0 { 
             // 12 + 34
-            i = 12.0; j = 34.0;
-            i_d1 = 1.0; i_d2 = 2.0; i_len = 2;
-            j_d1 = 3.0; j_d2 = 4.0; j_len = 2;
+            i = 12; j = 34;
         } 
         if t == 1 { 
             // 99 + 1
-            i = 99.0; j = 1.0; 
-            i_d1 = 9.0; i_d2 = 9.0; i_len = 2;
-            j_d1 = 1.0; j_len = 1;
+            i = 99; j = 1; 
         }
         if t == 2 { 
             // 5 + 5
-            i = 5.0; j = 5.0; 
-            i_d1 = 5.0; i_len = 1;
-            j_d1 = 5.0; j_len = 1;
+            i = 5; j = 5; 
         }
         if t == 3 { 
             // 88 + 99
-            i = 88.0; j = 99.0; 
-            i_d1 = 8.0; i_d2 = 8.0; i_len = 2;
-            j_d1 = 9.0; j_d2 = 9.0; j_len = 2;
+            i = 88; j = 99; 
         }
-
+        
+        // Extract digits using integer arithmetic (same as training)
+        let i_d1 = pow(i / 10, 1.0).get(0);
+        let i_d2 = pow(i - ((i/10)*10), 1.0).get(0);
+        
+        let j_d1 = pow(j / 10, 1.0).get(0);
+        let j_d2 = pow(j - ((j/10)*10), 1.0).get(0);
+        
         // Construct basic input part: "i + j ="
         let val_plus = 10.0;
         let val_eq = 11.0;
@@ -111,86 +104,85 @@ fn main() {
         let x8=val_pad; let x9=val_pad; let x10=val_pad; let x11=val_pad;
 
         let pos = 0;
-        // i
-        if i_len == 1 { x0 = i_d1; pos = 1; } 
-        else { x0 = i_d1; x1 = i_d2; pos = 2; }
+        
+        // i (Always 2 digits, leading zero if needed)
+        x0 = i_d1; 
+        x1 = i_d2;
         
         // +
-        if pos == 1 { x1 = val_plus; pos = 2; } 
-        else { x2 = val_plus; pos = 3; }
+        x2 = val_plus;
 
-        // j
-        if j_len == 1 {
-            if pos == 2 { x2 = j_d1; pos = 3; }
-            else { x3 = j_d1; pos = 4; }
-        } else {
-            if pos == 2 { x2 = j_d1; x3 = j_d2; pos = 4; }
-            else { x3 = j_d1; x4 = j_d2; pos = 5; }
-        }
+        // j (Always 2 digits, leading zero if needed)
+        x3 = j_d1;
+        x4 = j_d2;
 
         // =
-        if pos == 3 { x3 = val_eq; pos = 4; }
-        else {
-            if pos == 4 { x4 = val_eq; pos = 5; }
-            else { x5 = val_eq; pos = 6; }
-        }
+        x5 = val_eq;
         
-        // Start Autoregressive decoding for 3 steps (max result length 3)
-        // At pos, we predict r1.
-        // Then we feed r1 at pos, predict r2 at pos+1...
+        pos = 6; // Next position to predict is x6 (first digit of result)
         
-        print("---");
+        // Printing for verification
         print("Input:"); print(i); print("+"); print(j);
         print("Predicted Digits:");
 
-        let pred_pos_start = pos - 1;
+        // Step 1: Predict 1st result digit (at pos 6, using logits from pos 5 '=')
+        // Input: x0..x5, pad...
+        let data1 = [x0, x1, x2, x3, x4, x5, val_pad, val_pad, val_pad, 12.0, 12.0, 12.0];
+        let input1 = reshape(data1, 1, 12);
+        let logits1 = model.forward(input1);
+        let logits1 = reshape(logits1, 12, 13);
+        // Slice at pos 5 to get prediction for pos 6
+        let next_logits1 = logits1.slice(5, 1);
         
-        // Loop max 3 digits
-        for step in range(0, 3) {
-            let data = [x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11];
-            let X = reshape(data, 1, 12);
-            let logits = model.forward(X);
-            let out_flat = reshape(logits, 156); // 12*13
-            
-            // Check prediction at current pos
-            let current_pos_idx = 0;
-            if step == 0 { current_pos_idx = pred_pos_start; }
-            if step == 1 { current_pos_idx = pred_pos_start + 1; }
-            if step == 2 { current_pos_idx = pred_pos_start + 2; }
-            
-            if current_pos_idx >= 12 {
-                // Out of bounds (e.g. if input shifted too far)
-            } else {
-                let offset = current_pos_idx * 13;
-                let max_val = -1000.0;
-                let argmax = 0;
-                
-                for k in range(0, 13) {
-                    let idx = offset + k;
-                    let v = out_flat[idx]; 
-                    if v > max_val {
-                        max_val = v;
-                        argmax = k;
-                    }
-                }
-                
-                print(argmax);
-                
-                // If predicted PAD, stop? Or just continue filling.
-                if argmax == 12 {
-                   // break; // Can't break loop easily in tl? 
-                }
-
-                // Append argmax to input for next step
-                let val_argmax = pow(argmax, 1.0).get(0);
-                
-                if current_pos_idx == 4 { x4 = val_argmax; }
-                if current_pos_idx == 5 { x5 = val_argmax; }
-                if current_pos_idx == 6 { x6 = val_argmax; }
-                if current_pos_idx == 7 { x7 = val_argmax; }
-                if current_pos_idx == 8 { x8 = val_argmax; }
-            }
+        let pred1 = 0;
+        let max_val = -1000000.0;
+        for k in range(0, 13) {
+            let val = next_logits1.get(k);
+            if val > max_val { max_val = val; pred1 = k; }
         }
+        print(pred1);
+
+        // Step 2: Predict 2nd result digit (at pos 7, using logits from pos 6 'pred1')
+        // Input: x0..x5, pred1, pad...
+        // Convert pred1 (index) to tensor value (f32) if needed.
+        // indices in training are float values of digits (0.0 - 9.0). 
+        // pred1 is index k (0-12). 
+        // Since vocab is 0-9, 10, 11, 12, index k maps directly to value k.0
+        let val_pred1 = pow(pred1, 1.0).get(0);
+
+        let data2 = [x0, x1, x2, x3, x4, x5, val_pred1, val_pad, val_pad, 12.0, 12.0, 12.0];
+        let input2 = reshape(data2, 1, 12);
+        let logits2 = model.forward(input2);
+        let logits2 = reshape(logits2, 12, 13);
+        // Slice at pos 6 to get prediction for pos 7
+        let next_logits2 = logits2.slice(6, 1);
+
+        let pred2 = 0;
+        let max_val = -1000000.0;
+        for k in range(0, 13) {
+            let val = next_logits2.get(k);
+            if val > max_val { max_val = val; pred2 = k; }
+        }
+        print(pred2);
+
+        // Step 3: Predict 3rd result digit (at pos 8, using logits from pos 7 'pred2')
+        // Input: x0..x5, pred1, pred2, pad...
+        let val_pred2 = pow(pred2, 1.0).get(0);
+
+        let data3 = [x0, x1, x2, x3, x4, x5, val_pred1, val_pred2, val_pad, 12.0, 12.0, 12.0];
+        let input3 = reshape(data3, 1, 12);
+        let logits3 = model.forward(input3);
+        let logits3 = reshape(logits3, 12, 13);
+        // Slice at pos 7 to get prediction for pos 8
+        let next_logits3 = logits3.slice(7, 1);
+
+        let pred3 = 0;
+        let max_val = -1000000.0;
+        for k in range(0, 13) {
+            let val = next_logits3.get(k);
+            if val > max_val { max_val = val; pred3 = k; }
+        }
+        print(pred3);
     }
     
     print("Inference Verification Complete.");

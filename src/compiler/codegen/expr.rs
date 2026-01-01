@@ -839,6 +839,28 @@ impl<'ctx> CodeGenerator<'ctx> {
                             // Assuming it returns Tensor<f32, 0> or 1.
                             Ok((res, obj_ty)) // Currently preserving type/rank info is hard, returning same opaque type
                         }
+                        "slice" => {
+                            if args.len() != 2 {
+                                return Err("slice requires 2 arguments".into());
+                            }
+                            let (start_val, _) = self.compile_expr(&args[0])?;
+                            let (len_val, _) = self.compile_expr(&args[1])?;
+
+                            let fn_val = self.module.get_function("tl_tensor_slice").unwrap();
+                            let call = self
+                                .builder
+                                .build_call(
+                                    fn_val,
+                                    &[obj_val.into(), start_val.into(), len_val.into()],
+                                    "slice_res",
+                                )
+                                .map_err(|e| e.to_string())?;
+                            let res = match call.try_as_basic_value() {
+                                ValueKind::Basic(v) => v,
+                                _ => return Err("Invalid slice return".into()),
+                            };
+                            return Ok((res, obj_ty));
+                        }
                         "add_assign" | "sub_assign" | "mul_assign" | "div_assign" => {
                             if args.len() != 1 {
                                 return Err(format!("{} requires 1 argument", method));
@@ -1316,6 +1338,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // Only supporting basic tensor type propagation for now
                         return Ok((res, lhs_ty));
                     }
+
                     "grad" => {
                         if args.len() != 1 {
                             return Err("grad requires 1 argument".into());
