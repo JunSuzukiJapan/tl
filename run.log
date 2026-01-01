@@ -1,0 +1,302 @@
+warning: unused imports: `DType`, `Device`, `Result as CandleResult`, and `Shape`
+ --> src/runtime/mod.rs:6:19
+  |
+6 | use candle_core::{DType, Device, Result as CandleResult, Shape, Tensor};
+  |                   ^^^^^  ^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^  ^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: use of deprecated method `inkwell::types::IntType::<'ctx>::ptr_type`: Starting from version 15.0, LLVM doesn't differentiate between pointer types. Use Context::ptr_type instead.
+   --> src/compiler/codegen/builtins.rs:344:18
+    |
+344 |                 .ptr_type(inkwell::AddressSpace::default())
+    |                  ^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: unreachable statement
+    --> src/compiler/semantics.rs:1096:21
+     |
+1094 |                       unreachable!("t0 verified as tensor above");
+     |                       ------------------------------------------- any code following this expression is unreachable
+1095 |                       // For reshape, return matched type with rank 0 (dynamic).
+1096 | /                     if let Type::Tensor(inner, _) = t0 {
+1097 | |                         return Ok(Type::Tensor(inner, 0));
+1098 | |                     }
+     | |_____________________^ unreachable statement
+     |
+     = note: `#[warn(unreachable_code)]` on by default
+
+warning: `tl` (bin "tl") generated 3 warnings (run `cargo fix --bin "tl"` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.22s
+     Running `target/debug/tl run examples/train_add.tl`
+Running file: "examples/train_add.tl"
+Executing main...
+Initializing Runtime: CPU backend selected.
+Starting Training on Random Noise...
+Epoch:
+0
+Loss:
+[2.6436]
+Tensor[[], f32]
+DEBUG: grad() for tensor 0x7fa6f481c6e0 shape=[14, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f481c6e0
+DEBUG: grad() for tensor 0x7fa6f481df70 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f481df70
+DEBUG: grad() for tensor 0x7fa6f481e550 shape=[16, 48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f481e550
+DEBUG: grad() for tensor 0x7fa6f481ed50 shape=[48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f481ed50
+DEBUG: grad() for tensor 0x7fa6f481f320 shape=[48, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f481f320
+DEBUG: grad() for tensor 0x7fa6f481f9a0 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f481f9a0
+DEBUG: grad() for tensor 0x7fa6f4820a10 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4820a10
+DEBUG: grad() for tensor 0x7fa6f4820ff0 shape=[16, 64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4820ff0
+DEBUG: grad() for tensor 0x7fa6f48218b0 shape=[64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f48218b0
+DEBUG: grad() for tensor 0x7fa6f4821e80 shape=[64, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4821e80
+DEBUG: grad() for tensor 0x7fa6f4822500 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4822500
+DEBUG: grad() for tensor 0x7fa6f4823590 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4823590
+DEBUG: grad() for tensor 0x7fa6f4823b70 shape=[16, 48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4823b70
+DEBUG: grad() for tensor 0x7fa6f4824370 shape=[48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4824370
+DEBUG: grad() for tensor 0x7fa6f4824940 shape=[48, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4824940
+DEBUG: grad() for tensor 0x7fa6f4824fc0 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4824fc0
+DEBUG: grad() for tensor 0x7fa6f4826030 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4826030
+DEBUG: grad() for tensor 0x7fa6f4826610 shape=[16, 64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4826610
+DEBUG: grad() for tensor 0x7fa6f4826ed0 shape=[64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4826ed0
+DEBUG: grad() for tensor 0x7fa6f48274a0 shape=[64, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f48274a0
+DEBUG: grad() for tensor 0x7fa6f4827b20 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4827b20
+DEBUG: grad() for tensor 0x7fa6f4828b90 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4828b90
+DEBUG: grad() for tensor 0x7fa6f4828f60 shape=[16, 14]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4828f60
+DEBUG: grad() for tensor 0x7fa6f482a260 shape=[14]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f482a260
+Epoch:
+1
+Loss:
+[2.6243]
+Tensor[[], f32]
+DEBUG: grad() for tensor 0x7fa6f332cd40 shape=[14, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f332cd40
+DEBUG: grad() for tensor 0x7fa6f332f0a0 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f332f0a0
+DEBUG: grad() for tensor 0x7fa6f33301a0 shape=[16, 48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f33301a0
+DEBUG: grad() for tensor 0x7fa6f33308a0 shape=[48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f33308a0
+DEBUG: grad() for tensor 0x7fa6f3330cf0 shape=[48, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3330cf0
+DEBUG: grad() for tensor 0x7fa6f3331280 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3331280
+DEBUG: grad() for tensor 0x7fa6f3331850 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3331850
+DEBUG: grad() for tensor 0x7fa6f3331f20 shape=[16, 64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3331f20
+DEBUG: grad() for tensor 0x7fa6f33326f0 shape=[64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f33326f0
+DEBUG: grad() for tensor 0x7fa6f3332ad0 shape=[64, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3332ad0
+DEBUG: grad() for tensor 0x7fa6f3333050 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3333050
+DEBUG: grad() for tensor 0x7fa6f3333620 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3333620
+DEBUG: grad() for tensor 0x7fa6f3333c70 shape=[16, 48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3333c70
+DEBUG: grad() for tensor 0x7fa6f3334380 shape=[48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3334380
+DEBUG: grad() for tensor 0x7fa6f33347d0 shape=[48, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f33347d0
+DEBUG: grad() for tensor 0x7fa6f3334d60 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3334d60
+DEBUG: grad() for tensor 0x7fa6f3335330 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3335330
+DEBUG: grad() for tensor 0x7fa6f3335a00 shape=[16, 64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3335a00
+DEBUG: grad() for tensor 0x7fa6f33361d0 shape=[64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f33361d0
+DEBUG: grad() for tensor 0x7fa6f33365b0 shape=[64, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f33365b0
+DEBUG: grad() for tensor 0x7fa6f3336b30 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3336b30
+DEBUG: grad() for tensor 0x7fa6f3337100 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3337100
+DEBUG: grad() for tensor 0x7fa6f33380b0 shape=[16, 14]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f33380b0
+DEBUG: grad() for tensor 0x7fa6f3338650 shape=[14]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3338650
+Epoch:
+2
+Loss:
+[2.6053]
+Tensor[[], f32]
+DEBUG: grad() for tensor 0x7fa6f48319b0 shape=[14, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f48319b0
+DEBUG: grad() for tensor 0x7fa6f4833450 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4833450
+DEBUG: grad() for tensor 0x7fa6f4833020 shape=[16, 48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4833020
+DEBUG: grad() for tensor 0x7fa6f4b0c250 shape=[48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4b0c250
+DEBUG: grad() for tensor 0x7fa6f4b0d080 shape=[48, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4b0d080
+DEBUG: grad() for tensor 0x7fa6f4b0d5d0 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4b0d5d0
+DEBUG: grad() for tensor 0x7fa6f4b0dc40 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4b0dc40
+DEBUG: grad() for tensor 0x7fa6f4b0e310 shape=[16, 64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4b0e310
+DEBUG: grad() for tensor 0x7fa6f4b0eae0 shape=[64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4b0eae0
+DEBUG: grad() for tensor 0x7fa6f4b0eec0 shape=[64, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4b0eec0
+DEBUG: grad() for tensor 0x7fa6f4b0f440 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4b0f440
+DEBUG: grad() for tensor 0x7fa6f4b0fa10 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4b0fa10
+DEBUG: grad() for tensor 0x7fa6f4b10060 shape=[16, 48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4b10060
+DEBUG: grad() for tensor 0x7fa6f4b10770 shape=[48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4b10770
+DEBUG: grad() for tensor 0x7fa6f4b10bc0 shape=[48, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4b10bc0
+DEBUG: grad() for tensor 0x7fa6f4b11150 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4b11150
+DEBUG: grad() for tensor 0x7fa6f4b11720 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4b11720
+DEBUG: grad() for tensor 0x7fa6f4b11df0 shape=[16, 64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4b11df0
+DEBUG: grad() for tensor 0x7fa6f4b125c0 shape=[64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4b125c0
+DEBUG: grad() for tensor 0x7fa6f4c055d0 shape=[64, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4c055d0
+DEBUG: grad() for tensor 0x7fa6f4c05b70 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4c05b70
+DEBUG: grad() for tensor 0x7fa6f4c061d0 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4c061d0
+DEBUG: grad() for tensor 0x7fa6f4c071b0 shape=[16, 14]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4c071b0
+DEBUG: grad() for tensor 0x7fa6f4c07730 shape=[14]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4c07730
+Epoch:
+3
+Loss:
+[2.5866]
+Tensor[[], f32]
+DEBUG: grad() for tensor 0x7fa6f2715c30 shape=[14, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f2715c30
+DEBUG: grad() for tensor 0x7fa6f27165f0 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f27165f0
+DEBUG: grad() for tensor 0x7fa6f2716c40 shape=[16, 48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f2716c40
+DEBUG: grad() for tensor 0x7fa6f2717360 shape=[48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f2717360
+DEBUG: grad() for tensor 0x7fa6f4a0c8f0 shape=[48, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4a0c8f0
+DEBUG: grad() for tensor 0x7fa6f4a0dab0 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4a0dab0
+DEBUG: grad() for tensor 0x7fa6f4a0e0e0 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4a0e0e0
+DEBUG: grad() for tensor 0x7fa6f4a0ac50 shape=[16, 64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4a0ac50
+DEBUG: grad() for tensor 0x7fa6f3336b30 shape=[64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3336b30
+DEBUG: grad() for tensor 0x7fa6f3337100 shape=[64, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3337100
+DEBUG: grad() for tensor 0x7fa6f3334d60 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3334d60
+DEBUG: grad() for tensor 0x7fa6f3333050 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3333050
+DEBUG: grad() for tensor 0x7fa6f2717710 shape=[16, 48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f2717710
+DEBUG: grad() for tensor 0x7fa6f2717e20 shape=[48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f2717e20
+DEBUG: grad() for tensor 0x7fa6f3608840 shape=[48, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3608840
+DEBUG: grad() for tensor 0x7fa6f3609ef0 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3609ef0
+DEBUG: grad() for tensor 0x7fa6f360a810 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f360a810
+DEBUG: grad() for tensor 0x7fa6f360aef0 shape=[16, 64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f360aef0
+DEBUG: grad() for tensor 0x7fa6f360b6c0 shape=[64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f360b6c0
+DEBUG: grad() for tensor 0x7fa6f360baa0 shape=[64, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f360baa0
+DEBUG: grad() for tensor 0x7fa6f360c020 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f360c020
+DEBUG: grad() for tensor 0x7fa6f360c5f0 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f360c5f0
+DEBUG: grad() for tensor 0x7fa6f3423950 shape=[16, 14]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3423950
+DEBUG: grad() for tensor 0x7fa6f3424240 shape=[14]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3424240
+Epoch:
+4
+Loss:
+[2.5680]
+Tensor[[], f32]
+DEBUG: grad() for tensor 0x7fa6f3608660 shape=[14, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3608660
+DEBUG: grad() for tensor 0x7fa6f3607b40 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3607b40
+DEBUG: grad() for tensor 0x7fa6f360da00 shape=[16, 48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f360da00
+DEBUG: grad() for tensor 0x7fa6f3609330 shape=[48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3609330
+DEBUG: grad() for tensor 0x7fa6f360e7b0 shape=[48, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f360e7b0
+DEBUG: grad() for tensor 0x7fa6f36108f0 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f36108f0
+DEBUG: grad() for tensor 0x7fa6f3610ec0 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3610ec0
+DEBUG: grad() for tensor 0x7fa6f3611590 shape=[16, 64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3611590
+DEBUG: grad() for tensor 0x7fa6f3611d60 shape=[64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3611d60
+DEBUG: grad() for tensor 0x7fa6f3612140 shape=[64, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3612140
+DEBUG: grad() for tensor 0x7fa6f36126c0 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f36126c0
+DEBUG: grad() for tensor 0x7fa6f3612c90 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3612c90
+DEBUG: grad() for tensor 0x7fa6f36132e0 shape=[16, 48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f36132e0
+DEBUG: grad() for tensor 0x7fa6f36139f0 shape=[48]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f36139f0
+DEBUG: grad() for tensor 0x7fa6f3613e40 shape=[48, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3613e40
+DEBUG: grad() for tensor 0x7fa6f36143a0 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f36143a0
+DEBUG: grad() for tensor 0x7fa6f3614940 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3614940
+DEBUG: grad() for tensor 0x7fa6f4a0e340 shape=[16, 64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4a0e340
+DEBUG: grad() for tensor 0x7fa6f4a0ee60 shape=[64]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f4a0ee60
+DEBUG: grad() for tensor 0x7fa6f3614df0 shape=[64, 16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3614df0
+DEBUG: grad() for tensor 0x7fa6f3615360 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3615360
+DEBUG: grad() for tensor 0x7fa6f3615900 shape=[16]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3615900
+DEBUG: grad() for tensor 0x7fa6f3616890 shape=[16, 14]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3616890
+DEBUG: grad() for tensor 0x7fa6f3616e20 shape=[14]
+DEBUG: Grad FOUND from GradStore for tensor 0x7fa6f3616e20
+Program returned: 259

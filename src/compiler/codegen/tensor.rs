@@ -1,5 +1,5 @@
-use crate::compiler::ast::*;
 use super::CodeGenerator;
+use crate::compiler::ast::*;
 use inkwell::values::*;
 use std::collections::HashMap;
 
@@ -386,7 +386,15 @@ impl<'ctx> CodeGenerator<'ctx> {
             match expr {
                 Expr::IndexAccess(inner, indices) => {
                     if let Expr::Variable(name) = &**inner {
-                        Some((name.clone(), indices.clone()))
+                        let mut str_indices = Vec::new();
+                        for idx in indices {
+                            if let Expr::Variable(s) = idx {
+                                str_indices.push(s.clone());
+                            } else {
+                                return None;
+                            }
+                        }
+                        Some((name.clone(), str_indices))
                     } else {
                         None
                     }

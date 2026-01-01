@@ -86,7 +86,7 @@ pub enum Stmt {
     },
     Assign {
         name: String,
-        indices: Option<Vec<String>>,
+        indices: Option<Vec<Expr>>,
         op: AssignOp, // =, +=, max=, avg=
         value: Expr,
     },
@@ -136,8 +136,8 @@ pub enum Expr {
 
     // Variables & Access
     Variable(String),
-    IndexAccess(Box<Expr>, Vec<String>), // Name[i, j]
-    FieldAccess(Box<Expr>, String),      // self.field
+    IndexAccess(Box<Expr>, Vec<Expr>), // Name[i, j]
+    FieldAccess(Box<Expr>, String),    // self.field
 
     // Ops
     BinOp(Box<Expr>, BinOp, Box<Expr>),

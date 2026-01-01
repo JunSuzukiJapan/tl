@@ -124,14 +124,19 @@ impl Term {
                     // Convert indices to terms
                     let idx_terms: Vec<Term> = indices
                         .iter()
-                        .map(|idx_str| {
-                            if let Ok(n) = idx_str.parse::<i64>() {
-                                Term::Val(Value::Int(n))
-                            } else if let Some(val) = subst.get(idx_str) {
-                                Term::Val(val.clone())
-                            } else {
-                                Term::Var(idx_str.clone())
+                        .map(|idx_expr| match idx_expr {
+                            Expr::Int(n) => Term::Val(Value::Int(*n)),
+                            Expr::Variable(name) => {
+                                if let Some(val) = subst.get(name) {
+                                    Term::Val(val.clone())
+                                } else {
+                                    Term::Var(name.clone())
+                                }
                             }
+                            _ => panic!(
+                                "Unsupported expression in tensor index (inference): {:?}",
+                                idx_expr
+                            ),
                         })
                         .collect();
 

@@ -261,11 +261,7 @@ fn parse_postfix(input: &str) -> IResult<&str, Expr> {
             map(
                 delimited(
                     ws(char('[')),
-                    separated_list1(ws(char(',')), identifier), // Spec says indices are identifiers? or Exprs?
-                    // AST says Vec<String> for IndexAccess indices.
-                    // But usually x[i+1] is Expr.
-                    // Current AST: IndexAccess(Box<Expr>, Vec<String>)
-                    // Let's stick to identifier for now as per AST.
+                    separated_list1(ws(char(',')), parse_expr),
                     ws(char(']')),
                 ),
                 |idxs| (1, vec![], Some(idxs), None), // Tag 1 for Index
@@ -471,7 +467,7 @@ fn parse_assign_stmt(input: &str) -> IResult<&str, Stmt> {
 
     let (input, indices) = opt(delimited(
         ws(char('[')),
-        separated_list0(ws(char(',')), identifier),
+        separated_list0(ws(char(',')), parse_expr),
         ws(char(']')),
     ))(input)?;
 

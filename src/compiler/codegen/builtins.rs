@@ -299,6 +299,24 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_embedding") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_embedding as usize);
     }
+    if let Some(f) = module.get_function("tl_tensor_save") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_save as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_load") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_load as usize);
+    }
+    if let Some(f) = module.get_function("tl_save_all_params") {
+        execution_engine.add_global_mapping(&f, runtime::tl_save_all_params as usize);
+    }
+    if let Some(f) = module.get_function("tl_load_all_params") {
+        execution_engine.add_global_mapping(&f, runtime::tl_load_all_params as usize);
+    }
+    if let Some(f) = module.get_function("tl_add_parameter") {
+        execution_engine.add_global_mapping(&f, runtime::tl_add_parameter as usize);
+    }
+    if let Some(f) = module.get_function("tl_register_parameter") {
+        execution_engine.add_global_mapping(&f, runtime::tl_register_parameter as usize);
+    }
 
     // VarBuilder-based parameter management
     if let Some(f) = module.get_function("tl_varbuilder_get") {
@@ -399,9 +417,33 @@ pub fn declare_runtime_functions<'ctx>(
     let ce_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     module.add_function("tl_tensor_cross_entropy", ce_type, None);
 
+    // tl_tensor_save(path: *const i8, t: *mut OpaqueTensor) -> void
+    let save_type = void_type.fn_type(&[i8_ptr.into(), void_ptr.into()], false);
+    module.add_function("tl_tensor_save", save_type, None);
+
+    // tl_tensor_load(path: *const i8) -> *mut OpaqueTensor
+    let load_type = void_ptr.fn_type(&[i8_ptr.into()], false);
+    module.add_function("tl_tensor_load", load_type, None);
+
+    // tl_save_all_params(path: *const i8) -> void
+    let save_all_type = void_type.fn_type(&[i8_ptr.into()], false);
+    module.add_function("tl_save_all_params", save_all_type, None);
+
+    // tl_load_all_params(path: *const i8) -> void
+    let load_all_type = void_type.fn_type(&[i8_ptr.into()], false);
+    module.add_function("tl_load_all_params", load_all_type, None);
+
     // tl_tensor_sub_assign(ref_t: *mut, val: *mut) -> void
     let sub_assign_type = void_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     module.add_function("tl_tensor_sub_assign", sub_assign_type, None);
+
+    // tl_add_parameter(name: *const i8, t: *mut OpaqueTensor) -> void
+    let add_param_type = void_type.fn_type(&[i8_ptr.into(), void_ptr.into()], false);
+    module.add_function("tl_add_parameter", add_param_type, None);
+
+    // tl_register_parameter(t: *mut OpaqueTensor) -> *mut OpaqueTensor
+    let reg_param_type = void_ptr.fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_register_parameter", reg_param_type, None);
 
     // Register new return types
     fn_return_types.insert("tl_tensor_randn".to_string(), tensor_type.clone());
@@ -421,6 +463,12 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_tensor_tril".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_sum_dim".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_embedding".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_save".to_string(), Type::Void);
+    fn_return_types.insert("tl_tensor_load".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_save_all_params".to_string(), Type::Void);
+    fn_return_types.insert("tl_load_all_params".to_string(), Type::Void);
+    fn_return_types.insert("tl_add_parameter".to_string(), Type::Void);
+    fn_return_types.insert("tl_register_parameter".to_string(), tensor_type.clone());
 
     // VarBuilder-based parameter management
     fn_return_types.insert("tl_varbuilder_get".to_string(), tensor_type.clone());

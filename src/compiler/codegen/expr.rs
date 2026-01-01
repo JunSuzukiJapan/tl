@@ -566,6 +566,31 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                             let res = match call.try_as_basic_value() {
                                 ValueKind::Basic(v) => v,
+                                _ => return Err("Invalid clone return".into()),
+                            };
+                            Ok((res, obj_ty))
+                        }
+                        "detach" => {
+                            let fn_val = self.module.get_function("tl_tensor_detach").unwrap();
+                            // Optional arg: req_grad (bool). Default to false.
+                            let req_grad = if args.len() > 0 {
+                                let (arg_val, _arg_ty) = self.compile_expr(&args[0])?;
+                                arg_val.into_int_value()
+                            } else {
+                                self.context.bool_type().const_int(0, false)
+                            };
+
+                            let call = self
+                                .builder
+                                .build_call(
+                                    fn_val,
+                                    &[obj_val.into(), req_grad.into()],
+                                    "detach_res",
+                                )
+                                .map_err(|e| e.to_string())?;
+
+                            let res = match call.try_as_basic_value() {
+                                ValueKind::Basic(v) => v,
                                 _ => return Err("Invalid detach return".into()),
                             };
                             Ok((res, obj_ty))
@@ -576,13 +601,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .builder
                                 .build_call(fn_val, &[obj_val.into()], "grad_res")
                                 .map_err(|e| e.to_string())?;
-                            let res = match call.try_as_basic_value() {
-                                ValueKind::Basic(v) => v,
-                                _ => return Err("Invalid grad return".into()),
-                            };
-                            // Assuming grad has same rank as obj, but for now just opaque tensor
-                            Ok((res, obj_ty))
+
+                            match call.try_as_basic_value() {
+                                ValueKind::Basic(v) => Ok((v, obj_ty)),
+                                _ => Err("Invalid grad return".into()),
+                            }
                         }
+                        "save" => {
+                            let fn_val = self.module.get_function("tl_tensor_save").unwrap();
+                            let (path_val, _) = self.compile_expr(&args[0])?;
+
+                            // tl_tensor_save(path, tensor)
+                            self.builder
+                                .build_call(fn_val, &[path_val.into(), obj_val.into()], "save_call")
+                                .map_err(|e| e.to_string())?;
+
+                            Ok((
+                                self.context.i64_type().const_int(0, false).into(),
+                                Type::Void,
+                            ))
+                        }
+
                         "reshape" => {
                             if args.len() != 1 {
                                 return Err("reshape method requires 1 argument (shape)".into());
@@ -1388,6 +1427,49 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let llvm_func_name = match name.as_str() {
                             "slice" => "tl_tensor_slice",
                             "sum" => "tl_tensor_sum",
+                            "load_tensor" => {
+                                let fn_val = self.module.get_function("tl_tensor_load").unwrap();
+                                let (path_val, _) = self.compile_expr(&args[0])?;
+
+                                let call = self
+                                    .builder
+                                    .build_call(fn_val, &[path_val.into()], "load_res")
+                                    .map_err(|e| e.to_string())?;
+
+                                let res = match call.try_as_basic_value() {
+                                    ValueKind::Basic(v) => v,
+                                    _ => return Err("Invalid load return".into()),
+                                };
+                                return Ok((res, Type::Tensor(Box::new(Type::F32), 1)));
+                            }
+                            "save_all_params" => {
+                                let fn_val =
+                                    self.module.get_function("tl_save_all_params").unwrap();
+                                let (path_val, _) = self.compile_expr(&args[0])?;
+
+                                self.builder
+                                    .build_call(fn_val, &[path_val.into()], "save_all_res")
+                                    .map_err(|e| e.to_string())?;
+
+                                return Ok((
+                                    self.context.i64_type().const_int(0, false).into(),
+                                    Type::Void,
+                                ));
+                            }
+                            "load_all_params" => {
+                                let fn_val =
+                                    self.module.get_function("tl_load_all_params").unwrap();
+                                let (path_val, _) = self.compile_expr(&args[0])?;
+
+                                self.builder
+                                    .build_call(fn_val, &[path_val.into()], "load_all_res")
+                                    .map_err(|e| e.to_string())?;
+
+                                return Ok((
+                                    self.context.i64_type().const_int(0, false).into(),
+                                    Type::Void,
+                                ));
+                            }
                             "randn" => {
                                 // randn(shape, requires_grad)
                                 // Handle specially to pass rank/shape pointer and bool
@@ -1463,7 +1545,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .unwrap()
                                     .get_first_basic_block()
                                     .unwrap();
-                                self.builder.position_at_end(entry);
+
+                                match entry.get_first_instruction() {
+                                    Some(inst) => self.builder.position_before(&inst),
+                                    None => self.builder.position_at_end(entry),
+                                }
 
                                 let shape_array_type = usize_type.array_type(rank as u32);
                                 let shape_alloca = self
@@ -1515,7 +1601,30 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     ValueKind::Basic(v) => v,
                                     _ => return Err("Invalid call return".into()),
                                 };
+
                                 return Ok((res, Type::Tensor(Box::new(Type::F32), rank)));
+                            }
+                            "parameter" => {
+                                if args.len() != 1 {
+                                    return Err("parameter requires 1 argument".into());
+                                }
+                                let (arg_val, arg_ty) = self.compile_expr(&args[0])?;
+
+                                let fn_val = self
+                                    .module
+                                    .get_function("tl_register_parameter")
+                                    .ok_or("tl_register_parameter not found")?;
+
+                                let call = self
+                                    .builder
+                                    .build_call(fn_val, &[arg_val.into()], "param_reg")
+                                    .map_err(|e| e.to_string())?;
+
+                                let res = match call.try_as_basic_value() {
+                                    ValueKind::Basic(v) => v,
+                                    _ => return Err("Invalid parameter return".into()),
+                                };
+                                return Ok((res, arg_ty));
                             }
                             _ => name,
                         };
@@ -1587,18 +1696,28 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .build_alloca(array_type, "idx_arr")
                             .map_err(|e| e.to_string())?;
 
-                        for (i, idx_str) in indices.iter().enumerate() {
-                            let idx_val = if let Ok(n) = idx_str.parse::<u64>() {
-                                i64_type.const_int(n, false).into()
-                            } else {
-                                // Lookup variable
-                                let (ptr_val, _) = self
-                                    .lookup_variable(idx_str)
-                                    .ok_or(format!("Index {} not found", idx_str))?;
-                                self.builder
-                                    .build_load(i64_type, ptr_val.into_pointer_value(), "idx_load")
-                                    .map_err(|e| e.to_string())?
+                        for (i, idx_expr) in indices.iter().enumerate() {
+                            let (compiled_idx, ty) = self.compile_expr(idx_expr)?;
+
+                            // Ensure index is integer
+                            let idx_val = match ty {
+                                Type::I64 => compiled_idx.into_int_value(),
+                                Type::I32 => self
+                                    .builder
+                                    .build_int_z_extend(
+                                        compiled_idx.into_int_value(),
+                                        i64_type,
+                                        "zext",
+                                    )
+                                    .map_err(|e| e.to_string())?,
+                                Type::F64 | Type::F32 => {
+                                    return Err(
+                                        format!("Index must be integer, found {:?}", ty).into()
+                                    )
+                                }
+                                _ => return Err(format!("Invalid index type {:?}", ty).into()),
                             };
+                            let idx_val = inkwell::values::BasicValueEnum::IntValue(idx_val);
 
                             let elem_ptr = unsafe {
                                 self.builder
@@ -2157,25 +2276,29 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
 
                 let dim_fn = self.module.get_function("tl_tensor_dim").unwrap();
-                for (i, idx_name) in indices.iter().enumerate() {
-                    if idx_name.parse::<u64>().is_ok() {
-                        continue;
-                    }
-                    if !bounds.contains_key(idx_name) {
-                        let dim_idx_val = self.context.i64_type().const_int(i as u64, false);
-                        let call_result = self
-                            .builder
-                            .build_call(
-                                dim_fn,
-                                &[tensor_ptr.into(), dim_idx_val.into()],
-                                "dim_size",
-                            )
-                            .map_err(|e| e.to_string())?;
-                        let dim_size = match call_result.try_as_basic_value() {
-                            ValueKind::Basic(v) => v.into_int_value(),
-                            _ => return Err("Invalid dim return".into()),
-                        };
-                        bounds.insert(idx_name.clone(), dim_size);
+                for (i, idx_expr) in indices.iter().enumerate() {
+                    match idx_expr {
+                        Expr::Int(_) | Expr::Float(_) => continue,
+                        Expr::Variable(name) => {
+                            if !bounds.contains_key(name) {
+                                let dim_idx_val =
+                                    self.context.i64_type().const_int(i as u64, false);
+                                let call_result = self
+                                    .builder
+                                    .build_call(
+                                        dim_fn,
+                                        &[tensor_ptr.into(), dim_idx_val.into()],
+                                        "dim_size",
+                                    )
+                                    .map_err(|e| e.to_string())?;
+                                let dim_size = match call_result.try_as_basic_value() {
+                                    ValueKind::Basic(v) => v.into_int_value(),
+                                    _ => return Err("Invalid dim return".into()),
+                                };
+                                bounds.insert(name.clone(), dim_size);
+                            }
+                        }
+                        _ => continue,
                     }
                 }
             }

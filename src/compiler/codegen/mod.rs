@@ -24,6 +24,7 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) fn_return_types: HashMap<String, Type>,
     pub(crate) struct_types: HashMap<String, StructType<'ctx>>,
     pub(crate) struct_defs: HashMap<String, StructDef>,
+    pub(crate) param_counter: usize,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -44,6 +45,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             fn_return_types: HashMap::new(),
             struct_types: HashMap::new(),
             struct_defs: HashMap::new(),
+            param_counter: 0,
         };
 
         // Delegate to runtime module

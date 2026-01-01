@@ -10,7 +10,6 @@ struct MLP { f: Linear, p: Linear }
 impl MLP { fn new(d: i64) -> MLP { return MLP(Linear::new(d, d*4), Linear::new(d*4, d)); } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { return self.p.forward(relu(self.f.forward(x))); } fn step(self, lr: f32) { self.f.step(lr); self.p.step(lr); } }
 struct Block { l1: LayerNorm, a: CausalSelfAttention, l2: LayerNorm, m: MLP }
 impl Block { fn new(d: i64) -> Block { return Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)); } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { let x = x + self.a.forward(self.l1.forward(x)); return x + self.m.forward(self.l2.forward(x)); } fn step(self, lr: f32) { self.l1.step(lr); self.a.step(lr); self.l2.step(lr); self.m.step(lr); } }
-
 struct GPT { w: Embedding, b: Block, l: LayerNorm, h: Linear }
 impl GPT { fn new(v: i64, d: i64) -> GPT { return GPT(Embedding::new(v, d), Block::new(d), LayerNorm::new(d), Linear::new(d, v)); } fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { return self.h.forward(self.l.forward(self.b.forward(self.w.forward(i)))); } fn step(self, lr: f32) { self.w.step(lr); self.b.step(lr); self.l.step(lr); self.h.step(lr); } }
 
@@ -18,32 +17,16 @@ fn main() {
     let vocab_size = 13;
     let d_model = 64; 
     let block_size = 6;
-    let model = GPT::new(vocab_size, d_model);
-    let lr = 0.01; // Increase LR for quick convergence test
-    let epochs = 200;
-
-    print("Starting Training...");
-
-    for epoch in range(0, epochs) {
-        // 1 + 2 = 3 PAD
-        let data = [1.0, 10.0, 2.0, 11.0, 3.0, 12.0];
-        let X = reshape(data, 1, 6);
-        // +, 2, =, 3, PAD, PAD
-        let target = [10.0, 2.0, 11.0, 3.0, 12.0, 12.0];
-        let Y = reshape(target, 1, 6);
-        
-        let logits = model.forward(X); 
-        let logits_flat = reshape(logits, 6, 13);
-        let Y_flat = reshape(Y, 6);
-        let loss = cross_entropy(logits_flat, Y_flat);
-        if epoch % 50 == 0 {
-            print("Epoch:"); print(epoch); print("Loss:"); print(loss);
-        }
-        backward(loss);
-        model.step(lr);
-    }
+    let model = GPT::new(vocab_size, d_model, block_size); // args mismatch but just checking parse
+    print("Main Start");
     
-    print("Training Complete.");
-    save_all_params("model.safetensors");
-    print("Model Saved.");
+    // Test Array Literal
+    let data = [1.0, 2.0];
+    print("Array Literal OK");
+    
+    // Test Loop
+    for i in range(0, 5) {
+        print(i);
+    }
+    print("Loop OK");
 }

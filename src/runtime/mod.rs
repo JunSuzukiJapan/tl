@@ -22,6 +22,7 @@ thread_local! {
 // Global VarMap for tracking all trainable parameters
 lazy_static::lazy_static! {
     static ref GLOBAL_VAR_MAP: Mutex<candle_nn::VarMap> = Mutex::new(candle_nn::VarMap::new());
+    static ref GLOBAL_PARAM_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 }
 
 /// OpaqueTensor wraps a Candle Tensor and optionally a Var for gradient tracking
@@ -278,8 +279,8 @@ pub extern "C" fn tl_tensor_detach(t: *mut OpaqueTensor, req_grad: bool) -> *mut
         if req_grad {
             let var = candle_core::Var::from_tensor(&detached).unwrap();
             let t_ref = var.as_tensor().clone();
-            std::mem::forget(var);
-            Box::into_raw(Box::new(OpaqueTensor(t_ref, None, None)))
+            let var_arc = Arc::new(var);
+            Box::into_raw(Box::new(OpaqueTensor(t_ref, Some(var_arc), None)))
         } else {
             Box::into_raw(Box::new(OpaqueTensor(detached, None, None)))
         }
@@ -837,5 +838,140 @@ pub extern "C" fn tl_tensor_matmul(
             t_a.matmul(t_b).unwrap()
         });
         Box::into_raw(Box::new(OpaqueTensor(result, None, None)))
+    }
+}
+#[no_mangle]
+pub extern "C" fn tl_tensor_save(path: *const std::os::raw::c_char, t: *mut OpaqueTensor) {
+    use std::ffi::CStr;
+    unsafe {
+        let path_str = CStr::from_ptr(path).to_str().unwrap();
+        let tensor = &(*t).0;
+        let mut tensors = std::collections::HashMap::new();
+        tensors.insert("tensor".to_string(), tensor.clone());
+        candle_core::safetensors::save(&tensors, path_str).unwrap();
+        println!("Saved tensor to {}", path_str);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_load(path: *const std::os::raw::c_char) -> *mut OpaqueTensor {
+    use std::ffi::CStr;
+    unsafe {
+        let path_str = CStr::from_ptr(path).to_str().unwrap();
+        let device = get_device();
+        let tensors = candle_core::safetensors::load(path_str, &device).unwrap();
+        let tensor = tensors
+            .get("tensor")
+            .expect("Failed to find 'tensor' key in file")
+            .clone();
+        Box::into_raw(Box::new(OpaqueTensor(tensor, None, None)))
+    }
+}
+#[no_mangle]
+pub extern "C" fn tl_save_all_params(path: *const std::os::raw::c_char) {
+    use std::ffi::CStr;
+    unsafe {
+        let path_str = CStr::from_ptr(path).to_str().unwrap();
+        let varmap = GLOBAL_VAR_MAP.lock().unwrap();
+        let data = varmap.data();
+        let data_guard = data.lock().unwrap();
+
+        // Convert VarMap to HashMap<String, Tensor> for saving
+        let mut tensors = std::collections::HashMap::new();
+        for (key, var) in data_guard.iter() {
+            tensors.insert(key.clone(), var.as_tensor().clone());
+        }
+
+        candle_core::safetensors::save(&tensors, path_str).unwrap();
+        println!("Saved {} parameters to {}", tensors.len(), path_str);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_load_all_params(path: *const std::os::raw::c_char) {
+    use std::ffi::CStr;
+    unsafe {
+        let path_str = CStr::from_ptr(path).to_str().unwrap();
+        let device = get_device();
+
+        match candle_core::safetensors::load(path_str, &device) {
+            Ok(tensors) => {
+                let varmap = GLOBAL_VAR_MAP.lock().unwrap();
+                let data = varmap.data();
+                let mut data_guard = data.lock().unwrap();
+
+                let mut loaded_count = 0;
+                for (key, tensor) in tensors.iter() {
+                    if let Some(var) = data_guard.get(key) {
+                        if let Err(e) = var.set(tensor) {
+                            println!("Warning: Failed to set param {}: {}", key, e);
+                        } else {
+                            loaded_count += 1;
+                        }
+                    } else {
+                        // Parameter not found in current model (maybe model structure changed or unused weight)
+                        // println!("Warning: Param {} found in file but not in current model", key);
+                    }
+                }
+                println!("Loaded {} parameters from {}", loaded_count, path_str);
+            }
+            Err(e) => {
+                println!("Error loading parameters from {}: {}", path_str, e);
+            }
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_add_parameter(name: *const std::os::raw::c_char, t: *mut OpaqueTensor) {
+    use std::ffi::CStr;
+    unsafe {
+        let name_str = CStr::from_ptr(name).to_str().unwrap().to_string();
+        let tensor_wrapper = &*t;
+
+        // Check if OpaqueTensor already has a Var associated
+        let var = if let Some(ref v) = tensor_wrapper.1 {
+            v.as_ref().clone()
+        } else {
+            // If not, create a new Var from the inner tensor
+            candle_core::Var::from_tensor(&tensor_wrapper.0).unwrap()
+        };
+
+        let varmap = GLOBAL_VAR_MAP.lock().unwrap();
+        let data = varmap.data();
+        let mut data_guard = data.lock().unwrap();
+
+        data_guard.insert(name_str.clone(), var);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_register_parameter(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    use std::sync::atomic::Ordering;
+    unsafe {
+        let tensor_wrapper = &mut *t;
+        // Ensure we have a Var
+        let var_arc = if let Some(ref v) = tensor_wrapper.1 {
+            v.clone()
+        } else {
+            // Create Var if not present
+            let v = candle_core::Var::from_tensor(&tensor_wrapper.0).unwrap();
+            let arc = Arc::new(v);
+            tensor_wrapper.1 = Some(arc.clone());
+            tensor_wrapper.0 = arc.as_tensor().clone();
+            arc
+        };
+
+        // Generate Name
+        let id = GLOBAL_PARAM_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let name = format!("param_{}", id);
+
+        // Register
+        let varmap = GLOBAL_VAR_MAP.lock().unwrap();
+        let data = varmap.data();
+        let mut data_guard = data.lock().unwrap();
+        data_guard.insert(name, var_arc.as_ref().clone());
+
+        t // Return same pointer
     }
 }
