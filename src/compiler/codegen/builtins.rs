@@ -312,11 +312,11 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_save_all_params") {
         execution_engine.add_global_mapping(&f, runtime::tl_save_all_params as usize);
     }
-    if let Some(f) = module.get_function("tl_load_all_params") {
-        execution_engine.add_global_mapping(&f, runtime::tl_load_all_params as usize);
-    }
     if let Some(f) = module.get_function("tl_add_parameter") {
         execution_engine.add_global_mapping(&f, runtime::tl_add_parameter as usize);
+    }
+    if let Some(f) = module.get_function("tl_load_all_params") {
+        execution_engine.add_global_mapping(&f, runtime::tl_load_all_params as usize);
     }
     if let Some(f) = module.get_function("tl_register_parameter") {
         execution_engine.add_global_mapping(&f, runtime::tl_register_parameter as usize);
@@ -459,6 +459,10 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_save_all_params(path: *const i8) -> void
     let save_all_type = void_type.fn_type(&[i8_ptr.into()], false);
     module.add_function("tl_save_all_params", save_all_type, None);
+
+    // tl_add_parameter(name: *str, t: *mut Tensor) -> void
+    let add_param_type = void_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    module.add_function("tl_add_parameter", add_param_type, None);
 
     // tl_load_all_params(path: *const i8) -> void
     let load_all_type = void_type.fn_type(&[i8_ptr.into()], false);

@@ -85,8 +85,11 @@ impl MemoryManager {
     /// Unregister a pointer (e.g., when it's reassigned)
     /// The memory won't be freed on scope exit
     pub fn unregister(&mut self, ptr: *mut c_void) {
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.retain(|record| record.ptr != ptr);
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(pos) = scope.iter().position(|r| r.ptr == ptr) {
+                scope.remove(pos);
+                return;
+            }
         }
     }
 }

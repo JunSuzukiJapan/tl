@@ -333,14 +333,29 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let rank = shape.len();
 
                 // Allocate buffer for elements
+                // Use entry block allocation to prevent stack explosion in loops
+                let current_block = self.builder.get_insert_block().unwrap();
+                let function = current_block.get_parent().unwrap();
+                let entry_block = function.get_first_basic_block().unwrap();
+
+                // Move to entry block
+                if let Some(first_instr) = entry_block.get_first_instruction() {
+                    self.builder.position_before(&first_instr);
+                } else {
+                    self.builder.position_at_end(entry_block);
+                }
+
                 let data_alloca = self
                     .builder
                     .build_array_alloca(
                         f32_type,
                         i64_type.const_int(total_elements as u64, false),
-                        "tensor_data",
+                        "tensor_data_arr",
                     )
                     .map_err(|e| e.to_string())?;
+
+                // Move back to current block
+                self.builder.position_at_end(current_block);
 
                 // Helper to flatten and compile elements
                 fn flatten_exprs(exprs: &[Expr], result: &mut Vec<Expr>) {
@@ -373,6 +388,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     };
 
                     // Get pointer to element position
+                    // data_alloca is Pointer to Array (or just ptr due to array decay? build_array_alloca returns ptr)
+                    // build_array_alloca returns pointer to allocated type (float*).
+                    // So we treat it as float*. Indices: [i]
                     let ptr = unsafe {
                         self.builder
                             .build_in_bounds_gep(
@@ -391,14 +409,25 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
 
                 // Allocate and fill shape buffer
+                // Move to entry block again for shape
+                let current_block_2 = self.builder.get_insert_block().unwrap(); // Should be same
+                if let Some(first_instr) = entry_block.get_first_instruction() {
+                    self.builder.position_before(&first_instr);
+                } else {
+                    self.builder.position_at_end(entry_block);
+                }
+
                 let shape_alloca = self
                     .builder
                     .build_array_alloca(
                         i64_type,
                         i64_type.const_int(rank as u64, false),
-                        "tensor_shape",
+                        "tensor_shape_arr",
                     )
                     .map_err(|e| e.to_string())?;
+
+                // Move back
+                self.builder.position_at_end(current_block_2);
 
                 for (i, dim) in shape.iter().enumerate() {
                     let ptr = unsafe {
@@ -1604,6 +1633,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 self.builder
                                     .build_call(fn_val, &[path_val.into()], "save_all_res")
                                     .map_err(|e| e.to_string())?;
+
+                                return Ok((
+                                    self.context.i64_type().const_int(0, false).into(),
+                                    Type::Void,
+                                ));
+                            }
+                            "add_parameter" => {
+                                let fn_val = self.module.get_function("tl_add_parameter").unwrap();
+                                let (name_val, _) = self.compile_expr(&args[0])?;
+                                let (tensor_val, _) = self.compile_expr(&args[1])?;
+
+                                self.builder
+                                    .build_call(fn_val, &[name_val.into(), tensor_val.into()], "")
+                                    .unwrap();
 
                                 return Ok((
                                     self.context.i64_type().const_int(0, false).into(),

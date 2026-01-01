@@ -306,10 +306,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let i64_type = self.context.i64_type();
 
                 // 1. Alloca for data
-                let data_ptr = self
-                    .builder
-                    .build_alloca(f32_type, "scalar_data")
-                    .map_err(|e| e.to_string())?;
+                let current_block = self.builder.get_insert_block().unwrap();
+                let parent_fn = current_block.get_parent().unwrap();
+                let data_ptr = self.create_entry_block_alloca(parent_fn, "scalar_data", &Type::F32);
 
                 // 2. Determine value to store
                 let cast_val = if let Type::I64 = ty {
@@ -328,10 +327,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // 4. Call tl_tensor_new(data, rank=0, shape=dummy_ptr)
                 let rank_val = i64_type.const_int(0, false);
                 // Allocate a dummy shape (i64) to provide non-null pointer for slice::from_raw_parts
-                let shape_ptr = self
-                    .builder
-                    .build_alloca(i64_type, "scalar_shape")
-                    .map_err(|e| e.to_string())?;
+                // Use entry block alloca for shape too
+                let shape_ptr =
+                    self.create_entry_block_alloca(parent_fn, "scalar_shape", &Type::I64);
 
                 let tensor_new_fn = self
                     .module

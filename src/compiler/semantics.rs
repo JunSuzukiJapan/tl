@@ -242,7 +242,7 @@ impl SemanticAnalyzer {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::UserDefined("Struct".into()),
                             found: obj_type,
-                        })
+                        });
                     }
                 };
 
@@ -758,7 +758,6 @@ impl SemanticAnalyzer {
                     }
                     // Return type is same as first arg (preserving shape usually, or broadcasted)
                     // For simplicity assume resulting type is similar to input or just Tensor
-                    // We can just return t0 type or verify broadcasting...
                     // Let's return t0 for now.
                     return Ok(Type::Tensor(Box::new(Type::F32), 0));
                 }
@@ -827,6 +826,34 @@ impl SemanticAnalyzer {
                                 found: t0,
                             })
                         }
+                    }
+                    return Ok(Type::Void);
+                }
+
+                if name == "add_parameter" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&args[0])?;
+                    match t0 {
+                        Type::UserDefined(s) if s == "String" => {}
+                        _ => {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::UserDefined("String".into()),
+                                found: t0,
+                            })
+                        }
+                    }
+                    let t1 = self.check_expr(&args[1])?;
+                    if !matches!(t1, Type::Tensor(_, _)) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Tensor(Box::new(Type::Void), 0),
+                            found: t1,
+                        });
                     }
                     return Ok(Type::Void);
                 }
@@ -1692,7 +1719,7 @@ impl SemanticAnalyzer {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::UserDefined("Struct".into()),
                             found: obj_type,
-                        })
+                        });
                     }
                 };
 
@@ -1737,13 +1764,22 @@ impl SemanticAnalyzer {
                             }
                             return Ok(Type::F32);
                         }
+                        if method_name == "sum" {
+                            // sum() returns a scalar tensor (rank 0) or maintains type
+                            match obj_type {
+                                Type::Tensor(inner, _) => {
+                                    return Ok(Type::Tensor(inner.clone(), 0))
+                                }
+                                _ => return Ok(obj_type.clone()),
+                            }
+                        }
                         return Ok(Type::Void); // Fallback
                     }
                     _ => {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::UserDefined("Struct".into()),
                             found: obj_type,
-                        })
+                        });
                     }
                 };
 

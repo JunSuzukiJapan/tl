@@ -15,6 +15,37 @@ impl Block { fn new(d: i64) -> Block { return Block(LayerNorm::new(d), CausalSel
 struct GPT { w: Embedding, b: Block, l: LayerNorm, h: Linear }
 impl GPT { fn new(v: i64, d: i64) -> GPT { return GPT(Embedding::new(v, d), Block::new(d), LayerNorm::new(d), Linear::new(d, v)); } fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { return self.h.forward(self.l.forward(self.b.forward(self.w.forward(i)))); } fn step(self, lr: f32) -> GPT { let s = self; s.w = s.w.step(lr); s.b = s.b.step(lr); s.l = s.l.step(lr); s.h = s.h.step(lr); return s; } }
 
+// Wrapper for memory monitoring
+fn get_memory() -> i64 {
+    return tl_get_memory_mb();
+}
+
+fn register_gpt_params(m: GPT) {
+    add_parameter("w.w", m.w.w);
+
+    add_parameter("b.l1.w", m.b.l1.w);
+    add_parameter("b.l1.b", m.b.l1.b);
+    
+    add_parameter("b.a.a.W", m.b.a.a.W);
+    add_parameter("b.a.a.b", m.b.a.a.b);
+    add_parameter("b.a.p.W", m.b.a.p.W);
+    add_parameter("b.a.p.b", m.b.a.p.b);
+    
+    add_parameter("b.l2.w", m.b.l2.w);
+    add_parameter("b.l2.b", m.b.l2.b); 
+
+    add_parameter("b.m.f.W", m.b.m.f.W);
+    add_parameter("b.m.f.b", m.b.m.f.b);
+    add_parameter("b.m.p.W", m.b.m.p.W);
+    add_parameter("b.m.p.b", m.b.m.p.b);
+
+    add_parameter("l.w", m.l.w);
+    add_parameter("l.b", m.l.b);
+
+    add_parameter("h.W", m.h.W);
+    add_parameter("h.b", m.h.b);
+}
+
 fn main() {
     let vocab_size = 13;
     let d_model = 64; 
@@ -22,6 +53,11 @@ fn main() {
     print("Initializing Model for Inference...");
     let model = GPT::new(vocab_size, d_model);
     
+    let model = GPT::new(vocab_size, d_model);
+    
+    // Register parameters to enable loading
+    register_gpt_params(model);
+
     print("Loading Parameters...");
     load_all_params("model_2digit.safetensors");
     print("Parameters Loaded.");
@@ -34,37 +70,41 @@ fn main() {
         let i = 0.0;
         let j = 0.0;
         
-        if t == 0 { i = 12.0; j = 34.0; } // 46
-        if t == 1 { i = 99.0; j = 1.0; } // 100
-        if t == 2 { i = 5.0; j = 5.0; } // 10
-        if t == 3 { i = 88.0; j = 99.0; } // 187
+        let i_d1 = 0.0; let i_d2 = 0.0;
+        let j_d1 = 0.0; let j_d2 = 0.0;
         
+        let i_len = 0;
+        let j_len = 0;
+
+        if t == 0 { 
+            // 12 + 34
+            i = 12.0; j = 34.0;
+            i_d1 = 1.0; i_d2 = 2.0; i_len = 2;
+            j_d1 = 3.0; j_d2 = 4.0; j_len = 2;
+        } 
+        if t == 1 { 
+            // 99 + 1
+            i = 99.0; j = 1.0; 
+            i_d1 = 9.0; i_d2 = 9.0; i_len = 2;
+            j_d1 = 1.0; j_len = 1;
+        }
+        if t == 2 { 
+            // 5 + 5
+            i = 5.0; j = 5.0; 
+            i_d1 = 5.0; i_len = 1;
+            j_d1 = 5.0; j_len = 1;
+        }
+        if t == 3 { 
+            // 88 + 99
+            i = 88.0; j = 99.0; 
+            i_d1 = 8.0; i_d2 = 8.0; i_len = 2;
+            j_d1 = 9.0; j_d2 = 9.0; j_len = 2;
+        }
+
         // Construct basic input part: "i + j ="
         let val_plus = 10.0;
         let val_eq = 11.0;
         let val_pad = 12.0;
-
-        // i digits
-        let i_d1 = 12.0; let i_d2 = 12.0;
-        if i < 10 {
-            i_d1 = pow(i, 1.0).get(0);
-        } else {
-             let tens = i / 10;
-             let units = i - (tens * 10);
-             i_d1 = pow(tens, 1.0).get(0);
-             i_d2 = pow(units, 1.0).get(0);
-        }
-
-        // j digits
-        let j_d1 = 12.0; let j_d2 = 12.0;
-        if j < 10 {
-            j_d1 = pow(j, 1.0).get(0);
-        } else {
-             let tens = j / 10;
-             let units = j - (tens * 10);
-             j_d1 = pow(tens, 1.0).get(0);
-             j_d2 = pow(units, 1.0).get(0);
-        }
 
         let x0=val_pad; let x1=val_pad; let x2=val_pad; let x3=val_pad; 
         let x4=val_pad; let x5=val_pad; let x6=val_pad; let x7=val_pad;
@@ -72,7 +112,7 @@ fn main() {
 
         let pos = 0;
         // i
-        if i < 10 { x0 = i_d1; pos = 1; } 
+        if i_len == 1 { x0 = i_d1; pos = 1; } 
         else { x0 = i_d1; x1 = i_d2; pos = 2; }
         
         // +
@@ -80,7 +120,7 @@ fn main() {
         else { x2 = val_plus; pos = 3; }
 
         // j
-        if j < 10 {
+        if j_len == 1 {
             if pos == 2 { x2 = j_d1; pos = 3; }
             else { x3 = j_d1; pos = 4; }
         } else {
@@ -103,7 +143,7 @@ fn main() {
         print("Input:"); print(i); print("+"); print(j);
         print("Predicted Digits:");
 
-        let pred_pos_start = pos;
+        let pred_pos_start = pos - 1;
         
         // Loop max 3 digits
         for step in range(0, 3) {

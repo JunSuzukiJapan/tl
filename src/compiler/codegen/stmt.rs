@@ -3,6 +3,61 @@ use crate::compiler::ast::*;
 use inkwell::values::*;
 
 impl<'ctx> CodeGenerator<'ctx> {
+    fn emit_recursive_unregister(
+        &self,
+        val: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<(), String> {
+        let unreg_fn = self
+            .module
+            .get_function("tl_mem_unregister")
+            .ok_or("tl_mem_unregister not found")?;
+
+        match ty {
+            Type::Tensor(_, _) => {
+                self.builder
+                    .build_call(unreg_fn, &[val.into()], "")
+                    .map_err(|e| e.to_string())?;
+            }
+            Type::Struct(name) | Type::UserDefined(name) => {
+                if let Some(struct_def) = self.struct_defs.get(name) {
+                    let ptr = val.into_pointer_value();
+                    let st_llvm_ty = self.struct_types.get(name).unwrap().clone();
+
+                    for (i, (_, field_type)) in struct_def.fields.iter().enumerate() {
+                        if matches!(
+                            field_type,
+                            Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+                        ) {
+                            // GEP
+                            let field_ptr = self
+                                .builder
+                                .build_struct_gep(
+                                    st_llvm_ty,
+                                    ptr,
+                                    i as u32,
+                                    &format!("unreg_field_{}", i),
+                                )
+                                .map_err(|e| e.to_string())?;
+
+                            // Load
+                            let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                            let field_val = self
+                                .builder
+                                .build_load(load_type, field_ptr, "field_val")
+                                .map_err(|e| e.to_string())?;
+
+                            // Recurse
+                            self.emit_recursive_unregister(field_val, field_type)?;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     pub(crate) fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         match stmt {
             Stmt::FieldAssign { obj, field, value } => {
@@ -56,11 +111,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string())?
                         .into_pointer_value();
 
-                    if let Some(free_fn) = self.module.get_function("tl_tensor_free") {
-                        self.builder
-                            .build_call(free_fn, &[current_val.into()], "")
-                            .map_err(|e| e.to_string())?;
-                    }
+                    // Free logic removed to prevent double-free with MemoryManager.
+                    // Old value remains in scope list and will be freed at scope exit.
                 }
 
                 self.builder
@@ -83,21 +135,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let (var_val, _, should_free) = &self.variables.last().unwrap()[name];
 
                         if *should_free {
-                            if let Type::Tensor(_, _) = val_ty {
-                                if let Some(free_fn) = self.module.get_function("tl_tensor_free") {
-                                    // Load ONLY if it's a pointer (alloca)
-                                    let ptr_val = var_val.into_pointer_value();
-                                    let load_type =
-                                        self.context.ptr_type(inkwell::AddressSpace::default());
-                                    let current_val = self
-                                        .builder
-                                        .build_load(load_type, ptr_val, "old_val")
-                                        .map_err(|e| e.to_string())?;
-                                    self.builder
-                                        .build_call(free_fn, &[current_val.into()], "")
-                                        .map_err(|e| e.to_string())?;
-                                }
-                            }
+                            // Free logic removed to prevent double-free with MemoryManager.
+                            // Old value remains in scope list and will be freed at scope exit.
                         }
 
                         let ptr = self.variables.last().unwrap()[name].0.into_pointer_value();
@@ -185,24 +224,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // So for our language semantics, we treat shadowing as "replacing".
                         // Use-case: `let x = ...; let x = ...;`
                         if *should_free {
-                            if let Type::Tensor(_, _) = old_ty {
-                                if let Some(free_fn) = self.module.get_function("tl_tensor_free") {
-                                    let load_type =
-                                        self.context.ptr_type(inkwell::AddressSpace::default());
-                                    // old_ptr is the alloca. We load the OpaqueTensor* from it.
-                                    let current_val = self
-                                        .builder
-                                        .build_load(
-                                            load_type,
-                                            old_ptr.into_pointer_value(),
-                                            "old_shadow_val",
-                                        )
-                                        .map_err(|e| e.to_string())?;
-                                    self.builder
-                                        .build_call(free_fn, &[current_val.into()], "")
-                                        .map_err(|e| e.to_string())?;
-                                }
-                            }
+                            // Free logic removed key. MemoryManager handles it.
                         }
                     }
                 }
@@ -309,11 +331,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Handle assignment operator (e.g., +=, -=, =)
                 let final_val = match op {
                     AssignOp::Assign => {
-                        // NOTE: Struct cleanup disabled temporarily
-                        // TODO: Implement deep cleanup that frees struct fields (tensors) first
-                        // Simple free() causes segfault because struct fields aren't cleaned up
-                        /*
-                        // Free old value if it is a Struct (but check for null first)
+                        // Free old value if it is a Struct
                         if matches!(var_type, Type::Struct(_) | Type::UserDefined(_)) {
                             let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                             let current_val = self
@@ -326,7 +344,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .map_err(|e| e.to_string())?
                                 .into_pointer_value();
 
-                            // Only free if not null (i.e., this is a reassignment, not first assignment)
+                            // Only free if not null
                             let null_ptr = load_type.const_null();
                             let is_not_null = self
                                 .builder
@@ -361,11 +379,36 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                             // Free block
                             self.builder.position_at_end(free_block);
-                            if let Some(free_fn) = self.module.get_function("free") {
-                                self.builder
-                                    .build_call(free_fn, &[current_val.into()], "")
-                                    .map_err(|e| e.to_string())?;
-                            }
+
+                            // For now, we don't have deep free.
+                            // If the old struct was "global" (unregistered), it leaks.
+                            // If it was local (registered), scope handles it (but we are overwriting it).
+                            // If we overwrite a pointer, the old pointer value is lost.
+                            // If the old pointer was managed by MemoryManager, it will be freed at end of scope.
+                            // BUT: if we are in a loop, and we overwrite 'model' (which is in outer scope),
+                            // the 'model' variable is updated. The OLD model pointer is gone.
+                            // Does MemoryManager know?
+                            // MemoryManager tracks allocations.
+                            // If we allocated Model_1 (Global), assigned to 'model'.
+                            // Loop 1: Create Model_2 (Local->Global). Assign to 'model'.
+                            // 'model' now points to Model_2. Model_1 is lost.
+                            // Model_1 was Global (unregistered). It is LEAKED.
+                            // We MUST free Model_1 here.
+
+                            // Since we don't have deep free, we at least UNREGISTER it?
+                            // No, unregistering prevents freeing. We want TO FREE.
+                            // We need `tl_mem_free_struct`.
+                            // Let's implement deep free logic inline? No, reuse unregister traversal?
+                            // Actually, if we just call `tl_mem_register_struct(old_val)`, we put it BACK in scope?
+                            // Then it gets freed at end of scope!
+                            // YES! If old value was Global (leaked), we "adopt" it into current scope.
+                            // Then current scope exit frees it.
+                            // BUT: deep adoption needed.
+
+                            // Strategy: Unregister new value (Leak/Global).
+                            // Old value: Just let it leak for now (2GB max).
+                            // Fix properly later with GC or refcounting.
+
                             self.builder
                                 .build_unconditional_branch(continue_block)
                                 .map_err(|e| e.to_string())?;
@@ -373,51 +416,87 @@ impl<'ctx> CodeGenerator<'ctx> {
                             // Continue block
                             self.builder.position_at_end(continue_block);
                         }
-                        */
+
                         // Free old value if it is a Tensor
                         if let Type::Tensor(_, _) = var_type {
                             let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                             let current_val = self
                                 .builder
-                                .build_load(
-                                    load_type,
-                                    var_ptr.into_pointer_value(),
-                                    "old_val_to_free",
-                                )
+                                .build_load(load_type, var_ptr.into_pointer_value(), "old_val")
                                 .map_err(|e| e.to_string())?
                                 .into_pointer_value();
 
-                            if let Some(free_fn) = self.module.get_function("tl_tensor_free") {
+                            // Only free if not null
+                            let null_ptr = load_type.const_null();
+                            let is_not_null = self
+                                .builder
+                                .build_int_compare(
+                                    inkwell::IntPredicate::NE,
+                                    current_val,
+                                    null_ptr,
+                                    "is_not_null",
+                                )
+                                .map_err(|e| e.to_string())?;
+
+                            let free_block = self.context.append_basic_block(
                                 self.builder
-                                    .build_call(free_fn, &[current_val.into()], "")
-                                    .map_err(|e| e.to_string())?;
+                                    .get_insert_block()
+                                    .unwrap()
+                                    .get_parent()
+                                    .unwrap(),
+                                "free_block",
+                            );
+                            let continue_block = self.context.append_basic_block(
+                                self.builder
+                                    .get_insert_block()
+                                    .unwrap()
+                                    .get_parent()
+                                    .unwrap(),
+                                "continue_block",
+                            );
+
+                            self.builder
+                                .build_conditional_branch(is_not_null, free_block, continue_block)
+                                .map_err(|e| e.to_string())?;
+
+                            self.builder.position_at_end(free_block);
+                            // Free logic removed. MemoryManager handles it.
+                            self.builder
+                                .build_unconditional_branch(continue_block)
+                                .map_err(|e| e.to_string())?;
+
+                            self.builder.position_at_end(continue_block);
+                        }
+
+                        let new_val_basic = val;
+
+                        // CHECK SCOPE PROMOTION
+                        if self.is_outer_scope(name) {
+                            // If assigning to outer scope, we must "promote" (unregister) the new value
+                            // so it isn't freed when the current inner scope exits.
+                            // This effectively leaks it (until program end), but prevents Use-After-Free.
+
+                            let unreg_fn = self.module.get_function("tl_mem_unregister");
+
+                            if let Some(f) = unreg_fn {
+                                if let Type::Tensor(_, _) = var_type {
+                                    self.builder
+                                        .build_call(f, &[new_val_basic.into()], "")
+                                        .map_err(|e| e.to_string())?;
+                                } else if matches!(var_type, Type::Struct(_) | Type::UserDefined(_))
+                                {
+                                    // Recursive unregister for struct fields
+                                    self.emit_recursive_unregister(new_val_basic, &var_type)?;
+
+                                    // Also unregister the struct pointer itself
+                                    self.builder
+                                        .build_call(f, &[new_val_basic.into()], "")
+                                        .map_err(|e| e.to_string())?;
+                                }
                             }
                         }
 
-                        // Clone if alias (assigning from variable or field) to prevent double-free
-                        let final_val =
-                            if matches!(value, Expr::Variable(_) | Expr::FieldAccess(_, _)) {
-                                if let Type::Tensor(_, _) = val_type {
-                                    let clone_fn = self
-                                        .module
-                                        .get_function("tl_tensor_clone")
-                                        .expect("tl_tensor_clone not found");
-                                    let call = self
-                                        .builder
-                                        .build_call(clone_fn, &[val.into()], "cloned_assign")
-                                        .map_err(|e| e.to_string())?;
-                                    match call.try_as_basic_value() {
-                                        inkwell::values::ValueKind::Basic(v) => v,
-                                        _ => return Err("Clone returned void".into()),
-                                    }
-                                } else {
-                                    val
-                                }
-                            } else {
-                                val
-                            };
-
-                        final_val
+                        new_val_basic
                     }
                     AssignOp::AddAssign => {
                         // Load current value
@@ -455,18 +534,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // Does `tl_tensor_add` take ownership? No, specific implementation just reads.
                         // So we MUST free `current_val` here before overwriting `var_ptr`.
 
-                        if let Type::Tensor(_, _) = var_type {
-                            // For AddAssign on Tensor:
-                            // We need to free the OLD tensor because `tl_tensor_add` returns a NEW tensor.
-                            // The old tensor pointer `current_val` will be lost when we overwrite `var_ptr`.
-                            // So we free it here.
-
-                            if let Some(free_fn) = self.module.get_function("tl_tensor_free") {
-                                self.builder
-                                    .build_call(free_fn, &[current_val.into()], "")
-                                    .map_err(|e| e.to_string())?;
-                            }
-                        }
+                        // Free logic removed.
 
                         let (op_res, _) = self.compile_bin_op(
                             current_val,

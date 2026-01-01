@@ -76,27 +76,8 @@ impl<'ctx> CodeGenerator<'ctx> {
     // Emit cleanup for ALL active scopes (reverse order)
     // Used for Return statements to ensure everything is freed before returning
     fn emit_all_scopes_cleanup(&self) {
-        if let Some(free_fn) = self.module.get_function("tl_tensor_free") {
-            for scope in self.variables.iter().rev() {
-                for (_name, (ptr, ty, should_free)) in scope {
-                    if *should_free {
-                        if let Type::Tensor(_, _) = ty {
-                            if ptr.is_pointer_value() {
-                                let ptr_val = ptr.into_pointer_value();
-                                let void_ptr_type =
-                                    self.context.ptr_type(inkwell::AddressSpace::default());
-                                if let Ok(loaded) =
-                                    self.builder
-                                        .build_load(void_ptr_type, ptr_val, "load_for_free")
-                                {
-                                    let _ = self.builder.build_call(free_fn, &[loaded.into()], "");
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // cleanup is handled by runtime MemoryManager (tl_mem_exit_scope)
+        // We do NOT manual free here to avoid double-free.
     }
 
     // Emit cleanup for the current scope (without popping).
@@ -105,27 +86,8 @@ impl<'ctx> CodeGenerator<'ctx> {
     // Actually exit_scope() pops.
     // We need a function that just emits the cleanup instructions for the TOP scope.
     pub(crate) fn emit_top_scope_cleanup(&self) {
-        if let Some(scope) = self.variables.last() {
-            if let Some(free_fn) = self.module.get_function("tl_tensor_free") {
-                for (_name, (ptr, ty, should_free)) in scope {
-                    if *should_free {
-                        if let Type::Tensor(_, _) = ty {
-                            if ptr.is_pointer_value() {
-                                let ptr_val = ptr.into_pointer_value();
-                                let void_ptr_type =
-                                    self.context.ptr_type(inkwell::AddressSpace::default());
-                                if let Ok(loaded) =
-                                    self.builder
-                                        .build_load(void_ptr_type, ptr_val, "load_for_free")
-                                {
-                                    let _ = self.builder.build_call(free_fn, &[loaded.into()], "");
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // cleanup is handled by runtime MemoryManager
+        // We do NOT manual free here.
     }
 
     // Exit the current scope
@@ -406,6 +368,25 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
         None
+    }
+
+    pub(crate) fn lookup_scope_depth(&self, name: &str) -> Option<usize> {
+        for (i, scope) in self.variables.iter().enumerate().rev() {
+            if scope.contains_key(name) {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    pub(crate) fn is_outer_scope(&self, name: &str) -> bool {
+        if let Some(depth) = self.lookup_scope_depth(name) {
+            // Current depth is self.variables.len() - 1
+            if depth < self.variables.len() - 1 {
+                return true;
+            }
+        }
+        false
     }
 
     fn compile_fn_proto(&mut self, func: &FunctionDef) -> Result<FunctionValue<'ctx>, String> {
