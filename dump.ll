@@ -2,10 +2,11 @@
 source_filename = "main"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 
+%Data = type { ptr }
+
 @tensor_name = private unnamed_addr constant [2 x i8] c"x\00", align 1
 @tensor_name.77 = private unnamed_addr constant [2 x i8] c"y\00", align 1
 @str_literal = private unnamed_addr constant [9 x i8] c"Inner OK\00", align 1
-@str_literal.78 = private unnamed_addr constant [11 x i8] c"Complex OK\00", align 1
 
 declare void @tl_print_i64(i64)
 
@@ -309,6 +310,8 @@ declare void @tl_system_sleep.76(float)
 
 define void @main() {
 entry:
+  %d = alloca ptr, align 8
+  %shape_arr6 = alloca [2 x i64], align 8
   %y = alloca ptr, align 8
   %shape_arr2 = alloca [2 x i64], align 8
   %x = alloca ptr, align 8
@@ -337,7 +340,19 @@ else:                                             ; preds = %entry
   br label %merge
 
 merge:                                            ; preds = %else, %then
-  call void @tl_print_string(ptr @str_literal.78)
+  %init_Data = alloca %Data, align 8
+  %shape_ptr_in7 = getelementptr inbounds [2 x i64], ptr %shape_arr6, i64 0, i64 0
+  store i64 3, ptr %shape_ptr_in7, align 8
+  %shape_ptr_in8 = getelementptr inbounds [2 x i64], ptr %shape_arr6, i64 0, i64 1
+  store i64 3, ptr %shape_ptr_in8, align 8
+  %randn_res9 = call ptr @tl_tensor_randn(i64 2, ptr %shape_arr6, i1 false)
+  %Data.t = getelementptr inbounds nuw %Data, ptr %init_Data, i32 0, i32 0
+  store ptr %randn_res9, ptr %Data.t, align 8
+  %val_Data = load %Data, ptr %init_Data, align 8
+  store %Data %val_Data, ptr %d, align 8
+  %d10 = load %Data, ptr %d, align 8
+  %t = extractvalue %Data %d10, 0
+  call void @tl_tensor_print(ptr %t)
   %load_for_free = load ptr, ptr %x, align 8
   call void @tl_tensor_free(ptr %load_for_free)
   ret void

@@ -160,6 +160,9 @@ pub enum Expr {
         range: Box<Expr>,             // e.g., 0..n or a collection
         condition: Option<Box<Expr>>, // where clause
     },
+
+    // Struct Init: Name { field: value, ... }
+    StructInit(String, Vec<(String, Expr)>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

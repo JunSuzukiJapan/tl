@@ -225,6 +225,20 @@ fn parse_aggregation(input: &str) -> IResult<&str, Expr> {
     ))
 }
 
+fn parse_struct_init(input: &str) -> IResult<&str, Expr> {
+    // Identifier { field: expr, ... }
+    let (input, name) = ws(identifier)(input)?;
+    let (input, _) = ws(char('{'))(input)?;
+    let (input, fields) = separated_list0(
+        ws(char(',')),
+        pair(ws(identifier), preceded(ws(char(':')), parse_expr)),
+    )(input)?;
+    let (input, _) = opt(ws(char(',')))(input)?;
+    let (input, _) = ws(char('}'))(input)?;
+
+    Ok((input, Expr::StructInit(name, fields)))
+}
+
 // Primary: Literal | Variable | (Expr) | Block? | IfExpr | Aggregation
 fn parse_primary(input: &str) -> IResult<&str, Expr> {
     ws(alt((
@@ -235,6 +249,7 @@ fn parse_primary(input: &str) -> IResult<&str, Expr> {
         parse_if_expr,
         parse_tensor_literal,
         parse_aggregation, // Must come before parse_variable
+        parse_struct_init, // Must come before parse_variable
         parse_variable,
         parse_block_expr,
         delimited(ws(char('(')), parse_expr, ws(char(')'))),

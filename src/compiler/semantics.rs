@@ -601,6 +601,58 @@ impl SemanticAnalyzer {
             Expr::Float(_) => Ok(Type::F32), // Default float literal type
             Expr::Bool(_) => Ok(Type::Bool),
             Expr::StringLiteral(_) => Ok(Type::UserDefined("String".to_string())), // Placeholder
+            Expr::StructInit(name, fields) => {
+                let struct_def = self
+                    .structs
+                    .get(name)
+                    .ok_or_else(|| SemanticError::StructNotFound(name.clone()))?
+                    .clone();
+
+                let mut initialized_fields = HashSet::new();
+                for (field_name, field_expr) in fields {
+                    if initialized_fields.contains(field_name) {
+                        return Err(SemanticError::DuplicateDefinition(format!(
+                            "Field {} in struct init",
+                            field_name
+                        )));
+                    }
+                    initialized_fields.insert(field_name.clone());
+
+                    // Check if field exists and get type
+                    let expected_type = struct_def
+                        .fields
+                        .iter()
+                        .find(|(f, _)| f == field_name)
+                        .map(|(_, t)| t)
+                        .ok_or_else(|| {
+                            SemanticError::VariableNotFound(format!(
+                                "Field {} in struct {}",
+                                field_name, name
+                            ))
+                        })?;
+
+                    let found_type = self.check_expr(field_expr)?;
+                    if !self.are_types_compatible(expected_type, &found_type) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: expected_type.clone(),
+                            found: found_type,
+                        });
+                    }
+                }
+
+                // Check for missing fields
+                for (field_name, _) in &struct_def.fields {
+                    if !initialized_fields.contains(field_name) {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: format!("Struct init {}", name),
+                            expected: struct_def.fields.len(),
+                            found: initialized_fields.len(),
+                        });
+                    }
+                }
+
+                Ok(Type::Struct(name.clone()))
+            }
             Expr::Variable(name) => self.lookup_variable(name),
             Expr::BinOp(lhs, op, rhs) => {
                 let left = self.check_expr(lhs)?;
@@ -1615,24 +1667,29 @@ impl SemanticAnalyzer {
             }
             Expr::FieldAccess(obj, field_name) => {
                 let obj_type = self.check_expr(obj)?;
-                if let Type::UserDefined(name) = obj_type {
-                    if let Some(struct_def) = self.structs.get(&name) {
-                        for (f_name, f_type) in &struct_def.fields {
-                            if f_name == field_name {
-                                return Ok(f_type.clone());
-                            }
-                        }
-                        return Err(SemanticError::VariableNotFound(format!(
-                            "Field {}",
-                            field_name
-                        )));
+                let name = match obj_type {
+                    Type::UserDefined(n) => n,
+                    Type::Struct(n) => n,
+                    _ => {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::UserDefined("Struct".into()),
+                            found: obj_type,
+                        })
                     }
-                    return Err(SemanticError::StructNotFound(name));
+                };
+
+                if let Some(struct_def) = self.structs.get(&name) {
+                    for (f_name, f_type) in &struct_def.fields {
+                        if f_name == field_name {
+                            return Ok(f_type.clone());
+                        }
+                    }
+                    return Err(SemanticError::VariableNotFound(format!(
+                        "Field {}",
+                        field_name
+                    )));
                 }
-                Err(SemanticError::TypeMismatch {
-                    expected: Type::UserDefined("Struct".into()),
-                    found: obj_type,
-                })
+                return Err(SemanticError::StructNotFound(name));
             }
             Expr::MethodCall(obj, method_name, args) => {
                 let obj_type = self.check_expr(obj)?;

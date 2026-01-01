@@ -79,38 +79,49 @@ impl<'ctx> CodeGenerator<'ctx> {
                     ))?;
                 let (_, field_ty) = &struct_def.fields[field_idx];
 
-                if !obj_val.is_pointer_value() {
-                    return Err("Cannot access field of non-pointer struct".into());
+                if obj_val.is_pointer_value() {
+                    let ptr = obj_val.into_pointer_value();
+                    let st_llvm_ty = self.struct_types.get(&struct_name).unwrap();
+
+                    let field_ptr = self
+                        .builder
+                        .build_struct_gep(
+                            st_llvm_ty.clone(),
+                            ptr,
+                            field_idx as u32,
+                            &format!("ptr_{}", field),
+                        )
+                        .map_err(|e| e.to_string())?;
+
+                    let llvm_ty: inkwell::types::BasicTypeEnum = match field_ty {
+                        Type::I64 => self.context.i64_type().into(),
+                        Type::F32 => self.context.f32_type().into(),
+                        Type::Bool => self.context.bool_type().into(),
+                        Type::Tensor(_, _) => self
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
+                        Type::Struct(name) | Type::UserDefined(name) => {
+                            (*self.struct_types.get(name.as_str()).unwrap()).into()
+                        }
+                        _ => self.context.i64_type().into(), // Placeholder
+                    };
+
+                    let loaded = self
+                        .builder
+                        .build_load(llvm_ty, field_ptr, field)
+                        .map_err(|e| e.to_string())?;
+                    Ok((loaded, field_ty.clone()))
+                } else if obj_val.is_struct_value() {
+                    let struct_val = obj_val.into_struct_value();
+                    let extracted = self
+                        .builder
+                        .build_extract_value(struct_val, field_idx as u32, field)
+                        .map_err(|e| e.to_string())?;
+                    Ok((extracted, field_ty.clone()))
+                } else {
+                    Err("Cannot access field of non-pointer and non-struct value".into())
                 }
-                let ptr = obj_val.into_pointer_value();
-                let st_llvm_ty = self.struct_types.get(&struct_name).unwrap();
-
-                let field_ptr = self
-                    .builder
-                    .build_struct_gep(
-                        st_llvm_ty.clone(),
-                        ptr,
-                        field_idx as u32,
-                        &format!("ptr_{}", field),
-                    )
-                    .map_err(|e| e.to_string())?;
-
-                let llvm_ty: inkwell::types::BasicTypeEnum = match field_ty {
-                    Type::I64 => self.context.i64_type().into(),
-                    Type::F32 => self.context.f32_type().into(),
-                    Type::Bool => self.context.bool_type().into(),
-                    Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => self
-                        .context
-                        .ptr_type(inkwell::AddressSpace::default())
-                        .into(),
-                    _ => self.context.i64_type().into(), // Placeholder
-                };
-
-                let loaded = self
-                    .builder
-                    .build_load(llvm_ty, field_ptr, field)
-                    .map_err(|e| e.to_string())?;
-                Ok((loaded, field_ty.clone()))
             }
 
             Expr::Variable(name) => {
@@ -122,10 +133,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 Type::I64 => self.context.i64_type().into(),
                                 Type::F32 => self.context.f32_type().into(),
                                 Type::Bool => self.context.bool_type().into(),
-                                Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => self
+                                Type::Tensor(_, _) => self
                                     .context
                                     .ptr_type(inkwell::AddressSpace::default())
                                     .into(),
+                                Type::Struct(name) | Type::UserDefined(name) => {
+                                    (*self.struct_types.get(name.as_str()).unwrap()).into()
+                                }
                                 _ => self.context.i64_type().into(), // Fallback
                             };
                             let loaded = self
@@ -139,6 +153,56 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 }
                 Err(format!("Variable {} not found in scopes", name))
+            }
+            Expr::StructInit(name, fields) => {
+                let struct_type = *self
+                    .struct_types
+                    .get(name)
+                    .ok_or(format!("Struct type {} not found in codegen", name))?;
+
+                let struct_def = self
+                    .struct_defs
+                    .get(name)
+                    .ok_or(format!("Struct definition {} not found", name))?
+                    .clone();
+
+                // Allocate struct on stack to initialize fields
+                let alloca = self
+                    .builder
+                    .build_alloca(struct_type, &format!("init_{}", name))
+                    .map_err(|e| e.to_string())?;
+
+                for (field_name, field_expr) in fields {
+                    let field_idx = struct_def
+                        .fields
+                        .iter()
+                        .position(|(n, _)| n == field_name)
+                        .ok_or(format!("Field {} not found in struct {}", field_name, name))?;
+
+                    let (val, _ty) = self.compile_expr(field_expr)?;
+
+                    let field_ptr = self
+                        .builder
+                        .build_struct_gep(
+                            struct_type,
+                            alloca,
+                            field_idx as u32,
+                            &format!("{}.{}", name, field_name),
+                        )
+                        .map_err(|e| e.to_string())?;
+
+                    self.builder
+                        .build_store(field_ptr, val)
+                        .map_err(|e| e.to_string())?;
+                }
+
+                // Load the constructed struct value to return
+                let val = self
+                    .builder
+                    .build_load(struct_type, alloca, &format!("val_{}", name))
+                    .map_err(|e| e.to_string())?;
+
+                Ok((val, Type::Struct(name.clone())))
             }
             Expr::StaticMethodCall(type_name, method_name, args) => {
                 // 1. Resolve Mangled Name

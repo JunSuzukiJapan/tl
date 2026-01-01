@@ -10,8 +10,8 @@ fn main() {
         print("Inner OK");
     }
     
-    // Struct initialization is apparently not implemented in Parser/AST yet.
-    // So we skip testing it to avoid parse error.
-    
-    print("Complex OK");
+    let d = Data {
+        t: randn([3, 3], false),
+    };
+    print(d.t);
 }
