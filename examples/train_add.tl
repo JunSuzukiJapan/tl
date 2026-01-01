@@ -104,8 +104,8 @@ fn main() {
     let d_model = 64; 
     let model = GPT::new(vocab_size, d_model);
     let lr = 0.01; 
-    let lr = 0.01; 
-    let epochs = 2; // Reduced to 2 for quick verification (20k steps)
+    let lr = 0.001; 
+    let epochs = 50; // Increased to 50 for better accuracy
 
     print("Training 2-digit addition (0-99) - With memory monitoring");
 
