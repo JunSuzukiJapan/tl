@@ -56,7 +56,9 @@ fn make_var(v: candle_core::Var) -> *mut OpaqueTensor {
     ptr
 }
 
-#[no_mangle]
+// --- File I/O ---
+
+#[no_mangle] // Existing functions continue...
 pub extern "C" fn tl_tensor_new(
     data: *const c_float,
     rank: usize,
@@ -916,7 +918,8 @@ pub extern "C" fn tl_tensor_matmul(
     }
 }
 #[no_mangle]
-pub extern "C" fn tl_tensor_save(path: *const std::os::raw::c_char, t: *mut OpaqueTensor) {
+
+pub extern "C" fn tl_tensor_save(t: *mut OpaqueTensor, path: *const std::os::raw::c_char) {
     use std::ffi::CStr;
     unsafe {
         let path_str = CStr::from_ptr(path).to_str().unwrap();
@@ -924,7 +927,7 @@ pub extern "C" fn tl_tensor_save(path: *const std::os::raw::c_char, t: *mut Opaq
         let mut tensors = std::collections::HashMap::new();
         tensors.insert("tensor".to_string(), tensor.clone());
         candle_core::safetensors::save(&tensors, path_str).unwrap();
-        println!("Saved tensor to {}", path_str);
+        // println!("Saved tensor to {}", path_str);
     }
 }
 
@@ -940,6 +943,85 @@ pub extern "C" fn tl_tensor_load(path: *const std::os::raw::c_char) -> *mut Opaq
             .expect("Failed to find 'tensor' key in file")
             .clone();
         make_tensor(tensor)
+    }
+}
+
+// --- Tensor Map (State Dict) Support ---
+
+#[repr(C)]
+pub struct OpaqueTensorMap(pub std::collections::HashMap<String, Tensor>);
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_map_new() -> *mut OpaqueTensorMap {
+    let map = OpaqueTensorMap(std::collections::HashMap::new());
+    Box::into_raw(Box::new(map))
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_map_insert(
+    map: *mut OpaqueTensorMap,
+    name: *const std::os::raw::c_char,
+    tensor: *mut OpaqueTensor,
+) {
+    unsafe {
+        if map.is_null() || name.is_null() || tensor.is_null() {
+            return;
+        }
+
+        let map_ref = &mut (*map).0;
+        let c_str = std::ffi::CStr::from_ptr(name);
+        let key = c_str.to_string_lossy().into_owned();
+
+        let t_ref = &(*tensor).0;
+        map_ref.insert(key, t_ref.clone());
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *const std::os::raw::c_char) {
+    unsafe {
+        let map_ref = &(*map).0;
+        let p_str = std::ffi::CStr::from_ptr(path).to_str().unwrap();
+        candle_core::safetensors::save(map_ref, p_str).unwrap();
+        // println!("Saved model to {}", p_str);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_map_load(path: *const std::os::raw::c_char) -> *mut OpaqueTensorMap {
+    unsafe {
+        let p_str = std::ffi::CStr::from_ptr(path).to_str().unwrap();
+        let device = get_device();
+        let map =
+            candle_core::safetensors::load(p_str, &device).expect("Failed to load model file");
+        let opaque = OpaqueTensorMap(map);
+        Box::into_raw(Box::new(opaque))
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_map_get(
+    map: *mut OpaqueTensorMap,
+    name: *const std::os::raw::c_char,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let map_ref = &(*map).0;
+        let c_str = std::ffi::CStr::from_ptr(name);
+        let key = c_str.to_string_lossy();
+
+        if let Some(t) = map_ref.get(key.as_ref()) {
+            make_tensor(t.clone())
+        } else {
+            // Panic or Return Null? Panic for now standard behavior
+            panic!("Weight '{}' not found in loaded file.", key);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_map_free(map: *mut OpaqueTensorMap) {
+    unsafe {
+        let _ = Box::from_raw(map); // Drop
     }
 }
 #[no_mangle]

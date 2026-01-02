@@ -2311,6 +2311,7 @@ dependencies = [
  "nom",
  "predicates",
  "reqwest",
+ "safetensors",
  "thiserror 1.0.69",
  "tokio",
 ]

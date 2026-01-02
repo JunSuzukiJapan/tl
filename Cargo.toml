@@ -20,6 +20,7 @@ inkwell = { version = "0.7.0", features = ["llvm21-1"] }
 # Tensor Runtime (Candle)
 candle-core = { version = "0.9.1" }
 candle-nn = "0.9.1"
+safetensors = "0.4.1"
 
 # Utils
 lazy_static = "1.4.0"

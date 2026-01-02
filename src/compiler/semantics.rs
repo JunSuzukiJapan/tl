@@ -1336,6 +1336,74 @@ impl SemanticAnalyzer {
                         });
                     }
                     return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                } else if name == "save_weights" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&args[0])?;
+                    let t1 = self.check_expr(&args[1])?;
+
+                    // Arg 0: Tensor OR Struct
+                    match t0 {
+                        Type::Tensor(_, _) => {}
+                        Type::UserDefined(ref s) if s != "String" => {}
+                        Type::Struct(_) => {}
+                        _ => {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::UserDefined("Tensor or Struct".into()),
+                                found: t0,
+                            })
+                        }
+                    }
+
+                    if !matches!(t1, Type::UserDefined(ref s) if s == "String") {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::UserDefined("String".into()),
+                            found: t1,
+                        });
+                    }
+                    return Ok(Type::Void);
+                } else if name == "load_weights" {
+                    if args.len() == 1 {
+                        let t0 = self.check_expr(&args[0])?;
+                        if !matches!(t0, Type::UserDefined(ref s) if s == "String") {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::UserDefined("String".into()),
+                                found: t0,
+                            });
+                        }
+                        return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                    } else if args.len() == 2 {
+                        let t0 = self.check_expr(&args[0])?;
+                        let t1 = self.check_expr(&args[1])?;
+                        match t0 {
+                            Type::UserDefined(ref s) if s != "String" => {}
+                            Type::Struct(_) => {}
+                            _ => {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::UserDefined("Struct".into()),
+                                    found: t0,
+                                })
+                            }
+                        }
+                        if !matches!(t1, Type::UserDefined(ref s) if s == "String") {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::UserDefined("String".into()),
+                                found: t1,
+                            });
+                        }
+                        return Ok(Type::Void);
+                    } else {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1, // or 2
+                            found: args.len(),
+                        });
+                    }
                 }
 
                 if let Some(func) = self.functions.get(name).cloned() {
@@ -1945,6 +2013,8 @@ impl SemanticAnalyzer {
                 // Otherwise strict match
                 r1 == r2
             }
+            (Type::UserDefined(n1), Type::Struct(n2)) => n1 == n2,
+            (Type::Struct(n1), Type::UserDefined(n2)) => n1 == n2,
             _ => t1 == t2,
         }
     }

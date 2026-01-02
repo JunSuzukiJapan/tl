@@ -4,6 +4,166 @@ use inkwell::values::*;
 use std::collections::HashMap;
 
 impl<'ctx> CodeGenerator<'ctx> {
+    pub(crate) fn gen_save_struct(
+        &self,
+        map: inkwell::values::BasicValueEnum<'ctx>,
+        struct_ptr: inkwell::values::BasicValueEnum<'ctx>,
+        struct_name: &str,
+        prefix: String,
+    ) -> Result<(), String> {
+        let def = self
+            .struct_defs
+            .get(struct_name)
+            .ok_or(format!("Struct definition '{}' not found", struct_name))?;
+
+        let struct_ty = *self
+            .struct_types
+            .get(struct_name)
+            .ok_or("Struct LLVM type not found")?;
+
+        for (i, (field_name, field_type)) in def.fields.iter().enumerate() {
+            let full_key = if prefix.is_empty() {
+                field_name.clone()
+            } else {
+                format!("{}.{}", prefix, field_name)
+            };
+
+            let ptr = struct_ptr.into_pointer_value();
+            let field_ptr = self
+                .builder
+                .build_struct_gep(struct_ty, ptr, i as u32, field_name)
+                .map_err(|e| e.to_string())?;
+
+            match field_type {
+                Type::Tensor(_, _) => {
+                    // Save Tensor
+                    let tensor_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let t_val = self
+                        .builder
+                        .build_load(tensor_ptr_ty, field_ptr, field_name)
+                        .map_err(|e| e.to_string())?;
+                    let key_ptr = self
+                        .builder
+                        .build_global_string_ptr(&full_key, "key_str")
+                        .map_err(|e| e.to_string())?;
+
+                    let i8_ptr = self
+                        .builder
+                        .build_pointer_cast(
+                            key_ptr.as_pointer_value(),
+                            self.context.ptr_type(inkwell::AddressSpace::default()),
+                            "key_cast",
+                        )
+                        .map_err(|e| e.to_string())?;
+
+                    let insert_fn = self
+                        .module
+                        .get_function("tl_tensor_map_insert")
+                        .ok_or("tl_tensor_map_insert not found")?;
+                    let _ = self
+                        .builder
+                        .build_call(insert_fn, &[map.into(), i8_ptr.into(), t_val.into()], "")
+                        .map_err(|e| e.to_string())?;
+                }
+                Type::UserDefined(sub_name) if sub_name != "String" => {
+                    // Recurse
+                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let sub_val = self
+                        .builder
+                        .build_load(ptr_ty, field_ptr, "sub_ptr")
+                        .map_err(|e| e.to_string())?;
+                    self.gen_save_struct(map, sub_val, sub_name, full_key)?;
+                }
+                _ => {
+                    // Skip primitives
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn gen_load_struct(
+        &self,
+        map: inkwell::values::BasicValueEnum<'ctx>,
+        struct_ptr: inkwell::values::BasicValueEnum<'ctx>,
+        struct_name: &str,
+        prefix: String,
+    ) -> Result<(), String> {
+        let def = self
+            .struct_defs
+            .get(struct_name)
+            .ok_or(format!("Struct definition '{}' not found", struct_name))?;
+
+        let struct_ty = *self
+            .struct_types
+            .get(struct_name)
+            .ok_or("Struct LLVM type not found")?;
+
+        for (i, (field_name, field_type)) in def.fields.iter().enumerate() {
+            let full_key = if prefix.is_empty() {
+                field_name.clone()
+            } else {
+                format!("{}.{}", prefix, field_name)
+            };
+
+            let ptr = struct_ptr.into_pointer_value();
+            let field_ptr = self
+                .builder
+                .build_struct_gep(struct_ty, ptr, i as u32, field_name)
+                .map_err(|e| e.to_string())?;
+
+            match field_type {
+                Type::Tensor(_, _) => {
+                    // Load Tensor
+                    let key_ptr = self
+                        .builder
+                        .build_global_string_ptr(&full_key, "key_str")
+                        .map_err(|e| e.to_string())?;
+
+                    let i8_ptr = self
+                        .builder
+                        .build_pointer_cast(
+                            key_ptr.as_pointer_value(),
+                            self.context.ptr_type(inkwell::AddressSpace::default()),
+                            "key_cast",
+                        )
+                        .map_err(|e| e.to_string())?;
+
+                    let get_fn = self
+                        .module
+                        .get_function("tl_tensor_map_get")
+                        .ok_or("tl_tensor_map_get not found")?;
+                    let call = self
+                        .builder
+                        .build_call(get_fn, &[map.into(), i8_ptr.into()], "t_val")
+                        .map_err(|e| e.to_string())?;
+
+                    let t_val = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("tl_tensor_map_get returned inst/void".into()),
+                    };
+
+                    self.builder
+                        .build_store(field_ptr, t_val)
+                        .map_err(|e| e.to_string())?;
+                }
+                Type::UserDefined(sub_name) if sub_name != "String" => {
+                    // Recurse: load the pointer to inner struct
+                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let sub_val = self
+                        .builder
+                        .build_load(ptr_ty, field_ptr, "sub_ptr")
+                        .map_err(|e| e.to_string())?;
+                    self.gen_load_struct(map, sub_val, sub_name, full_key)?;
+                }
+                _ => {
+                    // Skip primitives
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn compile_expr(
         &mut self,
         expr: &Expr,
@@ -1765,6 +1925,154 @@ impl<'ctx> CodeGenerator<'ctx> {
                     _ => return Err("Invalid transpose return".into()),
                 };
                 Ok((res, t_ty)) // Returns same type (Tensor)
+            }
+            "save_weights" => {
+                if args.len() != 2 {
+                    return Err("save_weights requires 2 arguments: tensor/struct, path".into());
+                }
+                let (t_val, t_ty) = self.compile_expr(&args[0])?;
+                let (path_val, path_ty) = self.compile_expr(&args[1])?;
+
+                if !matches!(path_ty, Type::UserDefined(s) if s == "String") {
+                    return Err("Second argument to save_weights must be a String (path)".into());
+                }
+
+                match t_ty {
+                    Type::Tensor(_, _) => {
+                        let fn_val = self
+                            .module
+                            .get_function("tl_tensor_save")
+                            .ok_or("tl_tensor_save not found")?;
+                        self.builder
+                            .build_call(fn_val, &[t_val.into(), path_val.into()], "")
+                            .map_err(|e| e.to_string())?;
+                    }
+                    Type::UserDefined(struct_name) | Type::Struct(struct_name)
+                        if struct_name != "String" =>
+                    {
+                        // Struct serialization
+                        let new_fn = self
+                            .module
+                            .get_function("tl_tensor_map_new")
+                            .ok_or("tl_tensor_map_new not found")?;
+                        let map_call = self
+                            .builder
+                            .build_call(new_fn, &[], "map")
+                            .map_err(|e| e.to_string())?;
+                        let map_val = match map_call.try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(v) => v,
+                            _ => return Err("tl_tensor_map_new returned void".into()),
+                        };
+
+                        self.gen_save_struct(map_val, t_val, &struct_name, "".to_string())?;
+
+                        let save_fn = self
+                            .module
+                            .get_function("tl_tensor_map_save")
+                            .ok_or("tl_tensor_map_save not found")?;
+                        self.builder
+                            .build_call(save_fn, &[map_val.into(), path_val.into()], "")
+                            .map_err(|e| e.to_string())?;
+
+                        let free_fn = self
+                            .module
+                            .get_function("tl_tensor_map_free")
+                            .ok_or("tl_tensor_map_free not found")?;
+                        self.builder
+                            .build_call(free_fn, &[map_val.into()], "")
+                            .map_err(|e| e.to_string())?;
+                    }
+                    _ => {
+                        return Err(format!(
+                        "First argument to save_weights must be a tensor or struct. Found: {:?}",
+                        t_ty
+                    ))
+                    }
+                }
+
+                Ok((
+                    self.context.i64_type().const_int(0, false).into(),
+                    Type::Void,
+                ))
+            }
+            "load_weights" => {
+                if args.len() == 1 {
+                    let (path_val, path_ty) = self.compile_expr(&args[0])?;
+                    if !matches!(path_ty, Type::UserDefined(s) if s == "String") {
+                        return Err("Argument to load_weights must be a String (path)".into());
+                    }
+
+                    let fn_val = self
+                        .module
+                        .get_function("tl_tensor_load")
+                        .ok_or("tl_tensor_load not found")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[path_val.into()], "load_res")
+                        .map_err(|e| e.to_string())?;
+
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid load_weights return".into()),
+                    };
+                    Ok((res, Type::Tensor(Box::new(Type::F32), 0)))
+                } else if args.len() == 2 {
+                    // Struct load
+                    let (struct_val, s_ty) = self.compile_expr(&args[0])?;
+                    let (path_val, path_ty) = self.compile_expr(&args[1])?;
+                    if !matches!(path_ty, Type::UserDefined(s) if s == "String") {
+                        return Err(
+                            "Second argument to load_weights must be a String (path)".into()
+                        );
+                    }
+
+                    let struct_name_opt = match &s_ty {
+                        Type::UserDefined(s) => Some(s.clone()),
+                        Type::Struct(s) => Some(s.clone()),
+                        _ => None,
+                    };
+
+                    if let Some(struct_name) = struct_name_opt {
+                        if struct_name == "String" {
+                            return Err("Cannot load weights into String".into());
+                        }
+
+                        let load_fn = self
+                            .module
+                            .get_function("tl_tensor_map_load")
+                            .ok_or("tl_tensor_map_load not found")?;
+                        let map_call = self
+                            .builder
+                            .build_call(load_fn, &[path_val.into()], "map")
+                            .map_err(|e| e.to_string())?;
+                        let map_val = match map_call.try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(v) => v,
+                            _ => return Err("tl_tensor_map_load returned void".into()),
+                        };
+
+                        self.gen_load_struct(map_val, struct_val, &struct_name, "".to_string())?;
+
+                        let free_fn = self
+                            .module
+                            .get_function("tl_tensor_map_free")
+                            .ok_or("tl_tensor_map_free not found")?;
+                        self.builder
+                            .build_call(free_fn, &[map_val.into()], "")
+                            .map_err(|e| e.to_string())?;
+
+                        Ok((
+                            self.context.i64_type().const_int(0, false).into(),
+                            Type::Void,
+                        ))
+                    } else {
+                        return Err(format!(
+                            "First argument to load_weights (2 args) must be a struct. Found: {:?}",
+                            s_ty
+                        ));
+                    }
+                } else {
+                    return Err("load_weights requires 1 or 2 arguments".into());
+                }
             }
             "reshape" => {
                 if args.len() < 2 {

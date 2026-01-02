@@ -169,6 +169,40 @@ pub fn declare_runtime_functions<'ctx>(
         .fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
     module.add_function("strcmp", strcmp_type, None);
 
+    // tl_tensor_save(t: *mut Tensor, path: *const i8) -> void
+    let save_type = void_type.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
+    module.add_function("tl_tensor_save", save_type, None);
+
+    // tl_tensor_load(path: *const i8) -> *mut Tensor
+    let load_type = void_ptr.fn_type(&[i8_ptr.into()], false);
+    module.add_function("tl_tensor_load", load_type, None);
+
+    // --- Map Support ---
+    // tl_tensor_map_new() -> *mut Map
+    let map_new_type = void_ptr.fn_type(&[], false);
+    module.add_function("tl_tensor_map_new", map_new_type, None);
+
+    // tl_tensor_map_insert(map, name, tensor)
+    let map_insert_type =
+        void_type.fn_type(&[void_ptr.into(), i8_ptr.into(), void_ptr.into()], false);
+    module.add_function("tl_tensor_map_insert", map_insert_type, None);
+
+    // tl_tensor_map_save(map, path)
+    let map_save_type = void_type.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
+    module.add_function("tl_tensor_map_save", map_save_type, None);
+
+    // tl_tensor_map_load(path) -> *mut Map
+    let map_load_type = void_ptr.fn_type(&[i8_ptr.into()], false);
+    module.add_function("tl_tensor_map_load", map_load_type, None);
+
+    // tl_tensor_map_get(map, name) -> *mut Tensor
+    let map_get_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
+    module.add_function("tl_tensor_map_get", map_get_type, None);
+
+    // tl_tensor_map_free(map)
+    let map_free_type = void_type.fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_tensor_map_free", map_free_type, None);
+
     // --- Global Mappings ---
     // Mapping symbols is critical for JIT.
     // We do it here to keep CodeGenerator::new clean.
@@ -315,6 +349,24 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_add_parameter") {
         execution_engine.add_global_mapping(&f, runtime::tl_add_parameter as usize);
     }
+    if let Some(f) = module.get_function("tl_tensor_map_new") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_new as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_map_insert") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_insert as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_map_save") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_save as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_map_load") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_load as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_map_get") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_map_free") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_free as usize);
+    }
     if let Some(f) = module.get_function("tl_load_all_params") {
         execution_engine.add_global_mapping(&f, runtime::tl_load_all_params as usize);
     }
@@ -361,6 +413,26 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_reshape_dims") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_reshape_dims as usize);
+    }
+
+    // Map Support
+    if let Some(f) = module.get_function("tl_tensor_map_new") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_new as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_map_insert") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_insert as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_map_save") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_save as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_map_load") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_load as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_map_get") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_map_free") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_free as usize);
     }
 
     // Populate return types for lookups
