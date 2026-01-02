@@ -1,0 +1,74 @@
+   Compiling tl v0.1.0 (/Users/suzukijun/Program/Rust/tl)
+error[E0277]: the trait bound `BasicMetadataValueEnum<'_>: From<Result<PointerValue<'_>, ...>>` is not satisfied
+    --> src/compiler/codegen/expr.rs:1040:26
+     |
+1040 |                         .into(),
+     |                          ^^^^ unsatisfied trait bound
+     |
+     = help: the trait `From<Result<inkwell::values::PointerValue<'_>, inkwell::builder::BuilderError>>` is not implemented for `BasicMetadataValueEnum<'_>`
+     = help: the following other types implement trait `From<T>`:
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::ArrayValue<'_>>`
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::BasicValueEnum<'_>>`
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::FloatValue<'_>>`
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::IntValue<'_>>`
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::MetadataValue<'_>>`
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::PointerValue<'_>>`
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::ScalableVectorValue<'_>>`
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::StructValue<'_>>`
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::VectorValue<'_>>`
+     = note: required for `Result<inkwell::values::PointerValue<'_>, inkwell::builder::BuilderError>` to implement `std::convert::Into<BasicMetadataValueEnum<'_>>`
+     = note: the full name for the type has been written to '/Users/suzukijun/Program/Rust/tl/target/debug/deps/tl-1b92b1c7664e8bc3.long-type-15508526501634342469.txt'
+     = note: consider using `--verbose` to print the full type name to the console
+
+error[E0277]: the trait bound `BasicMetadataValueEnum<'_>: From<Result<PointerValue<'_>, ...>>` is not satisfied
+    --> src/compiler/codegen/expr.rs:1048:26
+     |
+1048 |                         .into(),
+     |                          ^^^^ unsatisfied trait bound
+     |
+     = help: the trait `From<Result<inkwell::values::PointerValue<'_>, inkwell::builder::BuilderError>>` is not implemented for `BasicMetadataValueEnum<'_>`
+     = help: the following other types implement trait `From<T>`:
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::ArrayValue<'_>>`
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::BasicValueEnum<'_>>`
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::FloatValue<'_>>`
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::IntValue<'_>>`
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::MetadataValue<'_>>`
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::PointerValue<'_>>`
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::ScalableVectorValue<'_>>`
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::StructValue<'_>>`
+               `BasicMetadataValueEnum<'_>` implements `From<inkwell::values::VectorValue<'_>>`
+     = note: required for `Result<inkwell::values::PointerValue<'_>, inkwell::builder::BuilderError>` to implement `std::convert::Into<BasicMetadataValueEnum<'_>>`
+     = note: the full name for the type has been written to '/Users/suzukijun/Program/Rust/tl/target/debug/deps/tl-1b92b1c7664e8bc3.long-type-17066691759130126812.txt'
+     = note: consider using `--verbose` to print the full type name to the console
+
+warning: unreachable statement
+   --> src/compiler/codegen/tensor.rs:375:9
+    |
+372 |           return Ok(None);
+    |           --------------- any code following this expression is unreachable
+...
+375 | /         if lhs_indices.len() != 2 {
+376 | |             eprintln!("Optimization skipped: lhs len != 2: {:?}", lhs_indices);
+377 | |             return Ok(None);
+378 | |         }
+    | |_________^ unreachable statement
+    |
+    = note: `#[warn(unreachable_code)]` on by default
+
+warning: unused variable: `lhs_indices`
+   --> src/compiler/codegen/tensor.rs:367:9
+    |
+367 |         lhs_indices: &[String],
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_lhs_indices`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `value`
+   --> src/compiler/codegen/tensor.rs:368:9
+    |
+368 |         value: &Expr,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+
+For more information about this error, try `rustc --explain E0277`.
+warning: `tl` (bin "tl") generated 3 warnings
+error: could not compile `tl` (bin "tl") due to 2 previous errors; 3 warnings emitted

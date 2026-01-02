@@ -1,0 +1,49 @@
+
+    // Helper to infer free indices (used in Stmt::Let for Tensor Equation)
+    fn infer_free_indices(&self, expr: &Expr) -> Vec<String> {
+        let mut indices = HashSet::new();
+        self.collect_indices(expr, &mut indices);
+
+        let mut free_indices: Vec<String> = indices
+            .into_iter()
+            .filter(|idx| {
+                // If it exists in scope, it is NOT free
+                self.lookup_variable(idx).is_err()
+            })
+            .collect();
+        free_indices.sort();
+        free_indices
+    }
+
+    fn collect_indices(&self, expr: &Expr, indices: &mut HashSet<String>) {
+        match expr {
+            Expr::IndexAccess(_, idxs) => {
+                for idx in idxs {
+                    if let Expr::Variable(name) = idx {
+                        indices.insert(name.clone());
+                    }
+                }
+            }
+            Expr::BinOp(lhs, _, rhs) => {
+                self.collect_indices(lhs, indices);
+                self.collect_indices(rhs, indices);
+            }
+            Expr::UnOp(_, val) => {
+                self.collect_indices(val, indices);
+            }
+            Expr::FnCall(_, args) | Expr::MethodCall(_, _, args) | Expr::StaticMethodCall(_, _, args) => {
+                 for arg in args {
+                    self.collect_indices(arg, indices);
+                 }
+            }
+            Expr::TensorLiteral(elems) => {
+                for elem in elems {
+                     self.collect_indices(elem, indices);
+                }
+            }
+             Expr::IfExpr(cond, _, _) => {
+                 self.collect_indices(cond, indices);
+            }
+            _ => {}
+        }
+    }

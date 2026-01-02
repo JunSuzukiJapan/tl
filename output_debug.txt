@@ -1,0 +1,92 @@
+   Compiling tl v0.1.0 (/Users/suzukijun/Program/Rust/tl)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.96s
+     Running `target/debug/tl run examples/matmul.tl`
+compile_tensor_equation: lhs=["i", "k"], name=_comp_res_0
+MatMul Optimization SUCCEEDED
+WARNING: Registering tensor without active scope
+WARNING: Registering tensor without active scope
+WARNING: Registering tensor without active scope
+
+thread 'main' panicked at /Users/suzukijun/.rustup/toolchains/stable-x86_64-apple-darwin/lib/rustlib/src/rust/library/core/src/iter/traits/accum.rs:149:1:
+attempt to multiply with overflow
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'main' panicked at library/core/src/panicking.rs:225:5:
+panic in a function that cannot unwind
+stack backtrace:
+   0:        0x10d19946e - std::backtrace_rs::backtrace::libunwind::trace::h33bd56891de6f1f5
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/../../backtrace/src/backtrace/libunwind.rs:117:9
+   1:        0x10d19946e - std::backtrace_rs::backtrace::trace_unsynchronized::h2fc2efecaa1a6e29
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/../../backtrace/src/backtrace/mod.rs:66:14
+   2:        0x10d19946e - std::sys::backtrace::_print_fmt::h92d5ac884ffc33c4
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/sys/backtrace.rs:66:9
+   3:        0x10d19946e - <std::sys::backtrace::BacktraceLock::print::DisplayBacktrace as core::fmt::Display>::fmt::hdf9d499282983ca1
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/sys/backtrace.rs:39:26
+   4:        0x10d1bd503 - core::fmt::rt::Argument::fmt::h1373ed04ab20207f
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/core/src/fmt/rt.rs:173:76
+   5:        0x10d1bd503 - core::fmt::write::ha3e676817a26542c
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/core/src/fmt/mod.rs:1468:25
+   6:        0x10d195db2 - std::io::default_write_fmt::h7f8a9f2c78982f70
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/io/mod.rs:639:11
+   7:        0x10d195db2 - std::io::Write::write_fmt::h3fa87877e74f2174
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/io/mod.rs:1954:13
+   8:        0x10d1992b2 - std::sys::backtrace::BacktraceLock::print::hca62efc2bb2e276f
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/sys/backtrace.rs:42:9
+   9:        0x10d19a57c - std::panicking::default_hook::{{closure}}::h738016111345ab68
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/panicking.rs:300:27
+  10:        0x10d19a367 - std::panicking::default_hook::h9b5b4504538f2fff
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/panicking.rs:327:9
+  11:        0x10d19b0fc - std::panicking::rust_panic_with_hook::h6c62f3c177eadda6
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/panicking.rs:833:13
+  12:        0x10d19acf5 - std::panicking::begin_panic_handler::{{closure}}::h05d487bfd00a9e61
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/panicking.rs:699:13
+  13:        0x10d199939 - std::sys::backtrace::__rust_end_short_backtrace::h2287d3478ccfc203
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/sys/backtrace.rs:174:18
+  14:        0x10d19a964 - __rustc[de2ca18b4c54d5b8]::rust_begin_unwind
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/panicking.rs:697:5
+  15:        0x10d6bf004 - core::panicking::panic_nounwind_fmt::runtime::hcc333d21bc99c49b
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/core/src/panicking.rs:117:22
+  16:        0x10d6bf004 - core::panicking::panic_nounwind_fmt::h406496188e77da47
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/core/src/intrinsics/mod.rs:2367:9
+  17:        0x10d6bf0aa - core::panicking::panic_nounwind::h85c30b2ea2a9b2d3
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/core/src/panicking.rs:225:5
+  18:        0x10d6bf2b8 - core::panicking::panic_cannot_unwind::he217146cb150f4e1
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/core/src/panicking.rs:346:5
+  19:        0x10a5d3775 - tl_register_tensor
+                               at /Users/suzukijun/Program/Rust/tl/src/runtime/registry.rs:29:1
+  20:        0x10f90a210 - <unknown>
+  21:        0x10a60f21e - inkwell::execution_engine::JitFunction<unsafe extern "C" fn() .> Output>::call::h5629e40f5486f0cf
+                               at /Users/suzukijun/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/inkwell-0.7.1/src/execution_engine.rs:544:17
+  22:        0x10a60f21e - tl::compiler::codegen::CodeGenerator::jit_execute::hdb8d59b6cd2d3f9f
+                               at /Users/suzukijun/Program/Rust/tl/src/compiler/codegen/mod.rs:65:25
+  23:        0x10a4ef0e2 - tl::main::h6f07055cb8145e6d
+                               at /Users/suzukijun/Program/Rust/tl/src/main.rs:112:27
+  24:        0x10a5833fe - core::ops::function::FnOnce::call_once::h8049fbe4bb270b84
+                               at /Users/suzukijun/.rustup/toolchains/stable-x86_64-apple-darwin/lib/rustlib/src/rust/library/core/src/ops/function.rs:253:5
+  25:        0x10a5a8471 - std::sys::backtrace::__rust_begin_short_backtrace::h8756e7cda725e83c
+                               at /Users/suzukijun/.rustup/toolchains/stable-x86_64-apple-darwin/lib/rustlib/src/rust/library/std/src/sys/backtrace.rs:158:18
+  26:        0x10a5610a4 - std::rt::lang_start::{{closure}}::hb8fa828e2e17d7d2
+                               at /Users/suzukijun/.rustup/toolchains/stable-x86_64-apple-darwin/lib/rustlib/src/rust/library/std/src/rt.rs:206:18
+  27:        0x10d18f675 - core::ops::function::impls::<impl core::ops::function::FnOnce<A> for &F>::call_once::h17d962d0da800092
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/core/src/ops/function.rs:290:21
+  28:        0x10d18f675 - std::panicking::catch_unwind::do_call::h1965c15a821f7316
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/panicking.rs:589:40
+  29:        0x10d18f675 - std::panicking::catch_unwind::hc1fdef9d69fe8050
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/panicking.rs:552:19
+  30:        0x10d18f675 - std::panic::catch_unwind::hf5fa116dd7b61ea8
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/panic.rs:359:14
+  31:        0x10d18f675 - std::rt::lang_start_internal::{{closure}}::hbea020dada06b087
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/rt.rs:175:24
+  32:        0x10d18f675 - std::panicking::catch_unwind::do_call::hacf66ccf95b00ca5
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/panicking.rs:589:40
+  33:        0x10d18f675 - std::panicking::catch_unwind::h2d571a195ad69034
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/panicking.rs:552:19
+  34:        0x10d18f675 - std::panic::catch_unwind::h9669ba92a7850db6
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/panic.rs:359:14
+  35:        0x10d18f675 - std::rt::lang_start_internal::hbe7a8ad0c87189aa
+                               at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library/std/src/rt.rs:171:5
+  36:        0x10a561087 - std::rt::lang_start::hbda8d5f6b5e72484
+                               at /Users/suzukijun/.rustup/toolchains/stable-x86_64-apple-darwin/lib/rustlib/src/rust/library/std/src/rt.rs:205:5
+  37:        0x10a4f2768 - _main
+  38:     0x7ff80e5f2530 - <unknown>
+thread caused non-unwinding panic. aborting.
