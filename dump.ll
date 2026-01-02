@@ -36,21 +36,30 @@ target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:
 @str_literal.107 = private unnamed_addr constant [4 x i8] c"l.b\00", align 1
 @str_literal.108 = private unnamed_addr constant [4 x i8] c"h.W\00", align 1
 @str_literal.109 = private unnamed_addr constant [4 x i8] c"h.b\00", align 1
-@tensor_name.110 = private unnamed_addr constant [11 x i8] c"total_loss\00", align 1
-@tensor_name.111 = private unnamed_addr constant [5 x i8] c"data\00", align 1
-@tensor_name.112 = private unnamed_addr constant [7 x i8] c"target\00", align 1
-@tensor_name.113 = private unnamed_addr constant [2 x i8] c"X\00", align 1
-@tensor_name.114 = private unnamed_addr constant [2 x i8] c"Y\00", align 1
-@tensor_name.115 = private unnamed_addr constant [7 x i8] c"logits\00", align 1
-@tensor_name.116 = private unnamed_addr constant [12 x i8] c"logits_flat\00", align 1
-@tensor_name.117 = private unnamed_addr constant [7 x i8] c"Y_flat\00", align 1
-@tensor_name.118 = private unnamed_addr constant [5 x i8] c"loss\00", align 1
-@str_literal.119 = private unnamed_addr constant [6 x i8] c"Loss:\00", align 1
-@str_literal.120 = private unnamed_addr constant [12 x i8] c"Memory(MB):\00", align 1
-@str_literal.121 = private unnamed_addr constant [58 x i8] c"Training 2-digit addition (0-99) - With memory monitoring\00", align 1
-@str_literal.122 = private unnamed_addr constant [7 x i8] c"Epoch:\00", align 1
-@str_literal.123 = private unnamed_addr constant [19 x i8] c"Training Complete!\00", align 1
-@str_literal.124 = private unnamed_addr constant [25 x i8] c"model_2digit.safetensors\00", align 1
+@str_literal.110 = private unnamed_addr constant [36 x i8] c"Initializing Model for Inference...\00", align 1
+@str_literal.111 = private unnamed_addr constant [22 x i8] c"Loading Parameters...\00", align 1
+@str_literal.112 = private unnamed_addr constant [25 x i8] c"model_2digit.safetensors\00", align 1
+@str_literal.113 = private unnamed_addr constant [19 x i8] c"Parameters Loaded.\00", align 1
+@str_literal.114 = private unnamed_addr constant [42 x i8] c"Running Inference verification 2-digit...\00", align 1
+@str_literal.115 = private unnamed_addr constant [7 x i8] c"Input:\00", align 1
+@str_literal.116 = private unnamed_addr constant [2 x i8] c"+\00", align 1
+@str_literal.117 = private unnamed_addr constant [18 x i8] c"Predicted Digits:\00", align 1
+@tensor_name.118 = private unnamed_addr constant [6 x i8] c"data1\00", align 1
+@tensor_name.119 = private unnamed_addr constant [7 x i8] c"input1\00", align 1
+@tensor_name.120 = private unnamed_addr constant [8 x i8] c"logits1\00", align 1
+@tensor_name.121 = private unnamed_addr constant [8 x i8] c"logits1\00", align 1
+@tensor_name.122 = private unnamed_addr constant [13 x i8] c"next_logits1\00", align 1
+@tensor_name.123 = private unnamed_addr constant [6 x i8] c"data2\00", align 1
+@tensor_name.124 = private unnamed_addr constant [7 x i8] c"input2\00", align 1
+@tensor_name.125 = private unnamed_addr constant [8 x i8] c"logits2\00", align 1
+@tensor_name.126 = private unnamed_addr constant [8 x i8] c"logits2\00", align 1
+@tensor_name.127 = private unnamed_addr constant [13 x i8] c"next_logits2\00", align 1
+@tensor_name.128 = private unnamed_addr constant [6 x i8] c"data3\00", align 1
+@tensor_name.129 = private unnamed_addr constant [7 x i8] c"input3\00", align 1
+@tensor_name.130 = private unnamed_addr constant [8 x i8] c"logits3\00", align 1
+@tensor_name.131 = private unnamed_addr constant [8 x i8] c"logits3\00", align 1
+@tensor_name.132 = private unnamed_addr constant [13 x i8] c"next_logits3\00", align 1
+@str_literal.133 = private unnamed_addr constant [33 x i8] c"Inference Verification Complete.\00", align 1
 
 declare void @tl_print_i64(i64)
 
@@ -441,49 +450,63 @@ entry:
   ret ptr %binop_res
 }
 
-define void @tl_Linear_step(ptr %self, float %lr) {
+define ptr @tl_Linear_step(ptr %self, float %lr) {
 entry:
   %gb = alloca ptr, align 8
   %gW = alloca ptr, align 8
+  %s = alloca ptr, align 8
   %lr2 = alloca float, align 4
   %self1 = alloca ptr, align 8
   store ptr %self, ptr %self1, align 8
   store float %lr, ptr %lr2, align 4
   %self3 = load ptr, ptr %self1, align 8
-  %ptr_W = getelementptr inbounds nuw %Linear, ptr %self3, i32 0, i32 0
+  store ptr %self3, ptr %s, align 8
+  %s4 = load ptr, ptr %s, align 8
+  %ptr_W = getelementptr inbounds nuw %Linear, ptr %s4, i32 0, i32 0
   %W = load ptr, ptr %ptr_W, align 8
   %grad_res = call ptr @tl_tensor_grad(ptr %W)
   store ptr %grad_res, ptr %gW, align 8
   call void @tl_register_tensor(ptr @tensor_name, ptr %grad_res)
-  %self4 = load ptr, ptr %self1, align 8
-  %ptr_b = getelementptr inbounds nuw %Linear, ptr %self4, i32 0, i32 1
+  %s5 = load ptr, ptr %s, align 8
+  %ptr_b = getelementptr inbounds nuw %Linear, ptr %s5, i32 0, i32 1
   %b = load ptr, ptr %ptr_b, align 8
-  %grad_res5 = call ptr @tl_tensor_grad(ptr %b)
-  store ptr %grad_res5, ptr %gb, align 8
-  call void @tl_register_tensor(ptr @tensor_name.86, ptr %grad_res5)
-  %self6 = load ptr, ptr %self1, align 8
-  %ptr_W7 = getelementptr inbounds nuw %Linear, ptr %self6, i32 0, i32 0
-  %W8 = load ptr, ptr %ptr_W7, align 8
-  %gW9 = load ptr, ptr %gW, align 8
-  %lr10 = load float, ptr %lr2, align 4
+  %grad_res6 = call ptr @tl_tensor_grad(ptr %b)
+  store ptr %grad_res6, ptr %gb, align 8
+  call void @tl_register_tensor(ptr @tensor_name.86, ptr %grad_res6)
+  %s7 = load ptr, ptr %s, align 8
+  %ptr_W8 = getelementptr inbounds nuw %Linear, ptr %s7, i32 0, i32 0
+  %s9 = load ptr, ptr %s, align 8
+  %ptr_W10 = getelementptr inbounds nuw %Linear, ptr %s9, i32 0, i32 0
+  %W11 = load ptr, ptr %ptr_W10, align 8
+  %gW12 = load ptr, ptr %gW, align 8
+  %lr13 = load float, ptr %lr2, align 4
   %scalar_data = alloca float, align 4
-  store float %lr10, ptr %scalar_data, align 4
+  store float %lr13, ptr %scalar_data, align 4
   %scalar_shape = alloca i64, i64 0, align 8
   %scalar_tensor = call ptr @tl_tensor_new(ptr %scalar_data, i64 0, ptr %scalar_shape)
-  %binop_res = call ptr @tl_tensor_mul(ptr %gW9, ptr %scalar_tensor)
-  call void @tl_tensor_sub_assign(ptr %W8, ptr %binop_res)
-  %self11 = load ptr, ptr %self1, align 8
-  %ptr_b12 = getelementptr inbounds nuw %Linear, ptr %self11, i32 0, i32 1
-  %b13 = load ptr, ptr %ptr_b12, align 8
-  %gb14 = load ptr, ptr %gb, align 8
-  %lr15 = load float, ptr %lr2, align 4
-  %scalar_data16 = alloca float, align 4
-  store float %lr15, ptr %scalar_data16, align 4
-  %scalar_shape17 = alloca i64, i64 0, align 8
-  %scalar_tensor18 = call ptr @tl_tensor_new(ptr %scalar_data16, i64 0, ptr %scalar_shape17)
-  %binop_res19 = call ptr @tl_tensor_mul(ptr %gb14, ptr %scalar_tensor18)
-  call void @tl_tensor_sub_assign(ptr %b13, ptr %binop_res19)
-  ret void
+  %binop_res = call ptr @tl_tensor_mul(ptr %gW12, ptr %scalar_tensor)
+  %binop_res14 = call ptr @tl_tensor_sub(ptr %W11, ptr %binop_res)
+  %detach_res = call ptr @tl_tensor_detach(ptr %binop_res14, i1 true)
+  %old_field_val = load ptr, ptr %ptr_W8, align 8
+  store ptr %detach_res, ptr %ptr_W8, align 8
+  %s15 = load ptr, ptr %s, align 8
+  %ptr_b16 = getelementptr inbounds nuw %Linear, ptr %s15, i32 0, i32 1
+  %s17 = load ptr, ptr %s, align 8
+  %ptr_b18 = getelementptr inbounds nuw %Linear, ptr %s17, i32 0, i32 1
+  %b19 = load ptr, ptr %ptr_b18, align 8
+  %gb20 = load ptr, ptr %gb, align 8
+  %lr21 = load float, ptr %lr2, align 4
+  %scalar_data22 = alloca float, align 4
+  store float %lr21, ptr %scalar_data22, align 4
+  %scalar_shape23 = alloca i64, i64 0, align 8
+  %scalar_tensor24 = call ptr @tl_tensor_new(ptr %scalar_data22, i64 0, ptr %scalar_shape23)
+  %binop_res25 = call ptr @tl_tensor_mul(ptr %gb20, ptr %scalar_tensor24)
+  %binop_res26 = call ptr @tl_tensor_sub(ptr %b19, ptr %binop_res25)
+  %detach_res27 = call ptr @tl_tensor_detach(ptr %binop_res26, i1 true)
+  %old_field_val28 = load ptr, ptr %ptr_b16, align 8
+  store ptr %detach_res27, ptr %ptr_b16, align 8
+  %s29 = load ptr, ptr %s, align 8
+  ret ptr %s29
 }
 
 define ptr @tl_Embedding_new(i64 %v, i64 %d) {
@@ -526,31 +549,40 @@ entry:
   ret ptr %emb_res
 }
 
-define void @tl_Embedding_step(ptr %self, float %lr) {
+define ptr @tl_Embedding_step(ptr %self, float %lr) {
 entry:
   %g = alloca ptr, align 8
+  %s = alloca ptr, align 8
   %lr2 = alloca float, align 4
   %self1 = alloca ptr, align 8
   store ptr %self, ptr %self1, align 8
   store float %lr, ptr %lr2, align 4
   %self3 = load ptr, ptr %self1, align 8
-  %ptr_w = getelementptr inbounds nuw %Embedding, ptr %self3, i32 0, i32 0
+  store ptr %self3, ptr %s, align 8
+  %s4 = load ptr, ptr %s, align 8
+  %ptr_w = getelementptr inbounds nuw %Embedding, ptr %s4, i32 0, i32 0
   %w = load ptr, ptr %ptr_w, align 8
   %grad_res = call ptr @tl_tensor_grad(ptr %w)
   store ptr %grad_res, ptr %g, align 8
   call void @tl_register_tensor(ptr @tensor_name.87, ptr %grad_res)
-  %self4 = load ptr, ptr %self1, align 8
-  %ptr_w5 = getelementptr inbounds nuw %Embedding, ptr %self4, i32 0, i32 0
-  %w6 = load ptr, ptr %ptr_w5, align 8
-  %g7 = load ptr, ptr %g, align 8
-  %lr8 = load float, ptr %lr2, align 4
+  %s5 = load ptr, ptr %s, align 8
+  %ptr_w6 = getelementptr inbounds nuw %Embedding, ptr %s5, i32 0, i32 0
+  %s7 = load ptr, ptr %s, align 8
+  %ptr_w8 = getelementptr inbounds nuw %Embedding, ptr %s7, i32 0, i32 0
+  %w9 = load ptr, ptr %ptr_w8, align 8
+  %g10 = load ptr, ptr %g, align 8
+  %lr11 = load float, ptr %lr2, align 4
   %scalar_data = alloca float, align 4
-  store float %lr8, ptr %scalar_data, align 4
+  store float %lr11, ptr %scalar_data, align 4
   %scalar_shape = alloca i64, i64 0, align 8
   %scalar_tensor = call ptr @tl_tensor_new(ptr %scalar_data, i64 0, ptr %scalar_shape)
-  %binop_res = call ptr @tl_tensor_mul(ptr %g7, ptr %scalar_tensor)
-  call void @tl_tensor_sub_assign(ptr %w6, ptr %binop_res)
-  ret void
+  %binop_res = call ptr @tl_tensor_mul(ptr %g10, ptr %scalar_tensor)
+  %binop_res12 = call ptr @tl_tensor_sub(ptr %w9, ptr %binop_res)
+  %detach_res = call ptr @tl_tensor_detach(ptr %binop_res12, i1 true)
+  %old_field_val = load ptr, ptr %ptr_w6, align 8
+  store ptr %detach_res, ptr %ptr_w6, align 8
+  %s13 = load ptr, ptr %s, align 8
+  ret ptr %s13
 }
 
 define ptr @tl_LayerNorm_new(i64 %d) {
@@ -606,31 +638,40 @@ entry:
   ret ptr %binop_res
 }
 
-define void @tl_LayerNorm_step(ptr %self, float %lr) {
+define ptr @tl_LayerNorm_step(ptr %self, float %lr) {
 entry:
   %gb = alloca ptr, align 8
+  %s = alloca ptr, align 8
   %lr2 = alloca float, align 4
   %self1 = alloca ptr, align 8
   store ptr %self, ptr %self1, align 8
   store float %lr, ptr %lr2, align 4
   %self3 = load ptr, ptr %self1, align 8
-  %ptr_b = getelementptr inbounds nuw %LayerNorm, ptr %self3, i32 0, i32 1
+  store ptr %self3, ptr %s, align 8
+  %s4 = load ptr, ptr %s, align 8
+  %ptr_b = getelementptr inbounds nuw %LayerNorm, ptr %s4, i32 0, i32 1
   %b = load ptr, ptr %ptr_b, align 8
   %grad_res = call ptr @tl_tensor_grad(ptr %b)
   store ptr %grad_res, ptr %gb, align 8
   call void @tl_register_tensor(ptr @tensor_name.88, ptr %grad_res)
-  %self4 = load ptr, ptr %self1, align 8
-  %ptr_b5 = getelementptr inbounds nuw %LayerNorm, ptr %self4, i32 0, i32 1
-  %b6 = load ptr, ptr %ptr_b5, align 8
-  %gb7 = load ptr, ptr %gb, align 8
-  %lr8 = load float, ptr %lr2, align 4
+  %s5 = load ptr, ptr %s, align 8
+  %ptr_b6 = getelementptr inbounds nuw %LayerNorm, ptr %s5, i32 0, i32 1
+  %s7 = load ptr, ptr %s, align 8
+  %ptr_b8 = getelementptr inbounds nuw %LayerNorm, ptr %s7, i32 0, i32 1
+  %b9 = load ptr, ptr %ptr_b8, align 8
+  %gb10 = load ptr, ptr %gb, align 8
+  %lr11 = load float, ptr %lr2, align 4
   %scalar_data = alloca float, align 4
-  store float %lr8, ptr %scalar_data, align 4
+  store float %lr11, ptr %scalar_data, align 4
   %scalar_shape = alloca i64, i64 0, align 8
   %scalar_tensor = call ptr @tl_tensor_new(ptr %scalar_data, i64 0, ptr %scalar_shape)
-  %binop_res = call ptr @tl_tensor_mul(ptr %gb7, ptr %scalar_tensor)
-  call void @tl_tensor_sub_assign(ptr %b6, ptr %binop_res)
-  ret void
+  %binop_res = call ptr @tl_tensor_mul(ptr %gb10, ptr %scalar_tensor)
+  %binop_res12 = call ptr @tl_tensor_sub(ptr %b9, ptr %binop_res)
+  %detach_res = call ptr @tl_tensor_detach(ptr %binop_res12, i1 true)
+  %old_field_val = load ptr, ptr %ptr_b6, align 8
+  store ptr %detach_res, ptr %ptr_b6, align 8
+  %s13 = load ptr, ptr %s, align 8
+  ret ptr %s13
 }
 
 define ptr @tl_CausalSelfAttention_new(i64 %d) {
@@ -701,23 +742,33 @@ entry:
   ret ptr %call_method14
 }
 
-define void @tl_CausalSelfAttention_step(ptr %self, float %lr) {
+define ptr @tl_CausalSelfAttention_step(ptr %self, float %lr) {
 entry:
+  %s = alloca ptr, align 8
   %lr2 = alloca float, align 4
   %self1 = alloca ptr, align 8
   store ptr %self, ptr %self1, align 8
   store float %lr, ptr %lr2, align 4
   %self3 = load ptr, ptr %self1, align 8
-  %ptr_a = getelementptr inbounds nuw %CausalSelfAttention, ptr %self3, i32 0, i32 0
-  %a = load ptr, ptr %ptr_a, align 8
-  %lr4 = load float, ptr %lr2, align 4
-  call void @tl_Linear_step(ptr %a, float %lr4)
-  %self5 = load ptr, ptr %self1, align 8
-  %ptr_p = getelementptr inbounds nuw %CausalSelfAttention, ptr %self5, i32 0, i32 1
-  %p = load ptr, ptr %ptr_p, align 8
-  %lr6 = load float, ptr %lr2, align 4
-  call void @tl_Linear_step(ptr %p, float %lr6)
-  ret void
+  store ptr %self3, ptr %s, align 8
+  %s4 = load ptr, ptr %s, align 8
+  %ptr_a = getelementptr inbounds nuw %CausalSelfAttention, ptr %s4, i32 0, i32 0
+  %s5 = load ptr, ptr %s, align 8
+  %ptr_a6 = getelementptr inbounds nuw %CausalSelfAttention, ptr %s5, i32 0, i32 0
+  %a = load ptr, ptr %ptr_a6, align 8
+  %lr7 = load float, ptr %lr2, align 4
+  %call_method = call ptr @tl_Linear_step(ptr %a, float %lr7)
+  store ptr %call_method, ptr %ptr_a, align 8
+  %s8 = load ptr, ptr %s, align 8
+  %ptr_p = getelementptr inbounds nuw %CausalSelfAttention, ptr %s8, i32 0, i32 1
+  %s9 = load ptr, ptr %s, align 8
+  %ptr_p10 = getelementptr inbounds nuw %CausalSelfAttention, ptr %s9, i32 0, i32 1
+  %p = load ptr, ptr %ptr_p10, align 8
+  %lr11 = load float, ptr %lr2, align 4
+  %call_method12 = call ptr @tl_Linear_step(ptr %p, float %lr11)
+  store ptr %call_method12, ptr %ptr_p, align 8
+  %s13 = load ptr, ptr %s, align 8
+  ret ptr %s13
 }
 
 define ptr @tl_MLP_new(i64 %d) {
@@ -759,23 +810,33 @@ entry:
   ret ptr %call_method6
 }
 
-define void @tl_MLP_step(ptr %self, float %lr) {
+define ptr @tl_MLP_step(ptr %self, float %lr) {
 entry:
+  %s = alloca ptr, align 8
   %lr2 = alloca float, align 4
   %self1 = alloca ptr, align 8
   store ptr %self, ptr %self1, align 8
   store float %lr, ptr %lr2, align 4
   %self3 = load ptr, ptr %self1, align 8
-  %ptr_f = getelementptr inbounds nuw %MLP, ptr %self3, i32 0, i32 0
-  %f = load ptr, ptr %ptr_f, align 8
-  %lr4 = load float, ptr %lr2, align 4
-  call void @tl_Linear_step(ptr %f, float %lr4)
-  %self5 = load ptr, ptr %self1, align 8
-  %ptr_p = getelementptr inbounds nuw %MLP, ptr %self5, i32 0, i32 1
-  %p = load ptr, ptr %ptr_p, align 8
-  %lr6 = load float, ptr %lr2, align 4
-  call void @tl_Linear_step(ptr %p, float %lr6)
-  ret void
+  store ptr %self3, ptr %s, align 8
+  %s4 = load ptr, ptr %s, align 8
+  %ptr_f = getelementptr inbounds nuw %MLP, ptr %s4, i32 0, i32 0
+  %s5 = load ptr, ptr %s, align 8
+  %ptr_f6 = getelementptr inbounds nuw %MLP, ptr %s5, i32 0, i32 0
+  %f = load ptr, ptr %ptr_f6, align 8
+  %lr7 = load float, ptr %lr2, align 4
+  %call_method = call ptr @tl_Linear_step(ptr %f, float %lr7)
+  store ptr %call_method, ptr %ptr_f, align 8
+  %s8 = load ptr, ptr %s, align 8
+  %ptr_p = getelementptr inbounds nuw %MLP, ptr %s8, i32 0, i32 1
+  %s9 = load ptr, ptr %s, align 8
+  %ptr_p10 = getelementptr inbounds nuw %MLP, ptr %s9, i32 0, i32 1
+  %p = load ptr, ptr %ptr_p10, align 8
+  %lr11 = load float, ptr %lr2, align 4
+  %call_method12 = call ptr @tl_Linear_step(ptr %p, float %lr11)
+  store ptr %call_method12, ptr %ptr_p, align 8
+  %s13 = load ptr, ptr %s, align 8
+  ret ptr %s13
 }
 
 define ptr @tl_Block_new(i64 %d) {
@@ -836,33 +897,49 @@ entry:
   ret ptr %binop_res15
 }
 
-define void @tl_Block_step(ptr %self, float %lr) {
+define ptr @tl_Block_step(ptr %self, float %lr) {
 entry:
+  %s = alloca ptr, align 8
   %lr2 = alloca float, align 4
   %self1 = alloca ptr, align 8
   store ptr %self, ptr %self1, align 8
   store float %lr, ptr %lr2, align 4
   %self3 = load ptr, ptr %self1, align 8
-  %ptr_l1 = getelementptr inbounds nuw %Block, ptr %self3, i32 0, i32 0
-  %l1 = load ptr, ptr %ptr_l1, align 8
-  %lr4 = load float, ptr %lr2, align 4
-  call void @tl_LayerNorm_step(ptr %l1, float %lr4)
-  %self5 = load ptr, ptr %self1, align 8
-  %ptr_a = getelementptr inbounds nuw %Block, ptr %self5, i32 0, i32 1
-  %a = load ptr, ptr %ptr_a, align 8
-  %lr6 = load float, ptr %lr2, align 4
-  call void @tl_CausalSelfAttention_step(ptr %a, float %lr6)
-  %self7 = load ptr, ptr %self1, align 8
-  %ptr_l2 = getelementptr inbounds nuw %Block, ptr %self7, i32 0, i32 2
-  %l2 = load ptr, ptr %ptr_l2, align 8
-  %lr8 = load float, ptr %lr2, align 4
-  call void @tl_LayerNorm_step(ptr %l2, float %lr8)
-  %self9 = load ptr, ptr %self1, align 8
-  %ptr_m = getelementptr inbounds nuw %Block, ptr %self9, i32 0, i32 3
-  %m = load ptr, ptr %ptr_m, align 8
-  %lr10 = load float, ptr %lr2, align 4
-  call void @tl_MLP_step(ptr %m, float %lr10)
-  ret void
+  store ptr %self3, ptr %s, align 8
+  %s4 = load ptr, ptr %s, align 8
+  %ptr_l1 = getelementptr inbounds nuw %Block, ptr %s4, i32 0, i32 0
+  %s5 = load ptr, ptr %s, align 8
+  %ptr_l16 = getelementptr inbounds nuw %Block, ptr %s5, i32 0, i32 0
+  %l1 = load ptr, ptr %ptr_l16, align 8
+  %lr7 = load float, ptr %lr2, align 4
+  %call_method = call ptr @tl_LayerNorm_step(ptr %l1, float %lr7)
+  store ptr %call_method, ptr %ptr_l1, align 8
+  %s8 = load ptr, ptr %s, align 8
+  %ptr_a = getelementptr inbounds nuw %Block, ptr %s8, i32 0, i32 1
+  %s9 = load ptr, ptr %s, align 8
+  %ptr_a10 = getelementptr inbounds nuw %Block, ptr %s9, i32 0, i32 1
+  %a = load ptr, ptr %ptr_a10, align 8
+  %lr11 = load float, ptr %lr2, align 4
+  %call_method12 = call ptr @tl_CausalSelfAttention_step(ptr %a, float %lr11)
+  store ptr %call_method12, ptr %ptr_a, align 8
+  %s13 = load ptr, ptr %s, align 8
+  %ptr_l2 = getelementptr inbounds nuw %Block, ptr %s13, i32 0, i32 2
+  %s14 = load ptr, ptr %s, align 8
+  %ptr_l215 = getelementptr inbounds nuw %Block, ptr %s14, i32 0, i32 2
+  %l2 = load ptr, ptr %ptr_l215, align 8
+  %lr16 = load float, ptr %lr2, align 4
+  %call_method17 = call ptr @tl_LayerNorm_step(ptr %l2, float %lr16)
+  store ptr %call_method17, ptr %ptr_l2, align 8
+  %s18 = load ptr, ptr %s, align 8
+  %ptr_m = getelementptr inbounds nuw %Block, ptr %s18, i32 0, i32 3
+  %s19 = load ptr, ptr %s, align 8
+  %ptr_m20 = getelementptr inbounds nuw %Block, ptr %s19, i32 0, i32 3
+  %m = load ptr, ptr %ptr_m20, align 8
+  %lr21 = load float, ptr %lr2, align 4
+  %call_method22 = call ptr @tl_MLP_step(ptr %m, float %lr21)
+  store ptr %call_method22, ptr %ptr_m, align 8
+  %s23 = load ptr, ptr %s, align 8
+  ret ptr %s23
 }
 
 define ptr @tl_GPT_new(i64 %v, i64 %d) {
@@ -919,33 +996,49 @@ entry:
   ret ptr %call_method10
 }
 
-define void @tl_GPT_step(ptr %self, float %lr) {
+define ptr @tl_GPT_step(ptr %self, float %lr) {
 entry:
+  %s = alloca ptr, align 8
   %lr2 = alloca float, align 4
   %self1 = alloca ptr, align 8
   store ptr %self, ptr %self1, align 8
   store float %lr, ptr %lr2, align 4
   %self3 = load ptr, ptr %self1, align 8
-  %ptr_w = getelementptr inbounds nuw %GPT, ptr %self3, i32 0, i32 0
-  %w = load ptr, ptr %ptr_w, align 8
-  %lr4 = load float, ptr %lr2, align 4
-  call void @tl_Embedding_step(ptr %w, float %lr4)
-  %self5 = load ptr, ptr %self1, align 8
-  %ptr_b = getelementptr inbounds nuw %GPT, ptr %self5, i32 0, i32 1
-  %b = load ptr, ptr %ptr_b, align 8
-  %lr6 = load float, ptr %lr2, align 4
-  call void @tl_Block_step(ptr %b, float %lr6)
-  %self7 = load ptr, ptr %self1, align 8
-  %ptr_l = getelementptr inbounds nuw %GPT, ptr %self7, i32 0, i32 2
-  %l = load ptr, ptr %ptr_l, align 8
-  %lr8 = load float, ptr %lr2, align 4
-  call void @tl_LayerNorm_step(ptr %l, float %lr8)
-  %self9 = load ptr, ptr %self1, align 8
-  %ptr_h = getelementptr inbounds nuw %GPT, ptr %self9, i32 0, i32 3
-  %h = load ptr, ptr %ptr_h, align 8
-  %lr10 = load float, ptr %lr2, align 4
-  call void @tl_Linear_step(ptr %h, float %lr10)
-  ret void
+  store ptr %self3, ptr %s, align 8
+  %s4 = load ptr, ptr %s, align 8
+  %ptr_w = getelementptr inbounds nuw %GPT, ptr %s4, i32 0, i32 0
+  %s5 = load ptr, ptr %s, align 8
+  %ptr_w6 = getelementptr inbounds nuw %GPT, ptr %s5, i32 0, i32 0
+  %w = load ptr, ptr %ptr_w6, align 8
+  %lr7 = load float, ptr %lr2, align 4
+  %call_method = call ptr @tl_Embedding_step(ptr %w, float %lr7)
+  store ptr %call_method, ptr %ptr_w, align 8
+  %s8 = load ptr, ptr %s, align 8
+  %ptr_b = getelementptr inbounds nuw %GPT, ptr %s8, i32 0, i32 1
+  %s9 = load ptr, ptr %s, align 8
+  %ptr_b10 = getelementptr inbounds nuw %GPT, ptr %s9, i32 0, i32 1
+  %b = load ptr, ptr %ptr_b10, align 8
+  %lr11 = load float, ptr %lr2, align 4
+  %call_method12 = call ptr @tl_Block_step(ptr %b, float %lr11)
+  store ptr %call_method12, ptr %ptr_b, align 8
+  %s13 = load ptr, ptr %s, align 8
+  %ptr_l = getelementptr inbounds nuw %GPT, ptr %s13, i32 0, i32 2
+  %s14 = load ptr, ptr %s, align 8
+  %ptr_l15 = getelementptr inbounds nuw %GPT, ptr %s14, i32 0, i32 2
+  %l = load ptr, ptr %ptr_l15, align 8
+  %lr16 = load float, ptr %lr2, align 4
+  %call_method17 = call ptr @tl_LayerNorm_step(ptr %l, float %lr16)
+  store ptr %call_method17, ptr %ptr_l, align 8
+  %s18 = load ptr, ptr %s, align 8
+  %ptr_h = getelementptr inbounds nuw %GPT, ptr %s18, i32 0, i32 3
+  %s19 = load ptr, ptr %s, align 8
+  %ptr_h20 = getelementptr inbounds nuw %GPT, ptr %s19, i32 0, i32 3
+  %h = load ptr, ptr %ptr_h20, align 8
+  %lr21 = load float, ptr %lr2, align 4
+  %call_method22 = call ptr @tl_Linear_step(ptr %h, float %lr21)
+  store ptr %call_method22, ptr %ptr_h, align 8
+  %s23 = load ptr, ptr %s, align 8
+  ret ptr %s23
 }
 
 define i64 @get_memory() {
@@ -1103,386 +1196,612 @@ entry:
   ret void
 }
 
-define void @train_epoch(ptr %model, float %lr, i64 %epoch) {
-entry:
-  %mem_mb = alloca i64, align 8
-  %loss = alloca ptr, align 8
-  %Y_flat = alloca ptr, align 8
-  %logits_flat = alloca ptr, align 8
-  %logits = alloca ptr, align 8
-  %Y = alloca ptr, align 8
-  %X = alloca ptr, align 8
-  %target = alloca ptr, align 8
-  %tensor_shape_arr136 = alloca i64, i64 1, align 8
-  %tensor_data_arr117 = alloca float, i64 12, align 4
-  %data = alloca ptr, align 8
-  %tensor_shape_arr = alloca i64, i64 1, align 8
-  %tensor_data_arr = alloca float, i64 12, align 4
-  %s_d3 = alloca float, align 4
-  %scalar_shape95 = alloca i64, align 8
-  %scalar_data94 = alloca float, align 4
-  %scalar_shape92 = alloca i64, align 8
-  %scalar_data90 = alloca float, align 4
-  %s_d2 = alloca float, align 4
-  %scalar_shape81 = alloca i64, align 8
-  %scalar_data80 = alloca float, align 4
-  %scalar_shape78 = alloca i64, align 8
-  %scalar_data76 = alloca float, align 4
-  %s_d1 = alloca float, align 4
-  %scalar_shape66 = alloca i64, align 8
-  %scalar_data65 = alloca float, align 4
-  %scalar_shape63 = alloca i64, align 8
-  %scalar_data61 = alloca float, align 4
-  %j_d2 = alloca float, align 4
-  %scalar_shape55 = alloca i64, align 8
-  %scalar_data54 = alloca float, align 4
-  %scalar_shape52 = alloca i64, align 8
-  %scalar_data50 = alloca float, align 4
-  %j_d1 = alloca float, align 4
-  %scalar_shape41 = alloca i64, align 8
-  %scalar_data40 = alloca float, align 4
-  %scalar_shape38 = alloca i64, align 8
-  %scalar_data36 = alloca float, align 4
-  %i_d2 = alloca float, align 4
-  %scalar_shape30 = alloca i64, align 8
-  %scalar_data29 = alloca float, align 4
-  %scalar_shape27 = alloca i64, align 8
-  %scalar_data25 = alloca float, align 4
-  %i_d1 = alloca float, align 4
-  %scalar_shape19 = alloca i64, align 8
-  %scalar_data18 = alloca float, align 4
-  %scalar_shape16 = alloca i64, align 8
-  %scalar_data15 = alloca float, align 4
-  %sum = alloca i64, align 8
-  %j = alloca i64, align 8
-  %i = alloca i64, align 8
-  %total_loss = alloca ptr, align 8
-  %scalar_shape5 = alloca i64, align 8
-  %scalar_data4 = alloca float, align 4
-  %scalar_shape = alloca i64, align 8
-  %scalar_data = alloca float, align 4
-  %epoch3 = alloca i64, align 8
-  %lr2 = alloca float, align 4
-  %model1 = alloca ptr, align 8
-  store ptr %model, ptr %model1, align 8
-  store float %lr, ptr %lr2, align 4
-  store i64 %epoch, ptr %epoch3, align 8
-  store float 0.000000e+00, ptr %scalar_data, align 4
-  %scalar_tensor = call ptr @tl_tensor_new(ptr %scalar_data, i64 0, ptr %scalar_shape)
-  store float 1.000000e+00, ptr %scalar_data4, align 4
-  %scalar_tensor6 = call ptr @tl_tensor_new(ptr %scalar_data4, i64 0, ptr %scalar_shape5)
-  %pow_res = call ptr @tl_tensor_pow(ptr %scalar_tensor, ptr %scalar_tensor6)
-  store ptr %pow_res, ptr %total_loss, align 8
-  call void @tl_register_tensor(ptr @tensor_name.110, ptr %pow_res)
-  br label %for_header
-
-for_header:                                       ; preds = %for_end9, %entry
-  %for_idx = phi i64 [ 0, %entry ], [ %next_idx166, %for_end9 ]
-  %for_cond = icmp slt i64 %for_idx, 100
-  br i1 %for_cond, label %for_body, label %for_end
-
-for_body:                                         ; preds = %for_header
-  call void @tl_mem_enter_scope()
-  store i64 %for_idx, ptr %i, align 8
-  br label %for_header7
-
-for_end:                                          ; preds = %for_header
-  %call_tmp = call i64 @get_memory()
-  store i64 %call_tmp, ptr %mem_mb, align 8
-  call void @tl_print_string(ptr @str_literal.119)
-  %total_loss167 = load ptr, ptr %total_loss, align 8
-  call void @tl_tensor_print(ptr %total_loss167)
-  call void @tl_print_string(ptr @str_literal.120)
-  %mem_mb168 = load i64, ptr %mem_mb, align 8
-  call void @tl_print_i64(i64 %mem_mb168)
-  ret void
-
-for_header7:                                      ; preds = %continue_block, %for_body
-  %for_idx10 = phi i64 [ 0, %for_body ], [ %next_idx, %continue_block ]
-  %for_cond11 = icmp slt i64 %for_idx10, 100
-  br i1 %for_cond11, label %for_body8, label %for_end9
-
-for_body8:                                        ; preds = %for_header7
-  call void @tl_mem_enter_scope()
-  store i64 %for_idx10, ptr %j, align 8
-  %i12 = load i64, ptr %i, align 8
-  %j13 = load i64, ptr %j, align 8
-  %addtmp = add i64 %i12, %j13
-  store i64 %addtmp, ptr %sum, align 8
-  %i14 = load i64, ptr %i, align 8
-  %divtmp = sdiv i64 %i14, 10
-  %cast_i64_f32 = sitofp i64 %divtmp to float
-  store float %cast_i64_f32, ptr %scalar_data15, align 4
-  %scalar_tensor17 = call ptr @tl_tensor_new(ptr %scalar_data15, i64 0, ptr %scalar_shape16)
-  store float 1.000000e+00, ptr %scalar_data18, align 4
-  %scalar_tensor20 = call ptr @tl_tensor_new(ptr %scalar_data18, i64 0, ptr %scalar_shape19)
-  %pow_res21 = call ptr @tl_tensor_pow(ptr %scalar_tensor17, ptr %scalar_tensor20)
-  %get_res = call float @tl_tensor_get(ptr %pow_res21, i64 0)
-  store float %get_res, ptr %i_d1, align 4
-  %i22 = load i64, ptr %i, align 8
-  %i23 = load i64, ptr %i, align 8
-  %divtmp24 = sdiv i64 %i23, 10
-  %multmp = mul i64 %divtmp24, 10
-  %subtmp = sub i64 %i22, %multmp
-  %cast_i64_f3226 = sitofp i64 %subtmp to float
-  store float %cast_i64_f3226, ptr %scalar_data25, align 4
-  %scalar_tensor28 = call ptr @tl_tensor_new(ptr %scalar_data25, i64 0, ptr %scalar_shape27)
-  store float 1.000000e+00, ptr %scalar_data29, align 4
-  %scalar_tensor31 = call ptr @tl_tensor_new(ptr %scalar_data29, i64 0, ptr %scalar_shape30)
-  %pow_res32 = call ptr @tl_tensor_pow(ptr %scalar_tensor28, ptr %scalar_tensor31)
-  %get_res33 = call float @tl_tensor_get(ptr %pow_res32, i64 0)
-  store float %get_res33, ptr %i_d2, align 4
-  %j34 = load i64, ptr %j, align 8
-  %divtmp35 = sdiv i64 %j34, 10
-  %cast_i64_f3237 = sitofp i64 %divtmp35 to float
-  store float %cast_i64_f3237, ptr %scalar_data36, align 4
-  %scalar_tensor39 = call ptr @tl_tensor_new(ptr %scalar_data36, i64 0, ptr %scalar_shape38)
-  store float 1.000000e+00, ptr %scalar_data40, align 4
-  %scalar_tensor42 = call ptr @tl_tensor_new(ptr %scalar_data40, i64 0, ptr %scalar_shape41)
-  %pow_res43 = call ptr @tl_tensor_pow(ptr %scalar_tensor39, ptr %scalar_tensor42)
-  %get_res44 = call float @tl_tensor_get(ptr %pow_res43, i64 0)
-  store float %get_res44, ptr %j_d1, align 4
-  %j45 = load i64, ptr %j, align 8
-  %j46 = load i64, ptr %j, align 8
-  %divtmp47 = sdiv i64 %j46, 10
-  %multmp48 = mul i64 %divtmp47, 10
-  %subtmp49 = sub i64 %j45, %multmp48
-  %cast_i64_f3251 = sitofp i64 %subtmp49 to float
-  store float %cast_i64_f3251, ptr %scalar_data50, align 4
-  %scalar_tensor53 = call ptr @tl_tensor_new(ptr %scalar_data50, i64 0, ptr %scalar_shape52)
-  store float 1.000000e+00, ptr %scalar_data54, align 4
-  %scalar_tensor56 = call ptr @tl_tensor_new(ptr %scalar_data54, i64 0, ptr %scalar_shape55)
-  %pow_res57 = call ptr @tl_tensor_pow(ptr %scalar_tensor53, ptr %scalar_tensor56)
-  %get_res58 = call float @tl_tensor_get(ptr %pow_res57, i64 0)
-  store float %get_res58, ptr %j_d2, align 4
-  %sum59 = load i64, ptr %sum, align 8
-  %divtmp60 = sdiv i64 %sum59, 100
-  %cast_i64_f3262 = sitofp i64 %divtmp60 to float
-  store float %cast_i64_f3262, ptr %scalar_data61, align 4
-  %scalar_tensor64 = call ptr @tl_tensor_new(ptr %scalar_data61, i64 0, ptr %scalar_shape63)
-  store float 1.000000e+00, ptr %scalar_data65, align 4
-  %scalar_tensor67 = call ptr @tl_tensor_new(ptr %scalar_data65, i64 0, ptr %scalar_shape66)
-  %pow_res68 = call ptr @tl_tensor_pow(ptr %scalar_tensor64, ptr %scalar_tensor67)
-  %get_res69 = call float @tl_tensor_get(ptr %pow_res68, i64 0)
-  store float %get_res69, ptr %s_d1, align 4
-  %sum70 = load i64, ptr %sum, align 8
-  %sum71 = load i64, ptr %sum, align 8
-  %divtmp72 = sdiv i64 %sum71, 100
-  %multmp73 = mul i64 %divtmp72, 100
-  %subtmp74 = sub i64 %sum70, %multmp73
-  %divtmp75 = sdiv i64 %subtmp74, 10
-  %cast_i64_f3277 = sitofp i64 %divtmp75 to float
-  store float %cast_i64_f3277, ptr %scalar_data76, align 4
-  %scalar_tensor79 = call ptr @tl_tensor_new(ptr %scalar_data76, i64 0, ptr %scalar_shape78)
-  store float 1.000000e+00, ptr %scalar_data80, align 4
-  %scalar_tensor82 = call ptr @tl_tensor_new(ptr %scalar_data80, i64 0, ptr %scalar_shape81)
-  %pow_res83 = call ptr @tl_tensor_pow(ptr %scalar_tensor79, ptr %scalar_tensor82)
-  %get_res84 = call float @tl_tensor_get(ptr %pow_res83, i64 0)
-  store float %get_res84, ptr %s_d2, align 4
-  %sum85 = load i64, ptr %sum, align 8
-  %sum86 = load i64, ptr %sum, align 8
-  %divtmp87 = sdiv i64 %sum86, 10
-  %multmp88 = mul i64 %divtmp87, 10
-  %subtmp89 = sub i64 %sum85, %multmp88
-  %cast_i64_f3291 = sitofp i64 %subtmp89 to float
-  store float %cast_i64_f3291, ptr %scalar_data90, align 4
-  %scalar_tensor93 = call ptr @tl_tensor_new(ptr %scalar_data90, i64 0, ptr %scalar_shape92)
-  store float 1.000000e+00, ptr %scalar_data94, align 4
-  %scalar_tensor96 = call ptr @tl_tensor_new(ptr %scalar_data94, i64 0, ptr %scalar_shape95)
-  %pow_res97 = call ptr @tl_tensor_pow(ptr %scalar_tensor93, ptr %scalar_tensor96)
-  %get_res98 = call float @tl_tensor_get(ptr %pow_res97, i64 0)
-  store float %get_res98, ptr %s_d3, align 4
-  %i_d199 = load float, ptr %i_d1, align 4
-  %elem_ptr = getelementptr inbounds float, ptr %tensor_data_arr, i64 0
-  store float %i_d199, ptr %elem_ptr, align 4
-  %i_d2100 = load float, ptr %i_d2, align 4
-  %elem_ptr101 = getelementptr inbounds float, ptr %tensor_data_arr, i64 1
-  store float %i_d2100, ptr %elem_ptr101, align 4
-  %elem_ptr102 = getelementptr inbounds float, ptr %tensor_data_arr, i64 2
-  store float 1.000000e+01, ptr %elem_ptr102, align 4
-  %j_d1103 = load float, ptr %j_d1, align 4
-  %elem_ptr104 = getelementptr inbounds float, ptr %tensor_data_arr, i64 3
-  store float %j_d1103, ptr %elem_ptr104, align 4
-  %j_d2105 = load float, ptr %j_d2, align 4
-  %elem_ptr106 = getelementptr inbounds float, ptr %tensor_data_arr, i64 4
-  store float %j_d2105, ptr %elem_ptr106, align 4
-  %elem_ptr107 = getelementptr inbounds float, ptr %tensor_data_arr, i64 5
-  store float 1.100000e+01, ptr %elem_ptr107, align 4
-  %s_d1108 = load float, ptr %s_d1, align 4
-  %elem_ptr109 = getelementptr inbounds float, ptr %tensor_data_arr, i64 6
-  store float %s_d1108, ptr %elem_ptr109, align 4
-  %s_d2110 = load float, ptr %s_d2, align 4
-  %elem_ptr111 = getelementptr inbounds float, ptr %tensor_data_arr, i64 7
-  store float %s_d2110, ptr %elem_ptr111, align 4
-  %s_d3112 = load float, ptr %s_d3, align 4
-  %elem_ptr113 = getelementptr inbounds float, ptr %tensor_data_arr, i64 8
-  store float %s_d3112, ptr %elem_ptr113, align 4
-  %elem_ptr114 = getelementptr inbounds float, ptr %tensor_data_arr, i64 9
-  store float 1.200000e+01, ptr %elem_ptr114, align 4
-  %elem_ptr115 = getelementptr inbounds float, ptr %tensor_data_arr, i64 10
-  store float 1.200000e+01, ptr %elem_ptr115, align 4
-  %elem_ptr116 = getelementptr inbounds float, ptr %tensor_data_arr, i64 11
-  store float 1.200000e+01, ptr %elem_ptr116, align 4
-  %shape_ptr = getelementptr inbounds i64, ptr %tensor_shape_arr, i64 0
-  store i64 12, ptr %shape_ptr, align 8
-  %new_tensor = call ptr @tl_tensor_new(ptr %tensor_data_arr, i64 1, ptr %tensor_shape_arr)
-  store ptr %new_tensor, ptr %data, align 8
-  call void @tl_register_tensor(ptr @tensor_name.111, ptr %new_tensor)
-  %i_d2118 = load float, ptr %i_d2, align 4
-  %elem_ptr119 = getelementptr inbounds float, ptr %tensor_data_arr117, i64 0
-  store float %i_d2118, ptr %elem_ptr119, align 4
-  %elem_ptr120 = getelementptr inbounds float, ptr %tensor_data_arr117, i64 1
-  store float 1.000000e+01, ptr %elem_ptr120, align 4
-  %j_d1121 = load float, ptr %j_d1, align 4
-  %elem_ptr122 = getelementptr inbounds float, ptr %tensor_data_arr117, i64 2
-  store float %j_d1121, ptr %elem_ptr122, align 4
-  %j_d2123 = load float, ptr %j_d2, align 4
-  %elem_ptr124 = getelementptr inbounds float, ptr %tensor_data_arr117, i64 3
-  store float %j_d2123, ptr %elem_ptr124, align 4
-  %elem_ptr125 = getelementptr inbounds float, ptr %tensor_data_arr117, i64 4
-  store float 1.100000e+01, ptr %elem_ptr125, align 4
-  %s_d1126 = load float, ptr %s_d1, align 4
-  %elem_ptr127 = getelementptr inbounds float, ptr %tensor_data_arr117, i64 5
-  store float %s_d1126, ptr %elem_ptr127, align 4
-  %s_d2128 = load float, ptr %s_d2, align 4
-  %elem_ptr129 = getelementptr inbounds float, ptr %tensor_data_arr117, i64 6
-  store float %s_d2128, ptr %elem_ptr129, align 4
-  %s_d3130 = load float, ptr %s_d3, align 4
-  %elem_ptr131 = getelementptr inbounds float, ptr %tensor_data_arr117, i64 7
-  store float %s_d3130, ptr %elem_ptr131, align 4
-  %elem_ptr132 = getelementptr inbounds float, ptr %tensor_data_arr117, i64 8
-  store float 1.200000e+01, ptr %elem_ptr132, align 4
-  %elem_ptr133 = getelementptr inbounds float, ptr %tensor_data_arr117, i64 9
-  store float 1.200000e+01, ptr %elem_ptr133, align 4
-  %elem_ptr134 = getelementptr inbounds float, ptr %tensor_data_arr117, i64 10
-  store float 1.200000e+01, ptr %elem_ptr134, align 4
-  %elem_ptr135 = getelementptr inbounds float, ptr %tensor_data_arr117, i64 11
-  store float 1.200000e+01, ptr %elem_ptr135, align 4
-  %shape_ptr137 = getelementptr inbounds i64, ptr %tensor_shape_arr136, i64 0
-  store i64 12, ptr %shape_ptr137, align 8
-  %new_tensor138 = call ptr @tl_tensor_new(ptr %tensor_data_arr117, i64 1, ptr %tensor_shape_arr136)
-  store ptr %new_tensor138, ptr %target, align 8
-  call void @tl_register_tensor(ptr @tensor_name.112, ptr %new_tensor138)
-  %data139 = load ptr, ptr %data, align 8
-  %dims_alloca = alloca [2 x i64], align 8
-  %dim_ptr = getelementptr [2 x i64], ptr %dims_alloca, i64 0, i64 0
-  store i64 1, ptr %dim_ptr, align 8
-  %dim_ptr140 = getelementptr [2 x i64], ptr %dims_alloca, i64 0, i64 1
-  store i64 12, ptr %dim_ptr140, align 8
-  %dims_ptr = getelementptr [2 x i64], ptr %dims_alloca, i64 0, i64 0
-  %reshape_dims_res = call ptr @tl_tensor_reshape_dims(ptr %data139, ptr %dims_ptr, i64 2)
-  store ptr %reshape_dims_res, ptr %X, align 8
-  call void @tl_register_tensor(ptr @tensor_name.113, ptr %reshape_dims_res)
-  %target141 = load ptr, ptr %target, align 8
-  %dims_alloca142 = alloca [2 x i64], align 8
-  %dim_ptr143 = getelementptr [2 x i64], ptr %dims_alloca142, i64 0, i64 0
-  store i64 1, ptr %dim_ptr143, align 8
-  %dim_ptr144 = getelementptr [2 x i64], ptr %dims_alloca142, i64 0, i64 1
-  store i64 12, ptr %dim_ptr144, align 8
-  %dims_ptr145 = getelementptr [2 x i64], ptr %dims_alloca142, i64 0, i64 0
-  %reshape_dims_res146 = call ptr @tl_tensor_reshape_dims(ptr %target141, ptr %dims_ptr145, i64 2)
-  store ptr %reshape_dims_res146, ptr %Y, align 8
-  call void @tl_register_tensor(ptr @tensor_name.114, ptr %reshape_dims_res146)
-  %model147 = load ptr, ptr %model1, align 8
-  %X148 = load ptr, ptr %X, align 8
-  %call_method = call ptr @tl_GPT_forward(ptr %model147, ptr %X148)
-  store ptr %call_method, ptr %logits, align 8
-  call void @tl_register_tensor(ptr @tensor_name.115, ptr %call_method)
-  %logits149 = load ptr, ptr %logits, align 8
-  %dims_alloca150 = alloca [2 x i64], align 8
-  %dim_ptr151 = getelementptr [2 x i64], ptr %dims_alloca150, i64 0, i64 0
-  store i64 12, ptr %dim_ptr151, align 8
-  %dim_ptr152 = getelementptr [2 x i64], ptr %dims_alloca150, i64 0, i64 1
-  store i64 13, ptr %dim_ptr152, align 8
-  %dims_ptr153 = getelementptr [2 x i64], ptr %dims_alloca150, i64 0, i64 0
-  %reshape_dims_res154 = call ptr @tl_tensor_reshape_dims(ptr %logits149, ptr %dims_ptr153, i64 2)
-  store ptr %reshape_dims_res154, ptr %logits_flat, align 8
-  call void @tl_register_tensor(ptr @tensor_name.116, ptr %reshape_dims_res154)
-  %Y155 = load ptr, ptr %Y, align 8
-  %dims_alloca156 = alloca [1 x i64], align 8
-  %dim_ptr157 = getelementptr [1 x i64], ptr %dims_alloca156, i64 0, i64 0
-  store i64 12, ptr %dim_ptr157, align 8
-  %dims_ptr158 = getelementptr [1 x i64], ptr %dims_alloca156, i64 0, i64 0
-  %reshape_dims_res159 = call ptr @tl_tensor_reshape_dims(ptr %Y155, ptr %dims_ptr158, i64 1)
-  store ptr %reshape_dims_res159, ptr %Y_flat, align 8
-  call void @tl_register_tensor(ptr @tensor_name.117, ptr %reshape_dims_res159)
-  %logits_flat160 = load ptr, ptr %logits_flat, align 8
-  %Y_flat161 = load ptr, ptr %Y_flat, align 8
-  %ce_res = call ptr @tl_tensor_cross_entropy(ptr %logits_flat160, ptr %Y_flat161)
-  store ptr %ce_res, ptr %loss, align 8
-  call void @tl_register_tensor(ptr @tensor_name.118, ptr %ce_res)
-  %loss162 = load ptr, ptr %loss, align 8
-  call void @tl_tensor_backward(ptr %loss162)
-  %model163 = load ptr, ptr %model1, align 8
-  %lr164 = load float, ptr %lr2, align 4
-  call void @tl_GPT_step(ptr %model163, float %lr164)
-  %loss165 = load ptr, ptr %loss, align 8
-  %detach_res = call ptr @tl_tensor_detach(ptr %loss165, i1 true)
-  %old_val = load ptr, ptr %total_loss, align 8
-  %is_not_null = icmp ne ptr %old_val, null
-  br i1 %is_not_null, label %free_block, label %continue_block
-
-for_end9:                                         ; preds = %for_header7
-  call void @tl_mem_exit_scope()
-  %next_idx166 = add i64 %for_idx, 1
-  br label %for_header
-
-free_block:                                       ; preds = %for_body8
-  br label %continue_block
-
-continue_block:                                   ; preds = %free_block, %for_body8
-  call void @tl_mem_unregister(ptr %detach_res)
-  store ptr %detach_res, ptr %total_loss, align 8
-  call void @tl_mem_exit_scope()
-  %next_idx = add i64 %for_idx10, 1
-  br label %for_header7
-}
-
 define void @main() {
 entry:
-  %epoch = alloca i64, align 8
-  %epochs = alloca i64, align 8
-  %lr3 = alloca float, align 4
-  %lr = alloca float, align 4
+  %val270 = alloca float, align 4
+  %k266 = alloca i64, align 8
+  %max_val260 = alloca float, align 4
+  %pred3 = alloca i64, align 8
+  %next_logits3 = alloca ptr, align 8
+  %logits3257 = alloca ptr, align 8
+  %logits3 = alloca ptr, align 8
+  %input3 = alloca ptr, align 8
+  %data3 = alloca ptr, align 8
+  %tensor_shape_arr239 = alloca i64, i64 1, align 8
+  %tensor_data_arr217 = alloca float, i64 12, align 4
+  %val_pred2 = alloca float, align 4
+  %scalar_shape213 = alloca i64, align 8
+  %scalar_data212 = alloca float, align 4
+  %scalar_shape210 = alloca i64, align 8
+  %scalar_data208 = alloca float, align 4
+  %val196 = alloca float, align 4
+  %k192 = alloca i64, align 8
+  %max_val186 = alloca float, align 4
+  %pred2 = alloca i64, align 8
+  %next_logits2 = alloca ptr, align 8
+  %logits2183 = alloca ptr, align 8
+  %logits2 = alloca ptr, align 8
+  %input2 = alloca ptr, align 8
+  %data2 = alloca ptr, align 8
+  %tensor_shape_arr165 = alloca i64, i64 1, align 8
+  %tensor_data_arr143 = alloca float, i64 12, align 4
+  %val_pred1 = alloca float, align 4
+  %scalar_shape139 = alloca i64, align 8
+  %scalar_data138 = alloca float, align 4
+  %scalar_shape136 = alloca i64, align 8
+  %scalar_data134 = alloca float, align 4
+  %val = alloca float, align 4
+  %k = alloca i64, align 8
+  %max_val = alloca float, align 4
+  %pred1 = alloca i64, align 8
+  %next_logits1 = alloca ptr, align 8
+  %logits1115 = alloca ptr, align 8
+  %logits1 = alloca ptr, align 8
+  %input1 = alloca ptr, align 8
+  %data1 = alloca ptr, align 8
+  %tensor_shape_arr = alloca i64, i64 1, align 8
+  %tensor_data_arr = alloca float, i64 12, align 4
+  %pos = alloca i64, align 8
+  %x11 = alloca float, align 4
+  %x10 = alloca float, align 4
+  %x9 = alloca float, align 4
+  %x8 = alloca float, align 4
+  %x7 = alloca float, align 4
+  %x6 = alloca float, align 4
+  %x5 = alloca float, align 4
+  %x4 = alloca float, align 4
+  %x3 = alloca float, align 4
+  %x2 = alloca float, align 4
+  %x1 = alloca float, align 4
+  %x0 = alloca float, align 4
+  %val_pad = alloca float, align 4
+  %val_eq = alloca float, align 4
+  %val_plus = alloca float, align 4
+  %j_d2 = alloca float, align 4
+  %scalar_shape61 = alloca i64, align 8
+  %scalar_data60 = alloca float, align 4
+  %scalar_shape58 = alloca i64, align 8
+  %scalar_data56 = alloca float, align 4
+  %j_d1 = alloca float, align 4
+  %scalar_shape47 = alloca i64, align 8
+  %scalar_data46 = alloca float, align 4
+  %scalar_shape44 = alloca i64, align 8
+  %scalar_data42 = alloca float, align 4
+  %i_d2 = alloca float, align 4
+  %scalar_shape36 = alloca i64, align 8
+  %scalar_data35 = alloca float, align 4
+  %scalar_shape33 = alloca i64, align 8
+  %scalar_data31 = alloca float, align 4
+  %i_d1 = alloca float, align 4
+  %scalar_shape26 = alloca i64, align 8
+  %scalar_data25 = alloca float, align 4
+  %scalar_shape = alloca i64, align 8
+  %scalar_data = alloca float, align 4
+  %j = alloca i64, align 8
+  %i = alloca i64, align 8
+  %t = alloca i64, align 8
+  %model6 = alloca ptr, align 8
   %model = alloca ptr, align 8
+  %block_size = alloca i64, align 8
   %d_model = alloca i64, align 8
   %vocab_size = alloca i64, align 8
   store i64 13, ptr %vocab_size, align 8
   store i64 64, ptr %d_model, align 8
+  store i64 12, ptr %block_size, align 8
+  call void @tl_print_string(ptr @str_literal.110)
   %vocab_size1 = load i64, ptr %vocab_size, align 8
   %d_model2 = load i64, ptr %d_model, align 8
   %static_call = call ptr @tl_GPT_new(i64 %vocab_size1, i64 %d_model2)
   store ptr %static_call, ptr %model, align 8
-  store float 0x3F847AE140000000, ptr %lr, align 4
-  store float 0x3F50624DE0000000, ptr %lr3, align 4
-  store i64 50, ptr %epochs, align 8
-  call void @tl_print_string(ptr @str_literal.121)
-  %epochs4 = load i64, ptr %epochs, align 8
+  %vocab_size3 = load i64, ptr %vocab_size, align 8
+  %d_model4 = load i64, ptr %d_model, align 8
+  %static_call5 = call ptr @tl_GPT_new(i64 %vocab_size3, i64 %d_model4)
+  store ptr %static_call5, ptr %model6, align 8
+  %model7 = load ptr, ptr %model6, align 8
+  call void @register_gpt_params(ptr %model7)
+  call void @tl_print_string(ptr @str_literal.111)
+  call void @tl_load_all_params(ptr @str_literal.112)
+  call void @tl_print_string(ptr @str_literal.113)
+  call void @tl_print_string(ptr @str_literal.114)
   br label %for_header
 
-for_header:                                       ; preds = %for_body, %entry
-  %for_idx = phi i64 [ 0, %entry ], [ %next_idx, %for_body ]
-  %for_cond = icmp slt i64 %for_idx, %epochs4
+for_header:                                       ; preds = %for_end263, %entry
+  %for_idx = phi i64 [ 0, %entry ], [ %next_idx281, %for_end263 ]
+  %for_cond = icmp slt i64 %for_idx, 4
   br i1 %for_cond, label %for_body, label %for_end
 
 for_body:                                         ; preds = %for_header
   call void @tl_mem_enter_scope()
-  store i64 %for_idx, ptr %epoch, align 8
-  call void @tl_print_string(ptr @str_literal.122)
-  %epoch5 = load i64, ptr %epoch, align 8
-  call void @tl_print_i64(i64 %epoch5)
-  %model6 = load ptr, ptr %model, align 8
-  %lr7 = load float, ptr %lr3, align 4
-  %epoch8 = load i64, ptr %epoch, align 8
-  call void @train_epoch(ptr %model6, float %lr7, i64 %epoch8)
-  call void @tl_mem_exit_scope()
-  %next_idx = add i64 %for_idx, 1
-  br label %for_header
+  store i64 %for_idx, ptr %t, align 8
+  store i64 0, ptr %i, align 8
+  store i64 0, ptr %j, align 8
+  %t8 = load i64, ptr %t, align 8
+  %eqtmp = icmp eq i64 %t8, 0
+  br i1 %eqtmp, label %then, label %else
 
 for_end:                                          ; preds = %for_header
-  %model9 = load ptr, ptr %model, align 8
-  call void @register_gpt_params(ptr %model9)
-  call void @tl_print_string(ptr @str_literal.123)
-  call void @tl_save_all_params(ptr @str_literal.124)
+  call void @tl_print_string(ptr @str_literal.133)
   ret void
+
+then:                                             ; preds = %for_body
+  store i64 12, ptr %i, align 8
+  store i64 34, ptr %j, align 8
+  br label %merge
+
+else:                                             ; preds = %for_body
+  br label %merge
+
+merge:                                            ; preds = %else, %then
+  %t9 = load i64, ptr %t, align 8
+  %eqtmp10 = icmp eq i64 %t9, 1
+  br i1 %eqtmp10, label %then11, label %else12
+
+then11:                                           ; preds = %merge
+  store i64 99, ptr %i, align 8
+  store i64 1, ptr %j, align 8
+  br label %merge13
+
+else12:                                           ; preds = %merge
+  br label %merge13
+
+merge13:                                          ; preds = %else12, %then11
+  %t14 = load i64, ptr %t, align 8
+  %eqtmp15 = icmp eq i64 %t14, 2
+  br i1 %eqtmp15, label %then16, label %else17
+
+then16:                                           ; preds = %merge13
+  store i64 5, ptr %i, align 8
+  store i64 5, ptr %j, align 8
+  br label %merge18
+
+else17:                                           ; preds = %merge13
+  br label %merge18
+
+merge18:                                          ; preds = %else17, %then16
+  %t19 = load i64, ptr %t, align 8
+  %eqtmp20 = icmp eq i64 %t19, 3
+  br i1 %eqtmp20, label %then21, label %else22
+
+then21:                                           ; preds = %merge18
+  store i64 88, ptr %i, align 8
+  store i64 99, ptr %j, align 8
+  br label %merge23
+
+else22:                                           ; preds = %merge18
+  br label %merge23
+
+merge23:                                          ; preds = %else22, %then21
+  %i24 = load i64, ptr %i, align 8
+  %divtmp = sdiv i64 %i24, 10
+  %cast_i64_f32 = sitofp i64 %divtmp to float
+  store float %cast_i64_f32, ptr %scalar_data, align 4
+  %scalar_tensor = call ptr @tl_tensor_new(ptr %scalar_data, i64 0, ptr %scalar_shape)
+  store float 1.000000e+00, ptr %scalar_data25, align 4
+  %scalar_tensor27 = call ptr @tl_tensor_new(ptr %scalar_data25, i64 0, ptr %scalar_shape26)
+  %pow_res = call ptr @tl_tensor_pow(ptr %scalar_tensor, ptr %scalar_tensor27)
+  %get_res = call float @tl_tensor_get(ptr %pow_res, i64 0)
+  store float %get_res, ptr %i_d1, align 4
+  %i28 = load i64, ptr %i, align 8
+  %i29 = load i64, ptr %i, align 8
+  %divtmp30 = sdiv i64 %i29, 10
+  %multmp = mul i64 %divtmp30, 10
+  %subtmp = sub i64 %i28, %multmp
+  %cast_i64_f3232 = sitofp i64 %subtmp to float
+  store float %cast_i64_f3232, ptr %scalar_data31, align 4
+  %scalar_tensor34 = call ptr @tl_tensor_new(ptr %scalar_data31, i64 0, ptr %scalar_shape33)
+  store float 1.000000e+00, ptr %scalar_data35, align 4
+  %scalar_tensor37 = call ptr @tl_tensor_new(ptr %scalar_data35, i64 0, ptr %scalar_shape36)
+  %pow_res38 = call ptr @tl_tensor_pow(ptr %scalar_tensor34, ptr %scalar_tensor37)
+  %get_res39 = call float @tl_tensor_get(ptr %pow_res38, i64 0)
+  store float %get_res39, ptr %i_d2, align 4
+  %j40 = load i64, ptr %j, align 8
+  %divtmp41 = sdiv i64 %j40, 10
+  %cast_i64_f3243 = sitofp i64 %divtmp41 to float
+  store float %cast_i64_f3243, ptr %scalar_data42, align 4
+  %scalar_tensor45 = call ptr @tl_tensor_new(ptr %scalar_data42, i64 0, ptr %scalar_shape44)
+  store float 1.000000e+00, ptr %scalar_data46, align 4
+  %scalar_tensor48 = call ptr @tl_tensor_new(ptr %scalar_data46, i64 0, ptr %scalar_shape47)
+  %pow_res49 = call ptr @tl_tensor_pow(ptr %scalar_tensor45, ptr %scalar_tensor48)
+  %get_res50 = call float @tl_tensor_get(ptr %pow_res49, i64 0)
+  store float %get_res50, ptr %j_d1, align 4
+  %j51 = load i64, ptr %j, align 8
+  %j52 = load i64, ptr %j, align 8
+  %divtmp53 = sdiv i64 %j52, 10
+  %multmp54 = mul i64 %divtmp53, 10
+  %subtmp55 = sub i64 %j51, %multmp54
+  %cast_i64_f3257 = sitofp i64 %subtmp55 to float
+  store float %cast_i64_f3257, ptr %scalar_data56, align 4
+  %scalar_tensor59 = call ptr @tl_tensor_new(ptr %scalar_data56, i64 0, ptr %scalar_shape58)
+  store float 1.000000e+00, ptr %scalar_data60, align 4
+  %scalar_tensor62 = call ptr @tl_tensor_new(ptr %scalar_data60, i64 0, ptr %scalar_shape61)
+  %pow_res63 = call ptr @tl_tensor_pow(ptr %scalar_tensor59, ptr %scalar_tensor62)
+  %get_res64 = call float @tl_tensor_get(ptr %pow_res63, i64 0)
+  store float %get_res64, ptr %j_d2, align 4
+  store float 1.000000e+01, ptr %val_plus, align 4
+  store float 1.100000e+01, ptr %val_eq, align 4
+  store float 1.200000e+01, ptr %val_pad, align 4
+  %val_pad65 = load float, ptr %val_pad, align 4
+  store float %val_pad65, ptr %x0, align 4
+  %val_pad66 = load float, ptr %val_pad, align 4
+  store float %val_pad66, ptr %x1, align 4
+  %val_pad67 = load float, ptr %val_pad, align 4
+  store float %val_pad67, ptr %x2, align 4
+  %val_pad68 = load float, ptr %val_pad, align 4
+  store float %val_pad68, ptr %x3, align 4
+  %val_pad69 = load float, ptr %val_pad, align 4
+  store float %val_pad69, ptr %x4, align 4
+  %val_pad70 = load float, ptr %val_pad, align 4
+  store float %val_pad70, ptr %x5, align 4
+  %val_pad71 = load float, ptr %val_pad, align 4
+  store float %val_pad71, ptr %x6, align 4
+  %val_pad72 = load float, ptr %val_pad, align 4
+  store float %val_pad72, ptr %x7, align 4
+  %val_pad73 = load float, ptr %val_pad, align 4
+  store float %val_pad73, ptr %x8, align 4
+  %val_pad74 = load float, ptr %val_pad, align 4
+  store float %val_pad74, ptr %x9, align 4
+  %val_pad75 = load float, ptr %val_pad, align 4
+  store float %val_pad75, ptr %x10, align 4
+  %val_pad76 = load float, ptr %val_pad, align 4
+  store float %val_pad76, ptr %x11, align 4
+  store i64 0, ptr %pos, align 8
+  %i_d177 = load float, ptr %i_d1, align 4
+  store float %i_d177, ptr %x0, align 4
+  %i_d278 = load float, ptr %i_d2, align 4
+  store float %i_d278, ptr %x1, align 4
+  %val_plus79 = load float, ptr %val_plus, align 4
+  store float %val_plus79, ptr %x2, align 4
+  %j_d180 = load float, ptr %j_d1, align 4
+  store float %j_d180, ptr %x3, align 4
+  %j_d281 = load float, ptr %j_d2, align 4
+  store float %j_d281, ptr %x4, align 4
+  %val_eq82 = load float, ptr %val_eq, align 4
+  store float %val_eq82, ptr %x5, align 4
+  store i64 6, ptr %pos, align 8
+  call void @tl_print_string(ptr @str_literal.115)
+  %i83 = load i64, ptr %i, align 8
+  call void @tl_print_i64(i64 %i83)
+  call void @tl_print_string(ptr @str_literal.116)
+  %j84 = load i64, ptr %j, align 8
+  call void @tl_print_i64(i64 %j84)
+  call void @tl_print_string(ptr @str_literal.117)
+  %x085 = load float, ptr %x0, align 4
+  %elem_ptr = getelementptr inbounds float, ptr %tensor_data_arr, i64 0
+  store float %x085, ptr %elem_ptr, align 4
+  %x186 = load float, ptr %x1, align 4
+  %elem_ptr87 = getelementptr inbounds float, ptr %tensor_data_arr, i64 1
+  store float %x186, ptr %elem_ptr87, align 4
+  %x288 = load float, ptr %x2, align 4
+  %elem_ptr89 = getelementptr inbounds float, ptr %tensor_data_arr, i64 2
+  store float %x288, ptr %elem_ptr89, align 4
+  %x390 = load float, ptr %x3, align 4
+  %elem_ptr91 = getelementptr inbounds float, ptr %tensor_data_arr, i64 3
+  store float %x390, ptr %elem_ptr91, align 4
+  %x492 = load float, ptr %x4, align 4
+  %elem_ptr93 = getelementptr inbounds float, ptr %tensor_data_arr, i64 4
+  store float %x492, ptr %elem_ptr93, align 4
+  %x594 = load float, ptr %x5, align 4
+  %elem_ptr95 = getelementptr inbounds float, ptr %tensor_data_arr, i64 5
+  store float %x594, ptr %elem_ptr95, align 4
+  %val_pad96 = load float, ptr %val_pad, align 4
+  %elem_ptr97 = getelementptr inbounds float, ptr %tensor_data_arr, i64 6
+  store float %val_pad96, ptr %elem_ptr97, align 4
+  %val_pad98 = load float, ptr %val_pad, align 4
+  %elem_ptr99 = getelementptr inbounds float, ptr %tensor_data_arr, i64 7
+  store float %val_pad98, ptr %elem_ptr99, align 4
+  %val_pad100 = load float, ptr %val_pad, align 4
+  %elem_ptr101 = getelementptr inbounds float, ptr %tensor_data_arr, i64 8
+  store float %val_pad100, ptr %elem_ptr101, align 4
+  %elem_ptr102 = getelementptr inbounds float, ptr %tensor_data_arr, i64 9
+  store float 1.200000e+01, ptr %elem_ptr102, align 4
+  %elem_ptr103 = getelementptr inbounds float, ptr %tensor_data_arr, i64 10
+  store float 1.200000e+01, ptr %elem_ptr103, align 4
+  %elem_ptr104 = getelementptr inbounds float, ptr %tensor_data_arr, i64 11
+  store float 1.200000e+01, ptr %elem_ptr104, align 4
+  %shape_ptr = getelementptr inbounds i64, ptr %tensor_shape_arr, i64 0
+  store i64 12, ptr %shape_ptr, align 8
+  %new_tensor = call ptr @tl_tensor_new(ptr %tensor_data_arr, i64 1, ptr %tensor_shape_arr)
+  store ptr %new_tensor, ptr %data1, align 8
+  call void @tl_register_tensor(ptr @tensor_name.118, ptr %new_tensor)
+  %data1105 = load ptr, ptr %data1, align 8
+  %dims_alloca = alloca [2 x i64], align 8
+  %dim_ptr = getelementptr [2 x i64], ptr %dims_alloca, i64 0, i64 0
+  store i64 1, ptr %dim_ptr, align 8
+  %dim_ptr106 = getelementptr [2 x i64], ptr %dims_alloca, i64 0, i64 1
+  store i64 12, ptr %dim_ptr106, align 8
+  %dims_ptr = getelementptr [2 x i64], ptr %dims_alloca, i64 0, i64 0
+  %reshape_dims_res = call ptr @tl_tensor_reshape_dims(ptr %data1105, ptr %dims_ptr, i64 2)
+  store ptr %reshape_dims_res, ptr %input1, align 8
+  call void @tl_register_tensor(ptr @tensor_name.119, ptr %reshape_dims_res)
+  %model107 = load ptr, ptr %model6, align 8
+  %input1108 = load ptr, ptr %input1, align 8
+  %call_method = call ptr @tl_GPT_forward(ptr %model107, ptr %input1108)
+  store ptr %call_method, ptr %logits1, align 8
+  call void @tl_register_tensor(ptr @tensor_name.120, ptr %call_method)
+  %logits1109 = load ptr, ptr %logits1, align 8
+  %dims_alloca110 = alloca [2 x i64], align 8
+  %dim_ptr111 = getelementptr [2 x i64], ptr %dims_alloca110, i64 0, i64 0
+  store i64 12, ptr %dim_ptr111, align 8
+  %dim_ptr112 = getelementptr [2 x i64], ptr %dims_alloca110, i64 0, i64 1
+  store i64 13, ptr %dim_ptr112, align 8
+  %dims_ptr113 = getelementptr [2 x i64], ptr %dims_alloca110, i64 0, i64 0
+  %reshape_dims_res114 = call ptr @tl_tensor_reshape_dims(ptr %logits1109, ptr %dims_ptr113, i64 2)
+  store ptr %reshape_dims_res114, ptr %logits1115, align 8
+  call void @tl_register_tensor(ptr @tensor_name.121, ptr %reshape_dims_res114)
+  %logits1116 = load ptr, ptr %logits1115, align 8
+  %slice_res = call ptr @tl_tensor_slice(ptr %logits1116, i64 5, i64 1)
+  store ptr %slice_res, ptr %next_logits1, align 8
+  call void @tl_register_tensor(ptr @tensor_name.122, ptr %slice_res)
+  store i64 0, ptr %pred1, align 8
+  store float -1.000000e+06, ptr %max_val, align 4
+  br label %for_header117
+
+for_header117:                                    ; preds = %merge129, %merge23
+  %for_idx120 = phi i64 [ 0, %merge23 ], [ %next_idx, %merge129 ]
+  %for_cond121 = icmp slt i64 %for_idx120, 13
+  br i1 %for_cond121, label %for_body118, label %for_end119
+
+for_body118:                                      ; preds = %for_header117
+  call void @tl_mem_enter_scope()
+  store i64 %for_idx120, ptr %k, align 8
+  %next_logits1122 = load ptr, ptr %next_logits1, align 8
+  %k123 = load i64, ptr %k, align 8
+  %get_res124 = call float @tl_tensor_get(ptr %next_logits1122, i64 %k123)
+  store float %get_res124, ptr %val, align 4
+  %val125 = load float, ptr %val, align 4
+  %max_val126 = load float, ptr %max_val, align 4
+  %fgttmp = fcmp ogt float %val125, %max_val126
+  br i1 %fgttmp, label %then127, label %else128
+
+for_end119:                                       ; preds = %for_header117
+  %pred1132 = load i64, ptr %pred1, align 8
+  call void @tl_print_i64(i64 %pred1132)
+  %pred1133 = load i64, ptr %pred1, align 8
+  %cast_i64_f32135 = sitofp i64 %pred1133 to float
+  store float %cast_i64_f32135, ptr %scalar_data134, align 4
+  %scalar_tensor137 = call ptr @tl_tensor_new(ptr %scalar_data134, i64 0, ptr %scalar_shape136)
+  store float 1.000000e+00, ptr %scalar_data138, align 4
+  %scalar_tensor140 = call ptr @tl_tensor_new(ptr %scalar_data138, i64 0, ptr %scalar_shape139)
+  %pow_res141 = call ptr @tl_tensor_pow(ptr %scalar_tensor137, ptr %scalar_tensor140)
+  %get_res142 = call float @tl_tensor_get(ptr %pow_res141, i64 0)
+  store float %get_res142, ptr %val_pred1, align 4
+  %x0144 = load float, ptr %x0, align 4
+  %elem_ptr145 = getelementptr inbounds float, ptr %tensor_data_arr143, i64 0
+  store float %x0144, ptr %elem_ptr145, align 4
+  %x1146 = load float, ptr %x1, align 4
+  %elem_ptr147 = getelementptr inbounds float, ptr %tensor_data_arr143, i64 1
+  store float %x1146, ptr %elem_ptr147, align 4
+  %x2148 = load float, ptr %x2, align 4
+  %elem_ptr149 = getelementptr inbounds float, ptr %tensor_data_arr143, i64 2
+  store float %x2148, ptr %elem_ptr149, align 4
+  %x3150 = load float, ptr %x3, align 4
+  %elem_ptr151 = getelementptr inbounds float, ptr %tensor_data_arr143, i64 3
+  store float %x3150, ptr %elem_ptr151, align 4
+  %x4152 = load float, ptr %x4, align 4
+  %elem_ptr153 = getelementptr inbounds float, ptr %tensor_data_arr143, i64 4
+  store float %x4152, ptr %elem_ptr153, align 4
+  %x5154 = load float, ptr %x5, align 4
+  %elem_ptr155 = getelementptr inbounds float, ptr %tensor_data_arr143, i64 5
+  store float %x5154, ptr %elem_ptr155, align 4
+  %val_pred1156 = load float, ptr %val_pred1, align 4
+  %elem_ptr157 = getelementptr inbounds float, ptr %tensor_data_arr143, i64 6
+  store float %val_pred1156, ptr %elem_ptr157, align 4
+  %val_pad158 = load float, ptr %val_pad, align 4
+  %elem_ptr159 = getelementptr inbounds float, ptr %tensor_data_arr143, i64 7
+  store float %val_pad158, ptr %elem_ptr159, align 4
+  %val_pad160 = load float, ptr %val_pad, align 4
+  %elem_ptr161 = getelementptr inbounds float, ptr %tensor_data_arr143, i64 8
+  store float %val_pad160, ptr %elem_ptr161, align 4
+  %elem_ptr162 = getelementptr inbounds float, ptr %tensor_data_arr143, i64 9
+  store float 1.200000e+01, ptr %elem_ptr162, align 4
+  %elem_ptr163 = getelementptr inbounds float, ptr %tensor_data_arr143, i64 10
+  store float 1.200000e+01, ptr %elem_ptr163, align 4
+  %elem_ptr164 = getelementptr inbounds float, ptr %tensor_data_arr143, i64 11
+  store float 1.200000e+01, ptr %elem_ptr164, align 4
+  %shape_ptr166 = getelementptr inbounds i64, ptr %tensor_shape_arr165, i64 0
+  store i64 12, ptr %shape_ptr166, align 8
+  %new_tensor167 = call ptr @tl_tensor_new(ptr %tensor_data_arr143, i64 1, ptr %tensor_shape_arr165)
+  store ptr %new_tensor167, ptr %data2, align 8
+  call void @tl_register_tensor(ptr @tensor_name.123, ptr %new_tensor167)
+  %data2168 = load ptr, ptr %data2, align 8
+  %dims_alloca169 = alloca [2 x i64], align 8
+  %dim_ptr170 = getelementptr [2 x i64], ptr %dims_alloca169, i64 0, i64 0
+  store i64 1, ptr %dim_ptr170, align 8
+  %dim_ptr171 = getelementptr [2 x i64], ptr %dims_alloca169, i64 0, i64 1
+  store i64 12, ptr %dim_ptr171, align 8
+  %dims_ptr172 = getelementptr [2 x i64], ptr %dims_alloca169, i64 0, i64 0
+  %reshape_dims_res173 = call ptr @tl_tensor_reshape_dims(ptr %data2168, ptr %dims_ptr172, i64 2)
+  store ptr %reshape_dims_res173, ptr %input2, align 8
+  call void @tl_register_tensor(ptr @tensor_name.124, ptr %reshape_dims_res173)
+  %model174 = load ptr, ptr %model6, align 8
+  %input2175 = load ptr, ptr %input2, align 8
+  %call_method176 = call ptr @tl_GPT_forward(ptr %model174, ptr %input2175)
+  store ptr %call_method176, ptr %logits2, align 8
+  call void @tl_register_tensor(ptr @tensor_name.125, ptr %call_method176)
+  %logits2177 = load ptr, ptr %logits2, align 8
+  %dims_alloca178 = alloca [2 x i64], align 8
+  %dim_ptr179 = getelementptr [2 x i64], ptr %dims_alloca178, i64 0, i64 0
+  store i64 12, ptr %dim_ptr179, align 8
+  %dim_ptr180 = getelementptr [2 x i64], ptr %dims_alloca178, i64 0, i64 1
+  store i64 13, ptr %dim_ptr180, align 8
+  %dims_ptr181 = getelementptr [2 x i64], ptr %dims_alloca178, i64 0, i64 0
+  %reshape_dims_res182 = call ptr @tl_tensor_reshape_dims(ptr %logits2177, ptr %dims_ptr181, i64 2)
+  store ptr %reshape_dims_res182, ptr %logits2183, align 8
+  call void @tl_register_tensor(ptr @tensor_name.126, ptr %reshape_dims_res182)
+  %logits2184 = load ptr, ptr %logits2183, align 8
+  %slice_res185 = call ptr @tl_tensor_slice(ptr %logits2184, i64 6, i64 1)
+  store ptr %slice_res185, ptr %next_logits2, align 8
+  call void @tl_register_tensor(ptr @tensor_name.127, ptr %slice_res185)
+  store i64 0, ptr %pred2, align 8
+  store float -1.000000e+06, ptr %max_val186, align 4
+  br label %for_header187
+
+then127:                                          ; preds = %for_body118
+  %val130 = load float, ptr %val, align 4
+  store float %val130, ptr %max_val, align 4
+  %k131 = load i64, ptr %k, align 8
+  store i64 %k131, ptr %pred1, align 8
+  br label %merge129
+
+else128:                                          ; preds = %for_body118
+  br label %merge129
+
+merge129:                                         ; preds = %else128, %then127
+  call void @tl_mem_exit_scope()
+  %next_idx = add i64 %for_idx120, 1
+  br label %for_header117
+
+for_header187:                                    ; preds = %merge202, %for_end119
+  %for_idx190 = phi i64 [ 0, %for_end119 ], [ %next_idx205, %merge202 ]
+  %for_cond191 = icmp slt i64 %for_idx190, 13
+  br i1 %for_cond191, label %for_body188, label %for_end189
+
+for_body188:                                      ; preds = %for_header187
+  call void @tl_mem_enter_scope()
+  store i64 %for_idx190, ptr %k192, align 8
+  %next_logits2193 = load ptr, ptr %next_logits2, align 8
+  %k194 = load i64, ptr %k192, align 8
+  %get_res195 = call float @tl_tensor_get(ptr %next_logits2193, i64 %k194)
+  store float %get_res195, ptr %val196, align 4
+  %val197 = load float, ptr %val196, align 4
+  %max_val198 = load float, ptr %max_val186, align 4
+  %fgttmp199 = fcmp ogt float %val197, %max_val198
+  br i1 %fgttmp199, label %then200, label %else201
+
+for_end189:                                       ; preds = %for_header187
+  %pred2206 = load i64, ptr %pred2, align 8
+  call void @tl_print_i64(i64 %pred2206)
+  %pred2207 = load i64, ptr %pred2, align 8
+  %cast_i64_f32209 = sitofp i64 %pred2207 to float
+  store float %cast_i64_f32209, ptr %scalar_data208, align 4
+  %scalar_tensor211 = call ptr @tl_tensor_new(ptr %scalar_data208, i64 0, ptr %scalar_shape210)
+  store float 1.000000e+00, ptr %scalar_data212, align 4
+  %scalar_tensor214 = call ptr @tl_tensor_new(ptr %scalar_data212, i64 0, ptr %scalar_shape213)
+  %pow_res215 = call ptr @tl_tensor_pow(ptr %scalar_tensor211, ptr %scalar_tensor214)
+  %get_res216 = call float @tl_tensor_get(ptr %pow_res215, i64 0)
+  store float %get_res216, ptr %val_pred2, align 4
+  %x0218 = load float, ptr %x0, align 4
+  %elem_ptr219 = getelementptr inbounds float, ptr %tensor_data_arr217, i64 0
+  store float %x0218, ptr %elem_ptr219, align 4
+  %x1220 = load float, ptr %x1, align 4
+  %elem_ptr221 = getelementptr inbounds float, ptr %tensor_data_arr217, i64 1
+  store float %x1220, ptr %elem_ptr221, align 4
+  %x2222 = load float, ptr %x2, align 4
+  %elem_ptr223 = getelementptr inbounds float, ptr %tensor_data_arr217, i64 2
+  store float %x2222, ptr %elem_ptr223, align 4
+  %x3224 = load float, ptr %x3, align 4
+  %elem_ptr225 = getelementptr inbounds float, ptr %tensor_data_arr217, i64 3
+  store float %x3224, ptr %elem_ptr225, align 4
+  %x4226 = load float, ptr %x4, align 4
+  %elem_ptr227 = getelementptr inbounds float, ptr %tensor_data_arr217, i64 4
+  store float %x4226, ptr %elem_ptr227, align 4
+  %x5228 = load float, ptr %x5, align 4
+  %elem_ptr229 = getelementptr inbounds float, ptr %tensor_data_arr217, i64 5
+  store float %x5228, ptr %elem_ptr229, align 4
+  %val_pred1230 = load float, ptr %val_pred1, align 4
+  %elem_ptr231 = getelementptr inbounds float, ptr %tensor_data_arr217, i64 6
+  store float %val_pred1230, ptr %elem_ptr231, align 4
+  %val_pred2232 = load float, ptr %val_pred2, align 4
+  %elem_ptr233 = getelementptr inbounds float, ptr %tensor_data_arr217, i64 7
+  store float %val_pred2232, ptr %elem_ptr233, align 4
+  %val_pad234 = load float, ptr %val_pad, align 4
+  %elem_ptr235 = getelementptr inbounds float, ptr %tensor_data_arr217, i64 8
+  store float %val_pad234, ptr %elem_ptr235, align 4
+  %elem_ptr236 = getelementptr inbounds float, ptr %tensor_data_arr217, i64 9
+  store float 1.200000e+01, ptr %elem_ptr236, align 4
+  %elem_ptr237 = getelementptr inbounds float, ptr %tensor_data_arr217, i64 10
+  store float 1.200000e+01, ptr %elem_ptr237, align 4
+  %elem_ptr238 = getelementptr inbounds float, ptr %tensor_data_arr217, i64 11
+  store float 1.200000e+01, ptr %elem_ptr238, align 4
+  %shape_ptr240 = getelementptr inbounds i64, ptr %tensor_shape_arr239, i64 0
+  store i64 12, ptr %shape_ptr240, align 8
+  %new_tensor241 = call ptr @tl_tensor_new(ptr %tensor_data_arr217, i64 1, ptr %tensor_shape_arr239)
+  store ptr %new_tensor241, ptr %data3, align 8
+  call void @tl_register_tensor(ptr @tensor_name.128, ptr %new_tensor241)
+  %data3242 = load ptr, ptr %data3, align 8
+  %dims_alloca243 = alloca [2 x i64], align 8
+  %dim_ptr244 = getelementptr [2 x i64], ptr %dims_alloca243, i64 0, i64 0
+  store i64 1, ptr %dim_ptr244, align 8
+  %dim_ptr245 = getelementptr [2 x i64], ptr %dims_alloca243, i64 0, i64 1
+  store i64 12, ptr %dim_ptr245, align 8
+  %dims_ptr246 = getelementptr [2 x i64], ptr %dims_alloca243, i64 0, i64 0
+  %reshape_dims_res247 = call ptr @tl_tensor_reshape_dims(ptr %data3242, ptr %dims_ptr246, i64 2)
+  store ptr %reshape_dims_res247, ptr %input3, align 8
+  call void @tl_register_tensor(ptr @tensor_name.129, ptr %reshape_dims_res247)
+  %model248 = load ptr, ptr %model6, align 8
+  %input3249 = load ptr, ptr %input3, align 8
+  %call_method250 = call ptr @tl_GPT_forward(ptr %model248, ptr %input3249)
+  store ptr %call_method250, ptr %logits3, align 8
+  call void @tl_register_tensor(ptr @tensor_name.130, ptr %call_method250)
+  %logits3251 = load ptr, ptr %logits3, align 8
+  %dims_alloca252 = alloca [2 x i64], align 8
+  %dim_ptr253 = getelementptr [2 x i64], ptr %dims_alloca252, i64 0, i64 0
+  store i64 12, ptr %dim_ptr253, align 8
+  %dim_ptr254 = getelementptr [2 x i64], ptr %dims_alloca252, i64 0, i64 1
+  store i64 13, ptr %dim_ptr254, align 8
+  %dims_ptr255 = getelementptr [2 x i64], ptr %dims_alloca252, i64 0, i64 0
+  %reshape_dims_res256 = call ptr @tl_tensor_reshape_dims(ptr %logits3251, ptr %dims_ptr255, i64 2)
+  store ptr %reshape_dims_res256, ptr %logits3257, align 8
+  call void @tl_register_tensor(ptr @tensor_name.131, ptr %reshape_dims_res256)
+  %logits3258 = load ptr, ptr %logits3257, align 8
+  %slice_res259 = call ptr @tl_tensor_slice(ptr %logits3258, i64 7, i64 1)
+  store ptr %slice_res259, ptr %next_logits3, align 8
+  call void @tl_register_tensor(ptr @tensor_name.132, ptr %slice_res259)
+  store i64 0, ptr %pred3, align 8
+  store float -1.000000e+06, ptr %max_val260, align 4
+  br label %for_header261
+
+then200:                                          ; preds = %for_body188
+  %val203 = load float, ptr %val196, align 4
+  store float %val203, ptr %max_val186, align 4
+  %k204 = load i64, ptr %k192, align 8
+  store i64 %k204, ptr %pred2, align 8
+  br label %merge202
+
+else201:                                          ; preds = %for_body188
+  br label %merge202
+
+merge202:                                         ; preds = %else201, %then200
+  call void @tl_mem_exit_scope()
+  %next_idx205 = add i64 %for_idx190, 1
+  br label %for_header187
+
+for_header261:                                    ; preds = %merge276, %for_end189
+  %for_idx264 = phi i64 [ 0, %for_end189 ], [ %next_idx279, %merge276 ]
+  %for_cond265 = icmp slt i64 %for_idx264, 13
+  br i1 %for_cond265, label %for_body262, label %for_end263
+
+for_body262:                                      ; preds = %for_header261
+  call void @tl_mem_enter_scope()
+  store i64 %for_idx264, ptr %k266, align 8
+  %next_logits3267 = load ptr, ptr %next_logits3, align 8
+  %k268 = load i64, ptr %k266, align 8
+  %get_res269 = call float @tl_tensor_get(ptr %next_logits3267, i64 %k268)
+  store float %get_res269, ptr %val270, align 4
+  %val271 = load float, ptr %val270, align 4
+  %max_val272 = load float, ptr %max_val260, align 4
+  %fgttmp273 = fcmp ogt float %val271, %max_val272
+  br i1 %fgttmp273, label %then274, label %else275
+
+for_end263:                                       ; preds = %for_header261
+  %pred3280 = load i64, ptr %pred3, align 8
+  call void @tl_print_i64(i64 %pred3280)
+  call void @tl_mem_exit_scope()
+  %next_idx281 = add i64 %for_idx, 1
+  br label %for_header
+
+then274:                                          ; preds = %for_body262
+  %val277 = load float, ptr %val270, align 4
+  store float %val277, ptr %max_val260, align 4
+  %k278 = load i64, ptr %k266, align 8
+  store i64 %k278, ptr %pred3, align 8
+  br label %merge276
+
+else275:                                          ; preds = %for_body262
+  br label %merge276
+
+merge276:                                         ; preds = %else275, %then274
+  call void @tl_mem_exit_scope()
+  %next_idx279 = add i64 %for_idx264, 1
+  br label %for_header261
 }

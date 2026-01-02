@@ -54,41 +54,53 @@ fn train_epoch(model: GPT, lr: f32, epoch: i64) {
     // To safe time, we use a subset or full set?
     // Let's use full set for i, and subset for j to mix predictability and speed, or smaller ranges.
     // 30x30 = 900 steps per epoch. 50 epochs = 45000 steps.
-    for i in range(0, 100) { 
-        for j in range(0, 100) {
-            let sum = i + j;
-            
-            // Extract digits using simple division/modulo
-            // Format: always 3 digits with leading zeros (e.g., "099 + 001 = 100")
-            let i_d1 = pow(i / 10, 1.0).get(0);
-            let i_d2 = pow(i - ((i/10)*10), 1.0).get(0);
-            
-            let j_d1 = pow(j / 10, 1.0).get(0);
-            let j_d2 = pow(j - ((j/10)*10), 1.0).get(0);
-            
-            let s_d1 = pow(sum / 100, 1.0).get(0);
-            let s_d2 = pow((sum - ((sum/100)*100)) / 10, 1.0).get(0);
-            let s_d3 = pow(sum - ((sum/10)*10), 1.0).get(0);
-            
-            // Fixed format sequence: d1 d2 + d1 d2 = d1 d2 d3 PAD PAD PAD
-            // Total: 12 tokens
-            let data = [i_d1, i_d2, 10.0, j_d1, j_d2, 11.0, s_d1, s_d2, s_d3, 12.0, 12.0, 12.0];
-            let target = [i_d2, 10.0, j_d1, j_d2, 11.0, s_d1, s_d2, s_d3, 12.0, 12.0, 12.0, 12.0];
-            
-            let X = reshape(data, 1, 12);
-            let Y = reshape(target, 1, 12);
-            
-            let logits = model.forward(X);
-            let logits_flat = reshape(logits, 12, 13);
-            let Y_flat = reshape(Y, 12);
-            let loss = cross_entropy(logits_flat, Y_flat);
-            
-            backward(loss);
-            
-            // In-place update
-            model.step(lr);
-            total_loss = loss.detach(true);
-        }
+    // Use single loop with pseudo-random shuffling to break data correlation
+    // Total 100*100 = 10000 combinations
+    let total_steps = 10000;
+    let stride = 137; // Prime stride to cover all indices
+    let offset = epoch * 79; // Vary start point per epoch
+
+    for s in range(0, total_steps) {
+        // Calculate randomized index: (s * stride + offset) % total_steps
+        let raw = s * stride + offset;
+        let idx = raw - ((raw / total_steps) * total_steps);
+        
+        // Decode i and j from idx
+        let i = idx / 100;
+        let j = idx - ((idx / 100) * 100);
+
+        let sum = i + j;
+        
+        // Extract digits using simple division/modulo
+        // Format: always 3 digits with leading zeros (e.g., "099 + 001 = 100")
+        let i_d1 = pow(i / 10, 1.0).get(0);
+        let i_d2 = pow(i - ((i/10)*10), 1.0).get(0);
+        
+        let j_d1 = pow(j / 10, 1.0).get(0);
+        let j_d2 = pow(j - ((j/10)*10), 1.0).get(0);
+        
+        let s_d1 = pow(sum / 100, 1.0).get(0);
+        let s_d2 = pow((sum - ((sum/100)*100)) / 10, 1.0).get(0);
+        let s_d3 = pow(sum - ((sum/10)*10), 1.0).get(0);
+        
+        // Fixed format sequence: d1 d2 + d1 d2 = d1 d2 d3 PAD PAD PAD
+        // Total: 12 tokens
+        let data = [i_d1, i_d2, 10.0, j_d1, j_d2, 11.0, s_d1, s_d2, s_d3, 12.0, 12.0, 12.0];
+        let target = [i_d2, 10.0, j_d1, j_d2, 11.0, s_d1, s_d2, s_d3, 12.0, 12.0, 12.0, 12.0];
+        
+        let X = reshape(data, 1, 12);
+        let Y = reshape(target, 1, 12);
+        
+        let logits = model.forward(X);
+        let logits_flat = reshape(logits, 12, 13);
+        let Y_flat = reshape(Y, 12);
+        let loss = cross_entropy(logits_flat, Y_flat);
+        
+        backward(loss);
+        
+        // In-place update
+        model.step(lr);
+        total_loss = loss.detach(true);
     }
 
     // Memory logging every epoch
