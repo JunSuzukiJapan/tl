@@ -364,120 +364,12 @@ impl<'ctx> CodeGenerator<'ctx> {
     // MatMul Optimization Helper
     pub(crate) fn try_compile_matmul(
         &mut self,
-        lhs_indices: &[String],
-        value: &Expr,
+        _lhs_indices: &[String],
+        _value: &Expr,
     ) -> Result<Option<inkwell::values::PointerValue<'ctx>>, String> {
-        // Target Pattern: C[i, k] = A[i, j] * B[j, k]
-        // Temporarily disable optimization for debugging
-        return Ok(None);
-
-        // 1. Check constraints
-        if lhs_indices.len() != 2 {
-            eprintln!("Optimization skipped: lhs len != 2: {:?}", lhs_indices);
-            return Ok(None);
-        }
-        let i_idx = &lhs_indices[0];
-        let k_idx = &lhs_indices[1];
-
-        // 2. Check binary operation (Mul)
-        let (lhs_op, rhs_op) = match value {
-            Expr::BinOp(lhs, op, rhs) => {
-                if matches!(op, BinOp::Mul) {
-                    (lhs, rhs)
-                } else {
-                    eprintln!("Optimization skipped: Op is {:?}, expected Mul", op);
-                    return Ok(None);
-                }
-            }
-            _ => {
-                eprintln!("Optimization skipped: Not a Mul BinOp. Value: {:?}", value);
-                return Ok(None);
-            }
-        };
-
-        // 3. Extract operands (A[...], B[...])
-        // Need to identify which is A and which is B based on indices
-        // A should be [i, j], B should be [j, k]
-
-        fn get_tensor_access_indices(expr: &Expr) -> Option<(String, Vec<String>)> {
-            match expr {
-                Expr::IndexAccess(inner, indices) => {
-                    if let Expr::Variable(name) = &**inner {
-                        let mut str_indices = Vec::new();
-                        for idx in indices {
-                            if let Expr::Variable(s) = idx {
-                                str_indices.push(s.clone());
-                            } else {
-                                return None;
-                            }
-                        }
-                        Some((name.clone(), str_indices))
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            }
-        }
-
-        let lhs_access = get_tensor_access_indices(lhs_op);
-        let rhs_access = get_tensor_access_indices(rhs_op);
-
-        if lhs_access.is_none() || rhs_access.is_none() {
-            return Ok(None);
-        }
-
-        let (a_name, a_indices) = lhs_access.unwrap();
-        let (b_name, b_indices) = rhs_access.unwrap();
-
-        // 4. Verify indices pattern for MatMul: [i, j] * [j, k] -> [i, k]
-        // or [i, j] * [k, j] (transpose) etc.
-        // For strict MatMul with tl_tensor_matmul: expects (M, K) * (K, N) -> (M, N)
-        // A indices: [i, j] -> i=M, j=K
-        // B indices: [j, k] -> j=K, k=N
-        // C indices: [i, k] -> i=M, k=N
-
-        if a_indices.len() != 2 || b_indices.len() != 2 {
-            return Ok(None);
-        }
-
-        if a_indices[0] == *i_idx
-            && b_indices[1] == *k_idx
-            && a_indices[1] == b_indices[0]
-            && a_indices[1] != *i_idx
-            && a_indices[1] != *k_idx
-        {
-            // Matched! A[i,j] * B[j,k]
-            // Lookup variables
-            let a_ptr = self.lookup_variable_ptr(&a_name)?;
-            let b_ptr = self.lookup_variable_ptr(&b_name)?;
-
-            // Call runtime
-            let mul_fn = self
-                .module
-                .get_function("tl_tensor_matmul")
-                .ok_or("tl_tensor_matmul not found")?;
-
-            let call = self
-                .builder
-                .build_call(mul_fn, &[a_ptr.into(), b_ptr.into()], "matmul_res")
-                .map_err(|e| e.to_string())?;
-
-            let res = match call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-                _ => return Ok(None),
-            };
-            return Ok(Some(res));
-        }
-
-        eprintln!("MatMul Optimization Failed:");
-        eprintln!("  LHS Indices: {:?}", lhs_indices);
-        eprintln!("  A Indices: {:?}", a_indices);
-        eprintln!("  B Indices: {:?}", b_indices);
-
         Ok(None)
     }
-
+    #[allow(dead_code)]
     pub(crate) fn lookup_variable_ptr(
         &self,
         name: &str,
