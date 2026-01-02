@@ -3,11 +3,11 @@ struct Counter {
 }
 
 impl Counter {
-    fn increment(amount: i64) {
+    fn increment(self: Counter, amount: i64) {
         self.val = self.val + amount;
     }
     
-    fn get() -> i64 {
+    fn get(self: Counter) -> i64 {
         return self.val;
     }
 }

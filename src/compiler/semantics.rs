@@ -284,68 +284,28 @@ impl SemanticAnalyzer {
 
             Stmt::Let {
                 name,
-                indices,
                 type_annotation,
                 value,
             } => {
-                let inferred_type = if let Some(idxs) = indices {
+                // 1. Infer free indices (Tensor Equation Mode)
+                let free_indices = self.infer_free_indices(value);
+
+                let inferred_type = if !free_indices.is_empty() {
                     // Tensor Equation Logic
                     self.enter_scope();
 
-                    // 1. Declare LHS indices
-                    // let C[i, k] = ... -> i, k are valid indices (I64/Usize)
-                    let mut lhs_indices = HashSet::new();
-                    for idx in idxs {
-                        if lhs_indices.contains(idx) {
-                            return Err(SemanticError::DuplicateDefinition(idx.clone()));
-                        }
-                        lhs_indices.insert(idx.clone());
+                    // Declare implicitly inferred indices
+                    for idx in &free_indices {
                         self.declare_variable(idx.clone(), Type::I64)?;
                     }
 
-                    // 2. Discover RHS indices
-                    // Scan value for IndexAccess identifiers.
-                    // If not in LHS and not in outer scope, declare as reduction index.
-                    let mut used_indices = HashSet::new();
-                    self.collect_indices(value, &mut used_indices);
-
-                    for idx in used_indices {
-                        // Check if already declared (LHS or Outer Scope)
-                        // If lookup succeeds, it's defined.
-                        // But wait, if it is defined in outer scope, is it an index or variable?
-                        // If it's used in IndexAccess, it's an index.
-                        // If we are in "Tensor Equation Mode", we might want to capture outer variables too?
-                        // Design decision: Implicit reduction indices must NOT be defined in outer scope to avoid ambiguity?
-                        // Or shadowing: if not in LHS, check if defined. If defined, it's a constant/param.
-                        // If NOT defined, it's a local reduction index (dummy var).
-
-                        if lhs_indices.contains(&idx) {
-                            continue;
-                        }
-
-                        if self.lookup_variable(&idx).is_ok() {
-                            // Defined in outer scope (or earlier in THIS scope provided we shadowed LHS).
-                            // It's a parameter (e.g. constant index, or outer loop var).
-                            // Do nothing.
-                        } else {
-                            // Not in LHS, not in Outer. Treat as reduction index.
-                            self.declare_variable(idx, Type::I64)?;
-                        }
-                    }
-
-                    // 3. Check RHS expression
-                    // It should evaluate to a Scalar type (f32, i64, bool) usually,
-                    // or a Tensor if we are building a Tensor of Tensors (rare).
-                    // Example: A[i, j] -> f32.
-                    // A[i, j] * B[j, k] -> f32.
+                    // Now check RHS with these indices valid
                     let rhs_type = self.check_expr(value)?;
 
                     self.exit_scope();
 
-                    // 4. Construct Result Type
-                    // Tensor<rhs_type, rank=idxs.len()>
-                    // We assume dense tensor for now.
-                    Type::Tensor(Box::new(rhs_type), idxs.len())
+                    // Construct Tensor Type
+                    Type::Tensor(Box::new(rhs_type), free_indices.len())
                 } else {
                     self.check_expr(value)?
                 };
@@ -778,7 +738,7 @@ impl SemanticAnalyzer {
                     }
                     return Ok(t0);
                 }
-                if name == "print" {
+                if name == "print" || name == "println" {
                     if args.len() != 1 {
                         return Err(SemanticError::ArgumentCountMismatch {
                             name: name.clone(),
@@ -1506,6 +1466,40 @@ impl SemanticAnalyzer {
                     }
                 }
             }
+            Expr::TensorComprehension { indices, body } => {
+                // 1. Enter scope to declare indices
+                self.enter_scope();
+
+                // 2. Declare loop variables (dimensions) as integers
+                for idx in indices {
+                    self.declare_variable(idx.clone(), Type::I64)?;
+                }
+
+                // 3. Infer implicit reduction variables (free vars in body NOT in indices)
+                let free_indices_in_body = self.infer_free_indices(body);
+                let reduction_indices: Vec<String> = free_indices_in_body
+                    .into_iter()
+                    .filter(|v| !indices.contains(v))
+                    .collect();
+
+                // Declare reduction indices too so body checks pass (they are implicit loops)
+                for ridx in &reduction_indices {
+                    // Check if already declared (might be outer scope var, or truly implicit)
+                    if self.lookup_variable(ridx).is_err() {
+                        self.declare_variable(ridx.clone(), Type::I64)?;
+                    }
+                }
+
+                // 4. Check body type
+                let body_type = self.check_expr(body)?;
+
+                // 5. Exit scope
+                self.exit_scope();
+
+                // 6. Result Type is Tensor<BodyType, Rank = indices.len()>
+                Ok(Type::Tensor(Box::new(body_type), indices.len()))
+            }
+
             Expr::Block(stmts) => {
                 self.enter_scope();
                 let mut ret_type = Type::Void;
@@ -2003,5 +1997,20 @@ impl SemanticAnalyzer {
             }
             _ => {}
         }
+    }
+    // Helper to infer free indices (used in Stmt::Let for Tensor Equation)
+    fn infer_free_indices(&self, expr: &Expr) -> Vec<String> {
+        let mut indices = HashSet::new();
+        self.collect_indices(expr, &mut indices);
+
+        let mut free_indices: Vec<String> = indices
+            .into_iter()
+            .filter(|idx| {
+                // If it exists in scope, it is NOT free
+                self.lookup_variable(idx).is_err()
+            })
+            .collect();
+        free_indices.sort();
+        free_indices
     }
 }

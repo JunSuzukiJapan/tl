@@ -3,6 +3,71 @@ use crate::compiler::ast::*;
 use inkwell::values::*;
 
 impl<'ctx> CodeGenerator<'ctx> {
+    // Helper to infer free indices from implicit tensor equation (RHS)
+    // Returns sorted list of unique variable names used as indices but not bound in scope
+    fn infer_free_indices(&self, expr: &Expr) -> Vec<String> {
+        let mut indices = std::collections::HashSet::new();
+        self.collect_indices(expr, &mut indices);
+
+        // Filter out variables that are defined in current scope (e.g. loops)
+        // If a variable is NOT in scope, it is a free index (implicit dimension)
+        let mut free_indices: Vec<String> = indices
+            .into_iter()
+            .filter(|idx| {
+                // If variable exists in scope, it's a bound value/loop var, NOT a free dimension
+                !self.variable_exists(idx)
+            })
+            .collect();
+
+        free_indices.sort();
+        free_indices
+    }
+
+    fn collect_indices(&self, expr: &Expr, indices: &mut std::collections::HashSet<String>) {
+        match expr {
+            Expr::IndexAccess(_, idxs) => {
+                for idx in idxs {
+                    if let Expr::Variable(name) = idx {
+                        indices.insert(name.clone());
+                    }
+                    // Recursive check? Indices usually simple vars.
+                }
+            }
+            Expr::BinOp(lhs, _, rhs) => {
+                self.collect_indices(lhs, indices);
+                self.collect_indices(rhs, indices);
+            }
+            Expr::UnOp(_, val) => {
+                self.collect_indices(val, indices);
+            }
+            Expr::FnCall(_, args)
+            | Expr::MethodCall(_, _, args)
+            | Expr::StaticMethodCall(_, _, args) => {
+                for arg in args {
+                    self.collect_indices(arg, indices);
+                }
+            }
+            Expr::TensorLiteral(elems) => {
+                for elem in elems {
+                    self.collect_indices(elem, indices);
+                }
+            }
+            Expr::IfExpr(cond, _, _) => {
+                self.collect_indices(cond, indices);
+            }
+            _ => {}
+        }
+    }
+
+    fn variable_exists(&self, name: &str) -> bool {
+        for scope in self.variables.iter().rev() {
+            if scope.contains_key(name) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn emit_recursive_unregister(
         &self,
         val: BasicValueEnum<'ctx>,
@@ -169,16 +234,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 Ok(())
             }
-            Stmt::Let {
-                name,
-                indices,
-                value,
-                ..
-            } => {
-                if let Some(idxs) = indices {
-                    // Tensor Equation
+            Stmt::Let { name, value, .. } => {
+                // 1. Analyze value for Free Indices (Implicit Tensor Equation)
+                let free_indices = self.infer_free_indices(value);
+
+                if !free_indices.is_empty() {
+                    // Found free indices -> It's a tensor equation! e.g. let C = A[i, j] * B[j, k];
+                    // free_indices will be ["i", "k"] (sorted)
+                    // Delegate to compile_tensor_equation
                     return self
-                        .compile_tensor_equation(name, idxs, value)
+                        .compile_tensor_equation(name, &free_indices, value)
                         .map_err(|e| e.to_string());
                 }
 
@@ -240,6 +305,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .insert(name.clone(), (alloca.into(), val_ty.clone(), true)); // Store pointer and type
 
                 // Register tensor with runtime if it is a tensor
+                // PANIC INVESTIGATION: tl_register_tensor causes slice alignment panic for some reason.
+                // Disabling it for now to verify if tensor creation itself is valid.
+                /*
                 if let Type::Tensor(_, _) = val_ty {
                     if let Some(register_fn) = self.module.get_function("tl_register_tensor") {
                         // Create global string for name
@@ -258,6 +326,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .map_err(|e| e.to_string())?;
                     }
                 }
+                */
                 Ok(())
             }
             Stmt::Return(expr) => {

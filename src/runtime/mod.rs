@@ -64,7 +64,6 @@ pub extern "C" fn tl_tensor_new(
 ) -> *mut OpaqueTensor {
     let shape_slice = unsafe { slice::from_raw_parts(shape, rank) };
     let num_elements: usize = shape_slice.iter().product();
-
     let data_slice = unsafe { slice::from_raw_parts(data, num_elements) };
 
     let device = get_device();

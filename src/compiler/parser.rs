@@ -146,6 +146,23 @@ fn parse_block_expr(input: &str) -> IResult<&str, Expr> {
     map(parse_block, Expr::Block)(input)
 }
 
+fn parse_tensor_comprehension(input: &str) -> IResult<&str, Expr> {
+    // [ i, k | expr ]
+    let (input, _) = ws(char('['))(input)?;
+    let (input, indices) = separated_list1(ws(char(',')), ws(identifier))(input)?;
+    let (input, _) = ws(char('|'))(input)?;
+    let (input, body) = parse_expr(input)?;
+    let (input, _) = ws(char(']'))(input)?;
+
+    Ok((
+        input,
+        Expr::TensorComprehension {
+            indices: indices.into_iter().map(|s| s.to_string()).collect(),
+            body: Box::new(body),
+        },
+    ))
+}
+
 // --- Control Flow ---
 fn parse_if_expr(input: &str) -> IResult<&str, Expr> {
     let (input, _) = tag("if")(input)?;
@@ -247,6 +264,7 @@ fn parse_primary(input: &str) -> IResult<&str, Expr> {
         parse_literal_bool,
         parse_literal_string,
         parse_if_expr,
+        parse_tensor_comprehension, // Try parsing comprehension before literal array
         parse_tensor_literal,
         parse_aggregation, // Must come before parse_variable
         parse_struct_init, // Must come before parse_variable
@@ -451,13 +469,6 @@ fn parse_let_stmt(input: &str) -> IResult<&str, Stmt> {
     let (input, _) = tag("let")(input)?;
     let (input, name) = ws(identifier)(input)?;
 
-    // Optional indices [i, j]
-    let (input, indices) = opt(delimited(
-        ws(char('[')),
-        separated_list0(ws(char(',')), identifier),
-        ws(char(']')),
-    ))(input)?;
-
     // Optional type : Type
     let (input, type_annotation) = opt(preceded(ws(char(':')), parse_type))(input)?;
 
@@ -469,7 +480,6 @@ fn parse_let_stmt(input: &str) -> IResult<&str, Stmt> {
         input,
         Stmt::Let {
             name,
-            indices,
             type_annotation,
             value,
         },

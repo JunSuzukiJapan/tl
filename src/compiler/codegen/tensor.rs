@@ -13,8 +13,14 @@ impl<'ctx> CodeGenerator<'ctx> {
         let i64_type = self.context.i64_type();
         let f32_type = self.context.f32_type();
 
+        eprintln!(
+            "compile_tensor_equation: lhs={:?}, name={}",
+            lhs_indices, name
+        );
+
         // 1. Try MatMul Optimization
         if let Some(res_ptr) = self.try_compile_matmul(lhs_indices, value)? {
+            eprintln!("MatMul Optimization SUCCEEDED");
             // Optimization successful, store result and return
             // Register variable
             let val = res_ptr;
@@ -228,7 +234,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .build_alloca(i64_type.array_type(rank as u32), "shape")
             .map_err(|e| e.to_string())?;
         for (i, idx) in lhs_indices.iter().enumerate() {
-            let limit = *index_bounds.get(idx).unwrap();
+            let limit = index_bounds.get(idx).unwrap();
             let elem_ptr = unsafe {
                 self.builder
                     .build_gep(
@@ -243,7 +249,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?
             };
             self.builder
-                .build_store(elem_ptr, limit)
+                .build_store(elem_ptr, *limit)
                 .map_err(|e| e.to_string())?;
         }
         let shape_ptr = self
@@ -362,9 +368,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         value: &Expr,
     ) -> Result<Option<inkwell::values::PointerValue<'ctx>>, String> {
         // Target Pattern: C[i, k] = A[i, j] * B[j, k]
+        // Temporarily disable optimization for debugging
+        return Ok(None);
 
         // 1. Check constraints
         if lhs_indices.len() != 2 {
+            eprintln!("Optimization skipped: lhs len != 2: {:?}", lhs_indices);
             return Ok(None);
         }
         let i_idx = &lhs_indices[0];
@@ -372,8 +381,18 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // 2. Check binary operation (Mul)
         let (lhs_op, rhs_op) = match value {
-            Expr::BinOp(lhs, op, rhs) if matches!(op, BinOp::Mul) => (lhs, rhs),
-            _ => return Ok(None),
+            Expr::BinOp(lhs, op, rhs) => {
+                if matches!(op, BinOp::Mul) {
+                    (lhs, rhs)
+                } else {
+                    eprintln!("Optimization skipped: Op is {:?}, expected Mul", op);
+                    return Ok(None);
+                }
+            }
+            _ => {
+                eprintln!("Optimization skipped: Not a Mul BinOp. Value: {:?}", value);
+                return Ok(None);
+            }
         };
 
         // 3. Extract operands (A[...], B[...])
@@ -450,6 +469,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             };
             return Ok(Some(res));
         }
+
+        eprintln!("MatMul Optimization Failed:");
+        eprintln!("  LHS Indices: {:?}", lhs_indices);
+        eprintln!("  A Indices: {:?}", a_indices);
+        eprintln!("  B Indices: {:?}", b_indices);
 
         Ok(None)
     }

@@ -80,7 +80,6 @@ pub enum Stmt {
     },
     Let {
         name: String,
-        indices: Option<Vec<String>>, // For let x[i, j] = ...
         type_annotation: Option<Type>,
         value: Expr,
     },
@@ -131,6 +130,10 @@ pub enum Expr {
     Int(i64),
     Bool(bool),
     StringLiteral(String),
+    TensorComprehension {
+        indices: Vec<String>,
+        body: Box<Expr>,
+    },
     TensorLiteral(Vec<Expr>),      // Dynamic tensor with expressions
     TensorConstLiteral(Vec<Expr>), // Static tensor with only constants (optimized)
 
