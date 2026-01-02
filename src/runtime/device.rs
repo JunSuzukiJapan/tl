@@ -122,6 +122,17 @@ lazy_static! {
         Arc::new(Mutex::new(DeviceManager::new()));
 }
 
+// Thread-local cached device to avoid repeated Mutex locks
+thread_local! {
+    static CACHED_DEVICE: std::cell::RefCell<Option<Device>> = const { std::cell::RefCell::new(None) };
+}
+
 pub fn get_device() -> Device {
-    DEVICE_MANAGER.lock().unwrap().device().clone()
+    CACHED_DEVICE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.is_none() {
+            *cache = Some(DEVICE_MANAGER.lock().unwrap().device().clone());
+        }
+        cache.as_ref().unwrap().clone()
+    })
 }

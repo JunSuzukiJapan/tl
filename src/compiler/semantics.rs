@@ -131,14 +131,15 @@ impl SemanticAnalyzer {
             self.check_impl_block(i)?;
         }
 
+        // Check top-level statements (e.g. main script)
+        // Do this before function bodies so globals are in scope
+        for s in &module.tensor_decls {
+            self.check_stmt(s)?;
+        }
+
         // Second pass: check function bodies
         for f in &module.functions {
             self.check_function(f, None)?;
-        }
-
-        // Check top-level statements (e.g. main script)
-        for s in &module.tensor_decls {
-            self.check_stmt(s)?;
         }
 
         Ok(())
@@ -275,10 +276,30 @@ impl SemanticAnalyzer {
                 type_annotation,
                 init,
             } => {
+                let mut final_ty = type_annotation.clone();
                 if let Some(expr) = init {
-                    let _ = self.check_expr(expr)?;
+                    let init_ty = self.check_expr(expr)?;
+                    // If annotation is primitive but init is tensor, upgrade annotation to tensor
+                    if matches!(type_annotation, Type::F32 | Type::F64 | Type::I32 | Type::I64) {
+                        if let Type::Tensor(ref inner, rank) = init_ty {
+                            if self.are_types_compatible(&type_annotation, inner) {
+                                final_ty = Type::Tensor(Box::new(type_annotation.clone()), rank);
+                            }
+                        } else if let Type::ScalarArray(ref inner, _len) = init_ty {
+                            if self.are_types_compatible(&type_annotation, inner) {
+                                final_ty = Type::Tensor(Box::new(type_annotation.clone()), 1); // ScalarArray is 1D
+                            }
+                        }
+                    } else {
+                        if !self.are_types_compatible(type_annotation, &init_ty) {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: type_annotation.clone(),
+                                found: init_ty,
+                            });
+                        }
+                    }
                 }
-                self.declare_variable(name.clone(), type_annotation.clone())?;
+                self.declare_variable(name.clone(), final_ty)?;
                 Ok(())
             }
 
@@ -790,6 +811,17 @@ impl SemanticAnalyzer {
                     return Ok(Type::Void);
                 }
 
+                if name == "tl_system_time" {
+                    if !args.is_empty() {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 0,
+                            found: args.len(),
+                        });
+                    }
+                    return Ok(Type::F32);
+                }
+
                 if name == "add_parameter" {
                     if args.len() != 2 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -1112,21 +1144,9 @@ impl SemanticAnalyzer {
                         });
                     }
 
-                    // Allow arg 1 to be tensor (old) OR args 1..N to be Int (new)
-                    if args.len() == 2 {
-                        let t1 = self.check_expr(&args[1])?;
-                        if matches!(t1, Type::Tensor(_, _)) {
-                            // Old behavior
-                        } else if matches!(t1, Type::I64 | Type::I32) {
-                            // New behavior (reshape to flat?)
-                        } else {
-                            // Error
-                        }
-                    }
-
-                    // Validate remaining args are Int (if not using shape tensor)
+                    // Allow arg 1 to be tensor/array (old) OR args 1..N to be Int (new)
                     let t1 = self.check_expr(&args[1])?;
-                    if matches!(t1, Type::Tensor(_, _)) && args.len() == 2 {
+                    if (matches!(t1, Type::Tensor(_, _)) || matches!(t1, Type::ScalarArray(_, _))) && args.len() == 2 {
                         // OK
                     } else {
                         // Varargs mode: All remaining args must be Int
@@ -1260,15 +1280,34 @@ impl SemanticAnalyzer {
                     }
                     return Ok(Type::I64);
                 } else if name == "varbuilder_get" {
-                    if args.len() != 2 {
+                    if args.len() < 2 {
                         return Err(SemanticError::ArgumentCountMismatch {
                             name: name.clone(),
                             expected: 2,
                             found: args.len(),
                         });
                     }
-                    let _name_type = self.check_expr(&args[0])?;
-                    let _shape_type = self.check_expr(&args[1])?;
+                    let t0 = self.check_expr(&args[0])?;
+                    if !matches!(t0, Type::UserDefined(ref s) if s == "String") {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::UserDefined("String".into()),
+                            found: t0,
+                        });
+                    }
+                    // Remaining args must be Ints (if varargs) OR a single Tensor/Array
+                    if args.len() == 2 {
+                        let _ = self.check_expr(&args[1])?;
+                    } else {
+                        for arg in &args[1..] {
+                            let t = self.check_expr(arg)?;
+                            if !matches!(t, Type::I64 | Type::I32) {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::I64,
+                                    found: t,
+                                });
+                            }
+                        }
+                    }
                     return Ok(Type::Tensor(Box::new(Type::F32), 0));
                 } else if name == "update_all_params" {
                     if args.len() != 1 {
@@ -1745,7 +1784,7 @@ impl SemanticAnalyzer {
                         return Ok(Type::UserDefined("Path".to_string()));
                     }
                     ("System", "time") => {
-                        return Ok(Type::F64);
+                        return Ok(Type::F32);
                     }
                     ("System", "sleep") => {
                         return Ok(Type::Void);
@@ -1753,11 +1792,21 @@ impl SemanticAnalyzer {
                     ("Env", "get") => {
                         return Ok(Type::UserDefined("String".into()));
                     }
+                    ("Env", "set") => {
+                        if args.len() != 2 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: "Env::set".into(),
+                                expected: 2,
+                                found: args.len(),
+                            });
+                        }
+                        return Ok(Type::Void);
+                    }
                     ("Http", "get") => {
                         return Ok(Type::UserDefined("String".into()));
                     }
                     ("Http", "download") => {
-                        return Ok(Type::Void);
+                        return Ok(Type::Bool);
                     }
                     _ => {
                         return Err(SemanticError::FunctionNotFound(format!(
@@ -2000,22 +2049,29 @@ impl SemanticAnalyzer {
     }
 
     fn are_types_compatible(&self, t1: &Type, t2: &Type) -> bool {
+        if t1 == t2 {
+            return true;
+        }
         match (t1, t2) {
             (Type::Tensor(i1, r1), Type::Tensor(i2, r2)) => {
-                // If inner types match
-                if i1 != i2 {
-                    return false;
-                }
-                // If either rank is 0, we treat it as dynamic/compatible
-                if *r1 == 0 || *r2 == 0 {
-                    return true;
-                }
-                // Otherwise strict match
-                r1 == r2
+                // If either rank is 0, we treat it as dynamic/compatible rank
+                let ranks_match = *r1 == 0 || *r2 == 0 || r1 == r2;
+                ranks_match && self.are_types_compatible(i1, i2)
+            }
+            (Type::Tensor(inner, _rank), primitive) if self.are_types_compatible(inner, primitive) => {
+                true // Allow scalar to tensor promotion in some contexts
+            }
+            (primitive, Type::Tensor(inner, _rank)) if self.are_types_compatible(primitive, inner) => {
+                true
             }
             (Type::UserDefined(n1), Type::Struct(n2)) => n1 == n2,
             (Type::Struct(n1), Type::UserDefined(n2)) => n1 == n2,
-            _ => t1 == t2,
+            // Promotions
+            (Type::F64, Type::F32) => true,
+            (Type::I64, Type::I32) => true,
+            (Type::F32, Type::I64) => true, // Allow int to float promotion
+            (Type::F64, Type::I64) => true,
+            _ => false,
         }
     }
 

@@ -14,8 +14,8 @@ fn Linear_new(in_dim: i64, out_dim: i64) -> Linear {
 struct SGD { lr: f32 }
 
 impl SGD {
-    // Implicit self
-    fn step(model: Linear) -> Linear {  
+    // Explicit self required
+    fn step(self, model: Linear) -> Linear {  
         let gW = model.W.grad();
         let gb = model.b.grad();
         

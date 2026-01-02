@@ -42,6 +42,9 @@ pub enum Type {
     // User defined struct
     Struct(String),
 
+    // Optimized small constant array (elements up to 4, stored as scalars)
+    ScalarArray(Box<Type>, usize), // (element_type, length)
+
     // Generic placeholder
     UserDefined(String),
 

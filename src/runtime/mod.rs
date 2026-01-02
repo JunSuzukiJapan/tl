@@ -1,7 +1,8 @@
 pub mod device;
 pub mod memory_manager;
 pub mod registry;
-pub mod stdlib; // Add this
+pub mod stdlib;
+pub mod tensor_pool;
 
 use crate::runtime::device::get_device;
 use candle_core::Tensor;
@@ -271,10 +272,6 @@ pub extern "C" fn tl_tensor_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
 #[no_mangle]
 pub extern "C" fn tl_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
-        if a.is_null() || b.is_null() {
-            println!("FATAL: tl_tensor_mul received NULL pointer");
-            return std::ptr::null_mut();
-        }
         let t_a = &(*a).0;
         let t_b = &(*b).0;
         let result = t_a
@@ -416,13 +413,22 @@ pub extern "C" fn tl_tensor_get(t: *mut OpaqueTensor, idx: i64) -> c_float {
             return 0.0;
         }
         let tensor = &(*t).0;
-        // Naive implementation: assume 1D or flat index
-        // To get scalar, we can reshape to 1D and get.
-        // For now, assume tensor is 1D or we want flat index.
+        let i = idx as usize;
+
+        // Fast path: if 1D tensor on CPU, use narrow+to_scalar
+        if tensor.rank() == 1 && !tensor.device().is_cuda() && !tensor.device().is_metal() {
+            if let Ok(elem) = tensor.narrow(0, i, 1) {
+                if let Ok(scalar) = elem.to_scalar::<f32>() {
+                    return scalar;
+                }
+            }
+        }
+
+        // Fallback for multi-dim or GPU tensors
         let val: f32 = tensor
             .flatten_all()
             .unwrap()
-            .get(idx as usize)
+            .get(i)
             .unwrap()
             .to_scalar()
             .unwrap();
@@ -492,6 +498,10 @@ pub extern "C" fn tl_tensor_get_f32_md(
         // Calculate flat index based on dimensions
         let dims = tensor.dims();
         let mut flat_idx = 0;
+        // Assuming row-major layout (C-style)
+        // flat_idx = i0 * stride0 + i1 * stride1 + ...
+        // stride_last = 1
+        // stride_k = stride_{k+1} * dim_{k+1}
         let mut stride = 1;
         for i in (0..rank).rev() {
             flat_idx += idxs_usize[i] * stride;
@@ -525,72 +535,83 @@ pub extern "C" fn tl_tensor_transpose(
 #[no_mangle]
 
 pub extern "C" fn tl_tensor_backward(t: *mut OpaqueTensor) {
+
     unsafe {
-        let tensor = &(*t).0;
-        // Perform backpropagation
-        if let Ok(grads) = tensor.backward() {
-            // Store gradients in thread-local storage, replacing any previous ones
-            LATEST_GRADS.with(|g| {
-                // println!("DEBUG: backward() completed. Grads count: {}", grads.d.len()); // Cannot access private field 'd'?
-                // Candle GradStore doesn't expose len() or keys() easily?
-                // Actually it might not expose internal map.
-                // But we can check if it's empty later in grad().
-                *g.borrow_mut() = Some(grads);
-            });
-        } else {
-            // Error handling or fallback?
-            eprintln!(
-                "Runtime Error: backward() failed. Ensure the tensor behaves like a scalar loss."
-            );
+
+        if t.is_null() {
+
+            eprintln!("Runtime Error: tl_tensor_backward received NULL pointer");
+
+            return;
+
         }
+
+        let tensor = &(*t).0;
+
+        // Perform backpropagation
+
+        if let Ok(grads) = tensor.backward() {
+
+            // Store gradients in thread-local storage, replacing any previous ones
+
+            LATEST_GRADS.with(|g| {
+
+                *g.borrow_mut() = Some(grads);
+
+            });
+
+        } else {
+
+            // Error handling or fallback?
+
+            eprintln!(
+
+                "Runtime Error: backward() failed. Ensure the tensor behaves like a scalar loss."
+
+            );
+
+        }
+
     }
+
 }
+
+
+
+
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
+        if t.is_null() {
+            return std::ptr::null_mut();
+        }
         let tensor = &(*t).0;
-        let var_ref = &(*t).1;
-
-        // println!(
-        //     "DEBUG: grad() for tensor {:p} shape={:?}",
-        //     t,
-        //     tensor.shape()
-        // );
-        // std::io::stdout().flush().unwrap();
 
         // If this tensor has an associated Var, get the gradient from it directly
-        // TODO: Candle's Var doesn't expose a direct grad() method
-        // Need to investigate VarMap-based approach or alternative API
-        if let Some(_var_arc) = var_ref {
-            // println!("DEBUG: Tensor has Var, but cannot access grad() - API limitation");
-            // std::io::stdout().flush().unwrap();
+        // (Known limitation: Candle Var doesn't expose grad directly easily here)
 
-            // Candle's Var API doesn't provide direct gradient access
-            // Gradients must be retrieved through GradStore after backward()
-            // This is a known limitation requiring further investigation
-        }
-
-        // Fallback: Retrieve gradient from LATEST_GRADS (for non-Var tensors or intermediate results)
+        // Retrieve gradient from LATEST_GRADS
         let grad = LATEST_GRADS.with(|g| {
             let borrow = g.borrow();
-            if let Some(store) = &*borrow {
-                store.get(tensor).cloned()
+            if let Some(grads) = borrow.as_ref() {
+                grads.get(tensor).cloned()
             } else {
                 None
             }
         });
 
         if let Some(g) = grad {
-            // println!("DEBUG: Grad FOUND from GradStore for tensor {:p}", t);
-            make_tensor(g)
-        } else {
-            // println!("DEBUG: Grad NOT found for tensor {:p} - returning Zeros", t);
-            // Return Zeros instead of NULL to avoid panic in optimizer step.
-            // This handles cases where a parameter might not be used in the current batch.
-            let zeros = tensor.zeros_like().unwrap();
-            make_tensor(zeros)
+            return make_tensor(g);
         }
+
+        // FALLBACK: If no gradient found, return a zero tensor of the same shape
+        // This prevents NULL pointer crashes in training loops
+        if let Ok(zeros) = tensor.zeros_like() {
+            return make_tensor(zeros);
+        }
+
+        std::ptr::null_mut()
     }
 }
 

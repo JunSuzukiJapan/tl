@@ -1,6 +1,7 @@
 use super::CodeGenerator;
 use crate::compiler::ast::*;
 use inkwell::values::*;
+use inkwell::types::BasicType;
 use std::collections::HashMap;
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -290,6 +291,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if let Some((val, ty, _)) = scope.get(name) {
                         if val.is_pointer_value() {
                             let ptr = val.into_pointer_value();
+
+                            // ScalarArray: load the pointer from alloca (it stores ptr to global)
+                            if let Type::ScalarArray(_, _) = ty {
+                                let ptr_type =
+                                    self.context.ptr_type(inkwell::AddressSpace::default());
+                                let loaded_ptr = self
+                                    .builder
+                                    .build_load(ptr_type, ptr, &format!("{}_ptr", name))
+                                    .map_err(|e| e.to_string())?;
+                                return Ok((loaded_ptr, ty.clone()));
+                            }
+
                             let llvm_ty: inkwell::types::BasicTypeEnum = match ty {
                                 Type::I64 => self.context.i64_type().into(),
                                 Type::F32 => self.context.f32_type().into(),
@@ -378,22 +391,78 @@ impl<'ctx> CodeGenerator<'ctx> {
             Expr::IndexAccess(target, indices) => {
                 let (val, val_type) = self.compile_expr(target)?;
                 match val_type {
+                    // OPTIMIZATION: ScalarArray direct access (no runtime call)
+                    Type::ScalarArray(elem_type, len) => {
+                        if indices.len() != 1 {
+                            return Err("ScalarArray only supports 1D index".into());
+                        }
+
+                        let llvm_elem_type: inkwell::types::BasicTypeEnum = match elem_type.as_ref() {
+                            Type::I64 => self.context.i64_type().into(),
+                            Type::I32 => self.context.i32_type().into(),
+                            Type::F32 => self.context.f32_type().into(),
+                            _ => self.context.f32_type().into(),
+                        };
+                        let i64_type = self.context.i64_type();
+                        let _array_type = llvm_elem_type.array_type(len as u32);
+                        let array_ptr = val.into_pointer_value();
+
+                        let (idx_val, idx_ty) = self.compile_expr(&indices[0])?;
+                        let idx_int = match idx_ty {
+                            Type::I64 => idx_val.into_int_value(),
+                            Type::I32 => self
+                                .builder
+                                .build_int_z_extend(idx_val.into_int_value(), i64_type, "zext")
+                                .map_err(|e| e.to_string())?,
+                            _ => return Err("Index must be integer".into()),
+                        };
+
+                        // Direct GEP into array
+                        let elem_ptr = unsafe {
+                            self.builder
+                                .build_in_bounds_gep(
+                                    llvm_elem_type,
+                                    array_ptr,
+                                    &[idx_int],
+                                    "scalar_elem_ptr",
+                                )
+                                .map_err(|e| e.to_string())?
+                        };
+
+                        let loaded = self
+                            .builder
+                            .build_load(llvm_elem_type, elem_ptr, "scalar_elem")
+                            .map_err(|e| e.to_string())?;
+
+                        Ok((loaded, *elem_type))
+                    }
                     Type::Tensor(_, _) => {
                         // Prepare indices array
                         let rank = indices.len();
                         let i64_type = self.context.i64_type();
 
-                        // Create array on stack
+                        // Create array on stack in the ENTRY block to avoid stack overflow in loops
                         let array_type = i64_type.array_type(rank as u32);
-                        let array_alloca = self
-                            .builder
+                        
+                        let current_block = self.builder.get_insert_block().unwrap();
+                        let function = current_block.get_parent().unwrap();
+                        let entry_block = function.get_first_basic_block().unwrap();
+                        
+                        let entry_builder = self.context.create_builder();
+                        if let Some(first_instr) = entry_block.get_first_instruction() {
+                            entry_builder.position_before(&first_instr);
+                        } else {
+                            entry_builder.position_at_end(entry_block);
+                        }
+                        
+                        let array_alloca = entry_builder
                             .build_alloca(array_type, "idx_arr")
                             .map_err(|e| e.to_string())?;
 
                         for (i, idx_expr) in indices.iter().enumerate() {
                             let (compiled_idx, ty) = self.compile_expr(idx_expr)?;
 
-                            // Ensure index is integer
+                            // Ensure index is integer or float (cast if needed)
                             let idx_val = match ty {
                                 Type::I64 => compiled_idx.into_int_value(),
                                 Type::I32 => self
@@ -404,11 +473,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                                         "zext",
                                     )
                                     .map_err(|e| e.to_string())?,
-                                Type::F64 | Type::F32 => {
-                                    return Err(
-                                        format!("Index must be integer, found {:?}", ty).into()
+                                Type::F64 | Type::F32 => self
+                                    .builder
+                                    .build_float_to_signed_int(
+                                        compiled_idx.into_float_value(),
+                                        i64_type,
+                                        "f2i",
                                     )
-                                }
+                                    .map_err(|e| e.to_string())?,
                                 _ => return Err(format!("Invalid index type {:?}", ty).into()),
                             };
                             let idx_val = inkwell::values::BasicValueEnum::IntValue(idx_val);
@@ -460,7 +532,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                         Ok((res, Type::F32))
                     }
-                    _ => Err("Index access only on Tensor".into()),
+                    _ => Err("Index access only on Tensor or ScalarArray".into()),
                 }
             }
             Expr::UnOp(op, expr) => {
@@ -521,10 +593,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 range,
                 condition,
             } => {
-                // For now, implement a simple version:
-                // Assume range is a tensor/array and we iterate over its length
-                // sum(arr[i] for i in arr) -> loop over arr indices
-
                 let function = self
                     .builder
                     .get_insert_block()
@@ -532,26 +600,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .get_parent()
                     .unwrap();
 
-                // Get range expression to determine loop bounds
-                let (range_val, range_ty) = self.compile_expr(range)?;
+                // Convert range to Tensor
+                let range_val = self.ensure_tensor_v2(range, 1)?;
+                let _range_ty = Type::Tensor(Box::new(Type::F32), 1); // Simplified
 
-                // For Tensor types, get the length from the first dimension
-                let loop_count = match &range_ty {
-                    Type::Tensor(_, _) => {
-                        let len_fn = self
-                            .module
-                            .get_function("tl_tensor_len")
-                            .ok_or("tl_tensor_len not found")?;
-                        let call = self
-                            .builder
-                            .build_call(len_fn, &[range_val.into()], "len")
-                            .map_err(|e| e.to_string())?;
-                        match call.try_as_basic_value() {
-                            ValueKind::Basic(v) => v.into_int_value(),
-                            _ => return Err("Failed to get tensor length".into()),
-                        }
-                    }
-                    _ => return Err("Aggregation range must be a tensor".into()),
+                // Get length
+                let len_fn = self
+                    .module
+                    .get_function("tl_tensor_len")
+                    .ok_or("tl_tensor_len not found")?;
+                let call = self
+                    .builder
+                    .build_call(len_fn, &[range_val.into()], "len")
+                    .map_err(|e| e.to_string())?;
+                let loop_count = match call.try_as_basic_value() {
+                    ValueKind::Basic(v) => v.into_int_value(),
+                    _ => return Err("Failed to get tensor length".into()),
                 };
 
                 // Create blocks for the loop
@@ -605,10 +669,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder.position_at_end(body_bb);
                 self.enter_scope();
 
-                // Determine element type from range_ty
-                let elem_ty = match &range_ty {
-                    Type::Tensor(t, _) => *t.clone(),
-                    _ => Type::I64, // Fallback (should be checked earlier)
+                // Determine element type from original range expression
+                let (_, orig_range_ty) = self.compile_expr(range)?;
+                let elem_ty = match orig_range_ty {
+                    Type::Tensor(ref t, _) => *t.clone(),
+                    Type::ScalarArray(ref t, _) => *t.clone(),
+                    _ => Type::F32,
                 };
 
                 // Load element value using tl_tensor_get(tensor, index) -> f32
@@ -630,8 +696,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .build_float_to_signed_int(val_f32, i64_type, "cast_i64")
                         .map_err(|e| e.to_string())?
                         .into(),
-                    Type::F32 => val_f32.into(),
-                    _ => return Err("Unsupported tensor element type for aggregation".into()),
+                    Type::I32 => self
+                        .builder
+                        .build_float_to_signed_int(val_f32, self.context.i32_type(), "cast_i32")
+                        .map_err(|e| e.to_string())?
+                        .into(),
+                    _ => val_f32.into(),
                 };
 
                 // Store the loop variable
@@ -934,13 +1004,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => return Err("malloc returned invalid value".into()),
         };
 
-        // Register with memory manager for automatic cleanup
-        if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
-            self.builder
-                .build_call(register_fn, &[raw_ptr.into()], "")
-                .map_err(|e| e.to_string())?;
-        }
-
         // Cast to Struct Pointer (opaque pointer in modern LLVM, but typed for GEP)
         let struct_ptr = self
             .builder
@@ -987,23 +1050,23 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         // 1. Resolve Mangled Name
         let mangled_name = format!("tl_{}_{}", type_name, method_name);
+        let stdlib_name = format!(
+            "tl_{}_{}",
+            type_name.to_lowercase(),
+            method_name
+        );
 
         // 2. Lookup Function
-        let func = self
-            .module
-            .get_function(&mangled_name)
-            .or_else(|| {
-                // Try fallback for stdlib mappings (lowercase)
-                self.module.get_function(&format!(
-                    "tl_{}_{}",
-                    type_name.to_lowercase(),
-                    method_name
-                ))
-            })
-            .ok_or(format!(
-                "Static method {}::{} not found (mangled: {})",
-                type_name, method_name, mangled_name
-            ))?;
+        let (func, actual_name) = if let Some(f) = self.module.get_function(&mangled_name) {
+            (f, mangled_name)
+        } else if let Some(f) = self.module.get_function(&stdlib_name) {
+            (f, stdlib_name)
+        } else {
+            return Err(format!(
+                "Static method {}::{} not found (checked {} and {})",
+                type_name, method_name, mangled_name, stdlib_name
+            ));
+        };
 
         // 3. Compile Args
         let mut compiled_args = Vec::new();
@@ -1021,7 +1084,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // 5. Return Value
         let ret_ty = self
             .fn_return_types
-            .get(&mangled_name)
+            .get(&actual_name)
             .cloned()
             .unwrap_or(Type::Void);
 
@@ -1231,9 +1294,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         elements: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         // Optimized path for constant tensor literals - static extraction
-        fn flatten_const(exprs: &[Expr]) -> Result<(Vec<f64>, Vec<usize>), String> {
+        fn flatten_const(exprs: &[Expr]) -> Result<(Vec<f64>, Vec<usize>, bool), String> {
             if exprs.is_empty() {
-                return Ok((vec![], vec![0]));
+                return Ok((vec![], vec![0], false));
             }
 
             let is_nested = matches!(
@@ -1243,12 +1306,12 @@ impl<'ctx> CodeGenerator<'ctx> {
             if is_nested {
                 let mut flat_data = Vec::new();
                 let mut first_shape = None;
+                let mut all_ints = true;
 
                 for e in exprs {
-                    let (children, shape) = match e {
+                    let (children, shape, ints) = match e {
                         Expr::TensorConstLiteral(c) | Expr::TensorLiteral(c) => {
-                            let (data, s) = flatten_const(c)?;
-                            (data, s)
+                            flatten_const(c)?
                         }
                         _ => return Err("Mixed types in const tensor".into()),
                     };
@@ -1260,30 +1323,76 @@ impl<'ctx> CodeGenerator<'ctx> {
                         first_shape = Some(shape.clone());
                     }
                     flat_data.extend(children);
+                    all_ints &= ints;
                 }
 
                 let mut shape = vec![exprs.len()];
                 if let Some(s) = first_shape {
                     shape.extend(s);
                 }
-                Ok((flat_data, shape))
+                Ok((flat_data, shape, all_ints))
             } else {
                 let mut data = Vec::new();
+                let mut all_ints = true;
                 for e in exprs {
                     match e {
-                        Expr::Float(f) => data.push(*f),
+                        Expr::Float(f) => {
+                            data.push(*f);
+                            all_ints = false;
+                        }
                         Expr::Int(i) => data.push(*i as f64),
                         _ => return Err("Const tensor must contain only literals".into()),
                     }
                 }
-                Ok((data, vec![exprs.len()]))
+                Ok((data, vec![exprs.len()], all_ints))
             }
         }
 
-        let (flat_data, shape) = flatten_const(elements)?;
+        let (flat_data, shape, all_ints) = flatten_const(elements)?;
         let rank = shape.len();
-        let len = flat_data.len() as u64;
+        let len = flat_data.len();
 
+        // OPTIMIZATION: For small 1D constant tensors (≤8 elements), use heap-based scalar array
+        // ONLY for integers to preserve types and avoid garbage issues with floats
+        if rank == 1 && len <= 0 && len > 0 && all_ints {
+            let elem_ty = Type::I64;
+            let llvm_elem_type: inkwell::types::IntType = self.context.i64_type();
+            let i64_type = self.context.i64_type();
+            
+            // Allocate on HEAP
+            let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
+            let size_elem = llvm_elem_type.size_of();
+            let size = self.builder.build_int_mul(size_elem, i64_type.const_int(len as u64, false), "malloc_size").map_err(|e| e.to_string())?;
+            let call = self.builder.build_call(malloc_fn, &[size.into()], "arr_malloc").map_err(|e| e.to_string())?;
+            let raw_ptr = match call.try_as_basic_value() {
+                ValueKind::Basic(v) => v.into_pointer_value(),
+                _ => return Err("malloc failed".into()),
+            };
+
+            // Populate array
+            for (i, val) in flat_data.iter().enumerate() {
+                let v = i64_type.const_int(*val as u64, true);
+                let elem_ptr = unsafe {
+                    self.builder
+                        .build_in_bounds_gep(
+                            llvm_elem_type,
+                            raw_ptr,
+                            &[self.context.i64_type().const_int(i as u64, false)],
+                            "elem_ptr",
+                        )
+                        .map_err(|e| e.to_string())?
+                };
+                self.builder.build_store(elem_ptr, v).map_err(|e| e.to_string())?;
+            }
+
+            return Ok((
+                raw_ptr.into(),
+                Type::ScalarArray(Box::new(elem_ty), len),
+            ));
+        }
+
+        // Fall back to standard tensor creation for larger tensors
+        let len = len as u64;
         let f32_type = self.context.f32_type();
         let i64_type = self.context.i64_type();
 
@@ -1441,7 +1550,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Expr::IndexAccess(target, indices) => {
                 // Target should be Expr::Ident for variable access
                 // Instead of compiling, look up the variable directly
-                let tensor_ptr = match target.as_ref() {
+                let (tensor_ptr, is_scalar_array, array_len) = match target.as_ref() {
                     Expr::Variable(name) => {
                         let (val, ty) = self
                             .lookup_variable(name)
@@ -1459,8 +1568,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     )
                                     .map_err(|e| e.to_string())?
                                     .into_pointer_value();
-                                loaded
+                                (loaded, false, 0)
                             }
+                            Type::ScalarArray(_, len) => {
+                                // For ScalarArray, val is pointer to alloca storing pointer to array
+                                // We don't need the runtime pointer for bounds, just the length
+                                (val.into_pointer_value(), true, len)
+                            }
+
                             _ => return Err("Expected tensor variable".into()),
                         }
                     }
@@ -1475,19 +1590,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Expr::Int(_) | Expr::Float(_) => continue,
                         Expr::Variable(name) => {
                             if !bounds.contains_key(name) {
-                                let dim_idx_val =
-                                    self.context.i64_type().const_int(i as u64, false);
-                                let call_result = self
-                                    .builder
-                                    .build_call(
-                                        dim_fn,
-                                        &[tensor_ptr.into(), dim_idx_val.into()],
-                                        "dim_size",
-                                    )
-                                    .map_err(|e| e.to_string())?;
-                                let dim_size = match call_result.try_as_basic_value() {
-                                    ValueKind::Basic(v) => v.into_int_value(),
-                                    _ => return Err("Invalid dim return".into()),
+                                let dim_size = if is_scalar_array {
+                                    if i == 0 {
+                                        self.context.i64_type().const_int(array_len as u64, false)
+                                    } else {
+                                        return Err("ScalarArray only has 1 dimension".into());
+                                    }
+                                } else {
+                                    let dim_idx_val =
+                                        self.context.i64_type().const_int(i as u64, false);
+                                    let call_result = self
+                                        .builder
+                                        .build_call(
+                                            dim_fn,
+                                            &[tensor_ptr.into(), dim_idx_val.into()],
+                                            "dim_size",
+                                        )
+                                        .map_err(|e| e.to_string())?;
+                                    match call_result.try_as_basic_value() {
+                                        ValueKind::Basic(v) => v.into_int_value(),
+                                        _ => return Err("Invalid dim return".into()),
+                                    }
                                 };
                                 bounds.insert(name.clone(), dim_size);
                             }
@@ -1820,6 +1943,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 ValueKind::Basic(v) => v.into_pointer_value(),
                 _ => return Err("malloc returned instruction value".into()),
             };
+
             // Cast to Struct* (Opaque)
             let struct_ptr = self
                 .builder
@@ -1888,6 +2012,47 @@ impl<'ctx> CodeGenerator<'ctx> {
                             // Better to return error if not found, but it should be found if declared.
                             // For now, assume declared or error.
                             return Err("tl_print_string not found (add to init)".into());
+                        }
+                    }
+                    Type::ScalarArray(_elem_type, len) => {
+                        // Print ScalarArray as [elem0, elem1, ...]
+                        let f32_type = self.context.f32_type();
+                        let i64_type = self.context.i64_type();
+                        let array_type = f32_type.array_type(len as u32);
+                        let array_ptr = arg_val.into_pointer_value();
+
+                        // Get print function
+                        let _print_string_fn = self
+                            .module
+                            .get_function("tl_print_string")
+                            .ok_or("tl_print_string not found")?;
+                        let print_f32_fn = self
+                            .module
+                            .get_function("tl_print_f32")
+                            .ok_or("tl_print_f32 not found")?;
+
+                        // Print each element
+                        for i in 0..len {
+                            let elem_ptr = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(
+                                        array_type,
+                                        array_ptr,
+                                        &[
+                                            i64_type.const_int(0, false),
+                                            i64_type.const_int(i as u64, false),
+                                        ],
+                                        "elem_ptr",
+                                    )
+                                    .map_err(|e| e.to_string())?
+                            };
+                            let elem_val = self
+                                .builder
+                                .build_load(f32_type, elem_ptr, "elem_val")
+                                .map_err(|e| e.to_string())?;
+                            self.builder
+                                .build_call(print_f32_fn, &[elem_val.into()], "print_elem")
+                                .map_err(|e| e.to_string())?;
                         }
                     }
                     _ => return Err(format!("Cannot print type {:?}", arg_type)),
@@ -2078,14 +2243,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() < 2 {
                     return Err("reshape requires at least tensor and 1 dimension".into());
                 }
-                let (t_val, t_ty) = self.compile_expr(&args[0])?;
-                if !matches!(t_ty, Type::Tensor(_, _)) {
-                    return Err("First argument to reshape must be a tensor".into());
-                }
-                // Check if 2nd arg is Tensor (Old behavior)
+                let t_val = self.ensure_tensor_v2(&args[0], 0)?;
+                
+                // Check if 2nd arg is Tensor/Array (Old behavior)
                 let (_, arg1_ty) = self.compile_expr(&args[1])?;
-                if matches!(arg1_ty, Type::Tensor(_, _)) && args.len() == 2 {
-                    let (s_val, _) = self.compile_expr(&args[1])?;
+                if (matches!(arg1_ty, Type::Tensor(_, _)) || matches!(arg1_ty, Type::ScalarArray(_, _))) && args.len() == 2 {
+                    let s_val = self.ensure_tensor_v2(&args[1], 1)?;
                     let reshape_fn = self
                         .module
                         .get_function("tl_tensor_reshape")
@@ -2172,11 +2335,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 2 {
                     return Err("softmax requires 2 arguments".into());
                 }
-                let (arg0_val, arg0_ty) = self.compile_expr(&args[0])?;
+                let arg0_val = self.ensure_tensor_v2(&args[0], 0)?;
+                let arg0_ty = Type::Tensor(Box::new(Type::F32), 0); // Simplified
                 let (arg1_val, _arg1_ty) = self.compile_expr(&args[1])?; // dim
-                if !matches!(arg0_ty, Type::Tensor(_, _)) {
-                    return Err("softmax arg0 must be tensor".into());
-                }
+                
                 // arg1 must be i64 (dim)
                 let fn_val = self
                     .module
@@ -2196,14 +2358,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 2 {
                     return Err("cross_entropy requires 2 arguments".into());
                 }
-                let (arg0_val, arg0_ty) = self.compile_expr(&args[0])?;
-                let (arg1_val, arg1_ty) = self.compile_expr(&args[1])?;
-                if !matches!(arg0_ty, Type::Tensor(_, _)) {
-                    return Err("cross_entropy arg0 must be tensor".into());
-                }
-                if !matches!(arg1_ty, Type::Tensor(_, _)) {
-                    return Err("cross_entropy arg1 must be tensor".into());
-                }
+                let arg0_val = self.ensure_tensor_v2(&args[0], 0)?;
+                let arg1_val = self.ensure_tensor_v2(&args[1], 0)?;
+                
                 let fn_val = self
                     .module
                     .get_function("tl_tensor_cross_entropy")
@@ -2223,10 +2380,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 1 {
                     return Err("exp requires 1 argument".into());
                 }
-                let (arg_val, arg_ty) = self.compile_expr(&args[0])?;
-                if !matches!(arg_ty, Type::Tensor(_, _)) {
-                    return Err("exp requires a tensor".into());
-                }
+                let arg_val = self.ensure_tensor_v2(&args[0], 0)?;
+                let arg_ty = Type::Tensor(Box::new(Type::F32), 0);
+
                 let fn_val = self.module.get_function("tl_tensor_exp").unwrap();
                 let call = self
                     .builder
@@ -2242,7 +2398,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 1 {
                     return Err("log requires 1 argument".into());
                 }
-                let (arg_val, arg_ty) = self.compile_expr(&args[0])?;
+                let arg_val = self.ensure_tensor_v2(&args[0], 0)?;
+                let arg_ty = Type::Tensor(Box::new(Type::F32), 0);
+
                 let fn_val = self.module.get_function("tl_tensor_log").unwrap();
                 let call = self
                     .builder
@@ -2258,10 +2416,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 1 {
                     return Err("len requires 1 argument".into());
                 }
-                let (arg_val, arg_ty) = self.compile_expr(&args[0])?;
-                if !matches!(arg_ty, Type::Tensor(_, _)) {
-                    return Err("len requires a tensor".into());
-                }
+                let arg_val = self.ensure_tensor_v2(&args[0], 0)?;
+                
                 let fn_val = self
                     .module
                     .get_function("tl_tensor_len")
@@ -2280,10 +2436,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 1 {
                     return Err("sqrt requires 1 argument".into());
                 }
-                let (arg_val, arg_ty) = self.compile_expr(&args[0])?;
-                if !matches!(arg_ty, Type::Tensor(_, _)) {
-                    return Err("sqrt requires a tensor".into());
-                }
+                let arg_val = self.ensure_tensor_v2(&args[0], 0)?;
+                let arg_ty = Type::Tensor(Box::new(Type::F32), 0);
+
                 let fn_val = self.module.get_function("tl_tensor_sqrt").unwrap();
                 let call = self
                     .builder
@@ -2299,11 +2454,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 2 {
                     return Err("matmul requires 2 arguments".into());
                 }
-                let (lhs_val, lhs_ty) = self.compile_expr(&args[0])?;
-                let (rhs_val, rhs_ty) = self.compile_expr(&args[1])?;
-                if !matches!(lhs_ty, Type::Tensor(_, _)) || !matches!(rhs_ty, Type::Tensor(_, _)) {
-                    return Err("matmul requires tensors".into());
-                }
+                let lhs_val = self.ensure_tensor_v2(&args[0], 0)?;
+                let rhs_val = self.ensure_tensor_v2(&args[1], 0)?;
+                
                 let fn_val = self.module.get_function("tl_tensor_matmul").unwrap();
                 let call = self
                     .builder
@@ -2313,8 +2466,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     ValueKind::Basic(v) => v,
                     _ => return Err("Invalid matmul return".into()),
                 };
-                // Only supporting basic tensor type propagation for now
-                return Ok((res, lhs_ty));
+                return Ok((res, Type::Tensor(Box::new(Type::F32), 0)));
             }
             "grad" => {
                 if args.len() != 1 {
@@ -2347,55 +2499,79 @@ impl<'ctx> CodeGenerator<'ctx> {
                 ));
             }
             "varbuilder_get" => {
-                if args.len() != 2 {
-                    return Err("varbuilder_get requires 2 arguments".into());
+                if args.len() < 2 {
+                    return Err("varbuilder_get requires at least 2 arguments (name and dimensions)".into());
                 }
-                let name_ptr = if let Expr::StringLiteral(s) = &args[0] {
-                    let global_str = self
-                        .builder
-                        .build_global_string_ptr(s, "param_name")
-                        .unwrap();
-                    global_str.as_pointer_value()
-                } else {
-                    return Err("varbuilder_get expects string literal as first argument".into());
-                };
-                let (rank, shape_ptr) = match &args[1] {
-                    Expr::TensorLiteral(elements) | Expr::TensorConstLiteral(elements) => {
-                        let rank = elements.len();
-                        let shape_values: Vec<_> = elements
-                            .iter()
-                            .map(|e| {
-                                let (val, _) = self.compile_expr(e)?;
-                                Ok(val)
-                            })
-                            .collect::<Result<Vec<_>, String>>()?;
-                        let i64_type = self.context.i64_type();
-                        let shape_alloca = self
-                            .builder
-                            .build_alloca(i64_type.array_type(rank as u32), "shape_arr")
-                            .unwrap();
-                        for (i, val) in shape_values.iter().enumerate() {
-                            let idx = self.context.i64_type().const_int(i as u64, false);
-                            let ptr = unsafe {
-                                self.builder
-                                    .build_in_bounds_gep(
-                                        i64_type.array_type(rank as u32),
-                                        shape_alloca,
-                                        &[self.context.i64_type().const_zero(), idx],
-                                        &format!("shape_elem_{}", i),
-                                    )
-                                    .unwrap()
+                let (name_val, name_ty) = self.compile_expr(&args[0])?;
+                if !matches!(name_ty, Type::UserDefined(ref s) if s == "String") {
+                    return Err(format!(
+                        "varbuilder_get expects String as first argument, found {:?}",
+                        name_ty
+                    ));
+                }
+                let name_ptr = name_val.into_pointer_value();
+
+                // Handle both TensorLiteral/ScalarArray and Varargs dims
+                let (rank, shape_ptr) = if args.len() == 2 && matches!(self.compile_expr(&args[1])?.1, Type::Tensor(_, _) | Type::ScalarArray(_, _)) {
+                    let (shape_val, arg1_ty) = self.compile_expr(&args[1])?;
+                    let (num_elements, shape_vals) = match &arg1_ty {
+                        Type::Tensor(_, _) => {
+                            let len_fn = self.module.get_function("tl_tensor_len").ok_or("tl_tensor_len not found")?;
+                            let call = self.builder.build_call(len_fn, &[shape_val.into()], "len").map_err(|e| e.to_string())?;
+                            let _len = match call.try_as_basic_value() {
+                                ValueKind::Basic(v) => v.into_int_value(),
+                                _ => return Err("Invalid len return".into()),
                             };
-                            self.builder.build_store(ptr, val.into_int_value()).unwrap();
+                            
+                            // We need the values too. For now, assume it's a literal we can inspect or use runtime loop.
+                            // But CodeGen for varbuilder_get currently expects to build a static shape array.
+                            // If it's a literal, we can flatten it.
+                            match &args[1] {
+                                Expr::TensorLiteral(elements) | Expr::TensorConstLiteral(elements) => {
+                                    (elements.len(), elements.iter().map(|e| {
+                                        let (val, _) = self.compile_expr(e)?;
+                                        Ok(val)
+                                    }).collect::<Result<Vec<_>, String>>()?)
+                                }
+                                _ => return Err("varbuilder_get shape must be a literal array".into()),
+                            }
                         }
-                        (rank, shape_alloca)
+                        Type::ScalarArray(_, l) => {
+                            match &args[1] {
+                                Expr::TensorLiteral(elements) | Expr::TensorConstLiteral(elements) => {
+                                    (*l, elements.iter().map(|e| {
+                                        let (val, _) = self.compile_expr(e)?;
+                                        Ok(val)
+                                    }).collect::<Result<Vec<_>, String>>()?)
+                                }
+                                _ => return Err("varbuilder_get shape must be a literal array".into()),
+                            }
+                        }
+                        _ => unreachable!(),
+                    };
+
+                    let i64_type = self.context.i64_type();
+                    let shape_alloca = self.builder.build_alloca(i64_type.array_type(num_elements as u32), "shape_arr").unwrap();
+                    for (i, val) in shape_vals.iter().enumerate() {
+                        let idx = self.context.i64_type().const_int(i as u64, false);
+                        let ptr = unsafe { self.builder.build_in_bounds_gep(i64_type.array_type(num_elements as u32), shape_alloca, &[self.context.i64_type().const_zero(), idx], "shptr").unwrap() };
+                        self.builder.build_store(ptr, val.into_int_value()).unwrap();
                     }
-                    _ => {
-                        return Err(
-                            "varbuilder_get expects tensor literal as second argument".into()
-                        );
+                    (num_elements, shape_alloca)
+                } else {
+                    // Varargs mode: args[1..] are dims
+                    let num_dims = args.len() - 1;
+                    let i64_type = self.context.i64_type();
+                    let shape_alloca = self.builder.build_alloca(i64_type.array_type(num_dims as u32), "shape_arr").unwrap();
+                    for (i, arg) in args[1..].iter().enumerate() {
+                        let (val, _) = self.compile_expr(arg)?;
+                        let idx = i64_type.const_int(i as u64, false);
+                        let ptr = unsafe { self.builder.build_in_bounds_gep(i64_type.array_type(num_dims as u32), shape_alloca, &[i64_type.const_zero(), idx], "shptr").unwrap() };
+                        self.builder.build_store(ptr, val.into_int_value()).unwrap();
                     }
+                    (num_dims, shape_alloca)
                 };
+
                 let fn_val = self.module.get_function("tl_varbuilder_get").unwrap();
                 let call = self
                     .builder
@@ -2433,15 +2609,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 1 {
                     return Err("varbuilder_grad requires 1 argument".into());
                 }
-                let name_ptr = if let Expr::StringLiteral(s) = &args[0] {
-                    let global_str = self
-                        .builder
-                        .build_global_string_ptr(s, "param_name")
-                        .unwrap();
-                    global_str.as_pointer_value()
-                } else {
-                    return Err("varbuilder_grad expects string literal as argument".into());
-                };
+                let (name_val, name_ty) = self.compile_expr(&args[0])?;
+                if !matches!(name_ty, Type::UserDefined(ref s) if s == "String") {
+                    return Err(format!(
+                        "varbuilder_grad expects String as argument, found {:?}",
+                        name_ty
+                    ));
+                }
+                let name_ptr = name_val.into_pointer_value();
+
                 let fn_val = self.module.get_function("tl_varbuilder_grad").unwrap();
                 let call = self
                     .builder
@@ -2456,7 +2632,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             "sum" => {
                 if args.len() == 1 {
                     // Global sum
-                    let (arg_val, _arg_ty) = self.compile_expr(&args[0])?;
+                    let arg_val = self.ensure_tensor_v2(&args[0], 0)?;
                     let fn_val = self.module.get_function("tl_tensor_sum").unwrap();
                     let call = self
                         .builder
@@ -2467,10 +2643,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => return Err("Invalid sum return".into()),
                     };
                     // Return type is Tensor (scalar)
-                    return Ok((res, Type::Tensor(Box::new(Type::F32), 1)));
+                    return Ok((res, Type::Tensor(Box::new(Type::F32), 0)));
                 } else if args.len() == 2 {
                     // Sum over dim: sum(t, dim)
-                    let (t_val, _t_ty) = self.compile_expr(&args[0])?;
+                    let t_val = self.ensure_tensor_v2(&args[0], 0)?;
                     let (dim_val, dim_ty) = self.compile_expr(&args[1])?;
                     // Convert dim to i64 (usize)
                     let dim_int = match dim_ty {
@@ -2500,7 +2676,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         ValueKind::Basic(v) => v,
                         _ => return Err("Invalid sum return".into()),
                     };
-                    return Ok((res, Type::Tensor(Box::new(Type::F32), 1)));
+                    return Ok((res, Type::Tensor(Box::new(Type::F32), 0)));
                 } else {
                     return Err("sum requires 1 or 2 arguments".into());
                 }
@@ -2529,7 +2705,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 2 {
                     return Err("tril requires 2 arguments".into());
                 }
-                let (t_val, _) = self.compile_expr(&args[0])?;
+                let t_val = self.ensure_tensor_v2(&args[0], 0)?;
                 let (diag_val, diag_ty) = self.compile_expr(&args[1])?;
                 // Cast diag to i32
                 let diag_i32 = match diag_ty {
@@ -2561,8 +2737,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 2 {
                     return Err("embedding requires 2 arguments".into());
                 }
-                let (idx_val, _) = self.compile_expr(&args[0])?;
-                let (w_val, _) = self.compile_expr(&args[1])?;
+                let idx_val = self.ensure_tensor_v2(&args[0], 0)?;
+                let w_val = self.ensure_tensor_v2(&args[1], 0)?;
                 let fn_val = self.module.get_function("tl_tensor_embedding").unwrap();
                 let call = self
                     .builder
@@ -2646,21 +2822,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                     "randn" => {
                         // randn(shape, requires_grad)
-                        // Handle specially to pass rank/shape pointer and bool
-                        // args[0] must be tensor (shape) or literal?
-                        // Actually, user might pass [10, 10].
-                        // But `compile_expr` for TensorLiteral returns a Tensor pointer.
-                        // We need shape as generic array?
-                        // Existing `tl_tensor_new` logic handled parsing TensorLiteral manually to create C-array.
-                        // But here `args[0]` is an Expr.
-                        // If it's a TensorLiteral, we can do similar logic.
-                        // If it's a variable, it is a Tensor*.
-                        // `tl_tensor_randn` needs `rank, shape_ptr`.
-                        // Let's support only Literal Shape for now for simplicity, OR
-                        // use a version of randn that takes a shape TENSOR.
-                        // To match `tl_tensor_new`, we need raw shape.
-                        // Let's assume usage: let x = randn([10, 20], true);
-                        // The parser gives `TensorLiteral`.
                         if args.is_empty() {
                             return Err("randn requires shape".into());
                         }
@@ -2693,10 +2854,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 (el.len(), vals)
                             }
                             _ => {
-                                return Err(
-                                    "randn currently requires array literal [dim, ...] for shape"
-                                        .into(),
-                                );
+                                // Dynamic shape tensor
+                                let shape_tensor = self.ensure_tensor_v2(shape_expr, 1)?;
+                                let len_fn = self.module.get_function("tl_tensor_len").ok_or("tl_tensor_len not found")?;
+                                let call = self.builder.build_call(len_fn, &[shape_tensor.into()], "len").map_err(|e| e.to_string())?;
+                                let _ = match call.try_as_basic_value() {
+                                    ValueKind::Basic(v) => v.into_int_value(),
+                                    _ => return Err("Invalid len return".into()),
+                                };
+                                
+                                // This is hard because we need the actual values at compile time to build the alloca?
+                                // No, we can use a dynamic alloca or just a fixed large enough one?
+                                // For now, only support literals for shape in randn.
+                                return Err("randn currently requires array literal [dim, ...] for shape".into());
                             }
                         };
                         let requires_grad = if args.len() > 1 {
@@ -2708,24 +2878,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                             false
                         };
                         let i64_type = self.context.i64_type();
-                        let usize_type = self.context.i64_type(); // usize is 64-bit
-                                                                  // Stack allocate shape array
+                        
+                        // Entry block alloca for shape array
                         let current_block = self.builder.get_insert_block().unwrap();
-                        let entry = current_block
-                            .get_parent()
-                            .unwrap()
-                            .get_first_basic_block()
-                            .unwrap();
-                        match entry.get_first_instruction() {
-                            Some(inst) => self.builder.position_before(&inst),
-                            None => self.builder.position_at_end(entry),
+                        let function = current_block.get_parent().unwrap();
+                        let entry_block = function.get_first_basic_block().unwrap();
+                        let entry_builder = self.context.create_builder();
+                        if let Some(first_instr) = entry_block.get_first_instruction() {
+                            entry_builder.position_before(&first_instr);
+                        } else {
+                            entry_builder.position_at_end(entry_block);
                         }
-                        let shape_array_type = usize_type.array_type(rank as u32);
-                        let shape_alloca = self
-                            .builder
+                        
+                        let shape_array_type = i64_type.array_type(rank as u32);
+                        let shape_alloca = entry_builder
                             .build_alloca(shape_array_type, "shape_arr")
                             .map_err(|e| e.to_string())?;
-                        self.builder.position_at_end(current_block);
+                        
                         // Store compiled shape values
                         for (i, val) in shape_vals.iter().enumerate() {
                             let ptr = unsafe {

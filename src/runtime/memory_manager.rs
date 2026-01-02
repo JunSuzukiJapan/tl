@@ -1,5 +1,4 @@
 use std::ffi::c_void;
-use std::sync::Mutex;
 
 use super::OpaqueTensor;
 
@@ -48,11 +47,9 @@ impl MemoryManager {
                 unsafe {
                     match record.alloc_type {
                         AllocationType::Struct => {
-                            // Simple malloc'd struct - use libc free
                             libc::free(record.ptr);
                         }
                         AllocationType::Tensor => {
-                            // OpaqueTensor - use tl_tensor_free
                             let tensor_ptr = record.ptr as *mut OpaqueTensor;
                             super::tl_tensor_free(tensor_ptr);
                         }
@@ -96,7 +93,7 @@ impl MemoryManager {
 
 // Global memory manager instance
 lazy_static::lazy_static! {
-    static ref MEMORY_MANAGER: Mutex<MemoryManager> = Mutex::new(MemoryManager::new());
+    static ref MEMORY_MANAGER: std::sync::Mutex<MemoryManager> = std::sync::Mutex::new(MemoryManager::new());
 }
 
 // C-ABI functions for LLVM codegen
@@ -124,10 +121,9 @@ pub extern "C" fn tl_mem_register_struct(ptr: *mut c_void) {
     }
 }
 
-/// Register a tensor allocation (Internal Rust API)
+/// Register a tensor allocation (internal)
 pub fn register_tensor_global(ptr: *mut OpaqueTensor) {
     if ptr.is_null() {
-        eprintln!("WARNING: Attempted to register null tensor pointer");
         return;
     }
 
@@ -137,7 +133,7 @@ pub fn register_tensor_global(ptr: *mut OpaqueTensor) {
     if mgr.scopes.is_empty() {
         // No active scope
         // This should not happen in normal usage but prevents crash
-        eprintln!("WARNING: Registering tensor without active scope");
+        // eprintln!("WARNING: Registering tensor without active scope");
         return;
     }
 
@@ -150,7 +146,7 @@ pub extern "C" fn tl_mem_register_tensor(ptr: *mut OpaqueTensor) {
     register_tensor_global(ptr);
 }
 
-/// Unregister a pointer (won't be freed on scope exit)
+/// Unregister a pointer (e.g. from reassignment or return)
 #[no_mangle]
 pub extern "C" fn tl_mem_unregister(ptr: *mut c_void) {
     if !ptr.is_null() {

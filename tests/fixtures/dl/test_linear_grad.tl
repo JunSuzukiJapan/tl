@@ -12,8 +12,8 @@ struct Linear {
 impl Linear {
     fn new(in_features: i64, out_features: i64) -> Linear {
         return Linear(
-            randn([in_features, out_features], true) * 0.1,
-            randn([out_features], true) * 0.0
+            randn([in_features, out_features], true),
+            randn([out_features], true)
         );
     }
     
@@ -24,8 +24,8 @@ impl Linear {
     fn step(self, lr: f32) {
         let gw = self.weight.grad();
         let gb = self.bias.grad();
-        self.weight = (self.weight - gw * lr).detach();
-        self.bias = (self.bias - gb * lr).detach();
+        self.weight = (self.weight - gw * lr).detach(true);
+        self.bias = (self.bias - gb * lr).detach(true);
     }
 }
 

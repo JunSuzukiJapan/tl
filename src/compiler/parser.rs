@@ -3,7 +3,7 @@ use crate::compiler::ast::*;
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_while, take_while1},
-    character::complete::{alpha1, char, digit1},
+    character::complete::{alpha1, char, digit1, space0, space1},
     combinator::{map, map_res, opt, recognize, value},
     multi::{separated_list0, separated_list1},
     sequence::{delimited, pair, preceded, tuple},
@@ -47,8 +47,8 @@ fn identifier(input: &str) -> IResult<&str, String> {
         }),
         |s: &String| {
             let keywords = vec![
-                "fn", "struct", "impl", "let", "if", "else", "return", "for", "in", "true",
-                "false", "f32", "f64", "i32", "i64", "bool", "usize", "void", "Tensor",
+                "fn", "struct", "impl", "let", "if", "else", "return", "for", "in", "while",
+                "true", "false", "f32", "f64", "i32", "i64", "bool", "usize", "void", "Tensor",
             ];
             !keywords.contains(&s.as_str())
         },
@@ -467,23 +467,49 @@ fn parse_expr(input: &str) -> IResult<&str, Expr> {
 // let x[i, j] = ...
 fn parse_let_stmt(input: &str) -> IResult<&str, Stmt> {
     let (input, _) = tag("let")(input)?;
-    let (input, name) = ws(identifier)(input)?;
+    let (input, _) = space1(input)?;
+    let (input, name) = identifier(input)?;
+    
+    // Optional indices for tensor comprehension: [i, j]
+    let (input, indices) = opt(delimited(
+        tuple((char('['), space0)),
+        separated_list0(tuple((char(','), space0)), identifier),
+        tuple((space0, char(']'))),
+    ))(input)?;
 
-    // Optional type : Type
-    let (input, type_annotation) = opt(preceded(ws(char(':')), parse_type))(input)?;
-
-    let (input, _) = ws(char('='))(input)?;
+    let (input, _) = space0(input)?;
+    let (input, type_annotation) = opt(preceded(tuple((char(':'), space0)), parse_type))(input)?;
+    let (input, _) = space0(input)?;
+    let (input, _) = char('=')(input)?;
+    let (input, _) = space0(input)?;
     let (input, value) = parse_expr(input)?;
-    let (input, _) = ws(char(';'))(input)?;
+    let (input, _) = space0(input)?;
+    let (input, _) = char(';')(input)?;
 
-    Ok((
-        input,
-        Stmt::Let {
-            name,
-            type_annotation,
-            value,
-        },
-    ))
+    if let Some(idxs) = indices {
+        // Transform into TensorComprehension expression if indices are present
+        // let C[i,j] = expr  -->  let C = TensorComprehension { indices: [i,j], body: expr }
+        Ok((
+            input,
+            Stmt::Let {
+                name,
+                type_annotation,
+                value: Expr::TensorComprehension {
+                    indices: idxs,
+                    body: Box::new(value),
+                },
+            },
+        ))
+    } else {
+        Ok((
+            input,
+            Stmt::Let {
+                name,
+                type_annotation,
+                value,
+            },
+        ))
+    }
 }
 
 // x[i] += ... or x = ...

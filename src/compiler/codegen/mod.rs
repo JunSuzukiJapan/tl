@@ -74,18 +74,10 @@ impl<'ctx> CodeGenerator<'ctx> {
     // Emit cleanup for ALL active scopes (reverse order)
     // Used for Return statements to ensure everything is freed before returning
     fn emit_all_scopes_cleanup(&self) {
-        // cleanup is handled by runtime MemoryManager (tl_mem_exit_scope)
-        // We do NOT manual free here to avoid double-free.
     }
 
     // Emit cleanup for the current scope (without popping).
-    // This is useful for loops where we want to free variables at the end of an iteration
-    // but the scope itself is popped by exit_scope() later or we need to reuse the scope map logic.
-    // Actually exit_scope() pops.
-    // We need a function that just emits the cleanup instructions for the TOP scope.
     pub(crate) fn emit_top_scope_cleanup(&self) {
-        // cleanup is handled by runtime MemoryManager
-        // We do NOT manual free here.
     }
 
     // Exit the current scope
@@ -124,7 +116,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(), // OpaqueTensor*
                     Type::Struct(name) | Type::UserDefined(name) => {
-                        if self.struct_types.contains_key(name) {
+                        if self.struct_types.contains_key(name) || name == "String" {
                             self.context
                                 .ptr_type(inkwell::AddressSpace::default())
                                 .into()

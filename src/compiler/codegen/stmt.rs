@@ -1,6 +1,7 @@
 use super::CodeGenerator;
 use crate::compiler::ast::*;
 use inkwell::values::*;
+use inkwell::types::BasicType;
 
 impl<'ctx> CodeGenerator<'ctx> {
     // Helper to infer free indices from implicit tensor equation (RHS)
@@ -68,7 +69,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         false
     }
 
-    fn emit_recursive_unregister(
+    pub(crate) fn emit_recursive_unregister(
         &self,
         val: BasicValueEnum<'ctx>,
         ty: &Type,
@@ -187,11 +188,18 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             Stmt::TensorDecl {
                 name,
-                type_annotation: _,
+                type_annotation,
                 init,
             } => {
                 if let Some(expr) = init {
-                    let (val_ir, val_ty) = self.compile_expr(expr)?;
+                    let val_ir = self.ensure_tensor_v2(expr, 0)?;
+                    let val_ty = if matches!(type_annotation, Type::Tensor(_, _)) {
+                        type_annotation.clone()
+                    } else {
+                        // Fallback to compiled type if not explicitly a Tensor
+                        let (_, ty) = self.compile_expr(expr)?;
+                        ty
+                    };
 
                     // NOTE: Removed clone to preserve gradients
 
@@ -234,7 +242,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 Ok(())
             }
-            Stmt::Let { name, value, .. } => {
+            Stmt::Let {
+                name,
+                type_annotation,
+                value,
+            } => {
                 // 1. Analyze value for Free Indices (Implicit Tensor Equation)
                 let free_indices = self.infer_free_indices(value);
 
@@ -247,7 +259,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string());
                 }
 
-                let (val_ir, val_ty) = self.compile_expr(value)?;
+                let (mut val_ir, mut val_ty) = self.compile_expr(value)?;
+
+                // Convert ScalarArray to Tensor if explicitly requested as Tensor
+                if let Some(target_ty) = type_annotation {
+                    if matches!(target_ty, Type::Tensor(_, _))
+                        && matches!(val_ty, Type::ScalarArray(_, _))
+                    {
+                        val_ir = self.ensure_tensor_v2(value, 0)?;
+                        val_ty = target_ty.clone();
+                    }
+                }
 
                 // Clone if alias (initializing from variable or field)
                 let val_ir = if matches!(value, Expr::Variable(_) | Expr::FieldAccess(_, _)) {
@@ -339,13 +361,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                     }
                 }
-                let val = self.compile_expr(expr)?;
+                let (val, _) = self.compile_expr(expr)?;
 
                 // Emit cleanup for ALL active scopes (reverse order)
                 self.emit_all_scopes_cleanup();
 
                 self.builder
-                    .build_return(Some(&val.0))
+                    .build_return(Some(&val))
                     .map_err(|e| e.to_string())?;
                 Ok(())
             }
@@ -739,26 +761,29 @@ impl<'ctx> CodeGenerator<'ctx> {
                         (s.into_int_value(), e.into_int_value(), false)
                     }
                     Expr::Variable(_) | Expr::FieldAccess(_, _) => {
-                        // Assume it's a tensor iteration
+                        // Assume it's a tensor or array iteration
                         let (tensor_val, tensor_ty) = self.compile_expr(iterator)?;
-                        if !matches!(tensor_ty, Type::Tensor(_, _)) {
-                            return Err("For loop iterator must be a tensor or range".into());
-                        }
-                        // Get tensor length
-                        let len_fn = self
-                            .module
-                            .get_function("tl_tensor_len")
-                            .ok_or("tl_tensor_len not found")?;
-                        let len_call = self
-                            .builder
-                            .build_call(len_fn, &[tensor_val.into()], "tensor_len")
-                            .map_err(|e| e.to_string())?;
-                        let len = match len_call.try_as_basic_value() {
-                            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-                            _ => return Err("Invalid tensor_len return".into()),
+                        let len = match &tensor_ty {
+                            Type::Tensor(_, _) => {
+                                // Get tensor length
+                                let len_fn = self
+                                    .module
+                                    .get_function("tl_tensor_len")
+                                    .ok_or("tl_tensor_len not found")?;
+                                let len_call = self
+                                    .builder
+                                    .build_call(len_fn, &[tensor_val.into()], "tensor_len")
+                                    .map_err(|e| e.to_string())?;
+                                match len_call.try_as_basic_value() {
+                                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                                    _ => return Err("Invalid tensor_len return".into()),
+                                }
+                            }
+                            Type::ScalarArray(_, len) => i64_type.const_int(*len as u64, false),
+                            _ => return Err("For loop iterator must be a tensor, array, or range".into()),
                         };
 
-                        // Store tensor pointer for use in body
+                        // Store tensor/array pointer for use in body
                         let tensor_ptr = tensor_val.into_pointer_value();
                         let tensor_alloca = self
                             .builder
@@ -782,41 +807,43 @@ impl<'ctx> CodeGenerator<'ctx> {
                     _ => {
                         // Try to compile as expression and check type
                         let (iter_val, iter_ty) = self.compile_expr(iterator)?;
-                        if let Type::Tensor(_, _) = iter_ty {
-                            let len_fn = self
-                                .module
-                                .get_function("tl_tensor_len")
-                                .ok_or("tl_tensor_len not found")?;
-                            let len_call = self
-                                .builder
-                                .build_call(len_fn, &[iter_val.into()], "tensor_len")
-                                .map_err(|e| e.to_string())?;
-                            let len = match len_call.try_as_basic_value() {
-                                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-                                _ => return Err("Invalid tensor_len return".into()),
-                            };
+                        let len = match &iter_ty {
+                            Type::Tensor(_, _) => {
+                                let len_fn = self
+                                    .module
+                                    .get_function("tl_tensor_len")
+                                    .ok_or("tl_tensor_len not found")?;
+                                let len_call = self
+                                    .builder
+                                    .build_call(len_fn, &[iter_val.into()], "tensor_len")
+                                    .map_err(|e| e.to_string())?;
+                                match len_call.try_as_basic_value() {
+                                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                                    _ => return Err("Invalid tensor_len return".into()),
+                                }
+                            }
+                            Type::ScalarArray(_, len) => i64_type.const_int(*len as u64, false),
+                            _ => return Err("For loop iterator must be a tensor, array, or range".into()),
+                        };
 
-                            let tensor_ptr = iter_val.into_pointer_value();
-                            let tensor_alloca = self
-                                .builder
-                                .build_alloca(
-                                    self.context.ptr_type(inkwell::AddressSpace::default()),
-                                    "for_tensor",
-                                )
-                                .map_err(|e| e.to_string())?;
-                            self.builder
-                                .build_store(tensor_alloca, tensor_ptr)
-                                .map_err(|e| e.to_string())?;
+                        let tensor_ptr = iter_val.into_pointer_value();
+                        let tensor_alloca = self
+                            .builder
+                            .build_alloca(
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "for_tensor",
+                            )
+                            .map_err(|e| e.to_string())?;
+                        self.builder
+                            .build_store(tensor_alloca, tensor_ptr)
+                            .map_err(|e| e.to_string())?;
 
-                            self.variables.last_mut().unwrap().insert(
-                                "__for_tensor__".to_string(),
-                                (tensor_alloca.into(), iter_ty.clone(), false),
-                            );
+                        self.variables.last_mut().unwrap().insert(
+                            "__for_tensor__".to_string(),
+                            (tensor_alloca.into(), iter_ty.clone(), false),
+                        );
 
-                            (i64_type.const_int(0, false), len, true)
-                        } else {
-                            return Err("For loop iterator must be a tensor or range".into());
-                        }
+                        (i64_type.const_int(0, false), len, true)
                     }
                 };
 
@@ -877,18 +904,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Loop body
                 self.builder.position_at_end(loop_body);
 
-                // Enter memory scope for iteration
-                if let Some(scope_enter) = self.module.get_function("tl_mem_enter_scope") {
-                    self.builder
-                        .build_call(scope_enter, &[], "")
-                        .map_err(|e| e.to_string())?;
-                }
-
                 self.enter_scope();
 
                 // Bind loop variable
                 let loop_var_val = if is_tensor_iter {
-                    // Get element from tensor - use saved alloca since we're in a new scope
+                    // Search through scopes to find the type of __for_tensor__
+                    let mut iter_ty = None;
+                    for scope in self.variables.iter().rev() {
+                        if let Some((_, ty, _)) = scope.get("__for_tensor__") {
+                            iter_ty = Some(ty.clone());
+                            break;
+                        }
+                    }
+                    let iter_ty = iter_ty.ok_or("Iterator type not found")?;
+
+                    // Get element from tensor/array - use saved alloca since we're in a new scope
                     let tensor_alloca =
                         saved_tensor_alloca.ok_or("Tensor alloca not found for for-loop")?;
                     let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
@@ -898,21 +928,74 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string())?
                         .into_pointer_value();
 
-                    let get_fn = self
-                        .module
-                        .get_function("tl_tensor_get")
-                        .ok_or("tl_tensor_get not found")?;
-                    let get_call = self
-                        .builder
-                        .build_call(
-                            get_fn,
-                            &[tensor_ptr.into(), phi.as_basic_value().into()],
-                            "elem_val",
-                        )
-                        .map_err(|e| e.to_string())?;
-                    match get_call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => (v, Type::F32),
-                        _ => return Err("Invalid tensor_get return".into()),
+                    match iter_ty {
+                        Type::Tensor(inner_ty, _) => {
+                            let get_fn = self
+                                .module
+                                .get_function("tl_tensor_get")
+                                .ok_or("tl_tensor_get not found")?;
+                            let get_call = self
+                                .builder
+                                .build_call(
+                                    get_fn,
+                                    &[tensor_ptr.into(), phi.as_basic_value().into()],
+                                    "elem_val",
+                                )
+                                .map_err(|e| e.to_string())?;
+                            
+                            match get_call.try_as_basic_value() {
+                                inkwell::values::ValueKind::Basic(v) => {
+                                    let f_val = v.into_float_value();
+                                    match inner_ty.as_ref() {
+                                        Type::I64 => {
+                                            let i_val = self.builder.build_float_to_signed_int(
+                                                f_val,
+                                                self.context.i64_type(),
+                                                "f2i"
+                                            ).map_err(|e| e.to_string())?;
+                                            (i_val.into(), Type::I64)
+                                        }
+                                        Type::I32 => {
+                                            let i_val = self.builder.build_float_to_signed_int(
+                                                f_val,
+                                                self.context.i32_type(),
+                                                "f2i"
+                                            ).map_err(|e| e.to_string())?;
+                                            (i_val.into(), Type::I32)
+                                        }
+                                        _ => (v, Type::F32), // Default/Keep as F32
+                                    }
+                                }
+                                _ => return Err("Invalid tensor_get return".into()),
+                            }
+                        }
+                        Type::ScalarArray(elem_ty, len) => {
+                            let llvm_elem_type: inkwell::types::BasicTypeEnum = match elem_ty.as_ref() {
+                                Type::I64 => self.context.i64_type().into(),
+                                Type::F32 => self.context.f32_type().into(),
+                                _ => self.context.f32_type().into(),
+                            };
+                            let array_type = llvm_elem_type.array_type(len as u32);
+                            let elem_ptr = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(
+                                        array_type,
+                                        tensor_ptr,
+                                        &[
+                                            i64_type.const_int(0, false),
+                                            phi.as_basic_value().into_int_value(),
+                                        ],
+                                        "elem_ptr",
+                                    )
+                                    .map_err(|e| e.to_string())?
+                            };
+                            let loaded = self
+                                .builder
+                                .build_load(llvm_elem_type, elem_ptr, "elem_val")
+                                .map_err(|e| e.to_string())?;
+                            (loaded, *elem_ty.clone())
+                        }
+                        _ => unreachable!(),
                     }
                 } else {
                     // Range iteration: loop var is the index
@@ -935,13 +1018,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
 
                 self.exit_scope();
-
-                // Exit memory scope before back-edge
-                if let Some(scope_exit) = self.module.get_function("tl_mem_exit_scope") {
-                    self.builder
-                        .build_call(scope_exit, &[], "")
-                        .map_err(|e| e.to_string())?;
-                }
 
                 // Increment index
                 let body_end_block = self.builder.get_insert_block().unwrap();
@@ -1417,6 +1493,80 @@ impl<'ctx> CodeGenerator<'ctx> {
                     _ => return Err("Invalid return from runtime binop".into()),
                 };
                 Ok((res_ptr.into(), rhs_type.clone()))
+            }
+            // ScalarArray operations: convert to Tensor and use tensor ops
+            (Type::ScalarArray(_, len1), Type::ScalarArray(_, len2)) if len1 == len2 => {
+                // Convert both ScalarArrays to tensors and perform tensor operation
+                let _f32_type = self.context.f32_type();
+                let i64_type = self.context.i64_type();
+
+                // Helper to create tensor from ScalarArray pointer
+                let create_tensor =
+                    |builder: &inkwell::builder::Builder<'ctx>,
+                     module: &inkwell::module::Module<'ctx>,
+                     ptr: inkwell::values::PointerValue<'ctx>,
+                     len: usize|
+                     -> Result<inkwell::values::PointerValue<'ctx>, String> {
+                        let new_fn = module
+                            .get_function("tl_tensor_new")
+                            .ok_or("tl_tensor_new not found")?;
+
+                        // Shape: [len]
+                        let shape_alloca = builder
+                            .build_alloca(i64_type, "shape")
+                            .map_err(|e| e.to_string())?;
+                        builder
+                            .build_store(shape_alloca, i64_type.const_int(len as u64, false))
+                            .map_err(|e| e.to_string())?;
+
+                        let call = builder
+                            .build_call(
+                                new_fn,
+                                &[
+                                    ptr.into(),
+                                    i64_type.const_int(1, false).into(),
+                                    shape_alloca.into(),
+                                ],
+                                "tensor_from_scalar_arr",
+                            )
+                            .map_err(|e| e.to_string())?;
+
+                        match call.try_as_basic_value() {
+                            ValueKind::Basic(v) => Ok(v.into_pointer_value()),
+                            _ => Err("Invalid tensor new return".into()),
+                        }
+                    };
+
+                let l_tensor =
+                    create_tensor(&self.builder, &self.module, lhs.into_pointer_value(), *len1)?;
+                let r_tensor =
+                    create_tensor(&self.builder, &self.module, rhs.into_pointer_value(), *len2)?;
+
+                // Now call tensor binary op
+                let fn_name = match op {
+                    BinOp::Add => "tl_tensor_add",
+                    BinOp::Mul => "tl_tensor_mul",
+                    BinOp::Div => "tl_tensor_div",
+                    BinOp::Sub => "tl_tensor_sub",
+                    _ => return Err("Unsupported ScalarArray op".into()),
+                };
+
+                let fn_val = self
+                    .module
+                    .get_function(fn_name)
+                    .ok_or(format!("Runtime function {} not found", fn_name))?;
+                let call = self
+                    .builder
+                    .build_call(fn_val, &[l_tensor.into(), r_tensor.into()], "binop_res")
+                    .map_err(|e| e.to_string())?;
+
+                let res_ptr = match call.try_as_basic_value() {
+                    ValueKind::Basic(v) => v.into_pointer_value(),
+                    _ => return Err("Invalid return from runtime binop".into()),
+                };
+
+                // Return as Tensor (since we converted)
+                Ok((res_ptr.into(), Type::Tensor(Box::new(Type::F32), 1)))
             }
             _ => Err(format!(
                 "Type mismatch in BinOp {:?}: {:?} vs {:?}",

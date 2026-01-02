@@ -718,6 +718,23 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_system_sleep as usize);
     }
 
+    // Memory Manager mappings
+    if let Some(f) = module.get_function("tl_mem_enter_scope") {
+        execution_engine.add_global_mapping(&f, runtime::memory_manager::tl_mem_enter_scope as usize);
+    }
+    if let Some(f) = module.get_function("tl_mem_exit_scope") {
+        execution_engine.add_global_mapping(&f, runtime::memory_manager::tl_mem_exit_scope as usize);
+    }
+    if let Some(f) = module.get_function("tl_mem_register_struct") {
+        execution_engine.add_global_mapping(&f, runtime::memory_manager::tl_mem_register_struct as usize);
+    }
+    if let Some(f) = module.get_function("tl_mem_register_tensor") {
+        execution_engine.add_global_mapping(&f, runtime::memory_manager::tl_mem_register_tensor as usize);
+    }
+    if let Some(f) = module.get_function("tl_mem_unregister") {
+        execution_engine.add_global_mapping(&f, runtime::memory_manager::tl_mem_unregister as usize);
+    }
+
     // Return types
     fn_return_types.insert(
         "tl_string_concat".to_string(),
