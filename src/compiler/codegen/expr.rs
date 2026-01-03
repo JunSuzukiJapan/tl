@@ -986,24 +986,112 @@ impl<'ctx> CodeGenerator<'ctx> {
             .ok_or(format!("Struct definition {} not found", name))?
             .clone();
 
-        // Allocate struct on HEAP using malloc
+        // Determine allocation strategy: Arena or Heap
         let size = struct_type
             .size_of()
             .ok_or(format!("Cannot determine size of struct {}", name))?;
+
+        // 1. Check if Arena is active
+        let is_active_fn = self
+            .module
+            .get_function("tl_arena_is_active")
+            .ok_or("tl_arena_is_active not found")?;
+        let is_active_call = self
+            .builder
+            .build_call(is_active_fn, &[], "is_arena_active")
+            .map_err(|e| e.to_string())?;
+        let is_active_val = match is_active_call.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("tl_arena_is_active returned void".into()),
+        };
+        let is_active_bool = self
+            .builder
+            .build_int_compare(
+                inkwell::IntPredicate::NE,
+                is_active_val,
+                self.context.bool_type().const_zero(),
+                "is_active_bool",
+            )
+            .map_err(|e| e.to_string())?;
+
+        // 2. Setup blocks
+        let current_block = self.builder.get_insert_block().unwrap();
+        let function = current_block.get_parent().unwrap();
+        let arena_block = self.context.append_basic_block(function, "alloc_arena");
+        let heap_block = self.context.append_basic_block(function, "alloc_heap");
+        let merge_block = self.context.append_basic_block(function, "alloc_merge");
+
+        self.builder
+            .build_conditional_branch(is_active_bool, arena_block, heap_block)
+            .map_err(|e| e.to_string())?;
+
+        // 3. Heap Allocation (Legacy path)
+        self.builder.position_at_end(heap_block);
         let malloc_fn = self
             .module
             .get_function("malloc")
             .ok_or("malloc not found (declare in builtins)")?;
-
         let call = self
             .builder
             .build_call(malloc_fn, &[size.into()], "struct_malloc")
             .map_err(|e| e.to_string())?;
-
-        let raw_ptr = match call.try_as_basic_value() {
+        let raw_ptr_heap = match call.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
             _ => return Err("malloc returned invalid value".into()),
         };
+        // Register with MemoryManager
+        if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
+            let cast_ptr = self
+                .builder
+                .build_pointer_cast(
+                    raw_ptr_heap,
+                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                    "cast_ptr",
+                )
+                .unwrap();
+            self.builder
+                .build_call(register_fn, &[cast_ptr.into()], "")
+                .map_err(|e| e.to_string())?;
+        }
+        self.builder
+            .build_unconditional_branch(merge_block)
+            .unwrap();
+        let heap_end_block = self.builder.get_insert_block().unwrap();
+
+        // 4. Arena Allocation
+        self.builder.position_at_end(arena_block);
+        let arena_alloc_fn = self
+            .module
+            .get_function("tl_arena_alloc")
+            .ok_or("tl_arena_alloc not found")?;
+        let alloc_call = self
+            .builder
+            .build_call(arena_alloc_fn, &[size.into()], "struct_arena_alloc")
+            .map_err(|e| e.to_string())?;
+        let raw_ptr_arena = match alloc_call.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+            _ => return Err("tl_arena_alloc returned invalid value".into()),
+        };
+        // NO registration for arena pointers!
+        self.builder
+            .build_unconditional_branch(merge_block)
+            .unwrap();
+        let arena_end_block = self.builder.get_insert_block().unwrap();
+
+        // 5. Merge
+        self.builder.position_at_end(merge_block);
+        let ptr_phi = self
+            .builder
+            .build_phi(
+                self.context.ptr_type(inkwell::AddressSpace::default()),
+                "struct_ptr_phi",
+            )
+            .unwrap();
+        ptr_phi.add_incoming(&[
+            (&raw_ptr_heap, heap_end_block),
+            (&raw_ptr_arena, arena_end_block),
+        ]);
+        let raw_ptr = ptr_phi.as_basic_value().into_pointer_value();
 
         // Cast to Struct Pointer (opaque pointer in modern LLVM, but typed for GEP)
         let struct_ptr = self
@@ -1014,14 +1102,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 "struct_ptr",
             )
             .map_err(|e| e.to_string())?;
-
-        // CRITICAL: Register struct with MemoryManager
-        // Without this, the struct is malloc'd but never tracked, causing memory leaks
-        if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
-            self.builder
-                .build_call(register_fn, &[struct_ptr.into()], "")
-                .map_err(|e| e.to_string())?;
-        }
 
         for (field_name, field_expr) in fields {
             let field_idx = struct_def

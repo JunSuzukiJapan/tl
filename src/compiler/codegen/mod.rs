@@ -1,5 +1,5 @@
-// src/compiler/codegen.rs
 use crate::compiler::ast::*;
+use crate::compiler::shape_analysis::ShapeAnalyzer;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::execution_engine::ExecutionEngine;
@@ -476,6 +476,46 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .last_mut()
                 .unwrap()
                 .insert(arg_name.clone(), (alloca.into(), arg_type.clone(), false));
+        }
+
+        // Initialize Arena in main if needed
+        if func.name == "main" {
+            let mut analyzer = ShapeAnalyzer::new();
+            let profile = analyzer.analyze_block(&func.body);
+
+            // Heuristic: If we have static tensors or significant allocations, init arena
+            // We assume safe upper bound for OpaqueTensor size (around 32-48 bytes usually, use 64 for safety)
+            // Plus the actual static tensor data size.
+            if profile.total_static_size.unwrap_or(0) > 0 || profile.max_allocations > 0 {
+                let struct_overhead = profile.max_allocations * 64; // safely cover OpaqueTensor struct size
+                let total_capacity = profile.total_static_size.unwrap_or(0) + struct_overhead;
+
+                // Align to page size (4096) roughly, or just use what we need.
+                // call tl_arena_init(capacity)
+                let init_fn = self
+                    .module
+                    .get_function("tl_arena_init")
+                    .or_else(|| {
+                        // Declare if missing (should be in builtins but just in case)
+                        let i64_type = self.context.i64_type();
+                        let fn_type = self.context.void_type().fn_type(&[i64_type.into()], false);
+                        let f = self.module.add_function("tl_arena_init", fn_type, None);
+                        Some(f)
+                    })
+                    .unwrap();
+
+                self.builder
+                    .build_call(
+                        init_fn,
+                        &[self
+                            .context
+                            .i64_type()
+                            .const_int(total_capacity as u64, false)
+                            .into()],
+                        "",
+                    )
+                    .unwrap();
+            }
         }
 
         // Compile extra statements (e.g. top-level tensor decls)

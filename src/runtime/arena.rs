@@ -1,5 +1,6 @@
 use std::alloc::{alloc, dealloc, Layout};
 use std::cell::RefCell;
+use std::ffi::c_void;
 
 use super::OpaqueTensor;
 
@@ -52,6 +53,22 @@ impl Arena {
 
     pub fn reset(&mut self) {
         self.offset = 0;
+    }
+
+    pub fn contains(&self, ptr: *const u8) -> bool {
+        let start = self.buffer as *const u8;
+        let end = unsafe { self.buffer.add(self.capacity) } as *const u8;
+        ptr >= start && ptr < end
+    }
+
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
+    pub fn set_offset(&mut self, offset: usize) {
+        if offset <= self.capacity {
+            self.offset = offset;
+        }
     }
 }
 
@@ -126,6 +143,38 @@ pub extern "C" fn tl_arena_reset() {
     ARENA.with(|arena| {
         if let Some(ref mut a) = *arena.borrow_mut() {
             a.reset();
+        }
+    });
+}
+
+/// Check if a pointer belongs to the arena
+#[no_mangle]
+pub extern "C" fn tl_arena_contains(ptr: *mut c_void) -> bool {
+    ARENA.with(|arena| {
+        if let Some(ref a) = *arena.borrow() {
+            a.contains(ptr as *const u8)
+        } else {
+            false
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tl_arena_get_offset() -> usize {
+    ARENA.with(|arena| {
+        if let Some(ref a) = *arena.borrow() {
+            a.offset()
+        } else {
+            0
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tl_arena_set_offset(offset: usize) {
+    ARENA.with(|arena| {
+        if let Some(ref mut a) = *arena.borrow_mut() {
+            a.set_offset(offset);
         }
     });
 }

@@ -21,6 +21,8 @@ struct AllocationRecord {
 pub struct MemoryManager {
     // Stack of scopes, each scope contains its allocations
     scopes: Vec<Vec<AllocationRecord>>,
+    // Stack of arena offsets corresponding to each scope
+    arena_offsets: Vec<usize>,
 }
 
 // SAFETY: MemoryManager contains raw pointers but they are only accessed
@@ -30,12 +32,18 @@ unsafe impl Sync for MemoryManager {}
 
 impl MemoryManager {
     pub fn new() -> Self {
-        MemoryManager { scopes: Vec::new() }
+        MemoryManager {
+            scopes: Vec::new(),
+            arena_offsets: Vec::new(),
+        }
     }
 
     /// Enter a new scope
     pub fn enter_scope(&mut self) {
         self.scopes.push(Vec::new());
+        // Save current arena offset
+        let offset = super::arena::tl_arena_get_offset();
+        self.arena_offsets.push(offset);
     }
 
     /// Exit current scope and free ALL allocations in that scope
@@ -45,6 +53,12 @@ impl MemoryManager {
             // eprintln!("WARNING: exit_scope called on empty scope stack");
             return;
         }
+
+        // Restore arena offset (freeing all arena allocations in this scope)
+        if let Some(offset) = self.arena_offsets.pop() {
+            super::arena::tl_arena_set_offset(offset);
+        }
+
         if let Some(allocations) = self.scopes.pop() {
             // Free all allocations in reverse order (LIFO)
             for record in allocations.into_iter().rev() {

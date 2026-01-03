@@ -23,6 +23,7 @@ pub enum ShapeInfo {
 
 impl ShapeInfo {
     /// Calculate size in bytes if fully static
+    #[allow(dead_code)]
     pub fn static_size(&self, elem_size: usize) -> Option<usize> {
         match self {
             ShapeInfo::Static(dims) => {
@@ -34,6 +35,7 @@ impl ShapeInfo {
     }
 
     /// Check if shape is fully static
+    #[allow(dead_code)]
     pub fn is_static(&self) -> bool {
         matches!(self, ShapeInfo::Static(_))
     }
@@ -41,6 +43,7 @@ impl ShapeInfo {
 
 /// Memory usage formula for dynamic cases
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SizeFormula {
     /// Constant part (bytes)
     pub constant: usize,
@@ -58,6 +61,7 @@ impl SizeFormula {
         }
     }
 
+    #[allow(dead_code)]
     pub fn add_factor(&mut self, var_name: String, coeff: usize) {
         self.factors.push((var_name, coeff));
     }
@@ -70,6 +74,7 @@ pub struct BlockMemoryProfile {
     pub total_static_size: Option<usize>,
 
     /// Formula for partially dynamic size
+    #[allow(dead_code)]
     pub size_formula: Option<SizeFormula>,
 
     /// Maximum allocation count (for pool sizing)
@@ -85,6 +90,7 @@ impl BlockMemoryProfile {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_static(&self) -> bool {
         self.total_static_size.is_some()
     }
@@ -131,7 +137,7 @@ impl ShapeAnalyzer {
     }
 
     /// Infer shape from function calls
-    fn infer_fn_call_shape(&self, fname: &str, args: &[Expr]) -> ShapeInfo {
+    fn infer_fn_call_shape(&self, fname: &str, _args: &[Expr]) -> ShapeInfo {
         // Handle special functions that we can analyze
         match fname {
             _ => ShapeInfo::Unknown,

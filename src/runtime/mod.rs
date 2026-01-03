@@ -45,14 +45,23 @@ pub struct OpaqueTensor(
 // Helper to create and register an OpaqueTensor from a Candle Tensor
 // This ensures that all intermediate tensors are tracked and freed by the memory manager.
 fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
-    // CRITICAL FIX: TensorPool disabled due to conflict with MemoryManager
-    // TensorPool reuses freed memory, but MemoryManager tracks all pointers
-    // This causes double-free when:
-    // 1. Tensor A is freed and returned to pool
-    // 2. Pool reuses that memory for Tensor B
-    // 3. MemoryManager still thinks it owns Tensor A's pointer
-    // 4. When scope exits, MemoryManager tries to free the same pointer again
-    let ptr = Box::into_raw(Box::new(OpaqueTensor(t, None, None)));
+    let boxed = Box::new(OpaqueTensor(t, None, None));
+    let ptr = if arena::tl_arena_is_active() {
+        // Allocate in arena
+        let size = std::mem::size_of::<OpaqueTensor>() as i64;
+        let arena_ptr = arena::tl_arena_alloc(size);
+        if !arena_ptr.is_null() {
+            unsafe {
+                std::ptr::write(arena_ptr, *boxed);
+            }
+            arena_ptr
+        } else {
+            // Arena full, fallback to Heap
+            Box::into_raw(boxed)
+        }
+    } else {
+        Box::into_raw(boxed)
+    };
     memory_manager::register_tensor_global(ptr);
     ptr
 }
@@ -61,8 +70,23 @@ fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
 fn make_var(v: candle_core::Var) -> *mut OpaqueTensor {
     let t_ref = v.as_tensor().clone();
     let var_arc = Arc::new(v);
-    // CRITICAL FIX: TensorPool disabled (same reason as make_tensor)
-    let ptr = Box::into_raw(Box::new(OpaqueTensor(t_ref, Some(var_arc), None)));
+
+    let boxed = Box::new(OpaqueTensor(t_ref, Some(var_arc), None));
+    let ptr = if arena::tl_arena_is_active() {
+        let size = std::mem::size_of::<OpaqueTensor>() as i64;
+        let arena_ptr = arena::tl_arena_alloc(size);
+        if !arena_ptr.is_null() {
+            unsafe {
+                std::ptr::write(arena_ptr, *boxed);
+            }
+            arena_ptr
+        } else {
+            Box::into_raw(boxed)
+        }
+    } else {
+        Box::into_raw(boxed)
+    };
+
     memory_manager::register_tensor_global(ptr);
     ptr
 }
@@ -164,11 +188,23 @@ pub extern "C" fn tl_varbuilder_get(
     // Store Var reference in Arc so it persists across clones
     let var_arc = Arc::new(var);
 
-    let ptr = Box::into_raw(Box::new(OpaqueTensor(
-        tensor,
-        Some(var_arc),
-        Some(name_str),
-    )));
+    let boxed = Box::new(OpaqueTensor(tensor, Some(var_arc), Some(name_str)));
+
+    let ptr = if arena::tl_arena_is_active() {
+        let size = std::mem::size_of::<OpaqueTensor>() as i64;
+        let arena_ptr = arena::tl_arena_alloc(size);
+        if !arena_ptr.is_null() {
+            unsafe {
+                std::ptr::write(arena_ptr, *boxed);
+            }
+            arena_ptr
+        } else {
+            Box::into_raw(boxed)
+        }
+    } else {
+        Box::into_raw(boxed)
+    };
+
     memory_manager::register_tensor_global(ptr);
     ptr
 }
@@ -372,9 +408,14 @@ pub extern "C" fn tl_tensor_print(t: *mut OpaqueTensor) {
 pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) {
     if !t.is_null() {
         unsafe {
-            // CRITICAL FIX: TensorPool disabled
-            // Simply drop the Box, which frees the OpaqueTensor and its contained Tensor
-            let _ = Box::from_raw(t);
+            if arena::tl_arena_contains(t as *mut std::ffi::c_void) {
+                // If it's in the arena, we DON'T free the pointer itself (the arena owns it).
+                // But we DO need to drop the contents (Tensor, Arc<Var>, String) to decrement refcounts.
+                std::ptr::drop_in_place(t);
+            } else {
+                // Heap allocated, safe to free via Box
+                let _ = Box::from_raw(t);
+            }
         }
     }
 }
@@ -399,8 +440,21 @@ pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
 
         // Clone the Arc<Var> if it exists to maintain gradient tracking
         let cloned_var = var_ref.as_ref().map(Arc::clone);
+        let boxed = Box::new(OpaqueTensor(cloned, cloned_var, None));
 
-        let ptr = Box::into_raw(Box::new(OpaqueTensor(cloned, cloned_var, None)));
+        let ptr = if arena::tl_arena_is_active() {
+            let size = std::mem::size_of::<OpaqueTensor>() as i64;
+            let arena_ptr = arena::tl_arena_alloc(size);
+            if !arena_ptr.is_null() {
+                std::ptr::write(arena_ptr, *boxed);
+                arena_ptr
+            } else {
+                Box::into_raw(boxed)
+            }
+        } else {
+            Box::into_raw(boxed)
+        };
+
         memory_manager::register_tensor_global(ptr);
         ptr
     }

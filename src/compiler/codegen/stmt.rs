@@ -1185,13 +1185,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 self.exit_scope();
 
-                // Exit memory scope before back-edge
-                if let Some(scope_exit) = self.module.get_function("tl_mem_exit_scope") {
-                    self.builder
-                        .build_call(scope_exit, &[], "")
-                        .map_err(|e| e.to_string())?;
-                }
-
                 // Loop back to condition
                 if self
                     .builder
