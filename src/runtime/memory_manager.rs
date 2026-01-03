@@ -44,11 +44,11 @@ impl MemoryManager {
         // Save current arena offset
         let offset = super::arena::tl_arena_get_offset();
         self.arena_offsets.push(offset);
-        println!(
-            "DEBUG: Enter Scope. Depth: {}. Arena Offset: {}",
-            self.scopes.len(),
-            offset
-        );
+        // println!(
+        //     "DEBUG: Enter Scope. Depth: {}. Arena Offset: {}",
+        //     self.scopes.len(),
+        //     offset
+        // );
     }
 
     /// Exit current scope and free ALL allocations in that scope
@@ -125,9 +125,22 @@ lazy_static::lazy_static! {
 
 // C-ABI functions for LLVM codegen
 
+static ENTER_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static EXIT_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Enter a new memory scope
 #[no_mangle]
 pub extern "C" fn tl_mem_enter_scope() {
+    // let count = ENTER_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // if count % 10000 == 0 {
+    //     let exits = EXIT_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+    //     println!(
+    //         "DEBUG SCOPE: Enter={}, Exit={}, Net={}",
+    //         count,
+    //         exits,
+    //         count as isize - exits as isize
+    //     );
+    // }
     let mut mgr = MEMORY_MANAGER.lock().unwrap();
     mgr.enter_scope();
 }
@@ -135,6 +148,7 @@ pub extern "C" fn tl_mem_enter_scope() {
 /// Exit current scope and free all allocations in it
 #[no_mangle]
 pub extern "C" fn tl_mem_exit_scope() {
+    // EXIT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut mgr = MEMORY_MANAGER.lock().unwrap();
     mgr.exit_scope();
 }

@@ -94,7 +94,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     // Exit the current scope
     fn exit_scope(&mut self) {
-        // Only emit cleanup if the current block is NOT terminated
+        // Only emit cleanup if the current block is NOT terminated.
+        // Note: This causes enter/exit imbalance at runtime for return statements.
+        // The proper fix is in Stmt::Return to emit cleanup BEFORE the return.
         let is_terminated = self
             .builder
             .get_insert_block()
@@ -286,6 +288,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map(|b| b.get_terminator().is_some())
                         .unwrap_or(false);
                     if !is_terminated {
+                        // CRITICAL FIX: Emit cleanup BEFORE the implicit return
+                        self.emit_all_scopes_cleanup();
                         self.builder.build_return(None).unwrap();
                     }
                 }

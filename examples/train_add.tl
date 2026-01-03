@@ -38,7 +38,7 @@ fn train_epoch(model: GPT, lr: f32, epoch: i64) {
     for s in range(0, total_steps) {
         // Calculate randomized index: (s * stride + offset) % total_steps
         let raw = s * stride + offset;
-        let idx = raw - ((raw / total_steps) * total_steps);
+        let idx = raw - ((raw / 10000) * 10000);
         
         // Decode i and j from idx
         let i = idx / 100;
