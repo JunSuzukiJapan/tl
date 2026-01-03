@@ -20,31 +20,7 @@ fn get_memory() -> i64 {
     return tl_get_memory_mb();
 }
 
-fn register_gpt_params(m: GPT) {
-    add_parameter("w.w", m.w.w);
 
-    add_parameter("b.l1.w", m.b.l1.w);
-    add_parameter("b.l1.b", m.b.l1.b);
-    
-    add_parameter("b.a.a.W", m.b.a.a.W);
-    add_parameter("b.a.a.b", m.b.a.a.b);
-    add_parameter("b.a.p.W", m.b.a.p.W);
-    add_parameter("b.a.p.b", m.b.a.p.b);
-    
-    add_parameter("b.l2.w", m.b.l2.w);
-    add_parameter("b.l2.b", m.b.l2.b); 
-
-    add_parameter("b.m.f.W", m.b.m.f.W);
-    add_parameter("b.m.f.b", m.b.m.f.b);
-    add_parameter("b.m.p.W", m.b.m.p.W);
-    add_parameter("b.m.p.b", m.b.m.p.b);
-
-    add_parameter("l.w", m.l.w);
-    add_parameter("l.b", m.l.b);
-
-    add_parameter("h.W", m.h.W);
-    add_parameter("h.b", m.h.b);
-}
 
 fn main() {
     let vocab_size = 13;
@@ -52,14 +28,11 @@ fn main() {
     let block_size = 12; 
     print("Initializing Model for Inference...");
     let model = GPT::new(vocab_size, d_model);
-    
-    let model = GPT::new(vocab_size, d_model);
-    
-    // Register parameters to enable loading
-    register_gpt_params(model);
 
     print("Loading Parameters...");
-    load_all_params("model_2digit.safetensors");
+    // Auto-register and load
+    load_all_params(model, "model_2digit.safetensors");
+    print("Parameters Loaded.");
     print("Parameters Loaded.");
 
     print("Running Inference verification 2-digit...");

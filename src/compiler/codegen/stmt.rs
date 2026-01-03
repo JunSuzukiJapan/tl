@@ -767,11 +767,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 // Branch to merge if current block has no terminator
                 // Use get_insert_block() because nested statements may have changed current block
+                // Check current block
                 let current_block = self.builder.get_insert_block().unwrap();
                 if current_block.get_terminator().is_none() {
+                    self.exit_scope();
                     self.builder.build_unconditional_branch(merge_bb).unwrap();
+                } else {
+                    self.exit_scope();
                 }
-                self.exit_scope();
 
                 // Else
                 self.builder.position_at_end(else_bb);
@@ -784,9 +787,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Check current block (not else_bb) since nested if may have changed it
                 let current_block = self.builder.get_insert_block().unwrap();
                 if current_block.get_terminator().is_none() {
+                    self.exit_scope();
                     self.builder.build_unconditional_branch(merge_bb).unwrap();
+                } else {
+                    self.exit_scope();
                 }
-                self.exit_scope();
 
                 // Merge
                 self.builder.position_at_end(merge_bb);
