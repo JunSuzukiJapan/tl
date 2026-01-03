@@ -175,14 +175,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Free old value if Tensor
                 if let Type::Tensor(_, _) = field_type {
                     let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                    let _current_val = self
+                    let current_val = self
                         .builder
                         .build_load(load_type, field_ptr, "old_field_val")
                         .map_err(|e| e.to_string())?
                         .into_pointer_value();
 
-                    // Free logic removed to prevent double-free with MemoryManager.
-                    // Old value remains in scope list and will be freed at scope exit.
+                    // FIX: Manually free the old value because it's owned by the struct (unregistered).
+                    // If we don't free it, it leaks 100% since MemoryManager doesn't track it.
+                    // This potentially causes Use-After-Free if aliased, but leak is guaranteed otherwise.
+                    let free_fn = self
+                        .module
+                        .get_function("tl_tensor_free")
+                        .ok_or("tl_tensor_free not found")?;
+
+                    self.builder
+                        .build_call(free_fn, &[current_val.into()], "")
+                        .map_err(|e| e.to_string())?;
                 }
 
                 self.builder
@@ -569,7 +578,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // Free old value if it is a Tensor
                         if let Type::Tensor(_, _) = var_type {
                             let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                            let _current_val = self
+                            let current_val = self
                                 .builder
                                 .build_load(load_type, var_ptr.into_pointer_value(), "old_val")
                                 .map_err(|e| e.to_string())?
@@ -581,7 +590,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .builder
                                 .build_int_compare(
                                     inkwell::IntPredicate::NE,
-                                    _current_val,
+                                    current_val,
                                     null_ptr,
                                     "is_not_null",
                                 )
@@ -609,7 +618,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .map_err(|e| e.to_string())?;
 
                             self.builder.position_at_end(free_block);
-                            // Free logic removed. MemoryManager handles it.
+                            // FIX: Restore manual free for Stmt::Assign.
+                            // This ensures that if we overwrite a promoted variable (outer scope), we free its old value.
+                            // Safety: tl_tensor_free handles unregistering to prevent double-free if registered.
+                            let free_fn = self
+                                .module
+                                .get_function("tl_tensor_free")
+                                .ok_or("tl_tensor_free not found")?;
+
+                            self.builder
+                                .build_call(free_fn, &[current_val.into()], "")
+                                .map_err(|e| e.to_string())?;
+
                             self.builder
                                 .build_unconditional_branch(continue_block)
                                 .map_err(|e| e.to_string())?;

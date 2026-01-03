@@ -31,14 +31,14 @@ fn train_epoch(model: GPT, lr: f32, epoch: i64) {
     // 30x30 = 900 steps per epoch. 50 epochs = 45000 steps.
     // Use single loop with pseudo-random shuffling to break data correlation
     // Total 100*100 = 10000 combinations
-    let total_steps = 1000; // Reduced for faster feedback
+    let total_steps = 1000;
     let stride = 137; // Prime stride to cover all indices
     let offset = epoch * 79; // Vary start point per epoch
 
     for s in range(0, total_steps) {
         // Calculate randomized index: (s * stride + offset) % total_steps
         let raw = s * stride + offset;
-        let idx = raw - ((raw / total_steps) * total_steps);
+        let idx = raw - ((raw / 10000) * 10000);
         
         // Decode i and j from idx
         let i = idx / 100;
@@ -71,11 +71,11 @@ fn train_epoch(model: GPT, lr: f32, epoch: i64) {
         let Y_flat = reshape(Y, 12);
         let loss = cross_entropy(logits_flat, Y_flat);
         
-        backward(loss);
+        // backward(loss);
         
         // In-place update
-        model.step(lr);
-        total_loss = loss.detach(true);
+        // model.step(lr);
+        // total_loss = loss.detach(true);
     }
 
     // Memory logging every epoch

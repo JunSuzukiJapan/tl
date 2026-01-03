@@ -1895,7 +1895,33 @@ impl<'ctx> CodeGenerator<'ctx> {
                 ))
             } else {
                 match call.try_as_basic_value() {
-                    ValueKind::Basic(v) => Ok((v, ret_ty)),
+                    ValueKind::Basic(v) => {
+                        // FIX: User-defined methods unregister return value, so we must register it
+                        // to prevent memory leaks (and keep graph alive for backprop).
+                        if let Type::Tensor(_, _) = ret_ty {
+                            // Only register if it's a tensor
+                            // Assumes user-defined methods always unregister.
+                            // Runtime methods are handled in the 'else' block below or specific matches.
+                            if let Some(reg_fn) = self.module.get_function("tl_mem_register_tensor")
+                            {
+                                let ptr = v.into_pointer_value();
+                                // Ensure pointer type match
+                                let cast_ptr = self
+                                    .builder
+                                    .build_pointer_cast(
+                                        ptr,
+                                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                                        "cast_reg",
+                                    )
+                                    .map_err(|e| e.to_string())?;
+
+                                self.builder
+                                    .build_call(reg_fn, &[cast_ptr.into()], "")
+                                    .map_err(|e| e.to_string())?;
+                            }
+                        }
+                        Ok((v, ret_ty))
+                    }
                     _ => Err("Invalid return value".into()),
                 }
             }
@@ -3317,7 +3343,34 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .cloned()
                     .unwrap_or(Type::Void);
                 match call.try_as_basic_value() {
-                    ValueKind::Basic(v) => Ok((v, ret_type)),
+                    ValueKind::Basic(v) => {
+                        // FIX: User-defined functions unregister return value, so we must register it
+                        if let Type::Tensor(_, _) = ret_type {
+                            // Assume user functions always unregister.
+                            // Runtime functions usually matched above, but if any slip through and are registered,
+                            // we might double-register.
+                            // Ideally we check if it is a runtime function (starts with tl_tensor_).
+                            // But usually user functions don't start with tl_tensor_.
+                            // And source name is used here.
+                            if let Some(reg_fn) = self.module.get_function("tl_mem_register_tensor")
+                            {
+                                let ptr = v.into_pointer_value();
+                                let cast_ptr = self
+                                    .builder
+                                    .build_pointer_cast(
+                                        ptr,
+                                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                                        "cast_reg",
+                                    )
+                                    .map_err(|e| e.to_string())?;
+
+                                self.builder
+                                    .build_call(reg_fn, &[cast_ptr.into()], "")
+                                    .map_err(|e| e.to_string())?;
+                            }
+                        }
+                        Ok((v, ret_type))
+                    }
                     _ => {
                         // Void return
                         Ok((
