@@ -1,5 +1,7 @@
+pub mod arena;
 pub mod device;
-pub mod memory_manager;
+pub mod memory_manager; // Arena allocator for tensor memory optimization
+
 pub mod registry;
 pub mod stdlib;
 pub mod tensor_pool;

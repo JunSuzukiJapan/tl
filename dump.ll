@@ -3,15 +3,15 @@ source_filename = "main"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 
 @str_literal = private unnamed_addr constant [27 x i8] c"Test: VarBuilder functions\00", align 1
-@str_literal.98 = private unnamed_addr constant [12 x i8] c"test_weight\00", align 1
-@str_literal.99 = private unnamed_addr constant [10 x i8] c"test_bias\00", align 1
-@str_literal.100 = private unnamed_addr constant [19 x i8] c"Created parameters\00", align 1
-@str_literal.101 = private unnamed_addr constant [6 x i8] c"Loss:\00", align 1
-@str_literal.102 = private unnamed_addr constant [12 x i8] c"test_weight\00", align 1
-@str_literal.103 = private unnamed_addr constant [10 x i8] c"test_bias\00", align 1
-@str_literal.104 = private unnamed_addr constant [17 x i8] c"Weight gradient:\00", align 1
-@str_literal.105 = private unnamed_addr constant [15 x i8] c"Bias gradient:\00", align 1
-@str_literal.106 = private unnamed_addr constant [20 x i8] c"Parameters updated!\00", align 1
+@str_literal.103 = private unnamed_addr constant [12 x i8] c"test_weight\00", align 1
+@str_literal.104 = private unnamed_addr constant [10 x i8] c"test_bias\00", align 1
+@str_literal.105 = private unnamed_addr constant [19 x i8] c"Created parameters\00", align 1
+@str_literal.106 = private unnamed_addr constant [6 x i8] c"Loss:\00", align 1
+@str_literal.107 = private unnamed_addr constant [12 x i8] c"test_weight\00", align 1
+@str_literal.108 = private unnamed_addr constant [10 x i8] c"test_bias\00", align 1
+@str_literal.109 = private unnamed_addr constant [17 x i8] c"Weight gradient:\00", align 1
+@str_literal.110 = private unnamed_addr constant [15 x i8] c"Bias gradient:\00", align 1
+@str_literal.111 = private unnamed_addr constant [20 x i8] c"Parameters updated!\00", align 1
 
 declare void @tl_print_i64(i64)
 
@@ -199,6 +199,16 @@ declare ptr @tl_pool_acquire(i64)
 
 declare void @tl_pool_release(ptr, i64)
 
+declare void @tl_arena_init(i64)
+
+declare ptr @tl_arena_alloc(i64)
+
+declare void @tl_arena_free()
+
+declare i1 @tl_arena_is_active()
+
+declare void @tl_arena_reset()
+
 declare void @tl_print_i64.5(i64)
 
 declare void @tl_print_f32.6(float)
@@ -385,6 +395,16 @@ declare ptr @tl_pool_acquire.96(i64)
 
 declare void @tl_pool_release.97(ptr, i64)
 
+declare void @tl_arena_init.98(i64)
+
+declare ptr @tl_arena_alloc.99(i64)
+
+declare void @tl_arena_free.100()
+
+declare i1 @tl_arena_is_active.101()
+
+declare void @tl_arena_reset.102()
+
 define void @main() {
 entry:
   %gb = alloca ptr, align 16
@@ -416,7 +436,7 @@ entry:
   store i64 10, ptr %shptr, align 8
   %shptr6 = getelementptr inbounds [2 x i64], ptr %shape_arr, i64 0, i64 1
   store i64 5, ptr %shptr6, align 8
-  %varbuilder_get_result = call ptr @tl_varbuilder_get(ptr @str_literal.98, i64 2, ptr %shape_arr)
+  %varbuilder_get_result = call ptr @tl_varbuilder_get(ptr @str_literal.103, i64 2, ptr %shape_arr)
   store ptr %varbuilder_get_result, ptr %weight, align 8
   %arr_malloc7 = call ptr @malloc(i64 ptrtoint (ptr getelementptr (i64, ptr null, i32 1) to i64))
   call void @tl_mem_register_struct(ptr %arr_malloc7)
@@ -429,9 +449,9 @@ entry:
   %shape_arr11 = alloca [1 x i64], align 8
   %shptr12 = getelementptr inbounds [1 x i64], ptr %shape_arr11, i64 0, i64 0
   store i64 5, ptr %shptr12, align 8
-  %varbuilder_get_result13 = call ptr @tl_varbuilder_get(ptr @str_literal.99, i64 1, ptr %shape_arr11)
+  %varbuilder_get_result13 = call ptr @tl_varbuilder_get(ptr @str_literal.104, i64 1, ptr %shape_arr11)
   store ptr %varbuilder_get_result13, ptr %bias, align 8
-  call void @tl_print_string(ptr @str_literal.100)
+  call void @tl_print_string(ptr @str_literal.105)
   %weight14 = load ptr, ptr %weight, align 8
   call void @tl_tensor_print(ptr %weight14)
   %bias15 = load ptr, ptr %bias, align 8
@@ -451,23 +471,23 @@ entry:
   %output21 = load ptr, ptr %output, align 8
   %sum_res = call ptr @tl_tensor_sum(ptr %output21)
   store ptr %sum_res, ptr %loss, align 8
-  call void @tl_print_string(ptr @str_literal.101)
+  call void @tl_print_string(ptr @str_literal.106)
   %loss22 = load ptr, ptr %loss, align 8
   call void @tl_tensor_print(ptr %loss22)
   %loss23 = load ptr, ptr %loss, align 8
   call void @tl_tensor_backward(ptr %loss23)
-  %varbuilder_grad_result = call ptr @tl_varbuilder_grad(ptr @str_literal.102)
+  %varbuilder_grad_result = call ptr @tl_varbuilder_grad(ptr @str_literal.107)
   store ptr %varbuilder_grad_result, ptr %gw, align 8
-  %varbuilder_grad_result24 = call ptr @tl_varbuilder_grad(ptr @str_literal.103)
+  %varbuilder_grad_result24 = call ptr @tl_varbuilder_grad(ptr @str_literal.108)
   store ptr %varbuilder_grad_result24, ptr %gb, align 8
-  call void @tl_print_string(ptr @str_literal.104)
+  call void @tl_print_string(ptr @str_literal.109)
   %gw25 = load ptr, ptr %gw, align 8
   call void @tl_tensor_print(ptr %gw25)
-  call void @tl_print_string(ptr @str_literal.105)
+  call void @tl_print_string(ptr @str_literal.110)
   %gb26 = load ptr, ptr %gb, align 8
   call void @tl_tensor_print(ptr %gb26)
   call void @tl_update_all_params(float 0x3F847AE140000000)
-  call void @tl_print_string(ptr @str_literal.106)
+  call void @tl_print_string(ptr @str_literal.111)
   call void @tl_mem_exit_scope()
   ret void
 }

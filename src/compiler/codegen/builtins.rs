@@ -405,6 +405,23 @@ pub fn declare_runtime_functions<'ctx>(
             .add_global_mapping(&f, runtime::memory_manager::tl_mem_unregister as usize);
     }
 
+    // Arena Allocator mappings
+    if let Some(f) = module.get_function("tl_arena_init") {
+        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_init as usize);
+    }
+    if let Some(f) = module.get_function("tl_arena_alloc") {
+        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_alloc as usize);
+    }
+    if let Some(f) = module.get_function("tl_arena_free") {
+        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_free as usize);
+    }
+    if let Some(f) = module.get_function("tl_arena_is_active") {
+        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_is_active as usize);
+    }
+    if let Some(f) = module.get_function("tl_arena_reset") {
+        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_reset as usize);
+    }
+
     if let Some(f) = module.get_function("tl_update_all_params") {
         execution_engine.add_global_mapping(&f, runtime::tl_update_all_params as usize);
     }
@@ -827,6 +844,35 @@ pub fn declare_runtime_functions<'ctx>(
     let pool_release_type = void_type.fn_type(&[ptr_type.into(), i64_type.into()], false);
     module.add_function("tl_pool_release", pool_release_type, None);
     fn_return_types.insert("tl_pool_release".to_string(), Type::Void);
+
+    // Arena Allocator Functions
+    // tl_arena_init(capacity: i64) -> void
+    let arena_init_type = void_type.fn_type(&[i64_type.into()], false);
+    module.add_function("tl_arena_init", arena_init_type, None);
+    fn_return_types.insert("tl_arena_init".to_string(), Type::Void);
+
+    // tl_arena_alloc(size: i64) -> *mut OpaqueTensor
+    let arena_alloc_type = ptr_type.fn_type(&[i64_type.into()], false);
+    module.add_function("tl_arena_alloc", arena_alloc_type, None);
+    fn_return_types.insert(
+        "tl_arena_alloc".to_string(),
+        Type::Tensor(Box::new(Type::F32), 1),
+    );
+
+    // tl_arena_free() -> void
+    let arena_free_type = void_type.fn_type(&[], false);
+    module.add_function("tl_arena_free", arena_free_type, None);
+    fn_return_types.insert("tl_arena_free".to_string(), Type::Void);
+
+    // tl_arena_is_active() -> bool
+    let arena_is_active_type = context.bool_type().fn_type(&[], false);
+    module.add_function("tl_arena_is_active", arena_is_active_type, None);
+    fn_return_types.insert("tl_arena_is_active".to_string(), Type::Bool);
+
+    // tl_arena_reset() -> void
+    let arena_reset_type = void_type.fn_type(&[], false);
+    module.add_function("tl_arena_reset", arena_reset_type, None);
+    fn_return_types.insert("tl_arena_reset".to_string(), Type::Void);
 
     fn_return_types.insert("tl_env_set".to_string(), Type::Void);
     fn_return_types.insert("tl_system_time".to_string(), Type::F32); // Using F32 as default float for now
