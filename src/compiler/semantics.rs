@@ -773,42 +773,86 @@ impl SemanticAnalyzer {
                     return Ok(Type::Void);
                 }
                 if name == "save_all_params" {
-                    if args.len() != 1 {
+                    if args.len() == 1 {
+                        let t0 = self.check_expr(&args[0])?;
+                        match t0 {
+                            Type::UserDefined(s) if s == "String" => {}
+                            _ => {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::UserDefined("String".into()),
+                                    found: t0,
+                                })
+                            }
+                        }
+                    } else if args.len() == 2 {
+                        let t0 = self.check_expr(&args[0])?;
+                        match t0 {
+                            Type::Struct(_) | Type::UserDefined(_) => {}
+                            _ => {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::UserDefined("Struct".into()),
+                                    found: t0,
+                                })
+                            }
+                        }
+                        let t1 = self.check_expr(&args[1])?;
+                        match t1 {
+                            Type::UserDefined(s) if s == "String" => {}
+                            _ => {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::UserDefined("String".into()),
+                                    found: t1,
+                                })
+                            }
+                        }
+                    } else {
                         return Err(SemanticError::ArgumentCountMismatch {
                             name: name.clone(),
-                            expected: 1,
+                            expected: 2, // or 1
                             found: args.len(),
                         });
-                    }
-                    let t0 = self.check_expr(&args[0])?;
-                    match t0 {
-                        Type::UserDefined(s) if s == "String" => {}
-                        _ => {
-                            return Err(SemanticError::TypeMismatch {
-                                expected: Type::UserDefined("String".into()),
-                                found: t0,
-                            })
-                        }
                     }
                     return Ok(Type::Void);
                 }
                 if name == "load_all_params" {
-                    if args.len() != 1 {
+                    if args.len() == 1 {
+                        let t0 = self.check_expr(&args[0])?;
+                        match t0 {
+                            Type::UserDefined(s) if s == "String" => {}
+                            _ => {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::UserDefined("String".into()),
+                                    found: t0,
+                                })
+                            }
+                        }
+                    } else if args.len() == 2 {
+                        let t0 = self.check_expr(&args[0])?;
+                        match t0 {
+                            Type::Struct(_) | Type::UserDefined(_) => {}
+                            _ => {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::UserDefined("Struct".into()),
+                                    found: t0,
+                                })
+                            }
+                        }
+                        let t1 = self.check_expr(&args[1])?;
+                        match t1 {
+                            Type::UserDefined(s) if s == "String" => {}
+                            _ => {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::UserDefined("String".into()),
+                                    found: t1,
+                                })
+                            }
+                        }
+                    } else {
                         return Err(SemanticError::ArgumentCountMismatch {
                             name: name.clone(),
-                            expected: 1,
+                            expected: 2, // or 1
                             found: args.len(),
                         });
-                    }
-                    let t0 = self.check_expr(&args[0])?;
-                    match t0 {
-                        Type::UserDefined(s) if s == "String" => {}
-                        _ => {
-                            return Err(SemanticError::TypeMismatch {
-                                expected: Type::UserDefined("String".into()),
-                                found: t0,
-                            })
-                        }
                     }
                     return Ok(Type::Void);
                 }
@@ -822,6 +866,29 @@ impl SemanticAnalyzer {
                         });
                     }
                     return Ok(Type::F32);
+                }
+
+                if name == "register_modules" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&args[0])?;
+                    match t0 {
+                        Type::Struct(_) | Type::UserDefined(_) => {
+                            // Ideally check if it maps to a known struct, but UserDefined usually implies valid type if checked elsewhere
+                        }
+                        _ => {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::UserDefined("Struct".into()),
+                                found: t0,
+                            })
+                        }
+                    }
+                    return Ok(Type::Void);
                 }
 
                 if name == "add_parameter" {
@@ -1776,15 +1843,9 @@ impl SemanticAnalyzer {
                         }
                         Ok(Type::UserDefined("Path".to_string()))
                     }
-                    ("System", "time") => {
-                        Ok(Type::F32)
-                    }
-                    ("System", "sleep") => {
-                        Ok(Type::Void)
-                    }
-                    ("Env", "get") => {
-                        Ok(Type::UserDefined("String".into()))
-                    }
+                    ("System", "time") => Ok(Type::F32),
+                    ("System", "sleep") => Ok(Type::Void),
+                    ("Env", "get") => Ok(Type::UserDefined("String".into())),
                     ("Env", "set") => {
                         if args.len() != 2 {
                             return Err(SemanticError::ArgumentCountMismatch {
@@ -1795,18 +1856,12 @@ impl SemanticAnalyzer {
                         }
                         Ok(Type::Void)
                     }
-                    ("Http", "get") => {
-                        Ok(Type::UserDefined("String".into()))
-                    }
-                    ("Http", "download") => {
-                        Ok(Type::Bool)
-                    }
-                    _ => {
-                        Err(SemanticError::FunctionNotFound(format!(
-                            "{}::{}",
-                            type_name, method_name
-                        )))
-                    }
+                    ("Http", "get") => Ok(Type::UserDefined("String".into())),
+                    ("Http", "download") => Ok(Type::Bool),
+                    _ => Err(SemanticError::FunctionNotFound(format!(
+                        "{}::{}",
+                        type_name, method_name
+                    ))),
                 }
             }
             Expr::FieldAccess(obj, field_name) => {

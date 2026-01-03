@@ -19,31 +19,7 @@ fn get_memory() -> i64 {
     return tl_get_memory_mb();
 }
 
-fn register_gpt_params(m: GPT) {
-    add_parameter("w.w", m.w.w);
 
-    add_parameter("b.l1.w", m.b.l1.w);
-    add_parameter("b.l1.b", m.b.l1.b);
-    
-    add_parameter("b.a.a.W", m.b.a.a.W);
-    add_parameter("b.a.a.b", m.b.a.a.b);
-    add_parameter("b.a.p.W", m.b.a.p.W);
-    add_parameter("b.a.p.b", m.b.a.p.b);
-    
-    add_parameter("b.l2.w", m.b.l2.w);
-    add_parameter("b.l2.b", m.b.l2.b); 
-
-    add_parameter("b.m.f.W", m.b.m.f.W);
-    add_parameter("b.m.f.b", m.b.m.f.b);
-    add_parameter("b.m.p.W", m.b.m.p.W);
-    add_parameter("b.m.p.b", m.b.m.p.b);
-
-    add_parameter("l.w", m.l.w);
-    add_parameter("l.b", m.l.b);
-
-    add_parameter("h.W", m.h.W);
-    add_parameter("h.b", m.h.b);
-}
 
 // CRITICAL: Extract training loop into separate function to create new stack frame
 fn train_epoch(model: GPT, lr: f32, epoch: i64) {
@@ -127,11 +103,7 @@ fn main() {
         
         train_epoch(model, lr, epoch);
     }
-    
-    // Register all parameters manually before saving
-    // Because we use functional updates, the final tensors are in 'model', but not in the global registry.
-    register_gpt_params(model);
-    
     print("Training Complete!");
-    save_all_params("model_2digit.safetensors");
+    // Auto-register and save
+    save_all_params(model, "model_2digit.safetensors");
 }

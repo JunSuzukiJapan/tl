@@ -1,2 +1,5 @@
 target/
 Papers/
+
+dump.ll
+*.safetensors

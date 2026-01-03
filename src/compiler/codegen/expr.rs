@@ -165,6 +165,93 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(())
     }
 
+    pub(crate) fn gen_register_params(
+        &self,
+        struct_ptr: inkwell::values::BasicValueEnum<'ctx>,
+        struct_name: &str,
+        prefix: String,
+    ) -> Result<(), String> {
+        let def = self
+            .struct_defs
+            .get(struct_name)
+            .ok_or(format!("Struct definition '{}' not found", struct_name))?;
+
+        let struct_ty = *self
+            .struct_types
+            .get(struct_name)
+            .ok_or("Struct LLVM type not found")?;
+
+        for (i, (field_name, field_type)) in def.fields.iter().enumerate() {
+            let full_key = if prefix.is_empty() {
+                field_name.clone()
+            } else {
+                format!("{}.{}", prefix, field_name)
+            };
+
+            let ptr = struct_ptr.into_pointer_value();
+            let field_ptr = self
+                .builder
+                .build_struct_gep(struct_ty, ptr, i as u32, field_name)
+                .map_err(|e| e.to_string())?;
+
+            match field_type {
+                Type::Tensor(_, _) => {
+                    // Register Tensor: tl_add_parameter(name, tensor)
+                    let tensor_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let t_val = self
+                        .builder
+                        .build_load(tensor_ptr_ty, field_ptr, field_name)
+                        .map_err(|e| e.to_string())?;
+
+                    let key_ptr = self
+                        .builder
+                        .build_global_string_ptr(&full_key, "key_str")
+                        .map_err(|e| e.to_string())?;
+
+                    let i8_ptr = self
+                        .builder
+                        .build_pointer_cast(
+                            key_ptr.as_pointer_value(),
+                            self.context.ptr_type(inkwell::AddressSpace::default()),
+                            "key_cast",
+                        )
+                        .map_err(|e| e.to_string())?;
+
+                    let add_fn = self
+                        .module
+                        .get_function("tl_add_parameter")
+                        .ok_or("tl_add_parameter not found")?;
+
+                    self.builder
+                        .build_call(add_fn, &[i8_ptr.into(), t_val.into()], "")
+                        .map_err(|e| e.to_string())?;
+                }
+                Type::UserDefined(sub_name) if sub_name != "String" => {
+                    // Recurse
+                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let sub_val = self
+                        .builder
+                        .build_load(ptr_ty, field_ptr, "sub_ptr")
+                        .map_err(|e| e.to_string())?;
+                    self.gen_register_params(sub_val, sub_name, full_key)?;
+                }
+                Type::Struct(sub_name) => {
+                    // Recurse for Type::Struct as well (e.g. from generic instantiation)
+                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let sub_val = self
+                        .builder
+                        .build_load(ptr_ty, field_ptr, "sub_ptr")
+                        .map_err(|e| e.to_string())?;
+                    self.gen_register_params(sub_val, sub_name, full_key)?;
+                }
+                _ => {
+                    // Skip primitives
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn compile_expr(
         &mut self,
         expr: &Expr,
@@ -2104,6 +2191,19 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Ok((struct_ptr.into(), Type::Struct(name.to_string())));
         }
         match name {
+            "register_modules" => {
+                if args.len() != 1 {
+                    return Err("register_modules requires 1 argument (struct)".into());
+                }
+                let (val, ty) = self.compile_expr(&args[0])?;
+                match ty {
+                    Type::Struct(sname) | Type::UserDefined(sname) => {
+                        self.gen_register_params(val, &sname, "".to_string())?;
+                        return Ok((self.context.i64_type().const_zero().into(), Type::Void));
+                    }
+                    _ => return Err("register_modules expects a struct argument".into()),
+                }
+            }
             "print" | "println" => {
                 if args.len() != 1 {
                     return Err("print requires 1 argument".into());
@@ -2964,7 +3064,24 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                     "save_all_params" => {
                         let fn_val = self.module.get_function("tl_save_all_params").unwrap();
-                        let (path_val, _) = self.compile_expr(&args[0])?;
+                        let path_val = if args.len() == 2 {
+                            // Arg 0: Struct/UserDefined
+                            let (struct_val, struct_ty) = self.compile_expr(&args[0])?;
+                            let struct_name = match struct_ty {
+                                Type::Struct(s) | Type::UserDefined(s) => s,
+                                _ => return Err("Expected struct as first arg".into()),
+                            };
+                            self.gen_register_params(struct_val, &struct_name, "".to_string())?;
+
+                            // Arg 1: String
+                            let (path, _) = self.compile_expr(&args[1])?;
+                            path
+                        } else {
+                            // Arg 0: String
+                            let (path, _) = self.compile_expr(&args[0])?;
+                            path
+                        };
+
                         self.builder
                             .build_call(fn_val, &[path_val.into()], "save_all_res")
                             .map_err(|e| e.to_string())?;
@@ -2987,7 +3104,24 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                     "load_all_params" => {
                         let fn_val = self.module.get_function("tl_load_all_params").unwrap();
-                        let (path_val, _) = self.compile_expr(&args[0])?;
+                        let path_val = if args.len() == 2 {
+                            // Arg 0: Struct/UserDefined
+                            let (struct_val, struct_ty) = self.compile_expr(&args[0])?;
+                            let struct_name = match struct_ty {
+                                Type::Struct(s) | Type::UserDefined(s) => s,
+                                _ => return Err("Expected struct as first arg".into()),
+                            };
+                            self.gen_register_params(struct_val, &struct_name, "".to_string())?;
+
+                            // Arg 1: String
+                            let (path, _) = self.compile_expr(&args[1])?;
+                            path
+                        } else {
+                            // Arg 0: String
+                            let (path, _) = self.compile_expr(&args[0])?;
+                            path
+                        };
+
                         self.builder
                             .build_call(fn_val, &[path_val.into()], "load_all_res")
                             .map_err(|e| e.to_string())?;
