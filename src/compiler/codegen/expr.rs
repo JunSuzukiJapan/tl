@@ -1871,6 +1871,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if args.len() != 2 {
                         return Err("slice requires 2 arguments".into());
                     }
+
+                    // slice() only works on Tensors, not ScalarArrays
+                    if matches!(obj_ty, Type::ScalarArray(_, _)) {
+                        return Err("slice() does not support ScalarArray. Convert to Tensor first using Tensor::new() or similar".into());
+                    }
+
                     let (start_val, _) = self.compile_expr(&args[0])?;
                     let (len_val, _) = self.compile_expr(&args[1])?;
 
@@ -2995,13 +3001,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .map_err(|e| e.to_string())?;
 
                         // Fix alignment
-                        unsafe {
-                            shape_alloca
-                                .as_instruction_value()
-                                .unwrap()
-                                .set_alignment(16)
-                                .map_err(|e| e.to_string())?;
-                        }
+                        shape_alloca
+                            .as_instruction_value()
+                            .unwrap()
+                            .set_alignment(16)
+                            .map_err(|e| e.to_string())?;
 
                         // Store compiled shape values
                         for (i, val) in shape_vals.iter().enumerate() {

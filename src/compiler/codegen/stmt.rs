@@ -419,12 +419,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Emit cleanup for ALL active scopes (reverse order)
                 self.emit_all_scopes_cleanup();
 
-                // CRITICAL FIX: Pop ALL function scopes from variables stack
-                // emit_all_scopes_cleanup only emits LLVM IR calls but doesn't update Rust state
-                let scopes_to_pop = self.variables.len() - self.fn_entry_scope_depth;
-                for _ in 0..scopes_to_pop {
-                    self.variables.pop();
-                }
+                // NOTE: Do NOT pop self.variables here!
+                // Reason: compile_expr() above may contain recursive function calls
+                // If we pop scopes here, those recursive calls will lose access to variables
+                // The compiler's variable stack will be cleaned up naturally after function compilation
 
                 self.builder
                     .build_return(Some(&val))
@@ -1450,7 +1448,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Create scalar tensor
                 // Create scalar tensor
                 let val = rhs.into_float_value();
-                let f32_type = self.context.f32_type();
+                let _f32_type = self.context.f32_type();
                 let i64_type = self.context.i64_type();
 
                 // 1. Alloca in Entry Block
@@ -1513,7 +1511,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Scalar op Tensor (Broadcasting)
                 // Create scalar tensor
                 let val = lhs.into_float_value();
-                let f32_type = self.context.f32_type();
+                let _f32_type = self.context.f32_type();
                 let i64_type = self.context.i64_type();
 
                 // 1. Alloca in Entry Block
