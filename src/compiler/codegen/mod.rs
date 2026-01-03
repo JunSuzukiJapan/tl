@@ -24,6 +24,7 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) fn_return_types: HashMap<String, Type>,
     pub(crate) struct_types: HashMap<String, StructType<'ctx>>,
     pub(crate) struct_defs: HashMap<String, StructDef>,
+    pub(crate) fn_entry_scope_depth: usize,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -44,6 +45,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             fn_return_types: HashMap::new(),
             struct_types: HashMap::new(),
             struct_defs: HashMap::new(),
+            fn_entry_scope_depth: 0,
         };
 
         // Delegate to runtime module
@@ -74,11 +76,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
-    // Emit cleanup for ALL active scopes (reverse order)
-    // Used for Return statements to ensure everything is freed before returning
     fn emit_all_scopes_cleanup(&self) {
         if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
-            for _ in 0..self.variables.len() {
+            // Only clean up scopes pushed WITHIN the current function
+            for _ in 0..(self.variables.len() - self.fn_entry_scope_depth) {
                 self.builder.build_call(f, &[], "").unwrap();
             }
         }
@@ -232,6 +233,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Compile Body
                 let entry = self.context.append_basic_block(function, "entry");
                 self.builder.position_at_end(entry);
+                self.fn_entry_scope_depth = self.variables.len();
                 self.enter_scope();
 
                 // Get params and store them
@@ -459,13 +461,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         let entry = self.context.append_basic_block(function, "entry");
         self.builder.position_at_end(entry);
 
-        // Clear variables for new function scope?
-        // Actually functions have their own scope stack context usually.
-        // But here we might be reusing the generator.
-        // Ideally we should reset scopes relative to function, but we kept global context?
-        // Let's assume a fresh function scope.
-        // self.variables.clear(); // DANGEROUS if we have globals?
-        // Better: Push a new scope for function arguments
+        // Push a new scope for function arguments
+        self.fn_entry_scope_depth = self.variables.len();
         self.enter_scope(); // Function scope
 
         // Register arguments
@@ -513,9 +510,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .unwrap()
                 .get_terminator()
                 .is_none()
-            {
-                self.builder.build_return(None).map_err(|e| e.to_string())?;
-            }
+        {
+            self.builder.build_return(None).map_err(|e| e.to_string())?;
+        }
 
         if !function.verify(true) {
             function.print_to_stderr();

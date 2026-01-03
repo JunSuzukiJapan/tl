@@ -376,6 +376,10 @@ pub extern "C" fn tl_tensor_print(t: *mut OpaqueTensor) {
 #[no_mangle]
 pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
     if !t.is_null() {
+        // Unregister from memory manager if it was registered
+        // (to prevent double-free on scope exit if manually freed)
+        memory_manager::tl_mem_unregister(t as *mut std::ffi::c_void);
+
         unsafe {
             let elem_count = (*t).0.elem_count();
             tensor_pool::pool_release(t, elem_count);

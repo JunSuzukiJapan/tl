@@ -1,7 +1,7 @@
 use super::CodeGenerator;
 use crate::compiler::ast::*;
-use inkwell::values::*;
 use inkwell::types::BasicType;
+use inkwell::values::*;
 
 impl<'ctx> CodeGenerator<'ctx> {
     // Helper to infer free indices from implicit tensor equation (RHS)
@@ -80,11 +80,15 @@ impl<'ctx> CodeGenerator<'ctx> {
             .ok_or("tl_mem_unregister not found")?;
 
         match ty {
-            Type::Tensor(_, _) => {
+            Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => {
                 self.builder
                     .build_call(unreg_fn, &[val.into()], "")
                     .map_err(|e| e.to_string())?;
             }
+            _ => {}
+        }
+
+        match ty {
             Type::Struct(name) | Type::UserDefined(name) => {
                 if let Some(struct_def) = self.struct_defs.get(name) {
                     let ptr = val.into_pointer_value();
@@ -195,10 +199,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let val_ir = self.ensure_tensor_v2(expr, 0)?;
                     let val_ty = if matches!(type_annotation, Type::Tensor(_, _)) {
                         type_annotation.clone()
+                    } else if matches!(type_annotation, Type::ScalarArray(_, _)) {
+                        type_annotation.clone()
                     } else {
-                        // Fallback to compiled type if not explicitly a Tensor
-                        let (_, ty) = self.compile_expr(expr)?;
-                        ty
+                        // tensor name: f32 means Tensor<f32, 0>
+                        Type::Tensor(Box::new(type_annotation.clone()), 0)
                     };
 
                     // NOTE: Removed clone to preserve gradients
@@ -361,7 +366,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                     }
                 }
-                let (val, _) = self.compile_expr(expr)?;
+                let (val, ty) = self.compile_expr(expr)?;
+
+                // IMPORTANT: Unregister the return value from MemoryManager
+                // so it survives emit_all_scopes_cleanup
+                // This prevents the return value from being freed when we exit the function scope
+                self.emit_recursive_unregister(val, &ty)?;
 
                 // Emit cleanup for ALL active scopes (reverse order)
                 self.emit_all_scopes_cleanup();
@@ -780,7 +790,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 }
                             }
                             Type::ScalarArray(_, len) => i64_type.const_int(*len as u64, false),
-                            _ => return Err("For loop iterator must be a tensor, array, or range".into()),
+                            _ => {
+                                return Err(
+                                    "For loop iterator must be a tensor, array, or range".into()
+                                )
+                            }
                         };
 
                         // Store tensor/array pointer for use in body
@@ -823,7 +837,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 }
                             }
                             Type::ScalarArray(_, len) => i64_type.const_int(*len as u64, false),
-                            _ => return Err("For loop iterator must be a tensor, array, or range".into()),
+                            _ => {
+                                return Err(
+                                    "For loop iterator must be a tensor, array, or range".into()
+                                )
+                            }
                         };
 
                         let tensor_ptr = iter_val.into_pointer_value();
@@ -942,25 +960,31 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     "elem_val",
                                 )
                                 .map_err(|e| e.to_string())?;
-                            
+
                             match get_call.try_as_basic_value() {
                                 inkwell::values::ValueKind::Basic(v) => {
                                     let f_val = v.into_float_value();
                                     match inner_ty.as_ref() {
                                         Type::I64 => {
-                                            let i_val = self.builder.build_float_to_signed_int(
-                                                f_val,
-                                                self.context.i64_type(),
-                                                "f2i"
-                                            ).map_err(|e| e.to_string())?;
+                                            let i_val = self
+                                                .builder
+                                                .build_float_to_signed_int(
+                                                    f_val,
+                                                    self.context.i64_type(),
+                                                    "f2i",
+                                                )
+                                                .map_err(|e| e.to_string())?;
                                             (i_val.into(), Type::I64)
                                         }
                                         Type::I32 => {
-                                            let i_val = self.builder.build_float_to_signed_int(
-                                                f_val,
-                                                self.context.i32_type(),
-                                                "f2i"
-                                            ).map_err(|e| e.to_string())?;
+                                            let i_val = self
+                                                .builder
+                                                .build_float_to_signed_int(
+                                                    f_val,
+                                                    self.context.i32_type(),
+                                                    "f2i",
+                                                )
+                                                .map_err(|e| e.to_string())?;
                                             (i_val.into(), Type::I32)
                                         }
                                         _ => (v, Type::F32), // Default/Keep as F32
@@ -970,11 +994,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                             }
                         }
                         Type::ScalarArray(elem_ty, len) => {
-                            let llvm_elem_type: inkwell::types::BasicTypeEnum = match elem_ty.as_ref() {
-                                Type::I64 => self.context.i64_type().into(),
-                                Type::F32 => self.context.f32_type().into(),
-                                _ => self.context.f32_type().into(),
-                            };
+                            let llvm_elem_type: inkwell::types::BasicTypeEnum =
+                                match elem_ty.as_ref() {
+                                    Type::I64 => self.context.i64_type().into(),
+                                    Type::F32 => self.context.f32_type().into(),
+                                    _ => self.context.f32_type().into(),
+                                };
                             let array_type = llvm_elem_type.array_type(len as u32);
                             let elem_ptr = unsafe {
                                 self.builder

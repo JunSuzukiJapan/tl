@@ -1,5 +1,5 @@
 tensor A: i64 = [1, 2, 3, 4, 5];
-tensor B: f32 = [10.5, 20.0, 5.5];
+print(A);tensor B: f32 = [10.5, 20.0, 5.5];
 
 // Sum
 let s = sum(i for i in A);

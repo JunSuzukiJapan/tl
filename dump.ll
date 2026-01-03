@@ -2,8 +2,7 @@
 source_filename = "main"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 
-@str_literal = private unnamed_addr constant [6 x i8] c"Time:\00", align 1
-@str_literal.98 = private unnamed_addr constant [8 x i8] c"Result:\00", align 1
+@str_literal = private unnamed_addr constant [21 x i8] c"MatMul result shape:\00", align 1
 
 declare void @tl_print_i64(i64)
 
@@ -377,56 +376,141 @@ declare ptr @tl_pool_acquire.96(i64)
 
 declare void @tl_pool_release.97(ptr, i64)
 
-define i64 @main() {
+define void @main() {
 entry:
-  %end = alloca float, align 4
-  %a = alloca i64, align 8
-  %i = alloca i64, align 8
-  %x = alloca float, align 4
-  %start = alloca float, align 4
+  %C = alloca ptr, align 8
+  %idx_arr32 = alloca [2 x i64], align 8
+  %idx_arr = alloca [2 x i64], align 8
+  %k = alloca i64, align 8
+  %j = alloca i64, align 8
+  %i16 = alloca i64, align 8
+  %B = alloca ptr, align 8
+  %shape_arr6 = alloca [2 x i64], align 8
+  %A = alloca ptr, align 8
+  %shape_arr = alloca [2 x i64], align 8
+  %N = alloca i64, align 8
+  %K = alloca i64, align 8
+  %M = alloca i64, align 8
   call void @tl_mem_enter_scope()
-  %call_tmp = call float @tl_system_time()
-  store float %call_tmp, ptr %start, align 4
-  store float 0.000000e+00, ptr %x, align 4
-  br label %for_header
-
-for_header:                                       ; preds = %for_body, %entry
-  %for_idx = phi i64 [ 0, %entry ], [ %next_idx, %for_body ]
-  %for_cond = icmp slt i64 %for_idx, 50000
-  br i1 %for_cond, label %for_body, label %for_end
-
-for_body:                                         ; preds = %for_header
+  store i64 16, ptr %M, align 8
+  store i64 16, ptr %K, align 8
+  store i64 16, ptr %N, align 8
+  %M1 = load i64, ptr %M, align 8
+  %K2 = load i64, ptr %K, align 8
+  %shape_ptr_in = getelementptr inbounds [2 x i64], ptr %shape_arr, i64 0, i64 0
+  store i64 %M1, ptr %shape_ptr_in, align 8
+  %shape_ptr_in3 = getelementptr inbounds [2 x i64], ptr %shape_arr, i64 0, i64 1
+  store i64 %K2, ptr %shape_ptr_in3, align 8
+  %randn_res = call ptr @tl_tensor_randn(i64 2, ptr %shape_arr, i1 false)
+  store ptr %randn_res, ptr %A, align 8
+  %K4 = load i64, ptr %K, align 8
+  %N5 = load i64, ptr %N, align 8
+  %shape_ptr_in7 = getelementptr inbounds [2 x i64], ptr %shape_arr6, i64 0, i64 0
+  store i64 %K4, ptr %shape_ptr_in7, align 8
+  %shape_ptr_in8 = getelementptr inbounds [2 x i64], ptr %shape_arr6, i64 0, i64 1
+  store i64 %N5, ptr %shape_ptr_in8, align 8
+  %randn_res9 = call ptr @tl_tensor_randn(i64 2, ptr %shape_arr6, i1 false)
+  store ptr %randn_res9, ptr %B, align 8
+  %A10 = load ptr, ptr %A, align 8
+  %dim_size = call i64 @tl_tensor_dim(ptr %A10, i64 0)
+  %dim_size11 = call i64 @tl_tensor_dim(ptr %A10, i64 1)
+  %B12 = load ptr, ptr %B, align 8
+  %dim_size13 = call i64 @tl_tensor_dim(ptr %B12, i64 1)
+  %sz_acc = mul i64 1, %dim_size
+  %sz_acc14 = mul i64 %sz_acc, %dim_size11
+  %sz_acc15 = mul i64 %sz_acc14, %dim_size13
+  %buf_void = call ptr @calloc(i64 %sz_acc15, i64 4)
   call void @tl_mem_enter_scope()
-  store i64 %for_idx, ptr %i, align 8
-  %malloc_size = mul i64 ptrtoint (ptr getelementptr (float, ptr null, i32 1) to i64), 2
-  %arr_malloc = call ptr @malloc(i64 %malloc_size)
-  %elem_ptr = getelementptr inbounds float, ptr %arr_malloc, i64 0
-  store float 1.000000e+00, ptr %elem_ptr, align 4
-  %elem_ptr1 = getelementptr inbounds float, ptr %arr_malloc, i64 1
-  store float 2.000000e+00, ptr %elem_ptr1, align 4
-  store ptr %arr_malloc, ptr %a, align 8
-  %x2 = load float, ptr %x, align 4
-  %a_ptr = load ptr, ptr %a, align 8
-  %scalar_elem_ptr = getelementptr inbounds float, ptr %a_ptr, i64 0
-  %scalar_elem = load float, ptr %scalar_elem_ptr, align 4
-  %faddtmp = fadd float %x2, %scalar_elem
-  store float %faddtmp, ptr %x, align 4
-  call void @tl_mem_exit_scope()
-  %next_idx = add i64 %for_idx, 1
-  br label %for_header
+  br label %loop_cond
 
-for_end:                                          ; preds = %for_header
-  %call_tmp3 = call float @tl_system_time()
-  store float %call_tmp3, ptr %end, align 4
+eq_after:                                         ; preds = %loop_aft
+  %shape = alloca [3 x i64], align 8
+  %shape_ptr = getelementptr [3 x i64], ptr %shape, i64 0, i64 0
+  store i64 %dim_size, ptr %shape_ptr, align 8
+  %shape_ptr51 = getelementptr [3 x i64], ptr %shape, i64 0, i64 1
+  store i64 %dim_size11, ptr %shape_ptr51, align 8
+  %shape_ptr52 = getelementptr [3 x i64], ptr %shape, i64 0, i64 2
+  store i64 %dim_size13, ptr %shape_ptr52, align 8
+  %t = call ptr @tl_tensor_new(ptr %buf_void, i64 3, ptr %shape)
+  store ptr %t, ptr %C, align 8
   call void @tl_print_string(ptr @str_literal)
-  %end4 = load float, ptr %end, align 4
-  %start5 = load float, ptr %start, align 4
-  %fsubtmp = fsub float %end4, %start5
-  call void @tl_print_f32(float %fsubtmp)
-  call void @tl_print_string(ptr @str_literal.98)
-  %x6 = load float, ptr %x, align 4
-  call void @tl_print_f32(float %x6)
+  %C53 = load ptr, ptr %C, align 8
+  call void @tl_tensor_print(ptr %C53)
   call void @tl_mem_exit_scope()
-  call void @tl_mem_exit_scope()
-  ret i64 0
+  ret void
+
+loop_cond:                                        ; preds = %loop_aft19, %entry
+  %i = phi i64 [ 0, %entry ], [ %next50, %loop_aft19 ]
+  %cmp = icmp slt i64 %i, %dim_size
+  br i1 %cmp, label %loop_body, label %loop_aft
+
+loop_body:                                        ; preds = %loop_cond
+  store i64 %i, ptr %i16, align 8
+  br label %loop_cond17
+
+loop_aft:                                         ; preds = %loop_cond
+  br label %eq_after
+
+loop_cond17:                                      ; preds = %loop_aft24, %loop_body
+  %i20 = phi i64 [ 0, %loop_body ], [ %next48, %loop_aft24 ]
+  %cmp21 = icmp slt i64 %i20, %dim_size11
+  br i1 %cmp21, label %loop_body18, label %loop_aft19
+
+loop_body18:                                      ; preds = %loop_cond17
+  store i64 %i20, ptr %j, align 8
+  br label %loop_cond22
+
+loop_aft19:                                       ; preds = %loop_cond17
+  %iv49 = load i64, ptr %i16, align 8
+  %next50 = add i64 %iv49, 1
+  br label %loop_cond
+
+loop_cond22:                                      ; preds = %loop_body23, %loop_body18
+  %i25 = phi i64 [ 0, %loop_body18 ], [ %next, %loop_body23 ]
+  %cmp26 = icmp slt i64 %i25, %dim_size13
+  br i1 %cmp26, label %loop_body23, label %loop_aft24
+
+loop_body23:                                      ; preds = %loop_cond22
+  store i64 %i25, ptr %k, align 8
+  %A27 = load ptr, ptr %A, align 8
+  %i28 = load i64, ptr %i16, align 8
+  %idx_ptr = getelementptr [2 x i64], ptr %idx_arr, i64 0, i64 0
+  store i64 %i28, ptr %idx_ptr, align 8
+  %j29 = load i64, ptr %j, align 8
+  %idx_ptr30 = getelementptr [2 x i64], ptr %idx_arr, i64 0, i64 1
+  store i64 %j29, ptr %idx_ptr30, align 8
+  %get_md_call = call float @tl_tensor_get_f32_md(ptr %A27, ptr %idx_arr, i64 2)
+  %B31 = load ptr, ptr %B, align 8
+  %j33 = load i64, ptr %j, align 8
+  %idx_ptr34 = getelementptr [2 x i64], ptr %idx_arr32, i64 0, i64 0
+  store i64 %j33, ptr %idx_ptr34, align 8
+  %k35 = load i64, ptr %k, align 8
+  %idx_ptr36 = getelementptr [2 x i64], ptr %idx_arr32, i64 0, i64 1
+  store i64 %k35, ptr %idx_ptr36, align 8
+  %get_md_call37 = call float @tl_tensor_get_f32_md(ptr %B31, ptr %idx_arr32, i64 2)
+  %fmultmp = fmul float %get_md_call, %get_md_call37
+  %iv = load i64, ptr %k, align 8
+  %term = mul i64 %iv, 1
+  %off = add i64 0, %term
+  %str = mul i64 1, %dim_size13
+  %iv38 = load i64, ptr %j, align 8
+  %term39 = mul i64 %iv38, %str
+  %off40 = add i64 %off, %term39
+  %str41 = mul i64 %str, %dim_size11
+  %iv42 = load i64, ptr %i16, align 8
+  %term43 = mul i64 %iv42, %str41
+  %off44 = add i64 %off40, %term43
+  %str45 = mul i64 %str41, %dim_size
+  %ptr = getelementptr float, ptr %buf_void, i64 %off44
+  %cur = load float, ptr %ptr, align 4
+  %new = fadd float %cur, %fmultmp
+  store float %new, ptr %ptr, align 4
+  %iv46 = load i64, ptr %k, align 8
+  %next = add i64 %iv46, 1
+  br label %loop_cond22
+
+loop_aft24:                                       ; preds = %loop_cond22
+  %iv47 = load i64, ptr %j, align 8
+  %next48 = add i64 %iv47, 1
+  br label %loop_cond17
 }

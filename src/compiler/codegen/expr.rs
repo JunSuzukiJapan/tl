@@ -1553,7 +1553,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             // Tensor is a pointer to OpaqueTensor struct.
             // We represent it as a generic pointer (ptr) in LLVM 15+, or i8* in older.
             // Inkwell Context has ptr_type
-            Type::Tensor(_, _) | Type::UserDefined(_) | Type::Struct(_) => self
+            Type::Tensor(_, _)
+            | Type::UserDefined(_)
+            | Type::Struct(_)
+            | Type::ScalarArray(_, _) => self
                 .context
                 .ptr_type(inkwell::AddressSpace::default())
                 .into(),
@@ -2041,44 +2044,41 @@ impl<'ctx> CodeGenerator<'ctx> {
                             return Err("tl_print_string not found (add to init)".into());
                         }
                     }
-                    Type::ScalarArray(_elem_type, len) => {
-                        // Print ScalarArray as [elem0, elem1, ...]
-                        let f32_type = self.context.f32_type();
+                    Type::ScalarArray(ref elem_type, len) => {
                         let i64_type = self.context.i64_type();
-                        let array_type = f32_type.array_type(len as u32);
+                        let f32_type = self.context.f32_type();
+
+                        let (llvm_elem_type, print_fn_name): (inkwell::types::BasicTypeEnum, &str) =
+                            match elem_type.as_ref() {
+                                Type::I64 => (i64_type.into(), "tl_print_i64"),
+                                _ => (f32_type.into(), "tl_print_f32"),
+                            };
+
+                        let print_fn = self
+                            .module
+                            .get_function(print_fn_name)
+                            .ok_or(format!("{} not found", print_fn_name))?;
+
                         let array_ptr = arg_val.into_pointer_value();
 
-                        // Get print function
-                        let _print_string_fn = self
-                            .module
-                            .get_function("tl_print_string")
-                            .ok_or("tl_print_string not found")?;
-                        let print_f32_fn = self
-                            .module
-                            .get_function("tl_print_f32")
-                            .ok_or("tl_print_f32 not found")?;
-
-                        // Print each element
                         for i in 0..len {
+                            let idx = i64_type.const_int(i as u64, false);
                             let elem_ptr = unsafe {
                                 self.builder
                                     .build_in_bounds_gep(
-                                        array_type,
+                                        llvm_elem_type,
                                         array_ptr,
-                                        &[
-                                            i64_type.const_int(0, false),
-                                            i64_type.const_int(i as u64, false),
-                                        ],
+                                        &[idx],
                                         "elem_ptr",
                                     )
                                     .map_err(|e| e.to_string())?
                             };
                             let elem_val = self
                                 .builder
-                                .build_load(f32_type, elem_ptr, "elem_val")
+                                .build_load(llvm_elem_type, elem_ptr, "elem_val")
                                 .map_err(|e| e.to_string())?;
                             self.builder
-                                .build_call(print_f32_fn, &[elem_val.into()], "print_elem")
+                                .build_call(print_fn, &[elem_val.into()], "print_elem")
                                 .map_err(|e| e.to_string())?;
                         }
                     }

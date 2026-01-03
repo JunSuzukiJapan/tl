@@ -41,16 +41,22 @@ impl MemoryManager {
     /// Exit current scope and free ALL allocations in that scope
     /// CRITICAL: This MUST free all unfreed memory in the scope
     pub fn exit_scope(&mut self) {
+        if self.scopes.is_empty() {
+            // eprintln!("WARNING: exit_scope called on empty scope stack");
+            return;
+        }
         if let Some(allocations) = self.scopes.pop() {
             // Free all allocations in reverse order (LIFO)
             for record in allocations.into_iter().rev() {
                 unsafe {
                     match record.alloc_type {
                         AllocationType::Struct => {
+                            // eprintln!("DEBUG: freeing struct at {:?}", record.ptr);
                             libc::free(record.ptr);
                         }
                         AllocationType::Tensor => {
                             let tensor_ptr = record.ptr as *mut OpaqueTensor;
+                            // eprintln!("DEBUG: freeing tensor at {:?}", tensor_ptr);
                             super::tl_tensor_free(tensor_ptr);
                         }
                     }

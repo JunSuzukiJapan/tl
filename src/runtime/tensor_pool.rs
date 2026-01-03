@@ -43,6 +43,11 @@ impl TensorPool {
     /// Release a tensor back to the pool
     pub fn release(&mut self, ptr: *mut OpaqueTensor, element_count: usize) {
         if let Some(bucket) = size_bucket(element_count) {
+            // Check if already in pool (to prevent double release corruption)
+            if self.pools[bucket].contains(&ptr) {
+                return;
+            }
+
             if self.pools[bucket].len() < MAX_POOL_SIZE {
                 // Drop the content of OpaqueTensor (Tensor, Arc<Var>, etc.)
                 // but keep the allocated memory for the struct itself
