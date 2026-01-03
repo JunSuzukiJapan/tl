@@ -188,6 +188,30 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder
                     .build_store(field_ptr, val)
                     .map_err(|e| e.to_string())?;
+
+                // Fix for Use-After-Free:
+                // When assigning to a field, the value (Tensor/Struct) is now owned by the struct.
+                // The struct likely outlives the current scope (e.g. self).
+                // We MUST unregister the value from the current scope so it isn't freed when the function returns.
+                // Note: This currently leads to a leak if the struct is freed without recursive cleanup,
+                // but it prevents the critical Use-After-Free panic/segfault.
+                let unreg_fn = self.module.get_function("tl_mem_unregister");
+                if let Some(f) = unreg_fn {
+                    let should_unregister = match &field_type {
+                        Type::Tensor(_, _) => true,
+                        Type::Struct(_) | Type::UserDefined(_) => true,
+                        // Strings are UserDefined("String") usually? Or primitive?
+                        // If String is struct, it's covered.
+                        _ => false,
+                    };
+
+                    if should_unregister {
+                        self.builder
+                            .build_call(f, &[val.into()], "")
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+
                 Ok(())
             }
             Stmt::TensorDecl {
@@ -316,7 +340,25 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // So for our language semantics, we treat shadowing as "replacing".
                         // Use-case: `let x = ...; let x = ...;`
                         if *should_free {
-                            // Free logic removed key. MemoryManager handles it.
+                            // CRITICAL FIX: Unregister shadowed value from MemoryManager
+                            // Without this, the old value stays registered and gets double-freed
+                            if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                                // Load the actual pointer value from the alloca
+                                let ptr_type =
+                                    self.context.ptr_type(inkwell::AddressSpace::default());
+                                let old_value = self
+                                    .builder
+                                    .build_load(
+                                        ptr_type,
+                                        _old_ptr.into_pointer_value(),
+                                        "old_shadowed",
+                                    )
+                                    .map_err(|e| e.to_string())?;
+
+                                self.builder
+                                    .build_call(unreg_fn, &[old_value.into()], "")
+                                    .map_err(|e| e.to_string())?;
+                            }
                         }
                     }
                 }
@@ -330,30 +372,31 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .last_mut()
                     .unwrap()
                     .insert(name.clone(), (alloca.into(), val_ty.clone(), true)); // Store pointer and type
-
-                // Register tensor with runtime if it is a tensor
-                // PANIC INVESTIGATION: tl_register_tensor causes slice alignment panic for some reason.
-                // Disabling it for now to verify if tensor creation itself is valid.
-                /*
-                if let Type::Tensor(_, _) = val_ty {
-                    if let Some(register_fn) = self.module.get_function("tl_register_tensor") {
-                        // Create global string for name
-                        let name_global = self
-                            .builder
-                            .build_global_string_ptr(name, "tensor_name")
-                            .map_err(|e| e.to_string())?;
-                        // val.0 is pointer to tensor (OpaqueTensor*)
-                        // register call: tl_register_tensor(name_ptr, tensor_ptr)
-                        self.builder
-                            .build_call(
-                                register_fn,
-                                &[name_global.as_pointer_value().into(), val_ir.into()],
-                                "",
-                            )
-                            .map_err(|e| e.to_string())?;
-                    }
-                }
-                */
+                                                                                  /*
+                                                                                  match &val_ty {
+                                                                                      Type::Tensor(_, _) => {
+                                                                                          if let Some(register_fn) =
+                                                                                              self.module.get_function("tl_mem_register_tensor")
+                                                                                          {
+                                                                                              // Load the pointer from alloca (val_ir is the value to store, so it's the pointer)
+                                                                                              // val_ir is the T* (OpaqueTensor*)
+                                                                                              self.builder
+                                                                                                  .build_call(register_fn, &[val_ir.into()], "")
+                                                                                                  .map_err(|e| e.to_string())?;
+                                                                                          }
+                                                                                      }
+                                                                                      Type::Struct(_) | Type::UserDefined(_) => {
+                                                                                          /*
+                                                                                          if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
+                                                                                              self.builder
+                                                                                                  .build_call(register_fn, &[val_ir.into()], "")
+                                                                                                  .map_err(|e| e.to_string())?;
+                                                                                          }
+                                                                                          */
+                                                                                      }
+                                                                                      _ => {}
+                                                                                  }
+                                                                                  */
                 Ok(())
             }
             Stmt::Return(expr) => {
@@ -375,6 +418,13 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Emit cleanup for ALL active scopes (reverse order)
                 self.emit_all_scopes_cleanup();
+
+                // CRITICAL FIX: Pop ALL function scopes from variables stack
+                // emit_all_scopes_cleanup only emits LLVM IR calls but doesn't update Rust state
+                let scopes_to_pop = self.variables.len() - self.fn_entry_scope_depth;
+                for _ in 0..scopes_to_pop {
+                    self.variables.pop();
+                }
 
                 self.builder
                     .build_return(Some(&val))
@@ -1398,24 +1448,24 @@ impl<'ctx> CodeGenerator<'ctx> {
             (Type::Tensor(inner, _), Type::F32) if **inner == Type::F32 => {
                 // Broadcasting Tensor op Scalar
                 // Create scalar tensor
+                // Create scalar tensor
                 let val = rhs.into_float_value();
                 let f32_type = self.context.f32_type();
                 let i64_type = self.context.i64_type();
 
-                // 1. Data Alloca (1 elem)
-                let data_alloca = self
-                    .builder
-                    .build_alloca(f32_type, "scalar_data")
-                    .map_err(|e| e.to_string())?;
+                // 1. Alloca in Entry Block
+                let current_block = self.builder.get_insert_block().unwrap();
+                let parent_fn = current_block.get_parent().unwrap();
+
+                let data_alloca =
+                    self.create_entry_block_alloca(parent_fn, "scalar_data_rhs", &Type::F32);
                 self.builder
                     .build_store(data_alloca, val)
                     .map_err(|e| e.to_string())?;
 
-                // 2. Shape Alloca (0 elem)
-                let shape_alloca = self
-                    .builder
-                    .build_array_alloca(i64_type, i64_type.const_int(0, false), "scalar_shape")
-                    .map_err(|e| e.to_string())?;
+                // 2. Shape Alloca (dummy i64)
+                let shape_alloca =
+                    self.create_entry_block_alloca(parent_fn, "scalar_shape_rhs", &Type::I64);
 
                 // 3. New Tensor
                 let new_fn = self.module.get_function("tl_tensor_new").unwrap();
@@ -1425,7 +1475,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .build_call(
                         new_fn,
                         &[data_alloca.into(), rank_val.into(), shape_alloca.into()],
-                        "scalar_tensor",
+                        "scalar_tensor_rhs",
                     )
                     .map_err(|e| e.to_string())?;
                 let scalar_tensor = match call.try_as_basic_value() {
@@ -1466,18 +1516,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let f32_type = self.context.f32_type();
                 let i64_type = self.context.i64_type();
 
-                let data_alloca = self
-                    .builder
-                    .build_alloca(f32_type, "scalar_data")
-                    .map_err(|e| e.to_string())?;
+                // 1. Alloca in Entry Block
+                let current_block = self.builder.get_insert_block().unwrap();
+                let parent_fn = current_block.get_parent().unwrap();
+
+                let data_alloca =
+                    self.create_entry_block_alloca(parent_fn, "scalar_data_lhs", &Type::F32);
                 self.builder
                     .build_store(data_alloca, val)
                     .map_err(|e| e.to_string())?;
 
-                let shape_alloca = self
-                    .builder
-                    .build_array_alloca(i64_type, i64_type.const_int(0, false), "scalar_shape")
-                    .map_err(|e| e.to_string())?;
+                let shape_alloca =
+                    self.create_entry_block_alloca(parent_fn, "scalar_shape_lhs", &Type::I64);
 
                 let new_fn = self.module.get_function("tl_tensor_new").unwrap();
                 let rank_val = i64_type.const_int(0, false);
@@ -1486,7 +1536,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .build_call(
                         new_fn,
                         &[data_alloca.into(), rank_val.into(), shape_alloca.into()],
-                        "scalar_tensor",
+                        "scalar_tensor_lhs",
                     )
                     .map_err(|e| e.to_string())?;
                 let scalar_tensor = match call.try_as_basic_value() {

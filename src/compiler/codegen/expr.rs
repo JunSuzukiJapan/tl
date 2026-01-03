@@ -1015,6 +1015,14 @@ impl<'ctx> CodeGenerator<'ctx> {
             )
             .map_err(|e| e.to_string())?;
 
+        // CRITICAL: Register struct with MemoryManager
+        // Without this, the struct is malloc'd but never tracked, causing memory leaks
+        if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
+            self.builder
+                .build_call(register_fn, &[struct_ptr.into()], "")
+                .map_err(|e| e.to_string())?;
+        }
+
         for (field_name, field_expr) in fields {
             let field_idx = struct_def
                 .fields
@@ -1563,7 +1571,12 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => self.context.i64_type().into(),
         };
 
-        builder.build_alloca(llvm_type, name).unwrap()
+        let alloca = builder.build_alloca(llvm_type, name).unwrap();
+        if let Some(instr) = alloca.as_instruction_value() {
+            // Force 16-byte alignment to satisfy SIMD/slice requirements
+            instr.set_alignment(16).ok();
+        }
+        alloca
     }
 
     // Debug method to print IR
@@ -2980,6 +2993,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let shape_alloca = entry_builder
                             .build_alloca(shape_array_type, "shape_arr")
                             .map_err(|e| e.to_string())?;
+
+                        // Fix alignment
+                        unsafe {
+                            shape_alloca
+                                .as_instruction_value()
+                                .unwrap()
+                                .set_alignment(16)
+                                .map_err(|e| e.to_string())?;
+                        }
 
                         // Store compiled shape values
                         for (i, val) in shape_vals.iter().enumerate() {

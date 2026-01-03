@@ -489,8 +489,18 @@ impl<'ctx> CodeGenerator<'ctx> {
             if i == body_len - 1 && func.return_type != Type::Void {
                 // Check if it's an expression that should be returned
                 if let Stmt::Expr(expr) = stmt {
-                    let (val, _) = self.compile_expr(expr)?;
+                    let (val, ty) = self.compile_expr(expr)?;
+
+                    // IMPORTANT: Unregister return value (same as Stmt::Return)
+                    self.emit_recursive_unregister(val, &ty)?;
+
                     self.emit_all_scopes_cleanup();
+
+                    // CRITICAL FIX: Pop the function scope from variables stack
+                    // emit_all_scopes_cleanup only emits LLVM IR calls to tl_mem_exit_scope
+                    // but doesn't update the Rust compiler's scope tracking
+                    self.variables.pop();
+
                     self.builder
                         .build_return(Some(&val))
                         .map_err(|e| e.to_string())?;

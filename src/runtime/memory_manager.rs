@@ -57,7 +57,7 @@ impl MemoryManager {
                         AllocationType::Tensor => {
                             let tensor_ptr = record.ptr as *mut OpaqueTensor;
                             // eprintln!("DEBUG: freeing tensor at {:?}", tensor_ptr);
-                            super::tl_tensor_free(tensor_ptr);
+                            super::free_tensor_resources(tensor_ptr);
                         }
                     }
                 }
@@ -158,5 +158,116 @@ pub extern "C" fn tl_mem_unregister(ptr: *mut c_void) {
     if !ptr.is_null() {
         let mut mgr = MEMORY_MANAGER.lock().unwrap();
         mgr.unregister(ptr);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::c_void;
+
+    // Helper to create a dummy pointer (for testing only)
+    fn dummy_ptr(offset: usize) -> *mut c_void {
+        offset as *mut c_void
+    }
+
+    fn dummy_tensor_ptr(offset: usize) -> *mut OpaqueTensor {
+        offset as *mut OpaqueTensor
+    }
+
+    #[test]
+    fn test_basic_scope() {
+        let mut mgr = MemoryManager::new();
+        assert_eq!(mgr.scopes.len(), 0);
+        mgr.enter_scope();
+        assert_eq!(mgr.scopes.len(), 1);
+        mgr.exit_scope();
+        assert_eq!(mgr.scopes.len(), 0);
+    }
+
+    #[test]
+    fn test_nested_scopes() {
+        let mut mgr = MemoryManager::new();
+        mgr.enter_scope();
+        assert_eq!(mgr.scopes.len(), 1);
+        mgr.enter_scope();
+        assert_eq!(mgr.scopes.len(), 2);
+        mgr.enter_scope();
+        assert_eq!(mgr.scopes.len(), 3);
+        mgr.exit_scope();
+        assert_eq!(mgr.scopes.len(), 2);
+        mgr.exit_scope();
+        assert_eq!(mgr.scopes.len(), 1);
+        mgr.exit_scope();
+        assert_eq!(mgr.scopes.len(), 0);
+    }
+
+    #[test]
+    fn test_register_struct() {
+        let mut mgr = MemoryManager::new();
+        mgr.enter_scope();
+        let ptr = dummy_ptr(0x1000);
+        mgr.register_struct(ptr);
+        assert_eq!(mgr.scopes[0].len(), 1);
+        assert_eq!(mgr.scopes[0][0].ptr, ptr);
+        assert!(matches!(
+            mgr.scopes[0][0].alloc_type,
+            AllocationType::Struct
+        ));
+    }
+
+    #[test]
+    fn test_register_tensor() {
+        let mut mgr = MemoryManager::new();
+        mgr.enter_scope();
+        let ptr = dummy_tensor_ptr(0x2000);
+        mgr.register_tensor(ptr);
+        assert_eq!(mgr.scopes[0].len(), 1);
+        assert_eq!(mgr.scopes[0][0].ptr, ptr as *mut c_void);
+        assert!(matches!(
+            mgr.scopes[0][0].alloc_type,
+            AllocationType::Tensor
+        ));
+    }
+
+    #[test]
+    fn test_unregister() {
+        let mut mgr = MemoryManager::new();
+        mgr.enter_scope();
+        let ptr1 = dummy_ptr(0x1000);
+        let ptr2 = dummy_ptr(0x2000);
+        let ptr3 = dummy_ptr(0x3000);
+        mgr.register_struct(ptr1);
+        mgr.register_struct(ptr2);
+        mgr.register_struct(ptr3);
+        assert_eq!(mgr.scopes[0].len(), 3);
+        mgr.unregister(ptr2);
+        assert_eq!(mgr.scopes[0].len(), 2);
+        assert_eq!(mgr.scopes[0][0].ptr, ptr1);
+        assert_eq!(mgr.scopes[0][1].ptr, ptr3);
+    }
+
+    #[test]
+    fn test_unregister_nonexistent() {
+        let mut mgr = MemoryManager::new();
+        mgr.enter_scope();
+        mgr.register_struct(dummy_ptr(0x1000));
+        mgr.unregister(dummy_ptr(0x9999));
+        assert_eq!(mgr.scopes[0].len(), 1);
+    }
+
+    #[test]
+    fn test_exit_scope_empty() {
+        let mut mgr = MemoryManager::new();
+        mgr.exit_scope();
+        assert_eq!(mgr.scopes.len(), 0);
+    }
+
+    #[test]
+    fn test_c_api_functions() {
+        tl_mem_enter_scope();
+        tl_mem_enter_scope();
+        tl_mem_exit_scope();
+        tl_mem_exit_scope();
     }
 }

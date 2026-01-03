@@ -43,15 +43,14 @@ pub struct OpaqueTensor(
 // Helper to create and register an OpaqueTensor from a Candle Tensor
 // This ensures that all intermediate tensors are tracked and freed by the memory manager.
 fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
-    let elem_count = t.elem_count();
-    let ptr = if let Some(p) = tensor_pool::pool_acquire(elem_count) {
-        unsafe {
-            std::ptr::write(p, OpaqueTensor(t, None, None));
-        }
-        p
-    } else {
-        Box::into_raw(Box::new(OpaqueTensor(t, None, None)))
-    };
+    // CRITICAL FIX: TensorPool disabled due to conflict with MemoryManager
+    // TensorPool reuses freed memory, but MemoryManager tracks all pointers
+    // This causes double-free when:
+    // 1. Tensor A is freed and returned to pool
+    // 2. Pool reuses that memory for Tensor B
+    // 3. MemoryManager still thinks it owns Tensor A's pointer
+    // 4. When scope exits, MemoryManager tries to free the same pointer again
+    let ptr = Box::into_raw(Box::new(OpaqueTensor(t, None, None)));
     memory_manager::register_tensor_global(ptr);
     ptr
 }
@@ -60,15 +59,8 @@ fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
 fn make_var(v: candle_core::Var) -> *mut OpaqueTensor {
     let t_ref = v.as_tensor().clone();
     let var_arc = Arc::new(v);
-    let elem_count = t_ref.elem_count();
-    let ptr = if let Some(p) = tensor_pool::pool_acquire(elem_count) {
-        unsafe {
-            std::ptr::write(p, OpaqueTensor(t_ref, Some(var_arc), None));
-        }
-        p
-    } else {
-        Box::into_raw(Box::new(OpaqueTensor(t_ref, Some(var_arc), None)))
-    };
+    // CRITICAL FIX: TensorPool disabled (same reason as make_tensor)
+    let ptr = Box::into_raw(Box::new(OpaqueTensor(t_ref, Some(var_arc), None)));
     memory_manager::register_tensor_global(ptr);
     ptr
 }
@@ -373,6 +365,18 @@ pub extern "C" fn tl_tensor_print(t: *mut OpaqueTensor) {
     }
 }
 
+/// Internal function to free tensor resources without unregistering
+/// Used by MemoryManager to avoid deadlock
+pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) {
+    if !t.is_null() {
+        unsafe {
+            // CRITICAL FIX: TensorPool disabled
+            // Simply drop the Box, which frees the OpaqueTensor and its contained Tensor
+            let _ = Box::from_raw(t);
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
     if !t.is_null() {
@@ -380,10 +384,7 @@ pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
         // (to prevent double-free on scope exit if manually freed)
         memory_manager::tl_mem_unregister(t as *mut std::ffi::c_void);
 
-        unsafe {
-            let elem_count = (*t).0.elem_count();
-            tensor_pool::pool_release(t, elem_count);
-        }
+        free_tensor_resources(t);
     }
 }
 
@@ -929,6 +930,7 @@ pub extern "C" fn tl_tensor_matmul(
     unsafe {
         let t_a = &(*a).0;
         let t_b = &(*b).0;
+
         // Use broadcast_matmul to support [B, S, D] x [D, O] -> [B, S, O]
         let result = t_a.broadcast_matmul(t_b).unwrap_or_else(|_| {
             // Fallback to strict matmul if broadcast fails or if not needed?

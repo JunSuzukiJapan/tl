@@ -2,7 +2,16 @@
 source_filename = "main"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 
-@str_literal = private unnamed_addr constant [21 x i8] c"MatMul result shape:\00", align 1
+@str_literal = private unnamed_addr constant [27 x i8] c"Test: VarBuilder functions\00", align 1
+@str_literal.98 = private unnamed_addr constant [12 x i8] c"test_weight\00", align 1
+@str_literal.99 = private unnamed_addr constant [10 x i8] c"test_bias\00", align 1
+@str_literal.100 = private unnamed_addr constant [19 x i8] c"Created parameters\00", align 1
+@str_literal.101 = private unnamed_addr constant [6 x i8] c"Loss:\00", align 1
+@str_literal.102 = private unnamed_addr constant [12 x i8] c"test_weight\00", align 1
+@str_literal.103 = private unnamed_addr constant [10 x i8] c"test_bias\00", align 1
+@str_literal.104 = private unnamed_addr constant [17 x i8] c"Weight gradient:\00", align 1
+@str_literal.105 = private unnamed_addr constant [15 x i8] c"Bias gradient:\00", align 1
+@str_literal.106 = private unnamed_addr constant [20 x i8] c"Parameters updated!\00", align 1
 
 declare void @tl_print_i64(i64)
 
@@ -378,139 +387,87 @@ declare void @tl_pool_release.97(ptr, i64)
 
 define void @main() {
 entry:
-  %C = alloca ptr, align 8
-  %idx_arr32 = alloca [2 x i64], align 8
-  %idx_arr = alloca [2 x i64], align 8
-  %k = alloca i64, align 8
-  %j = alloca i64, align 8
-  %i16 = alloca i64, align 8
-  %B = alloca ptr, align 8
-  %shape_arr6 = alloca [2 x i64], align 8
-  %A = alloca ptr, align 8
-  %shape_arr = alloca [2 x i64], align 8
-  %N = alloca i64, align 8
-  %K = alloca i64, align 8
-  %M = alloca i64, align 8
+  %gb = alloca ptr, align 16
+  %gw = alloca ptr, align 16
+  %loss = alloca ptr, align 16
+  %output = alloca ptr, align 16
+  %x = alloca ptr, align 16
+  %shape_arr16 = alloca [2 x i64], align 16
+  %bias = alloca ptr, align 16
+  %weight = alloca ptr, align 16
   call void @tl_mem_enter_scope()
-  store i64 16, ptr %M, align 8
-  store i64 16, ptr %K, align 8
-  store i64 16, ptr %N, align 8
-  %M1 = load i64, ptr %M, align 8
-  %K2 = load i64, ptr %K, align 8
-  %shape_ptr_in = getelementptr inbounds [2 x i64], ptr %shape_arr, i64 0, i64 0
-  store i64 %M1, ptr %shape_ptr_in, align 8
-  %shape_ptr_in3 = getelementptr inbounds [2 x i64], ptr %shape_arr, i64 0, i64 1
-  store i64 %K2, ptr %shape_ptr_in3, align 8
-  %randn_res = call ptr @tl_tensor_randn(i64 2, ptr %shape_arr, i1 false)
-  store ptr %randn_res, ptr %A, align 8
-  %K4 = load i64, ptr %K, align 8
-  %N5 = load i64, ptr %N, align 8
-  %shape_ptr_in7 = getelementptr inbounds [2 x i64], ptr %shape_arr6, i64 0, i64 0
-  store i64 %K4, ptr %shape_ptr_in7, align 8
-  %shape_ptr_in8 = getelementptr inbounds [2 x i64], ptr %shape_arr6, i64 0, i64 1
-  store i64 %N5, ptr %shape_ptr_in8, align 8
-  %randn_res9 = call ptr @tl_tensor_randn(i64 2, ptr %shape_arr6, i1 false)
-  store ptr %randn_res9, ptr %B, align 8
-  %A10 = load ptr, ptr %A, align 8
-  %dim_size = call i64 @tl_tensor_dim(ptr %A10, i64 0)
-  %dim_size11 = call i64 @tl_tensor_dim(ptr %A10, i64 1)
-  %B12 = load ptr, ptr %B, align 8
-  %dim_size13 = call i64 @tl_tensor_dim(ptr %B12, i64 1)
-  %sz_acc = mul i64 1, %dim_size
-  %sz_acc14 = mul i64 %sz_acc, %dim_size11
-  %sz_acc15 = mul i64 %sz_acc14, %dim_size13
-  %buf_void = call ptr @calloc(i64 %sz_acc15, i64 4)
-  call void @tl_mem_enter_scope()
-  br label %loop_cond
-
-eq_after:                                         ; preds = %loop_aft
-  %shape = alloca [3 x i64], align 8
-  %shape_ptr = getelementptr [3 x i64], ptr %shape, i64 0, i64 0
-  store i64 %dim_size, ptr %shape_ptr, align 8
-  %shape_ptr51 = getelementptr [3 x i64], ptr %shape, i64 0, i64 1
-  store i64 %dim_size11, ptr %shape_ptr51, align 8
-  %shape_ptr52 = getelementptr [3 x i64], ptr %shape, i64 0, i64 2
-  store i64 %dim_size13, ptr %shape_ptr52, align 8
-  %t = call ptr @tl_tensor_new(ptr %buf_void, i64 3, ptr %shape)
-  store ptr %t, ptr %C, align 8
   call void @tl_print_string(ptr @str_literal)
-  %C53 = load ptr, ptr %C, align 8
-  call void @tl_tensor_print(ptr %C53)
+  %malloc_size = mul i64 ptrtoint (ptr getelementptr (i64, ptr null, i32 1) to i64), 2
+  %arr_malloc = call ptr @malloc(i64 %malloc_size)
+  call void @tl_mem_register_struct(ptr %arr_malloc)
+  %elem_ptr = getelementptr inbounds i64, ptr %arr_malloc, i64 0
+  store i64 10, ptr %elem_ptr, align 8
+  %elem_ptr1 = getelementptr inbounds i64, ptr %arr_malloc, i64 1
+  store i64 5, ptr %elem_ptr1, align 8
+  %malloc_size2 = mul i64 ptrtoint (ptr getelementptr (i64, ptr null, i32 1) to i64), 2
+  %arr_malloc3 = call ptr @malloc(i64 %malloc_size2)
+  call void @tl_mem_register_struct(ptr %arr_malloc3)
+  %elem_ptr4 = getelementptr inbounds i64, ptr %arr_malloc3, i64 0
+  store i64 10, ptr %elem_ptr4, align 8
+  %elem_ptr5 = getelementptr inbounds i64, ptr %arr_malloc3, i64 1
+  store i64 5, ptr %elem_ptr5, align 8
+  %shape_arr = alloca [2 x i64], align 8
+  %shptr = getelementptr inbounds [2 x i64], ptr %shape_arr, i64 0, i64 0
+  store i64 10, ptr %shptr, align 8
+  %shptr6 = getelementptr inbounds [2 x i64], ptr %shape_arr, i64 0, i64 1
+  store i64 5, ptr %shptr6, align 8
+  %varbuilder_get_result = call ptr @tl_varbuilder_get(ptr @str_literal.98, i64 2, ptr %shape_arr)
+  store ptr %varbuilder_get_result, ptr %weight, align 8
+  %arr_malloc7 = call ptr @malloc(i64 ptrtoint (ptr getelementptr (i64, ptr null, i32 1) to i64))
+  call void @tl_mem_register_struct(ptr %arr_malloc7)
+  %elem_ptr8 = getelementptr inbounds i64, ptr %arr_malloc7, i64 0
+  store i64 5, ptr %elem_ptr8, align 8
+  %arr_malloc9 = call ptr @malloc(i64 ptrtoint (ptr getelementptr (i64, ptr null, i32 1) to i64))
+  call void @tl_mem_register_struct(ptr %arr_malloc9)
+  %elem_ptr10 = getelementptr inbounds i64, ptr %arr_malloc9, i64 0
+  store i64 5, ptr %elem_ptr10, align 8
+  %shape_arr11 = alloca [1 x i64], align 8
+  %shptr12 = getelementptr inbounds [1 x i64], ptr %shape_arr11, i64 0, i64 0
+  store i64 5, ptr %shptr12, align 8
+  %varbuilder_get_result13 = call ptr @tl_varbuilder_get(ptr @str_literal.99, i64 1, ptr %shape_arr11)
+  store ptr %varbuilder_get_result13, ptr %bias, align 8
+  call void @tl_print_string(ptr @str_literal.100)
+  %weight14 = load ptr, ptr %weight, align 8
+  call void @tl_tensor_print(ptr %weight14)
+  %bias15 = load ptr, ptr %bias, align 8
+  call void @tl_tensor_print(ptr %bias15)
+  %shape_ptr_in = getelementptr inbounds [2 x i64], ptr %shape_arr16, i64 0, i64 0
+  store i64 4, ptr %shape_ptr_in, align 8
+  %shape_ptr_in17 = getelementptr inbounds [2 x i64], ptr %shape_arr16, i64 0, i64 1
+  store i64 10, ptr %shape_ptr_in17, align 8
+  %randn_res = call ptr @tl_tensor_randn(i64 2, ptr %shape_arr16, i1 false)
+  store ptr %randn_res, ptr %x, align 8
+  %x18 = load ptr, ptr %x, align 8
+  %weight19 = load ptr, ptr %weight, align 8
+  %matmul_res = call ptr @tl_tensor_matmul(ptr %x18, ptr %weight19)
+  %bias20 = load ptr, ptr %bias, align 8
+  %binop_res = call ptr @tl_tensor_add(ptr %matmul_res, ptr %bias20)
+  store ptr %binop_res, ptr %output, align 8
+  %output21 = load ptr, ptr %output, align 8
+  %sum_res = call ptr @tl_tensor_sum(ptr %output21)
+  store ptr %sum_res, ptr %loss, align 8
+  call void @tl_print_string(ptr @str_literal.101)
+  %loss22 = load ptr, ptr %loss, align 8
+  call void @tl_tensor_print(ptr %loss22)
+  %loss23 = load ptr, ptr %loss, align 8
+  call void @tl_tensor_backward(ptr %loss23)
+  %varbuilder_grad_result = call ptr @tl_varbuilder_grad(ptr @str_literal.102)
+  store ptr %varbuilder_grad_result, ptr %gw, align 8
+  %varbuilder_grad_result24 = call ptr @tl_varbuilder_grad(ptr @str_literal.103)
+  store ptr %varbuilder_grad_result24, ptr %gb, align 8
+  call void @tl_print_string(ptr @str_literal.104)
+  %gw25 = load ptr, ptr %gw, align 8
+  call void @tl_tensor_print(ptr %gw25)
+  call void @tl_print_string(ptr @str_literal.105)
+  %gb26 = load ptr, ptr %gb, align 8
+  call void @tl_tensor_print(ptr %gb26)
+  call void @tl_update_all_params(float 0x3F847AE140000000)
+  call void @tl_print_string(ptr @str_literal.106)
   call void @tl_mem_exit_scope()
   ret void
-
-loop_cond:                                        ; preds = %loop_aft19, %entry
-  %i = phi i64 [ 0, %entry ], [ %next50, %loop_aft19 ]
-  %cmp = icmp slt i64 %i, %dim_size
-  br i1 %cmp, label %loop_body, label %loop_aft
-
-loop_body:                                        ; preds = %loop_cond
-  store i64 %i, ptr %i16, align 8
-  br label %loop_cond17
-
-loop_aft:                                         ; preds = %loop_cond
-  br label %eq_after
-
-loop_cond17:                                      ; preds = %loop_aft24, %loop_body
-  %i20 = phi i64 [ 0, %loop_body ], [ %next48, %loop_aft24 ]
-  %cmp21 = icmp slt i64 %i20, %dim_size11
-  br i1 %cmp21, label %loop_body18, label %loop_aft19
-
-loop_body18:                                      ; preds = %loop_cond17
-  store i64 %i20, ptr %j, align 8
-  br label %loop_cond22
-
-loop_aft19:                                       ; preds = %loop_cond17
-  %iv49 = load i64, ptr %i16, align 8
-  %next50 = add i64 %iv49, 1
-  br label %loop_cond
-
-loop_cond22:                                      ; preds = %loop_body23, %loop_body18
-  %i25 = phi i64 [ 0, %loop_body18 ], [ %next, %loop_body23 ]
-  %cmp26 = icmp slt i64 %i25, %dim_size13
-  br i1 %cmp26, label %loop_body23, label %loop_aft24
-
-loop_body23:                                      ; preds = %loop_cond22
-  store i64 %i25, ptr %k, align 8
-  %A27 = load ptr, ptr %A, align 8
-  %i28 = load i64, ptr %i16, align 8
-  %idx_ptr = getelementptr [2 x i64], ptr %idx_arr, i64 0, i64 0
-  store i64 %i28, ptr %idx_ptr, align 8
-  %j29 = load i64, ptr %j, align 8
-  %idx_ptr30 = getelementptr [2 x i64], ptr %idx_arr, i64 0, i64 1
-  store i64 %j29, ptr %idx_ptr30, align 8
-  %get_md_call = call float @tl_tensor_get_f32_md(ptr %A27, ptr %idx_arr, i64 2)
-  %B31 = load ptr, ptr %B, align 8
-  %j33 = load i64, ptr %j, align 8
-  %idx_ptr34 = getelementptr [2 x i64], ptr %idx_arr32, i64 0, i64 0
-  store i64 %j33, ptr %idx_ptr34, align 8
-  %k35 = load i64, ptr %k, align 8
-  %idx_ptr36 = getelementptr [2 x i64], ptr %idx_arr32, i64 0, i64 1
-  store i64 %k35, ptr %idx_ptr36, align 8
-  %get_md_call37 = call float @tl_tensor_get_f32_md(ptr %B31, ptr %idx_arr32, i64 2)
-  %fmultmp = fmul float %get_md_call, %get_md_call37
-  %iv = load i64, ptr %k, align 8
-  %term = mul i64 %iv, 1
-  %off = add i64 0, %term
-  %str = mul i64 1, %dim_size13
-  %iv38 = load i64, ptr %j, align 8
-  %term39 = mul i64 %iv38, %str
-  %off40 = add i64 %off, %term39
-  %str41 = mul i64 %str, %dim_size11
-  %iv42 = load i64, ptr %i16, align 8
-  %term43 = mul i64 %iv42, %str41
-  %off44 = add i64 %off40, %term43
-  %str45 = mul i64 %str41, %dim_size
-  %ptr = getelementptr float, ptr %buf_void, i64 %off44
-  %cur = load float, ptr %ptr, align 4
-  %new = fadd float %cur, %fmultmp
-  store float %new, ptr %ptr, align 4
-  %iv46 = load i64, ptr %k, align 8
-  %next = add i64 %iv46, 1
-  br label %loop_cond22
-
-loop_aft24:                                       ; preds = %loop_cond22
-  %iv47 = load i64, ptr %j, align 8
-  %next48 = add i64 %iv47, 1
-  br label %loop_cond17
 }
