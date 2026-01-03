@@ -2,16 +2,8 @@
 source_filename = "main"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 
-@str_literal = private unnamed_addr constant [27 x i8] c"Test: VarBuilder functions\00", align 1
-@str_literal.96 = private unnamed_addr constant [12 x i8] c"test_weight\00", align 1
-@str_literal.97 = private unnamed_addr constant [10 x i8] c"test_bias\00", align 1
-@str_literal.98 = private unnamed_addr constant [19 x i8] c"Created parameters\00", align 1
-@str_literal.99 = private unnamed_addr constant [6 x i8] c"Loss:\00", align 1
-@str_literal.100 = private unnamed_addr constant [12 x i8] c"test_weight\00", align 1
-@str_literal.101 = private unnamed_addr constant [10 x i8] c"test_bias\00", align 1
-@str_literal.102 = private unnamed_addr constant [17 x i8] c"Weight gradient:\00", align 1
-@str_literal.103 = private unnamed_addr constant [15 x i8] c"Bias gradient:\00", align 1
-@str_literal.104 = private unnamed_addr constant [20 x i8] c"Parameters updated!\00", align 1
+@str_literal = private unnamed_addr constant [6 x i8] c"Time:\00", align 1
+@str_literal.98 = private unnamed_addr constant [8 x i8] c"Result:\00", align 1
 
 declare void @tl_print_i64(i64)
 
@@ -195,6 +187,10 @@ declare void @tl_mem_register_tensor(ptr)
 
 declare void @tl_mem_unregister(ptr)
 
+declare ptr @tl_pool_acquire(i64)
+
+declare void @tl_pool_release(ptr, i64)
+
 declare void @tl_print_i64.5(i64)
 
 declare void @tl_print_f32.6(float)
@@ -377,107 +373,60 @@ declare void @tl_mem_register_tensor.94(ptr)
 
 declare void @tl_mem_unregister.95(ptr)
 
-define void @main() {
+declare ptr @tl_pool_acquire.96(i64)
+
+declare void @tl_pool_release.97(ptr, i64)
+
+define i64 @main() {
 entry:
-  %gb = alloca ptr, align 8
-  %gw = alloca ptr, align 8
-  %loss = alloca ptr, align 8
-  %output = alloca ptr, align 8
-  %x = alloca ptr, align 8
-  %shape_arr25 = alloca [2 x i64], align 8
-  %bias = alloca ptr, align 8
-  %weight = alloca ptr, align 8
+  %end = alloca float, align 4
+  %a = alloca i64, align 8
+  %i = alloca i64, align 8
+  %x = alloca float, align 4
+  %start = alloca float, align 4
+  call void @tl_mem_enter_scope()
+  %call_tmp = call float @tl_system_time()
+  store float %call_tmp, ptr %start, align 4
+  store float 0.000000e+00, ptr %x, align 4
+  br label %for_header
+
+for_header:                                       ; preds = %for_body, %entry
+  %for_idx = phi i64 [ 0, %entry ], [ %next_idx, %for_body ]
+  %for_cond = icmp slt i64 %for_idx, 50000
+  br i1 %for_cond, label %for_body, label %for_end
+
+for_body:                                         ; preds = %for_header
+  call void @tl_mem_enter_scope()
+  store i64 %for_idx, ptr %i, align 8
+  %malloc_size = mul i64 ptrtoint (ptr getelementptr (float, ptr null, i32 1) to i64), 2
+  %arr_malloc = call ptr @malloc(i64 %malloc_size)
+  %elem_ptr = getelementptr inbounds float, ptr %arr_malloc, i64 0
+  store float 1.000000e+00, ptr %elem_ptr, align 4
+  %elem_ptr1 = getelementptr inbounds float, ptr %arr_malloc, i64 1
+  store float 2.000000e+00, ptr %elem_ptr1, align 4
+  store ptr %arr_malloc, ptr %a, align 8
+  %x2 = load float, ptr %x, align 4
+  %a_ptr = load ptr, ptr %a, align 8
+  %scalar_elem_ptr = getelementptr inbounds float, ptr %a_ptr, i64 0
+  %scalar_elem = load float, ptr %scalar_elem_ptr, align 4
+  %faddtmp = fadd float %x2, %scalar_elem
+  store float %faddtmp, ptr %x, align 4
+  call void @tl_mem_exit_scope()
+  %next_idx = add i64 %for_idx, 1
+  br label %for_header
+
+for_end:                                          ; preds = %for_header
+  %call_tmp3 = call float @tl_system_time()
+  store float %call_tmp3, ptr %end, align 4
   call void @tl_print_string(ptr @str_literal)
-  %temp_data_heap = call ptr @malloc(i64 8)
-  %temp_shape_heap = call ptr @malloc(i64 8)
-  %data_elem = getelementptr inbounds float, ptr %temp_data_heap, i64 0
-  store float 1.000000e+01, ptr %data_elem, align 4
-  %data_elem1 = getelementptr inbounds float, ptr %temp_data_heap, i64 1
-  store float 5.000000e+00, ptr %data_elem1, align 4
-  %shape_elem = getelementptr inbounds i64, ptr %temp_shape_heap, i64 0
-  store i64 2, ptr %shape_elem, align 8
-  %new_const_tensor = call ptr @tl_tensor_new(ptr %temp_data_heap, i64 1, ptr %temp_shape_heap)
-  call void @free(ptr %temp_data_heap)
-  call void @free(ptr %temp_shape_heap)
-  %temp_data_heap2 = call ptr @malloc(i64 8)
-  %temp_shape_heap3 = call ptr @malloc(i64 8)
-  %data_elem4 = getelementptr inbounds float, ptr %temp_data_heap2, i64 0
-  store float 1.000000e+01, ptr %data_elem4, align 4
-  %data_elem5 = getelementptr inbounds float, ptr %temp_data_heap2, i64 1
-  store float 5.000000e+00, ptr %data_elem5, align 4
-  %shape_elem6 = getelementptr inbounds i64, ptr %temp_shape_heap3, i64 0
-  store i64 2, ptr %shape_elem6, align 8
-  %new_const_tensor7 = call ptr @tl_tensor_new(ptr %temp_data_heap2, i64 1, ptr %temp_shape_heap3)
-  call void @free(ptr %temp_data_heap2)
-  call void @free(ptr %temp_shape_heap3)
-  %len = call i64 @tl_tensor_len(ptr %new_const_tensor7)
-  %shape_arr = alloca [2 x i64], align 8
-  %shptr = getelementptr inbounds [2 x i64], ptr %shape_arr, i64 0, i64 0
-  store i64 10, ptr %shptr, align 8
-  %shptr8 = getelementptr inbounds [2 x i64], ptr %shape_arr, i64 0, i64 1
-  store i64 5, ptr %shptr8, align 8
-  %varbuilder_get_result = call ptr @tl_varbuilder_get(ptr @str_literal.96, i64 2, ptr %shape_arr)
-  store ptr %varbuilder_get_result, ptr %weight, align 8
-  %temp_data_heap9 = call ptr @malloc(i64 4)
-  %temp_shape_heap10 = call ptr @malloc(i64 8)
-  %data_elem11 = getelementptr inbounds float, ptr %temp_data_heap9, i64 0
-  store float 5.000000e+00, ptr %data_elem11, align 4
-  %shape_elem12 = getelementptr inbounds i64, ptr %temp_shape_heap10, i64 0
-  store i64 1, ptr %shape_elem12, align 8
-  %new_const_tensor13 = call ptr @tl_tensor_new(ptr %temp_data_heap9, i64 1, ptr %temp_shape_heap10)
-  call void @free(ptr %temp_data_heap9)
-  call void @free(ptr %temp_shape_heap10)
-  %temp_data_heap14 = call ptr @malloc(i64 4)
-  %temp_shape_heap15 = call ptr @malloc(i64 8)
-  %data_elem16 = getelementptr inbounds float, ptr %temp_data_heap14, i64 0
-  store float 5.000000e+00, ptr %data_elem16, align 4
-  %shape_elem17 = getelementptr inbounds i64, ptr %temp_shape_heap15, i64 0
-  store i64 1, ptr %shape_elem17, align 8
-  %new_const_tensor18 = call ptr @tl_tensor_new(ptr %temp_data_heap14, i64 1, ptr %temp_shape_heap15)
-  call void @free(ptr %temp_data_heap14)
-  call void @free(ptr %temp_shape_heap15)
-  %len19 = call i64 @tl_tensor_len(ptr %new_const_tensor18)
-  %shape_arr20 = alloca [1 x i64], align 8
-  %shptr21 = getelementptr inbounds [1 x i64], ptr %shape_arr20, i64 0, i64 0
-  store i64 5, ptr %shptr21, align 8
-  %varbuilder_get_result22 = call ptr @tl_varbuilder_get(ptr @str_literal.97, i64 1, ptr %shape_arr20)
-  store ptr %varbuilder_get_result22, ptr %bias, align 8
+  %end4 = load float, ptr %end, align 4
+  %start5 = load float, ptr %start, align 4
+  %fsubtmp = fsub float %end4, %start5
+  call void @tl_print_f32(float %fsubtmp)
   call void @tl_print_string(ptr @str_literal.98)
-  %weight23 = load ptr, ptr %weight, align 8
-  call void @tl_tensor_print(ptr %weight23)
-  %bias24 = load ptr, ptr %bias, align 8
-  call void @tl_tensor_print(ptr %bias24)
-  %shape_ptr_in = getelementptr inbounds [2 x i64], ptr %shape_arr25, i64 0, i64 0
-  store i64 4, ptr %shape_ptr_in, align 8
-  %shape_ptr_in26 = getelementptr inbounds [2 x i64], ptr %shape_arr25, i64 0, i64 1
-  store i64 10, ptr %shape_ptr_in26, align 8
-  %randn_res = call ptr @tl_tensor_randn(i64 2, ptr %shape_arr25, i1 false)
-  store ptr %randn_res, ptr %x, align 8
-  %x27 = load ptr, ptr %x, align 8
-  %weight28 = load ptr, ptr %weight, align 8
-  %matmul_res = call ptr @tl_tensor_matmul(ptr %x27, ptr %weight28)
-  %bias29 = load ptr, ptr %bias, align 8
-  %binop_res = call ptr @tl_tensor_add(ptr %matmul_res, ptr %bias29)
-  store ptr %binop_res, ptr %output, align 8
-  %output30 = load ptr, ptr %output, align 8
-  %sum_res = call ptr @tl_tensor_sum(ptr %output30)
-  store ptr %sum_res, ptr %loss, align 8
-  call void @tl_print_string(ptr @str_literal.99)
-  %loss31 = load ptr, ptr %loss, align 8
-  call void @tl_tensor_print(ptr %loss31)
-  %loss32 = load ptr, ptr %loss, align 8
-  call void @tl_tensor_backward(ptr %loss32)
-  %varbuilder_grad_result = call ptr @tl_varbuilder_grad(ptr @str_literal.100)
-  store ptr %varbuilder_grad_result, ptr %gw, align 8
-  %varbuilder_grad_result33 = call ptr @tl_varbuilder_grad(ptr @str_literal.101)
-  store ptr %varbuilder_grad_result33, ptr %gb, align 8
-  call void @tl_print_string(ptr @str_literal.102)
-  %gw34 = load ptr, ptr %gw, align 8
-  call void @tl_tensor_print(ptr %gw34)
-  call void @tl_print_string(ptr @str_literal.103)
-  %gb35 = load ptr, ptr %gb, align 8
-  call void @tl_tensor_print(ptr %gb35)
-  call void @tl_update_all_params(float 0x3F847AE140000000)
-  call void @tl_print_string(ptr @str_literal.104)
-  ret void
+  %x6 = load float, ptr %x, align 4
+  call void @tl_print_f32(float %x6)
+  call void @tl_mem_exit_scope()
+  call void @tl_mem_exit_scope()
+  ret i64 0
 }

@@ -88,7 +88,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Struct(name) | Type::UserDefined(name) => {
                 if let Some(struct_def) = self.struct_defs.get(name) {
                     let ptr = val.into_pointer_value();
-                    let st_llvm_ty = self.struct_types.get(name).unwrap().clone();
+                    let st_llvm_ty = *self.struct_types.get(name).unwrap();
 
                     for (i, (_, field_type)) in struct_def.fields.iter().enumerate() {
                         if matches!(
@@ -155,7 +155,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     return Err("Cannot assign field of non-pointer struct".into());
                 }
                 let ptr = obj_val.into_pointer_value();
-                let st_llvm_ty = self.struct_types.get(&struct_name).unwrap().clone();
+                let st_llvm_ty = *self.struct_types.get(&struct_name).unwrap();
 
                 let field_ptr = self
                     .builder
@@ -404,7 +404,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let mut found_var_type = None;
                 for scope in self.variables.iter().rev() {
                     if let Some((v, t, _)) = scope.get(name) {
-                        found_var_ptr = Some(v.clone());
+                        found_var_ptr = Some(*v);
                         found_var_type = Some(t.clone());
                         break;
                     }

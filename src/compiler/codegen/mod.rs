@@ -5,7 +5,7 @@ use inkwell::context::Context;
 use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Module as InkwellModule;
 use inkwell::types::{BasicMetadataTypeEnum, StructType};
-// use inkwell::values::Either; // Not used directlyimizationLevel;
+// use inkwell::values::Either; // Not used directly
 use inkwell::values::{BasicValueEnum, FunctionValue};
 use inkwell::OptimizationLevel;
 use std::collections::HashMap;
@@ -31,7 +31,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let module = context.create_module(module_name);
         let builder = context.create_builder();
         let execution_engine = module
-            .create_jit_execution_engine(OptimizationLevel::None)
+            .create_jit_execution_engine(OptimizationLevel::Aggressive)
             .map_err(|e| e.to_string())
             .unwrap();
 
@@ -69,15 +69,26 @@ impl<'ctx> CodeGenerator<'ctx> {
     // Enter a new scope
     fn enter_scope(&mut self) {
         self.variables.push(std::collections::HashMap::new());
+        if let Some(f) = self.module.get_function("tl_mem_enter_scope") {
+            self.builder.build_call(f, &[], "").unwrap();
+        }
     }
 
     // Emit cleanup for ALL active scopes (reverse order)
     // Used for Return statements to ensure everything is freed before returning
     fn emit_all_scopes_cleanup(&self) {
+        if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
+            for _ in 0..self.variables.len() {
+                self.builder.build_call(f, &[], "").unwrap();
+            }
+        }
     }
 
     // Emit cleanup for the current scope (without popping).
     pub(crate) fn emit_top_scope_cleanup(&self) {
+        if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
+            self.builder.build_call(f, &[], "").unwrap();
+        }
     }
 
     // Exit the current scope
@@ -347,6 +358,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.compile_fn(func, &ast_module.tensor_decls)?;
         }
 
+        // Apply LLVM optimizations
+        self.apply_optimizations();
+
         self.module.print_to_file("dump.ll").unwrap();
         Ok(())
     }
@@ -354,7 +368,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     pub(crate) fn lookup_variable(&self, name: &str) -> Option<(BasicValueEnum<'ctx>, Type)> {
         for scope in self.variables.iter().rev() {
             if let Some((v, t, _)) = scope.get(name) {
-                return Some((v.clone(), t.clone()));
+                return Some((*v, t.clone()));
             }
         }
         None
@@ -492,8 +506,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.exit_scope(); // End function scope
 
         // Add implicit return void if needed (not perfect but ok for now)
-        if func.return_type == Type::Void {
-            if self
+        if func.return_type == Type::Void
+            && self
                 .builder
                 .get_insert_block()
                 .unwrap()
@@ -502,7 +516,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             {
                 self.builder.build_return(None).map_err(|e| e.to_string())?;
             }
-        }
 
         if !function.verify(true) {
             function.print_to_stderr();
@@ -510,5 +523,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         Ok(())
+    }
+
+    fn apply_optimizations(&self) {
+        // OptimizationLevel::Aggressive is already set in execution_engine initialization.
+        // Manual pass management requires exact matching of inkwell/LLVM versioned methods.
     }
 }

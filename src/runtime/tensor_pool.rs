@@ -44,6 +44,11 @@ impl TensorPool {
     pub fn release(&mut self, ptr: *mut OpaqueTensor, element_count: usize) {
         if let Some(bucket) = size_bucket(element_count) {
             if self.pools[bucket].len() < MAX_POOL_SIZE {
+                // Drop the content of OpaqueTensor (Tensor, Arc<Var>, etc.)
+                // but keep the allocated memory for the struct itself
+                unsafe {
+                    std::ptr::drop_in_place(ptr);
+                }
                 self.pools[bucket].push(ptr);
             } else {
                 // Pool is full, actually free the tensor

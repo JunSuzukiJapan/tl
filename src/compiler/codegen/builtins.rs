@@ -720,19 +720,24 @@ pub fn declare_runtime_functions<'ctx>(
 
     // Memory Manager mappings
     if let Some(f) = module.get_function("tl_mem_enter_scope") {
-        execution_engine.add_global_mapping(&f, runtime::memory_manager::tl_mem_enter_scope as usize);
+        execution_engine
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_enter_scope as usize);
     }
     if let Some(f) = module.get_function("tl_mem_exit_scope") {
-        execution_engine.add_global_mapping(&f, runtime::memory_manager::tl_mem_exit_scope as usize);
+        execution_engine
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_exit_scope as usize);
     }
     if let Some(f) = module.get_function("tl_mem_register_struct") {
-        execution_engine.add_global_mapping(&f, runtime::memory_manager::tl_mem_register_struct as usize);
+        execution_engine
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_register_struct as usize);
     }
     if let Some(f) = module.get_function("tl_mem_register_tensor") {
-        execution_engine.add_global_mapping(&f, runtime::memory_manager::tl_mem_register_tensor as usize);
+        execution_engine
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_register_tensor as usize);
     }
     if let Some(f) = module.get_function("tl_mem_unregister") {
-        execution_engine.add_global_mapping(&f, runtime::memory_manager::tl_mem_unregister as usize);
+        execution_engine
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_unregister as usize);
     }
 
     // Return types
@@ -809,6 +814,19 @@ pub fn declare_runtime_functions<'ctx>(
     let mem_unregister_type = void_type.fn_type(&[ptr_type.into()], false);
     module.add_function("tl_mem_unregister", mem_unregister_type, None);
     fn_return_types.insert("tl_mem_unregister".to_string(), Type::Void);
+
+    // tl_pool_acquire(usize) -> ptr
+    let pool_acquire_type = ptr_type.fn_type(&[i64_type.into()], false);
+    module.add_function("tl_pool_acquire", pool_acquire_type, None);
+    fn_return_types.insert(
+        "tl_pool_acquire".to_string(),
+        Type::Tensor(Box::new(Type::F32), 1),
+    ); // Simplified rank
+
+    // tl_pool_release(ptr, usize) -> void
+    let pool_release_type = void_type.fn_type(&[ptr_type.into(), i64_type.into()], false);
+    module.add_function("tl_pool_release", pool_release_type, None);
+    fn_return_types.insert("tl_pool_release".to_string(), Type::Void);
 
     fn_return_types.insert("tl_env_set".to_string(), Type::Void);
     fn_return_types.insert("tl_system_time".to_string(), Type::F32); // Using F32 as default float for now

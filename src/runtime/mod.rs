@@ -6,7 +6,7 @@ pub mod tensor_pool;
 
 use crate::runtime::device::get_device;
 use candle_core::Tensor;
-use candle_nn; // Import candle_nn
+// Import candle_nn
 use std::cell::RefCell;
 use std::ffi::c_float;
 use std::slice;
@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 
 // Thread-local storage for the latest gradients computed by backward()
 thread_local! {
-    static LATEST_GRADS: RefCell<Option<candle_core::backprop::GradStore>> = RefCell::new(None);
+    static LATEST_GRADS: RefCell<Option<candle_core::backprop::GradStore>> = const { RefCell::new(None) };
 }
 
 // Global VarMap for tracking all trainable parameters
@@ -43,7 +43,15 @@ pub struct OpaqueTensor(
 // Helper to create and register an OpaqueTensor from a Candle Tensor
 // This ensures that all intermediate tensors are tracked and freed by the memory manager.
 fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
-    let ptr = Box::into_raw(Box::new(OpaqueTensor(t, None, None)));
+    let elem_count = t.elem_count();
+    let ptr = if let Some(p) = tensor_pool::pool_acquire(elem_count) {
+        unsafe {
+            std::ptr::write(p, OpaqueTensor(t, None, None));
+        }
+        p
+    } else {
+        Box::into_raw(Box::new(OpaqueTensor(t, None, None)))
+    };
     memory_manager::register_tensor_global(ptr);
     ptr
 }
@@ -52,7 +60,15 @@ fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
 fn make_var(v: candle_core::Var) -> *mut OpaqueTensor {
     let t_ref = v.as_tensor().clone();
     let var_arc = Arc::new(v);
-    let ptr = Box::into_raw(Box::new(OpaqueTensor(t_ref, Some(var_arc), None)));
+    let elem_count = t_ref.elem_count();
+    let ptr = if let Some(p) = tensor_pool::pool_acquire(elem_count) {
+        unsafe {
+            std::ptr::write(p, OpaqueTensor(t_ref, Some(var_arc), None));
+        }
+        p
+    } else {
+        Box::into_raw(Box::new(OpaqueTensor(t_ref, Some(var_arc), None)))
+    };
     memory_manager::register_tensor_global(ptr);
     ptr
 }
@@ -225,7 +241,7 @@ pub extern "C" fn tl_get_memory_mb() -> i64 {
 
         let pid = std::process::id();
         let output = Command::new("ps")
-            .args(&["-o", "rss=", "-p", &pid.to_string()])
+            .args(["-o", "rss=", "-p", &pid.to_string()])
             .output();
 
         if let Ok(output) = output {
@@ -361,7 +377,8 @@ pub extern "C" fn tl_tensor_print(t: *mut OpaqueTensor) {
 pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
     if !t.is_null() {
         unsafe {
-            let _ = Box::from_raw(t);
+            let elem_count = (*t).0.elem_count();
+            tensor_pool::pool_release(t, elem_count);
         }
     }
 }
@@ -374,7 +391,7 @@ pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
         let cloned = tensor.clone();
 
         // Clone the Arc<Var> if it exists to maintain gradient tracking
-        let cloned_var = var_ref.as_ref().map(|v| Arc::clone(v));
+        let cloned_var = var_ref.as_ref().map(Arc::clone);
 
         let ptr = Box::into_raw(Box::new(OpaqueTensor(cloned, cloned_var, None)));
         memory_manager::register_tensor_global(ptr);
@@ -508,14 +525,13 @@ pub extern "C" fn tl_tensor_get_f32_md(
             stride *= dims[i];
         }
 
-        let val = tensor
+        tensor
             .flatten_all()
             .unwrap()
             .get(flat_idx)
             .unwrap()
             .to_scalar()
-            .unwrap();
-        val
+            .unwrap()
     }
 }
 
@@ -533,17 +549,12 @@ pub extern "C" fn tl_tensor_transpose(
 }
 
 #[no_mangle]
-
 pub extern "C" fn tl_tensor_backward(t: *mut OpaqueTensor) {
-
     unsafe {
-
         if t.is_null() {
-
             eprintln!("Runtime Error: tl_tensor_backward received NULL pointer");
 
             return;
-
         }
 
         let tensor = &(*t).0;
@@ -551,34 +562,20 @@ pub extern "C" fn tl_tensor_backward(t: *mut OpaqueTensor) {
         // Perform backpropagation
 
         if let Ok(grads) = tensor.backward() {
-
             // Store gradients in thread-local storage, replacing any previous ones
 
             LATEST_GRADS.with(|g| {
-
                 *g.borrow_mut() = Some(grads);
-
             });
-
         } else {
-
             // Error handling or fallback?
 
             eprintln!(
-
                 "Runtime Error: backward() failed. Ensure the tensor behaves like a scalar loss."
-
             );
-
         }
-
     }
-
 }
-
-
-
-
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
@@ -855,9 +852,9 @@ pub extern "C" fn tl_tensor_tril(t: *mut OpaqueTensor, diagonal: i32) -> *mut Op
     let boundary = r.broadcast_add(&diag).unwrap();
 
     // Explicit broadcast for comparison [1, W] vs [H, 1] -> [H, W]
-    let h_dim = h as usize;
-    let w_dim = w as usize;
-    let target_shape = vec![h_dim, w_dim];
+    let h_dim = h;
+    let w_dim = w;
+    let target_shape = [h_dim, w_dim];
 
     let c_b = c.broadcast_as(&target_shape[..]).unwrap();
     let b_b = boundary.broadcast_as(&target_shape[..]).unwrap();
@@ -939,7 +936,6 @@ pub extern "C" fn tl_tensor_matmul(
     }
 }
 #[no_mangle]
-
 pub extern "C" fn tl_tensor_save(t: *mut OpaqueTensor, path: *const std::os::raw::c_char) {
     use std::ffi::CStr;
     unsafe {
@@ -1082,19 +1078,19 @@ pub extern "C" fn tl_load_all_params(path: *const std::os::raw::c_char) {
                 for (key, tensor) in tensors.iter() {
                     if let Some(var) = data_guard.get(key) {
                         if let Err(e) = var.set(tensor) {
-                            println!("Warning: Failed to set param {}: {}", key, e);
+                            eprintln!("Warning: Failed to set param {}: {}", key, e);
                         } else {
                             loaded_count += 1;
                         }
                     } else {
                         // Parameter not found in current model (maybe model structure changed or unused weight)
-                        // println!("Warning: Param {} found in file but not in current model", key);
+                        // eprintln!("Warning: Param {} found in file but not in current model", key);
                     }
                 }
                 println!("Loaded {} parameters from {}", loaded_count, path_str);
             }
             Err(e) => {
-                println!("Error loading parameters from {}: {}", path_str, e);
+                eprintln!("Error loading parameters from {}: {}", path_str, e);
             }
         }
     }

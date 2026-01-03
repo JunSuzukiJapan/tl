@@ -159,7 +159,7 @@ impl SemanticAnalyzer {
             let struct_methods = self
                 .methods
                 .entry(impl_block.target_type.clone())
-                .or_insert_with(HashMap::new);
+                .or_default();
             for method in &impl_block.methods {
                 if struct_methods.contains_key(&method.name) {
                     return Err(SemanticError::DuplicateDefinition(format!(
@@ -280,23 +280,25 @@ impl SemanticAnalyzer {
                 if let Some(expr) = init {
                     let init_ty = self.check_expr(expr)?;
                     // If annotation is primitive but init is tensor, upgrade annotation to tensor
-                    if matches!(type_annotation, Type::F32 | Type::F64 | Type::I32 | Type::I64) {
+                    if matches!(
+                        type_annotation,
+                        Type::F32 | Type::F64 | Type::I32 | Type::I64
+                    ) {
                         if let Type::Tensor(ref inner, rank) = init_ty {
-                            if self.are_types_compatible(&type_annotation, inner) {
+                            if self.are_types_compatible(type_annotation, inner) {
                                 final_ty = Type::Tensor(Box::new(type_annotation.clone()), rank);
                             }
                         } else if let Type::ScalarArray(ref inner, _len) = init_ty {
-                            if self.are_types_compatible(&type_annotation, inner) {
-                                final_ty = Type::Tensor(Box::new(type_annotation.clone()), 1); // ScalarArray is 1D
+                            if self.are_types_compatible(type_annotation, inner) {
+                                final_ty = Type::Tensor(Box::new(type_annotation.clone()), 1);
+                                // ScalarArray is 1D
                             }
                         }
-                    } else {
-                        if !self.are_types_compatible(type_annotation, &init_ty) {
-                            return Err(SemanticError::TypeMismatch {
-                                expected: type_annotation.clone(),
-                                found: init_ty,
-                            });
-                        }
+                    } else if !self.are_types_compatible(type_annotation, &init_ty) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: type_annotation.clone(),
+                            found: init_ty,
+                        });
                     }
                 }
                 self.declare_variable(name.clone(), final_ty)?;
@@ -1037,17 +1039,6 @@ impl SemanticAnalyzer {
                     self.check_expr(&args[0])?;
                     self.check_expr(&args[1])?;
                     return Ok(Type::Bool);
-                } else if name == "softmax" {
-                    if args.len() != 2 {
-                        return Err(SemanticError::ArgumentCountMismatch {
-                            name: name.clone(),
-                            expected: 2,
-                            found: args.len(),
-                        });
-                    }
-                    self.check_expr(&args[0])?;
-                    self.check_expr(&args[1])?; // dim
-                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
                 } else if name == "sin" || name == "cos" || name == "relu" || name == "gelu" {
                     if args.len() != 1 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -1146,7 +1137,9 @@ impl SemanticAnalyzer {
 
                     // Allow arg 1 to be tensor/array (old) OR args 1..N to be Int (new)
                     let t1 = self.check_expr(&args[1])?;
-                    if (matches!(t1, Type::Tensor(_, _)) || matches!(t1, Type::ScalarArray(_, _))) && args.len() == 2 {
+                    if (matches!(t1, Type::Tensor(_, _)) || matches!(t1, Type::ScalarArray(_, _)))
+                        && args.len() == 2
+                    {
                         // OK
                     } else {
                         // Varargs mode: All remaining args must be Int
@@ -1271,7 +1264,7 @@ impl SemanticAnalyzer {
                     }
                     return Ok(Type::Void);
                 } else if name == "tl_get_memory_mb" {
-                    if args.len() != 0 {
+                    if !args.is_empty() {
                         return Err(SemanticError::ArgumentCountMismatch {
                             name: "tl_get_memory_mb".into(),
                             expected: 0,
@@ -1496,7 +1489,7 @@ impl SemanticAnalyzer {
                     return Ok(Type::UserDefined(name.clone()));
                 }
 
-                return Err(SemanticError::FunctionNotFound(name.clone()));
+                Err(SemanticError::FunctionNotFound(name.clone()))
             }
             Expr::TensorLiteral(elements) | Expr::TensorConstLiteral(elements) => {
                 // Check all elements are same type
@@ -1749,7 +1742,7 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    for (_i, (arg_val, (_, arg_type))) in args.iter().zip(&func.args).enumerate() {
+                    for (arg_val, (_, arg_type)) in args.iter().zip(&func.args) {
                         let val_type = self.check_expr(arg_val)?;
                         if !self.are_types_compatible(&val_type, arg_type) {
                             return Err(SemanticError::TypeMismatch {
@@ -1771,7 +1764,7 @@ impl SemanticAnalyzer {
                                 found: args.len(),
                             });
                         }
-                        return Ok(Type::UserDefined("File".to_string()));
+                        Ok(Type::UserDefined("File".to_string()))
                     }
                     ("Path", "new") => {
                         if args.len() != 1 {
@@ -1781,16 +1774,16 @@ impl SemanticAnalyzer {
                                 found: args.len(),
                             });
                         }
-                        return Ok(Type::UserDefined("Path".to_string()));
+                        Ok(Type::UserDefined("Path".to_string()))
                     }
                     ("System", "time") => {
-                        return Ok(Type::F32);
+                        Ok(Type::F32)
                     }
                     ("System", "sleep") => {
-                        return Ok(Type::Void);
+                        Ok(Type::Void)
                     }
                     ("Env", "get") => {
-                        return Ok(Type::UserDefined("String".into()));
+                        Ok(Type::UserDefined("String".into()))
                     }
                     ("Env", "set") => {
                         if args.len() != 2 {
@@ -1800,19 +1793,19 @@ impl SemanticAnalyzer {
                                 found: args.len(),
                             });
                         }
-                        return Ok(Type::Void);
+                        Ok(Type::Void)
                     }
                     ("Http", "get") => {
-                        return Ok(Type::UserDefined("String".into()));
+                        Ok(Type::UserDefined("String".into()))
                     }
                     ("Http", "download") => {
-                        return Ok(Type::Bool);
+                        Ok(Type::Bool)
                     }
                     _ => {
-                        return Err(SemanticError::FunctionNotFound(format!(
+                        Err(SemanticError::FunctionNotFound(format!(
                             "{}::{}",
                             type_name, method_name
-                        )));
+                        )))
                     }
                 }
             }
@@ -1840,7 +1833,7 @@ impl SemanticAnalyzer {
                         field_name
                     )));
                 }
-                return Err(SemanticError::StructNotFound(name));
+                Err(SemanticError::StructNotFound(name))
             }
             Expr::MethodCall(obj, method_name, args) => {
                 let obj_type = self.check_expr(obj)?;
@@ -2058,10 +2051,14 @@ impl SemanticAnalyzer {
                 let ranks_match = *r1 == 0 || *r2 == 0 || r1 == r2;
                 ranks_match && self.are_types_compatible(i1, i2)
             }
-            (Type::Tensor(inner, _rank), primitive) if self.are_types_compatible(inner, primitive) => {
+            (Type::Tensor(inner, _rank), primitive)
+                if self.are_types_compatible(inner, primitive) =>
+            {
                 true // Allow scalar to tensor promotion in some contexts
             }
-            (primitive, Type::Tensor(inner, _rank)) if self.are_types_compatible(primitive, inner) => {
+            (primitive, Type::Tensor(inner, _rank))
+                if self.are_types_compatible(primitive, inner) =>
+            {
                 true
             }
             (Type::UserDefined(n1), Type::Struct(n2)) => n1 == n2,

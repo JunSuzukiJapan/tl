@@ -77,7 +77,7 @@ fn main() -> Result<()> {
             std::env::set_var("TL_DEVICE", device);
             crate::runtime::force_link();
             println!("Running file: {:?}", file);
-            let content = fs::read_to_string(&file)
+            let content = fs::read_to_string(file)
                 .with_context(|| format!("Failed to read file {:?}", file))?;
 
             // 1. Parser
@@ -133,7 +133,7 @@ fn main() -> Result<()> {
         }
         Commands::Build { file, output: _ } => {
             println!("Building file: {:?}", file);
-            let content = fs::read_to_string(&file)
+            let content = fs::read_to_string(file)
                 .with_context(|| format!("Failed to read file {:?}", file))?;
 
             // 1. Parser

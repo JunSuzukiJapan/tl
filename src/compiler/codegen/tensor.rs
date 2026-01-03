@@ -322,17 +322,38 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Use manual alloca for array
                     let entry_builder = self.context.create_builder();
                     let entry = parent_fn.get_first_basic_block().unwrap();
-                    if let Some(fi) = entry.get_first_instruction() { entry_builder.position_before(&fi); }
-                    else { entry_builder.position_at_end(entry); }
-                    let new_buf = entry_builder.build_alloca(f32_array_type, "conv_buf").unwrap();
+                    if let Some(fi) = entry.get_first_instruction() {
+                        entry_builder.position_before(&fi);
+                    } else {
+                        entry_builder.position_at_end(entry);
+                    }
+                    let new_buf = entry_builder
+                        .build_alloca(f32_array_type, "conv_buf")
+                        .unwrap();
 
                     // Copy and convert
                     for i in 0..len {
                         let idx = i64_type.const_int(i as u64, false);
-                        let src_ptr = unsafe { self.builder.build_in_bounds_gep(i64_type, val.into_pointer_value(), &[idx], "src").unwrap() };
+                        let src_ptr = unsafe {
+                            self.builder
+                                .build_in_bounds_gep(
+                                    i64_type,
+                                    val.into_pointer_value(),
+                                    &[idx],
+                                    "src",
+                                )
+                                .unwrap()
+                        };
                         let loaded = self.builder.build_load(i64_type, src_ptr, "l").unwrap();
-                        let f_val = self.builder.build_signed_int_to_float(loaded.into_int_value(), f32_type, "c").unwrap();
-                        let dst_ptr = unsafe { self.builder.build_in_bounds_gep(f32_type, new_buf, &[idx], "dst").unwrap() };
+                        let f_val = self
+                            .builder
+                            .build_signed_int_to_float(loaded.into_int_value(), f32_type, "c")
+                            .unwrap();
+                        let dst_ptr = unsafe {
+                            self.builder
+                                .build_in_bounds_gep(f32_type, new_buf, &[idx], "dst")
+                                .unwrap()
+                        };
                         self.builder.build_store(dst_ptr, f_val).unwrap();
                     }
                     new_buf.into()
@@ -351,10 +372,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .build_in_bounds_gep(
                             shape_array_type,
                             shape_alloca,
-                            &[
-                                i64_type.const_int(0, false),
-                                i64_type.const_int(0, false),
-                            ],
+                            &[i64_type.const_int(0, false), i64_type.const_int(0, false)],
                             "shape_ptr",
                         )
                         .map_err(|e| e.to_string())?
@@ -387,7 +405,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 match call.try_as_basic_value() {
                     ValueKind::Basic(v) => Ok(v),
-                    _ => return Err("tl_tensor_new returned void".into()),
+                    _ => Err("tl_tensor_new returned void".into()),
                 }
             }
             Type::F32 | Type::I64 => {
@@ -458,20 +476,18 @@ impl<'ctx> CodeGenerator<'ctx> {
         name: &str,
     ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
         for scope in self.variables.iter().rev() {
-            if let Some((val, ty, _)) = scope.get(name) {
+            if let Some((val, Type::Tensor(_, _), _)) = scope.get(name) {
                 // val is the alloca (pointer to pointer for Tensor)
                 // We need to load the pointer
-                if let Type::Tensor(_, _) = ty {
-                    if val.is_pointer_value() {
-                        // Load the pointer from the alloca
-                        let ptr_to_ptr = val.into_pointer_value();
-                        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                        let loaded = self
-                            .builder
-                            .build_load(ptr_type, ptr_to_ptr, "load_tensor_ptr")
-                            .map_err(|e| e.to_string())?;
-                        return Ok(loaded.into_pointer_value());
-                    }
+                if val.is_pointer_value() {
+                    // Load the pointer from the alloca
+                    let ptr_to_ptr = val.into_pointer_value();
+                    let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let loaded = self
+                        .builder
+                        .build_load(ptr_type, ptr_to_ptr, "load_tensor_ptr")
+                        .map_err(|e| e.to_string())?;
+                    return Ok(loaded.into_pointer_value());
                 }
             }
         }
