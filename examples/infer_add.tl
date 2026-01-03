@@ -24,7 +24,7 @@ fn get_memory() -> i64 {
 
 fn main() {
     let vocab_size = 13;
-    let d_model = 64; 
+    let d_model = 128; // Updated to match trained model
     let block_size = 12; 
     print("Initializing Model for Inference...");
     let model = GPT::new(vocab_size, d_model);

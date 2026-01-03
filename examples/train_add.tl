@@ -88,10 +88,10 @@ fn train_epoch(model: GPT, lr: f32, epoch: i64) {
 
 fn main() {
     let vocab_size = 13;
-    let d_model = 64; 
+    let d_model = 128; // Increased from 64 based on research (better capacity for arithmetic)
     let model = GPT::new(vocab_size, d_model);
-    let lr = 0.01; 
-    let epochs = 100; // Increased epochs, smaller steps
+    let lr = 0.001; // Reduced from 0.01 based on research (1.4e-4 to 1e-3 common)
+    let epochs = 200; // Increased from 100 based on research (200-1000 recommended)
 
     print("Training 2-digit addition (0-99) - With memory monitoring");
 
