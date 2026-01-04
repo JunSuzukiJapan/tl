@@ -4,15 +4,15 @@ fn main() {
     print("Test: VarBuilder functions");
     
     // Test varbuilder_get - create parameter tensors
-    let weight = varbuilder_get("test_weight", [10, 5]);
-    let bias = varbuilder_get("test_bias", [5]);
+    let weight = VarBuilder::get("test_weight", [10, 5]);
+    let bias = VarBuilder::get("test_bias", [5]);
     
     print("Created parameters");
     print(weight);
     print(bias);
     
     // Simple computation
-    let x = randn([4, 10], false);
+    let x = Tensor::randn([4, 10], false);
     let output = matmul(x, weight) + bias;
     let loss = sum(output);
     
@@ -23,8 +23,8 @@ fn main() {
     backward(loss);
     
     // Get gradients
-    let gw = varbuilder_grad("test_weight");
-    let gb = varbuilder_grad("test_bias");
+    let gw = VarBuilder::grad("test_weight");
+    let gb = VarBuilder::grad("test_bias");
     
     print("Weight gradient:");
     print(gw);

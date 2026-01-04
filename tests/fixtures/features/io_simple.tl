@@ -1,7 +1,7 @@
 fn main() {
     print("Testing Save/Load...");
     // Create random tensor
-    let t = randn([2, 2], false);
+    let t = Tensor::randn([2, 2], false);
     print("Original:");
     print(t);
     

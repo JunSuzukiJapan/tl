@@ -11,7 +11,7 @@ fn update_inplace(x: Tensor<f32, 1>) {
     print(x);
 }
 
-let a = randn([1], false);
+let a = Tensor::randn([1], false);
 print(a);
 
 print(a); // Original

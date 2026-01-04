@@ -12,7 +12,7 @@
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
-        return Linear((randn([i, o], true)*0.1).detach(true), (randn([o], true)*0.0).detach(true)); 
+        return Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         return matmul(x, self.W) + self.b; 
@@ -22,7 +22,7 @@ impl Linear {
 struct Embedding { w: Tensor<f32, 2> }
 impl Embedding { 
     fn new(v: i64, d: i64) -> Embedding { 
-        return Embedding((randn([v, d], true)*0.1).detach(true)); 
+        return Embedding((Tensor::randn([v, d], true)*0.1).detach(true)); 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         return embedding(i, self.w); 
@@ -32,7 +32,7 @@ impl Embedding {
 struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
 impl LayerNorm { 
     fn new(d: i64) -> LayerNorm { 
-        return LayerNorm((randn([d], true)*0.0+1.0).detach(true), (randn([d], true)*0.0).detach(true)); 
+        return LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         return x + self.b; 
@@ -82,7 +82,7 @@ impl Block {
 struct PositionalEmbedding { w: Tensor<f32, 2> }
 impl PositionalEmbedding {
     fn new(max_len: i64, d: i64) -> PositionalEmbedding {
-        return PositionalEmbedding((randn([max_len, d], true)*0.02).detach(true));
+        return PositionalEmbedding((Tensor::randn([max_len, d], true)*0.02).detach(true));
     }
     fn forward(self, p: Tensor<f32, 2>) -> Tensor<f32, 3> {
         return embedding(p, self.w);

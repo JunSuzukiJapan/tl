@@ -6,7 +6,7 @@ fn main() {
     print(mem_start);
     
     for i in range(0, 3) {
-        let x = randn([2, 3], false);
+        let x = Tensor::randn([2, 3], false);
         print("Created tensor");
     }
     

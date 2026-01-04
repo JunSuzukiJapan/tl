@@ -1242,9 +1242,155 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // 3. Compile Args
         let mut compiled_args = Vec::new();
-        for arg in args {
-            let (val, _) = self.compile_expr(arg)?;
-            compiled_args.push(val.into());
+
+        // Special handling for VarBuilder::get(name, shape...)
+        if type_name == "VarBuilder" && method_name == "get" {
+            // Arg 0: Name (String)
+            let (name_val, _) = self.compile_expr(&args[0])?;
+            compiled_args.push(name_val.into());
+
+            // Arg 1: Shape (Tensor) or Varargs (Ints)
+
+            if args.len() > 2 {
+                // Varargs -> Compile as TensorLiteral (which produces a Tensor)
+                // For VarBuilder::getAll(name, rank, shape_ptr), we need to extract rank and shape from the tensor.
+                // But wait, if we revert to rank, shape_ptr... we can't easily extract from OpaqueTensor in LLVM IR without calls.
+                // Actually, if we use Varargs, we know the rank (args.len()-1) and we can construct the shape array directly!
+
+                // Let's optimize: Compile args to an i64 array, pass generic pointer.
+                let rank = args.len() - 1;
+                let i64_type = self.context.i64_type();
+
+                // Allocate array
+                let shape_array_type = i64_type.array_type(rank as u32);
+                let shape_alloca = self
+                    .builder
+                    .build_alloca(shape_array_type, "shape_arr")
+                    .map_err(|e| e.to_string())?;
+
+                for (i, arg) in args[1..].iter().enumerate() {
+                    let (val, _) = self.compile_expr(arg)?;
+                    let i_value = val.into_int_value(); // Assume int
+
+                    let ptr = unsafe {
+                        self.builder
+                            .build_in_bounds_gep(
+                                shape_array_type,
+                                shape_alloca,
+                                &[
+                                    i64_type.const_int(0, false),
+                                    i64_type.const_int(i as u64, false),
+                                ],
+                                "tmp",
+                            )
+                            .map_err(|e| e.to_string())?
+                    };
+                    self.builder
+                        .build_store(ptr, i_value)
+                        .map_err(|e| e.to_string())?;
+                }
+
+                // Push Rank
+                compiled_args.push(i64_type.const_int(rank as u64, false).into());
+                // Push Shape Ptr (cast to usize*)
+                let ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        shape_alloca,
+                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                        "shape_cast",
+                    )
+                    .map_err(|e| e.to_string())?;
+                compiled_args.push(ptr.into());
+            } else {
+                // Single arg. Could be [10, 5] (ScalarArray/Tensor) OR 10 (Int).
+                let (val, ty) = self.compile_expr(&args[1])?;
+                let i64_type = self.context.i64_type();
+
+                if let Type::ScalarArray(_, len) = ty {
+                    // ScalarArray is i64*. Pass len and ptr.
+                    compiled_args.push(i64_type.const_int(len as u64, false).into());
+                    compiled_args.push(val.into());
+                } else if let Type::Tensor(_, _c_rank) = ty {
+                    // Tensor. We have OpaqueTensor*.
+                    // Call specialized runtime function for Tensor shape.
+                    let func_name = "tl_varbuilder_get_from_tensor";
+                    let func = self
+                        .module
+                        .get_function(func_name)
+                        .ok_or("tl_varbuilder_get_from_tensor not found")?;
+
+                    // Args: Name, Tensor
+                    let call = self
+                        .builder
+                        .build_call(func, &[name_val.into(), val.into()], "var_get")
+                        .map_err(|e| e.to_string())?;
+                    let ret_ty = Type::Tensor(Box::new(Type::F32), 0); // Dynamic rank
+                    match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => return Ok((v, ret_ty)),
+                        _ => return Err("Invalid return from varbuilder_get_from_tensor".into()),
+                    }
+                } else {
+                    // It is an int (scalar). Rank 1, Shape [val].
+                    let shape_array_type = i64_type.array_type(1);
+                    let shape_alloca = self
+                        .builder
+                        .build_alloca(shape_array_type, "shape_arr")
+                        .map_err(|e| e.to_string())?;
+                    let ptr = unsafe {
+                        self.builder
+                            .build_in_bounds_gep(
+                                shape_array_type,
+                                shape_alloca,
+                                &[i64_type.const_int(0, false), i64_type.const_int(0, false)],
+                                "tmp",
+                            )
+                            .map_err(|e| e.to_string())?
+                    };
+                    // Val should be int
+                    self.builder
+                        .build_store(ptr, val.into_int_value())
+                        .map_err(|e| e.to_string())?;
+
+                    compiled_args.push(i64_type.const_int(1, false).into());
+                    let ptr_cast = self
+                        .builder
+                        .build_pointer_cast(
+                            shape_alloca,
+                            self.context.ptr_type(inkwell::AddressSpace::default()),
+                            "shape_cast",
+                        )
+                        .map_err(|e| e.to_string())?;
+                    compiled_args.push(ptr_cast.into());
+                }
+            }
+        } else if type_name == "Tensor" && method_name == "randn" {
+            // Special handling for Tensor::randn(shape, requires_grad)
+            // The runtime expects (shape_tensor: *mut OpaqueTensor, requires_grad: bool)
+            // But the shape argument may be a ScalarArray [] which needs to be converted to a tensor
+
+            if args.is_empty() {
+                return Err("Tensor::randn requires shape argument".into());
+            }
+
+            // Compile shape argument - this should be a tensor or array
+            let shape_arg = &args[0];
+            let shape_tensor = self.ensure_tensor_v2(shape_arg, 1)?;
+            compiled_args.push(shape_tensor.into());
+
+            // Compile requires_grad argument (default to false if not provided)
+            if args.len() > 1 {
+                let (val, _) = self.compile_expr(&args[1])?;
+                compiled_args.push(val.into());
+            } else {
+                compiled_args.push(self.context.bool_type().const_int(0, false).into());
+            }
+        } else {
+            // Generic handling
+            for arg in args {
+                let (val, _) = self.compile_expr(arg)?;
+                compiled_args.push(val.into());
+            }
         }
 
         // 4. Call
@@ -1311,32 +1457,34 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Allocate buffer for elements
         // Use entry block allocation to prevent stack explosion in loops
-        let current_block = self.builder.get_insert_block().unwrap();
-        let function = current_block.get_parent().unwrap();
-        let entry_block = function.get_first_basic_block().unwrap();
+        // Allocate buffer for elements
+        // Use malloc directly at current block (HEAP allocation)
 
-        // Use calloc for data to ensure alignment and support broad sizes (matches tensor.rs)
-        let calloc_fn = self
+        // Use malloc for data (Variable Path)
+        let malloc_fn = self
             .module
-            .get_function("calloc")
-            .expect("calloc not found");
+            .get_function("malloc")
+            .expect("malloc not found");
+
+        let size = self
+            .builder
+            .build_int_mul(
+                i64_type.const_int(total_elements as u64, false),
+                i64_type.const_int(4, false), // sizeof(f32)
+                "malloc_size",
+            )
+            .map_err(|e| e.to_string())?;
+
         let call_idx = self
             .builder
-            .build_call(
-                calloc_fn,
-                &[
-                    i64_type.const_int(total_elements as u64, false).into(),
-                    i64_type.const_int(4, false).into(), // sizeof(f32)
-                ],
-                "buf_void",
-            )
+            .build_call(malloc_fn, &[size.into()], "buf_void")
             .map_err(|e| e.to_string())?;
 
         let data_alloca = match call_idx.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(inkwell::values::BasicValueEnum::PointerValue(v)) => {
                 v
             }
-            _ => return Err("Invalid calloc return".to_string()),
+            _ => return Err("Invalid malloc return".to_string()),
         };
 
         // Helper to flatten and compile elements
@@ -1368,9 +1516,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             };
 
             // Get pointer to element position
-            // data_alloca is Pointer to Array (or just ptr due to array decay? build_array_alloca returns ptr)
-            // build_array_alloca returns pointer to allocated type (float*).
-            // So we treat it as float*. Indices: [i]
             let ptr = unsafe {
                 self.builder
                     .build_in_bounds_gep(
@@ -1388,34 +1533,29 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .map_err(|e| e.to_string())?;
         }
 
-        // Allocate and fill shape buffer
-        // Move to entry block again for shape
-        let current_block_2 = self.builder.get_insert_block().unwrap(); // Should be same
-        if let Some(first_instr) = entry_block.get_first_instruction() {
-            self.builder.position_before(&first_instr);
-        } else {
-            self.builder.position_at_end(entry_block);
-        }
-
-        let shape_array_type = i64_type.array_type(rank as u32);
-        let shape_alloca = self
+        // Allocate and fill shape buffer on HEAP (malloc)
+        let shape_size = rank as u64 * 8; // i64 size
+        let shape_malloc_call = self
             .builder
-            .build_alloca(shape_array_type, "tensor_shape_arr")
+            .build_call(
+                malloc_fn,
+                &[i64_type.const_int(shape_size, false).into()],
+                "shape_malloc",
+            )
             .map_err(|e| e.to_string())?;
 
-        // Move back
-        self.builder.position_at_end(current_block_2);
+        let shape_alloca = match shape_malloc_call.try_as_basic_value() {
+            ValueKind::Basic(v) => v.into_pointer_value(),
+            _ => return Err("malloc failed".into()),
+        };
 
         for (i, dim) in shape.iter().enumerate() {
             let ptr = unsafe {
                 self.builder
                     .build_in_bounds_gep(
-                        shape_array_type,
+                        i64_type,
                         shape_alloca,
-                        &[
-                            i64_type.const_int(0, false),
-                            i64_type.const_int(i as u64, false),
-                        ],
+                        &[i64_type.const_int(i as u64, false)],
                         "shape_ptr",
                     )
                     .map_err(|e| e.to_string())?
@@ -1457,6 +1597,22 @@ impl<'ctx> CodeGenerator<'ctx> {
             ValueKind::Basic(v) => v,
             _ => return Err("Invalid tl_tensor_new return".into()),
         };
+
+        // CRITICAL: Free the malloc'd buffers after tl_tensor_new
+        // tl_tensor_new uses Tensor::from_slice which COPIES the data,
+        // so the original buffers are no longer needed and must be freed
+        // to prevent them from being reused and corrupting the tensor's internal data
+        let free_fn = self.module.get_function("free").expect("free not found");
+
+        // Free data buffer
+        self.builder
+            .build_call(free_fn, &[data_alloca.into()], "")
+            .map_err(|e| e.to_string())?;
+
+        // Free shape buffer
+        self.builder
+            .build_call(free_fn, &[shape_alloca.into()], "")
+            .map_err(|e| e.to_string())?;
 
         Ok((res, Type::Tensor(Box::new(Type::F32), rank)))
     }

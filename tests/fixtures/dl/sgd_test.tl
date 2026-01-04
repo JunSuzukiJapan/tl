@@ -5,8 +5,8 @@ struct Linear {
 }
 
 fn Linear_new(in_dim: i64, out_dim: i64) -> Linear {
-    let W = randn([in_dim, out_dim], true);
-    let b = randn([out_dim], true);
+    let W = Tensor::randn([in_dim, out_dim], true);
+    let b = Tensor::randn([out_dim], true);
     // MUST clone to keep tensors alive after W, b locals are dropped
     Linear(W.clone(), b.clone())
 }
@@ -47,9 +47,9 @@ let model = Linear_new(2, 1);
 let sgd = SGD(0.01); 
 
 // Data: y = 2*x1 - x2 + 0.5
-let X = randn([16, 2], false); // Batch size 16
-let true_W = randn([2, 1], false); // Weights not matching target exactly but arbitrary
-let true_b = randn([1], false);
+let X = Tensor::randn([16, 2], false); // Batch size 16
+let true_W = Tensor::randn([2, 1], false); // Weights not matching target exactly but arbitrary
+let true_b = Tensor::randn([1], false);
 
 print(model.W);
 

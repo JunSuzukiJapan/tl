@@ -3,7 +3,7 @@ fn main() {
     println("=== VarBuilder Simple Test ===");
     
     // Create parameter using varbuilder_get with individual dimensions
-    let w = varbuilder_get("weights", 10, 5);
+    let w = VarBuilder::get("weights", 10, 5);
     println("Parameter created");
     
     // Forward pass
@@ -15,7 +15,7 @@ fn main() {
     println("Backward complete");
     
     // Get gradient  
-    let grad_w = varbuilder_grad("weights");
+    let grad_w = VarBuilder::grad("weights");
     println("Got gradientgrad");
     
     // Update parameters

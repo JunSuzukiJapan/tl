@@ -1,7 +1,7 @@
 fn main() {
     let N = 256;
-    let A = randn([N, N]);
-    let B = randn([N, N]);
+    let A = Tensor::randn([N, N]);
+    let B = Tensor::randn([N, N]);
     
     // Explicit MatMul via equation
     // This should trigger the new optimization path

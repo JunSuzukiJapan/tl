@@ -126,12 +126,21 @@ pub extern "C" fn tl_tensor_new(
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_randn(
-    rank: usize,
-    shape: *const usize,
+    shape_tensor: *mut OpaqueTensor,
     requires_grad: bool,
 ) -> *mut OpaqueTensor {
     // Basic randn implementation
-    let shape_slice = unsafe { slice::from_raw_parts(shape, rank) };
+    let shape_data = unsafe {
+        let t = &(*shape_tensor).0;
+        t.flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()
+            .iter()
+            .map(|&x| x as usize)
+            .collect::<Vec<usize>>()
+    };
+    let shape_slice = &shape_data[..];
     let device = get_device();
 
     // Create random tensor
@@ -153,16 +162,31 @@ pub extern "C" fn tl_tensor_randn(
 /// This is the key to proper gradient tracking - all trainable parameters
 /// must be created through this function to ensure they are registered in VarMap
 #[no_mangle]
-pub extern "C" fn tl_varbuilder_get(
-    name: *const std::os::raw::c_char,
-    rank: usize,
-    shape: *const usize,
+pub extern "C" fn tl_varbuilder_get_from_tensor(
+    name_ptr: *const std::os::raw::c_char,
+    shape_tensor: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
     use std::ffi::CStr;
 
-    let name_str = unsafe { CStr::from_ptr(name).to_str().unwrap().to_string() };
-    let shape_slice = unsafe { slice::from_raw_parts(shape, rank) };
+    let name_str = unsafe { CStr::from_ptr(name_ptr).to_string_lossy().into_owned() };
 
+    // Extract shape from tensor
+    let shape_data = unsafe {
+        let t = &(*shape_tensor).0;
+        t.flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()
+            .iter()
+            .map(|&x| x as usize)
+            .collect::<Vec<usize>>()
+    };
+    let shape_slice = &shape_data[..];
+
+    tl_varbuilder_get_common(name_str, shape_slice)
+}
+
+fn tl_varbuilder_get_common(name_str: String, shape_slice: &[usize]) -> *mut OpaqueTensor {
     let varmap = GLOBAL_VAR_MAP.lock().unwrap();
     let device = get_device();
 
@@ -180,14 +204,11 @@ pub extern "C" fn tl_varbuilder_get(
 
     // Get the Var from VarMap
     let var = data_guard.get(&name_str).unwrap().clone();
-    drop(data_guard); // Release lock
-    drop(varmap); // Release varmap lock
+    drop(data_guard);
+    drop(varmap);
 
     let tensor = var.as_tensor().clone();
-
-    // Store Var reference in Arc so it persists across clones
     let var_arc = Arc::new(var);
-
     let boxed = Box::new(OpaqueTensor(tensor, Some(var_arc), Some(name_str)));
 
     let ptr = if arena::tl_arena_is_active() {
@@ -207,6 +228,20 @@ pub extern "C" fn tl_varbuilder_get(
 
     memory_manager::register_tensor_global(ptr);
     ptr
+}
+
+#[no_mangle]
+pub extern "C" fn tl_varbuilder_get(
+    name: *const std::os::raw::c_char,
+    rank: usize,
+    shape: *const usize,
+) -> *mut OpaqueTensor {
+    use std::ffi::CStr;
+
+    let name_str = unsafe { CStr::from_ptr(name).to_str().unwrap().to_string() };
+    let shape_slice = unsafe { slice::from_raw_parts(shape, rank) };
+
+    tl_varbuilder_get_common(name_str, shape_slice)
 }
 
 /// Update all parameters in VarMap using SGD

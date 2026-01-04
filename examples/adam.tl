@@ -5,8 +5,8 @@ struct Linear {
 }
 
 fn Linear_new(in_dim: i64, out_dim: i64) -> Linear {
-    let W = randn([in_dim, out_dim], true);
-    let b = randn([out_dim], true);
+    let W = Tensor::randn([in_dim, out_dim], true);
+    let b = Tensor::randn([out_dim], true);
     Linear(W.clone(), b.clone())
 }
 
@@ -79,14 +79,14 @@ impl Adam {
 let model = Linear_new(2, 1);
 
 // Zeros
-let m_W = randn([2, 1], false) * 0.0;
-let v_W = randn([2, 1], false) * 0.0;
-let m_b = randn([1], false) * 0.0;
-let v_b = randn([1], false) * 0.0;
+let m_W = Tensor::randn([2, 1], false) * 0.0;
+let v_W = Tensor::randn([2, 1], false) * 0.0;
+let m_b = Tensor::randn([1], false) * 0.0;
+let v_b = Tensor::randn([1], false) * 0.0;
 
 let optim = Adam(0.01, 0.9, 0.999, 0.00000001, 1, m_W, v_W, m_b, v_b);
 
-let X = randn([16, 2], false);
+let X = Tensor::randn([16, 2], false);
 
 print(model.W);
 

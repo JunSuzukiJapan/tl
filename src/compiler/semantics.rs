@@ -1183,10 +1183,11 @@ impl SemanticAnalyzer {
                     }
                     return Ok(t0); // Returns same tensor type
                 } else if name == "randn" {
-                    // randn(shape, requires_grad)
-                    // randn(shape, requires_grad)
-                    // Return rank 0 (dynamic) to be compatible with any target
-                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                    // LEGACY: Removed in favor of Tensor::randn
+                    return Err(SemanticError::FunctionNotFound(
+                        "randn is removed. Use Tensor::randn(shape, req_grad)".into(),
+                    ));
+                    // return Ok(Type::Tensor(Box::new(Type::F32), 0));
                 } else if name == "exp" || name == "log" || name == "sqrt" {
                     if args.len() != 1 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -1245,35 +1246,9 @@ impl SemanticAnalyzer {
                     }
                     return Ok(Type::I64);
                 } else if name == "varbuilder_get" {
-                    if args.len() < 2 {
-                        return Err(SemanticError::ArgumentCountMismatch {
-                            name: name.clone(),
-                            expected: 2,
-                            found: args.len(),
-                        });
-                    }
-                    let t0 = self.check_expr(&args[0])?;
-                    if !matches!(t0, Type::UserDefined(ref s) if s == "String") {
-                        return Err(SemanticError::TypeMismatch {
-                            expected: Type::UserDefined("String".into()),
-                            found: t0,
-                        });
-                    }
-                    // Remaining args must be Ints (if varargs) OR a single Tensor/Array
-                    if args.len() == 2 {
-                        let _ = self.check_expr(&args[1])?;
-                    } else {
-                        for arg in &args[1..] {
-                            let t = self.check_expr(arg)?;
-                            if !matches!(t, Type::I64 | Type::I32) {
-                                return Err(SemanticError::TypeMismatch {
-                                    expected: Type::I64,
-                                    found: t,
-                                });
-                            }
-                        }
-                    }
-                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                    return Err(SemanticError::FunctionNotFound(
+                        "varbuilder_get is removed. Use VarBuilder::get(name, shape)".into(),
+                    ));
                 } else if name == "update_all_params" {
                     if args.len() != 1 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -1285,15 +1260,9 @@ impl SemanticAnalyzer {
                     let _lr_type = self.check_expr(&args[0])?;
                     return Ok(Type::Void);
                 } else if name == "varbuilder_grad" {
-                    if args.len() != 1 {
-                        return Err(SemanticError::ArgumentCountMismatch {
-                            name: name.clone(),
-                            expected: 1,
-                            found: args.len(),
-                        });
-                    }
-                    let _name_type = self.check_expr(&args[0])?;
-                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                    return Err(SemanticError::FunctionNotFound(
+                        "varbuilder_grad is removed. Use VarBuilder::grad(name)".into(),
+                    ));
                 } else if name == "softmax" {
                     if args.len() != 2 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -1763,6 +1732,68 @@ impl SemanticAnalyzer {
                     }
                     ("Http", "get") => Ok(Type::UserDefined("String".into())),
                     ("Http", "download") => Ok(Type::Bool),
+                    // --- New Static Methods for Refactor ---
+                    ("Tensor", "randn") => {
+                        // Tensor::randn(shape, requires_grad)
+                        if args.len() != 2 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::randn".into(),
+                                expected: 2,
+                                found: args.len(),
+                            });
+                        }
+                        let _ = self.check_expr(&args[0])?;
+                        let t1 = self.check_expr(&args[1])?;
+
+                        if !matches!(t1, Type::Bool) {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::Bool,
+                                found: t1,
+                            });
+                        }
+                        Ok(Type::Tensor(Box::new(Type::F32), 0))
+                    }
+                    ("VarBuilder", "get") => {
+                        if args.len() < 2 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: "VarBuilder::get".into(),
+                                expected: 2,
+                                found: args.len(),
+                            });
+                        }
+                        let t0 = self.check_expr(&args[0])?;
+                        if !matches!(t0, Type::UserDefined(ref s) if s == "String") {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::UserDefined("String".into()),
+                                found: t0,
+                            });
+                        }
+                        if args.len() == 2 {
+                            let _ = self.check_expr(&args[1])?;
+                        } else {
+                            for arg in &args[1..] {
+                                let t = self.check_expr(arg)?;
+                                if !matches!(t, Type::I64 | Type::I32) {
+                                    return Err(SemanticError::TypeMismatch {
+                                        expected: Type::I64,
+                                        found: t, // used
+                                    });
+                                }
+                            }
+                        }
+                        Ok(Type::Tensor(Box::new(Type::F32), 0))
+                    }
+                    ("VarBuilder", "grad") => {
+                        if args.len() != 1 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: "VarBuilder::grad".into(),
+                                expected: 1,
+                                found: args.len(),
+                            });
+                        }
+                        let _ = self.check_expr(&args[0])?;
+                        Ok(Type::Tensor(Box::new(Type::F32), 0))
+                    }
                     _ => Err(SemanticError::FunctionNotFound(format!(
                         "{}::{}",
                         type_name, method_name
@@ -1950,6 +1981,74 @@ impl SemanticAnalyzer {
                                 });
                             }
                             Ok(Type::Bool)
+                        }
+                        // --- New Static Methods for Refactor ---
+                        ("Tensor", "randn") => {
+                            // Tensor::randn(shape, requires_grad)
+
+                            // Check args (flexible shape handling)
+                            if args.len() != 2 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: "Tensor::randn".into(),
+                                    expected: 2,
+                                    found: args.len(),
+                                });
+                            }
+                            // Arg 0: shape
+                            let _t0 = self.check_expr(&args[0])?;
+                            // Arg 1: requires_grad
+                            let t1 = self.check_expr(&args[1])?;
+
+                            if !matches!(t1, Type::Bool) {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::Bool,
+                                    found: t1,
+                                });
+                            }
+                            // Return Tensor<f32>
+                            Ok(Type::Tensor(Box::new(Type::F32), 0))
+                        }
+                        ("VarBuilder", "get") => {
+                            if args.len() < 2 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: "VarBuilder::get".into(),
+                                    expected: 2,
+                                    found: args.len(),
+                                });
+                            }
+                            let t0 = self.check_expr(&args[0])?;
+                            if !matches!(t0, Type::UserDefined(ref s) if s == "String") {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::UserDefined("String".into()),
+                                    found: t0,
+                                });
+                            }
+                            // Remaining args must be Ints (if varargs) OR a single Tensor/Array
+                            if args.len() == 2 {
+                                let _ = self.check_expr(&args[1])?;
+                            } else {
+                                for arg in &args[1..] {
+                                    let t = self.check_expr(arg)?;
+                                    if !matches!(t, Type::I64 | Type::I32) {
+                                        return Err(SemanticError::TypeMismatch {
+                                            expected: Type::I64,
+                                            found: t,
+                                        });
+                                    }
+                                }
+                            }
+                            Ok(Type::Tensor(Box::new(Type::F32), 0))
+                        }
+                        ("VarBuilder", "grad") => {
+                            if args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: "VarBuilder::grad".into(),
+                                    expected: 1,
+                                    found: args.len(),
+                                });
+                            }
+                            let _ = self.check_expr(&args[0])?;
+                            Ok(Type::Tensor(Box::new(Type::F32), 0))
                         }
                         ("Path", "is_dir") => {
                             if !args.is_empty() {

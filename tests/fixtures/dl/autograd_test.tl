@@ -1,7 +1,7 @@
 // Autograd Test
 
 // 1. Create a tensor with gradient tracking
-let w = randn([1], true);
+let w = Tensor::randn([1], true);
 print(w);
 
 // 2. Define a simple function: y = w * w * 3.0

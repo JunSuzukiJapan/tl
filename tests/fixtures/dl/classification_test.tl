@@ -5,7 +5,7 @@ struct Linear {
 
 // Data: 3 classes, 2 features
 // X: [2, 2]
-let X = randn([2, 2], false); 
+let X = Tensor::randn([2, 2], false); 
 print(X);
 
 // Target: [2] (indices 0, 1)
@@ -14,8 +14,8 @@ let target = [0.0, 1.0];
 print(target);
 
 fn Linear_new(in_dim: i64, out_dim: i64) -> Linear {
-    let W = randn([in_dim, out_dim], true);
-    let b = randn([out_dim], true);
+    let W = Tensor::randn([in_dim, out_dim], true);
+    let b = Tensor::randn([out_dim], true);
     return Linear(W.clone(), b.clone());
 }
 

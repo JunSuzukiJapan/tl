@@ -108,17 +108,17 @@ pub extern "C" fn tl_arena_alloc(size: i64) -> *mut OpaqueTensor {
     }
 
     ARENA.with(|arena| {
-        arena
-            .borrow_mut()
-            .as_mut()
-            .map(|a| {
-                let ptr = a.allocate(size as usize, 16); // 16-byte alignment for SIMD
-                ptr as *mut OpaqueTensor
-            })
-            .unwrap_or_else(|| {
-                eprintln!("Arena not initialized, returning null");
-                std::ptr::null_mut()
-            })
+        let mut borrow = arena.borrow_mut();
+        if let Some(ref mut a) = *borrow {
+            // Check overflow before allocate to avoid panic in allocate()
+            if a.offset + size as usize > a.capacity {
+                return std::ptr::null_mut();
+            }
+            let ptr = a.allocate(size as usize, 16);
+            ptr as *mut OpaqueTensor
+        } else {
+            std::ptr::null_mut()
+        }
     })
 }
 

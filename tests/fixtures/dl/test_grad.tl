@@ -2,7 +2,7 @@
 
 fn main() {
     print("Test 1: Simple gradient");
-    let x = randn([2, 3], true);
+    let x = Tensor::randn([2, 3], true);
     let y = x * 2.0;
     let loss = sum(y);
     
@@ -18,8 +18,8 @@ fn main() {
     print("Test 2: Embedding gradient");
     let vocab = 14;
     let d_model = 16;
-    let weight = randn([vocab, d_model], true) * 0.1;
-    let idx = randn([2, 4], false) * 0.0 + 1.0;
+    let weight = Tensor::randn([vocab, d_model], true) * 0.1;
+    let idx = Tensor::randn([2, 4], false) * 0.0 + 1.0;
     
     let emb = embedding(idx, weight);
     let loss2 = sum(emb);

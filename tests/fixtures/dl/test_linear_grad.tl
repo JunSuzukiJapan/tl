@@ -12,8 +12,8 @@ struct Linear {
 impl Linear {
     fn new(in_features: i64, out_features: i64) -> Linear {
         return Linear(
-            randn([in_features, out_features], true),
-            randn([out_features], true)
+            Tensor::randn([in_features, out_features], true),
+            Tensor::randn([out_features], true)
         );
     }
     
@@ -50,9 +50,9 @@ fn main() {
     let lr = 0.01;
     
     // Input: [batch=4, features=10]
-    let X = randn([4, 10], false);
+    let X = Tensor::randn([4, 10], false);
     // Target: [batch=4, outputs=5]  
-    let Y = randn([4, 5], false);
+    let Y = Tensor::randn([4, 5], false);
     
     print("Running 3 training steps...");
     

@@ -21,105 +21,112 @@ pub fn declare_runtime_functions<'ctx>(
     let void_ptr = context.ptr_type(AddressSpace::default()); // OpaqueTensor*
     let void_type = context.void_type();
 
+    // Helper to add function only if not exists
+    let add_fn = |name: &str, ty: inkwell::types::FunctionType<'ctx>| {
+        if module.get_function(name).is_none() {
+            module.add_function(name, ty, None);
+        }
+    };
+
     let print_i64_type = void_type.fn_type(&[i64_type.into()], false);
-    module.add_function("tl_print_i64", print_i64_type, None);
+    add_fn("tl_print_i64", print_i64_type);
 
     let print_f32_type = void_type.fn_type(&[f32_type.into()], false);
-    module.add_function("tl_print_f32", print_f32_type, None);
+    add_fn("tl_print_f32", print_f32_type);
 
     let print_str_type = void_type.fn_type(&[void_ptr.into()], false);
-    module.add_function("tl_print_string", print_str_type, None);
+    add_fn("tl_print_string", print_str_type);
 
     // malloc(size: i64) -> *u8
     let malloc_type = void_ptr.fn_type(&[i64_type.into()], false);
-    module.add_function("malloc", malloc_type, None);
+    add_fn("malloc", malloc_type);
 
     // calloc(num: i64, size: i64) -> *u8
     let calloc_type = void_ptr.fn_type(&[i64_type.into(), i64_type.into()], false);
-    module.add_function("calloc", calloc_type, None);
+    add_fn("calloc", calloc_type);
 
     // free(ptr: *u8) -> void
     let free_type = void_type.fn_type(&[void_ptr.into()], false);
-    module.add_function("free", free_type, None);
+    add_fn("free", free_type);
 
     // tl_tensor_dim(t: *mut OpaqueTensor, dim_idx: usize) -> i64
     let dim_type = i64_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
-    module.add_function("tl_tensor_dim", dim_type, None);
+    add_fn("tl_tensor_dim", dim_type);
 
     // tl_tensor_get_f32_md(t: *mut OpaqueTensor, indices: *const i64, rank: usize) -> f32
     let get_md_type = f32_type.fn_type(&[void_ptr.into(), i64_ptr.into(), i64_type.into()], false);
-    module.add_function("tl_tensor_get_f32_md", get_md_type, None);
+    add_fn("tl_tensor_get_f32_md", get_md_type);
 
     // tl_tensor_new(data: *const f32, rank: usize, shape: *const usize) -> *mut OpaqueTensor
     let new_type = void_ptr.fn_type(&[f32_ptr.into(), i64_type.into(), usize_ptr.into()], false);
-    module.add_function("tl_tensor_new", new_type, None);
+    add_fn("tl_tensor_new", new_type);
 
     let binop_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
-    module.add_function("tl_tensor_sub", binop_type, None);
+    add_fn("tl_tensor_sub", binop_type);
 
     // tl_tensor_free(t: *mut) -> void
     let free_type = void_type.fn_type(&[void_ptr.into()], false);
-    module.add_function("tl_tensor_free", free_type, None);
+    add_fn("tl_tensor_free", free_type);
 
     // tl_tensor_clone(t: *mut) -> *mut
     let clone_type = void_ptr.fn_type(&[void_ptr.into()], false);
-    module.add_function("tl_tensor_clone", clone_type, None);
+    add_fn("tl_tensor_clone", clone_type);
 
     // tl_tensor_add(a: *mut, b: *mut) -> *mut
     let bin_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
-    module.add_function("tl_tensor_add", bin_type, None);
-    module.add_function("tl_tensor_mul", bin_type, None);
+    add_fn("tl_tensor_add", bin_type);
+    add_fn("tl_tensor_mul", bin_type);
 
     // tl_tensor_print(t: *mut) -> void
     let print_type = void_type.fn_type(&[void_ptr.into()], false);
-    module.add_function("tl_tensor_print", print_type, None);
+    add_fn("tl_tensor_print", print_type);
 
     // tl_tensor_get(t: *mut, index: usize) -> f32 (Simplification: 1D get)
     let get_type = f32_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
-    module.add_function("tl_tensor_get", get_type, None);
+    add_fn("tl_tensor_get", get_type);
 
     // tl_tensor_slice(t: *mut, start: usize, len: usize) -> *mut
     let slice_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into()], false);
-    module.add_function("tl_tensor_slice", slice_type, None);
+    add_fn("tl_tensor_slice", slice_type);
 
     // tl_tensor_len(t: *mut) -> i64
     let len_type = i64_type.fn_type(&[void_ptr.into()], false);
-    module.add_function("tl_tensor_len", len_type, None);
+    add_fn("tl_tensor_len", len_type);
 
     // tl_tensor_neg(t: *mut) -> *mut
     let neg_type = void_ptr.fn_type(&[void_ptr.into()], false);
-    module.add_function("tl_tensor_neg", neg_type, None);
+    add_fn("tl_tensor_neg", neg_type);
 
     // tl_tensor_transpose(t: *mut, d0: usize, d1: usize) -> *mut
     let transpose_type =
         void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into()], false);
-    module.add_function("tl_tensor_transpose", transpose_type, None);
+    add_fn("tl_tensor_transpose", transpose_type);
 
     // tl_tensor_pow(t: *mut Tensor, exponent: *mut Tensor) -> *mut Tensor
     let pow_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
-    module.add_function("tl_tensor_pow", pow_type, None);
+    add_fn("tl_tensor_pow", pow_type);
 
     // tl_tensor_sqrt(t: *mut Tensor) -> *mut Tensor
-    let sqrt_type = void_ptr.fn_type(&[void_ptr.into()], false);
-    module.add_function("tl_tensor_sqrt", sqrt_type, None);
+    let unary_type = void_ptr.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_tensor_sqrt", unary_type);
 
     // Transformer Ops
     // tl_tensor_sin(t: *mut Tensor) -> *mut Tensor
-    module.add_function("tl_tensor_sin", sqrt_type, None); // Same signature as sqrt
+    add_fn("tl_tensor_sin", unary_type); // Same signature as sqrt
 
     // tl_tensor_cos(t: *mut Tensor) -> *mut Tensor
-    module.add_function("tl_tensor_cos", sqrt_type, None);
+    add_fn("tl_tensor_cos", unary_type);
 
     // tl_tensor_relu(t: *mut Tensor) -> *mut Tensor
-    module.add_function("tl_tensor_relu", sqrt_type, None);
+    add_fn("tl_tensor_relu", unary_type);
 
     // tl_tensor_gelu(t: *mut Tensor) -> *mut Tensor
-    module.add_function("tl_tensor_gelu", sqrt_type, None);
+    add_fn("tl_tensor_gelu", unary_type);
 
     // tl_tensor_tril(t: *mut Tensor, diagonal: i32) -> *mut Tensor
     let i32_type = context.i32_type();
     let tril_type = void_ptr.fn_type(&[void_ptr.into(), i32_type.into()], false);
-    module.add_function("tl_tensor_tril", tril_type, None);
+    add_fn("tl_tensor_tril", tril_type);
 
     // tl_tensor_sum_dim(t: *mut Tensor, dim: usize, keep: bool) -> *mut Tensor
     // usize -> i64 on 64-bit
@@ -127,81 +134,228 @@ pub fn declare_runtime_functions<'ctx>(
         &[void_ptr.into(), i64_type.into(), context.bool_type().into()],
         false,
     );
-    module.add_function("tl_tensor_sum_dim", sum_dim_type, None);
+    add_fn("tl_tensor_sum_dim", sum_dim_type);
 
     // tl_tensor_embedding(indices: *mut Tensor, weights: *mut Tensor) -> *mut Tensor
     let embedding_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
-    module.add_function("tl_tensor_embedding", embedding_type, None);
+    add_fn("tl_tensor_embedding", embedding_type);
 
     // tl_tensor_sum(t: *mut) -> *mut
-    let sum_type = void_ptr.fn_type(&[void_ptr.into()], false);
-    module.add_function("tl_tensor_sum", sum_type, None);
+    add_fn("tl_tensor_sum", unary_type);
 
     // tl_tensor_div(a: *mut, b: *mut) -> *mut
-    module.add_function("tl_tensor_div", bin_type, None);
+    add_fn("tl_tensor_div", bin_type);
 
     // tl_tensor_matmul(a: *mut, b: *mut) -> *mut
-    module.add_function("tl_tensor_matmul", bin_type, None);
+    add_fn("tl_tensor_matmul", bin_type);
 
-    // Unary ops: exp, log, sqrt
-    let unary_type = void_ptr.fn_type(&[void_ptr.into()], false);
-    module.add_function("tl_tensor_exp", unary_type, None);
-    module.add_function("tl_tensor_log", unary_type, None);
-    // module.add_function("tl_tensor_sqrt", unary_type, None); // Already declared above with specific type
-
-    // Binary ops: pow
-    // module.add_function("tl_tensor_pow", bin_type, None); // Already declared above with specific type
+    // Unary ops: exp, log
+    add_fn("tl_tensor_exp", unary_type);
+    add_fn("tl_tensor_log", unary_type);
 
     // Assign ops: add_assign, sub_assign, mul_assign, div_assign (return void)
     let assign_type = void_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
-    module.add_function("tl_tensor_add_assign", assign_type, None);
-    module.add_function("tl_tensor_sub_assign", assign_type, None);
-    module.add_function("tl_tensor_mul_assign", assign_type, None);
-    module.add_function("tl_tensor_div_assign", assign_type, None);
+    add_fn("tl_tensor_add_assign", assign_type);
+    add_fn("tl_tensor_sub_assign", assign_type);
+    add_fn("tl_tensor_mul_assign", assign_type);
+    add_fn("tl_tensor_div_assign", assign_type);
 
     let i8_ptr = context.ptr_type(AddressSpace::default());
     let register_type = void_type.fn_type(&[i8_ptr.into(), void_ptr.into()], false);
-    module.add_function("tl_register_tensor", register_type, None);
+    add_fn("tl_register_tensor", register_type);
 
     // strcmp(s1: *const i8, s2: *const i8) -> i32
     let strcmp_type = context
         .i32_type()
         .fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
-    module.add_function("strcmp", strcmp_type, None);
+    add_fn("strcmp", strcmp_type);
 
     // tl_tensor_save(t: *mut Tensor, path: *const i8) -> void
     let save_type = void_type.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
-    module.add_function("tl_tensor_save", save_type, None);
+    add_fn("tl_tensor_save", save_type);
 
     // tl_tensor_load(path: *const i8) -> *mut Tensor
     let load_type = void_ptr.fn_type(&[i8_ptr.into()], false);
-    module.add_function("tl_tensor_load", load_type, None);
+    add_fn("tl_tensor_load", load_type);
 
     // --- Map Support ---
     // tl_tensor_map_new() -> *mut Map
     let map_new_type = void_ptr.fn_type(&[], false);
-    module.add_function("tl_tensor_map_new", map_new_type, None);
+    add_fn("tl_tensor_map_new", map_new_type);
 
     // tl_tensor_map_insert(map, name, tensor)
     let map_insert_type =
         void_type.fn_type(&[void_ptr.into(), i8_ptr.into(), void_ptr.into()], false);
-    module.add_function("tl_tensor_map_insert", map_insert_type, None);
+    add_fn("tl_tensor_map_insert", map_insert_type);
 
     // tl_tensor_map_save(map, path)
     let map_save_type = void_type.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
-    module.add_function("tl_tensor_map_save", map_save_type, None);
+    add_fn("tl_tensor_map_save", map_save_type);
 
     // tl_tensor_map_load(path) -> *mut Map
     let map_load_type = void_ptr.fn_type(&[i8_ptr.into()], false);
-    module.add_function("tl_tensor_map_load", map_load_type, None);
+    add_fn("tl_tensor_map_load", map_load_type);
 
     // tl_tensor_map_get(map, name) -> *mut Tensor
     let map_get_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
-    module.add_function("tl_tensor_map_get", map_get_type, None);
+    add_fn("tl_tensor_map_get", map_get_type);
 
     // tl_tensor_map_free(map)
     let map_free_type = void_type.fn_type(&[void_ptr.into()], false);
-    module.add_function("tl_tensor_map_free", map_free_type, None);
+    add_fn("tl_tensor_map_free", map_free_type);
+
+    // Reshape
+    let reshape_dims_type =
+        void_ptr.fn_type(&[void_ptr.into(), i64_ptr.into(), i64_type.into()], false);
+    add_fn("tl_tensor_reshape_dims", reshape_dims_type);
+
+    let reshape_tensor_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_tensor_reshape", reshape_tensor_type);
+
+    // Randn
+    let randn_type = void_ptr.fn_type(&[void_ptr.into(), context.bool_type().into()], false);
+    add_fn("tl_tensor_randn", randn_type);
+
+    // VarBuilder
+    // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize)
+    let varbuilder_get_type =
+        void_ptr.fn_type(&[i8_ptr.into(), i64_type.into(), usize_ptr.into()], false);
+    add_fn("tl_varbuilder_get", varbuilder_get_type);
+
+    // tl_varbuilder_get_from_tensor(name: *const c_char, shape_tensor: *mut OpaqueTensor)
+    let varbuilder_get_tensor_type = void_ptr.fn_type(&[i8_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_varbuilder_get_from_tensor", varbuilder_get_tensor_type);
+
+    // update_all_params(lr: f32)
+    let update_type = void_type.fn_type(&[f32_type.into()], false);
+    add_fn("tl_update_all_params", update_type);
+
+    // grad(name: *const c_char) -> Tensor
+    let grad_type = void_ptr.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_varbuilder_grad", grad_type);
+
+    // Autograd helpers
+    let backward_type = void_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_tensor_backward", backward_type);
+
+    let grad_fn_type = void_ptr.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_tensor_grad", grad_fn_type);
+
+    let detach_type = void_ptr.fn_type(&[void_ptr.into(), context.bool_type().into()], false);
+    add_fn("tl_tensor_detach", detach_type);
+
+    // Softmax / CrossEntropy
+    let softmax_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_tensor_softmax", softmax_type);
+
+    let cross_entropy_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_tensor_cross_entropy", cross_entropy_type);
+
+    // Checkpointing: save_all_params(dir), load_all...
+    let params_io_type = void_type.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_save_all_params", params_io_type);
+    let add_param_type = void_type.fn_type(&[i8_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_add_parameter", add_param_type);
+    add_fn("tl_load_all_params", params_io_type);
+
+    // Parameter Registration
+    let register_param_type = void_ptr.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_register_parameter", register_param_type);
+
+    // String ops
+    let str_concat_type = i8_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_string_concat", str_concat_type);
+
+    // File ops
+    let file_open_type = void_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_file_open", file_open_type);
+
+    let file_read_type = i8_ptr.fn_type(&[void_ptr.into()], false); // Returns String (i8*)
+    add_fn("tl_file_read_string", file_read_type);
+
+    let file_write_type = void_type.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_file_write_string", file_write_type);
+
+    let file_close_type = void_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_file_close", file_close_type);
+
+    // Path
+    let path_new_type = void_ptr.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_path_new", path_new_type);
+
+    let path_join_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_path_join", path_join_type);
+
+    let path_exists_type = context.bool_type().fn_type(&[void_ptr.into()], false);
+    add_fn("tl_path_exists", path_exists_type);
+    add_fn("tl_path_is_dir", path_exists_type);
+    add_fn("tl_path_is_file", path_exists_type);
+
+    let path_to_str_type = i8_ptr.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_path_to_string", path_to_str_type);
+
+    let path_free_type = void_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_path_free", path_free_type);
+
+    // Http
+    let http_dl_type = context
+        .bool_type()
+        .fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_http_download", http_dl_type);
+
+    let http_get_type = i8_ptr.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_http_get", http_get_type);
+
+    // Env
+    let env_get_type = i8_ptr.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_env_get", env_get_type);
+
+    let env_set_type = void_type.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_env_set", env_set_type);
+
+    // System
+    let sys_time_type = f32_type.fn_type(&[], false); // Return f32 timestamp
+    add_fn("tl_system_time", sys_time_type);
+
+    let sys_sleep_type = void_type.fn_type(&[f32_type.into()], false);
+    add_fn("tl_system_sleep", sys_sleep_type);
+
+    let mem_mb_type = i64_type.fn_type(&[], false);
+    add_fn("tl_get_memory_mb", mem_mb_type);
+
+    // Memory Scope
+    let enter_scope_type = void_type.fn_type(&[], false);
+    add_fn("tl_mem_enter_scope", enter_scope_type);
+
+    let exit_scope_type = void_type.fn_type(&[], false);
+    add_fn("tl_mem_exit_scope", exit_scope_type);
+
+    let reg_struct_type = void_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_mem_register_struct", reg_struct_type);
+    add_fn("tl_mem_register_tensor", reg_struct_type);
+    add_fn("tl_mem_unregister", reg_struct_type);
+
+    // Pool / Arena
+    let pool_acq = void_ptr.fn_type(&[i64_type.into()], false);
+    add_fn("tl_pool_acquire", pool_acq);
+
+    let pool_rel = void_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_pool_release", pool_rel);
+
+    let arena_init = void_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_arena_init", arena_init);
+
+    let arena_alloc = void_ptr.fn_type(&[i64_type.into()], false);
+    add_fn("tl_arena_alloc", arena_alloc);
+
+    let arena_free = void_type.fn_type(&[], false);
+    add_fn("tl_arena_free", arena_free);
+
+    let arena_active = context.bool_type().fn_type(&[], false);
+    add_fn("tl_arena_is_active", arena_active);
+
+    let arena_reset = void_type.fn_type(&[], false);
+    add_fn("tl_arena_reset", arena_reset);
 
     // --- Global Mappings ---
     // Mapping symbols is critical for JIT.
@@ -378,6 +532,15 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_varbuilder_get") {
         execution_engine.add_global_mapping(&f, runtime::tl_varbuilder_get as usize);
     }
+    if let Some(f) = module.get_function("tl_varbuilder_get_from_tensor") {
+        execution_engine.add_global_mapping(&f, runtime::tl_varbuilder_get_from_tensor as usize);
+    }
+    if let Some(f) = module.get_function("tl_varbuilder_grad") {
+        execution_engine.add_global_mapping(&f, runtime::tl_varbuilder_grad as usize);
+    }
+    if let Some(f) = module.get_function("tl_update_all_params") {
+        execution_engine.add_global_mapping(&f, runtime::tl_update_all_params as usize);
+    }
 
     if let Some(f) = module.get_function("tl_get_memory_mb") {
         execution_engine.add_global_mapping(&f, runtime::tl_get_memory_mb as usize);
@@ -491,20 +654,26 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_randn(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor
     let randn_type = void_ptr.fn_type(
         &[
-            i64_type.into(),
-            usize_ptr.into(),
-            context.bool_type().into(),
+            void_ptr.into(),            // Shape Tensor
+            context.bool_type().into(), // Req Grad
         ],
         false,
     );
     module.add_function("tl_tensor_randn", randn_type, None);
 
     // VarBuilder-based parameter management (following Candle's official pattern)
-    // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize) -> *mut OpaqueTensor
-    let i8_ptr = context.ptr_type(AddressSpace::default());
+    // tl_varbuilder_get(name: *const c_char, rank: i64, shape: *const usize) -> *mut OpaqueTensor
     let varbuilder_get_type =
         void_ptr.fn_type(&[i8_ptr.into(), i64_type.into(), usize_ptr.into()], false);
     module.add_function("tl_varbuilder_get", varbuilder_get_type, None);
+
+    // tl_varbuilder_get_from_tensor(name: *const c_char, shape_tensor: *mut OpaqueTensor)
+    let varbuilder_get_tensor_type = void_ptr.fn_type(&[i8_ptr.into(), void_ptr.into()], false);
+    module.add_function(
+        "tl_varbuilder_get_from_tensor",
+        varbuilder_get_tensor_type,
+        None,
+    );
 
     // tl_update_all_params(learning_rate: f32) -> void
     let update_params_type = void_type.fn_type(&[context.f32_type().into()], false);

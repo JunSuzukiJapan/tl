@@ -6,7 +6,7 @@ struct Emb {
 
 impl Emb {
     fn new(vocab: i64, d: i64) -> Emb {
-        return Emb(randn([vocab, d], true) * 0.1);
+        return Emb(Tensor::randn([vocab, d], true) * 0.1);
     }
     
     fn forward(self, idx: Tensor<f32, 2>) -> Tensor<f32, 3> {
@@ -18,7 +18,7 @@ fn main() {
     print("Test: Embedding gradient through struct");
     
     let emb = Emb::new(14, 16);
-    let idx = randn([2, 4], false) * 0.0 + 1.0;
+    let idx = Tensor::randn([2, 4], false) * 0.0 + 1.0;
     
     let out = emb.forward(idx);
     let loss = sum(out);

@@ -18,7 +18,7 @@ struct Linear {
 
 impl Linear {
     fn new(in_dim: i64, out_dim: i64) -> Linear {
-        return Linear(randn([in_dim, out_dim], true), randn([out_dim], true));
+        return Linear(Tensor::randn([in_dim, out_dim], true), Tensor::randn([out_dim], true));
     }
 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
@@ -36,7 +36,7 @@ struct Embedding {
 
 impl Embedding {
     fn new(vocab: i64, d_model: i64) -> Embedding {
-        return Embedding(randn([vocab, d_model], true));
+        return Embedding(Tensor::randn([vocab, d_model], true));
     }
 
     fn forward(self, idx: Tensor<f32, 2>) -> Tensor<f32, 3> {
@@ -53,7 +53,7 @@ struct LayerNorm {
 impl LayerNorm {
     fn new(d_model: i64) -> LayerNorm {
         // Initialize gamma=1, beta=0. Using randn approximation for test.
-        return LayerNorm(randn([d_model], true), randn([d_model], true) * 0.0);
+        return LayerNorm(Tensor::randn([d_model], true), Tensor::randn([d_model], true) * 0.0);
     }
 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
@@ -190,11 +190,11 @@ fn main() {
     // We strictly assume parser creates f32. Runtime converts to u32.
     // 0.0 -> 0, 1.0 -> 1
     // Let's ensure they are valid indices < vocab_size.
-    // randn([2, 4], false) gives values around 0.
+    // Tensor::randn([2, 4], false) gives values around 0.
     // abs(randn) * 10? abs not implemented.
     // Just use randn squared? or hardcoded trivial test.
     // "zeros" is safe? 0 is valid index.
-    let idx = randn([2, 4], false) * 0.0; // All zeros
+    let idx = Tensor::randn([2, 4], false) * 0.0; // All zeros
     // Or try to inject some values via file? Too complex.
     // Let's assumes indices are 0.
     
@@ -217,7 +217,7 @@ fn main() {
     
     // 4. Verify specific ops
     print("Verifying tril...");
-    let t = randn([3, 3], false);
+    let t = Tensor::randn([3, 3], false);
     let t_tril = tril(t, 0);
     print(t_tril);
     

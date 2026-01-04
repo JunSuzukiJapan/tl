@@ -12,9 +12,9 @@ struct Outer {
 fn main() {
     print("Testing register_modules...");
     let m = Outer {
-        t1: randn([1], true),
-        inner: Inner { val: randn([1], true) },
-        t2: randn([1], true)
+        t1: Tensor::randn([1], true),
+        inner: Inner { val: Tensor::randn([1], true) },
+        t2: Tensor::randn([1], true)
     };
     
     register_modules(m);

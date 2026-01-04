@@ -9,8 +9,8 @@ struct Model {
 
 fn main() {
     // Random init 1
-    let w = randn([2, 2], false);
-    let b = randn([2], false);
+    let w = Tensor::randn([2, 2], false);
+    let b = Tensor::randn([2], false);
     
     let sub = Sub { weight: w };
     let model = Model { layer1: sub, bias: b };
@@ -24,8 +24,8 @@ fn main() {
     println("Saved weights.");
 
     // Random init 2 (different)
-    let w2 = randn([2, 2], false);
-    let b2 = randn([2], false);
+    let w2 = Tensor::randn([2, 2], false);
+    let b2 = Tensor::randn([2], false);
     let sub2 = Sub { weight: w2 };
     let model2 = Model { layer1: sub2, bias: b2 };
 

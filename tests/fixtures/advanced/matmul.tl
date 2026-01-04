@@ -6,8 +6,8 @@ fn main() {
     let K = 16;
     let N = 16;
 
-    let A = randn([M, K]);
-    let B = randn([K, N]);
+    let A = Tensor::randn([M, K]);
+    let B = Tensor::randn([K, N]);
 
     // This should trigger the new optimization path
     let C = A[i, j] * B[j, k];

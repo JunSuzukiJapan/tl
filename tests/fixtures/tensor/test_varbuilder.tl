@@ -20,8 +20,8 @@ impl Linear {
     
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
         // Get parameters from VarMap by name
-        let weight = varbuilder_get(self.weight_name, [self.in_features, self.out_features]);
-        let bias = varbuilder_get(self.bias_name, [self.out_features]);
+        let weight = VarBuilder::get(self.weight_name, [self.in_features, self.out_features]);
+        let bias = VarBuilder::get(self.bias_name, [self.out_features]);
         return matmul(x, weight) + bias;
     }
 }
@@ -33,8 +33,8 @@ fn main() {
     let lr = 0.01;
     
     // Input and target
-    let X = randn([4, 10], false);
-    let Y = randn([4, 5], false);
+    let X = Tensor::randn([4, 10], false);
+    let Y = Tensor::randn([4, 5], false);
     
     print("Running 3 training steps...");
     
@@ -62,8 +62,8 @@ fn main() {
     print("Checking gradients were computed...");
     
     // Verify gradients exist
-    let gw = varbuilder_grad("linear1.weight");
-    let gb = varbuilder_grad("linear1.bias");
+    let gw = VarBuilder::grad("linear1.weight");
+    let gb = VarBuilder::grad("linear1.bias");
     
     print("Weight gradient:");
     print(gw);

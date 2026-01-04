@@ -44,40 +44,30 @@ impl MemoryManager {
         // Save current arena offset
         let offset = super::arena::tl_arena_get_offset();
         self.arena_offsets.push(offset);
-        // println!(
-        //     "DEBUG: Enter Scope. Depth: {}. Arena Offset: {}",
-        //     self.scopes.len(),
-        //     offset
-        // );
     }
 
     /// Exit current scope and free ALL allocations in that scope
     /// CRITICAL: This MUST free all unfreed memory in the scope
     pub fn exit_scope(&mut self) {
         if self.scopes.is_empty() {
-            eprintln!("WARNING: exit_scope called on empty scope stack");
             return;
         }
 
         // Restore arena offset (freeing all arena allocations in this scope)
         if let Some(offset) = self.arena_offsets.pop() {
             super::arena::tl_arena_set_offset(offset);
-            // println!("DEBUG: Exit Scope. Restored Arena Offset: {}", offset);
         }
 
         if let Some(allocations) = self.scopes.pop() {
-            // println!("DEBUG: Freeing {} allocations in scope", allocations.len());
             // Free all allocations in reverse order (LIFO)
             for record in allocations.into_iter().rev() {
                 unsafe {
                     match record.alloc_type {
                         AllocationType::Struct => {
-                            // eprintln!("DEBUG: freeing struct at {:?}", record.ptr);
                             libc::free(record.ptr);
                         }
                         AllocationType::Tensor => {
                             let tensor_ptr = record.ptr as *mut OpaqueTensor;
-                            // eprintln!("DEBUG: freeing tensor at {:?}", tensor_ptr);
                             super::free_tensor_resources(tensor_ptr);
                         }
                     }

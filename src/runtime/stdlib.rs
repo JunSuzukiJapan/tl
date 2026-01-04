@@ -14,7 +14,10 @@ pub extern "C" fn tl_string_concat(s1: *const c_char, s2: *const c_char) -> *mut
     let s2_str = unsafe { CStr::from_ptr(s2).to_string_lossy() };
     let joined = format!("{}{}", s1_str, s2_str);
     match CString::new(joined) {
-        Ok(c_str) => c_str.into_raw(),
+        Ok(c_str) => {
+            let ptr = c_str.into_raw();
+            ptr
+        }
         Err(_) => std::ptr::null_mut(),
     }
 }
