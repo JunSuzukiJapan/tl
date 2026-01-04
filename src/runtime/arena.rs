@@ -212,10 +212,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Arena overflow")]
     fn test_arena_overflow() {
         let mut arena = Arena::new(100);
-        arena.allocate(200, 16); // Should panic
+        let ptr = arena.allocate(200, 16);
+        assert!(ptr.is_null()); // Should return null, not panic
     }
 
     #[test]

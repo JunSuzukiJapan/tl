@@ -2,34 +2,8 @@
 source_filename = "main"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 
-@str_literal = private unnamed_addr constant [34 x i8] c"Arena offset mismatch! Expected: \00", align 1
-@str_literal.104 = private unnamed_addr constant [8 x i8] c", Got: \00", align 1
-@str_literal.105 = private unnamed_addr constant [39 x i8] c"Testing function level early return...\00", align 1
-@str_literal.106 = private unnamed_addr constant [53 x i8] c"FAILED: Early return did not restore offset. Start: \00", align 1
-@str_literal.107 = private unnamed_addr constant [8 x i8] c", End: \00", align 1
-@str_literal.108 = private unnamed_addr constant [37 x i8] c"PASSED: Early return restored offset\00", align 1
-@str_literal.109 = private unnamed_addr constant [54 x i8] c"FAILED: Normal return did not restore offset. Start: \00", align 1
-@str_literal.110 = private unnamed_addr constant [8 x i8] c", End: \00", align 1
-@str_literal.111 = private unnamed_addr constant [38 x i8] c"PASSED: Normal return restored offset\00", align 1
-@str_literal.112 = private unnamed_addr constant [37 x i8] c"Testing loop allocation stability...\00", align 1
-@str_literal.113 = private unnamed_addr constant [56 x i8] c"FAILED: Loop iterations did not restore offset. Start: \00", align 1
-@str_literal.114 = private unnamed_addr constant [8 x i8] c", End: \00", align 1
-@str_literal.115 = private unnamed_addr constant [40 x i8] c"PASSED: Loop iterations restored offset\00", align 1
-@str_literal.116 = private unnamed_addr constant [37 x i8] c"Testing nested block scope resets...\00", align 1
-@str_literal.117 = private unnamed_addr constant [46 x i8] c"FAILED: Outer block did not allocate in arena\00", align 1
-@str_literal.118 = private unnamed_addr constant [46 x i8] c"FAILED: Inner block did not allocate in arena\00", align 1
-@str_literal.119 = private unnamed_addr constant [53 x i8] c"FAILED: Inner block did not restore offset. Middle: \00", align 1
-@str_literal.120 = private unnamed_addr constant [16 x i8] c", After inner: \00", align 1
-@str_literal.121 = private unnamed_addr constant [36 x i8] c"PASSED: Inner block restored offset\00", align 1
-@str_literal.122 = private unnamed_addr constant [54 x i8] c"FAILED: Nested blocks did not restore offset. Start: \00", align 1
-@str_literal.123 = private unnamed_addr constant [8 x i8] c", End: \00", align 1
-@str_literal.124 = private unnamed_addr constant [38 x i8] c"PASSED: Nested blocks restored offset\00", align 1
-@str_literal.125 = private unnamed_addr constant [43 x i8] c"Starting Arena Allocator Integration Tests\00", align 1
-@str_literal.126 = private unnamed_addr constant [17 x i8] c"Arena is active.\00", align 1
-@str_literal.127 = private unnamed_addr constant [58 x i8] c"Arena is NOT active. Creating a tensor to trigger init...\00", align 1
-@str_literal.128 = private unnamed_addr constant [21 x i8] c"Arena is now active.\00", align 1
-@str_literal.129 = private unnamed_addr constant [39 x i8] c"Arena still NOT active. Manual init...\00", align 1
-@str_literal.130 = private unnamed_addr constant [34 x i8] c"Arena Integration Tests Completed\00", align 1
+@str_literal = private unnamed_addr constant [21 x i8] c"MatMul result shape:\00", align 1
+@str_literal.104 = private unnamed_addr constant [37 x i8] c"Difference sum (should be approx 0):\00", align 1
 
 declare void @tl_print_i64(i64)
 
@@ -437,415 +411,167 @@ declare ptr @tl_alloc_tmp.102(i64)
 
 declare void @tl_free_tmp.103(ptr)
 
-define void @verify_offset(i64 %expected) {
-entry:
-  %actual = alloca i64, align 16
-  %expected1 = alloca i64, align 16
-  call void @tl_mem_enter_scope()
-  store i64 %expected, ptr %expected1, align 8
-  %call_tmp = call i64 @tl_arena_get_offset()
-  store i64 %call_tmp, ptr %actual, align 8
-  %actual2 = load i64, ptr %actual, align 8
-  %expected3 = load i64, ptr %expected1, align 8
-  %neqtmp = icmp ne i64 %actual2, %expected3
-  br i1 %neqtmp, label %then, label %else
-
-then:                                             ; preds = %entry
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal)
-  %expected4 = load i64, ptr %expected1, align 8
-  call void @tl_print_i64(i64 %expected4)
-  call void @tl_print_string(ptr @str_literal.104)
-  %actual5 = load i64, ptr %actual, align 8
-  call void @tl_print_i64(i64 %actual5)
-  call void @tl_mem_exit_scope()
-  br label %merge
-
-else:                                             ; preds = %entry
-  call void @tl_mem_enter_scope()
-  call void @tl_mem_exit_scope()
-  br label %merge
-
-merge:                                            ; preds = %else, %then
-  call void @tl_mem_exit_scope()
-  ret void
-}
-
-define ptr @test_early_return(i1 %cond) {
-entry:
-  %ptr2 = alloca i64, align 16
-  %large1 = alloca ptr, align 16
-  %conv_buf = alloca [1 x float], align 4
-  %ptr = alloca i64, align 16
-  %cond1 = alloca i64, align 16
-  call void @tl_mem_enter_scope()
-  store i1 %cond, ptr %cond1, align 1
-  %call_tmp = call ptr @tl_arena_alloc(i64 128)
-  store ptr %call_tmp, ptr %ptr, align 8
-  %arr_malloc = call ptr @malloc(i64 ptrtoint (ptr getelementptr (i64, ptr null, i32 1) to i64))
-  call void @tl_mem_register_struct(ptr %arr_malloc)
-  %elem_ptr = getelementptr inbounds i64, ptr %arr_malloc, i64 0
-  store i64 10, ptr %elem_ptr, align 8
-  %src = getelementptr inbounds i64, ptr %arr_malloc, i64 0
-  %l = load i64, ptr %src, align 8
-  %c = sitofp i64 %l to float
-  %dst = getelementptr inbounds float, ptr %conv_buf, i64 0
-  store float %c, ptr %dst, align 4
-  %shape_arr = alloca [1 x i64], align 8
-  %shape_ptr = getelementptr inbounds [1 x i64], ptr %shape_arr, i64 0, i64 0
-  store i64 1, ptr %shape_ptr, align 8
-  %converted_tensor = call ptr @tl_tensor_new(ptr %conv_buf, i64 1, ptr %shape_arr)
-  %static_call = call ptr @tl_tensor_randn(ptr %converted_tensor, i1 false)
-  store ptr %static_call, ptr %large1, align 8
-  %cond2 = load i1, ptr %cond1, align 1
-  br i1 %cond2, label %then, label %else
-
-then:                                             ; preds = %entry
-  call void @tl_mem_enter_scope()
-  %large13 = load ptr, ptr %large1, align 8
-  call void @tl_mem_unregister(ptr %large13)
-  call void @tl_mem_exit_scope()
-  call void @tl_mem_exit_scope()
-  ret ptr %large13
-
-else:                                             ; preds = %entry
-  call void @tl_mem_enter_scope()
-  call void @tl_mem_exit_scope()
-  br label %merge
-
-merge:                                            ; preds = %else
-  %call_tmp4 = call ptr @tl_arena_alloc(i64 256)
-  store ptr %call_tmp4, ptr %ptr2, align 8
-  %large15 = load ptr, ptr %large1, align 8
-  call void @tl_mem_unregister(ptr %large15)
-  call void @tl_mem_exit_scope()
-  ret ptr %large15
-}
-
-define void @run_func_test() {
-entry:
-  %end_offset2 = alloca i64, align 16
-  %r2 = alloca ptr, align 16
-  %end_offset1 = alloca i64, align 16
-  %r1 = alloca ptr, align 16
-  %start_offset = alloca i64, align 16
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.105)
-  %call_tmp = call i64 @tl_arena_get_offset()
-  store i64 %call_tmp, ptr %start_offset, align 8
-  %call_tmp1 = call ptr @test_early_return(i1 true)
-  call void @tl_mem_register_tensor(ptr %call_tmp1)
-  store ptr %call_tmp1, ptr %r1, align 8
-  %call_tmp2 = call i64 @tl_arena_get_offset()
-  store i64 %call_tmp2, ptr %end_offset1, align 8
-  %end_offset13 = load i64, ptr %end_offset1, align 8
-  %start_offset4 = load i64, ptr %start_offset, align 8
-  %neqtmp = icmp ne i64 %end_offset13, %start_offset4
-  br i1 %neqtmp, label %then, label %else
-
-then:                                             ; preds = %entry
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.106)
-  %start_offset5 = load i64, ptr %start_offset, align 8
-  call void @tl_print_i64(i64 %start_offset5)
-  call void @tl_print_string(ptr @str_literal.107)
-  %end_offset16 = load i64, ptr %end_offset1, align 8
-  call void @tl_print_i64(i64 %end_offset16)
-  call void @tl_mem_exit_scope()
-  br label %merge
-
-else:                                             ; preds = %entry
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.108)
-  call void @tl_mem_exit_scope()
-  br label %merge
-
-merge:                                            ; preds = %else, %then
-  %call_tmp7 = call ptr @test_early_return(i1 false)
-  call void @tl_mem_register_tensor(ptr %call_tmp7)
-  store ptr %call_tmp7, ptr %r2, align 8
-  %call_tmp8 = call i64 @tl_arena_get_offset()
-  store i64 %call_tmp8, ptr %end_offset2, align 8
-  %end_offset29 = load i64, ptr %end_offset2, align 8
-  %start_offset10 = load i64, ptr %start_offset, align 8
-  %neqtmp11 = icmp ne i64 %end_offset29, %start_offset10
-  br i1 %neqtmp11, label %then12, label %else13
-
-then12:                                           ; preds = %merge
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.109)
-  %start_offset15 = load i64, ptr %start_offset, align 8
-  call void @tl_print_i64(i64 %start_offset15)
-  call void @tl_print_string(ptr @str_literal.110)
-  %end_offset216 = load i64, ptr %end_offset2, align 8
-  call void @tl_print_i64(i64 %end_offset216)
-  call void @tl_mem_exit_scope()
-  br label %merge14
-
-else13:                                           ; preds = %merge
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.111)
-  call void @tl_mem_exit_scope()
-  br label %merge14
-
-merge14:                                          ; preds = %else13, %then12
-  call void @tl_mem_exit_scope()
-  ret void
-}
-
-define void @run_loop_test() {
-entry:
-  %end_offset = alloca i64, align 16
-  %ptr = alloca i64, align 16
-  %i = alloca i64, align 16
-  %start_offset = alloca i64, align 16
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.112)
-  %call_tmp = call i64 @tl_arena_get_offset()
-  store i64 %call_tmp, ptr %start_offset, align 8
-  br label %for_header
-
-for_header:                                       ; preds = %for_body, %entry
-  %for_idx = phi i64 [ 0, %entry ], [ %next_idx, %for_body ]
-  %for_cond = icmp slt i64 %for_idx, 5
-  br i1 %for_cond, label %for_body, label %for_end
-
-for_body:                                         ; preds = %for_header
-  call void @tl_mem_enter_scope()
-  store i64 %for_idx, ptr %i, align 8
-  %call_tmp1 = call ptr @tl_arena_alloc(i64 64)
-  store ptr %call_tmp1, ptr %ptr, align 8
-  call void @tl_mem_exit_scope()
-  %next_idx = add i64 %for_idx, 1
-  br label %for_header
-
-for_end:                                          ; preds = %for_header
-  %call_tmp2 = call i64 @tl_arena_get_offset()
-  store i64 %call_tmp2, ptr %end_offset, align 8
-  %end_offset3 = load i64, ptr %end_offset, align 8
-  %start_offset4 = load i64, ptr %start_offset, align 8
-  %neqtmp = icmp ne i64 %end_offset3, %start_offset4
-  br i1 %neqtmp, label %then, label %else
-
-then:                                             ; preds = %for_end
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.113)
-  %start_offset5 = load i64, ptr %start_offset, align 8
-  call void @tl_print_i64(i64 %start_offset5)
-  call void @tl_print_string(ptr @str_literal.114)
-  %end_offset6 = load i64, ptr %end_offset, align 8
-  call void @tl_print_i64(i64 %end_offset6)
-  call void @tl_mem_exit_scope()
-  br label %merge
-
-else:                                             ; preds = %for_end
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.115)
-  call void @tl_mem_exit_scope()
-  br label %merge
-
-merge:                                            ; preds = %else, %then
-  call void @tl_mem_exit_scope()
-  ret void
-}
-
-define void @run_nested_test() {
-entry:
-  %end_offset = alloca i64, align 16
-  %inner_offset = alloca i64, align 16
-  %ptr2 = alloca i64, align 16
-  %middle_offset = alloca i64, align 16
-  %ptr1 = alloca i64, align 16
-  %start_offset = alloca i64, align 16
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.116)
-  %call_tmp = call i64 @tl_arena_get_offset()
-  store i64 %call_tmp, ptr %start_offset, align 8
-  br i1 true, label %then, label %else
-
-then:                                             ; preds = %entry
-  call void @tl_mem_enter_scope()
-  %call_tmp1 = call ptr @tl_arena_alloc(i64 128)
-  store ptr %call_tmp1, ptr %ptr1, align 8
-  %call_tmp2 = call i64 @tl_arena_get_offset()
-  store i64 %call_tmp2, ptr %middle_offset, align 8
-  %middle_offset3 = load i64, ptr %middle_offset, align 8
-  %start_offset4 = load i64, ptr %start_offset, align 8
-  %letmp = icmp sle i64 %middle_offset3, %start_offset4
-  br i1 %letmp, label %then5, label %else6
-
-else:                                             ; preds = %entry
-  call void @tl_mem_enter_scope()
-  call void @tl_mem_exit_scope()
-  br label %merge
-
-merge:                                            ; preds = %else, %merge23
-  %call_tmp26 = call i64 @tl_arena_get_offset()
-  store i64 %call_tmp26, ptr %end_offset, align 8
-  %end_offset27 = load i64, ptr %end_offset, align 8
-  %start_offset28 = load i64, ptr %start_offset, align 8
-  %neqtmp29 = icmp ne i64 %end_offset27, %start_offset28
-  br i1 %neqtmp29, label %then30, label %else31
-
-then5:                                            ; preds = %then
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.117)
-  call void @tl_mem_exit_scope()
-  br label %merge7
-
-else6:                                            ; preds = %then
-  call void @tl_mem_enter_scope()
-  call void @tl_mem_exit_scope()
-  br label %merge7
-
-merge7:                                           ; preds = %else6, %then5
-  br i1 true, label %then8, label %else9
-
-then8:                                            ; preds = %merge7
-  call void @tl_mem_enter_scope()
-  %call_tmp11 = call ptr @tl_arena_alloc(i64 256)
-  store ptr %call_tmp11, ptr %ptr2, align 8
-  %call_tmp12 = call i64 @tl_arena_get_offset()
-  store i64 %call_tmp12, ptr %inner_offset, align 8
-  %inner_offset13 = load i64, ptr %inner_offset, align 8
-  %middle_offset14 = load i64, ptr %middle_offset, align 8
-  %letmp15 = icmp sle i64 %inner_offset13, %middle_offset14
-  br i1 %letmp15, label %then16, label %else17
-
-else9:                                            ; preds = %merge7
-  call void @tl_mem_enter_scope()
-  call void @tl_mem_exit_scope()
-  br label %merge10
-
-merge10:                                          ; preds = %else9, %merge18
-  %call_tmp19 = call i64 @tl_arena_get_offset()
-  %middle_offset20 = load i64, ptr %middle_offset, align 8
-  %neqtmp = icmp ne i64 %call_tmp19, %middle_offset20
-  br i1 %neqtmp, label %then21, label %else22
-
-then16:                                           ; preds = %then8
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.118)
-  call void @tl_mem_exit_scope()
-  br label %merge18
-
-else17:                                           ; preds = %then8
-  call void @tl_mem_enter_scope()
-  call void @tl_mem_exit_scope()
-  br label %merge18
-
-merge18:                                          ; preds = %else17, %then16
-  call void @tl_mem_exit_scope()
-  br label %merge10
-
-then21:                                           ; preds = %merge10
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.119)
-  %middle_offset24 = load i64, ptr %middle_offset, align 8
-  call void @tl_print_i64(i64 %middle_offset24)
-  call void @tl_print_string(ptr @str_literal.120)
-  %call_tmp25 = call i64 @tl_arena_get_offset()
-  call void @tl_print_i64(i64 %call_tmp25)
-  call void @tl_mem_exit_scope()
-  br label %merge23
-
-else22:                                           ; preds = %merge10
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.121)
-  call void @tl_mem_exit_scope()
-  br label %merge23
-
-merge23:                                          ; preds = %else22, %then21
-  call void @tl_mem_exit_scope()
-  br label %merge
-
-then30:                                           ; preds = %merge
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.122)
-  %start_offset33 = load i64, ptr %start_offset, align 8
-  call void @tl_print_i64(i64 %start_offset33)
-  call void @tl_print_string(ptr @str_literal.123)
-  %end_offset34 = load i64, ptr %end_offset, align 8
-  call void @tl_print_i64(i64 %end_offset34)
-  call void @tl_mem_exit_scope()
-  br label %merge32
-
-else31:                                           ; preds = %merge
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.124)
-  call void @tl_mem_exit_scope()
-  br label %merge32
-
-merge32:                                          ; preds = %else31, %then30
-  call void @tl_mem_exit_scope()
-  ret void
-}
-
 define void @main() {
 entry:
-  %active2 = alloca i64, align 16
-  %dummy = alloca ptr, align 16
-  %conv_buf = alloca [1 x float], align 4
-  %active = alloca i64, align 16
+  %s = alloca ptr, align 16
+  %diff = alloca ptr, align 16
+  %D = alloca ptr, align 16
+  %C = alloca ptr, align 16
+  %_comp_res_0 = alloca ptr, align 16
+  %idx_arr38 = alloca [2 x i64], align 8
+  %idx_arr = alloca [2 x i64], align 8
+  %j = alloca i64, align 16
+  %k = alloca i64, align 16
+  %i22 = alloca i64, align 16
+  %B = alloca ptr, align 16
+  %A = alloca ptr, align 16
+  %N = alloca i64, align 16
   call void @tl_mem_enter_scope()
-  call void @tl_arena_init(i64 666112)
-  call void @tl_print_string(ptr @str_literal.125)
-  %call_tmp = call i1 @tl_arena_is_active()
-  store i1 %call_tmp, ptr %active, align 1
-  %active1 = load i1, ptr %active, align 1
-  br i1 %active1, label %then, label %else
-
-then:                                             ; preds = %entry
+  call void @tl_arena_init(i64 411136)
+  store i64 256, ptr %N, align 8
+  %buf_void = call ptr @tl_alloc_tmp(i64 8)
+  %N1 = load i64, ptr %N, align 8
+  %i2f = sitofp i64 %N1 to float
+  %elem_ptr = getelementptr inbounds float, ptr %buf_void, i64 0
+  store float %i2f, ptr %elem_ptr, align 4
+  %N2 = load i64, ptr %N, align 8
+  %i2f3 = sitofp i64 %N2 to float
+  %elem_ptr4 = getelementptr inbounds float, ptr %buf_void, i64 1
+  store float %i2f3, ptr %elem_ptr4, align 4
+  %shape_alloc = call ptr @tl_alloc_tmp(i64 8)
+  %shape_ptr = getelementptr inbounds i64, ptr %shape_alloc, i64 0
+  store i64 2, ptr %shape_ptr, align 8
+  %new_tensor = call ptr @tl_tensor_new(ptr %buf_void, i64 1, ptr %shape_alloc)
+  call void @tl_free_tmp(ptr %buf_void)
+  call void @tl_free_tmp(ptr %shape_alloc)
+  %static_call = call ptr @tl_tensor_randn(ptr %new_tensor, i1 false)
+  store ptr %static_call, ptr %A, align 8
+  %buf_void5 = call ptr @tl_alloc_tmp(i64 8)
+  %N6 = load i64, ptr %N, align 8
+  %i2f7 = sitofp i64 %N6 to float
+  %elem_ptr8 = getelementptr inbounds float, ptr %buf_void5, i64 0
+  store float %i2f7, ptr %elem_ptr8, align 4
+  %N9 = load i64, ptr %N, align 8
+  %i2f10 = sitofp i64 %N9 to float
+  %elem_ptr11 = getelementptr inbounds float, ptr %buf_void5, i64 1
+  store float %i2f10, ptr %elem_ptr11, align 4
+  %shape_alloc12 = call ptr @tl_alloc_tmp(i64 8)
+  %shape_ptr13 = getelementptr inbounds i64, ptr %shape_alloc12, i64 0
+  store i64 2, ptr %shape_ptr13, align 8
+  %new_tensor14 = call ptr @tl_tensor_new(ptr %buf_void5, i64 1, ptr %shape_alloc12)
+  call void @tl_free_tmp(ptr %buf_void5)
+  call void @tl_free_tmp(ptr %shape_alloc12)
+  %static_call15 = call ptr @tl_tensor_randn(ptr %new_tensor14, i1 false)
+  store ptr %static_call15, ptr %B, align 8
+  %A16 = load ptr, ptr %A, align 8
+  %dim_size = call i64 @tl_tensor_dim(ptr %A16, i64 0)
+  %dim_size17 = call i64 @tl_tensor_dim(ptr %A16, i64 1)
+  %B18 = load ptr, ptr %B, align 8
+  %dim_size19 = call i64 @tl_tensor_dim(ptr %B18, i64 1)
+  %sz_acc = mul i64 1, %dim_size
+  %sz_acc20 = mul i64 %sz_acc, %dim_size19
+  %buf_void21 = call ptr @calloc(i64 %sz_acc20, i64 4)
   call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.126)
-  call void @tl_mem_exit_scope()
-  br label %merge
+  br label %loop_cond
 
-else:                                             ; preds = %entry
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.127)
-  %arr_malloc = call ptr @malloc(i64 ptrtoint (ptr getelementptr (i64, ptr null, i32 1) to i64))
-  call void @tl_mem_register_struct(ptr %arr_malloc)
-  %elem_ptr = getelementptr inbounds i64, ptr %arr_malloc, i64 0
-  store i64 10, ptr %elem_ptr, align 8
-  %src = getelementptr inbounds i64, ptr %arr_malloc, i64 0
-  %l = load i64, ptr %src, align 8
-  %c = sitofp i64 %l to float
-  %dst = getelementptr inbounds float, ptr %conv_buf, i64 0
-  store float %c, ptr %dst, align 4
-  %shape_arr = alloca [1 x i64], align 8
-  %shape_ptr = getelementptr inbounds [1 x i64], ptr %shape_arr, i64 0, i64 0
-  store i64 1, ptr %shape_ptr, align 8
-  %converted_tensor = call ptr @tl_tensor_new(ptr %conv_buf, i64 1, ptr %shape_arr)
-  %static_call = call ptr @tl_tensor_randn(ptr %converted_tensor, i1 false)
-  store ptr %static_call, ptr %dummy, align 8
-  %call_tmp2 = call i1 @tl_arena_is_active()
-  store i1 %call_tmp2, ptr %active2, align 1
-  %active23 = load i1, ptr %active2, align 1
-  br i1 %active23, label %then4, label %else5
-
-merge:                                            ; preds = %merge6, %then
-  call void @run_func_test()
-  call void @run_loop_test()
-  call void @run_nested_test()
-  call void @tl_print_string(ptr @str_literal.130)
+eq_after:                                         ; preds = %loop_aft
+  %shape = alloca [2 x i64], align 8
+  %shape_ptr53 = getelementptr [2 x i64], ptr %shape, i64 0, i64 0
+  store i64 %dim_size, ptr %shape_ptr53, align 8
+  %shape_ptr54 = getelementptr [2 x i64], ptr %shape, i64 0, i64 1
+  store i64 %dim_size19, ptr %shape_ptr54, align 8
+  %t = call ptr @tl_tensor_new(ptr %buf_void21, i64 2, ptr %shape)
+  store ptr %t, ptr %_comp_res_0, align 8
+  %tensor_ptr = load ptr, ptr %_comp_res_0, align 8
+  store ptr %tensor_ptr, ptr %C, align 8
+  call void @tl_print_string(ptr @str_literal)
+  %C55 = load ptr, ptr %C, align 8
+  call void @tl_tensor_print(ptr %C55)
+  %A56 = load ptr, ptr %A, align 8
+  %B57 = load ptr, ptr %B, align 8
+  %matmul_res = call ptr @tl_tensor_matmul(ptr %A56, ptr %B57)
+  store ptr %matmul_res, ptr %D, align 8
+  %C58 = load ptr, ptr %C, align 8
+  %D59 = load ptr, ptr %D, align 8
+  %binop_res = call ptr @tl_tensor_sub(ptr %C58, ptr %D59)
+  store ptr %binop_res, ptr %diff, align 8
+  %diff60 = load ptr, ptr %diff, align 8
+  %sum_res = call ptr @tl_tensor_sum(ptr %diff60)
+  store ptr %sum_res, ptr %s, align 8
+  call void @tl_print_string(ptr @str_literal.104)
+  %s61 = load ptr, ptr %s, align 8
+  call void @tl_tensor_print(ptr %s61)
   call void @tl_mem_exit_scope()
   ret void
 
-then4:                                            ; preds = %else
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.128)
-  call void @tl_mem_exit_scope()
-  br label %merge6
+loop_cond:                                        ; preds = %loop_aft25, %entry
+  %i = phi i64 [ 0, %entry ], [ %next52, %loop_aft25 ]
+  %cmp = icmp slt i64 %i, %dim_size
+  br i1 %cmp, label %loop_body, label %loop_aft
 
-else5:                                            ; preds = %else
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.129)
-  call void @tl_arena_init(i64 65536)
-  call void @tl_mem_exit_scope()
-  br label %merge6
+loop_body:                                        ; preds = %loop_cond
+  store i64 %i, ptr %i22, align 8
+  br label %loop_cond23
 
-merge6:                                           ; preds = %else5, %then4
-  call void @tl_mem_exit_scope()
-  br label %merge
+loop_aft:                                         ; preds = %loop_cond
+  br label %eq_after
+
+loop_cond23:                                      ; preds = %loop_aft30, %loop_body
+  %i26 = phi i64 [ 0, %loop_body ], [ %next50, %loop_aft30 ]
+  %cmp27 = icmp slt i64 %i26, %dim_size19
+  br i1 %cmp27, label %loop_body24, label %loop_aft25
+
+loop_body24:                                      ; preds = %loop_cond23
+  store i64 %i26, ptr %k, align 8
+  br label %loop_cond28
+
+loop_aft25:                                       ; preds = %loop_cond23
+  %iv51 = load i64, ptr %i22, align 8
+  %next52 = add i64 %iv51, 1
+  br label %loop_cond
+
+loop_cond28:                                      ; preds = %loop_body29, %loop_body24
+  %i31 = phi i64 [ 0, %loop_body24 ], [ %next, %loop_body29 ]
+  %cmp32 = icmp slt i64 %i31, %dim_size17
+  br i1 %cmp32, label %loop_body29, label %loop_aft30
+
+loop_body29:                                      ; preds = %loop_cond28
+  store i64 %i31, ptr %j, align 8
+  %A33 = load ptr, ptr %A, align 8
+  %i34 = load i64, ptr %i22, align 8
+  %idx_ptr = getelementptr [2 x i64], ptr %idx_arr, i64 0, i64 0
+  store i64 %i34, ptr %idx_ptr, align 8
+  %j35 = load i64, ptr %j, align 8
+  %idx_ptr36 = getelementptr [2 x i64], ptr %idx_arr, i64 0, i64 1
+  store i64 %j35, ptr %idx_ptr36, align 8
+  %get_md_call = call float @tl_tensor_get_f32_md(ptr %A33, ptr %idx_arr, i64 2)
+  %B37 = load ptr, ptr %B, align 8
+  %j39 = load i64, ptr %j, align 8
+  %idx_ptr40 = getelementptr [2 x i64], ptr %idx_arr38, i64 0, i64 0
+  store i64 %j39, ptr %idx_ptr40, align 8
+  %k41 = load i64, ptr %k, align 8
+  %idx_ptr42 = getelementptr [2 x i64], ptr %idx_arr38, i64 0, i64 1
+  store i64 %k41, ptr %idx_ptr42, align 8
+  %get_md_call43 = call float @tl_tensor_get_f32_md(ptr %B37, ptr %idx_arr38, i64 2)
+  %fmultmp = fmul float %get_md_call, %get_md_call43
+  %iv = load i64, ptr %k, align 8
+  %term = mul i64 %iv, 1
+  %off = add i64 0, %term
+  %str = mul i64 1, %dim_size19
+  %iv44 = load i64, ptr %i22, align 8
+  %term45 = mul i64 %iv44, %str
+  %off46 = add i64 %off, %term45
+  %str47 = mul i64 %str, %dim_size
+  %ptr = getelementptr float, ptr %buf_void21, i64 %off46
+  %cur = load float, ptr %ptr, align 4
+  %new = fadd float %cur, %fmultmp
+  store float %new, ptr %ptr, align 4
+  %iv48 = load i64, ptr %j, align 8
+  %next = add i64 %iv48, 1
+  br label %loop_cond28
+
+loop_aft30:                                       ; preds = %loop_cond28
+  %iv49 = load i64, ptr %k, align 8
+  %next50 = add i64 %iv49, 1
+  br label %loop_cond23
 }
