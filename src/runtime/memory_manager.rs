@@ -44,6 +44,7 @@ impl MemoryManager {
         // Save current arena offset
         let offset = super::arena::tl_arena_get_offset();
         self.arena_offsets.push(offset);
+        // eprintln!("DEBUG: enter_scope (offset={})", offset);
     }
 
     /// Exit current scope and free ALL allocations in that scope
@@ -53,8 +54,8 @@ impl MemoryManager {
             return;
         }
 
-        // Restore arena offset (freeing all arena allocations in this scope)
         if let Some(offset) = self.arena_offsets.pop() {
+            // eprintln!("DEBUG: exit_scope, restoring arena offset to {}", offset);
             super::arena::tl_arena_set_offset(offset);
         }
 
@@ -64,6 +65,7 @@ impl MemoryManager {
                 unsafe {
                     match record.alloc_type {
                         AllocationType::Struct => {
+                            // eprintln!("DEBUG: exit_scope, freeing struct {:?}", record.ptr);
                             libc::free(record.ptr);
                         }
                         AllocationType::Tensor => {
@@ -78,6 +80,7 @@ impl MemoryManager {
 
     /// Register a struct allocation in the current scope
     pub fn register_struct(&mut self, ptr: *mut c_void) {
+        // eprintln!("DEBUG: register_struct {:?}", ptr);
         if let Some(scope) = self.scopes.last_mut() {
             scope.push(AllocationRecord {
                 ptr,
@@ -88,6 +91,7 @@ impl MemoryManager {
 
     /// Register a tensor allocation in the current scope
     pub fn register_tensor(&mut self, ptr: *mut OpaqueTensor) {
+        // eprintln!("DEBUG: register_tensor {:?}", ptr);
         if let Some(scope) = self.scopes.last_mut() {
             scope.push(AllocationRecord {
                 ptr: ptr as *mut c_void,
@@ -101,6 +105,7 @@ impl MemoryManager {
     pub fn unregister(&mut self, ptr: *mut c_void) {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(pos) = scope.iter().position(|r| r.ptr == ptr) {
+                // eprintln!("DEBUG: unregistering {:?}", ptr);
                 scope.remove(pos);
                 return;
             }

@@ -185,7 +185,7 @@ fn tl_varbuilder_get_common(name_str: String, shape_slice: &[usize]) -> *mut Opa
 
     let ptr = if arena::tl_arena_is_active() {
         let size = std::mem::size_of::<OpaqueTensor>() as i64;
-        let arena_ptr = arena::tl_arena_alloc(size);
+        let arena_ptr = arena::tl_arena_malloc(size) as *mut OpaqueTensor;
         if !arena_ptr.is_null() {
             unsafe {
                 std::ptr::write(arena_ptr, *boxed);
@@ -451,7 +451,7 @@ pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
 
         let ptr = if arena::tl_arena_is_active() {
             let size = std::mem::size_of::<OpaqueTensor>() as i64;
-            let arena_ptr = arena::tl_arena_alloc(size);
+            let arena_ptr = arena::tl_arena_malloc(size) as *mut OpaqueTensor;
             if !arena_ptr.is_null() {
                 std::ptr::write(arena_ptr, *boxed);
                 arena_ptr

@@ -357,6 +357,12 @@ pub fn declare_runtime_functions<'ctx>(
     let arena_reset = void_type.fn_type(&[], false);
     add_fn("tl_arena_reset", arena_reset);
 
+    let arena_offset = i64_type.fn_type(&[], false);
+    add_fn("tl_arena_get_offset", arena_offset);
+
+    let arena_capacity = i64_type.fn_type(&[], false);
+    add_fn("tl_arena_get_capacity", arena_capacity);
+
     // --- Global Mappings ---
     // Mapping symbols is critical for JIT.
     // We do it here to keep CodeGenerator::new clean.
@@ -584,6 +590,12 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_arena_reset") {
         execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_reset as usize);
     }
+    if let Some(f) = module.get_function("tl_arena_get_offset") {
+        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_get_offset as usize);
+    }
+    if let Some(f) = module.get_function("tl_arena_get_capacity") {
+        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_get_capacity as usize);
+    }
     if let Some(f) = module.get_function("tl_arena_malloc") {
         execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_malloc as usize);
     }
@@ -768,6 +780,12 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_load_all_params".to_string(), Type::Void);
     fn_return_types.insert("tl_add_parameter".to_string(), Type::Void);
     fn_return_types.insert("tl_register_parameter".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_arena_get_offset".to_string(), Type::I64);
+    fn_return_types.insert("tl_arena_get_capacity".to_string(), Type::I64);
+    fn_return_types.insert("tl_arena_is_active".to_string(), Type::Bool);
+    fn_return_types.insert("tl_arena_alloc".to_string(), Type::I64);
+    fn_return_types.insert("tl_arena_reset".to_string(), Type::Void);
+    fn_return_types.insert("tl_get_memory_mb".to_string(), Type::I64);
 
     // VarBuilder-based parameter management
     fn_return_types.insert("tl_varbuilder_get".to_string(), tensor_type.clone());
@@ -1029,13 +1047,10 @@ pub fn declare_runtime_functions<'ctx>(
     module.add_function("tl_arena_init", arena_init_type, None);
     fn_return_types.insert("tl_arena_init".to_string(), Type::Void);
 
-    // tl_arena_alloc(size) -> void*
-    let arena_alloc_type = ptr_type.fn_type(&[i64_type.into()], false);
+    // tl_arena_alloc(size) -> i64 (address)
+    let arena_alloc_type = i64_type.fn_type(&[i64_type.into()], false);
     module.add_function("tl_arena_alloc", arena_alloc_type, None);
-    fn_return_types.insert(
-        "tl_arena_alloc".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    );
+    // fn_return_types.insert("tl_arena_alloc".to_string(), Type::I64); // Already inserted at line 786
 
     // tl_arena_malloc(size) -> void*
     let arena_malloc_type = ptr_type.fn_type(&[i64_type.into()], false);

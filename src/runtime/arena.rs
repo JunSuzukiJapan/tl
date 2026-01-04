@@ -1,14 +1,15 @@
-use std::alloc::{alloc, dealloc, Layout};
+// use std::alloc::{alloc, dealloc, Layout};
 use std::cell::RefCell;
 use std::ffi::c_void;
 
-use super::OpaqueTensor;
+// use super::OpaqueTensor;
 
 thread_local! {
     static ARENA: RefCell<Option<Arena>> = RefCell::new(None);
 }
 
 pub struct Arena {
+    _storage: Box<[u8]>, // Key ownership
     buffer: *mut u8,
     capacity: usize,
     offset: usize,
@@ -16,17 +17,13 @@ pub struct Arena {
 
 impl Arena {
     pub fn new(capacity: usize) -> Self {
-        unsafe {
-            let layout = Layout::from_size_align_unchecked(capacity, 16);
-            let buffer = alloc(layout);
-            if buffer.is_null() {
-                panic!("Arena allocation failed: out of memory");
-            }
-            Arena {
-                buffer,
-                capacity,
-                offset: 0,
-            }
+        let mut storage = vec![0u8; capacity].into_boxed_slice();
+        let buffer = storage.as_mut_ptr();
+        Arena {
+            _storage: storage,
+            buffer,
+            capacity,
+            offset: 0,
         }
     }
 
@@ -66,10 +63,7 @@ impl Arena {
 
 impl Drop for Arena {
     fn drop(&mut self) {
-        unsafe {
-            let layout = Layout::from_size_align_unchecked(self.capacity, 16);
-            dealloc(self.buffer, layout);
-        }
+        // Box<[u8]> drops automatically
     }
 }
 
@@ -87,15 +81,16 @@ pub extern "C" fn tl_arena_init(capacity: i64) {
         if arena_ref.is_some() {
             eprintln!("Warning: Arena already initialized, reinitializing");
         }
-        *arena_ref = Some(Arena::new(capacity as usize));
+        let arena = Arena::new(capacity as usize);
+        *arena_ref = Some(arena);
     });
 }
 
-/// Allocate memory from arena for OpaqueTensor
-/// Returns null if arena is not initialized
+/// Allocate memory from arena for OpaqueTensor (testing purpose)
+/// Returns address as i64 logic
 #[no_mangle]
-pub extern "C" fn tl_arena_alloc(size: i64) -> *mut OpaqueTensor {
-    tl_arena_malloc(size) as *mut OpaqueTensor
+pub extern "C" fn tl_arena_alloc(size: i64) -> i64 {
+    tl_arena_malloc(size) as i64
 }
 
 /// Generic arena allocation
@@ -171,6 +166,17 @@ pub extern "C" fn tl_arena_get_offset() -> usize {
 }
 
 #[no_mangle]
+pub extern "C" fn tl_arena_get_capacity() -> usize {
+    ARENA.with(|arena| {
+        if let Some(ref a) = *arena.borrow() {
+            a.capacity
+        } else {
+            0
+        }
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn tl_arena_set_offset(offset: usize) {
     ARENA.with(|arena| {
         if let Some(ref mut a) = *arena.borrow_mut() {
@@ -218,7 +224,7 @@ mod tests {
         assert!(tl_arena_is_active());
 
         let ptr = tl_arena_alloc(256);
-        assert!(!ptr.is_null());
+        assert!(ptr != 0);
 
         tl_arena_free();
         assert!(!tl_arena_is_active());

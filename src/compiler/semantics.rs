@@ -1245,6 +1245,51 @@ impl SemanticAnalyzer {
                         });
                     }
                     return Ok(Type::I64);
+                } else if name == "tl_arena_get_offset" || name == "tl_arena_get_capacity" {
+                    if !args.is_empty() {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 0,
+                            found: args.len(),
+                        });
+                    }
+                    return Ok(Type::I64);
+                } else if name == "tl_arena_is_active" {
+                    if !args.is_empty() {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: "tl_arena_is_active".into(),
+                            expected: 0,
+                            found: args.len(),
+                        });
+                    }
+                    return Ok(Type::Bool);
+                } else if name == "tl_arena_alloc" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: "tl_arena_alloc".into(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    return Ok(Type::I64); // returns ptr as i64 for testing
+                } else if name == "tl_arena_reset" {
+                    if !args.is_empty() {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: "tl_arena_reset".into(),
+                            expected: 0,
+                            found: args.len(),
+                        });
+                    }
+                    return Ok(Type::Void);
+                } else if name == "tl_arena_init" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: "tl_arena_init".into(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    return Ok(Type::Void);
                 } else if name == "varbuilder_get" {
                     return Err(SemanticError::FunctionNotFound(
                         "varbuilder_get is removed. Use VarBuilder::get(name, shape)".into(),
