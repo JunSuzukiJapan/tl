@@ -158,19 +158,6 @@ pub fn register_tensor_global(ptr: *mut OpaqueTensor) {
         // eprintln!("WARNING: Registering tensor without active scope");
         return;
     }
-    // Check if already registered in current scope to prevent double-free
-    if let Some(scope) = mgr.scopes.last() {
-        if scope.iter().any(|r| r.ptr == ptr as *mut c_void) {
-            return;
-        }
-    }
-
-    // Check if already registered in current scope to prevent double-free
-    if let Some(scope) = mgr.scopes.last() {
-        if scope.iter().any(|r| r.ptr == ptr as *mut c_void) {
-            return;
-        }
-    }
 
     mgr.register_tensor(ptr);
 }

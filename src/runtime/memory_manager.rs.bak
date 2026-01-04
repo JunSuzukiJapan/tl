@@ -44,7 +44,7 @@ impl MemoryManager {
         // Save current arena offset
         let offset = super::arena::tl_arena_get_offset();
         self.arena_offsets.push(offset);
-        // eprintln!("DEBUG: enter_scope (offset={})", offset);
+        eprintln!("DEBUG: enter_scope (offset={})", offset);
     }
 
     /// Exit current scope and free ALL allocations in that scope
@@ -65,10 +65,11 @@ impl MemoryManager {
                 unsafe {
                     match record.alloc_type {
                         AllocationType::Struct => {
-                            // eprintln!("DEBUG: exit_scope, freeing struct {:?}", record.ptr);
+                            eprintln!("DEBUG: exit_scope, freeing struct {:?}", record.ptr);
                             libc::free(record.ptr);
                         }
                         AllocationType::Tensor => {
+                            eprintln!("DEBUG: exit_scope, freeing tensor {:?}", record.ptr);
                             let tensor_ptr = record.ptr as *mut OpaqueTensor;
                             super::free_tensor_resources(tensor_ptr);
                         }
@@ -91,7 +92,7 @@ impl MemoryManager {
 
     /// Register a tensor allocation in the current scope
     pub fn register_tensor(&mut self, ptr: *mut OpaqueTensor) {
-        // eprintln!("DEBUG: register_tensor {:?}", ptr);
+        eprintln!("DEBUG: register_tensor {:?}", ptr);
         if let Some(scope) = self.scopes.last_mut() {
             scope.push(AllocationRecord {
                 ptr: ptr as *mut c_void,
@@ -157,19 +158,6 @@ pub fn register_tensor_global(ptr: *mut OpaqueTensor) {
         // This should not happen in normal usage but prevents crash
         // eprintln!("WARNING: Registering tensor without active scope");
         return;
-    }
-    // Check if already registered in current scope to prevent double-free
-    if let Some(scope) = mgr.scopes.last() {
-        if scope.iter().any(|r| r.ptr == ptr as *mut c_void) {
-            return;
-        }
-    }
-
-    // Check if already registered in current scope to prevent double-free
-    if let Some(scope) = mgr.scopes.last() {
-        if scope.iter().any(|r| r.ptr == ptr as *mut c_void) {
-            return;
-        }
     }
 
     mgr.register_tensor(ptr);

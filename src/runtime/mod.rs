@@ -416,9 +416,10 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) {
     if !t.is_null() {
         unsafe {
             if arena::tl_arena_contains(t as *mut std::ffi::c_void) {
-                // If it's in the arena, we DON'T free the pointer itself (the arena owns it).
-                // But we DO need to drop the contents (Tensor, Arc<Var>, String) to decrement refcounts.
-                std::ptr::drop_in_place(t);
+                // Arena-allocated tensors should not be dropped individually
+                // The arena will handle cleanup when it's freed
+                // We just return without doing anything
+                return;
             } else {
                 // Heap allocated, safe to free via Box
                 let _ = Box::from_raw(t);

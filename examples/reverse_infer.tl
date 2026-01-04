@@ -59,12 +59,15 @@ impl CausalSelfAttention {
         let K_heads_T = transpose(K_heads, 1, 2);
         
         // Scale: 1/sqrt(32) approx 0.176
-        let K_scaled = K_heads_T * 0.176;
-        let logits = matmul(Q_heads, K_scaled);
+        let K_scaled = (K_heads_T * 0.176).contiguous();
+        let Q_cont = Q_heads.contiguous();
+        let logits = matmul(Q_cont, K_scaled);
         
         let masked = tril(logits, 0);
         let probs = softmax(masked, 2); 
-        let y_heads = matmul(probs, V_heads);
+        let probs_cont = probs.contiguous();
+        let V_cont = V_heads.contiguous();
+        let y_heads = matmul(probs_cont, V_cont);
         
         // Merge heads
         let y_trans = transpose(y_heads, 0, 1); // [10, 4, 32]
