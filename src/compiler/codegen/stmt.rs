@@ -229,7 +229,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 init,
             } => {
                 if let Some(expr) = init {
-                    let val_ir = self.ensure_tensor_v2(expr, 0)?;
+                    let (val_ir, _inferred_ty) = self.ensure_tensor_v2(expr, 0)?;
                     let val_ty = if matches!(type_annotation, Type::Tensor(_, _)) {
                         type_annotation.clone()
                     } else if matches!(type_annotation, Type::ScalarArray(_, _)) {
@@ -304,7 +304,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if matches!(target_ty, Type::Tensor(_, _))
                         && matches!(val_ty, Type::ScalarArray(_, _))
                     {
-                        val_ir = self.ensure_tensor_v2(value, 0)?;
+                        let (v, _t) = self.ensure_tensor_v2(value, 0)?;
+                        val_ir = v;
                         val_ty = target_ty.clone();
                     }
                 }

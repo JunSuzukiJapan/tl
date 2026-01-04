@@ -159,28 +159,15 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     fn compile_impl_blocks(&mut self, impls: &[ImplBlock]) -> Result<(), String> {
+        // Pass 1: Declare all methods (Prototypes) and register return types
         for imp in impls {
             for method in &imp.methods {
-                // Determine if static or instance based on first arg name "self"
-                // let is_instance = !method.args.is_empty() && method.args[0].0 == "self";
-                // (Unused for now, we just compile args as is)
-
-                // Mangle name: tl_{Struct}_{Method}
                 let mangled_name = format!("tl_{}_{}", imp.target_type, method.name);
-
-                // Mangle name: tl_{Struct}_{Method}
-                // Use lowercase struct name? Rust usually uses exact case.
-                // Let's use exact keys for now, but `expr.rs` used `to_lowercase()`.
-                // Mangle name: tl_{Struct}_{Method}
-                let _mangled_name = format!("tl_{}_{}", imp.target_type, method.name);
 
                 let mut param_types: Vec<BasicMetadataTypeEnum> = Vec::new();
 
-                // If instance, ensure self ptr is compatible?
-                // The parser puts 'self' in args.
-                // Semantic check verified types.
-                // Here we map types.
-
+                // Add 'self' param type explicitly if we want strict compatibility,
+                // but parser puts 'self' in args so we treat it as arg 0.
                 for (_arg_name, arg_ty) in &method.args {
                     let resolved_ty = if let Type::UserDefined(name) = arg_ty {
                         if name == "Self" {
@@ -206,7 +193,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .into(),
                         _ => self
                             .context
-                            .ptr_type(inkwell::AddressSpace::default()) // Fallback for ptrs
+                            .ptr_type(inkwell::AddressSpace::default()) // Fallback
                             .into(),
                     };
                     param_types.push(ty);
@@ -228,9 +215,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                     _ => self.context.void_type().fn_type(&param_types, false),
                 };
 
-                let function = self.module.add_function(&mangled_name, fn_type, None);
+                let _function = self.module.add_function(&mangled_name, fn_type, None);
                 self.fn_return_types
                     .insert(mangled_name.clone(), method.return_type.clone());
+            }
+        }
+
+        // Pass 2: Compile Bodies
+        for imp in impls {
+            for method in &imp.methods {
+                let mangled_name = format!("tl_{}_{}", imp.target_type, method.name);
+                let function = self
+                    .module
+                    .get_function(&mangled_name)
+                    .ok_or(format!("Function {} not found", mangled_name))?;
 
                 // Compile Body
                 let entry = self.context.append_basic_block(function, "entry");
@@ -263,19 +261,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .insert(arg_name.clone(), (alloca.into(), resolved_ty, false));
                     }
                 }
-                // ... (rest of method compilation)
-
-                // --- (Break to modifying compile_fn_proto separately since it is further down) ---
-                // Wait, replace_file_content doesn't support discontiguous blocks unless I use multi_replace.
-                // I should use multi_replace.
-                // I'll return invalid tool call if I try to mix patches.
-                // Actually I am viewing Lines 1 to 518. `compile_fn_proto` is at 394. `compile_impl_blocks` at 191.
-                // They are in the same file. I can use multi_replace.
-
-                // Old logic had specific `self` handling
-                // Now `self` is just an explicit argument `self: Struct`.
-                // So `self.variables.get("self")` works for `Expr::Variable("self")`.
-                // `Expr::FieldAccess` uses `Expr::Variable` if `obj` is `self`.
 
                 for stmt in &method.body {
                     self.compile_stmt(stmt)?;

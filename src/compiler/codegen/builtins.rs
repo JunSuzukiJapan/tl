@@ -244,6 +244,10 @@ pub fn declare_runtime_functions<'ctx>(
     let detach_type = void_ptr.fn_type(&[void_ptr.into(), context.bool_type().into()], false);
     add_fn("tl_tensor_detach", detach_type);
 
+    // Contiguous (メモリレイアウト連続化)
+    let contiguous_type = void_ptr.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_tensor_contiguous", contiguous_type);
+
     // Softmax / CrossEntropy
     let softmax_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
     add_fn("tl_tensor_softmax", softmax_type);
@@ -381,6 +385,9 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_matmul") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_matmul as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_contiguous") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_contiguous as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_print") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_print as usize);
@@ -655,6 +662,7 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_tensor_reshape_dims".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_sum_dim".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_matmul".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_contiguous".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_sum".to_string(), Type::F32); // Or tensor 0D? Usually returns scalar in simple implementation
                                                                     // ... complete as needed based on original CodeGen
                                                                     // tl_tensor_reshape_dims(tensor: *mut OpaqueTensor, dims: *const i64, num_dims: i64) -> *mut OpaqueTensor

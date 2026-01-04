@@ -298,15 +298,17 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     // FIXED Helper to ensure an expression evaluates to a Tensor, converting scalars if needed
+    // FIXED Helper to ensure an expression evaluates to a Tensor, converting scalars if needed
+    // Returns (Value, Type) where Type is the Tensor type (e.g. Tensor<f32, rank>)
     pub(crate) fn ensure_tensor_v2(
         &mut self,
         expr: &Expr,
         _expected_dims: usize,
-    ) -> Result<BasicValueEnum<'ctx>, String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         let (val, ty) = self.compile_expr(expr)?;
 
         match ty {
-            Type::Tensor(_, _) => Ok(val),
+            Type::Tensor(_, _) => Ok((val, ty)),
             Type::ScalarArray(elem_ty, len) => {
                 let i64_type = self.context.i64_type();
                 let f32_type = self.context.f32_type();
@@ -404,7 +406,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
 
                 match call.try_as_basic_value() {
-                    ValueKind::Basic(v) => Ok(v),
+                    ValueKind::Basic(v) => Ok((v, Type::Tensor(Box::new(Type::F32), 1))),
                     _ => Err("tl_tensor_new returned void".into()),
                 }
             }
@@ -457,7 +459,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     _ => return Err("tl_tensor_new failed".into()),
                 };
 
-                Ok(tensor_ptr)
+                Ok((tensor_ptr, Type::Tensor(Box::new(Type::F32), 0)))
             }
             _ => Err(format!("Cannot convert {:?} to Tensor", ty)),
         }

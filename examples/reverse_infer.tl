@@ -1,13 +1,6 @@
 // Sequence Reversal Inference
 //
-// 注記: 推論結果について (Note on Inference Results)
-// 入力 [1, 2, 3, 4] に対して [4, 2, 2, 1] と予測されるなど、一部のステップで誤差が生じることがあります。
-// 調査の結果、これは以下の理由により、小規模な Decoder-only Transformer にとって典型的な挙動（Reversal Curse）であることが判明しました。
-// 1. Reversal Curse: 因果的（左→右）に学習するモデルは、本質的に逆方向の操作を苦手とします。
-// 2. Positional Encoding: 絶対位置情報の学習限界により、隣接するトークン（3と2など）を取り違える "Off-by-one" エラーが発生しやすいです。
-// 3. モデル規模: 完全な精度を達成するには、より大きな d_model や双方向 Attention 機構が必要となる場合があります。
-// 現状の Loss 0.01 および 4文字中3文字正解という結果は、この規模のモデルとしては十分に学習が成功していることを示しています。
-
+// Matches improved architecture instructions.
 
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
@@ -35,25 +28,49 @@ impl LayerNorm {
         return LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return x + self.b; 
+        return x * self.w + self.b; 
     } 
 }
 
-struct CausalSelfAttention { a: Linear, p: Linear }
+struct CausalSelfAttention { q_proj: Linear, k_proj: Linear, v_proj: Linear, o_proj: Linear }
 impl CausalSelfAttention { 
     fn new(d: i64) -> CausalSelfAttention { 
-        return CausalSelfAttention(Linear::new(d, d*3), Linear::new(d*3, d)); 
+        // d_model=128. 4 heads -> 32 dim per head.
+        return CausalSelfAttention(Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        let qkv = self.a.forward(x); 
-        let q = qkv; 
-        let k = qkv; 
-        let v = qkv; 
-        let logits = matmul(q, transpose(k, 1, 2)) * 0.125;
-        let masked = tril(logits, 0); 
-        let probs = softmax(masked, 2);
-        let y = matmul(probs, v); 
-        return self.p.forward(y); 
+        // x: [1, T, 128]
+        let Q = self.q_proj.forward(x); // [1, T, 128]
+        let K = self.k_proj.forward(x);
+        let V = self.v_proj.forward(x);
+
+        // Split heads: [1, T, 128] -> [T, 4, 32] -> [4, T, 32]
+        
+        let Q_split = reshape(Q, 10, 4, 32);  // NOTE: infer uses len 10
+        let Q_heads = transpose(Q_split, 0, 1); // [4, 10, 32]
+        
+        let K_split = reshape(K, 10, 4, 32);
+        let K_heads = transpose(K_split, 0, 1); // [4, 10, 32]
+        
+        let V_split = reshape(V, 10, 4, 32);
+        let V_heads = transpose(V_split, 0, 1); // [4, 10, 32]
+        
+        // Attention
+        let K_heads_T = transpose(K_heads, 1, 2);
+        
+        // Scale: 1/sqrt(32) approx 0.176
+        let K_scaled = K_heads_T * 0.176;
+        let logits = matmul(Q_heads, K_scaled);
+        
+        let masked = tril(logits, 0);
+        let probs = softmax(masked, 2); 
+        let y_heads = matmul(probs, V_heads);
+        
+        // Merge heads
+        let y_trans = transpose(y_heads, 0, 1); // [10, 4, 32]
+        let y_out = reshape(y_trans, 1, 10, 128);
+        
+        return self.o_proj.forward(y_out); 
     } 
 }
 
@@ -78,7 +95,6 @@ impl Block {
     } 
 }
 
-
 struct PositionalEmbedding { w: Tensor<f32, 2> }
 impl PositionalEmbedding {
     fn new(max_len: i64, d: i64) -> PositionalEmbedding {
@@ -89,15 +105,25 @@ impl PositionalEmbedding {
     }
 }
 
-struct SeqModel { w: Embedding, p: PositionalEmbedding, b: Block, l: LayerNorm, h: Linear }
+struct SeqModel { w: Embedding, p: PositionalEmbedding, b1: Block, b2: Block, l: LayerNorm, h: Linear }
 impl SeqModel { 
     fn new(v: i64, max_len: i64, d: i64) -> SeqModel { 
-        return SeqModel(Embedding::new(v, d), PositionalEmbedding::new(max_len, d), Block::new(d), LayerNorm::new(d), Linear::new(d, v)); 
+        return SeqModel(
+            Embedding::new(v, d), 
+            PositionalEmbedding::new(max_len, d), 
+            Block::new(d), 
+            Block::new(d),
+            LayerNorm::new(d), 
+            Linear::new(d, v)
+        ); 
     } 
     fn forward(self, i: Tensor<f32, 2>, p: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let tok_emb = self.w.forward(i);
         let pos_emb = self.p.forward(p);
-        return self.h.forward(self.l.forward(self.b.forward(tok_emb + pos_emb))); 
+        let x = tok_emb + pos_emb;
+        let x = self.b1.forward(x);
+        let x = self.b2.forward(x);
+        return self.h.forward(self.l.forward(x)); 
     } 
 }
 
@@ -106,31 +132,11 @@ fn inference(model: SeqModel) {
     let PAD = 11.0;
     
     // Test case: 1 2 3 4 -> Expect 4 3 2 1
-    // Input sequence for generation: [1, 2, 3, 4, SEP]
-    // Then generate next 4 tokens.
     
     let d1 = 1.0;
     let d2 = 2.0;
     let d3 = 3.0;
     let d4 = 4.0;
-    
-    // Using simple array modification (value copy)
-    // TL arrays are fixed size value types.
-    // We start with [1, 2, 3, 4, SEP, PAD, PAD, PAD, PAD, PAD]
-    // We predict at index 4 (SEP) -> should give d4 (4).
-    // Then update input [..., 4, PAD...] -> predict at index 5 -> d3 (3).
-    
-    // Since our Attention is Causal, we can just feed the whole filled prefix.
-    
-    // We want to verify the full sequence generation: 4, 3, 2, 1.
-    // Since we don't have argmax/dynamic array update easily, we verify using Teacher Forcing.
-    // Causal masking ensures that prediction at step N only sees 0..N.
-    // So feeding [1, 2, 3, 4, SEP, 4, 3, 2, 1, PAD] allows us to check all predictions at once.
-    
-    // Position 4 (SEP) -> Should predict 4
-    // Position 5 (4)   -> Should predict 3
-    // Position 6 (3)   -> Should predict 2
-    // Position 7 (2)   -> Should predict 1
     
     let input = [d1, d2, d3, d4, SEP, d4, d3, d2, d1, PAD];
     print("Full Context Input:");
@@ -172,7 +178,7 @@ fn inference(model: SeqModel) {
 
 fn main() {
     let vocab_size = 12;
-    let d_model = 64;
+    let d_model = 128;
     let max_len = 16;
     let model = SeqModel::new(vocab_size, max_len, d_model);
     

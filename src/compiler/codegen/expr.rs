@@ -689,7 +689,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .unwrap();
 
                 // Convert range to Tensor
-                let range_val = self.ensure_tensor_v2(range, 1)?;
+                let (range_val, _) = self.ensure_tensor_v2(range, 1)?;
                 let _range_ty = Type::Tensor(Box::new(Type::F32), 1); // Simplified
 
                 // Get length
@@ -1302,7 +1302,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             // Compile shape argument - this should be a tensor or array
             let shape_arg = &args[0];
-            let shape_tensor = self.ensure_tensor_v2(shape_arg, 1)?;
+            let (shape_tensor, _) = self.ensure_tensor_v2(shape_arg, 1)?;
             compiled_args.push(shape_tensor.into());
 
             // Compile requires_grad argument (default to false if not provided)
@@ -1976,9 +1976,29 @@ impl<'ctx> CodeGenerator<'ctx> {
             let ret_ty = self
                 .fn_return_types
                 .get(&final_name)
+                .map(|t| {
+                    // println!("DEBUG: Method {} return type: {:?}", final_name, t);
+                    t
+                })
                 .unwrap_or(&Type::Void)
                 .clone();
+
+            if final_name.contains("forward") {
+                println!(
+                    "DEBUG: Method {} lookup. Found: {:?}",
+                    final_name,
+                    self.fn_return_types.get(&final_name)
+                );
+            }
+
             if let Type::Void = ret_ty {
+                if final_name.contains("forward") {
+                    println!(
+                        "DEBUG: Method {} returned VOID. fn_return_types keys: {:?}",
+                        final_name,
+                        self.fn_return_types.keys().collect::<Vec<_>>()
+                    );
+                }
                 Ok((
                     self.context.i64_type().const_int(0, false).into(),
                     Type::Void,
@@ -2105,6 +2125,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => Err("Invalid grad return".into()),
                     }
                 }
+                "contiguous" => {
+                    let fn_val = self.module.get_function("tl_tensor_contiguous").unwrap();
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into()], "contiguous_res")
+                        .map_err(|e| e.to_string())?;
+
+                    match call.try_as_basic_value() {
+                        ValueKind::Basic(v) => Ok((v, obj_ty)),
+                        _ => Err("Invalid contiguous return".into()),
+                    }
+                }
                 "save" => {
                     let fn_val = self.module.get_function("tl_tensor_save").unwrap();
                     let (path_val, _) = self.compile_expr(&args[0])?;
@@ -2183,7 +2215,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         return Err(format!("{} requires 1 argument", method));
                     }
                     // Must use ensure_tensor for RHS
-                    let rhs_val = self.ensure_tensor_v2(&args[0], 0)?;
+                    let (rhs_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
 
                     let fn_name = match method {
                         "add_assign" => "tl_tensor_add_assign",
@@ -2585,7 +2617,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() < 2 {
                     return Err("reshape requires at least tensor and 1 dimension".into());
                 }
-                let t_val = self.ensure_tensor_v2(&args[0], 0)?;
+                let (t_val, t_ty) = self.ensure_tensor_v2(&args[0], 0)?;
 
                 // Check if 2nd arg is Tensor/Array (Old behavior)
                 let (_, arg1_ty) = self.compile_expr(&args[1])?;
@@ -2593,7 +2625,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     || matches!(arg1_ty, Type::ScalarArray(_, _)))
                     && args.len() == 2
                 {
-                    let s_val = self.ensure_tensor_v2(&args[1], 1)?;
+                    let (s_val, _) = self.ensure_tensor_v2(&args[1], 1)?;
                     let reshape_fn = self
                         .module
                         .get_function("tl_tensor_reshape")
@@ -2604,7 +2636,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string())?;
                     match call.try_as_basic_value() {
                         ValueKind::Basic(v) => {
-                            return Ok((v, Type::Tensor(Box::new(Type::Void), 0)))
+                            let inner = if let Type::Tensor(ref i, _) = t_ty {
+                                if let Type::Void = **i {
+                                    Box::new(Type::F32)
+                                } else {
+                                    i.clone()
+                                }
+                            } else {
+                                Box::new(Type::F32)
+                            };
+                            return Ok((v, Type::Tensor(inner, 0)));
                         }
                         _ => return Err("Invalid reshape return".into()),
                     }
@@ -2674,13 +2715,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                     ValueKind::Basic(v) => v,
                     _ => return Err("Invalid reshape_dims return".into()),
                 };
-                Ok((res, Type::Tensor(Box::new(Type::Void), 0)))
+                let inner = if let Type::Tensor(ref i, _) = t_ty {
+                    if let Type::Void = **i {
+                        Box::new(Type::F32)
+                    } else {
+                        i.clone()
+                    }
+                } else {
+                    Box::new(Type::F32)
+                };
+                Ok((res, Type::Tensor(inner, 0)))
             }
             "softmax" => {
                 if args.len() != 2 {
                     return Err("softmax requires 2 arguments".into());
                 }
-                let arg0_val = self.ensure_tensor_v2(&args[0], 0)?;
+                let (arg0_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
                 let arg0_ty = Type::Tensor(Box::new(Type::F32), 0); // Simplified
                 let (arg1_val, _arg1_ty) = self.compile_expr(&args[1])?; // dim
 
@@ -2703,8 +2753,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 2 {
                     return Err("cross_entropy requires 2 arguments".into());
                 }
-                let arg0_val = self.ensure_tensor_v2(&args[0], 0)?;
-                let arg1_val = self.ensure_tensor_v2(&args[1], 0)?;
+                let (arg0_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
+                let (arg1_val, _) = self.ensure_tensor_v2(&args[1], 0)?;
 
                 let fn_val = self
                     .module
@@ -2725,7 +2775,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 1 {
                     return Err("exp requires 1 argument".into());
                 }
-                let arg_val = self.ensure_tensor_v2(&args[0], 0)?;
+                let (arg_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
                 let arg_ty = Type::Tensor(Box::new(Type::F32), 0);
 
                 let fn_val = self.module.get_function("tl_tensor_exp").unwrap();
@@ -2743,7 +2793,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 1 {
                     return Err("log requires 1 argument".into());
                 }
-                let arg_val = self.ensure_tensor_v2(&args[0], 0)?;
+                let (arg_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
                 let arg_ty = Type::Tensor(Box::new(Type::F32), 0);
 
                 let fn_val = self.module.get_function("tl_tensor_log").unwrap();
@@ -2761,7 +2811,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 1 {
                     return Err("len requires 1 argument".into());
                 }
-                let arg_val = self.ensure_tensor_v2(&args[0], 0)?;
+                let (arg_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
 
                 let fn_val = self
                     .module
@@ -2781,7 +2831,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 1 {
                     return Err("sqrt requires 1 argument".into());
                 }
-                let arg_val = self.ensure_tensor_v2(&args[0], 0)?;
+                let (arg_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
                 let arg_ty = Type::Tensor(Box::new(Type::F32), 0);
 
                 let fn_val = self.module.get_function("tl_tensor_sqrt").unwrap();
@@ -2799,8 +2849,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 2 {
                     return Err("matmul requires 2 arguments".into());
                 }
-                let lhs_val = self.ensure_tensor_v2(&args[0], 0)?;
-                let rhs_val = self.ensure_tensor_v2(&args[1], 0)?;
+                let (lhs_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
+                let (rhs_val, _) = self.ensure_tensor_v2(&args[1], 0)?;
 
                 let fn_val = self.module.get_function("tl_tensor_matmul").unwrap();
                 let call = self
@@ -3024,7 +3074,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             "sum" => {
                 if args.len() == 1 {
                     // Global sum
-                    let arg_val = self.ensure_tensor_v2(&args[0], 0)?;
+                    let (arg_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
                     let fn_val = self.module.get_function("tl_tensor_sum").unwrap();
                     let call = self
                         .builder
@@ -3038,7 +3088,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Ok((res, Type::Tensor(Box::new(Type::F32), 0)))
                 } else if args.len() == 2 {
                     // Sum over dim: sum(t, dim)
-                    let t_val = self.ensure_tensor_v2(&args[0], 0)?;
+                    let (t_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
                     let (dim_val, dim_ty) = self.compile_expr(&args[1])?;
                     // Convert dim to i64 (usize)
                     let dim_int = match dim_ty {
@@ -3097,7 +3147,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 2 {
                     return Err("tril requires 2 arguments".into());
                 }
-                let t_val = self.ensure_tensor_v2(&args[0], 0)?;
+                let (t_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
                 let (diag_val, diag_ty) = self.compile_expr(&args[1])?;
                 // Cast diag to i32
                 let diag_i32 = match diag_ty {
@@ -3129,8 +3179,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 2 {
                     return Err("embedding requires 2 arguments".into());
                 }
-                let idx_val = self.ensure_tensor_v2(&args[0], 0)?;
-                let w_val = self.ensure_tensor_v2(&args[1], 0)?;
+                let (idx_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
+                let (w_val, _) = self.ensure_tensor_v2(&args[1], 0)?;
                 let fn_val = self.module.get_function("tl_tensor_embedding").unwrap();
                 let call = self
                     .builder
@@ -3147,8 +3197,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     return Err("pow requires 2 arguments".into());
                 }
                 // Use ensure_tensor for both args
-                let base_val = self.ensure_tensor_v2(&args[0], 0)?;
-                let exp_val = self.ensure_tensor_v2(&args[1], 0)?;
+                let (base_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
+                let (exp_val, _) = self.ensure_tensor_v2(&args[1], 0)?;
                 let fn_val = self.module.get_function("tl_tensor_pow").unwrap();
                 let call = self
                     .builder
@@ -3281,7 +3331,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             }
                             _ => {
                                 // Dynamic shape tensor
-                                let shape_tensor = self.ensure_tensor_v2(shape_expr, 1)?;
+                                let (shape_tensor, _) = self.ensure_tensor_v2(shape_expr, 1)?;
                                 let len_fn = self
                                     .module
                                     .get_function("tl_tensor_len")

@@ -1013,6 +1013,17 @@ pub extern "C" fn tl_tensor_matmul(
         make_tensor(result)
     }
 }
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_contiguous(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    unsafe {
+        let tensor = &(*t).0;
+        // Candleのcontiguous()を使用してメモリレイアウトを連続化
+        let result = tensor.contiguous().unwrap();
+        make_tensor(result)
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn tl_tensor_save(t: *mut OpaqueTensor, path: *const std::os::raw::c_char) {
     use std::ffi::CStr;
