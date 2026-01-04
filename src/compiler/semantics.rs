@@ -1735,7 +1735,7 @@ impl SemanticAnalyzer {
                     // --- New Static Methods for Refactor ---
                     ("Tensor", "randn") => {
                         // Tensor::randn(shape, requires_grad)
-                        if args.len() != 2 {
+                        if args.is_empty() || args.len() > 2 {
                             return Err(SemanticError::ArgumentCountMismatch {
                                 name: "Tensor::randn".into(),
                                 expected: 2,
@@ -1743,13 +1743,14 @@ impl SemanticAnalyzer {
                             });
                         }
                         let _ = self.check_expr(&args[0])?;
-                        let t1 = self.check_expr(&args[1])?;
-
-                        if !matches!(t1, Type::Bool) {
-                            return Err(SemanticError::TypeMismatch {
-                                expected: Type::Bool,
-                                found: t1,
-                            });
+                        if args.len() == 2 {
+                            let t1 = self.check_expr(&args[1])?;
+                            if !matches!(t1, Type::Bool) {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::Bool,
+                                    found: t1,
+                                });
+                            }
                         }
                         Ok(Type::Tensor(Box::new(Type::F32), 0))
                     }

@@ -1078,42 +1078,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .size_of()
             .ok_or(format!("Cannot determine size of struct {}", name))?;
 
-        // 1. Check if Arena is active
-        let is_active_fn = self
-            .module
-            .get_function("tl_arena_is_active")
-            .ok_or("tl_arena_is_active not found")?;
-        let is_active_call = self
-            .builder
-            .build_call(is_active_fn, &[], "is_arena_active")
-            .map_err(|e| e.to_string())?;
-        let is_active_val = match is_active_call.try_as_basic_value() {
-            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-            _ => return Err("tl_arena_is_active returned void".into()),
-        };
-        let is_active_bool = self
-            .builder
-            .build_int_compare(
-                inkwell::IntPredicate::NE,
-                is_active_val,
-                self.context.bool_type().const_zero(),
-                "is_active_bool",
-            )
-            .map_err(|e| e.to_string())?;
-
-        // 2. Setup blocks
-        let current_block = self.builder.get_insert_block().unwrap();
-        let function = current_block.get_parent().unwrap();
-        let arena_block = self.context.append_basic_block(function, "alloc_arena");
-        let heap_block = self.context.append_basic_block(function, "alloc_heap");
-        let merge_block = self.context.append_basic_block(function, "alloc_merge");
-
-        self.builder
-            .build_conditional_branch(is_active_bool, arena_block, heap_block)
-            .map_err(|e| e.to_string())?;
-
-        // 3. Heap Allocation (Legacy path)
-        self.builder.position_at_end(heap_block);
+        // 1. Heap Allocation
         let malloc_fn = self
             .module
             .get_function("malloc")
@@ -1122,16 +1087,17 @@ impl<'ctx> CodeGenerator<'ctx> {
             .builder
             .build_call(malloc_fn, &[size.into()], "struct_malloc")
             .map_err(|e| e.to_string())?;
-        let raw_ptr_heap = match call.try_as_basic_value() {
+        let raw_ptr = match call.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
             _ => return Err("malloc returned invalid value".into()),
         };
-        // Register with MemoryManager
+
+        // 2. Register with MemoryManager
         if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
             let cast_ptr = self
                 .builder
                 .build_pointer_cast(
-                    raw_ptr_heap,
+                    raw_ptr,
                     self.context.ptr_type(inkwell::AddressSpace::default()),
                     "cast_ptr",
                 )
@@ -1140,45 +1106,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .build_call(register_fn, &[cast_ptr.into()], "")
                 .map_err(|e| e.to_string())?;
         }
-        self.builder
-            .build_unconditional_branch(merge_block)
-            .unwrap();
-        let heap_end_block = self.builder.get_insert_block().unwrap();
-
-        // 4. Arena Allocation
-        self.builder.position_at_end(arena_block);
-        let arena_alloc_fn = self
-            .module
-            .get_function("tl_arena_alloc")
-            .ok_or("tl_arena_alloc not found")?;
-        let alloc_call = self
-            .builder
-            .build_call(arena_alloc_fn, &[size.into()], "struct_arena_alloc")
-            .map_err(|e| e.to_string())?;
-        let raw_ptr_arena = match alloc_call.try_as_basic_value() {
-            inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-            _ => return Err("tl_arena_alloc returned invalid value".into()),
-        };
-        // NO registration for arena pointers!
-        self.builder
-            .build_unconditional_branch(merge_block)
-            .unwrap();
-        let arena_end_block = self.builder.get_insert_block().unwrap();
-
-        // 5. Merge
-        self.builder.position_at_end(merge_block);
-        let ptr_phi = self
-            .builder
-            .build_phi(
-                self.context.ptr_type(inkwell::AddressSpace::default()),
-                "struct_ptr_phi",
-            )
-            .unwrap();
-        ptr_phi.add_incoming(&[
-            (&raw_ptr_heap, heap_end_block),
-            (&raw_ptr_arena, arena_end_block),
-        ]);
-        let raw_ptr = ptr_phi.as_basic_value().into_pointer_value();
 
         // Cast to Struct Pointer (opaque pointer in modern LLVM, but typed for GEP)
         let struct_ptr = self
@@ -1460,31 +1387,31 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Allocate buffer for elements
         // Use malloc directly at current block (HEAP allocation)
 
-        // Use malloc for data (Variable Path)
-        let malloc_fn = self
+        // Use tl_alloc_tmp for data (Variable Path)
+        let alloc_tmp_fn = self
             .module
-            .get_function("malloc")
-            .expect("malloc not found");
+            .get_function("tl_alloc_tmp")
+            .expect("tl_alloc_tmp not found");
 
         let size = self
             .builder
             .build_int_mul(
                 i64_type.const_int(total_elements as u64, false),
                 i64_type.const_int(4, false), // sizeof(f32)
-                "malloc_size",
+                "alloc_size",
             )
             .map_err(|e| e.to_string())?;
 
         let call_idx = self
             .builder
-            .build_call(malloc_fn, &[size.into()], "buf_void")
+            .build_call(alloc_tmp_fn, &[size.into()], "buf_void")
             .map_err(|e| e.to_string())?;
 
         let data_alloca = match call_idx.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(inkwell::values::BasicValueEnum::PointerValue(v)) => {
                 v
             }
-            _ => return Err("Invalid malloc return".to_string()),
+            _ => return Err("Invalid tl_alloc_tmp return".to_string()),
         };
 
         // Helper to flatten and compile elements
@@ -1533,20 +1460,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .map_err(|e| e.to_string())?;
         }
 
-        // Allocate and fill shape buffer on HEAP (malloc)
+        // Allocate and fill shape buffer on HEAP (tl_alloc_tmp)
         let shape_size = rank as u64 * 8; // i64 size
-        let shape_malloc_call = self
+        let shape_alloc_call = self
             .builder
             .build_call(
-                malloc_fn,
+                alloc_tmp_fn,
                 &[i64_type.const_int(shape_size, false).into()],
-                "shape_malloc",
+                "shape_alloc",
             )
             .map_err(|e| e.to_string())?;
 
-        let shape_alloca = match shape_malloc_call.try_as_basic_value() {
+        let shape_alloca = match shape_alloc_call.try_as_basic_value() {
             ValueKind::Basic(v) => v.into_pointer_value(),
-            _ => return Err("malloc failed".into()),
+            _ => return Err("tl_alloc_tmp failed".into()),
         };
 
         for (i, dim) in shape.iter().enumerate() {
@@ -1598,20 +1525,23 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => return Err("Invalid tl_tensor_new return".into()),
         };
 
-        // CRITICAL: Free the malloc'd buffers after tl_tensor_new
+        // CRITICAL: Free the temporary buffers after tl_tensor_new
         // tl_tensor_new uses Tensor::from_slice which COPIES the data,
         // so the original buffers are no longer needed and must be freed
         // to prevent them from being reused and corrupting the tensor's internal data
-        let free_fn = self.module.get_function("free").expect("free not found");
+        let free_tmp_fn = self
+            .module
+            .get_function("tl_free_tmp")
+            .expect("tl_free_tmp not found");
 
         // Free data buffer
         self.builder
-            .build_call(free_fn, &[data_alloca.into()], "")
+            .build_call(free_tmp_fn, &[data_alloca.into()], "")
             .map_err(|e| e.to_string())?;
 
         // Free shape buffer
         self.builder
-            .build_call(free_fn, &[shape_alloca.into()], "")
+            .build_call(free_tmp_fn, &[shape_alloca.into()], "")
             .map_err(|e| e.to_string())?;
 
         Ok((res, Type::Tensor(Box::new(Type::F32), rank)))
@@ -1757,41 +1687,44 @@ impl<'ctx> CodeGenerator<'ctx> {
         // CRITICAL FIX: Use HEAP allocation (malloc) instead of STACK (alloca)
         // to prevent stack overflow with many tensor literals
 
-        // Get malloc and free functions
-        let malloc_fn = self
+        // Use tl_alloc_tmp instead of malloc
+        let alloc_tmp_fn = self
             .module
-            .get_function("malloc")
-            .ok_or("malloc not found")?;
-        let free_fn = self.module.get_function("free").ok_or("free not found")?;
+            .get_function("tl_alloc_tmp")
+            .expect("tl_alloc_tmp not found");
+        let free_tmp_fn = self
+            .module
+            .get_function("tl_free_tmp")
+            .expect("tl_free_tmp not found");
 
-        // Allocate data buffer on HEAP
+        // Allocate data buffer on HEAP/Arena
         let data_size_bytes = len * 4; // f32 = 4 bytes
-        let malloc_call = self
+        let alloc_call = self
             .builder
             .build_call(
-                malloc_fn,
+                alloc_tmp_fn,
                 &[i64_type.const_int(data_size_bytes, false).into()],
-                "temp_data_heap",
+                "temp_data_alloc",
             )
             .map_err(|e| e.to_string())?;
-        let data_ptr = match malloc_call.try_as_basic_value() {
+        let data_ptr = match alloc_call.try_as_basic_value() {
             ValueKind::Basic(v) => v.into_pointer_value(),
-            _ => return Err("malloc returned non-pointer".into()),
+            _ => return Err("tl_alloc_tmp returned non-pointer".into()),
         };
 
-        // Allocate shape buffer on HEAP
+        // Allocate shape buffer on HEAP/Arena
         let shape_size_bytes = rank as u64 * 8; // i64 = 8 bytes
-        let shape_malloc_call = self
+        let shape_alloc_call = self
             .builder
             .build_call(
-                malloc_fn,
+                alloc_tmp_fn,
                 &[i64_type.const_int(shape_size_bytes, false).into()],
-                "temp_shape_heap",
+                "temp_shape_alloc",
             )
             .map_err(|e| e.to_string())?;
-        let shape_ptr = match shape_malloc_call.try_as_basic_value() {
+        let shape_ptr = match shape_alloc_call.try_as_basic_value() {
             ValueKind::Basic(v) => v.into_pointer_value(),
-            _ => return Err("malloc returned non-pointer".into()),
+            _ => return Err("tl_alloc_tmp returned non-pointer".into()),
         };
 
         // Populate data buffer
@@ -1855,11 +1788,12 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // FREE heap-allocated buffers immediately after tl_tensor_new
         // (tl_tensor_new copies the data internally via Candle's from_slice)
+        // Free the temporary buffers
         self.builder
-            .build_call(free_fn, &[data_ptr.into()], "")
+            .build_call(free_tmp_fn, &[data_ptr.into()], "")
             .map_err(|e| e.to_string())?;
         self.builder
-            .build_call(free_fn, &[shape_ptr.into()], "")
+            .build_call(free_tmp_fn, &[shape_ptr.into()], "")
             .map_err(|e| e.to_string())?;
 
         Ok((res, Type::Tensor(Box::new(Type::F32), rank)))

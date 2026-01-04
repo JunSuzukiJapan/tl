@@ -486,14 +486,15 @@ impl<'ctx> CodeGenerator<'ctx> {
         if func.name == "main" {
             let mut analyzer = ShapeAnalyzer::new();
             let profile = analyzer.analyze_block(&func.body);
-
             // Heuristic: If we have static tensors or significant allocations, init arena
             // We assume safe upper bound for OpaqueTensor size (around 32-48 bytes usually, use 64 for safety)
             // Plus the actual static tensor data size.
-            if profile.total_static_size.unwrap_or(0) > 0 || profile.max_allocations > 0 {
-                let struct_overhead = profile.max_allocations * 64; // safely cover OpaqueTensor struct size
-                let total_capacity = profile.total_static_size.unwrap_or(0) + struct_overhead;
+            let mut total_capacity = profile.total_static_size.unwrap_or(0);
+            total_capacity += profile.max_allocations * 512; // Increased per-allocation overhead
 
+            if total_capacity > 0 || profile.max_allocations > 0 {
+                // Minimum arena size: 64KB
+                total_capacity = total_capacity.max(65536);
                 // Align to page size (4096) roughly, or just use what we need.
                 // call tl_arena_init(capacity)
                 let init_fn = self

@@ -114,7 +114,19 @@ impl ShapeAnalyzer {
         match expr {
             // Tensor literals: fully static from length
             Expr::TensorLiteral(elements) | Expr::TensorConstLiteral(elements) => {
-                ShapeInfo::Static(vec![elements.len()])
+                if elements.is_empty() {
+                    return ShapeInfo::Static(vec![0]);
+                }
+                let mut shape = vec![elements.len()];
+                // Peek at first element to get sub-shape
+                let sub_shape = self.analyze_expr(&elements[0]);
+                match sub_shape {
+                    ShapeInfo::Static(s) => {
+                        shape.extend(s);
+                    }
+                    _ => {}
+                }
+                ShapeInfo::Static(shape)
             }
 
             // Variable reference
@@ -129,6 +141,18 @@ impl ShapeAnalyzer {
                     self.infer_tensor_new_shape(args)
                 } else {
                     ShapeInfo::Unknown
+                }
+            }
+
+            // Binary operations: if both are static and same, result is same
+            Expr::BinOp(left, _, right) => {
+                let s1 = self.analyze_expr(left);
+                let s2 = self.analyze_expr(right);
+                match (s1, s2) {
+                    (ShapeInfo::Static(d1), ShapeInfo::Static(d2)) if d1 == d2 => {
+                        ShapeInfo::Static(d1)
+                    }
+                    _ => ShapeInfo::Unknown,
                 }
             }
 
@@ -183,6 +207,42 @@ impl ShapeAnalyzer {
         }
     }
 
+    /// Count number of tensor allocations in an expression
+    pub fn count_allocations(&self, expr: &Expr) -> usize {
+        match expr {
+            Expr::TensorLiteral(_) | Expr::TensorConstLiteral(_) => 1,
+            Expr::BinOp(l, _, r) => 1 + self.count_allocations(l) + self.count_allocations(r),
+            Expr::UnOp(_, e) => 1 + self.count_allocations(e),
+            Expr::FnCall(_, args) => {
+                100 + args
+                    .iter()
+                    .map(|a| self.count_allocations(a))
+                    .sum::<usize>()
+            }
+            Expr::MethodCall(obj, _, args) => {
+                100 + self.count_allocations(obj)
+                    + args
+                        .iter()
+                        .map(|a| self.count_allocations(a))
+                        .sum::<usize>()
+            }
+            Expr::StaticMethodCall(_, _, args) => {
+                100 + args
+                    .iter()
+                    .map(|a| self.count_allocations(a))
+                    .sum::<usize>()
+            }
+            Expr::IndexAccess(obj, indices) => {
+                0 + self.count_allocations(obj)
+                    + indices
+                        .iter()
+                        .map(|a| self.count_allocations(a))
+                        .sum::<usize>()
+            }
+            _ => 0,
+        }
+    }
+
     /// Analyze a statement and update shape information
     pub fn analyze_stmt(&mut self, stmt: &Stmt) {
         match stmt {
@@ -190,9 +250,13 @@ impl ShapeAnalyzer {
                 let shape = self.analyze_expr(value);
                 self.shapes.insert(name.clone(), shape);
             }
-            Stmt::Assign { name, value, .. } => {
-                let shape = self.analyze_expr(value);
-                self.shapes.insert(name.clone(), shape);
+            Stmt::Assign {
+                name, value, op, ..
+            } => {
+                if *op == AssignOp::Assign {
+                    let shape = self.analyze_expr(value);
+                    self.shapes.insert(name.clone(), shape);
+                }
             }
             _ => {}
         }
@@ -208,35 +272,45 @@ impl ShapeAnalyzer {
         for stmt in block {
             self.analyze_stmt(stmt);
 
-            // Count allocations and sizes for Let statements
-            if let Stmt::Let { value, .. } = stmt {
-                let shape = self.analyze_expr(value);
+            match stmt {
+                Stmt::Let { value, .. }
+                | Stmt::Assign { value, .. }
+                | Stmt::Expr(value)
+                | Stmt::FieldAssign { value, .. }
+                | Stmt::Return(value) => {
+                    allocation_count += self.count_allocations(value);
 
-                match shape {
-                    ShapeInfo::Static(ref dims) => {
-                        // Assume f32 = 4 bytes per element
-                        let size: usize = dims.iter().product::<usize>() * 4;
-                        total_size += size;
-                        allocation_count += 1;
-                    }
-                    ShapeInfo::PartiallyStatic { .. } => {
-                        has_dynamic = true;
-                        allocation_count += 1;
-                    }
-                    ShapeInfo::Unknown => {
-                        has_dynamic = true;
+                    let shape = self.analyze_expr(value);
+                    match shape {
+                        ShapeInfo::Static(dims) => {
+                            total_size += dims.iter().product::<usize>() * 4;
+                        }
+                        ShapeInfo::PartiallyStatic { .. } | ShapeInfo::Unknown => {
+                            has_dynamic = true;
+                        }
                     }
                 }
+                Stmt::If {
+                    then_block,
+                    else_block,
+                    ..
+                } => {
+                    let p1 = self.analyze_block(then_block);
+                    allocation_count += p1.max_allocations;
+                    if let Some(eb) = else_block {
+                        let p2 = self.analyze_block(eb);
+                        allocation_count += p2.max_allocations;
+                    }
+                }
+                _ => {}
             }
         }
 
         profile.max_allocations = allocation_count;
 
         if !has_dynamic && allocation_count > 0 {
-            // Fully static case
             profile.total_static_size = Some(total_size);
         } else if has_dynamic {
-            // Dynamic case - create formula (TODO: build proper formula)
             profile.size_formula = Some(SizeFormula::new(total_size));
         }
 

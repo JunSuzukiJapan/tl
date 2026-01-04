@@ -35,15 +35,7 @@ impl Arena {
         let aligned_offset = (self.offset + align - 1) & !(align - 1);
 
         if aligned_offset + size > self.capacity {
-            panic!(
-                "Arena overflow! Requested {} bytes (aligned to {}), have {} remaining. \
-                 Total capacity: {}, current offset: {}",
-                size,
-                aligned_offset,
-                self.capacity.saturating_sub(aligned_offset),
-                self.capacity,
-                self.offset
-            );
+            return std::ptr::null_mut();
         }
 
         let ptr = unsafe { self.buffer.add(aligned_offset) };
@@ -103,6 +95,12 @@ pub extern "C" fn tl_arena_init(capacity: i64) {
 /// Returns null if arena is not initialized
 #[no_mangle]
 pub extern "C" fn tl_arena_alloc(size: i64) -> *mut OpaqueTensor {
+    tl_arena_malloc(size) as *mut OpaqueTensor
+}
+
+/// Generic arena allocation
+#[no_mangle]
+pub extern "C" fn tl_arena_malloc(size: i64) -> *mut c_void {
     if size <= 0 {
         return std::ptr::null_mut();
     }
@@ -110,12 +108,14 @@ pub extern "C" fn tl_arena_alloc(size: i64) -> *mut OpaqueTensor {
     ARENA.with(|arena| {
         let mut borrow = arena.borrow_mut();
         if let Some(ref mut a) = *borrow {
-            // Check overflow before allocate to avoid panic in allocate()
-            if a.offset + size as usize > a.capacity {
+            // Check overflow before allocate to avoid getting null from allocate()
+            // if we want to handle it here.
+            let aligned_offset = (a.offset + 15) & !15;
+            if aligned_offset + size as usize > a.capacity {
                 return std::ptr::null_mut();
             }
             let ptr = a.allocate(size as usize, 16);
-            ptr as *mut OpaqueTensor
+            ptr as *mut c_void
         } else {
             std::ptr::null_mut()
         }

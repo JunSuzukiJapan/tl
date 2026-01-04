@@ -469,10 +469,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Lookup variable
                 let mut found_var_ptr = None;
                 let mut found_var_type = None;
+                let mut found_should_free = false;
                 for scope in self.variables.iter().rev() {
-                    if let Some((v, t, _)) = scope.get(name) {
+                    if let Some((v, t, sf)) = scope.get(name) {
                         found_var_ptr = Some(*v);
                         found_var_type = Some(t.clone());
+                        found_should_free = *sf;
                         break;
                     }
                 }
@@ -514,6 +516,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 )
                                 .map_err(|e| e.to_string())?;
 
+                            // AND also check if we own it
+                            let should_free_val = self
+                                .context
+                                .bool_type()
+                                .const_int(found_should_free as u64, false);
+                            let can_free = self
+                                .builder
+                                .build_and(is_not_null, should_free_val, "can_free")
+                                .unwrap();
+
                             let free_block = self.context.append_basic_block(
                                 self.builder
                                     .get_insert_block()
@@ -532,7 +544,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             );
 
                             self.builder
-                                .build_conditional_branch(is_not_null, free_block, continue_block)
+                                .build_conditional_branch(can_free, free_block, continue_block)
                                 .map_err(|e| e.to_string())?;
 
                             // Free block
@@ -596,6 +608,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 )
                                 .map_err(|e| e.to_string())?;
 
+                            // AND also check if we own it
+                            let should_free_val = self
+                                .context
+                                .bool_type()
+                                .const_int(found_should_free as u64, false);
+                            let can_free = self
+                                .builder
+                                .build_and(is_not_null, should_free_val, "can_free")
+                                .unwrap();
+
                             let free_block = self.context.append_basic_block(
                                 self.builder
                                     .get_insert_block()
@@ -614,7 +636,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             );
 
                             self.builder
-                                .build_conditional_branch(is_not_null, free_block, continue_block)
+                                .build_conditional_branch(can_free, free_block, continue_block)
                                 .map_err(|e| e.to_string())?;
 
                             self.builder.position_at_end(free_block);

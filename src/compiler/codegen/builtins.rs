@@ -584,6 +584,9 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_arena_reset") {
         execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_reset as usize);
     }
+    if let Some(f) = module.get_function("tl_arena_malloc") {
+        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_malloc as usize);
+    }
 
     if let Some(f) = module.get_function("tl_update_all_params") {
         execution_engine.add_global_mapping(&f, runtime::tl_update_all_params as usize);
@@ -598,6 +601,12 @@ pub fn declare_runtime_functions<'ctx>(
     // Map Support
     if let Some(f) = module.get_function("tl_tensor_map_new") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_new as usize);
+    }
+    if let Some(f) = module.get_function("tl_alloc_tmp") {
+        execution_engine.add_global_mapping(&f, runtime::tl_alloc_tmp as usize);
+    }
+    if let Some(f) = module.get_function("tl_free_tmp") {
+        execution_engine.add_global_mapping(&f, runtime::tl_free_tmp as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_map_insert") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_insert as usize);
@@ -1020,7 +1029,7 @@ pub fn declare_runtime_functions<'ctx>(
     module.add_function("tl_arena_init", arena_init_type, None);
     fn_return_types.insert("tl_arena_init".to_string(), Type::Void);
 
-    // tl_arena_alloc(size: i64) -> *mut OpaqueTensor
+    // tl_arena_alloc(size) -> void*
     let arena_alloc_type = ptr_type.fn_type(&[i64_type.into()], false);
     module.add_function("tl_arena_alloc", arena_alloc_type, None);
     fn_return_types.insert(
@@ -1028,20 +1037,36 @@ pub fn declare_runtime_functions<'ctx>(
         Type::Tensor(Box::new(Type::F32), 1),
     );
 
-    // tl_arena_free() -> void
-    let arena_free_type = void_type.fn_type(&[], false);
-    module.add_function("tl_arena_free", arena_free_type, None);
-    fn_return_types.insert("tl_arena_free".to_string(), Type::Void);
+    // tl_arena_malloc(size) -> void*
+    let arena_malloc_type = ptr_type.fn_type(&[i64_type.into()], false);
+    module.add_function("tl_arena_malloc", arena_malloc_type, None);
+    fn_return_types.insert(
+        "tl_arena_malloc".to_string(),
+        Type::Tensor(Box::new(Type::F32), 1),
+    );
 
     // tl_arena_is_active() -> bool
     let arena_is_active_type = context.bool_type().fn_type(&[], false);
     module.add_function("tl_arena_is_active", arena_is_active_type, None);
     fn_return_types.insert("tl_arena_is_active".to_string(), Type::Bool);
 
-    // tl_arena_reset() -> void
-    let arena_reset_type = void_type.fn_type(&[], false);
-    module.add_function("tl_arena_reset", arena_reset_type, None);
-    fn_return_types.insert("tl_arena_reset".to_string(), Type::Void);
+    // tl_arena_free() -> void
+    let arena_free_type = void_type.fn_type(&[], false);
+    module.add_function("tl_arena_free", arena_free_type, None);
+    fn_return_types.insert("tl_arena_free".to_string(), Type::Void);
+
+    // tl_alloc_tmp(size) -> void*
+    let alloc_tmp_type = ptr_type.fn_type(&[i64_type.into()], false);
+    module.add_function("tl_alloc_tmp", alloc_tmp_type, None);
+    fn_return_types.insert(
+        "tl_alloc_tmp".to_string(),
+        Type::Tensor(Box::new(Type::F32), 1),
+    );
+
+    // tl_free_tmp(ptr) -> void
+    let free_tmp_type = void_type.fn_type(&[ptr_type.into()], false);
+    module.add_function("tl_free_tmp", free_tmp_type, None);
+    fn_return_types.insert("tl_free_tmp".to_string(), Type::Void);
 
     fn_return_types.insert("tl_env_set".to_string(), Type::Void);
     fn_return_types.insert("tl_system_time".to_string(), Type::F32); // Using F32 as default float for now

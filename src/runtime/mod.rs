@@ -10,7 +10,7 @@ use crate::runtime::device::get_device;
 use candle_core::Tensor;
 // Import candle_nn
 use std::cell::RefCell;
-use std::ffi::c_float;
+use std::ffi::{c_float, c_void};
 use std::slice;
 use std::sync::{Arc, Mutex};
 
@@ -46,22 +46,7 @@ pub struct OpaqueTensor(
 // This ensures that all intermediate tensors are tracked and freed by the memory manager.
 fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
     let boxed = Box::new(OpaqueTensor(t, None, None));
-    let ptr = if arena::tl_arena_is_active() {
-        // Allocate in arena
-        let size = std::mem::size_of::<OpaqueTensor>() as i64;
-        let arena_ptr = arena::tl_arena_alloc(size);
-        if !arena_ptr.is_null() {
-            unsafe {
-                std::ptr::write(arena_ptr, *boxed);
-            }
-            arena_ptr
-        } else {
-            // Arena full, fallback to Heap
-            Box::into_raw(boxed)
-        }
-    } else {
-        Box::into_raw(boxed)
-    };
+    let ptr = Box::into_raw(boxed);
     memory_manager::register_tensor_global(ptr);
     ptr
 }
@@ -72,20 +57,7 @@ fn make_var(v: candle_core::Var) -> *mut OpaqueTensor {
     let var_arc = Arc::new(v);
 
     let boxed = Box::new(OpaqueTensor(t_ref, Some(var_arc), None));
-    let ptr = if arena::tl_arena_is_active() {
-        let size = std::mem::size_of::<OpaqueTensor>() as i64;
-        let arena_ptr = arena::tl_arena_alloc(size);
-        if !arena_ptr.is_null() {
-            unsafe {
-                std::ptr::write(arena_ptr, *boxed);
-            }
-            arena_ptr
-        } else {
-            Box::into_raw(boxed)
-        }
-    } else {
-        Box::into_raw(boxed)
-    };
+    let ptr = Box::into_raw(boxed);
 
     memory_manager::register_tensor_global(ptr);
     ptr
@@ -130,7 +102,7 @@ pub extern "C" fn tl_tensor_randn(
     requires_grad: bool,
 ) -> *mut OpaqueTensor {
     // Basic randn implementation
-    let shape_data = unsafe {
+    let shape_data: Vec<usize> = unsafe {
         let t = &(*shape_tensor).0;
         t.flatten_all()
             .unwrap()
@@ -138,7 +110,7 @@ pub extern "C" fn tl_tensor_randn(
             .unwrap()
             .iter()
             .map(|&x| x as usize)
-            .collect::<Vec<usize>>()
+            .collect()
     };
     let shape_slice = &shape_data[..];
     let device = get_device();
@@ -527,6 +499,16 @@ pub extern "C" fn tl_tensor_get(t: *mut OpaqueTensor, idx: i64) -> c_float {
         }
         let tensor = &(*t).0;
         let i = idx as usize;
+
+        // Handle rank 0 (scalar)
+        if tensor.rank() == 0 {
+            if i != 0 {
+                println!("WARNING: tl_tensor_get on scalar with non-zero index {}", i);
+            }
+            if let Ok(scalar) = tensor.to_scalar::<f32>() {
+                return scalar;
+            }
+        }
 
         // Fast path: if 1D tensor on CPU, use narrow+to_scalar
         if tensor.rank() == 1 && !tensor.device().is_cuda() && !tensor.device().is_metal() {
@@ -986,7 +968,6 @@ pub extern "C" fn tl_tensor_embedding(
     let indices = unsafe { &(*indices).0 };
     let weights = unsafe { &(*weights).0 };
 
-    // Cast indices to U32 (required/safer for index_select)
     // Input indices might be F32 if coming from literals.
     let indices_u32 = indices.to_dtype(candle_core::DType::U32).unwrap();
 
@@ -1244,6 +1225,43 @@ pub extern "C" fn tl_register_parameter(t: *mut OpaqueTensor) -> *mut OpaqueTens
         data_guard.insert(name, var_arc.as_ref().clone());
 
         t // Return same pointer
+    }
+}
+/// Allocate a temporary buffer, using the Arena if it's active and the size is "large"
+#[no_mangle]
+pub extern "C" fn tl_alloc_tmp(size: i64) -> *mut c_void {
+    if size <= 0 {
+        return std::ptr::null_mut();
+    }
+
+    // Threshold for using arena for temporary buffers: 256 bytes (e.g. 64 f32 elements)
+    if size >= 256 && arena::tl_arena_is_active() {
+        let ptr = arena::tl_arena_malloc(size);
+        if !ptr.is_null() {
+            return ptr;
+        }
+    }
+
+    // Fallback to heap
+    unsafe { libc::malloc(size as usize) }
+}
+
+/// Free a temporary buffer allocated with tl_alloc_tmp
+#[no_mangle]
+pub extern "C" fn tl_free_tmp(ptr: *mut c_void) {
+    if ptr.is_null() {
+        return;
+    }
+
+    // Check if it belongs to the arena
+    if arena::tl_arena_contains(ptr) {
+        // Arena handles its own deallocation (nothing to do here)
+        return;
+    }
+
+    // Heap allocated, must free
+    unsafe {
+        libc::free(ptr);
     }
 }
 
