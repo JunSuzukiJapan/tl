@@ -260,7 +260,7 @@ fn main() {
     let model = Transformer::new(vocab_size, max_len, d_model);
     
     let lr = 0.0005; // Reduced 
-    let epochs = 50; // Increased for better convergence
+    let epochs = 200; // Full training
     
     print("Training Sequence Reversal (Improved)...");
     
