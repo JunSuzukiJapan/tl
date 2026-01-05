@@ -70,13 +70,13 @@ impl CausalSelfAttention {
         // x shape in train_epoch is [1, 9] input -> Embedding -> [1, 9, 128].
         // So dims are: 0=Batch(1), 1=Time(9), 2=Channel(128).
         
-        let Q_split = reshape(Q, 9, 4, 32); 
+        let Q_split = reshape(Q, 9, 4, 48); 
         let Q_heads = transpose(Q_split, 0, 1); // [4, 9, 32]
         
-        let K_split = reshape(K, 9, 4, 32);
+        let K_split = reshape(K, 9, 4, 48);
         let K_heads = transpose(K_split, 0, 1); // [4, 9, 32]
         
-        let V_split = reshape(V, 9, 4, 32);
+        let V_split = reshape(V, 9, 4, 48);
         let V_heads = transpose(V_split, 0, 1); // [4, 9, 32]
         
         // Attention
@@ -84,8 +84,8 @@ impl CausalSelfAttention {
         // scores: [4, 9, 9]
         let K_heads_T = transpose(K_heads, 1, 2);
         
-        // Scale: 1/sqrt(32) approx 0.176
-        let K_scaled = (K_heads_T * 0.176).contiguous();
+        // Scale: 1/sqrt(48) approx 0.144
+        let K_scaled = (K_heads_T * 0.144).contiguous();
         let Q_cont = Q_heads.contiguous();
         
         let logits = matmul(Q_cont, K_scaled);
@@ -105,7 +105,7 @@ impl CausalSelfAttention {
         
         // Merge heads: [4, 9, 32] -> [9, 4, 32] -> [1, 9, 128]
         let y_trans = transpose(y_heads, 0, 1); // [9, 4, 32]
-        let y_out = reshape(y_trans, 1, 9, 128);
+        let y_out = reshape(y_trans, 1, 9, 192);
         
         return self.o_proj.forward(y_out); 
     } 
@@ -256,16 +256,16 @@ fn train_epoch(model: Transformer, lr: f32, steps: i64, seed_offset: i64) -> f32
 fn main() {
     let vocab_size = 12;
     let max_len = 16;
-    let d_model = 128; // Reverted to 128 for convergence
+    let d_model = 192; // Increased for better accuracy
     let model = Transformer::new(vocab_size, max_len, d_model);
     
-    let lr = 0.0005; // Reduced 
-    let epochs = 200; // Full training
+    let lr = 0.0003; // Reduced for stability with larger model
+    let epochs = 200; // Reduced to avoid memory issues
     
     print("Training Sequence Reversal (Improved)...");
     
     for epoch in range(0, epochs) {
-        let loss = train_epoch(model, lr, 200, epoch * 100);
+        let loss = train_epoch(model, lr, 300, epoch * 100);
         if (epoch - ((epoch/10)*10)) == 0 {
              print("Epoch:"); print(epoch); 
              print("Loss:"); print(loss);

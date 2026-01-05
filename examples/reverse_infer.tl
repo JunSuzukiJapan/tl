@@ -46,20 +46,20 @@ impl CausalSelfAttention {
 
         // Split heads: [1, T, 128] -> [T, 4, 32] -> [4, T, 32]
         
-        let Q_split = reshape(Q, 10, 4, 32);  // NOTE: infer uses len 10
+        let Q_split = reshape(Q, 10, 4, 48);  // NOTE: infer uses len 10
         let Q_heads = transpose(Q_split, 0, 1); // [4, 10, 32]
         
-        let K_split = reshape(K, 10, 4, 32);
+        let K_split = reshape(K, 10, 4, 48);
         let K_heads = transpose(K_split, 0, 1); // [4, 10, 32]
         
-        let V_split = reshape(V, 10, 4, 32);
+        let V_split = reshape(V, 10, 4, 48);
         let V_heads = transpose(V_split, 0, 1); // [4, 10, 32]
         
         // Attention
         let K_heads_T = transpose(K_heads, 1, 2);
         
-        // Scale: 1/sqrt(32) approx 0.176
-        let K_scaled = (K_heads_T * 0.176).contiguous();
+        // Scale: 1/sqrt(48) approx 0.144
+        let K_scaled = (K_heads_T * 0.144).contiguous();
         let Q_cont = Q_heads.contiguous();
         let logits = matmul(Q_cont, K_scaled);
         
@@ -71,7 +71,7 @@ impl CausalSelfAttention {
         
         // Merge heads
         let y_trans = transpose(y_heads, 0, 1); // [10, 4, 32]
-        let y_out = reshape(y_trans, 1, 10, 128);
+        let y_out = reshape(y_trans, 1, 10, 192);
         
         return self.o_proj.forward(y_out); 
     } 
@@ -181,7 +181,7 @@ fn inference(model: SeqModel) {
 
 fn main() {
     let vocab_size = 12;
-    let d_model = 128;
+    let d_model = 192;
     let max_len = 16;
     let model = SeqModel::new(vocab_size, max_len, d_model);
     
