@@ -641,10 +641,10 @@ impl SemanticAnalyzer {
                 let left = self.check_expr(lhs)?;
                 let right = self.check_expr(rhs)?;
                 // println!("DEBUG: BinOp {:?} left={:?} right={:?}", op, left, right);
-                match op {
-                    BinOp::Mul => println!("DEBUG: BinOp Mul left={:?} right={:?}", left, right),
-                    _ => {}
-                }
+                // match op {
+                //     BinOp::Mul => println!("DEBUG: BinOp Mul left={:?} right={:?}", left, right),
+                //     _ => {}
+                // }
                 let result_ty = match op {
                     BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
                         Type::Bool
@@ -1071,7 +1071,7 @@ impl SemanticAnalyzer {
                     let t1 = self.check_expr(&args[1])?;
                     let t2 = self.check_expr(&args[2])?;
 
-                    println!("DEBUG: transpose input type: {:?}", t0);
+                    // println!("DEBUG: transpose input type: {:?}", t0);
 
                     match t0 {
                         Type::Tensor(_, _) => {}
@@ -1105,7 +1105,7 @@ impl SemanticAnalyzer {
                     }
 
                     let t0 = self.check_expr(&args[0])?;
-                    println!("DEBUG: reshape input type: {:?}", t0);
+                    // println!("DEBUG: reshape input type: {:?}", t0);
                     if !matches!(t0, Type::Tensor(_, _)) {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),

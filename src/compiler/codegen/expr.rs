@@ -1983,21 +1983,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .unwrap_or(&Type::Void)
                 .clone();
 
-            if final_name.contains("forward") {
-                println!(
-                    "DEBUG: Method {} lookup. Found: {:?}",
-                    final_name,
-                    self.fn_return_types.get(&final_name)
-                );
-            }
+            // if final_name.contains("forward") {
+            //     println!(
+            //         "DEBUG: Method {} lookup. Found: {:?}",
+            //         final_name,
+            //         self.fn_return_types.get(&final_name)
+            //     );
+            // }
 
             if let Type::Void = ret_ty {
                 if final_name.contains("forward") {
-                    println!(
-                        "DEBUG: Method {} returned VOID. fn_return_types keys: {:?}",
-                        final_name,
-                        self.fn_return_types.keys().collect::<Vec<_>>()
-                    );
+                    // println!(
+                    //     "DEBUG: Method {} returned VOID. fn_return_types keys: {:?}",
+                    //     final_name,
+                    //     self.fn_return_types.keys().collect::<Vec<_>>()
+                    // );
                 }
                 Ok((
                     self.context.i64_type().const_int(0, false).into(),

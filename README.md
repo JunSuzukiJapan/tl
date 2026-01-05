@@ -10,6 +10,21 @@ A probabilistic logic programming language with first-class tensor support, JIT-
 - **GPU Support**: Metal (macOS) and CUDA backends.
 - **Optimization**: Aggressive JIT optimization and fast logic inference.
 
+## Prerequisites (macOS)
+Before building, ensure you have the required dependencies installed via Homebrew.
+
+1. **Install LLVM 18 and OpenSSL**:
+   ```bash
+   brew install llvm@18 openssl
+   ```
+
+2. **Configure Environment Variables**:
+   Add the following to your shell configuration (e.g., `~/.zshrc`) to help the build system find LLVM 18:
+   ```bash
+   export LLVM_SYS_181_PREFIX=$(brew --prefix llvm@18)
+   ```
+   Reload your shell (`source ~/.zshrc`) before running cargo commands.
+
 ## Build & Run
 ```bash
 # Run a specific example
