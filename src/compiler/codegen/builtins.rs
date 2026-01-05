@@ -61,6 +61,10 @@ pub fn declare_runtime_functions<'ctx>(
     let new_type = void_ptr.fn_type(&[f32_ptr.into(), i64_type.into(), usize_ptr.into()], false);
     add_fn("tl_tensor_new", new_type);
 
+    // tl_tensor_from_i64_array(data: *const i64, len: usize) -> *mut OpaqueTensor
+    let from_i64_type = void_ptr.fn_type(&[i64_ptr.into(), i64_type.into()], false);
+    add_fn("tl_tensor_from_i64_array", from_i64_type);
+
     let binop_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_tensor_sub", binop_type);
 
@@ -382,6 +386,9 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_new") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_new as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_from_i64_array") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_from_i64_array as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_matmul") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_matmul as usize);

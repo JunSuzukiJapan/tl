@@ -147,86 +147,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
             }
             Type::Struct(name) | Type::UserDefined(name) => {
-                if let Some(struct_def) = self.struct_defs.get(name) {
-                    let ptr = val.into_pointer_value();
-                    
-                    // Check for null before freeing
-                    let is_not_null = self.builder.build_is_not_null(ptr, "is_not_null")
-                        .map_err(|e| e.to_string())?;
-                    
-                    let free_block = self.context.append_basic_block(
-                        self.builder.get_insert_block().unwrap().get_parent().unwrap(),
-                        "recursive_free_struct",
-                    );
-                    let continue_block = self.context.append_basic_block(
-                        self.builder.get_insert_block().unwrap().get_parent().unwrap(),
-                        "continue_after_recursive_free",
-                    );
-
-                    self.builder
-                        .build_conditional_branch(is_not_null, free_block, continue_block)
-                        .map_err(|e| e.to_string())?;
-
-                    self.builder.position_at_end(free_block);
-
-                    let st_llvm_ty = *self.struct_types.get(name).unwrap();
-
-                    // Recursively free all fields
-                    for (i, (_, field_type)) in struct_def.fields.iter().enumerate() {
-                        if matches!(
-                            field_type,
-                            Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
-                        ) {
-                            // GEP
-                            let field_ptr = self
-                                .builder
-                                .build_struct_gep(
-                                    st_llvm_ty,
-                                    ptr,
-                                    i as u32,
-                                    &format!("free_field_{}", i),
-                                )
-                                .map_err(|e| e.to_string())?;
-
-                            // Load
-                            let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                            let field_val = self
-                                .builder
-                                .build_load(load_type, field_ptr, "field_val_to_free")
-                                .map_err(|e| e.to_string())?;
-
-                            // Recurse
-                            self.emit_recursive_free(field_val, field_type)?;
-                        }
-                    }
-                    
-                    // Finally free the struct pointer itself
-                    // Use libc::free
-                    let free_fn = self.module.get_function("free").ok_or("libc free not found. make sure to declare it or use helper")
-                         .or_else(|_| {
-                             // Fallback: Check if we have a wrapper or just declare it?
-                             // runtime declares it usually. but CodeGenerator might not know it if not in builtins.
-                             // builtins::declare_runtime_functions should have it? No, it usually has tl_...
-                             // Let's assume 'free' is available or use a helper from runtime if exists.
-                             // Actually memory_manager uses libc::free internally.
-                             // Let's add specific declaration if missing or use a runtime wrapper.
-                             // For now, let's assume "free" is available in symbol table because we link libc?
-                             // Safest is to use `emit_free_call` helper if we had one.
-                             // Let's check if "free" exists in module.
-                             if self.module.get_function("free").is_none() {
-                                 let void_type = self.context.void_type();
-                                 let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                                 let fn_type = void_type.fn_type(&[ptr_type.into()], false);
-                                 self.module.add_function("free", fn_type, None);
-                             }
-                             Ok::<inkwell::values::FunctionValue<'_>, String>(self.module.get_function("free").unwrap())
-                         })?;
-                    
-                    self.builder.build_call(free_fn, &[ptr.into()], "").unwrap();
-
-                    self.builder.build_unconditional_branch(continue_block).unwrap();
-                    self.builder.position_at_end(continue_block);
-                }
+                // DISABLED: Struct freeing causes SIGSEGV/SIGBUS.
+                // Structs in TL are typically stack-allocated. Their tensor fields
+                // are freed individually when the scope exits, not recursively from here.
+                // TODO: Implement proper ownership tracking if heap-allocated structs are needed.
+                let _ = name; // suppress unused warning
             }
             _ => {}
         }

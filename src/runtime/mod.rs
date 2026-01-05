@@ -127,6 +127,22 @@ pub extern "C" fn tl_tensor_randn(
     }
 }
 
+/// Create a 1D Tensor from an i64 array (for reshape shape arguments)
+#[no_mangle]
+pub extern "C" fn tl_tensor_from_i64_array(
+    data: *const i64,
+    len: usize,
+) -> *mut OpaqueTensor {
+    let data_slice = unsafe { slice::from_raw_parts(data, len) };
+    let device = get_device();
+    
+    // Convert i64 to f32 for Tensor (Candle tensors are typically f32)
+    let data_f32: Vec<f32> = data_slice.iter().map(|&x| x as f32).collect();
+    
+    let tensor = Tensor::from_slice(&data_f32, &[len], &device).unwrap();
+    make_tensor(tensor)
+}
+
 // VarBuilder-based parameter management (following Candle's official pattern)
 // This allows proper gradient tracking for parameters stored in struct fields
 

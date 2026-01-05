@@ -2060,59 +2060,17 @@ impl<'ctx> CodeGenerator<'ctx> {
             if self.is_safe_to_free(obj, &obj_ty) {
                 match obj_ty {
                     Type::Struct(_) | Type::UserDefined(_) => {
-                         // Runtime Check: Free ONLY IF return_ptr != obj_ptr
-                         // If they are equal, it means self was returned (aliasing), so we transfer ownership to return value (don't free obj).
-                         // If they are diff, it means a new object was returned, so obj is garbage (free it).
-                         
-                         let obj_ptr = obj_val.into_pointer_value();
-                         
-                         // Try to interpret return value as pointer
-                         let ret_is_ptr = func_val.get_type().get_return_type().map(|t| t.is_pointer_type()).unwrap_or(false);
-                         
-                         if ret_is_ptr {
-                             let ret_ptr = match call.try_as_basic_value() {
-                                 inkwell::values::ValueKind::Basic(v) => Some(v.into_pointer_value()),
-                                 _ => None,
-                             };
-                             
-                             if let Some(ret_p) = ret_ptr {
-                                 let are_diff = self.builder.build_int_compare(
-                                     inkwell::IntPredicate::NE,
-                                     obj_ptr,
-                                     ret_p,
-                                     "diff_check"
-                                 ).map_err(|e| e.to_string())?;
-
-                                 let free_block = self.context.append_basic_block(
-                                     self.builder.get_insert_block().unwrap().get_parent().unwrap(),
-                                     "free_obj"
-                                 );
-                                 let skip_block = self.context.append_basic_block(
-                                     self.builder.get_insert_block().unwrap().get_parent().unwrap(),
-                                     "skip_free"
-                                 );
-
-                                 self.builder.build_conditional_branch(are_diff, free_block, skip_block).unwrap();
-
-                                 self.builder.position_at_end(free_block);
-                                 self.emit_recursive_free(obj_val, &obj_ty)?;
-                                 self.builder.build_unconditional_branch(skip_block).unwrap();
-
-                                 self.builder.position_at_end(skip_block);
-                             } else {
-                                 // Should not happen if Struct returns Struct
-                                 self.emit_recursive_free(obj_val, &obj_ty)?; 
-                             }
-                         } else {
-                             // Return void or scalar? Free obj.
-                             self.emit_recursive_free(obj_val, &obj_ty)?;
-                         }
+                         // DISABLED: Struct/UserDefined freeing is too complex and causes SIGSEGV/SIGBUS.
+                         // These are typically stack-allocated and should not be freed here.
+                         // Memory is managed by scope exit or user-controlled.
+                         // TODO: Implement proper ownership tracking for heap-allocated structs if needed.
+                    }
+                    Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
+                        // Tensors: Unconditional free (methods usually return new tensor, not self alias)
+                        self.emit_recursive_free(obj_val, &obj_ty)?;
                     }
                     _ => {
-                        // Tensors etc: Unconditional free (assuming methods don't return self alias for tensors usually, or handled by tensor copy)
-                        // Actually Tensor methods usually return new tensor. In-place methods return void.
-                        // So safe to free receiver.
-                        self.emit_recursive_free(obj_val, &obj_ty)?;
+                        // Other types: do nothing
                     }
                 }
             }
