@@ -10,177 +10,72 @@ target datalayout = "e-m:o-i64:64-i128:128-n32:64-S128"
 %Block = type { ptr, ptr, ptr, ptr }
 %GPT = type { ptr, ptr, ptr, ptr, ptr, ptr, ptr }
 
-@str_literal = private unnamed_addr constant [6 x i8] c"Loss:\00", align 1
-@str_literal.104 = private unnamed_addr constant [12 x i8] c"Memory(MB):\00", align 1
-@str_literal.105 = private unnamed_addr constant [55 x i8] c"Resuming training from model_2digit_rev.safetensors...\00", align 1
+@str_literal = private unnamed_addr constant [15 x i8] c"Argmax result:\00", align 1
+@str_literal.104 = private unnamed_addr constant [5 x i8] c"Val:\00", align 1
+@str_literal.105 = private unnamed_addr constant [36 x i8] c"Initializing Model for Inference...\00", align 1
+@str_literal.106 = private unnamed_addr constant [46 x i8] c"Initializing Runtime: Metal backend selected.\00", align 1
+@str_literal.107 = private unnamed_addr constant [22 x i8] c"Loading Parameters...\00", align 1
 @key_str = private unnamed_addr constant [4 x i8] c"w.w\00", align 1
-@key_str.106 = private unnamed_addr constant [5 x i8] c"wp.w\00", align 1
-@key_str.107 = private unnamed_addr constant [8 x i8] c"b1.l1.w\00", align 1
-@key_str.108 = private unnamed_addr constant [8 x i8] c"b1.l1.b\00", align 1
-@key_str.109 = private unnamed_addr constant [14 x i8] c"b1.a.q_proj.W\00", align 1
-@key_str.110 = private unnamed_addr constant [14 x i8] c"b1.a.q_proj.b\00", align 1
-@key_str.111 = private unnamed_addr constant [14 x i8] c"b1.a.k_proj.W\00", align 1
-@key_str.112 = private unnamed_addr constant [14 x i8] c"b1.a.k_proj.b\00", align 1
-@key_str.113 = private unnamed_addr constant [14 x i8] c"b1.a.v_proj.W\00", align 1
-@key_str.114 = private unnamed_addr constant [14 x i8] c"b1.a.v_proj.b\00", align 1
-@key_str.115 = private unnamed_addr constant [14 x i8] c"b1.a.p_proj.W\00", align 1
-@key_str.116 = private unnamed_addr constant [14 x i8] c"b1.a.p_proj.b\00", align 1
-@key_str.117 = private unnamed_addr constant [8 x i8] c"b1.l2.w\00", align 1
-@key_str.118 = private unnamed_addr constant [8 x i8] c"b1.l2.b\00", align 1
-@key_str.119 = private unnamed_addr constant [9 x i8] c"b1.m.f.W\00", align 1
-@key_str.120 = private unnamed_addr constant [9 x i8] c"b1.m.f.b\00", align 1
-@key_str.121 = private unnamed_addr constant [9 x i8] c"b1.m.p.W\00", align 1
-@key_str.122 = private unnamed_addr constant [9 x i8] c"b1.m.p.b\00", align 1
-@key_str.123 = private unnamed_addr constant [8 x i8] c"b2.l1.w\00", align 1
-@key_str.124 = private unnamed_addr constant [8 x i8] c"b2.l1.b\00", align 1
-@key_str.125 = private unnamed_addr constant [14 x i8] c"b2.a.q_proj.W\00", align 1
-@key_str.126 = private unnamed_addr constant [14 x i8] c"b2.a.q_proj.b\00", align 1
-@key_str.127 = private unnamed_addr constant [14 x i8] c"b2.a.k_proj.W\00", align 1
-@key_str.128 = private unnamed_addr constant [14 x i8] c"b2.a.k_proj.b\00", align 1
-@key_str.129 = private unnamed_addr constant [14 x i8] c"b2.a.v_proj.W\00", align 1
-@key_str.130 = private unnamed_addr constant [14 x i8] c"b2.a.v_proj.b\00", align 1
-@key_str.131 = private unnamed_addr constant [14 x i8] c"b2.a.p_proj.W\00", align 1
-@key_str.132 = private unnamed_addr constant [14 x i8] c"b2.a.p_proj.b\00", align 1
-@key_str.133 = private unnamed_addr constant [8 x i8] c"b2.l2.w\00", align 1
-@key_str.134 = private unnamed_addr constant [8 x i8] c"b2.l2.b\00", align 1
-@key_str.135 = private unnamed_addr constant [9 x i8] c"b2.m.f.W\00", align 1
-@key_str.136 = private unnamed_addr constant [9 x i8] c"b2.m.f.b\00", align 1
-@key_str.137 = private unnamed_addr constant [9 x i8] c"b2.m.p.W\00", align 1
-@key_str.138 = private unnamed_addr constant [9 x i8] c"b2.m.p.b\00", align 1
-@key_str.139 = private unnamed_addr constant [8 x i8] c"b3.l1.w\00", align 1
-@key_str.140 = private unnamed_addr constant [8 x i8] c"b3.l1.b\00", align 1
-@key_str.141 = private unnamed_addr constant [14 x i8] c"b3.a.q_proj.W\00", align 1
-@key_str.142 = private unnamed_addr constant [14 x i8] c"b3.a.q_proj.b\00", align 1
-@key_str.143 = private unnamed_addr constant [14 x i8] c"b3.a.k_proj.W\00", align 1
-@key_str.144 = private unnamed_addr constant [14 x i8] c"b3.a.k_proj.b\00", align 1
-@key_str.145 = private unnamed_addr constant [14 x i8] c"b3.a.v_proj.W\00", align 1
-@key_str.146 = private unnamed_addr constant [14 x i8] c"b3.a.v_proj.b\00", align 1
-@key_str.147 = private unnamed_addr constant [14 x i8] c"b3.a.p_proj.W\00", align 1
-@key_str.148 = private unnamed_addr constant [14 x i8] c"b3.a.p_proj.b\00", align 1
-@key_str.149 = private unnamed_addr constant [8 x i8] c"b3.l2.w\00", align 1
-@key_str.150 = private unnamed_addr constant [8 x i8] c"b3.l2.b\00", align 1
-@key_str.151 = private unnamed_addr constant [9 x i8] c"b3.m.f.W\00", align 1
-@key_str.152 = private unnamed_addr constant [9 x i8] c"b3.m.f.b\00", align 1
-@key_str.153 = private unnamed_addr constant [9 x i8] c"b3.m.p.W\00", align 1
-@key_str.154 = private unnamed_addr constant [9 x i8] c"b3.m.p.b\00", align 1
-@key_str.155 = private unnamed_addr constant [4 x i8] c"l.w\00", align 1
-@key_str.156 = private unnamed_addr constant [4 x i8] c"l.b\00", align 1
-@key_str.157 = private unnamed_addr constant [4 x i8] c"h.W\00", align 1
-@key_str.158 = private unnamed_addr constant [4 x i8] c"h.b\00", align 1
-@str_literal.159 = private unnamed_addr constant [29 x i8] c"model_2digit_rev.safetensors\00", align 1
-@str_literal.160 = private unnamed_addr constant [61 x i8] c"Training 2-digit addition (Reverse Digits, 3-Layer) - RESUME\00", align 1
-@str_literal.161 = private unnamed_addr constant [7 x i8] c"Epoch:\00", align 1
-@key_str.162 = private unnamed_addr constant [4 x i8] c"w.w\00", align 1
-@key_str.163 = private unnamed_addr constant [5 x i8] c"wp.w\00", align 1
-@key_str.164 = private unnamed_addr constant [8 x i8] c"b1.l1.w\00", align 1
-@key_str.165 = private unnamed_addr constant [8 x i8] c"b1.l1.b\00", align 1
-@key_str.166 = private unnamed_addr constant [14 x i8] c"b1.a.q_proj.W\00", align 1
-@key_str.167 = private unnamed_addr constant [14 x i8] c"b1.a.q_proj.b\00", align 1
-@key_str.168 = private unnamed_addr constant [14 x i8] c"b1.a.k_proj.W\00", align 1
-@key_str.169 = private unnamed_addr constant [14 x i8] c"b1.a.k_proj.b\00", align 1
-@key_str.170 = private unnamed_addr constant [14 x i8] c"b1.a.v_proj.W\00", align 1
-@key_str.171 = private unnamed_addr constant [14 x i8] c"b1.a.v_proj.b\00", align 1
-@key_str.172 = private unnamed_addr constant [14 x i8] c"b1.a.p_proj.W\00", align 1
-@key_str.173 = private unnamed_addr constant [14 x i8] c"b1.a.p_proj.b\00", align 1
-@key_str.174 = private unnamed_addr constant [8 x i8] c"b1.l2.w\00", align 1
-@key_str.175 = private unnamed_addr constant [8 x i8] c"b1.l2.b\00", align 1
-@key_str.176 = private unnamed_addr constant [9 x i8] c"b1.m.f.W\00", align 1
-@key_str.177 = private unnamed_addr constant [9 x i8] c"b1.m.f.b\00", align 1
-@key_str.178 = private unnamed_addr constant [9 x i8] c"b1.m.p.W\00", align 1
-@key_str.179 = private unnamed_addr constant [9 x i8] c"b1.m.p.b\00", align 1
-@key_str.180 = private unnamed_addr constant [8 x i8] c"b2.l1.w\00", align 1
-@key_str.181 = private unnamed_addr constant [8 x i8] c"b2.l1.b\00", align 1
-@key_str.182 = private unnamed_addr constant [14 x i8] c"b2.a.q_proj.W\00", align 1
-@key_str.183 = private unnamed_addr constant [14 x i8] c"b2.a.q_proj.b\00", align 1
-@key_str.184 = private unnamed_addr constant [14 x i8] c"b2.a.k_proj.W\00", align 1
-@key_str.185 = private unnamed_addr constant [14 x i8] c"b2.a.k_proj.b\00", align 1
-@key_str.186 = private unnamed_addr constant [14 x i8] c"b2.a.v_proj.W\00", align 1
-@key_str.187 = private unnamed_addr constant [14 x i8] c"b2.a.v_proj.b\00", align 1
-@key_str.188 = private unnamed_addr constant [14 x i8] c"b2.a.p_proj.W\00", align 1
-@key_str.189 = private unnamed_addr constant [14 x i8] c"b2.a.p_proj.b\00", align 1
-@key_str.190 = private unnamed_addr constant [8 x i8] c"b2.l2.w\00", align 1
-@key_str.191 = private unnamed_addr constant [8 x i8] c"b2.l2.b\00", align 1
-@key_str.192 = private unnamed_addr constant [9 x i8] c"b2.m.f.W\00", align 1
-@key_str.193 = private unnamed_addr constant [9 x i8] c"b2.m.f.b\00", align 1
-@key_str.194 = private unnamed_addr constant [9 x i8] c"b2.m.p.W\00", align 1
-@key_str.195 = private unnamed_addr constant [9 x i8] c"b2.m.p.b\00", align 1
-@key_str.196 = private unnamed_addr constant [8 x i8] c"b3.l1.w\00", align 1
-@key_str.197 = private unnamed_addr constant [8 x i8] c"b3.l1.b\00", align 1
-@key_str.198 = private unnamed_addr constant [14 x i8] c"b3.a.q_proj.W\00", align 1
-@key_str.199 = private unnamed_addr constant [14 x i8] c"b3.a.q_proj.b\00", align 1
-@key_str.200 = private unnamed_addr constant [14 x i8] c"b3.a.k_proj.W\00", align 1
-@key_str.201 = private unnamed_addr constant [14 x i8] c"b3.a.k_proj.b\00", align 1
-@key_str.202 = private unnamed_addr constant [14 x i8] c"b3.a.v_proj.W\00", align 1
-@key_str.203 = private unnamed_addr constant [14 x i8] c"b3.a.v_proj.b\00", align 1
-@key_str.204 = private unnamed_addr constant [14 x i8] c"b3.a.p_proj.W\00", align 1
-@key_str.205 = private unnamed_addr constant [14 x i8] c"b3.a.p_proj.b\00", align 1
-@key_str.206 = private unnamed_addr constant [8 x i8] c"b3.l2.w\00", align 1
-@key_str.207 = private unnamed_addr constant [8 x i8] c"b3.l2.b\00", align 1
-@key_str.208 = private unnamed_addr constant [9 x i8] c"b3.m.f.W\00", align 1
-@key_str.209 = private unnamed_addr constant [9 x i8] c"b3.m.f.b\00", align 1
-@key_str.210 = private unnamed_addr constant [9 x i8] c"b3.m.p.W\00", align 1
-@key_str.211 = private unnamed_addr constant [9 x i8] c"b3.m.p.b\00", align 1
-@key_str.212 = private unnamed_addr constant [4 x i8] c"l.w\00", align 1
-@key_str.213 = private unnamed_addr constant [4 x i8] c"l.b\00", align 1
-@key_str.214 = private unnamed_addr constant [4 x i8] c"h.W\00", align 1
-@key_str.215 = private unnamed_addr constant [4 x i8] c"h.b\00", align 1
-@str_literal.216 = private unnamed_addr constant [29 x i8] c"model_2digit_rev.safetensors\00", align 1
-@str_literal.217 = private unnamed_addr constant [19 x i8] c"Training Complete!\00", align 1
-@key_str.218 = private unnamed_addr constant [4 x i8] c"w.w\00", align 1
-@key_str.219 = private unnamed_addr constant [5 x i8] c"wp.w\00", align 1
-@key_str.220 = private unnamed_addr constant [8 x i8] c"b1.l1.w\00", align 1
-@key_str.221 = private unnamed_addr constant [8 x i8] c"b1.l1.b\00", align 1
-@key_str.222 = private unnamed_addr constant [14 x i8] c"b1.a.q_proj.W\00", align 1
-@key_str.223 = private unnamed_addr constant [14 x i8] c"b1.a.q_proj.b\00", align 1
-@key_str.224 = private unnamed_addr constant [14 x i8] c"b1.a.k_proj.W\00", align 1
-@key_str.225 = private unnamed_addr constant [14 x i8] c"b1.a.k_proj.b\00", align 1
-@key_str.226 = private unnamed_addr constant [14 x i8] c"b1.a.v_proj.W\00", align 1
-@key_str.227 = private unnamed_addr constant [14 x i8] c"b1.a.v_proj.b\00", align 1
-@key_str.228 = private unnamed_addr constant [14 x i8] c"b1.a.p_proj.W\00", align 1
-@key_str.229 = private unnamed_addr constant [14 x i8] c"b1.a.p_proj.b\00", align 1
-@key_str.230 = private unnamed_addr constant [8 x i8] c"b1.l2.w\00", align 1
-@key_str.231 = private unnamed_addr constant [8 x i8] c"b1.l2.b\00", align 1
-@key_str.232 = private unnamed_addr constant [9 x i8] c"b1.m.f.W\00", align 1
-@key_str.233 = private unnamed_addr constant [9 x i8] c"b1.m.f.b\00", align 1
-@key_str.234 = private unnamed_addr constant [9 x i8] c"b1.m.p.W\00", align 1
-@key_str.235 = private unnamed_addr constant [9 x i8] c"b1.m.p.b\00", align 1
-@key_str.236 = private unnamed_addr constant [8 x i8] c"b2.l1.w\00", align 1
-@key_str.237 = private unnamed_addr constant [8 x i8] c"b2.l1.b\00", align 1
-@key_str.238 = private unnamed_addr constant [14 x i8] c"b2.a.q_proj.W\00", align 1
-@key_str.239 = private unnamed_addr constant [14 x i8] c"b2.a.q_proj.b\00", align 1
-@key_str.240 = private unnamed_addr constant [14 x i8] c"b2.a.k_proj.W\00", align 1
-@key_str.241 = private unnamed_addr constant [14 x i8] c"b2.a.k_proj.b\00", align 1
-@key_str.242 = private unnamed_addr constant [14 x i8] c"b2.a.v_proj.W\00", align 1
-@key_str.243 = private unnamed_addr constant [14 x i8] c"b2.a.v_proj.b\00", align 1
-@key_str.244 = private unnamed_addr constant [14 x i8] c"b2.a.p_proj.W\00", align 1
-@key_str.245 = private unnamed_addr constant [14 x i8] c"b2.a.p_proj.b\00", align 1
-@key_str.246 = private unnamed_addr constant [8 x i8] c"b2.l2.w\00", align 1
-@key_str.247 = private unnamed_addr constant [8 x i8] c"b2.l2.b\00", align 1
-@key_str.248 = private unnamed_addr constant [9 x i8] c"b2.m.f.W\00", align 1
-@key_str.249 = private unnamed_addr constant [9 x i8] c"b2.m.f.b\00", align 1
-@key_str.250 = private unnamed_addr constant [9 x i8] c"b2.m.p.W\00", align 1
-@key_str.251 = private unnamed_addr constant [9 x i8] c"b2.m.p.b\00", align 1
-@key_str.252 = private unnamed_addr constant [8 x i8] c"b3.l1.w\00", align 1
-@key_str.253 = private unnamed_addr constant [8 x i8] c"b3.l1.b\00", align 1
-@key_str.254 = private unnamed_addr constant [14 x i8] c"b3.a.q_proj.W\00", align 1
-@key_str.255 = private unnamed_addr constant [14 x i8] c"b3.a.q_proj.b\00", align 1
-@key_str.256 = private unnamed_addr constant [14 x i8] c"b3.a.k_proj.W\00", align 1
-@key_str.257 = private unnamed_addr constant [14 x i8] c"b3.a.k_proj.b\00", align 1
-@key_str.258 = private unnamed_addr constant [14 x i8] c"b3.a.v_proj.W\00", align 1
-@key_str.259 = private unnamed_addr constant [14 x i8] c"b3.a.v_proj.b\00", align 1
-@key_str.260 = private unnamed_addr constant [14 x i8] c"b3.a.p_proj.W\00", align 1
-@key_str.261 = private unnamed_addr constant [14 x i8] c"b3.a.p_proj.b\00", align 1
-@key_str.262 = private unnamed_addr constant [8 x i8] c"b3.l2.w\00", align 1
-@key_str.263 = private unnamed_addr constant [8 x i8] c"b3.l2.b\00", align 1
-@key_str.264 = private unnamed_addr constant [9 x i8] c"b3.m.f.W\00", align 1
-@key_str.265 = private unnamed_addr constant [9 x i8] c"b3.m.f.b\00", align 1
-@key_str.266 = private unnamed_addr constant [9 x i8] c"b3.m.p.W\00", align 1
-@key_str.267 = private unnamed_addr constant [9 x i8] c"b3.m.p.b\00", align 1
-@key_str.268 = private unnamed_addr constant [4 x i8] c"l.w\00", align 1
-@key_str.269 = private unnamed_addr constant [4 x i8] c"l.b\00", align 1
-@key_str.270 = private unnamed_addr constant [4 x i8] c"h.W\00", align 1
-@key_str.271 = private unnamed_addr constant [4 x i8] c"h.b\00", align 1
-@str_literal.272 = private unnamed_addr constant [29 x i8] c"model_2digit_rev.safetensors\00", align 1
+@key_str.108 = private unnamed_addr constant [5 x i8] c"wp.w\00", align 1
+@key_str.109 = private unnamed_addr constant [8 x i8] c"b1.l1.w\00", align 1
+@key_str.110 = private unnamed_addr constant [8 x i8] c"b1.l1.b\00", align 1
+@key_str.111 = private unnamed_addr constant [14 x i8] c"b1.a.q_proj.W\00", align 1
+@key_str.112 = private unnamed_addr constant [14 x i8] c"b1.a.q_proj.b\00", align 1
+@key_str.113 = private unnamed_addr constant [14 x i8] c"b1.a.k_proj.W\00", align 1
+@key_str.114 = private unnamed_addr constant [14 x i8] c"b1.a.k_proj.b\00", align 1
+@key_str.115 = private unnamed_addr constant [14 x i8] c"b1.a.v_proj.W\00", align 1
+@key_str.116 = private unnamed_addr constant [14 x i8] c"b1.a.v_proj.b\00", align 1
+@key_str.117 = private unnamed_addr constant [14 x i8] c"b1.a.p_proj.W\00", align 1
+@key_str.118 = private unnamed_addr constant [14 x i8] c"b1.a.p_proj.b\00", align 1
+@key_str.119 = private unnamed_addr constant [8 x i8] c"b1.l2.w\00", align 1
+@key_str.120 = private unnamed_addr constant [8 x i8] c"b1.l2.b\00", align 1
+@key_str.121 = private unnamed_addr constant [9 x i8] c"b1.m.f.W\00", align 1
+@key_str.122 = private unnamed_addr constant [9 x i8] c"b1.m.f.b\00", align 1
+@key_str.123 = private unnamed_addr constant [9 x i8] c"b1.m.p.W\00", align 1
+@key_str.124 = private unnamed_addr constant [9 x i8] c"b1.m.p.b\00", align 1
+@key_str.125 = private unnamed_addr constant [8 x i8] c"b2.l1.w\00", align 1
+@key_str.126 = private unnamed_addr constant [8 x i8] c"b2.l1.b\00", align 1
+@key_str.127 = private unnamed_addr constant [14 x i8] c"b2.a.q_proj.W\00", align 1
+@key_str.128 = private unnamed_addr constant [14 x i8] c"b2.a.q_proj.b\00", align 1
+@key_str.129 = private unnamed_addr constant [14 x i8] c"b2.a.k_proj.W\00", align 1
+@key_str.130 = private unnamed_addr constant [14 x i8] c"b2.a.k_proj.b\00", align 1
+@key_str.131 = private unnamed_addr constant [14 x i8] c"b2.a.v_proj.W\00", align 1
+@key_str.132 = private unnamed_addr constant [14 x i8] c"b2.a.v_proj.b\00", align 1
+@key_str.133 = private unnamed_addr constant [14 x i8] c"b2.a.p_proj.W\00", align 1
+@key_str.134 = private unnamed_addr constant [14 x i8] c"b2.a.p_proj.b\00", align 1
+@key_str.135 = private unnamed_addr constant [8 x i8] c"b2.l2.w\00", align 1
+@key_str.136 = private unnamed_addr constant [8 x i8] c"b2.l2.b\00", align 1
+@key_str.137 = private unnamed_addr constant [9 x i8] c"b2.m.f.W\00", align 1
+@key_str.138 = private unnamed_addr constant [9 x i8] c"b2.m.f.b\00", align 1
+@key_str.139 = private unnamed_addr constant [9 x i8] c"b2.m.p.W\00", align 1
+@key_str.140 = private unnamed_addr constant [9 x i8] c"b2.m.p.b\00", align 1
+@key_str.141 = private unnamed_addr constant [8 x i8] c"b3.l1.w\00", align 1
+@key_str.142 = private unnamed_addr constant [8 x i8] c"b3.l1.b\00", align 1
+@key_str.143 = private unnamed_addr constant [14 x i8] c"b3.a.q_proj.W\00", align 1
+@key_str.144 = private unnamed_addr constant [14 x i8] c"b3.a.q_proj.b\00", align 1
+@key_str.145 = private unnamed_addr constant [14 x i8] c"b3.a.k_proj.W\00", align 1
+@key_str.146 = private unnamed_addr constant [14 x i8] c"b3.a.k_proj.b\00", align 1
+@key_str.147 = private unnamed_addr constant [14 x i8] c"b3.a.v_proj.W\00", align 1
+@key_str.148 = private unnamed_addr constant [14 x i8] c"b3.a.v_proj.b\00", align 1
+@key_str.149 = private unnamed_addr constant [14 x i8] c"b3.a.p_proj.W\00", align 1
+@key_str.150 = private unnamed_addr constant [14 x i8] c"b3.a.p_proj.b\00", align 1
+@key_str.151 = private unnamed_addr constant [8 x i8] c"b3.l2.w\00", align 1
+@key_str.152 = private unnamed_addr constant [8 x i8] c"b3.l2.b\00", align 1
+@key_str.153 = private unnamed_addr constant [9 x i8] c"b3.m.f.W\00", align 1
+@key_str.154 = private unnamed_addr constant [9 x i8] c"b3.m.f.b\00", align 1
+@key_str.155 = private unnamed_addr constant [9 x i8] c"b3.m.p.W\00", align 1
+@key_str.156 = private unnamed_addr constant [9 x i8] c"b3.m.p.b\00", align 1
+@key_str.157 = private unnamed_addr constant [4 x i8] c"l.w\00", align 1
+@key_str.158 = private unnamed_addr constant [4 x i8] c"l.b\00", align 1
+@key_str.159 = private unnamed_addr constant [4 x i8] c"h.W\00", align 1
+@key_str.160 = private unnamed_addr constant [4 x i8] c"h.b\00", align 1
+@str_literal.161 = private unnamed_addr constant [29 x i8] c"model_2digit_rev.safetensors\00", align 1
+@str_literal.162 = private unnamed_addr constant [19 x i8] c"Parameters Loaded.\00", align 1
+@str_literal.163 = private unnamed_addr constant [14 x i8] c"Test: 12 + 34\00", align 1
+@str_literal.164 = private unnamed_addr constant [21 x i8] c"Predicted (Reverse):\00", align 1
+@str_literal.165 = private unnamed_addr constant [13 x i8] c"Test: 99 + 1\00", align 1
+@str_literal.166 = private unnamed_addr constant [21 x i8] c"Predicted (Reverse):\00", align 1
+@str_literal.167 = private unnamed_addr constant [33 x i8] c"Inference Verification Complete.\00", align 1
 
 declare void @tl_print_i64(i64)
 
@@ -621,6 +516,7 @@ entry:
   store float 0x3FB99999A0000000, ptr %scalar_data_rhs, align 4
   %scalar_tensor_rhs = call ptr @tl_tensor_new(ptr %scalar_data_rhs, i64 0, ptr %scalar_shape_rhs)
   %binop_res = call ptr @tl_tensor_mul(ptr %static_call, ptr %scalar_tensor_rhs)
+  call void @tl_tensor_free(ptr %static_call)
   %detach_res = call ptr @tl_tensor_detach(ptr %binop_res, i1 true)
   %init_field = getelementptr inbounds %Linear, ptr %struct_malloc, i32 0, i32 0
   store ptr %detach_res, ptr %init_field, align 8
@@ -639,6 +535,7 @@ entry:
   store float 0.000000e+00, ptr %scalar_data_rhs15, align 4
   %scalar_tensor_rhs17 = call ptr @tl_tensor_new(ptr %scalar_data_rhs15, i64 0, ptr %scalar_shape_rhs16)
   %binop_res18 = call ptr @tl_tensor_mul(ptr %static_call14, ptr %scalar_tensor_rhs17)
+  call void @tl_tensor_free(ptr %static_call14)
   %detach_res19 = call ptr @tl_tensor_detach(ptr %binop_res18, i1 true)
   %init_field20 = getelementptr inbounds %Linear, ptr %struct_malloc, i32 0, i32 1
   store ptr %detach_res19, ptr %init_field20, align 8
@@ -669,6 +566,7 @@ entry:
   %ptr_b = getelementptr inbounds %Linear, ptr %self5, i32 0, i32 1
   %b = load ptr, ptr %ptr_b, align 8
   %binop_res = call ptr @tl_tensor_add(ptr %matmul_res, ptr %b)
+  call void @tl_tensor_free(ptr %matmul_res)
   call void @tl_mem_unregister(ptr %binop_res)
   call void @tl_mem_exit_scope()
   ret ptr %binop_res
@@ -689,7 +587,6 @@ entry:
   store ptr %self, ptr %self1, align 8
   store float %lr, ptr %lr2, align 4
   %self3 = load ptr, ptr %self1, align 8
-  call void @tl_mem_unregister(ptr %self3)
   store ptr %self3, ptr %s, align 8
   %s4 = load ptr, ptr %s, align 8
   %ptr_W = getelementptr inbounds %Linear, ptr %s4, i32 0, i32 0
@@ -714,6 +611,7 @@ entry:
   %scalar_tensor_rhs = call ptr @tl_tensor_new(ptr %scalar_data_rhs, i64 0, ptr %scalar_shape_rhs)
   %binop_res = call ptr @tl_tensor_mul(ptr %gW12, ptr %scalar_tensor_rhs)
   %binop_res14 = call ptr @tl_tensor_sub(ptr %W11, ptr %binop_res)
+  call void @tl_tensor_free(ptr %binop_res)
   %detach_res = call ptr @tl_tensor_detach(ptr %binop_res14, i1 true)
   %old_field_val = load ptr, ptr %ptr_W8, align 8
   %cnt_free_diff = icmp ne ptr %old_field_val, %detach_res
@@ -737,6 +635,7 @@ skip_free:                                        ; preds = %free_old_val, %entr
   %scalar_tensor_rhs24 = call ptr @tl_tensor_new(ptr %scalar_data_rhs22, i64 0, ptr %scalar_shape_rhs23)
   %binop_res25 = call ptr @tl_tensor_mul(ptr %gb20, ptr %scalar_tensor_rhs24)
   %binop_res26 = call ptr @tl_tensor_sub(ptr %b19, ptr %binop_res25)
+  call void @tl_tensor_free(ptr %binop_res25)
   %detach_res27 = call ptr @tl_tensor_detach(ptr %binop_res26, i1 true)
   %old_field_val28 = load ptr, ptr %ptr_b16, align 8
   %cnt_free_diff29 = icmp ne ptr %old_field_val28, %detach_res27
@@ -790,6 +689,7 @@ entry:
   store float 0x3FB99999A0000000, ptr %scalar_data_rhs, align 4
   %scalar_tensor_rhs = call ptr @tl_tensor_new(ptr %scalar_data_rhs, i64 0, ptr %scalar_shape_rhs)
   %binop_res = call ptr @tl_tensor_mul(ptr %static_call, ptr %scalar_tensor_rhs)
+  call void @tl_tensor_free(ptr %static_call)
   %detach_res = call ptr @tl_tensor_detach(ptr %binop_res, i1 true)
   %init_field = getelementptr inbounds %Embedding, ptr %struct_malloc, i32 0, i32 0
   store ptr %detach_res, ptr %init_field, align 8
@@ -830,7 +730,6 @@ entry:
   store ptr %self, ptr %self1, align 8
   store float %lr, ptr %lr2, align 4
   %self3 = load ptr, ptr %self1, align 8
-  call void @tl_mem_unregister(ptr %self3)
   store ptr %self3, ptr %s, align 8
   %s4 = load ptr, ptr %s, align 8
   %ptr_w = getelementptr inbounds %Embedding, ptr %s4, i32 0, i32 0
@@ -849,6 +748,7 @@ entry:
   %scalar_tensor_rhs = call ptr @tl_tensor_new(ptr %scalar_data_rhs, i64 0, ptr %scalar_shape_rhs)
   %binop_res = call ptr @tl_tensor_mul(ptr %g10, ptr %scalar_tensor_rhs)
   %binop_res12 = call ptr @tl_tensor_sub(ptr %w9, ptr %binop_res)
+  call void @tl_tensor_free(ptr %binop_res)
   %detach_res = call ptr @tl_tensor_detach(ptr %binop_res12, i1 true)
   %old_field_val = load ptr, ptr %ptr_w6, align 8
   %cnt_free_diff = icmp ne ptr %old_field_val, %detach_res
@@ -897,9 +797,11 @@ entry:
   store float 0.000000e+00, ptr %scalar_data_rhs, align 4
   %scalar_tensor_rhs = call ptr @tl_tensor_new(ptr %scalar_data_rhs, i64 0, ptr %scalar_shape_rhs)
   %binop_res = call ptr @tl_tensor_mul(ptr %static_call, ptr %scalar_tensor_rhs)
+  call void @tl_tensor_free(ptr %static_call)
   store float 1.000000e+00, ptr %scalar_data_rhs3, align 4
   %scalar_tensor_rhs5 = call ptr @tl_tensor_new(ptr %scalar_data_rhs3, i64 0, ptr %scalar_shape_rhs4)
   %binop_res6 = call ptr @tl_tensor_add(ptr %binop_res, ptr %scalar_tensor_rhs5)
+  call void @tl_tensor_free(ptr %binop_res)
   %detach_res = call ptr @tl_tensor_detach(ptr %binop_res6, i1 true)
   %init_field = getelementptr inbounds %LayerNorm, ptr %struct_malloc, i32 0, i32 0
   store ptr %detach_res, ptr %init_field, align 8
@@ -918,6 +820,7 @@ entry:
   store float 0.000000e+00, ptr %scalar_data_rhs15, align 4
   %scalar_tensor_rhs17 = call ptr @tl_tensor_new(ptr %scalar_data_rhs15, i64 0, ptr %scalar_shape_rhs16)
   %binop_res18 = call ptr @tl_tensor_mul(ptr %static_call14, ptr %scalar_tensor_rhs17)
+  call void @tl_tensor_free(ptr %static_call14)
   %detach_res19 = call ptr @tl_tensor_detach(ptr %binop_res18, i1 true)
   %init_field20 = getelementptr inbounds %LayerNorm, ptr %struct_malloc, i32 0, i32 1
   store ptr %detach_res19, ptr %init_field20, align 8
@@ -961,7 +864,6 @@ entry:
   store ptr %self, ptr %self1, align 8
   store float %lr, ptr %lr2, align 4
   %self3 = load ptr, ptr %self1, align 8
-  call void @tl_mem_unregister(ptr %self3)
   store ptr %self3, ptr %s, align 8
   %s4 = load ptr, ptr %s, align 8
   %ptr_b = getelementptr inbounds %LayerNorm, ptr %s4, i32 0, i32 1
@@ -980,6 +882,7 @@ entry:
   %scalar_tensor_rhs = call ptr @tl_tensor_new(ptr %scalar_data_rhs, i64 0, ptr %scalar_shape_rhs)
   %binop_res = call ptr @tl_tensor_mul(ptr %gb10, ptr %scalar_tensor_rhs)
   %binop_res12 = call ptr @tl_tensor_sub(ptr %b9, ptr %binop_res)
+  call void @tl_tensor_free(ptr %binop_res)
   %detach_res = call ptr @tl_tensor_detach(ptr %binop_res12, i1 true)
   %old_field_val = load ptr, ptr %ptr_b6, align 8
   %cnt_free_diff = icmp ne ptr %old_field_val, %detach_res
@@ -1115,8 +1018,10 @@ entry:
   store float 0x3FB6A0BA20000000, ptr %scalar_data_rhs, align 4
   %scalar_tensor_rhs = call ptr @tl_tensor_new(ptr %scalar_data_rhs, i64 0, ptr %scalar_shape_rhs)
   %binop_res = call ptr @tl_tensor_mul(ptr %matmul_res, ptr %scalar_tensor_rhs)
+  call void @tl_tensor_free(ptr %matmul_res)
   %tril_res = call ptr @tl_tensor_tril(ptr %binop_res, i32 0)
   %softmax_res = call ptr @tl_tensor_softmax(ptr %tril_res, i64 2)
+  call void @tl_tensor_free(ptr %tril_res)
   %v13 = load ptr, ptr %v, align 8
   %matmul_res14 = call ptr @tl_tensor_matmul(ptr %softmax_res, ptr %v13)
   call void @tl_mem_unregister(ptr %matmul_res14)
@@ -1141,7 +1046,6 @@ entry:
   store ptr %self, ptr %self1, align 8
   store float %lr, ptr %lr2, align 4
   %self3 = load ptr, ptr %self1, align 8
-  call void @tl_mem_unregister(ptr %self3)
   store ptr %self3, ptr %s, align 8
   %s4 = load ptr, ptr %s, align 8
   %ptr_q_proj = getelementptr inbounds %CausalSelfAttention, ptr %s4, i32 0, i32 0
@@ -1372,6 +1276,7 @@ entry:
   call void @tl_mem_register_tensor(ptr %call_method)
   %relu_res = call ptr @tl_tensor_relu(ptr %call_method)
   %call_method6 = call ptr @tl_Linear_forward(ptr %p, ptr %relu_res)
+  call void @tl_tensor_free(ptr %relu_res)
   call void @tl_mem_register_tensor(ptr %call_method6)
   call void @tl_mem_unregister(ptr %call_method6)
   call void @tl_mem_exit_scope()
@@ -1387,7 +1292,6 @@ entry:
   store ptr %self, ptr %self1, align 8
   store float %lr, ptr %lr2, align 4
   %self3 = load ptr, ptr %self1, align 8
-  call void @tl_mem_unregister(ptr %self3)
   store ptr %self3, ptr %s, align 8
   %s4 = load ptr, ptr %s, align 8
   %ptr_f = getelementptr inbounds %MLP, ptr %s4, i32 0, i32 0
@@ -1601,8 +1505,10 @@ entry:
   %call_method = call ptr @tl_LayerNorm_forward(ptr %l1, ptr %x6)
   call void @tl_mem_register_tensor(ptr %call_method)
   %call_method7 = call ptr @tl_CausalSelfAttention_forward(ptr %a, ptr %call_method)
+  call void @tl_tensor_free(ptr %call_method)
   call void @tl_mem_register_tensor(ptr %call_method7)
   %binop_res = call ptr @tl_tensor_add(ptr %x3, ptr %call_method7)
+  call void @tl_tensor_free(ptr %call_method7)
   call void @tl_mem_unregister(ptr %binop_res)
   store ptr %binop_res, ptr %x8, align 8
   %x9 = load ptr, ptr %x8, align 8
@@ -1616,8 +1522,10 @@ entry:
   %call_method13 = call ptr @tl_LayerNorm_forward(ptr %l2, ptr %x12)
   call void @tl_mem_register_tensor(ptr %call_method13)
   %call_method14 = call ptr @tl_MLP_forward(ptr %m, ptr %call_method13)
+  call void @tl_tensor_free(ptr %call_method13)
   call void @tl_mem_register_tensor(ptr %call_method14)
   %binop_res15 = call ptr @tl_tensor_add(ptr %x9, ptr %call_method14)
+  call void @tl_tensor_free(ptr %call_method14)
   call void @tl_mem_unregister(ptr %binop_res15)
   call void @tl_mem_exit_scope()
   ret ptr %binop_res15
@@ -1632,7 +1540,6 @@ entry:
   store ptr %self, ptr %self1, align 8
   store float %lr, ptr %lr2, align 4
   %self3 = load ptr, ptr %self1, align 8
-  call void @tl_mem_unregister(ptr %self3)
   store ptr %self3, ptr %s, align 8
   %s4 = load ptr, ptr %s, align 8
   %ptr_l1 = getelementptr inbounds %Block, ptr %s4, i32 0, i32 0
@@ -2248,13 +2155,14 @@ entry:
 
 define ptr @tl_GPT_forward(ptr %self, ptr %i) {
 entry:
-  %x36 = alloca ptr, align 16
-  %x31 = alloca ptr, align 16
-  %x26 = alloca ptr, align 16
+  %x35 = alloca ptr, align 16
+  %x30 = alloca ptr, align 16
+  %x25 = alloca ptr, align 16
   %x = alloca ptr, align 16
   %pos_emb = alloca ptr, align 16
   %tok_emb = alloca ptr, align 16
   %pos = alloca ptr, align 16
+  %dims_alloca = alloca [2 x i64], align 8
   %pos_data = alloca ptr, align 16
   %i2 = alloca ptr, align 16
   %self1 = alloca ptr, align 16
@@ -2295,80 +2203,80 @@ entry:
   call void @tl_mem_unregister(ptr %new_const_tensor)
   store ptr %new_const_tensor, ptr %pos_data, align 8
   %pos_data14 = load ptr, ptr %pos_data, align 8
-  %dims_alloca = alloca [2 x i64], align 8
-  %dim_ptr = getelementptr [2 x i64], ptr %dims_alloca, i64 0, i64 0
-  store i64 1, ptr %dim_ptr, align 8
-  %dim_ptr15 = getelementptr [2 x i64], ptr %dims_alloca, i64 0, i64 1
-  store i64 12, ptr %dim_ptr15, align 8
+  %dim_ptr_0 = getelementptr [2 x i64], ptr %dims_alloca, i64 0, i64 0
+  store i64 1, ptr %dim_ptr_0, align 8
+  %dim_ptr = getelementptr [2 x i64], ptr %dims_alloca, i64 0, i64 1
+  store i64 12, ptr %dim_ptr, align 8
   %dims_ptr = getelementptr [2 x i64], ptr %dims_alloca, i64 0, i64 0
   %reshape_dims_res = call ptr @tl_tensor_reshape_dims(ptr %pos_data14, ptr %dims_ptr, i64 2)
   call void @tl_mem_unregister(ptr %reshape_dims_res)
   store ptr %reshape_dims_res, ptr %pos, align 8
-  %self16 = load ptr, ptr %self1, align 8
-  %ptr_w = getelementptr inbounds %GPT, ptr %self16, i32 0, i32 0
+  %self15 = load ptr, ptr %self1, align 8
+  %ptr_w = getelementptr inbounds %GPT, ptr %self15, i32 0, i32 0
   %w = load ptr, ptr %ptr_w, align 8
-  %i17 = load ptr, ptr %i2, align 8
-  %call_method = call ptr @tl_Embedding_forward(ptr %w, ptr %i17)
+  %i16 = load ptr, ptr %i2, align 8
+  %call_method = call ptr @tl_Embedding_forward(ptr %w, ptr %i16)
   call void @tl_mem_register_tensor(ptr %call_method)
   call void @tl_mem_unregister(ptr %call_method)
   store ptr %call_method, ptr %tok_emb, align 8
-  %self18 = load ptr, ptr %self1, align 8
-  %ptr_wp = getelementptr inbounds %GPT, ptr %self18, i32 0, i32 1
+  %self17 = load ptr, ptr %self1, align 8
+  %ptr_wp = getelementptr inbounds %GPT, ptr %self17, i32 0, i32 1
   %wp = load ptr, ptr %ptr_wp, align 8
-  %pos19 = load ptr, ptr %pos, align 8
-  %call_method20 = call ptr @tl_Embedding_forward(ptr %wp, ptr %pos19)
-  call void @tl_mem_register_tensor(ptr %call_method20)
-  call void @tl_mem_unregister(ptr %call_method20)
-  store ptr %call_method20, ptr %pos_emb, align 8
-  %tok_emb21 = load ptr, ptr %tok_emb, align 8
-  %pos_emb22 = load ptr, ptr %pos_emb, align 8
-  %binop_res = call ptr @tl_tensor_add(ptr %tok_emb21, ptr %pos_emb22)
+  %pos18 = load ptr, ptr %pos, align 8
+  %call_method19 = call ptr @tl_Embedding_forward(ptr %wp, ptr %pos18)
+  call void @tl_mem_register_tensor(ptr %call_method19)
+  call void @tl_mem_unregister(ptr %call_method19)
+  store ptr %call_method19, ptr %pos_emb, align 8
+  %tok_emb20 = load ptr, ptr %tok_emb, align 8
+  %pos_emb21 = load ptr, ptr %pos_emb, align 8
+  %binop_res = call ptr @tl_tensor_add(ptr %tok_emb20, ptr %pos_emb21)
   call void @tl_mem_unregister(ptr %binop_res)
   store ptr %binop_res, ptr %x, align 8
-  %self23 = load ptr, ptr %self1, align 8
-  %ptr_b1 = getelementptr inbounds %GPT, ptr %self23, i32 0, i32 2
+  %self22 = load ptr, ptr %self1, align 8
+  %ptr_b1 = getelementptr inbounds %GPT, ptr %self22, i32 0, i32 2
   %b1 = load ptr, ptr %ptr_b1, align 8
-  %x24 = load ptr, ptr %x, align 8
-  %call_method25 = call ptr @tl_Block_forward(ptr %b1, ptr %x24)
-  call void @tl_mem_register_tensor(ptr %call_method25)
-  call void @tl_mem_unregister(ptr %call_method25)
+  %x23 = load ptr, ptr %x, align 8
+  %call_method24 = call ptr @tl_Block_forward(ptr %b1, ptr %x23)
+  call void @tl_mem_register_tensor(ptr %call_method24)
+  call void @tl_mem_unregister(ptr %call_method24)
   %old_shadowed = load ptr, ptr %x, align 8
   call void @tl_mem_unregister(ptr %old_shadowed)
-  store ptr %call_method25, ptr %x26, align 8
-  %self27 = load ptr, ptr %self1, align 8
-  %ptr_b2 = getelementptr inbounds %GPT, ptr %self27, i32 0, i32 3
+  store ptr %call_method24, ptr %x25, align 8
+  %self26 = load ptr, ptr %self1, align 8
+  %ptr_b2 = getelementptr inbounds %GPT, ptr %self26, i32 0, i32 3
   %b2 = load ptr, ptr %ptr_b2, align 8
-  %x28 = load ptr, ptr %x26, align 8
-  %call_method29 = call ptr @tl_Block_forward(ptr %b2, ptr %x28)
-  call void @tl_mem_register_tensor(ptr %call_method29)
-  call void @tl_mem_unregister(ptr %call_method29)
-  %old_shadowed30 = load ptr, ptr %x26, align 8
-  call void @tl_mem_unregister(ptr %old_shadowed30)
-  store ptr %call_method29, ptr %x31, align 8
-  %self32 = load ptr, ptr %self1, align 8
-  %ptr_b3 = getelementptr inbounds %GPT, ptr %self32, i32 0, i32 4
+  %x27 = load ptr, ptr %x25, align 8
+  %call_method28 = call ptr @tl_Block_forward(ptr %b2, ptr %x27)
+  call void @tl_mem_register_tensor(ptr %call_method28)
+  call void @tl_mem_unregister(ptr %call_method28)
+  %old_shadowed29 = load ptr, ptr %x25, align 8
+  call void @tl_mem_unregister(ptr %old_shadowed29)
+  store ptr %call_method28, ptr %x30, align 8
+  %self31 = load ptr, ptr %self1, align 8
+  %ptr_b3 = getelementptr inbounds %GPT, ptr %self31, i32 0, i32 4
   %b3 = load ptr, ptr %ptr_b3, align 8
-  %x33 = load ptr, ptr %x31, align 8
-  %call_method34 = call ptr @tl_Block_forward(ptr %b3, ptr %x33)
-  call void @tl_mem_register_tensor(ptr %call_method34)
-  call void @tl_mem_unregister(ptr %call_method34)
-  %old_shadowed35 = load ptr, ptr %x31, align 8
-  call void @tl_mem_unregister(ptr %old_shadowed35)
-  store ptr %call_method34, ptr %x36, align 8
-  %self37 = load ptr, ptr %self1, align 8
-  %ptr_h = getelementptr inbounds %GPT, ptr %self37, i32 0, i32 6
+  %x32 = load ptr, ptr %x30, align 8
+  %call_method33 = call ptr @tl_Block_forward(ptr %b3, ptr %x32)
+  call void @tl_mem_register_tensor(ptr %call_method33)
+  call void @tl_mem_unregister(ptr %call_method33)
+  %old_shadowed34 = load ptr, ptr %x30, align 8
+  call void @tl_mem_unregister(ptr %old_shadowed34)
+  store ptr %call_method33, ptr %x35, align 8
+  %self36 = load ptr, ptr %self1, align 8
+  %ptr_h = getelementptr inbounds %GPT, ptr %self36, i32 0, i32 6
   %h = load ptr, ptr %ptr_h, align 8
-  %self38 = load ptr, ptr %self1, align 8
-  %ptr_l = getelementptr inbounds %GPT, ptr %self38, i32 0, i32 5
+  %self37 = load ptr, ptr %self1, align 8
+  %ptr_l = getelementptr inbounds %GPT, ptr %self37, i32 0, i32 5
   %l = load ptr, ptr %ptr_l, align 8
-  %x39 = load ptr, ptr %x36, align 8
-  %call_method40 = call ptr @tl_LayerNorm_forward(ptr %l, ptr %x39)
+  %x38 = load ptr, ptr %x35, align 8
+  %call_method39 = call ptr @tl_LayerNorm_forward(ptr %l, ptr %x38)
+  call void @tl_mem_register_tensor(ptr %call_method39)
+  %call_method40 = call ptr @tl_Linear_forward(ptr %h, ptr %call_method39)
+  call void @tl_tensor_free(ptr %call_method39)
   call void @tl_mem_register_tensor(ptr %call_method40)
-  %call_method41 = call ptr @tl_Linear_forward(ptr %h, ptr %call_method40)
-  call void @tl_mem_register_tensor(ptr %call_method41)
-  call void @tl_mem_unregister(ptr %call_method41)
+  call void @tl_mem_unregister(ptr %call_method40)
   call void @tl_mem_exit_scope()
-  ret ptr %call_method41
+  ret ptr %call_method40
 }
 
 define ptr @tl_GPT_step(ptr %self, float %lr) {
@@ -2380,7 +2288,6 @@ entry:
   store ptr %self, ptr %self1, align 8
   store float %lr, ptr %lr2, align 4
   %self3 = load ptr, ptr %self1, align 8
-  call void @tl_mem_unregister(ptr %self3)
   store ptr %self3, ptr %s, align 8
   %s4 = load ptr, ptr %s, align 8
   %ptr_w = getelementptr inbounds %GPT, ptr %s4, i32 0, i32 0
@@ -3305,6 +3212,67 @@ continue_after_recursive_free328:                 ; preds = %recursive_free_stru
   br label %skip_free325
 }
 
+define i64 @argmax(ptr %t) {
+entry:
+  %v = alloca float, align 16
+  %k = alloca i64, align 16
+  %idx = alloca i64, align 16
+  %max_val = alloca float, align 16
+  %t1 = alloca ptr, align 16
+  call void @tl_mem_enter_scope()
+  store ptr %t, ptr %t1, align 8
+  store float -1.000000e+06, ptr %max_val, align 4
+  store i64 0, ptr %idx, align 8
+  br label %for_header
+
+for_header:                                       ; preds = %merge, %entry
+  %for_idx = phi i64 [ %next_idx, %merge ], [ 0, %entry ]
+  %for_cond = icmp slt i64 %for_idx, 13
+  br i1 %for_cond, label %for_body, label %for_end
+
+for_body:                                         ; preds = %for_header
+  call void @tl_mem_enter_scope()
+  store i64 %for_idx, ptr %k, align 8
+  %t2 = load ptr, ptr %t1, align 8
+  %k3 = load i64, ptr %k, align 8
+  %get_res = call float @tl_tensor_get(ptr %t2, i64 %k3)
+  store float %get_res, ptr %v, align 4
+  %v4 = load float, ptr %v, align 4
+  %max_val5 = load float, ptr %max_val, align 4
+  %fgttmp = fcmp ogt float %v4, %max_val5
+  br i1 %fgttmp, label %then, label %else
+
+for_end:                                          ; preds = %for_header
+  call void @tl_print_string(ptr @str_literal)
+  %idx8 = load i64, ptr %idx, align 8
+  call void @tl_print_i64(i64 %idx8)
+  call void @tl_print_string(ptr @str_literal.104)
+  %max_val9 = load float, ptr %max_val, align 4
+  call void @tl_print_f32(float %max_val9)
+  %idx10 = load i64, ptr %idx, align 8
+  call void @tl_mem_exit_scope()
+  ret i64 %idx10
+
+then:                                             ; preds = %for_body
+  call void @tl_mem_enter_scope()
+  %v6 = load float, ptr %v, align 4
+  store float %v6, ptr %max_val, align 4
+  %k7 = load i64, ptr %k, align 8
+  store i64 %k7, ptr %idx, align 8
+  call void @tl_mem_exit_scope()
+  br label %merge
+
+else:                                             ; preds = %for_body
+  call void @tl_mem_enter_scope()
+  call void @tl_mem_exit_scope()
+  br label %merge
+
+merge:                                            ; preds = %else, %then
+  call void @tl_mem_exit_scope()
+  %next_idx = add i64 %for_idx, 1
+  br label %for_header
+}
+
 define i64 @get_memory() {
 entry:
   call void @tl_mem_enter_scope()
@@ -3313,413 +3281,98 @@ entry:
   ret i64 %call_tmp
 }
 
-define void @train_epoch(ptr %model, float %lr, i64 %epoch) {
-entry:
-  %mem_mb = alloca i64, align 16
-  %loss = alloca ptr, align 16
-  %Y_flat = alloca ptr, align 16
-  %logits_flat = alloca ptr, align 16
-  %logits = alloca ptr, align 16
-  %Y = alloca ptr, align 16
-  %X = alloca ptr, align 16
-  %target = alloca ptr, align 16
-  %data = alloca ptr, align 16
-  %v_s_d100 = alloca float, align 16
-  %scalar_shape114 = alloca i64, align 16
-  %scalar_data113 = alloca float, align 16
-  %scalar_shape111 = alloca i64, align 16
-  %scalar_data109 = alloca float, align 16
-  %v_s_d10 = alloca float, align 16
-  %scalar_shape104 = alloca i64, align 16
-  %scalar_data103 = alloca float, align 16
-  %scalar_shape101 = alloca i64, align 16
-  %scalar_data99 = alloca float, align 16
-  %v_s_d1 = alloca float, align 16
-  %scalar_shape94 = alloca i64, align 16
-  %scalar_data93 = alloca float, align 16
-  %scalar_shape91 = alloca i64, align 16
-  %scalar_data89 = alloca float, align 16
-  %v_j_d10 = alloca float, align 16
-  %scalar_shape84 = alloca i64, align 16
-  %scalar_data83 = alloca float, align 16
-  %scalar_shape81 = alloca i64, align 16
-  %scalar_data79 = alloca float, align 16
-  %v_j_d1 = alloca float, align 16
-  %scalar_shape74 = alloca i64, align 16
-  %scalar_data73 = alloca float, align 16
-  %scalar_shape71 = alloca i64, align 16
-  %scalar_data69 = alloca float, align 16
-  %v_i_d10 = alloca float, align 16
-  %scalar_shape64 = alloca i64, align 16
-  %scalar_data63 = alloca float, align 16
-  %scalar_shape61 = alloca i64, align 16
-  %scalar_data59 = alloca float, align 16
-  %v_i_d1 = alloca float, align 16
-  %scalar_shape55 = alloca i64, align 16
-  %scalar_data54 = alloca float, align 16
-  %scalar_shape52 = alloca i64, align 16
-  %scalar_data51 = alloca float, align 16
-  %s_d1 = alloca i64, align 16
-  %s_d10 = alloca i64, align 16
-  %rem = alloca i64, align 16
-  %s_d100 = alloca i64, align 16
-  %j_d1 = alloca i64, align 16
-  %j_d10 = alloca i64, align 16
-  %i_d1 = alloca i64, align 16
-  %i_d10 = alloca i64, align 16
-  %sum = alloca i64, align 16
-  %j = alloca i64, align 16
-  %i = alloca i64, align 16
-  %idx = alloca i64, align 16
-  %raw = alloca i64, align 16
-  %s = alloca i64, align 16
-  %offset = alloca i64, align 16
-  %stride = alloca i64, align 16
-  %total_steps = alloca i64, align 16
-  %total_loss = alloca ptr, align 16
-  %scalar_shape5 = alloca i64, align 16
-  %scalar_data4 = alloca float, align 16
-  %scalar_shape = alloca i64, align 16
-  %scalar_data = alloca float, align 16
-  %epoch3 = alloca i64, align 16
-  %lr2 = alloca float, align 16
-  %model1 = alloca ptr, align 16
-  call void @tl_mem_enter_scope()
-  store ptr %model, ptr %model1, align 8
-  store float %lr, ptr %lr2, align 4
-  store i64 %epoch, ptr %epoch3, align 8
-  store float 0.000000e+00, ptr %scalar_data, align 4
-  %scalar_tensor = call ptr @tl_tensor_new(ptr %scalar_data, i64 0, ptr %scalar_shape)
-  store float 1.000000e+00, ptr %scalar_data4, align 4
-  %scalar_tensor6 = call ptr @tl_tensor_new(ptr %scalar_data4, i64 0, ptr %scalar_shape5)
-  %pow_res = call ptr @tl_tensor_pow(ptr %scalar_tensor, ptr %scalar_tensor6)
-  call void @tl_mem_unregister(ptr %pow_res)
-  store ptr %pow_res, ptr %total_loss, align 8
-  store i64 1000, ptr %total_steps, align 8
-  store i64 137, ptr %stride, align 8
-  %epoch7 = load i64, ptr %epoch3, align 8
-  %multmp = mul i64 %epoch7, 79
-  store i64 %multmp, ptr %offset, align 8
-  %total_steps8 = load i64, ptr %total_steps, align 8
-  br label %for_header
-
-for_header:                                       ; preds = %continue_block, %entry
-  %for_idx = phi i64 [ 0, %entry ], [ %next_idx, %continue_block ]
-  %for_cond = icmp slt i64 %for_idx, %total_steps8
-  br i1 %for_cond, label %for_body, label %for_end
-
-for_body:                                         ; preds = %for_header
-  call void @tl_mem_enter_scope()
-  store i64 %for_idx, ptr %s, align 8
-  %s9 = load i64, ptr %s, align 8
-  %stride10 = load i64, ptr %stride, align 8
-  %multmp11 = mul i64 %s9, %stride10
-  %offset12 = load i64, ptr %offset, align 8
-  %addtmp = add i64 %multmp11, %offset12
-  store i64 %addtmp, ptr %raw, align 8
-  %raw13 = load i64, ptr %raw, align 8
-  %raw14 = load i64, ptr %raw, align 8
-  %divtmp = sdiv i64 %raw14, 10000
-  %multmp15 = mul i64 %divtmp, 10000
-  %subtmp = sub i64 %raw13, %multmp15
-  store i64 %subtmp, ptr %idx, align 8
-  %idx16 = load i64, ptr %idx, align 8
-  %divtmp17 = sdiv i64 %idx16, 100
-  store i64 %divtmp17, ptr %i, align 8
-  %idx18 = load i64, ptr %idx, align 8
-  %idx19 = load i64, ptr %idx, align 8
-  %divtmp20 = sdiv i64 %idx19, 100
-  %multmp21 = mul i64 %divtmp20, 100
-  %subtmp22 = sub i64 %idx18, %multmp21
-  store i64 %subtmp22, ptr %j, align 8
-  %i23 = load i64, ptr %i, align 8
-  %j24 = load i64, ptr %j, align 8
-  %addtmp25 = add i64 %i23, %j24
-  store i64 %addtmp25, ptr %sum, align 8
-  %i26 = load i64, ptr %i, align 8
-  %divtmp27 = sdiv i64 %i26, 10
-  store i64 %divtmp27, ptr %i_d10, align 8
-  %i28 = load i64, ptr %i, align 8
-  %i_d1029 = load i64, ptr %i_d10, align 8
-  %multmp30 = mul i64 %i_d1029, 10
-  %subtmp31 = sub i64 %i28, %multmp30
-  store i64 %subtmp31, ptr %i_d1, align 8
-  %j32 = load i64, ptr %j, align 8
-  %divtmp33 = sdiv i64 %j32, 10
-  store i64 %divtmp33, ptr %j_d10, align 8
-  %j34 = load i64, ptr %j, align 8
-  %j_d1035 = load i64, ptr %j_d10, align 8
-  %multmp36 = mul i64 %j_d1035, 10
-  %subtmp37 = sub i64 %j34, %multmp36
-  store i64 %subtmp37, ptr %j_d1, align 8
-  %sum38 = load i64, ptr %sum, align 8
-  %divtmp39 = sdiv i64 %sum38, 100
-  store i64 %divtmp39, ptr %s_d100, align 8
-  %sum40 = load i64, ptr %sum, align 8
-  %s_d10041 = load i64, ptr %s_d100, align 8
-  %multmp42 = mul i64 %s_d10041, 100
-  %subtmp43 = sub i64 %sum40, %multmp42
-  store i64 %subtmp43, ptr %rem, align 8
-  %rem44 = load i64, ptr %rem, align 8
-  %divtmp45 = sdiv i64 %rem44, 10
-  store i64 %divtmp45, ptr %s_d10, align 8
-  %rem46 = load i64, ptr %rem, align 8
-  %s_d1047 = load i64, ptr %s_d10, align 8
-  %multmp48 = mul i64 %s_d1047, 10
-  %subtmp49 = sub i64 %rem46, %multmp48
-  store i64 %subtmp49, ptr %s_d1, align 8
-  %i_d150 = load i64, ptr %i_d1, align 8
-  %cast_i64_f32 = sitofp i64 %i_d150 to float
-  store float %cast_i64_f32, ptr %scalar_data51, align 4
-  %scalar_tensor53 = call ptr @tl_tensor_new(ptr %scalar_data51, i64 0, ptr %scalar_shape52)
-  store float 1.000000e+00, ptr %scalar_data54, align 4
-  %scalar_tensor56 = call ptr @tl_tensor_new(ptr %scalar_data54, i64 0, ptr %scalar_shape55)
-  %pow_res57 = call ptr @tl_tensor_pow(ptr %scalar_tensor53, ptr %scalar_tensor56)
-  %get_res = call float @tl_tensor_get(ptr %pow_res57, i64 0)
-  store float %get_res, ptr %v_i_d1, align 4
-  %i_d1058 = load i64, ptr %i_d10, align 8
-  %cast_i64_f3260 = sitofp i64 %i_d1058 to float
-  store float %cast_i64_f3260, ptr %scalar_data59, align 4
-  %scalar_tensor62 = call ptr @tl_tensor_new(ptr %scalar_data59, i64 0, ptr %scalar_shape61)
-  store float 1.000000e+00, ptr %scalar_data63, align 4
-  %scalar_tensor65 = call ptr @tl_tensor_new(ptr %scalar_data63, i64 0, ptr %scalar_shape64)
-  %pow_res66 = call ptr @tl_tensor_pow(ptr %scalar_tensor62, ptr %scalar_tensor65)
-  %get_res67 = call float @tl_tensor_get(ptr %pow_res66, i64 0)
-  store float %get_res67, ptr %v_i_d10, align 4
-  %j_d168 = load i64, ptr %j_d1, align 8
-  %cast_i64_f3270 = sitofp i64 %j_d168 to float
-  store float %cast_i64_f3270, ptr %scalar_data69, align 4
-  %scalar_tensor72 = call ptr @tl_tensor_new(ptr %scalar_data69, i64 0, ptr %scalar_shape71)
-  store float 1.000000e+00, ptr %scalar_data73, align 4
-  %scalar_tensor75 = call ptr @tl_tensor_new(ptr %scalar_data73, i64 0, ptr %scalar_shape74)
-  %pow_res76 = call ptr @tl_tensor_pow(ptr %scalar_tensor72, ptr %scalar_tensor75)
-  %get_res77 = call float @tl_tensor_get(ptr %pow_res76, i64 0)
-  store float %get_res77, ptr %v_j_d1, align 4
-  %j_d1078 = load i64, ptr %j_d10, align 8
-  %cast_i64_f3280 = sitofp i64 %j_d1078 to float
-  store float %cast_i64_f3280, ptr %scalar_data79, align 4
-  %scalar_tensor82 = call ptr @tl_tensor_new(ptr %scalar_data79, i64 0, ptr %scalar_shape81)
-  store float 1.000000e+00, ptr %scalar_data83, align 4
-  %scalar_tensor85 = call ptr @tl_tensor_new(ptr %scalar_data83, i64 0, ptr %scalar_shape84)
-  %pow_res86 = call ptr @tl_tensor_pow(ptr %scalar_tensor82, ptr %scalar_tensor85)
-  %get_res87 = call float @tl_tensor_get(ptr %pow_res86, i64 0)
-  store float %get_res87, ptr %v_j_d10, align 4
-  %s_d188 = load i64, ptr %s_d1, align 8
-  %cast_i64_f3290 = sitofp i64 %s_d188 to float
-  store float %cast_i64_f3290, ptr %scalar_data89, align 4
-  %scalar_tensor92 = call ptr @tl_tensor_new(ptr %scalar_data89, i64 0, ptr %scalar_shape91)
-  store float 1.000000e+00, ptr %scalar_data93, align 4
-  %scalar_tensor95 = call ptr @tl_tensor_new(ptr %scalar_data93, i64 0, ptr %scalar_shape94)
-  %pow_res96 = call ptr @tl_tensor_pow(ptr %scalar_tensor92, ptr %scalar_tensor95)
-  %get_res97 = call float @tl_tensor_get(ptr %pow_res96, i64 0)
-  store float %get_res97, ptr %v_s_d1, align 4
-  %s_d1098 = load i64, ptr %s_d10, align 8
-  %cast_i64_f32100 = sitofp i64 %s_d1098 to float
-  store float %cast_i64_f32100, ptr %scalar_data99, align 4
-  %scalar_tensor102 = call ptr @tl_tensor_new(ptr %scalar_data99, i64 0, ptr %scalar_shape101)
-  store float 1.000000e+00, ptr %scalar_data103, align 4
-  %scalar_tensor105 = call ptr @tl_tensor_new(ptr %scalar_data103, i64 0, ptr %scalar_shape104)
-  %pow_res106 = call ptr @tl_tensor_pow(ptr %scalar_tensor102, ptr %scalar_tensor105)
-  %get_res107 = call float @tl_tensor_get(ptr %pow_res106, i64 0)
-  store float %get_res107, ptr %v_s_d10, align 4
-  %s_d100108 = load i64, ptr %s_d100, align 8
-  %cast_i64_f32110 = sitofp i64 %s_d100108 to float
-  store float %cast_i64_f32110, ptr %scalar_data109, align 4
-  %scalar_tensor112 = call ptr @tl_tensor_new(ptr %scalar_data109, i64 0, ptr %scalar_shape111)
-  store float 1.000000e+00, ptr %scalar_data113, align 4
-  %scalar_tensor115 = call ptr @tl_tensor_new(ptr %scalar_data113, i64 0, ptr %scalar_shape114)
-  %pow_res116 = call ptr @tl_tensor_pow(ptr %scalar_tensor112, ptr %scalar_tensor115)
-  %get_res117 = call float @tl_tensor_get(ptr %pow_res116, i64 0)
-  store float %get_res117, ptr %v_s_d100, align 4
-  %buf_void = call ptr @tl_alloc_tmp(i64 48)
-  %v_i_d1118 = load float, ptr %v_i_d1, align 4
-  %elem_ptr = getelementptr inbounds float, ptr %buf_void, i64 0
-  store float %v_i_d1118, ptr %elem_ptr, align 4
-  %v_i_d10119 = load float, ptr %v_i_d10, align 4
-  %elem_ptr120 = getelementptr inbounds float, ptr %buf_void, i64 1
-  store float %v_i_d10119, ptr %elem_ptr120, align 4
-  %elem_ptr121 = getelementptr inbounds float, ptr %buf_void, i64 2
-  store float 1.000000e+01, ptr %elem_ptr121, align 4
-  %v_j_d1122 = load float, ptr %v_j_d1, align 4
-  %elem_ptr123 = getelementptr inbounds float, ptr %buf_void, i64 3
-  store float %v_j_d1122, ptr %elem_ptr123, align 4
-  %v_j_d10124 = load float, ptr %v_j_d10, align 4
-  %elem_ptr125 = getelementptr inbounds float, ptr %buf_void, i64 4
-  store float %v_j_d10124, ptr %elem_ptr125, align 4
-  %elem_ptr126 = getelementptr inbounds float, ptr %buf_void, i64 5
-  store float 1.100000e+01, ptr %elem_ptr126, align 4
-  %v_s_d1127 = load float, ptr %v_s_d1, align 4
-  %elem_ptr128 = getelementptr inbounds float, ptr %buf_void, i64 6
-  store float %v_s_d1127, ptr %elem_ptr128, align 4
-  %v_s_d10129 = load float, ptr %v_s_d10, align 4
-  %elem_ptr130 = getelementptr inbounds float, ptr %buf_void, i64 7
-  store float %v_s_d10129, ptr %elem_ptr130, align 4
-  %v_s_d100131 = load float, ptr %v_s_d100, align 4
-  %elem_ptr132 = getelementptr inbounds float, ptr %buf_void, i64 8
-  store float %v_s_d100131, ptr %elem_ptr132, align 4
-  %elem_ptr133 = getelementptr inbounds float, ptr %buf_void, i64 9
-  store float 1.200000e+01, ptr %elem_ptr133, align 4
-  %elem_ptr134 = getelementptr inbounds float, ptr %buf_void, i64 10
-  store float 1.200000e+01, ptr %elem_ptr134, align 4
-  %elem_ptr135 = getelementptr inbounds float, ptr %buf_void, i64 11
-  store float 1.200000e+01, ptr %elem_ptr135, align 4
-  %shape_alloc = call ptr @tl_alloc_tmp(i64 8)
-  %shape_ptr = getelementptr inbounds i64, ptr %shape_alloc, i64 0
-  store i64 12, ptr %shape_ptr, align 8
-  %new_tensor = call ptr @tl_tensor_new(ptr %buf_void, i64 1, ptr %shape_alloc)
-  call void @tl_free_tmp(ptr %buf_void)
-  call void @tl_free_tmp(ptr %shape_alloc)
-  call void @tl_mem_unregister(ptr %new_tensor)
-  store ptr %new_tensor, ptr %data, align 8
-  %buf_void136 = call ptr @tl_alloc_tmp(i64 48)
-  %v_i_d10137 = load float, ptr %v_i_d10, align 4
-  %elem_ptr138 = getelementptr inbounds float, ptr %buf_void136, i64 0
-  store float %v_i_d10137, ptr %elem_ptr138, align 4
-  %elem_ptr139 = getelementptr inbounds float, ptr %buf_void136, i64 1
-  store float 1.000000e+01, ptr %elem_ptr139, align 4
-  %v_j_d1140 = load float, ptr %v_j_d1, align 4
-  %elem_ptr141 = getelementptr inbounds float, ptr %buf_void136, i64 2
-  store float %v_j_d1140, ptr %elem_ptr141, align 4
-  %v_j_d10142 = load float, ptr %v_j_d10, align 4
-  %elem_ptr143 = getelementptr inbounds float, ptr %buf_void136, i64 3
-  store float %v_j_d10142, ptr %elem_ptr143, align 4
-  %elem_ptr144 = getelementptr inbounds float, ptr %buf_void136, i64 4
-  store float 1.100000e+01, ptr %elem_ptr144, align 4
-  %v_s_d1145 = load float, ptr %v_s_d1, align 4
-  %elem_ptr146 = getelementptr inbounds float, ptr %buf_void136, i64 5
-  store float %v_s_d1145, ptr %elem_ptr146, align 4
-  %v_s_d10147 = load float, ptr %v_s_d10, align 4
-  %elem_ptr148 = getelementptr inbounds float, ptr %buf_void136, i64 6
-  store float %v_s_d10147, ptr %elem_ptr148, align 4
-  %v_s_d100149 = load float, ptr %v_s_d100, align 4
-  %elem_ptr150 = getelementptr inbounds float, ptr %buf_void136, i64 7
-  store float %v_s_d100149, ptr %elem_ptr150, align 4
-  %elem_ptr151 = getelementptr inbounds float, ptr %buf_void136, i64 8
-  store float 1.200000e+01, ptr %elem_ptr151, align 4
-  %elem_ptr152 = getelementptr inbounds float, ptr %buf_void136, i64 9
-  store float 1.200000e+01, ptr %elem_ptr152, align 4
-  %elem_ptr153 = getelementptr inbounds float, ptr %buf_void136, i64 10
-  store float 1.200000e+01, ptr %elem_ptr153, align 4
-  %elem_ptr154 = getelementptr inbounds float, ptr %buf_void136, i64 11
-  store float 1.200000e+01, ptr %elem_ptr154, align 4
-  %shape_alloc155 = call ptr @tl_alloc_tmp(i64 8)
-  %shape_ptr156 = getelementptr inbounds i64, ptr %shape_alloc155, i64 0
-  store i64 12, ptr %shape_ptr156, align 8
-  %new_tensor157 = call ptr @tl_tensor_new(ptr %buf_void136, i64 1, ptr %shape_alloc155)
-  call void @tl_free_tmp(ptr %buf_void136)
-  call void @tl_free_tmp(ptr %shape_alloc155)
-  call void @tl_mem_unregister(ptr %new_tensor157)
-  store ptr %new_tensor157, ptr %target, align 8
-  %data158 = load ptr, ptr %data, align 8
-  %dims_alloca = alloca [2 x i64], align 8
-  %dim_ptr = getelementptr [2 x i64], ptr %dims_alloca, i64 0, i64 0
-  store i64 1, ptr %dim_ptr, align 8
-  %dim_ptr159 = getelementptr [2 x i64], ptr %dims_alloca, i64 0, i64 1
-  store i64 12, ptr %dim_ptr159, align 8
-  %dims_ptr = getelementptr [2 x i64], ptr %dims_alloca, i64 0, i64 0
-  %reshape_dims_res = call ptr @tl_tensor_reshape_dims(ptr %data158, ptr %dims_ptr, i64 2)
-  call void @tl_mem_unregister(ptr %reshape_dims_res)
-  store ptr %reshape_dims_res, ptr %X, align 8
-  %target160 = load ptr, ptr %target, align 8
-  %dims_alloca161 = alloca [2 x i64], align 8
-  %dim_ptr162 = getelementptr [2 x i64], ptr %dims_alloca161, i64 0, i64 0
-  store i64 1, ptr %dim_ptr162, align 8
-  %dim_ptr163 = getelementptr [2 x i64], ptr %dims_alloca161, i64 0, i64 1
-  store i64 12, ptr %dim_ptr163, align 8
-  %dims_ptr164 = getelementptr [2 x i64], ptr %dims_alloca161, i64 0, i64 0
-  %reshape_dims_res165 = call ptr @tl_tensor_reshape_dims(ptr %target160, ptr %dims_ptr164, i64 2)
-  call void @tl_mem_unregister(ptr %reshape_dims_res165)
-  store ptr %reshape_dims_res165, ptr %Y, align 8
-  %model166 = load ptr, ptr %model1, align 8
-  %X167 = load ptr, ptr %X, align 8
-  %call_method = call ptr @tl_GPT_forward(ptr %model166, ptr %X167)
-  call void @tl_mem_register_tensor(ptr %call_method)
-  call void @tl_mem_unregister(ptr %call_method)
-  store ptr %call_method, ptr %logits, align 8
-  %logits168 = load ptr, ptr %logits, align 8
-  %dims_alloca169 = alloca [2 x i64], align 8
-  %dim_ptr170 = getelementptr [2 x i64], ptr %dims_alloca169, i64 0, i64 0
-  store i64 12, ptr %dim_ptr170, align 8
-  %dim_ptr171 = getelementptr [2 x i64], ptr %dims_alloca169, i64 0, i64 1
-  store i64 13, ptr %dim_ptr171, align 8
-  %dims_ptr172 = getelementptr [2 x i64], ptr %dims_alloca169, i64 0, i64 0
-  %reshape_dims_res173 = call ptr @tl_tensor_reshape_dims(ptr %logits168, ptr %dims_ptr172, i64 2)
-  call void @tl_mem_unregister(ptr %reshape_dims_res173)
-  store ptr %reshape_dims_res173, ptr %logits_flat, align 8
-  %Y174 = load ptr, ptr %Y, align 8
-  %dims_alloca175 = alloca [1 x i64], align 8
-  %dim_ptr176 = getelementptr [1 x i64], ptr %dims_alloca175, i64 0, i64 0
-  store i64 12, ptr %dim_ptr176, align 8
-  %dims_ptr177 = getelementptr [1 x i64], ptr %dims_alloca175, i64 0, i64 0
-  %reshape_dims_res178 = call ptr @tl_tensor_reshape_dims(ptr %Y174, ptr %dims_ptr177, i64 1)
-  call void @tl_mem_unregister(ptr %reshape_dims_res178)
-  store ptr %reshape_dims_res178, ptr %Y_flat, align 8
-  %logits_flat179 = load ptr, ptr %logits_flat, align 8
-  %Y_flat180 = load ptr, ptr %Y_flat, align 8
-  %ce_res = call ptr @tl_tensor_cross_entropy(ptr %logits_flat179, ptr %Y_flat180)
-  call void @tl_mem_unregister(ptr %ce_res)
-  store ptr %ce_res, ptr %loss, align 8
-  %loss181 = load ptr, ptr %loss, align 8
-  call void @tl_tensor_backward(ptr %loss181)
-  %model182 = load ptr, ptr %model1, align 8
-  %lr183 = load float, ptr %lr2, align 4
-  %call_method184 = call ptr @tl_GPT_step(ptr %model182, float %lr183)
-  call void @tl_mem_register_struct(ptr %call_method184)
-  call void @tl_mem_unregister(ptr %call_method184)
-  %loss185 = load ptr, ptr %loss, align 8
-  %detach_res = call ptr @tl_tensor_detach(ptr %loss185, i1 true)
-  call void @tl_mem_unregister(ptr %detach_res)
-  %old_val = load ptr, ptr %total_loss, align 8
-  %is_not_null = icmp ne ptr %old_val, null
-  %can_free = and i1 %is_not_null, true
-  br i1 %can_free, label %free_block, label %continue_block
-
-for_end:                                          ; preds = %for_header
-  %call_tmp = call i64 @get_memory()
-  store i64 %call_tmp, ptr %mem_mb, align 8
-  call void @tl_print_string(ptr @str_literal)
-  %total_loss186 = load ptr, ptr %total_loss, align 8
-  call void @tl_tensor_print(ptr %total_loss186)
-  call void @tl_print_string(ptr @str_literal.104)
-  %mem_mb187 = load i64, ptr %mem_mb, align 8
-  call void @tl_print_i64(i64 %mem_mb187)
-  call void @tl_mem_exit_scope()
-  ret void
-
-free_block:                                       ; preds = %for_body
-  call void @tl_tensor_free(ptr %old_val)
-  br label %continue_block
-
-continue_block:                                   ; preds = %free_block, %for_body
-  call void @tl_mem_unregister(ptr %detach_res)
-  store ptr %detach_res, ptr %total_loss, align 8
-  call void @tl_mem_exit_scope()
-  %next_idx = add i64 %for_idx, 1
-  br label %for_header
-}
-
 define void @main() {
 entry:
-  %epoch = alloca i64, align 16
-  %epochs = alloca i64, align 16
-  %lr = alloca float, align 16
+  %p3 = alloca i64, align 16
+  %log3_flat = alloca ptr, align 16
+  %dims_alloca434 = alloca [2 x i64], align 8
+  %log3 = alloca ptr, align 16
+  %inp3 = alloca ptr, align 16
+  %dims_alloca425 = alloca [2 x i64], align 8
+  %d3 = alloca ptr, align 16
+  %vp2 = alloca float, align 16
+  %scalar_shape396 = alloca i64, align 16
+  %scalar_data395 = alloca float, align 16
+  %scalar_shape393 = alloca i64, align 16
+  %scalar_data391 = alloca float, align 16
+  %p2 = alloca i64, align 16
+  %log2_flat = alloca ptr, align 16
+  %dims_alloca382 = alloca [2 x i64], align 8
+  %log2 = alloca ptr, align 16
+  %inp2 = alloca ptr, align 16
+  %dims_alloca373 = alloca [2 x i64], align 8
+  %d2 = alloca ptr, align 16
+  %vp1 = alloca float, align 16
+  %scalar_shape345 = alloca i64, align 16
+  %scalar_data344 = alloca float, align 16
+  %scalar_shape342 = alloca i64, align 16
+  %scalar_data340 = alloca float, align 16
+  %p1 = alloca i64, align 16
+  %log1_flat = alloca ptr, align 16
+  %dims_alloca331 = alloca [2 x i64], align 8
+  %log1 = alloca ptr, align 16
+  %inp1 = alloca ptr, align 16
+  %dims_alloca322 = alloca [2 x i64], align 8
+  %d1 = alloca ptr, align 16
+  %y5 = alloca float, align 16
+  %y4 = alloca float, align 16
+  %y3 = alloca float, align 16
+  %y2 = alloca float, align 16
+  %y1 = alloca float, align 16
+  %y0 = alloca float, align 16
+  %pred3 = alloca i64, align 16
+  %logits3_flat = alloca ptr, align 16
+  %dims_alloca288 = alloca [2 x i64], align 8
+  %logits3 = alloca ptr, align 16
+  %input3 = alloca ptr, align 16
+  %dims_alloca279 = alloca [2 x i64], align 8
+  %data3 = alloca ptr, align 16
+  %val_pred2 = alloca float, align 16
+  %scalar_shape249 = alloca i64, align 16
+  %scalar_data248 = alloca float, align 16
+  %scalar_shape246 = alloca i64, align 16
+  %scalar_data244 = alloca float, align 16
+  %pred2 = alloca i64, align 16
+  %logits2_flat = alloca ptr, align 16
+  %dims_alloca235 = alloca [2 x i64], align 8
+  %logits2 = alloca ptr, align 16
+  %input2 = alloca ptr, align 16
+  %dims_alloca226 = alloca [2 x i64], align 8
+  %data2 = alloca ptr, align 16
+  %val_pred1 = alloca float, align 16
+  %scalar_shape198 = alloca i64, align 16
+  %scalar_data197 = alloca float, align 16
+  %scalar_shape = alloca i64, align 16
+  %scalar_data = alloca float, align 16
+  %pred1 = alloca i64, align 16
+  %logits1_flat = alloca ptr, align 16
+  %dims_alloca190 = alloca [2 x i64], align 8
+  %logits1 = alloca ptr, align 16
+  %input1 = alloca ptr, align 16
+  %dims_alloca = alloca [2 x i64], align 8
+  %data1 = alloca ptr, align 16
+  %val_pad = alloca float, align 16
+  %x5 = alloca float, align 16
+  %x4 = alloca float, align 16
+  %x3 = alloca float, align 16
+  %x2 = alloca float, align 16
+  %x1 = alloca float, align 16
+  %x0 = alloca float, align 16
   %model = alloca ptr, align 16
   %d_model = alloca i64, align 16
   %vocab_size = alloca i64, align 16
   call void @tl_mem_enter_scope()
-  call void @tl_arena_init(i64 307200)
+  call void @tl_arena_init(i64 2819072)
   store i64 13, ptr %vocab_size, align 8
   store i64 128, ptr %d_model, align 8
+  call void @tl_print_string(ptr @str_literal.105)
   %vocab_size1 = load i64, ptr %vocab_size, align 8
   %d_model2 = load i64, ptr %d_model, align 8
   %static_call = call ptr @tl_GPT_new(i64 %vocab_size1, i64 %d_model2)
   call void @tl_mem_unregister(ptr %static_call)
   store ptr %static_call, ptr %model, align 8
-  br i1 true, label %then, label %else
-
-then:                                             ; preds = %entry
-  call void @tl_mem_enter_scope()
-  call void @tl_print_string(ptr @str_literal.105)
+  call void @tl_print_string(ptr @str_literal.106)
+  call void @tl_print_string(ptr @str_literal.107)
   %model3 = load ptr, ptr %model, align 8
   %w = getelementptr inbounds %GPT, ptr %model3, i32 0, i32 0
   %sub_ptr = load ptr, ptr %w, align 8
@@ -3730,1288 +3383,1271 @@ then:                                             ; preds = %entry
   %sub_ptr6 = load ptr, ptr %wp, align 8
   %w7 = getelementptr inbounds %Embedding, ptr %sub_ptr6, i32 0, i32 0
   %w8 = load ptr, ptr %w7, align 8
-  call void @tl_add_parameter(ptr @key_str.106, ptr %w8)
+  call void @tl_add_parameter(ptr @key_str.108, ptr %w8)
   %b1 = getelementptr inbounds %GPT, ptr %model3, i32 0, i32 2
   %sub_ptr9 = load ptr, ptr %b1, align 8
   %l1 = getelementptr inbounds %Block, ptr %sub_ptr9, i32 0, i32 0
   %sub_ptr10 = load ptr, ptr %l1, align 8
   %w11 = getelementptr inbounds %LayerNorm, ptr %sub_ptr10, i32 0, i32 0
   %w12 = load ptr, ptr %w11, align 8
-  call void @tl_add_parameter(ptr @key_str.107, ptr %w12)
+  call void @tl_add_parameter(ptr @key_str.109, ptr %w12)
   %b = getelementptr inbounds %LayerNorm, ptr %sub_ptr10, i32 0, i32 1
   %b13 = load ptr, ptr %b, align 8
-  call void @tl_add_parameter(ptr @key_str.108, ptr %b13)
+  call void @tl_add_parameter(ptr @key_str.110, ptr %b13)
   %a = getelementptr inbounds %Block, ptr %sub_ptr9, i32 0, i32 1
   %sub_ptr14 = load ptr, ptr %a, align 8
   %q_proj = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr14, i32 0, i32 0
   %sub_ptr15 = load ptr, ptr %q_proj, align 8
   %W = getelementptr inbounds %Linear, ptr %sub_ptr15, i32 0, i32 0
   %W16 = load ptr, ptr %W, align 8
-  call void @tl_add_parameter(ptr @key_str.109, ptr %W16)
+  call void @tl_add_parameter(ptr @key_str.111, ptr %W16)
   %b17 = getelementptr inbounds %Linear, ptr %sub_ptr15, i32 0, i32 1
   %b18 = load ptr, ptr %b17, align 8
-  call void @tl_add_parameter(ptr @key_str.110, ptr %b18)
+  call void @tl_add_parameter(ptr @key_str.112, ptr %b18)
   %k_proj = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr14, i32 0, i32 1
   %sub_ptr19 = load ptr, ptr %k_proj, align 8
   %W20 = getelementptr inbounds %Linear, ptr %sub_ptr19, i32 0, i32 0
   %W21 = load ptr, ptr %W20, align 8
-  call void @tl_add_parameter(ptr @key_str.111, ptr %W21)
+  call void @tl_add_parameter(ptr @key_str.113, ptr %W21)
   %b22 = getelementptr inbounds %Linear, ptr %sub_ptr19, i32 0, i32 1
   %b23 = load ptr, ptr %b22, align 8
-  call void @tl_add_parameter(ptr @key_str.112, ptr %b23)
+  call void @tl_add_parameter(ptr @key_str.114, ptr %b23)
   %v_proj = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr14, i32 0, i32 2
   %sub_ptr24 = load ptr, ptr %v_proj, align 8
   %W25 = getelementptr inbounds %Linear, ptr %sub_ptr24, i32 0, i32 0
   %W26 = load ptr, ptr %W25, align 8
-  call void @tl_add_parameter(ptr @key_str.113, ptr %W26)
+  call void @tl_add_parameter(ptr @key_str.115, ptr %W26)
   %b27 = getelementptr inbounds %Linear, ptr %sub_ptr24, i32 0, i32 1
   %b28 = load ptr, ptr %b27, align 8
-  call void @tl_add_parameter(ptr @key_str.114, ptr %b28)
+  call void @tl_add_parameter(ptr @key_str.116, ptr %b28)
   %p_proj = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr14, i32 0, i32 3
   %sub_ptr29 = load ptr, ptr %p_proj, align 8
   %W30 = getelementptr inbounds %Linear, ptr %sub_ptr29, i32 0, i32 0
   %W31 = load ptr, ptr %W30, align 8
-  call void @tl_add_parameter(ptr @key_str.115, ptr %W31)
+  call void @tl_add_parameter(ptr @key_str.117, ptr %W31)
   %b32 = getelementptr inbounds %Linear, ptr %sub_ptr29, i32 0, i32 1
   %b33 = load ptr, ptr %b32, align 8
-  call void @tl_add_parameter(ptr @key_str.116, ptr %b33)
+  call void @tl_add_parameter(ptr @key_str.118, ptr %b33)
   %l2 = getelementptr inbounds %Block, ptr %sub_ptr9, i32 0, i32 2
   %sub_ptr34 = load ptr, ptr %l2, align 8
   %w35 = getelementptr inbounds %LayerNorm, ptr %sub_ptr34, i32 0, i32 0
   %w36 = load ptr, ptr %w35, align 8
-  call void @tl_add_parameter(ptr @key_str.117, ptr %w36)
+  call void @tl_add_parameter(ptr @key_str.119, ptr %w36)
   %b37 = getelementptr inbounds %LayerNorm, ptr %sub_ptr34, i32 0, i32 1
   %b38 = load ptr, ptr %b37, align 8
-  call void @tl_add_parameter(ptr @key_str.118, ptr %b38)
+  call void @tl_add_parameter(ptr @key_str.120, ptr %b38)
   %m = getelementptr inbounds %Block, ptr %sub_ptr9, i32 0, i32 3
   %sub_ptr39 = load ptr, ptr %m, align 8
   %f = getelementptr inbounds %MLP, ptr %sub_ptr39, i32 0, i32 0
   %sub_ptr40 = load ptr, ptr %f, align 8
   %W41 = getelementptr inbounds %Linear, ptr %sub_ptr40, i32 0, i32 0
   %W42 = load ptr, ptr %W41, align 8
-  call void @tl_add_parameter(ptr @key_str.119, ptr %W42)
+  call void @tl_add_parameter(ptr @key_str.121, ptr %W42)
   %b43 = getelementptr inbounds %Linear, ptr %sub_ptr40, i32 0, i32 1
   %b44 = load ptr, ptr %b43, align 8
-  call void @tl_add_parameter(ptr @key_str.120, ptr %b44)
+  call void @tl_add_parameter(ptr @key_str.122, ptr %b44)
   %p = getelementptr inbounds %MLP, ptr %sub_ptr39, i32 0, i32 1
   %sub_ptr45 = load ptr, ptr %p, align 8
   %W46 = getelementptr inbounds %Linear, ptr %sub_ptr45, i32 0, i32 0
   %W47 = load ptr, ptr %W46, align 8
-  call void @tl_add_parameter(ptr @key_str.121, ptr %W47)
+  call void @tl_add_parameter(ptr @key_str.123, ptr %W47)
   %b48 = getelementptr inbounds %Linear, ptr %sub_ptr45, i32 0, i32 1
   %b49 = load ptr, ptr %b48, align 8
-  call void @tl_add_parameter(ptr @key_str.122, ptr %b49)
+  call void @tl_add_parameter(ptr @key_str.124, ptr %b49)
   %b2 = getelementptr inbounds %GPT, ptr %model3, i32 0, i32 3
   %sub_ptr50 = load ptr, ptr %b2, align 8
   %l151 = getelementptr inbounds %Block, ptr %sub_ptr50, i32 0, i32 0
   %sub_ptr52 = load ptr, ptr %l151, align 8
   %w53 = getelementptr inbounds %LayerNorm, ptr %sub_ptr52, i32 0, i32 0
   %w54 = load ptr, ptr %w53, align 8
-  call void @tl_add_parameter(ptr @key_str.123, ptr %w54)
+  call void @tl_add_parameter(ptr @key_str.125, ptr %w54)
   %b55 = getelementptr inbounds %LayerNorm, ptr %sub_ptr52, i32 0, i32 1
   %b56 = load ptr, ptr %b55, align 8
-  call void @tl_add_parameter(ptr @key_str.124, ptr %b56)
+  call void @tl_add_parameter(ptr @key_str.126, ptr %b56)
   %a57 = getelementptr inbounds %Block, ptr %sub_ptr50, i32 0, i32 1
   %sub_ptr58 = load ptr, ptr %a57, align 8
   %q_proj59 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr58, i32 0, i32 0
   %sub_ptr60 = load ptr, ptr %q_proj59, align 8
   %W61 = getelementptr inbounds %Linear, ptr %sub_ptr60, i32 0, i32 0
   %W62 = load ptr, ptr %W61, align 8
-  call void @tl_add_parameter(ptr @key_str.125, ptr %W62)
+  call void @tl_add_parameter(ptr @key_str.127, ptr %W62)
   %b63 = getelementptr inbounds %Linear, ptr %sub_ptr60, i32 0, i32 1
   %b64 = load ptr, ptr %b63, align 8
-  call void @tl_add_parameter(ptr @key_str.126, ptr %b64)
+  call void @tl_add_parameter(ptr @key_str.128, ptr %b64)
   %k_proj65 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr58, i32 0, i32 1
   %sub_ptr66 = load ptr, ptr %k_proj65, align 8
   %W67 = getelementptr inbounds %Linear, ptr %sub_ptr66, i32 0, i32 0
   %W68 = load ptr, ptr %W67, align 8
-  call void @tl_add_parameter(ptr @key_str.127, ptr %W68)
+  call void @tl_add_parameter(ptr @key_str.129, ptr %W68)
   %b69 = getelementptr inbounds %Linear, ptr %sub_ptr66, i32 0, i32 1
   %b70 = load ptr, ptr %b69, align 8
-  call void @tl_add_parameter(ptr @key_str.128, ptr %b70)
+  call void @tl_add_parameter(ptr @key_str.130, ptr %b70)
   %v_proj71 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr58, i32 0, i32 2
   %sub_ptr72 = load ptr, ptr %v_proj71, align 8
   %W73 = getelementptr inbounds %Linear, ptr %sub_ptr72, i32 0, i32 0
   %W74 = load ptr, ptr %W73, align 8
-  call void @tl_add_parameter(ptr @key_str.129, ptr %W74)
+  call void @tl_add_parameter(ptr @key_str.131, ptr %W74)
   %b75 = getelementptr inbounds %Linear, ptr %sub_ptr72, i32 0, i32 1
   %b76 = load ptr, ptr %b75, align 8
-  call void @tl_add_parameter(ptr @key_str.130, ptr %b76)
+  call void @tl_add_parameter(ptr @key_str.132, ptr %b76)
   %p_proj77 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr58, i32 0, i32 3
   %sub_ptr78 = load ptr, ptr %p_proj77, align 8
   %W79 = getelementptr inbounds %Linear, ptr %sub_ptr78, i32 0, i32 0
   %W80 = load ptr, ptr %W79, align 8
-  call void @tl_add_parameter(ptr @key_str.131, ptr %W80)
+  call void @tl_add_parameter(ptr @key_str.133, ptr %W80)
   %b81 = getelementptr inbounds %Linear, ptr %sub_ptr78, i32 0, i32 1
   %b82 = load ptr, ptr %b81, align 8
-  call void @tl_add_parameter(ptr @key_str.132, ptr %b82)
+  call void @tl_add_parameter(ptr @key_str.134, ptr %b82)
   %l283 = getelementptr inbounds %Block, ptr %sub_ptr50, i32 0, i32 2
   %sub_ptr84 = load ptr, ptr %l283, align 8
   %w85 = getelementptr inbounds %LayerNorm, ptr %sub_ptr84, i32 0, i32 0
   %w86 = load ptr, ptr %w85, align 8
-  call void @tl_add_parameter(ptr @key_str.133, ptr %w86)
+  call void @tl_add_parameter(ptr @key_str.135, ptr %w86)
   %b87 = getelementptr inbounds %LayerNorm, ptr %sub_ptr84, i32 0, i32 1
   %b88 = load ptr, ptr %b87, align 8
-  call void @tl_add_parameter(ptr @key_str.134, ptr %b88)
+  call void @tl_add_parameter(ptr @key_str.136, ptr %b88)
   %m89 = getelementptr inbounds %Block, ptr %sub_ptr50, i32 0, i32 3
   %sub_ptr90 = load ptr, ptr %m89, align 8
   %f91 = getelementptr inbounds %MLP, ptr %sub_ptr90, i32 0, i32 0
   %sub_ptr92 = load ptr, ptr %f91, align 8
   %W93 = getelementptr inbounds %Linear, ptr %sub_ptr92, i32 0, i32 0
   %W94 = load ptr, ptr %W93, align 8
-  call void @tl_add_parameter(ptr @key_str.135, ptr %W94)
+  call void @tl_add_parameter(ptr @key_str.137, ptr %W94)
   %b95 = getelementptr inbounds %Linear, ptr %sub_ptr92, i32 0, i32 1
   %b96 = load ptr, ptr %b95, align 8
-  call void @tl_add_parameter(ptr @key_str.136, ptr %b96)
+  call void @tl_add_parameter(ptr @key_str.138, ptr %b96)
   %p97 = getelementptr inbounds %MLP, ptr %sub_ptr90, i32 0, i32 1
   %sub_ptr98 = load ptr, ptr %p97, align 8
   %W99 = getelementptr inbounds %Linear, ptr %sub_ptr98, i32 0, i32 0
   %W100 = load ptr, ptr %W99, align 8
-  call void @tl_add_parameter(ptr @key_str.137, ptr %W100)
+  call void @tl_add_parameter(ptr @key_str.139, ptr %W100)
   %b101 = getelementptr inbounds %Linear, ptr %sub_ptr98, i32 0, i32 1
   %b102 = load ptr, ptr %b101, align 8
-  call void @tl_add_parameter(ptr @key_str.138, ptr %b102)
+  call void @tl_add_parameter(ptr @key_str.140, ptr %b102)
   %b3 = getelementptr inbounds %GPT, ptr %model3, i32 0, i32 4
   %sub_ptr103 = load ptr, ptr %b3, align 8
   %l1104 = getelementptr inbounds %Block, ptr %sub_ptr103, i32 0, i32 0
   %sub_ptr105 = load ptr, ptr %l1104, align 8
   %w106 = getelementptr inbounds %LayerNorm, ptr %sub_ptr105, i32 0, i32 0
   %w107 = load ptr, ptr %w106, align 8
-  call void @tl_add_parameter(ptr @key_str.139, ptr %w107)
+  call void @tl_add_parameter(ptr @key_str.141, ptr %w107)
   %b108 = getelementptr inbounds %LayerNorm, ptr %sub_ptr105, i32 0, i32 1
   %b109 = load ptr, ptr %b108, align 8
-  call void @tl_add_parameter(ptr @key_str.140, ptr %b109)
+  call void @tl_add_parameter(ptr @key_str.142, ptr %b109)
   %a110 = getelementptr inbounds %Block, ptr %sub_ptr103, i32 0, i32 1
   %sub_ptr111 = load ptr, ptr %a110, align 8
   %q_proj112 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr111, i32 0, i32 0
   %sub_ptr113 = load ptr, ptr %q_proj112, align 8
   %W114 = getelementptr inbounds %Linear, ptr %sub_ptr113, i32 0, i32 0
   %W115 = load ptr, ptr %W114, align 8
-  call void @tl_add_parameter(ptr @key_str.141, ptr %W115)
+  call void @tl_add_parameter(ptr @key_str.143, ptr %W115)
   %b116 = getelementptr inbounds %Linear, ptr %sub_ptr113, i32 0, i32 1
   %b117 = load ptr, ptr %b116, align 8
-  call void @tl_add_parameter(ptr @key_str.142, ptr %b117)
+  call void @tl_add_parameter(ptr @key_str.144, ptr %b117)
   %k_proj118 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr111, i32 0, i32 1
   %sub_ptr119 = load ptr, ptr %k_proj118, align 8
   %W120 = getelementptr inbounds %Linear, ptr %sub_ptr119, i32 0, i32 0
   %W121 = load ptr, ptr %W120, align 8
-  call void @tl_add_parameter(ptr @key_str.143, ptr %W121)
+  call void @tl_add_parameter(ptr @key_str.145, ptr %W121)
   %b122 = getelementptr inbounds %Linear, ptr %sub_ptr119, i32 0, i32 1
   %b123 = load ptr, ptr %b122, align 8
-  call void @tl_add_parameter(ptr @key_str.144, ptr %b123)
+  call void @tl_add_parameter(ptr @key_str.146, ptr %b123)
   %v_proj124 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr111, i32 0, i32 2
   %sub_ptr125 = load ptr, ptr %v_proj124, align 8
   %W126 = getelementptr inbounds %Linear, ptr %sub_ptr125, i32 0, i32 0
   %W127 = load ptr, ptr %W126, align 8
-  call void @tl_add_parameter(ptr @key_str.145, ptr %W127)
+  call void @tl_add_parameter(ptr @key_str.147, ptr %W127)
   %b128 = getelementptr inbounds %Linear, ptr %sub_ptr125, i32 0, i32 1
   %b129 = load ptr, ptr %b128, align 8
-  call void @tl_add_parameter(ptr @key_str.146, ptr %b129)
+  call void @tl_add_parameter(ptr @key_str.148, ptr %b129)
   %p_proj130 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr111, i32 0, i32 3
   %sub_ptr131 = load ptr, ptr %p_proj130, align 8
   %W132 = getelementptr inbounds %Linear, ptr %sub_ptr131, i32 0, i32 0
   %W133 = load ptr, ptr %W132, align 8
-  call void @tl_add_parameter(ptr @key_str.147, ptr %W133)
+  call void @tl_add_parameter(ptr @key_str.149, ptr %W133)
   %b134 = getelementptr inbounds %Linear, ptr %sub_ptr131, i32 0, i32 1
   %b135 = load ptr, ptr %b134, align 8
-  call void @tl_add_parameter(ptr @key_str.148, ptr %b135)
+  call void @tl_add_parameter(ptr @key_str.150, ptr %b135)
   %l2136 = getelementptr inbounds %Block, ptr %sub_ptr103, i32 0, i32 2
   %sub_ptr137 = load ptr, ptr %l2136, align 8
   %w138 = getelementptr inbounds %LayerNorm, ptr %sub_ptr137, i32 0, i32 0
   %w139 = load ptr, ptr %w138, align 8
-  call void @tl_add_parameter(ptr @key_str.149, ptr %w139)
+  call void @tl_add_parameter(ptr @key_str.151, ptr %w139)
   %b140 = getelementptr inbounds %LayerNorm, ptr %sub_ptr137, i32 0, i32 1
   %b141 = load ptr, ptr %b140, align 8
-  call void @tl_add_parameter(ptr @key_str.150, ptr %b141)
+  call void @tl_add_parameter(ptr @key_str.152, ptr %b141)
   %m142 = getelementptr inbounds %Block, ptr %sub_ptr103, i32 0, i32 3
   %sub_ptr143 = load ptr, ptr %m142, align 8
   %f144 = getelementptr inbounds %MLP, ptr %sub_ptr143, i32 0, i32 0
   %sub_ptr145 = load ptr, ptr %f144, align 8
   %W146 = getelementptr inbounds %Linear, ptr %sub_ptr145, i32 0, i32 0
   %W147 = load ptr, ptr %W146, align 8
-  call void @tl_add_parameter(ptr @key_str.151, ptr %W147)
+  call void @tl_add_parameter(ptr @key_str.153, ptr %W147)
   %b148 = getelementptr inbounds %Linear, ptr %sub_ptr145, i32 0, i32 1
   %b149 = load ptr, ptr %b148, align 8
-  call void @tl_add_parameter(ptr @key_str.152, ptr %b149)
+  call void @tl_add_parameter(ptr @key_str.154, ptr %b149)
   %p150 = getelementptr inbounds %MLP, ptr %sub_ptr143, i32 0, i32 1
   %sub_ptr151 = load ptr, ptr %p150, align 8
   %W152 = getelementptr inbounds %Linear, ptr %sub_ptr151, i32 0, i32 0
   %W153 = load ptr, ptr %W152, align 8
-  call void @tl_add_parameter(ptr @key_str.153, ptr %W153)
+  call void @tl_add_parameter(ptr @key_str.155, ptr %W153)
   %b154 = getelementptr inbounds %Linear, ptr %sub_ptr151, i32 0, i32 1
   %b155 = load ptr, ptr %b154, align 8
-  call void @tl_add_parameter(ptr @key_str.154, ptr %b155)
+  call void @tl_add_parameter(ptr @key_str.156, ptr %b155)
   %l = getelementptr inbounds %GPT, ptr %model3, i32 0, i32 5
   %sub_ptr156 = load ptr, ptr %l, align 8
   %w157 = getelementptr inbounds %LayerNorm, ptr %sub_ptr156, i32 0, i32 0
   %w158 = load ptr, ptr %w157, align 8
-  call void @tl_add_parameter(ptr @key_str.155, ptr %w158)
+  call void @tl_add_parameter(ptr @key_str.157, ptr %w158)
   %b159 = getelementptr inbounds %LayerNorm, ptr %sub_ptr156, i32 0, i32 1
   %b160 = load ptr, ptr %b159, align 8
-  call void @tl_add_parameter(ptr @key_str.156, ptr %b160)
+  call void @tl_add_parameter(ptr @key_str.158, ptr %b160)
   %h = getelementptr inbounds %GPT, ptr %model3, i32 0, i32 6
   %sub_ptr161 = load ptr, ptr %h, align 8
   %W162 = getelementptr inbounds %Linear, ptr %sub_ptr161, i32 0, i32 0
   %W163 = load ptr, ptr %W162, align 8
-  call void @tl_add_parameter(ptr @key_str.157, ptr %W163)
+  call void @tl_add_parameter(ptr @key_str.159, ptr %W163)
   %b164 = getelementptr inbounds %Linear, ptr %sub_ptr161, i32 0, i32 1
   %b165 = load ptr, ptr %b164, align 8
-  call void @tl_add_parameter(ptr @key_str.158, ptr %b165)
-  call void @tl_load_all_params(ptr @str_literal.159)
-  call void @tl_mem_exit_scope()
-  br label %merge
-
-else:                                             ; preds = %entry
-  call void @tl_mem_enter_scope()
-  call void @tl_mem_exit_scope()
-  br label %merge
-
-merge:                                            ; preds = %else, %then
-  store float 0x3F40624DE0000000, ptr %lr, align 4
-  store i64 20, ptr %epochs, align 8
-  call void @tl_print_string(ptr @str_literal.160)
-  %epochs166 = load i64, ptr %epochs, align 8
-  br label %for_header
-
-for_header:                                       ; preds = %for_body, %merge
-  %for_idx = phi i64 [ 0, %merge ], [ %next_idx, %for_body ]
-  %for_cond = icmp slt i64 %for_idx, %epochs166
-  br i1 %for_cond, label %for_body, label %for_end
-
-for_body:                                         ; preds = %for_header
-  call void @tl_mem_enter_scope()
-  store i64 %for_idx, ptr %epoch, align 8
-  call void @tl_print_string(ptr @str_literal.161)
-  %epoch167 = load i64, ptr %epoch, align 8
-  call void @tl_print_i64(i64 %epoch167)
-  %model168 = load ptr, ptr %model, align 8
-  %lr169 = load float, ptr %lr, align 4
-  %epoch170 = load i64, ptr %epoch, align 8
-  call void @train_epoch(ptr %model168, float %lr169, i64 %epoch170)
-  %model171 = load ptr, ptr %model, align 8
-  %w172 = getelementptr inbounds %GPT, ptr %model171, i32 0, i32 0
-  %sub_ptr173 = load ptr, ptr %w172, align 8
-  %w174 = getelementptr inbounds %Embedding, ptr %sub_ptr173, i32 0, i32 0
-  %w175 = load ptr, ptr %w174, align 8
-  call void @tl_add_parameter(ptr @key_str.162, ptr %w175)
-  %wp176 = getelementptr inbounds %GPT, ptr %model171, i32 0, i32 1
-  %sub_ptr177 = load ptr, ptr %wp176, align 8
-  %w178 = getelementptr inbounds %Embedding, ptr %sub_ptr177, i32 0, i32 0
-  %w179 = load ptr, ptr %w178, align 8
-  call void @tl_add_parameter(ptr @key_str.163, ptr %w179)
-  %b1180 = getelementptr inbounds %GPT, ptr %model171, i32 0, i32 2
-  %sub_ptr181 = load ptr, ptr %b1180, align 8
-  %l1182 = getelementptr inbounds %Block, ptr %sub_ptr181, i32 0, i32 0
-  %sub_ptr183 = load ptr, ptr %l1182, align 8
-  %w184 = getelementptr inbounds %LayerNorm, ptr %sub_ptr183, i32 0, i32 0
-  %w185 = load ptr, ptr %w184, align 8
-  call void @tl_add_parameter(ptr @key_str.164, ptr %w185)
-  %b186 = getelementptr inbounds %LayerNorm, ptr %sub_ptr183, i32 0, i32 1
-  %b187 = load ptr, ptr %b186, align 8
-  call void @tl_add_parameter(ptr @key_str.165, ptr %b187)
-  %a188 = getelementptr inbounds %Block, ptr %sub_ptr181, i32 0, i32 1
-  %sub_ptr189 = load ptr, ptr %a188, align 8
-  %q_proj190 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr189, i32 0, i32 0
-  %sub_ptr191 = load ptr, ptr %q_proj190, align 8
-  %W192 = getelementptr inbounds %Linear, ptr %sub_ptr191, i32 0, i32 0
-  %W193 = load ptr, ptr %W192, align 8
-  call void @tl_add_parameter(ptr @key_str.166, ptr %W193)
-  %b194 = getelementptr inbounds %Linear, ptr %sub_ptr191, i32 0, i32 1
-  %b195 = load ptr, ptr %b194, align 8
-  call void @tl_add_parameter(ptr @key_str.167, ptr %b195)
-  %k_proj196 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr189, i32 0, i32 1
-  %sub_ptr197 = load ptr, ptr %k_proj196, align 8
-  %W198 = getelementptr inbounds %Linear, ptr %sub_ptr197, i32 0, i32 0
-  %W199 = load ptr, ptr %W198, align 8
-  call void @tl_add_parameter(ptr @key_str.168, ptr %W199)
-  %b200 = getelementptr inbounds %Linear, ptr %sub_ptr197, i32 0, i32 1
-  %b201 = load ptr, ptr %b200, align 8
-  call void @tl_add_parameter(ptr @key_str.169, ptr %b201)
-  %v_proj202 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr189, i32 0, i32 2
-  %sub_ptr203 = load ptr, ptr %v_proj202, align 8
-  %W204 = getelementptr inbounds %Linear, ptr %sub_ptr203, i32 0, i32 0
-  %W205 = load ptr, ptr %W204, align 8
-  call void @tl_add_parameter(ptr @key_str.170, ptr %W205)
-  %b206 = getelementptr inbounds %Linear, ptr %sub_ptr203, i32 0, i32 1
-  %b207 = load ptr, ptr %b206, align 8
-  call void @tl_add_parameter(ptr @key_str.171, ptr %b207)
-  %p_proj208 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr189, i32 0, i32 3
-  %sub_ptr209 = load ptr, ptr %p_proj208, align 8
-  %W210 = getelementptr inbounds %Linear, ptr %sub_ptr209, i32 0, i32 0
-  %W211 = load ptr, ptr %W210, align 8
-  call void @tl_add_parameter(ptr @key_str.172, ptr %W211)
-  %b212 = getelementptr inbounds %Linear, ptr %sub_ptr209, i32 0, i32 1
-  %b213 = load ptr, ptr %b212, align 8
-  call void @tl_add_parameter(ptr @key_str.173, ptr %b213)
-  %l2214 = getelementptr inbounds %Block, ptr %sub_ptr181, i32 0, i32 2
-  %sub_ptr215 = load ptr, ptr %l2214, align 8
-  %w216 = getelementptr inbounds %LayerNorm, ptr %sub_ptr215, i32 0, i32 0
-  %w217 = load ptr, ptr %w216, align 8
-  call void @tl_add_parameter(ptr @key_str.174, ptr %w217)
-  %b218 = getelementptr inbounds %LayerNorm, ptr %sub_ptr215, i32 0, i32 1
-  %b219 = load ptr, ptr %b218, align 8
-  call void @tl_add_parameter(ptr @key_str.175, ptr %b219)
-  %m220 = getelementptr inbounds %Block, ptr %sub_ptr181, i32 0, i32 3
-  %sub_ptr221 = load ptr, ptr %m220, align 8
-  %f222 = getelementptr inbounds %MLP, ptr %sub_ptr221, i32 0, i32 0
-  %sub_ptr223 = load ptr, ptr %f222, align 8
-  %W224 = getelementptr inbounds %Linear, ptr %sub_ptr223, i32 0, i32 0
-  %W225 = load ptr, ptr %W224, align 8
-  call void @tl_add_parameter(ptr @key_str.176, ptr %W225)
-  %b226 = getelementptr inbounds %Linear, ptr %sub_ptr223, i32 0, i32 1
-  %b227 = load ptr, ptr %b226, align 8
-  call void @tl_add_parameter(ptr @key_str.177, ptr %b227)
-  %p228 = getelementptr inbounds %MLP, ptr %sub_ptr221, i32 0, i32 1
-  %sub_ptr229 = load ptr, ptr %p228, align 8
-  %W230 = getelementptr inbounds %Linear, ptr %sub_ptr229, i32 0, i32 0
-  %W231 = load ptr, ptr %W230, align 8
-  call void @tl_add_parameter(ptr @key_str.178, ptr %W231)
-  %b232 = getelementptr inbounds %Linear, ptr %sub_ptr229, i32 0, i32 1
-  %b233 = load ptr, ptr %b232, align 8
-  call void @tl_add_parameter(ptr @key_str.179, ptr %b233)
-  %b2234 = getelementptr inbounds %GPT, ptr %model171, i32 0, i32 3
-  %sub_ptr235 = load ptr, ptr %b2234, align 8
-  %l1236 = getelementptr inbounds %Block, ptr %sub_ptr235, i32 0, i32 0
-  %sub_ptr237 = load ptr, ptr %l1236, align 8
-  %w238 = getelementptr inbounds %LayerNorm, ptr %sub_ptr237, i32 0, i32 0
-  %w239 = load ptr, ptr %w238, align 8
-  call void @tl_add_parameter(ptr @key_str.180, ptr %w239)
-  %b240 = getelementptr inbounds %LayerNorm, ptr %sub_ptr237, i32 0, i32 1
-  %b241 = load ptr, ptr %b240, align 8
-  call void @tl_add_parameter(ptr @key_str.181, ptr %b241)
-  %a242 = getelementptr inbounds %Block, ptr %sub_ptr235, i32 0, i32 1
-  %sub_ptr243 = load ptr, ptr %a242, align 8
-  %q_proj244 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr243, i32 0, i32 0
-  %sub_ptr245 = load ptr, ptr %q_proj244, align 8
-  %W246 = getelementptr inbounds %Linear, ptr %sub_ptr245, i32 0, i32 0
-  %W247 = load ptr, ptr %W246, align 8
-  call void @tl_add_parameter(ptr @key_str.182, ptr %W247)
-  %b248 = getelementptr inbounds %Linear, ptr %sub_ptr245, i32 0, i32 1
-  %b249 = load ptr, ptr %b248, align 8
-  call void @tl_add_parameter(ptr @key_str.183, ptr %b249)
-  %k_proj250 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr243, i32 0, i32 1
-  %sub_ptr251 = load ptr, ptr %k_proj250, align 8
-  %W252 = getelementptr inbounds %Linear, ptr %sub_ptr251, i32 0, i32 0
-  %W253 = load ptr, ptr %W252, align 8
-  call void @tl_add_parameter(ptr @key_str.184, ptr %W253)
-  %b254 = getelementptr inbounds %Linear, ptr %sub_ptr251, i32 0, i32 1
-  %b255 = load ptr, ptr %b254, align 8
-  call void @tl_add_parameter(ptr @key_str.185, ptr %b255)
-  %v_proj256 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr243, i32 0, i32 2
-  %sub_ptr257 = load ptr, ptr %v_proj256, align 8
-  %W258 = getelementptr inbounds %Linear, ptr %sub_ptr257, i32 0, i32 0
-  %W259 = load ptr, ptr %W258, align 8
-  call void @tl_add_parameter(ptr @key_str.186, ptr %W259)
-  %b260 = getelementptr inbounds %Linear, ptr %sub_ptr257, i32 0, i32 1
-  %b261 = load ptr, ptr %b260, align 8
-  call void @tl_add_parameter(ptr @key_str.187, ptr %b261)
-  %p_proj262 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr243, i32 0, i32 3
-  %sub_ptr263 = load ptr, ptr %p_proj262, align 8
-  %W264 = getelementptr inbounds %Linear, ptr %sub_ptr263, i32 0, i32 0
-  %W265 = load ptr, ptr %W264, align 8
-  call void @tl_add_parameter(ptr @key_str.188, ptr %W265)
-  %b266 = getelementptr inbounds %Linear, ptr %sub_ptr263, i32 0, i32 1
-  %b267 = load ptr, ptr %b266, align 8
-  call void @tl_add_parameter(ptr @key_str.189, ptr %b267)
-  %l2268 = getelementptr inbounds %Block, ptr %sub_ptr235, i32 0, i32 2
-  %sub_ptr269 = load ptr, ptr %l2268, align 8
-  %w270 = getelementptr inbounds %LayerNorm, ptr %sub_ptr269, i32 0, i32 0
-  %w271 = load ptr, ptr %w270, align 8
-  call void @tl_add_parameter(ptr @key_str.190, ptr %w271)
-  %b272 = getelementptr inbounds %LayerNorm, ptr %sub_ptr269, i32 0, i32 1
-  %b273 = load ptr, ptr %b272, align 8
-  call void @tl_add_parameter(ptr @key_str.191, ptr %b273)
-  %m274 = getelementptr inbounds %Block, ptr %sub_ptr235, i32 0, i32 3
-  %sub_ptr275 = load ptr, ptr %m274, align 8
-  %f276 = getelementptr inbounds %MLP, ptr %sub_ptr275, i32 0, i32 0
-  %sub_ptr277 = load ptr, ptr %f276, align 8
-  %W278 = getelementptr inbounds %Linear, ptr %sub_ptr277, i32 0, i32 0
-  %W279 = load ptr, ptr %W278, align 8
-  call void @tl_add_parameter(ptr @key_str.192, ptr %W279)
-  %b280 = getelementptr inbounds %Linear, ptr %sub_ptr277, i32 0, i32 1
-  %b281 = load ptr, ptr %b280, align 8
-  call void @tl_add_parameter(ptr @key_str.193, ptr %b281)
-  %p282 = getelementptr inbounds %MLP, ptr %sub_ptr275, i32 0, i32 1
-  %sub_ptr283 = load ptr, ptr %p282, align 8
-  %W284 = getelementptr inbounds %Linear, ptr %sub_ptr283, i32 0, i32 0
-  %W285 = load ptr, ptr %W284, align 8
-  call void @tl_add_parameter(ptr @key_str.194, ptr %W285)
-  %b286 = getelementptr inbounds %Linear, ptr %sub_ptr283, i32 0, i32 1
-  %b287 = load ptr, ptr %b286, align 8
-  call void @tl_add_parameter(ptr @key_str.195, ptr %b287)
-  %b3288 = getelementptr inbounds %GPT, ptr %model171, i32 0, i32 4
-  %sub_ptr289 = load ptr, ptr %b3288, align 8
-  %l1290 = getelementptr inbounds %Block, ptr %sub_ptr289, i32 0, i32 0
-  %sub_ptr291 = load ptr, ptr %l1290, align 8
-  %w292 = getelementptr inbounds %LayerNorm, ptr %sub_ptr291, i32 0, i32 0
-  %w293 = load ptr, ptr %w292, align 8
-  call void @tl_add_parameter(ptr @key_str.196, ptr %w293)
-  %b294 = getelementptr inbounds %LayerNorm, ptr %sub_ptr291, i32 0, i32 1
-  %b295 = load ptr, ptr %b294, align 8
-  call void @tl_add_parameter(ptr @key_str.197, ptr %b295)
-  %a296 = getelementptr inbounds %Block, ptr %sub_ptr289, i32 0, i32 1
-  %sub_ptr297 = load ptr, ptr %a296, align 8
-  %q_proj298 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr297, i32 0, i32 0
-  %sub_ptr299 = load ptr, ptr %q_proj298, align 8
-  %W300 = getelementptr inbounds %Linear, ptr %sub_ptr299, i32 0, i32 0
-  %W301 = load ptr, ptr %W300, align 8
-  call void @tl_add_parameter(ptr @key_str.198, ptr %W301)
-  %b302 = getelementptr inbounds %Linear, ptr %sub_ptr299, i32 0, i32 1
-  %b303 = load ptr, ptr %b302, align 8
-  call void @tl_add_parameter(ptr @key_str.199, ptr %b303)
-  %k_proj304 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr297, i32 0, i32 1
-  %sub_ptr305 = load ptr, ptr %k_proj304, align 8
-  %W306 = getelementptr inbounds %Linear, ptr %sub_ptr305, i32 0, i32 0
-  %W307 = load ptr, ptr %W306, align 8
-  call void @tl_add_parameter(ptr @key_str.200, ptr %W307)
-  %b308 = getelementptr inbounds %Linear, ptr %sub_ptr305, i32 0, i32 1
-  %b309 = load ptr, ptr %b308, align 8
-  call void @tl_add_parameter(ptr @key_str.201, ptr %b309)
-  %v_proj310 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr297, i32 0, i32 2
-  %sub_ptr311 = load ptr, ptr %v_proj310, align 8
-  %W312 = getelementptr inbounds %Linear, ptr %sub_ptr311, i32 0, i32 0
-  %W313 = load ptr, ptr %W312, align 8
-  call void @tl_add_parameter(ptr @key_str.202, ptr %W313)
-  %b314 = getelementptr inbounds %Linear, ptr %sub_ptr311, i32 0, i32 1
-  %b315 = load ptr, ptr %b314, align 8
-  call void @tl_add_parameter(ptr @key_str.203, ptr %b315)
-  %p_proj316 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr297, i32 0, i32 3
-  %sub_ptr317 = load ptr, ptr %p_proj316, align 8
-  %W318 = getelementptr inbounds %Linear, ptr %sub_ptr317, i32 0, i32 0
-  %W319 = load ptr, ptr %W318, align 8
-  call void @tl_add_parameter(ptr @key_str.204, ptr %W319)
-  %b320 = getelementptr inbounds %Linear, ptr %sub_ptr317, i32 0, i32 1
-  %b321 = load ptr, ptr %b320, align 8
-  call void @tl_add_parameter(ptr @key_str.205, ptr %b321)
-  %l2322 = getelementptr inbounds %Block, ptr %sub_ptr289, i32 0, i32 2
-  %sub_ptr323 = load ptr, ptr %l2322, align 8
-  %w324 = getelementptr inbounds %LayerNorm, ptr %sub_ptr323, i32 0, i32 0
-  %w325 = load ptr, ptr %w324, align 8
-  call void @tl_add_parameter(ptr @key_str.206, ptr %w325)
-  %b326 = getelementptr inbounds %LayerNorm, ptr %sub_ptr323, i32 0, i32 1
-  %b327 = load ptr, ptr %b326, align 8
-  call void @tl_add_parameter(ptr @key_str.207, ptr %b327)
-  %m328 = getelementptr inbounds %Block, ptr %sub_ptr289, i32 0, i32 3
-  %sub_ptr329 = load ptr, ptr %m328, align 8
-  %f330 = getelementptr inbounds %MLP, ptr %sub_ptr329, i32 0, i32 0
-  %sub_ptr331 = load ptr, ptr %f330, align 8
-  %W332 = getelementptr inbounds %Linear, ptr %sub_ptr331, i32 0, i32 0
-  %W333 = load ptr, ptr %W332, align 8
-  call void @tl_add_parameter(ptr @key_str.208, ptr %W333)
-  %b334 = getelementptr inbounds %Linear, ptr %sub_ptr331, i32 0, i32 1
-  %b335 = load ptr, ptr %b334, align 8
-  call void @tl_add_parameter(ptr @key_str.209, ptr %b335)
-  %p336 = getelementptr inbounds %MLP, ptr %sub_ptr329, i32 0, i32 1
-  %sub_ptr337 = load ptr, ptr %p336, align 8
-  %W338 = getelementptr inbounds %Linear, ptr %sub_ptr337, i32 0, i32 0
-  %W339 = load ptr, ptr %W338, align 8
-  call void @tl_add_parameter(ptr @key_str.210, ptr %W339)
-  %b340 = getelementptr inbounds %Linear, ptr %sub_ptr337, i32 0, i32 1
-  %b341 = load ptr, ptr %b340, align 8
-  call void @tl_add_parameter(ptr @key_str.211, ptr %b341)
-  %l342 = getelementptr inbounds %GPT, ptr %model171, i32 0, i32 5
-  %sub_ptr343 = load ptr, ptr %l342, align 8
-  %w344 = getelementptr inbounds %LayerNorm, ptr %sub_ptr343, i32 0, i32 0
-  %w345 = load ptr, ptr %w344, align 8
-  call void @tl_add_parameter(ptr @key_str.212, ptr %w345)
-  %b346 = getelementptr inbounds %LayerNorm, ptr %sub_ptr343, i32 0, i32 1
-  %b347 = load ptr, ptr %b346, align 8
-  call void @tl_add_parameter(ptr @key_str.213, ptr %b347)
-  %h348 = getelementptr inbounds %GPT, ptr %model171, i32 0, i32 6
-  %sub_ptr349 = load ptr, ptr %h348, align 8
-  %W350 = getelementptr inbounds %Linear, ptr %sub_ptr349, i32 0, i32 0
-  %W351 = load ptr, ptr %W350, align 8
-  call void @tl_add_parameter(ptr @key_str.214, ptr %W351)
-  %b352 = getelementptr inbounds %Linear, ptr %sub_ptr349, i32 0, i32 1
-  %b353 = load ptr, ptr %b352, align 8
-  call void @tl_add_parameter(ptr @key_str.215, ptr %b353)
-  call void @tl_save_all_params(ptr @str_literal.216)
-  call void @tl_mem_exit_scope()
-  %next_idx = add i64 %for_idx, 1
-  br label %for_header
-
-for_end:                                          ; preds = %for_header
-  call void @tl_print_string(ptr @str_literal.217)
-  %model354 = load ptr, ptr %model, align 8
-  %w355 = getelementptr inbounds %GPT, ptr %model354, i32 0, i32 0
-  %sub_ptr356 = load ptr, ptr %w355, align 8
-  %w357 = getelementptr inbounds %Embedding, ptr %sub_ptr356, i32 0, i32 0
-  %w358 = load ptr, ptr %w357, align 8
-  call void @tl_add_parameter(ptr @key_str.218, ptr %w358)
-  %wp359 = getelementptr inbounds %GPT, ptr %model354, i32 0, i32 1
-  %sub_ptr360 = load ptr, ptr %wp359, align 8
-  %w361 = getelementptr inbounds %Embedding, ptr %sub_ptr360, i32 0, i32 0
-  %w362 = load ptr, ptr %w361, align 8
-  call void @tl_add_parameter(ptr @key_str.219, ptr %w362)
-  %b1363 = getelementptr inbounds %GPT, ptr %model354, i32 0, i32 2
-  %sub_ptr364 = load ptr, ptr %b1363, align 8
-  %l1365 = getelementptr inbounds %Block, ptr %sub_ptr364, i32 0, i32 0
-  %sub_ptr366 = load ptr, ptr %l1365, align 8
-  %w367 = getelementptr inbounds %LayerNorm, ptr %sub_ptr366, i32 0, i32 0
-  %w368 = load ptr, ptr %w367, align 8
-  call void @tl_add_parameter(ptr @key_str.220, ptr %w368)
-  %b369 = getelementptr inbounds %LayerNorm, ptr %sub_ptr366, i32 0, i32 1
-  %b370 = load ptr, ptr %b369, align 8
-  call void @tl_add_parameter(ptr @key_str.221, ptr %b370)
-  %a371 = getelementptr inbounds %Block, ptr %sub_ptr364, i32 0, i32 1
-  %sub_ptr372 = load ptr, ptr %a371, align 8
-  %q_proj373 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr372, i32 0, i32 0
-  %sub_ptr374 = load ptr, ptr %q_proj373, align 8
-  %W375 = getelementptr inbounds %Linear, ptr %sub_ptr374, i32 0, i32 0
-  %W376 = load ptr, ptr %W375, align 8
-  call void @tl_add_parameter(ptr @key_str.222, ptr %W376)
-  %b377 = getelementptr inbounds %Linear, ptr %sub_ptr374, i32 0, i32 1
-  %b378 = load ptr, ptr %b377, align 8
-  call void @tl_add_parameter(ptr @key_str.223, ptr %b378)
-  %k_proj379 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr372, i32 0, i32 1
-  %sub_ptr380 = load ptr, ptr %k_proj379, align 8
-  %W381 = getelementptr inbounds %Linear, ptr %sub_ptr380, i32 0, i32 0
-  %W382 = load ptr, ptr %W381, align 8
-  call void @tl_add_parameter(ptr @key_str.224, ptr %W382)
-  %b383 = getelementptr inbounds %Linear, ptr %sub_ptr380, i32 0, i32 1
-  %b384 = load ptr, ptr %b383, align 8
-  call void @tl_add_parameter(ptr @key_str.225, ptr %b384)
-  %v_proj385 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr372, i32 0, i32 2
-  %sub_ptr386 = load ptr, ptr %v_proj385, align 8
-  %W387 = getelementptr inbounds %Linear, ptr %sub_ptr386, i32 0, i32 0
-  %W388 = load ptr, ptr %W387, align 8
-  call void @tl_add_parameter(ptr @key_str.226, ptr %W388)
-  %b389 = getelementptr inbounds %Linear, ptr %sub_ptr386, i32 0, i32 1
-  %b390 = load ptr, ptr %b389, align 8
-  call void @tl_add_parameter(ptr @key_str.227, ptr %b390)
-  %p_proj391 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr372, i32 0, i32 3
-  %sub_ptr392 = load ptr, ptr %p_proj391, align 8
-  %W393 = getelementptr inbounds %Linear, ptr %sub_ptr392, i32 0, i32 0
-  %W394 = load ptr, ptr %W393, align 8
-  call void @tl_add_parameter(ptr @key_str.228, ptr %W394)
-  %b395 = getelementptr inbounds %Linear, ptr %sub_ptr392, i32 0, i32 1
-  %b396 = load ptr, ptr %b395, align 8
-  call void @tl_add_parameter(ptr @key_str.229, ptr %b396)
-  %l2397 = getelementptr inbounds %Block, ptr %sub_ptr364, i32 0, i32 2
-  %sub_ptr398 = load ptr, ptr %l2397, align 8
-  %w399 = getelementptr inbounds %LayerNorm, ptr %sub_ptr398, i32 0, i32 0
-  %w400 = load ptr, ptr %w399, align 8
-  call void @tl_add_parameter(ptr @key_str.230, ptr %w400)
-  %b401 = getelementptr inbounds %LayerNorm, ptr %sub_ptr398, i32 0, i32 1
-  %b402 = load ptr, ptr %b401, align 8
-  call void @tl_add_parameter(ptr @key_str.231, ptr %b402)
-  %m403 = getelementptr inbounds %Block, ptr %sub_ptr364, i32 0, i32 3
-  %sub_ptr404 = load ptr, ptr %m403, align 8
-  %f405 = getelementptr inbounds %MLP, ptr %sub_ptr404, i32 0, i32 0
-  %sub_ptr406 = load ptr, ptr %f405, align 8
-  %W407 = getelementptr inbounds %Linear, ptr %sub_ptr406, i32 0, i32 0
-  %W408 = load ptr, ptr %W407, align 8
-  call void @tl_add_parameter(ptr @key_str.232, ptr %W408)
-  %b409 = getelementptr inbounds %Linear, ptr %sub_ptr406, i32 0, i32 1
-  %b410 = load ptr, ptr %b409, align 8
-  call void @tl_add_parameter(ptr @key_str.233, ptr %b410)
-  %p411 = getelementptr inbounds %MLP, ptr %sub_ptr404, i32 0, i32 1
-  %sub_ptr412 = load ptr, ptr %p411, align 8
-  %W413 = getelementptr inbounds %Linear, ptr %sub_ptr412, i32 0, i32 0
-  %W414 = load ptr, ptr %W413, align 8
-  call void @tl_add_parameter(ptr @key_str.234, ptr %W414)
-  %b415 = getelementptr inbounds %Linear, ptr %sub_ptr412, i32 0, i32 1
-  %b416 = load ptr, ptr %b415, align 8
-  call void @tl_add_parameter(ptr @key_str.235, ptr %b416)
-  %b2417 = getelementptr inbounds %GPT, ptr %model354, i32 0, i32 3
-  %sub_ptr418 = load ptr, ptr %b2417, align 8
-  %l1419 = getelementptr inbounds %Block, ptr %sub_ptr418, i32 0, i32 0
-  %sub_ptr420 = load ptr, ptr %l1419, align 8
-  %w421 = getelementptr inbounds %LayerNorm, ptr %sub_ptr420, i32 0, i32 0
-  %w422 = load ptr, ptr %w421, align 8
-  call void @tl_add_parameter(ptr @key_str.236, ptr %w422)
-  %b423 = getelementptr inbounds %LayerNorm, ptr %sub_ptr420, i32 0, i32 1
-  %b424 = load ptr, ptr %b423, align 8
-  call void @tl_add_parameter(ptr @key_str.237, ptr %b424)
-  %a425 = getelementptr inbounds %Block, ptr %sub_ptr418, i32 0, i32 1
-  %sub_ptr426 = load ptr, ptr %a425, align 8
-  %q_proj427 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr426, i32 0, i32 0
-  %sub_ptr428 = load ptr, ptr %q_proj427, align 8
-  %W429 = getelementptr inbounds %Linear, ptr %sub_ptr428, i32 0, i32 0
-  %W430 = load ptr, ptr %W429, align 8
-  call void @tl_add_parameter(ptr @key_str.238, ptr %W430)
-  %b431 = getelementptr inbounds %Linear, ptr %sub_ptr428, i32 0, i32 1
-  %b432 = load ptr, ptr %b431, align 8
-  call void @tl_add_parameter(ptr @key_str.239, ptr %b432)
-  %k_proj433 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr426, i32 0, i32 1
-  %sub_ptr434 = load ptr, ptr %k_proj433, align 8
-  %W435 = getelementptr inbounds %Linear, ptr %sub_ptr434, i32 0, i32 0
-  %W436 = load ptr, ptr %W435, align 8
-  call void @tl_add_parameter(ptr @key_str.240, ptr %W436)
-  %b437 = getelementptr inbounds %Linear, ptr %sub_ptr434, i32 0, i32 1
-  %b438 = load ptr, ptr %b437, align 8
-  call void @tl_add_parameter(ptr @key_str.241, ptr %b438)
-  %v_proj439 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr426, i32 0, i32 2
-  %sub_ptr440 = load ptr, ptr %v_proj439, align 8
-  %W441 = getelementptr inbounds %Linear, ptr %sub_ptr440, i32 0, i32 0
-  %W442 = load ptr, ptr %W441, align 8
-  call void @tl_add_parameter(ptr @key_str.242, ptr %W442)
-  %b443 = getelementptr inbounds %Linear, ptr %sub_ptr440, i32 0, i32 1
-  %b444 = load ptr, ptr %b443, align 8
-  call void @tl_add_parameter(ptr @key_str.243, ptr %b444)
-  %p_proj445 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr426, i32 0, i32 3
-  %sub_ptr446 = load ptr, ptr %p_proj445, align 8
-  %W447 = getelementptr inbounds %Linear, ptr %sub_ptr446, i32 0, i32 0
-  %W448 = load ptr, ptr %W447, align 8
-  call void @tl_add_parameter(ptr @key_str.244, ptr %W448)
-  %b449 = getelementptr inbounds %Linear, ptr %sub_ptr446, i32 0, i32 1
-  %b450 = load ptr, ptr %b449, align 8
-  call void @tl_add_parameter(ptr @key_str.245, ptr %b450)
-  %l2451 = getelementptr inbounds %Block, ptr %sub_ptr418, i32 0, i32 2
-  %sub_ptr452 = load ptr, ptr %l2451, align 8
-  %w453 = getelementptr inbounds %LayerNorm, ptr %sub_ptr452, i32 0, i32 0
-  %w454 = load ptr, ptr %w453, align 8
-  call void @tl_add_parameter(ptr @key_str.246, ptr %w454)
-  %b455 = getelementptr inbounds %LayerNorm, ptr %sub_ptr452, i32 0, i32 1
-  %b456 = load ptr, ptr %b455, align 8
-  call void @tl_add_parameter(ptr @key_str.247, ptr %b456)
-  %m457 = getelementptr inbounds %Block, ptr %sub_ptr418, i32 0, i32 3
-  %sub_ptr458 = load ptr, ptr %m457, align 8
-  %f459 = getelementptr inbounds %MLP, ptr %sub_ptr458, i32 0, i32 0
-  %sub_ptr460 = load ptr, ptr %f459, align 8
-  %W461 = getelementptr inbounds %Linear, ptr %sub_ptr460, i32 0, i32 0
-  %W462 = load ptr, ptr %W461, align 8
-  call void @tl_add_parameter(ptr @key_str.248, ptr %W462)
-  %b463 = getelementptr inbounds %Linear, ptr %sub_ptr460, i32 0, i32 1
-  %b464 = load ptr, ptr %b463, align 8
-  call void @tl_add_parameter(ptr @key_str.249, ptr %b464)
-  %p465 = getelementptr inbounds %MLP, ptr %sub_ptr458, i32 0, i32 1
-  %sub_ptr466 = load ptr, ptr %p465, align 8
-  %W467 = getelementptr inbounds %Linear, ptr %sub_ptr466, i32 0, i32 0
-  %W468 = load ptr, ptr %W467, align 8
-  call void @tl_add_parameter(ptr @key_str.250, ptr %W468)
-  %b469 = getelementptr inbounds %Linear, ptr %sub_ptr466, i32 0, i32 1
-  %b470 = load ptr, ptr %b469, align 8
-  call void @tl_add_parameter(ptr @key_str.251, ptr %b470)
-  %b3471 = getelementptr inbounds %GPT, ptr %model354, i32 0, i32 4
-  %sub_ptr472 = load ptr, ptr %b3471, align 8
-  %l1473 = getelementptr inbounds %Block, ptr %sub_ptr472, i32 0, i32 0
-  %sub_ptr474 = load ptr, ptr %l1473, align 8
-  %w475 = getelementptr inbounds %LayerNorm, ptr %sub_ptr474, i32 0, i32 0
-  %w476 = load ptr, ptr %w475, align 8
-  call void @tl_add_parameter(ptr @key_str.252, ptr %w476)
-  %b477 = getelementptr inbounds %LayerNorm, ptr %sub_ptr474, i32 0, i32 1
-  %b478 = load ptr, ptr %b477, align 8
-  call void @tl_add_parameter(ptr @key_str.253, ptr %b478)
-  %a479 = getelementptr inbounds %Block, ptr %sub_ptr472, i32 0, i32 1
-  %sub_ptr480 = load ptr, ptr %a479, align 8
-  %q_proj481 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr480, i32 0, i32 0
-  %sub_ptr482 = load ptr, ptr %q_proj481, align 8
-  %W483 = getelementptr inbounds %Linear, ptr %sub_ptr482, i32 0, i32 0
-  %W484 = load ptr, ptr %W483, align 8
-  call void @tl_add_parameter(ptr @key_str.254, ptr %W484)
-  %b485 = getelementptr inbounds %Linear, ptr %sub_ptr482, i32 0, i32 1
-  %b486 = load ptr, ptr %b485, align 8
-  call void @tl_add_parameter(ptr @key_str.255, ptr %b486)
-  %k_proj487 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr480, i32 0, i32 1
-  %sub_ptr488 = load ptr, ptr %k_proj487, align 8
-  %W489 = getelementptr inbounds %Linear, ptr %sub_ptr488, i32 0, i32 0
-  %W490 = load ptr, ptr %W489, align 8
-  call void @tl_add_parameter(ptr @key_str.256, ptr %W490)
-  %b491 = getelementptr inbounds %Linear, ptr %sub_ptr488, i32 0, i32 1
-  %b492 = load ptr, ptr %b491, align 8
-  call void @tl_add_parameter(ptr @key_str.257, ptr %b492)
-  %v_proj493 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr480, i32 0, i32 2
-  %sub_ptr494 = load ptr, ptr %v_proj493, align 8
-  %W495 = getelementptr inbounds %Linear, ptr %sub_ptr494, i32 0, i32 0
-  %W496 = load ptr, ptr %W495, align 8
-  call void @tl_add_parameter(ptr @key_str.258, ptr %W496)
-  %b497 = getelementptr inbounds %Linear, ptr %sub_ptr494, i32 0, i32 1
-  %b498 = load ptr, ptr %b497, align 8
-  call void @tl_add_parameter(ptr @key_str.259, ptr %b498)
-  %p_proj499 = getelementptr inbounds %CausalSelfAttention, ptr %sub_ptr480, i32 0, i32 3
-  %sub_ptr500 = load ptr, ptr %p_proj499, align 8
-  %W501 = getelementptr inbounds %Linear, ptr %sub_ptr500, i32 0, i32 0
-  %W502 = load ptr, ptr %W501, align 8
-  call void @tl_add_parameter(ptr @key_str.260, ptr %W502)
-  %b503 = getelementptr inbounds %Linear, ptr %sub_ptr500, i32 0, i32 1
-  %b504 = load ptr, ptr %b503, align 8
-  call void @tl_add_parameter(ptr @key_str.261, ptr %b504)
-  %l2505 = getelementptr inbounds %Block, ptr %sub_ptr472, i32 0, i32 2
-  %sub_ptr506 = load ptr, ptr %l2505, align 8
-  %w507 = getelementptr inbounds %LayerNorm, ptr %sub_ptr506, i32 0, i32 0
-  %w508 = load ptr, ptr %w507, align 8
-  call void @tl_add_parameter(ptr @key_str.262, ptr %w508)
-  %b509 = getelementptr inbounds %LayerNorm, ptr %sub_ptr506, i32 0, i32 1
-  %b510 = load ptr, ptr %b509, align 8
-  call void @tl_add_parameter(ptr @key_str.263, ptr %b510)
-  %m511 = getelementptr inbounds %Block, ptr %sub_ptr472, i32 0, i32 3
-  %sub_ptr512 = load ptr, ptr %m511, align 8
-  %f513 = getelementptr inbounds %MLP, ptr %sub_ptr512, i32 0, i32 0
-  %sub_ptr514 = load ptr, ptr %f513, align 8
-  %W515 = getelementptr inbounds %Linear, ptr %sub_ptr514, i32 0, i32 0
-  %W516 = load ptr, ptr %W515, align 8
-  call void @tl_add_parameter(ptr @key_str.264, ptr %W516)
-  %b517 = getelementptr inbounds %Linear, ptr %sub_ptr514, i32 0, i32 1
-  %b518 = load ptr, ptr %b517, align 8
-  call void @tl_add_parameter(ptr @key_str.265, ptr %b518)
-  %p519 = getelementptr inbounds %MLP, ptr %sub_ptr512, i32 0, i32 1
-  %sub_ptr520 = load ptr, ptr %p519, align 8
-  %W521 = getelementptr inbounds %Linear, ptr %sub_ptr520, i32 0, i32 0
-  %W522 = load ptr, ptr %W521, align 8
-  call void @tl_add_parameter(ptr @key_str.266, ptr %W522)
-  %b523 = getelementptr inbounds %Linear, ptr %sub_ptr520, i32 0, i32 1
-  %b524 = load ptr, ptr %b523, align 8
-  call void @tl_add_parameter(ptr @key_str.267, ptr %b524)
-  %l525 = getelementptr inbounds %GPT, ptr %model354, i32 0, i32 5
-  %sub_ptr526 = load ptr, ptr %l525, align 8
-  %w527 = getelementptr inbounds %LayerNorm, ptr %sub_ptr526, i32 0, i32 0
-  %w528 = load ptr, ptr %w527, align 8
-  call void @tl_add_parameter(ptr @key_str.268, ptr %w528)
-  %b529 = getelementptr inbounds %LayerNorm, ptr %sub_ptr526, i32 0, i32 1
-  %b530 = load ptr, ptr %b529, align 8
-  call void @tl_add_parameter(ptr @key_str.269, ptr %b530)
-  %h531 = getelementptr inbounds %GPT, ptr %model354, i32 0, i32 6
-  %sub_ptr532 = load ptr, ptr %h531, align 8
-  %W533 = getelementptr inbounds %Linear, ptr %sub_ptr532, i32 0, i32 0
-  %W534 = load ptr, ptr %W533, align 8
-  call void @tl_add_parameter(ptr @key_str.270, ptr %W534)
-  %b535 = getelementptr inbounds %Linear, ptr %sub_ptr532, i32 0, i32 1
-  %b536 = load ptr, ptr %b535, align 8
-  call void @tl_add_parameter(ptr @key_str.271, ptr %b536)
-  call void @tl_save_all_params(ptr @str_literal.272)
+  call void @tl_add_parameter(ptr @key_str.160, ptr %b165)
+  call void @tl_load_all_params(ptr @str_literal.161)
+  call void @tl_print_string(ptr @str_literal.162)
+  call void @tl_print_string(ptr @str_literal.163)
+  store float 2.000000e+00, ptr %x0, align 4
+  store float 1.000000e+00, ptr %x1, align 4
+  store float 1.000000e+01, ptr %x2, align 4
+  store float 4.000000e+00, ptr %x3, align 4
+  store float 3.000000e+00, ptr %x4, align 4
+  store float 1.100000e+01, ptr %x5, align 4
+  store float 1.200000e+01, ptr %val_pad, align 4
+  %buf_void = call ptr @tl_alloc_tmp(i64 48)
+  %x0166 = load float, ptr %x0, align 4
+  %elem_ptr = getelementptr inbounds float, ptr %buf_void, i64 0
+  store float %x0166, ptr %elem_ptr, align 4
+  %x1167 = load float, ptr %x1, align 4
+  %elem_ptr168 = getelementptr inbounds float, ptr %buf_void, i64 1
+  store float %x1167, ptr %elem_ptr168, align 4
+  %x2169 = load float, ptr %x2, align 4
+  %elem_ptr170 = getelementptr inbounds float, ptr %buf_void, i64 2
+  store float %x2169, ptr %elem_ptr170, align 4
+  %x3171 = load float, ptr %x3, align 4
+  %elem_ptr172 = getelementptr inbounds float, ptr %buf_void, i64 3
+  store float %x3171, ptr %elem_ptr172, align 4
+  %x4173 = load float, ptr %x4, align 4
+  %elem_ptr174 = getelementptr inbounds float, ptr %buf_void, i64 4
+  store float %x4173, ptr %elem_ptr174, align 4
+  %x5175 = load float, ptr %x5, align 4
+  %elem_ptr176 = getelementptr inbounds float, ptr %buf_void, i64 5
+  store float %x5175, ptr %elem_ptr176, align 4
+  %val_pad177 = load float, ptr %val_pad, align 4
+  %elem_ptr178 = getelementptr inbounds float, ptr %buf_void, i64 6
+  store float %val_pad177, ptr %elem_ptr178, align 4
+  %val_pad179 = load float, ptr %val_pad, align 4
+  %elem_ptr180 = getelementptr inbounds float, ptr %buf_void, i64 7
+  store float %val_pad179, ptr %elem_ptr180, align 4
+  %val_pad181 = load float, ptr %val_pad, align 4
+  %elem_ptr182 = getelementptr inbounds float, ptr %buf_void, i64 8
+  store float %val_pad181, ptr %elem_ptr182, align 4
+  %elem_ptr183 = getelementptr inbounds float, ptr %buf_void, i64 9
+  store float 1.200000e+01, ptr %elem_ptr183, align 4
+  %elem_ptr184 = getelementptr inbounds float, ptr %buf_void, i64 10
+  store float 1.200000e+01, ptr %elem_ptr184, align 4
+  %elem_ptr185 = getelementptr inbounds float, ptr %buf_void, i64 11
+  store float 1.200000e+01, ptr %elem_ptr185, align 4
+  %shape_alloc = call ptr @tl_alloc_tmp(i64 8)
+  %shape_ptr = getelementptr inbounds i64, ptr %shape_alloc, i64 0
+  store i64 12, ptr %shape_ptr, align 8
+  %new_tensor = call ptr @tl_tensor_new(ptr %buf_void, i64 1, ptr %shape_alloc)
+  call void @tl_free_tmp(ptr %buf_void)
+  call void @tl_free_tmp(ptr %shape_alloc)
+  call void @tl_mem_unregister(ptr %new_tensor)
+  store ptr %new_tensor, ptr %data1, align 8
+  %data1186 = load ptr, ptr %data1, align 8
+  %dim_ptr_0 = getelementptr [2 x i64], ptr %dims_alloca, i64 0, i64 0
+  store i64 1, ptr %dim_ptr_0, align 8
+  %dim_ptr = getelementptr [2 x i64], ptr %dims_alloca, i64 0, i64 1
+  store i64 12, ptr %dim_ptr, align 8
+  %dims_ptr = getelementptr [2 x i64], ptr %dims_alloca, i64 0, i64 0
+  %reshape_dims_res = call ptr @tl_tensor_reshape_dims(ptr %data1186, ptr %dims_ptr, i64 2)
+  call void @tl_mem_unregister(ptr %reshape_dims_res)
+  store ptr %reshape_dims_res, ptr %input1, align 8
+  %model187 = load ptr, ptr %model, align 8
+  %input1188 = load ptr, ptr %input1, align 8
+  %call_method = call ptr @tl_GPT_forward(ptr %model187, ptr %input1188)
+  call void @tl_mem_register_tensor(ptr %call_method)
+  call void @tl_mem_unregister(ptr %call_method)
+  store ptr %call_method, ptr %logits1, align 8
+  %logits1189 = load ptr, ptr %logits1, align 8
+  %dim_ptr_0191 = getelementptr [2 x i64], ptr %dims_alloca190, i64 0, i64 0
+  store i64 12, ptr %dim_ptr_0191, align 8
+  %dim_ptr192 = getelementptr [2 x i64], ptr %dims_alloca190, i64 0, i64 1
+  store i64 13, ptr %dim_ptr192, align 8
+  %dims_ptr193 = getelementptr [2 x i64], ptr %dims_alloca190, i64 0, i64 0
+  %reshape_dims_res194 = call ptr @tl_tensor_reshape_dims(ptr %logits1189, ptr %dims_ptr193, i64 2)
+  call void @tl_mem_unregister(ptr %reshape_dims_res194)
+  store ptr %reshape_dims_res194, ptr %logits1_flat, align 8
+  %logits1_flat195 = load ptr, ptr %logits1_flat, align 8
+  %slice_res = call ptr @tl_tensor_slice(ptr %logits1_flat195, i64 5, i64 1)
+  %call_tmp = call i64 @argmax(ptr %slice_res)
+  call void @tl_tensor_free(ptr %slice_res)
+  store i64 %call_tmp, ptr %pred1, align 8
+  %pred1196 = load i64, ptr %pred1, align 8
+  %cast_i64_f32 = sitofp i64 %pred1196 to float
+  store float %cast_i64_f32, ptr %scalar_data, align 4
+  %scalar_tensor = call ptr @tl_tensor_new(ptr %scalar_data, i64 0, ptr %scalar_shape)
+  store float 1.000000e+00, ptr %scalar_data197, align 4
+  %scalar_tensor199 = call ptr @tl_tensor_new(ptr %scalar_data197, i64 0, ptr %scalar_shape198)
+  %pow_res = call ptr @tl_tensor_pow(ptr %scalar_tensor, ptr %scalar_tensor199)
+  call void @tl_tensor_free(ptr %scalar_tensor199)
+  %get_res = call float @tl_tensor_get(ptr %pow_res, i64 0)
+  call void @tl_tensor_free(ptr %pow_res)
+  store float %get_res, ptr %val_pred1, align 4
+  %buf_void200 = call ptr @tl_alloc_tmp(i64 48)
+  %x0201 = load float, ptr %x0, align 4
+  %elem_ptr202 = getelementptr inbounds float, ptr %buf_void200, i64 0
+  store float %x0201, ptr %elem_ptr202, align 4
+  %x1203 = load float, ptr %x1, align 4
+  %elem_ptr204 = getelementptr inbounds float, ptr %buf_void200, i64 1
+  store float %x1203, ptr %elem_ptr204, align 4
+  %x2205 = load float, ptr %x2, align 4
+  %elem_ptr206 = getelementptr inbounds float, ptr %buf_void200, i64 2
+  store float %x2205, ptr %elem_ptr206, align 4
+  %x3207 = load float, ptr %x3, align 4
+  %elem_ptr208 = getelementptr inbounds float, ptr %buf_void200, i64 3
+  store float %x3207, ptr %elem_ptr208, align 4
+  %x4209 = load float, ptr %x4, align 4
+  %elem_ptr210 = getelementptr inbounds float, ptr %buf_void200, i64 4
+  store float %x4209, ptr %elem_ptr210, align 4
+  %x5211 = load float, ptr %x5, align 4
+  %elem_ptr212 = getelementptr inbounds float, ptr %buf_void200, i64 5
+  store float %x5211, ptr %elem_ptr212, align 4
+  %val_pred1213 = load float, ptr %val_pred1, align 4
+  %elem_ptr214 = getelementptr inbounds float, ptr %buf_void200, i64 6
+  store float %val_pred1213, ptr %elem_ptr214, align 4
+  %val_pad215 = load float, ptr %val_pad, align 4
+  %elem_ptr216 = getelementptr inbounds float, ptr %buf_void200, i64 7
+  store float %val_pad215, ptr %elem_ptr216, align 4
+  %val_pad217 = load float, ptr %val_pad, align 4
+  %elem_ptr218 = getelementptr inbounds float, ptr %buf_void200, i64 8
+  store float %val_pad217, ptr %elem_ptr218, align 4
+  %elem_ptr219 = getelementptr inbounds float, ptr %buf_void200, i64 9
+  store float 1.200000e+01, ptr %elem_ptr219, align 4
+  %elem_ptr220 = getelementptr inbounds float, ptr %buf_void200, i64 10
+  store float 1.200000e+01, ptr %elem_ptr220, align 4
+  %elem_ptr221 = getelementptr inbounds float, ptr %buf_void200, i64 11
+  store float 1.200000e+01, ptr %elem_ptr221, align 4
+  %shape_alloc222 = call ptr @tl_alloc_tmp(i64 8)
+  %shape_ptr223 = getelementptr inbounds i64, ptr %shape_alloc222, i64 0
+  store i64 12, ptr %shape_ptr223, align 8
+  %new_tensor224 = call ptr @tl_tensor_new(ptr %buf_void200, i64 1, ptr %shape_alloc222)
+  call void @tl_free_tmp(ptr %buf_void200)
+  call void @tl_free_tmp(ptr %shape_alloc222)
+  call void @tl_mem_unregister(ptr %new_tensor224)
+  store ptr %new_tensor224, ptr %data2, align 8
+  %data2225 = load ptr, ptr %data2, align 8
+  %dim_ptr_0227 = getelementptr [2 x i64], ptr %dims_alloca226, i64 0, i64 0
+  store i64 1, ptr %dim_ptr_0227, align 8
+  %dim_ptr228 = getelementptr [2 x i64], ptr %dims_alloca226, i64 0, i64 1
+  store i64 12, ptr %dim_ptr228, align 8
+  %dims_ptr229 = getelementptr [2 x i64], ptr %dims_alloca226, i64 0, i64 0
+  %reshape_dims_res230 = call ptr @tl_tensor_reshape_dims(ptr %data2225, ptr %dims_ptr229, i64 2)
+  call void @tl_mem_unregister(ptr %reshape_dims_res230)
+  store ptr %reshape_dims_res230, ptr %input2, align 8
+  %model231 = load ptr, ptr %model, align 8
+  %input2232 = load ptr, ptr %input2, align 8
+  %call_method233 = call ptr @tl_GPT_forward(ptr %model231, ptr %input2232)
+  call void @tl_mem_register_tensor(ptr %call_method233)
+  call void @tl_mem_unregister(ptr %call_method233)
+  store ptr %call_method233, ptr %logits2, align 8
+  %logits2234 = load ptr, ptr %logits2, align 8
+  %dim_ptr_0236 = getelementptr [2 x i64], ptr %dims_alloca235, i64 0, i64 0
+  store i64 12, ptr %dim_ptr_0236, align 8
+  %dim_ptr237 = getelementptr [2 x i64], ptr %dims_alloca235, i64 0, i64 1
+  store i64 13, ptr %dim_ptr237, align 8
+  %dims_ptr238 = getelementptr [2 x i64], ptr %dims_alloca235, i64 0, i64 0
+  %reshape_dims_res239 = call ptr @tl_tensor_reshape_dims(ptr %logits2234, ptr %dims_ptr238, i64 2)
+  call void @tl_mem_unregister(ptr %reshape_dims_res239)
+  store ptr %reshape_dims_res239, ptr %logits2_flat, align 8
+  %logits2_flat240 = load ptr, ptr %logits2_flat, align 8
+  %slice_res241 = call ptr @tl_tensor_slice(ptr %logits2_flat240, i64 6, i64 1)
+  %call_tmp242 = call i64 @argmax(ptr %slice_res241)
+  call void @tl_tensor_free(ptr %slice_res241)
+  store i64 %call_tmp242, ptr %pred2, align 8
+  %pred2243 = load i64, ptr %pred2, align 8
+  %cast_i64_f32245 = sitofp i64 %pred2243 to float
+  store float %cast_i64_f32245, ptr %scalar_data244, align 4
+  %scalar_tensor247 = call ptr @tl_tensor_new(ptr %scalar_data244, i64 0, ptr %scalar_shape246)
+  store float 1.000000e+00, ptr %scalar_data248, align 4
+  %scalar_tensor250 = call ptr @tl_tensor_new(ptr %scalar_data248, i64 0, ptr %scalar_shape249)
+  %pow_res251 = call ptr @tl_tensor_pow(ptr %scalar_tensor247, ptr %scalar_tensor250)
+  call void @tl_tensor_free(ptr %scalar_tensor250)
+  %get_res252 = call float @tl_tensor_get(ptr %pow_res251, i64 0)
+  call void @tl_tensor_free(ptr %pow_res251)
+  store float %get_res252, ptr %val_pred2, align 4
+  %buf_void253 = call ptr @tl_alloc_tmp(i64 48)
+  %x0254 = load float, ptr %x0, align 4
+  %elem_ptr255 = getelementptr inbounds float, ptr %buf_void253, i64 0
+  store float %x0254, ptr %elem_ptr255, align 4
+  %x1256 = load float, ptr %x1, align 4
+  %elem_ptr257 = getelementptr inbounds float, ptr %buf_void253, i64 1
+  store float %x1256, ptr %elem_ptr257, align 4
+  %x2258 = load float, ptr %x2, align 4
+  %elem_ptr259 = getelementptr inbounds float, ptr %buf_void253, i64 2
+  store float %x2258, ptr %elem_ptr259, align 4
+  %x3260 = load float, ptr %x3, align 4
+  %elem_ptr261 = getelementptr inbounds float, ptr %buf_void253, i64 3
+  store float %x3260, ptr %elem_ptr261, align 4
+  %x4262 = load float, ptr %x4, align 4
+  %elem_ptr263 = getelementptr inbounds float, ptr %buf_void253, i64 4
+  store float %x4262, ptr %elem_ptr263, align 4
+  %x5264 = load float, ptr %x5, align 4
+  %elem_ptr265 = getelementptr inbounds float, ptr %buf_void253, i64 5
+  store float %x5264, ptr %elem_ptr265, align 4
+  %val_pred1266 = load float, ptr %val_pred1, align 4
+  %elem_ptr267 = getelementptr inbounds float, ptr %buf_void253, i64 6
+  store float %val_pred1266, ptr %elem_ptr267, align 4
+  %val_pred2268 = load float, ptr %val_pred2, align 4
+  %elem_ptr269 = getelementptr inbounds float, ptr %buf_void253, i64 7
+  store float %val_pred2268, ptr %elem_ptr269, align 4
+  %val_pad270 = load float, ptr %val_pad, align 4
+  %elem_ptr271 = getelementptr inbounds float, ptr %buf_void253, i64 8
+  store float %val_pad270, ptr %elem_ptr271, align 4
+  %elem_ptr272 = getelementptr inbounds float, ptr %buf_void253, i64 9
+  store float 1.200000e+01, ptr %elem_ptr272, align 4
+  %elem_ptr273 = getelementptr inbounds float, ptr %buf_void253, i64 10
+  store float 1.200000e+01, ptr %elem_ptr273, align 4
+  %elem_ptr274 = getelementptr inbounds float, ptr %buf_void253, i64 11
+  store float 1.200000e+01, ptr %elem_ptr274, align 4
+  %shape_alloc275 = call ptr @tl_alloc_tmp(i64 8)
+  %shape_ptr276 = getelementptr inbounds i64, ptr %shape_alloc275, i64 0
+  store i64 12, ptr %shape_ptr276, align 8
+  %new_tensor277 = call ptr @tl_tensor_new(ptr %buf_void253, i64 1, ptr %shape_alloc275)
+  call void @tl_free_tmp(ptr %buf_void253)
+  call void @tl_free_tmp(ptr %shape_alloc275)
+  call void @tl_mem_unregister(ptr %new_tensor277)
+  store ptr %new_tensor277, ptr %data3, align 8
+  %data3278 = load ptr, ptr %data3, align 8
+  %dim_ptr_0280 = getelementptr [2 x i64], ptr %dims_alloca279, i64 0, i64 0
+  store i64 1, ptr %dim_ptr_0280, align 8
+  %dim_ptr281 = getelementptr [2 x i64], ptr %dims_alloca279, i64 0, i64 1
+  store i64 12, ptr %dim_ptr281, align 8
+  %dims_ptr282 = getelementptr [2 x i64], ptr %dims_alloca279, i64 0, i64 0
+  %reshape_dims_res283 = call ptr @tl_tensor_reshape_dims(ptr %data3278, ptr %dims_ptr282, i64 2)
+  call void @tl_mem_unregister(ptr %reshape_dims_res283)
+  store ptr %reshape_dims_res283, ptr %input3, align 8
+  %model284 = load ptr, ptr %model, align 8
+  %input3285 = load ptr, ptr %input3, align 8
+  %call_method286 = call ptr @tl_GPT_forward(ptr %model284, ptr %input3285)
+  call void @tl_mem_register_tensor(ptr %call_method286)
+  call void @tl_mem_unregister(ptr %call_method286)
+  store ptr %call_method286, ptr %logits3, align 8
+  %logits3287 = load ptr, ptr %logits3, align 8
+  %dim_ptr_0289 = getelementptr [2 x i64], ptr %dims_alloca288, i64 0, i64 0
+  store i64 12, ptr %dim_ptr_0289, align 8
+  %dim_ptr290 = getelementptr [2 x i64], ptr %dims_alloca288, i64 0, i64 1
+  store i64 13, ptr %dim_ptr290, align 8
+  %dims_ptr291 = getelementptr [2 x i64], ptr %dims_alloca288, i64 0, i64 0
+  %reshape_dims_res292 = call ptr @tl_tensor_reshape_dims(ptr %logits3287, ptr %dims_ptr291, i64 2)
+  call void @tl_mem_unregister(ptr %reshape_dims_res292)
+  store ptr %reshape_dims_res292, ptr %logits3_flat, align 8
+  %logits3_flat293 = load ptr, ptr %logits3_flat, align 8
+  %slice_res294 = call ptr @tl_tensor_slice(ptr %logits3_flat293, i64 7, i64 1)
+  %call_tmp295 = call i64 @argmax(ptr %slice_res294)
+  call void @tl_tensor_free(ptr %slice_res294)
+  store i64 %call_tmp295, ptr %pred3, align 8
+  call void @tl_print_string(ptr @str_literal.164)
+  %pred1296 = load i64, ptr %pred1, align 8
+  call void @tl_print_i64(i64 %pred1296)
+  %pred2297 = load i64, ptr %pred2, align 8
+  call void @tl_print_i64(i64 %pred2297)
+  %pred3298 = load i64, ptr %pred3, align 8
+  call void @tl_print_i64(i64 %pred3298)
+  call void @tl_print_string(ptr @str_literal.165)
+  store float 9.000000e+00, ptr %y0, align 4
+  store float 9.000000e+00, ptr %y1, align 4
+  store float 1.000000e+01, ptr %y2, align 4
+  store float 1.000000e+00, ptr %y3, align 4
+  store float 0.000000e+00, ptr %y4, align 4
+  store float 1.100000e+01, ptr %y5, align 4
+  %buf_void299 = call ptr @tl_alloc_tmp(i64 48)
+  %y0300 = load float, ptr %y0, align 4
+  %elem_ptr301 = getelementptr inbounds float, ptr %buf_void299, i64 0
+  store float %y0300, ptr %elem_ptr301, align 4
+  %y1302 = load float, ptr %y1, align 4
+  %elem_ptr303 = getelementptr inbounds float, ptr %buf_void299, i64 1
+  store float %y1302, ptr %elem_ptr303, align 4
+  %y2304 = load float, ptr %y2, align 4
+  %elem_ptr305 = getelementptr inbounds float, ptr %buf_void299, i64 2
+  store float %y2304, ptr %elem_ptr305, align 4
+  %y3306 = load float, ptr %y3, align 4
+  %elem_ptr307 = getelementptr inbounds float, ptr %buf_void299, i64 3
+  store float %y3306, ptr %elem_ptr307, align 4
+  %y4308 = load float, ptr %y4, align 4
+  %elem_ptr309 = getelementptr inbounds float, ptr %buf_void299, i64 4
+  store float %y4308, ptr %elem_ptr309, align 4
+  %y5310 = load float, ptr %y5, align 4
+  %elem_ptr311 = getelementptr inbounds float, ptr %buf_void299, i64 5
+  store float %y5310, ptr %elem_ptr311, align 4
+  %elem_ptr312 = getelementptr inbounds float, ptr %buf_void299, i64 6
+  store float 1.200000e+01, ptr %elem_ptr312, align 4
+  %elem_ptr313 = getelementptr inbounds float, ptr %buf_void299, i64 7
+  store float 1.200000e+01, ptr %elem_ptr313, align 4
+  %elem_ptr314 = getelementptr inbounds float, ptr %buf_void299, i64 8
+  store float 1.200000e+01, ptr %elem_ptr314, align 4
+  %elem_ptr315 = getelementptr inbounds float, ptr %buf_void299, i64 9
+  store float 1.200000e+01, ptr %elem_ptr315, align 4
+  %elem_ptr316 = getelementptr inbounds float, ptr %buf_void299, i64 10
+  store float 1.200000e+01, ptr %elem_ptr316, align 4
+  %elem_ptr317 = getelementptr inbounds float, ptr %buf_void299, i64 11
+  store float 1.200000e+01, ptr %elem_ptr317, align 4
+  %shape_alloc318 = call ptr @tl_alloc_tmp(i64 8)
+  %shape_ptr319 = getelementptr inbounds i64, ptr %shape_alloc318, i64 0
+  store i64 12, ptr %shape_ptr319, align 8
+  %new_tensor320 = call ptr @tl_tensor_new(ptr %buf_void299, i64 1, ptr %shape_alloc318)
+  call void @tl_free_tmp(ptr %buf_void299)
+  call void @tl_free_tmp(ptr %shape_alloc318)
+  call void @tl_mem_unregister(ptr %new_tensor320)
+  store ptr %new_tensor320, ptr %d1, align 8
+  %d1321 = load ptr, ptr %d1, align 8
+  %dim_ptr_0323 = getelementptr [2 x i64], ptr %dims_alloca322, i64 0, i64 0
+  store i64 1, ptr %dim_ptr_0323, align 8
+  %dim_ptr324 = getelementptr [2 x i64], ptr %dims_alloca322, i64 0, i64 1
+  store i64 12, ptr %dim_ptr324, align 8
+  %dims_ptr325 = getelementptr [2 x i64], ptr %dims_alloca322, i64 0, i64 0
+  %reshape_dims_res326 = call ptr @tl_tensor_reshape_dims(ptr %d1321, ptr %dims_ptr325, i64 2)
+  call void @tl_mem_unregister(ptr %reshape_dims_res326)
+  store ptr %reshape_dims_res326, ptr %inp1, align 8
+  %model327 = load ptr, ptr %model, align 8
+  %inp1328 = load ptr, ptr %inp1, align 8
+  %call_method329 = call ptr @tl_GPT_forward(ptr %model327, ptr %inp1328)
+  call void @tl_mem_register_tensor(ptr %call_method329)
+  call void @tl_mem_unregister(ptr %call_method329)
+  store ptr %call_method329, ptr %log1, align 8
+  %log1330 = load ptr, ptr %log1, align 8
+  %dim_ptr_0332 = getelementptr [2 x i64], ptr %dims_alloca331, i64 0, i64 0
+  store i64 12, ptr %dim_ptr_0332, align 8
+  %dim_ptr333 = getelementptr [2 x i64], ptr %dims_alloca331, i64 0, i64 1
+  store i64 13, ptr %dim_ptr333, align 8
+  %dims_ptr334 = getelementptr [2 x i64], ptr %dims_alloca331, i64 0, i64 0
+  %reshape_dims_res335 = call ptr @tl_tensor_reshape_dims(ptr %log1330, ptr %dims_ptr334, i64 2)
+  call void @tl_mem_unregister(ptr %reshape_dims_res335)
+  store ptr %reshape_dims_res335, ptr %log1_flat, align 8
+  %log1_flat336 = load ptr, ptr %log1_flat, align 8
+  %slice_res337 = call ptr @tl_tensor_slice(ptr %log1_flat336, i64 5, i64 1)
+  %call_tmp338 = call i64 @argmax(ptr %slice_res337)
+  call void @tl_tensor_free(ptr %slice_res337)
+  store i64 %call_tmp338, ptr %p1, align 8
+  %p1339 = load i64, ptr %p1, align 8
+  %cast_i64_f32341 = sitofp i64 %p1339 to float
+  store float %cast_i64_f32341, ptr %scalar_data340, align 4
+  %scalar_tensor343 = call ptr @tl_tensor_new(ptr %scalar_data340, i64 0, ptr %scalar_shape342)
+  store float 1.000000e+00, ptr %scalar_data344, align 4
+  %scalar_tensor346 = call ptr @tl_tensor_new(ptr %scalar_data344, i64 0, ptr %scalar_shape345)
+  %pow_res347 = call ptr @tl_tensor_pow(ptr %scalar_tensor343, ptr %scalar_tensor346)
+  call void @tl_tensor_free(ptr %scalar_tensor346)
+  %get_res348 = call float @tl_tensor_get(ptr %pow_res347, i64 0)
+  call void @tl_tensor_free(ptr %pow_res347)
+  store float %get_res348, ptr %vp1, align 4
+  %buf_void349 = call ptr @tl_alloc_tmp(i64 48)
+  %y0350 = load float, ptr %y0, align 4
+  %elem_ptr351 = getelementptr inbounds float, ptr %buf_void349, i64 0
+  store float %y0350, ptr %elem_ptr351, align 4
+  %y1352 = load float, ptr %y1, align 4
+  %elem_ptr353 = getelementptr inbounds float, ptr %buf_void349, i64 1
+  store float %y1352, ptr %elem_ptr353, align 4
+  %y2354 = load float, ptr %y2, align 4
+  %elem_ptr355 = getelementptr inbounds float, ptr %buf_void349, i64 2
+  store float %y2354, ptr %elem_ptr355, align 4
+  %y3356 = load float, ptr %y3, align 4
+  %elem_ptr357 = getelementptr inbounds float, ptr %buf_void349, i64 3
+  store float %y3356, ptr %elem_ptr357, align 4
+  %y4358 = load float, ptr %y4, align 4
+  %elem_ptr359 = getelementptr inbounds float, ptr %buf_void349, i64 4
+  store float %y4358, ptr %elem_ptr359, align 4
+  %y5360 = load float, ptr %y5, align 4
+  %elem_ptr361 = getelementptr inbounds float, ptr %buf_void349, i64 5
+  store float %y5360, ptr %elem_ptr361, align 4
+  %vp1362 = load float, ptr %vp1, align 4
+  %elem_ptr363 = getelementptr inbounds float, ptr %buf_void349, i64 6
+  store float %vp1362, ptr %elem_ptr363, align 4
+  %elem_ptr364 = getelementptr inbounds float, ptr %buf_void349, i64 7
+  store float 1.200000e+01, ptr %elem_ptr364, align 4
+  %elem_ptr365 = getelementptr inbounds float, ptr %buf_void349, i64 8
+  store float 1.200000e+01, ptr %elem_ptr365, align 4
+  %elem_ptr366 = getelementptr inbounds float, ptr %buf_void349, i64 9
+  store float 1.200000e+01, ptr %elem_ptr366, align 4
+  %elem_ptr367 = getelementptr inbounds float, ptr %buf_void349, i64 10
+  store float 1.200000e+01, ptr %elem_ptr367, align 4
+  %elem_ptr368 = getelementptr inbounds float, ptr %buf_void349, i64 11
+  store float 1.200000e+01, ptr %elem_ptr368, align 4
+  %shape_alloc369 = call ptr @tl_alloc_tmp(i64 8)
+  %shape_ptr370 = getelementptr inbounds i64, ptr %shape_alloc369, i64 0
+  store i64 12, ptr %shape_ptr370, align 8
+  %new_tensor371 = call ptr @tl_tensor_new(ptr %buf_void349, i64 1, ptr %shape_alloc369)
+  call void @tl_free_tmp(ptr %buf_void349)
+  call void @tl_free_tmp(ptr %shape_alloc369)
+  call void @tl_mem_unregister(ptr %new_tensor371)
+  store ptr %new_tensor371, ptr %d2, align 8
+  %d2372 = load ptr, ptr %d2, align 8
+  %dim_ptr_0374 = getelementptr [2 x i64], ptr %dims_alloca373, i64 0, i64 0
+  store i64 1, ptr %dim_ptr_0374, align 8
+  %dim_ptr375 = getelementptr [2 x i64], ptr %dims_alloca373, i64 0, i64 1
+  store i64 12, ptr %dim_ptr375, align 8
+  %dims_ptr376 = getelementptr [2 x i64], ptr %dims_alloca373, i64 0, i64 0
+  %reshape_dims_res377 = call ptr @tl_tensor_reshape_dims(ptr %d2372, ptr %dims_ptr376, i64 2)
+  call void @tl_mem_unregister(ptr %reshape_dims_res377)
+  store ptr %reshape_dims_res377, ptr %inp2, align 8
+  %model378 = load ptr, ptr %model, align 8
+  %inp2379 = load ptr, ptr %inp2, align 8
+  %call_method380 = call ptr @tl_GPT_forward(ptr %model378, ptr %inp2379)
+  call void @tl_mem_register_tensor(ptr %call_method380)
+  call void @tl_mem_unregister(ptr %call_method380)
+  store ptr %call_method380, ptr %log2, align 8
+  %log2381 = load ptr, ptr %log2, align 8
+  %dim_ptr_0383 = getelementptr [2 x i64], ptr %dims_alloca382, i64 0, i64 0
+  store i64 12, ptr %dim_ptr_0383, align 8
+  %dim_ptr384 = getelementptr [2 x i64], ptr %dims_alloca382, i64 0, i64 1
+  store i64 13, ptr %dim_ptr384, align 8
+  %dims_ptr385 = getelementptr [2 x i64], ptr %dims_alloca382, i64 0, i64 0
+  %reshape_dims_res386 = call ptr @tl_tensor_reshape_dims(ptr %log2381, ptr %dims_ptr385, i64 2)
+  call void @tl_mem_unregister(ptr %reshape_dims_res386)
+  store ptr %reshape_dims_res386, ptr %log2_flat, align 8
+  %log2_flat387 = load ptr, ptr %log2_flat, align 8
+  %slice_res388 = call ptr @tl_tensor_slice(ptr %log2_flat387, i64 6, i64 1)
+  %call_tmp389 = call i64 @argmax(ptr %slice_res388)
+  call void @tl_tensor_free(ptr %slice_res388)
+  store i64 %call_tmp389, ptr %p2, align 8
+  %p2390 = load i64, ptr %p2, align 8
+  %cast_i64_f32392 = sitofp i64 %p2390 to float
+  store float %cast_i64_f32392, ptr %scalar_data391, align 4
+  %scalar_tensor394 = call ptr @tl_tensor_new(ptr %scalar_data391, i64 0, ptr %scalar_shape393)
+  store float 1.000000e+00, ptr %scalar_data395, align 4
+  %scalar_tensor397 = call ptr @tl_tensor_new(ptr %scalar_data395, i64 0, ptr %scalar_shape396)
+  %pow_res398 = call ptr @tl_tensor_pow(ptr %scalar_tensor394, ptr %scalar_tensor397)
+  call void @tl_tensor_free(ptr %scalar_tensor397)
+  %get_res399 = call float @tl_tensor_get(ptr %pow_res398, i64 0)
+  call void @tl_tensor_free(ptr %pow_res398)
+  store float %get_res399, ptr %vp2, align 4
+  %buf_void400 = call ptr @tl_alloc_tmp(i64 48)
+  %y0401 = load float, ptr %y0, align 4
+  %elem_ptr402 = getelementptr inbounds float, ptr %buf_void400, i64 0
+  store float %y0401, ptr %elem_ptr402, align 4
+  %y1403 = load float, ptr %y1, align 4
+  %elem_ptr404 = getelementptr inbounds float, ptr %buf_void400, i64 1
+  store float %y1403, ptr %elem_ptr404, align 4
+  %y2405 = load float, ptr %y2, align 4
+  %elem_ptr406 = getelementptr inbounds float, ptr %buf_void400, i64 2
+  store float %y2405, ptr %elem_ptr406, align 4
+  %y3407 = load float, ptr %y3, align 4
+  %elem_ptr408 = getelementptr inbounds float, ptr %buf_void400, i64 3
+  store float %y3407, ptr %elem_ptr408, align 4
+  %y4409 = load float, ptr %y4, align 4
+  %elem_ptr410 = getelementptr inbounds float, ptr %buf_void400, i64 4
+  store float %y4409, ptr %elem_ptr410, align 4
+  %y5411 = load float, ptr %y5, align 4
+  %elem_ptr412 = getelementptr inbounds float, ptr %buf_void400, i64 5
+  store float %y5411, ptr %elem_ptr412, align 4
+  %vp1413 = load float, ptr %vp1, align 4
+  %elem_ptr414 = getelementptr inbounds float, ptr %buf_void400, i64 6
+  store float %vp1413, ptr %elem_ptr414, align 4
+  %vp2415 = load float, ptr %vp2, align 4
+  %elem_ptr416 = getelementptr inbounds float, ptr %buf_void400, i64 7
+  store float %vp2415, ptr %elem_ptr416, align 4
+  %elem_ptr417 = getelementptr inbounds float, ptr %buf_void400, i64 8
+  store float 1.200000e+01, ptr %elem_ptr417, align 4
+  %elem_ptr418 = getelementptr inbounds float, ptr %buf_void400, i64 9
+  store float 1.200000e+01, ptr %elem_ptr418, align 4
+  %elem_ptr419 = getelementptr inbounds float, ptr %buf_void400, i64 10
+  store float 1.200000e+01, ptr %elem_ptr419, align 4
+  %elem_ptr420 = getelementptr inbounds float, ptr %buf_void400, i64 11
+  store float 1.200000e+01, ptr %elem_ptr420, align 4
+  %shape_alloc421 = call ptr @tl_alloc_tmp(i64 8)
+  %shape_ptr422 = getelementptr inbounds i64, ptr %shape_alloc421, i64 0
+  store i64 12, ptr %shape_ptr422, align 8
+  %new_tensor423 = call ptr @tl_tensor_new(ptr %buf_void400, i64 1, ptr %shape_alloc421)
+  call void @tl_free_tmp(ptr %buf_void400)
+  call void @tl_free_tmp(ptr %shape_alloc421)
+  call void @tl_mem_unregister(ptr %new_tensor423)
+  store ptr %new_tensor423, ptr %d3, align 8
+  %d3424 = load ptr, ptr %d3, align 8
+  %dim_ptr_0426 = getelementptr [2 x i64], ptr %dims_alloca425, i64 0, i64 0
+  store i64 1, ptr %dim_ptr_0426, align 8
+  %dim_ptr427 = getelementptr [2 x i64], ptr %dims_alloca425, i64 0, i64 1
+  store i64 12, ptr %dim_ptr427, align 8
+  %dims_ptr428 = getelementptr [2 x i64], ptr %dims_alloca425, i64 0, i64 0
+  %reshape_dims_res429 = call ptr @tl_tensor_reshape_dims(ptr %d3424, ptr %dims_ptr428, i64 2)
+  call void @tl_mem_unregister(ptr %reshape_dims_res429)
+  store ptr %reshape_dims_res429, ptr %inp3, align 8
+  %model430 = load ptr, ptr %model, align 8
+  %inp3431 = load ptr, ptr %inp3, align 8
+  %call_method432 = call ptr @tl_GPT_forward(ptr %model430, ptr %inp3431)
+  call void @tl_mem_register_tensor(ptr %call_method432)
+  call void @tl_mem_unregister(ptr %call_method432)
+  store ptr %call_method432, ptr %log3, align 8
+  %log3433 = load ptr, ptr %log3, align 8
+  %dim_ptr_0435 = getelementptr [2 x i64], ptr %dims_alloca434, i64 0, i64 0
+  store i64 12, ptr %dim_ptr_0435, align 8
+  %dim_ptr436 = getelementptr [2 x i64], ptr %dims_alloca434, i64 0, i64 1
+  store i64 13, ptr %dim_ptr436, align 8
+  %dims_ptr437 = getelementptr [2 x i64], ptr %dims_alloca434, i64 0, i64 0
+  %reshape_dims_res438 = call ptr @tl_tensor_reshape_dims(ptr %log3433, ptr %dims_ptr437, i64 2)
+  call void @tl_mem_unregister(ptr %reshape_dims_res438)
+  store ptr %reshape_dims_res438, ptr %log3_flat, align 8
+  %log3_flat439 = load ptr, ptr %log3_flat, align 8
+  %slice_res440 = call ptr @tl_tensor_slice(ptr %log3_flat439, i64 7, i64 1)
+  %call_tmp441 = call i64 @argmax(ptr %slice_res440)
+  call void @tl_tensor_free(ptr %slice_res440)
+  store i64 %call_tmp441, ptr %p3, align 8
+  call void @tl_print_string(ptr @str_literal.166)
+  %p1442 = load i64, ptr %p1, align 8
+  call void @tl_print_i64(i64 %p1442)
+  %p2443 = load i64, ptr %p2, align 8
+  call void @tl_print_i64(i64 %p2443)
+  %p3444 = load i64, ptr %p3, align 8
+  call void @tl_print_i64(i64 %p3444)
+  call void @tl_print_string(ptr @str_literal.167)
   %struct_to_free = load ptr, ptr %model, align 8
   %is_not_null = icmp ne ptr %struct_to_free, null
   br i1 %is_not_null, label %recursive_free_struct, label %continue_after_recursive_free
 
-recursive_free_struct:                            ; preds = %for_end
+recursive_free_struct:                            ; preds = %entry
   %free_field_0 = getelementptr inbounds %GPT, ptr %struct_to_free, i32 0, i32 0
   %field_val_to_free = load ptr, ptr %free_field_0, align 8
-  %is_not_null537 = icmp ne ptr %field_val_to_free, null
-  br i1 %is_not_null537, label %recursive_free_struct538, label %continue_after_recursive_free539
+  %is_not_null445 = icmp ne ptr %field_val_to_free, null
+  br i1 %is_not_null445, label %recursive_free_struct446, label %continue_after_recursive_free447
 
-continue_after_recursive_free:                    ; preds = %continue_after_recursive_free817, %for_end
+continue_after_recursive_free:                    ; preds = %continue_after_recursive_free725, %entry
   call void @tl_mem_unregister(ptr %struct_to_free)
   call void @tl_mem_exit_scope()
   ret void
 
-recursive_free_struct538:                         ; preds = %recursive_free_struct
-  %free_field_0540 = getelementptr inbounds %Embedding, ptr %field_val_to_free, i32 0, i32 0
-  %field_val_to_free541 = load ptr, ptr %free_field_0540, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free541)
+recursive_free_struct446:                         ; preds = %recursive_free_struct
+  %free_field_0448 = getelementptr inbounds %Embedding, ptr %field_val_to_free, i32 0, i32 0
+  %field_val_to_free449 = load ptr, ptr %free_field_0448, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free449)
   call void @free(ptr %field_val_to_free)
-  br label %continue_after_recursive_free539
+  br label %continue_after_recursive_free447
 
-continue_after_recursive_free539:                 ; preds = %recursive_free_struct538, %recursive_free_struct
+continue_after_recursive_free447:                 ; preds = %recursive_free_struct446, %recursive_free_struct
   %free_field_1 = getelementptr inbounds %GPT, ptr %struct_to_free, i32 0, i32 1
-  %field_val_to_free542 = load ptr, ptr %free_field_1, align 8
+  %field_val_to_free450 = load ptr, ptr %free_field_1, align 8
+  %is_not_null451 = icmp ne ptr %field_val_to_free450, null
+  br i1 %is_not_null451, label %recursive_free_struct452, label %continue_after_recursive_free453
+
+recursive_free_struct452:                         ; preds = %continue_after_recursive_free447
+  %free_field_0454 = getelementptr inbounds %Embedding, ptr %field_val_to_free450, i32 0, i32 0
+  %field_val_to_free455 = load ptr, ptr %free_field_0454, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free455)
+  call void @free(ptr %field_val_to_free450)
+  br label %continue_after_recursive_free453
+
+continue_after_recursive_free453:                 ; preds = %recursive_free_struct452, %continue_after_recursive_free447
+  %free_field_2 = getelementptr inbounds %GPT, ptr %struct_to_free, i32 0, i32 2
+  %field_val_to_free456 = load ptr, ptr %free_field_2, align 8
+  %is_not_null457 = icmp ne ptr %field_val_to_free456, null
+  br i1 %is_not_null457, label %recursive_free_struct458, label %continue_after_recursive_free459
+
+recursive_free_struct458:                         ; preds = %continue_after_recursive_free453
+  %free_field_0460 = getelementptr inbounds %Block, ptr %field_val_to_free456, i32 0, i32 0
+  %field_val_to_free461 = load ptr, ptr %free_field_0460, align 8
+  %is_not_null462 = icmp ne ptr %field_val_to_free461, null
+  br i1 %is_not_null462, label %recursive_free_struct463, label %continue_after_recursive_free464
+
+continue_after_recursive_free459:                 ; preds = %continue_after_recursive_free522, %continue_after_recursive_free453
+  %free_field_3541 = getelementptr inbounds %GPT, ptr %struct_to_free, i32 0, i32 3
+  %field_val_to_free542 = load ptr, ptr %free_field_3541, align 8
   %is_not_null543 = icmp ne ptr %field_val_to_free542, null
   br i1 %is_not_null543, label %recursive_free_struct544, label %continue_after_recursive_free545
 
-recursive_free_struct544:                         ; preds = %continue_after_recursive_free539
-  %free_field_0546 = getelementptr inbounds %Embedding, ptr %field_val_to_free542, i32 0, i32 0
+recursive_free_struct463:                         ; preds = %recursive_free_struct458
+  %free_field_0465 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free461, i32 0, i32 0
+  %field_val_to_free466 = load ptr, ptr %free_field_0465, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free466)
+  %free_field_1467 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free461, i32 0, i32 1
+  %field_val_to_free468 = load ptr, ptr %free_field_1467, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free468)
+  call void @free(ptr %field_val_to_free461)
+  br label %continue_after_recursive_free464
+
+continue_after_recursive_free464:                 ; preds = %recursive_free_struct463, %recursive_free_struct458
+  %free_field_1469 = getelementptr inbounds %Block, ptr %field_val_to_free456, i32 0, i32 1
+  %field_val_to_free470 = load ptr, ptr %free_field_1469, align 8
+  %is_not_null471 = icmp ne ptr %field_val_to_free470, null
+  br i1 %is_not_null471, label %recursive_free_struct472, label %continue_after_recursive_free473
+
+recursive_free_struct472:                         ; preds = %continue_after_recursive_free464
+  %free_field_0474 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free470, i32 0, i32 0
+  %field_val_to_free475 = load ptr, ptr %free_field_0474, align 8
+  %is_not_null476 = icmp ne ptr %field_val_to_free475, null
+  br i1 %is_not_null476, label %recursive_free_struct477, label %continue_after_recursive_free478
+
+continue_after_recursive_free473:                 ; preds = %continue_after_recursive_free504, %continue_after_recursive_free464
+  %free_field_2509 = getelementptr inbounds %Block, ptr %field_val_to_free456, i32 0, i32 2
+  %field_val_to_free510 = load ptr, ptr %free_field_2509, align 8
+  %is_not_null511 = icmp ne ptr %field_val_to_free510, null
+  br i1 %is_not_null511, label %recursive_free_struct512, label %continue_after_recursive_free513
+
+recursive_free_struct477:                         ; preds = %recursive_free_struct472
+  %free_field_0479 = getelementptr inbounds %Linear, ptr %field_val_to_free475, i32 0, i32 0
+  %field_val_to_free480 = load ptr, ptr %free_field_0479, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free480)
+  %free_field_1481 = getelementptr inbounds %Linear, ptr %field_val_to_free475, i32 0, i32 1
+  %field_val_to_free482 = load ptr, ptr %free_field_1481, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free482)
+  call void @free(ptr %field_val_to_free475)
+  br label %continue_after_recursive_free478
+
+continue_after_recursive_free478:                 ; preds = %recursive_free_struct477, %recursive_free_struct472
+  %free_field_1483 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free470, i32 0, i32 1
+  %field_val_to_free484 = load ptr, ptr %free_field_1483, align 8
+  %is_not_null485 = icmp ne ptr %field_val_to_free484, null
+  br i1 %is_not_null485, label %recursive_free_struct486, label %continue_after_recursive_free487
+
+recursive_free_struct486:                         ; preds = %continue_after_recursive_free478
+  %free_field_0488 = getelementptr inbounds %Linear, ptr %field_val_to_free484, i32 0, i32 0
+  %field_val_to_free489 = load ptr, ptr %free_field_0488, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free489)
+  %free_field_1490 = getelementptr inbounds %Linear, ptr %field_val_to_free484, i32 0, i32 1
+  %field_val_to_free491 = load ptr, ptr %free_field_1490, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free491)
+  call void @free(ptr %field_val_to_free484)
+  br label %continue_after_recursive_free487
+
+continue_after_recursive_free487:                 ; preds = %recursive_free_struct486, %continue_after_recursive_free478
+  %free_field_2492 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free470, i32 0, i32 2
+  %field_val_to_free493 = load ptr, ptr %free_field_2492, align 8
+  %is_not_null494 = icmp ne ptr %field_val_to_free493, null
+  br i1 %is_not_null494, label %recursive_free_struct495, label %continue_after_recursive_free496
+
+recursive_free_struct495:                         ; preds = %continue_after_recursive_free487
+  %free_field_0497 = getelementptr inbounds %Linear, ptr %field_val_to_free493, i32 0, i32 0
+  %field_val_to_free498 = load ptr, ptr %free_field_0497, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free498)
+  %free_field_1499 = getelementptr inbounds %Linear, ptr %field_val_to_free493, i32 0, i32 1
+  %field_val_to_free500 = load ptr, ptr %free_field_1499, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free500)
+  call void @free(ptr %field_val_to_free493)
+  br label %continue_after_recursive_free496
+
+continue_after_recursive_free496:                 ; preds = %recursive_free_struct495, %continue_after_recursive_free487
+  %free_field_3 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free470, i32 0, i32 3
+  %field_val_to_free501 = load ptr, ptr %free_field_3, align 8
+  %is_not_null502 = icmp ne ptr %field_val_to_free501, null
+  br i1 %is_not_null502, label %recursive_free_struct503, label %continue_after_recursive_free504
+
+recursive_free_struct503:                         ; preds = %continue_after_recursive_free496
+  %free_field_0505 = getelementptr inbounds %Linear, ptr %field_val_to_free501, i32 0, i32 0
+  %field_val_to_free506 = load ptr, ptr %free_field_0505, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free506)
+  %free_field_1507 = getelementptr inbounds %Linear, ptr %field_val_to_free501, i32 0, i32 1
+  %field_val_to_free508 = load ptr, ptr %free_field_1507, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free508)
+  call void @free(ptr %field_val_to_free501)
+  br label %continue_after_recursive_free504
+
+continue_after_recursive_free504:                 ; preds = %recursive_free_struct503, %continue_after_recursive_free496
+  call void @free(ptr %field_val_to_free470)
+  br label %continue_after_recursive_free473
+
+recursive_free_struct512:                         ; preds = %continue_after_recursive_free473
+  %free_field_0514 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free510, i32 0, i32 0
+  %field_val_to_free515 = load ptr, ptr %free_field_0514, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free515)
+  %free_field_1516 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free510, i32 0, i32 1
+  %field_val_to_free517 = load ptr, ptr %free_field_1516, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free517)
+  call void @free(ptr %field_val_to_free510)
+  br label %continue_after_recursive_free513
+
+continue_after_recursive_free513:                 ; preds = %recursive_free_struct512, %continue_after_recursive_free473
+  %free_field_3518 = getelementptr inbounds %Block, ptr %field_val_to_free456, i32 0, i32 3
+  %field_val_to_free519 = load ptr, ptr %free_field_3518, align 8
+  %is_not_null520 = icmp ne ptr %field_val_to_free519, null
+  br i1 %is_not_null520, label %recursive_free_struct521, label %continue_after_recursive_free522
+
+recursive_free_struct521:                         ; preds = %continue_after_recursive_free513
+  %free_field_0523 = getelementptr inbounds %MLP, ptr %field_val_to_free519, i32 0, i32 0
+  %field_val_to_free524 = load ptr, ptr %free_field_0523, align 8
+  %is_not_null525 = icmp ne ptr %field_val_to_free524, null
+  br i1 %is_not_null525, label %recursive_free_struct526, label %continue_after_recursive_free527
+
+continue_after_recursive_free522:                 ; preds = %continue_after_recursive_free536, %continue_after_recursive_free513
+  call void @free(ptr %field_val_to_free456)
+  br label %continue_after_recursive_free459
+
+recursive_free_struct526:                         ; preds = %recursive_free_struct521
+  %free_field_0528 = getelementptr inbounds %Linear, ptr %field_val_to_free524, i32 0, i32 0
+  %field_val_to_free529 = load ptr, ptr %free_field_0528, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free529)
+  %free_field_1530 = getelementptr inbounds %Linear, ptr %field_val_to_free524, i32 0, i32 1
+  %field_val_to_free531 = load ptr, ptr %free_field_1530, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free531)
+  call void @free(ptr %field_val_to_free524)
+  br label %continue_after_recursive_free527
+
+continue_after_recursive_free527:                 ; preds = %recursive_free_struct526, %recursive_free_struct521
+  %free_field_1532 = getelementptr inbounds %MLP, ptr %field_val_to_free519, i32 0, i32 1
+  %field_val_to_free533 = load ptr, ptr %free_field_1532, align 8
+  %is_not_null534 = icmp ne ptr %field_val_to_free533, null
+  br i1 %is_not_null534, label %recursive_free_struct535, label %continue_after_recursive_free536
+
+recursive_free_struct535:                         ; preds = %continue_after_recursive_free527
+  %free_field_0537 = getelementptr inbounds %Linear, ptr %field_val_to_free533, i32 0, i32 0
+  %field_val_to_free538 = load ptr, ptr %free_field_0537, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free538)
+  %free_field_1539 = getelementptr inbounds %Linear, ptr %field_val_to_free533, i32 0, i32 1
+  %field_val_to_free540 = load ptr, ptr %free_field_1539, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free540)
+  call void @free(ptr %field_val_to_free533)
+  br label %continue_after_recursive_free536
+
+continue_after_recursive_free536:                 ; preds = %recursive_free_struct535, %continue_after_recursive_free527
+  call void @free(ptr %field_val_to_free519)
+  br label %continue_after_recursive_free522
+
+recursive_free_struct544:                         ; preds = %continue_after_recursive_free459
+  %free_field_0546 = getelementptr inbounds %Block, ptr %field_val_to_free542, i32 0, i32 0
   %field_val_to_free547 = load ptr, ptr %free_field_0546, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free547)
-  call void @free(ptr %field_val_to_free542)
-  br label %continue_after_recursive_free545
+  %is_not_null548 = icmp ne ptr %field_val_to_free547, null
+  br i1 %is_not_null548, label %recursive_free_struct549, label %continue_after_recursive_free550
 
-continue_after_recursive_free545:                 ; preds = %recursive_free_struct544, %continue_after_recursive_free539
-  %free_field_2 = getelementptr inbounds %GPT, ptr %struct_to_free, i32 0, i32 2
-  %field_val_to_free548 = load ptr, ptr %free_field_2, align 8
-  %is_not_null549 = icmp ne ptr %field_val_to_free548, null
-  br i1 %is_not_null549, label %recursive_free_struct550, label %continue_after_recursive_free551
+continue_after_recursive_free545:                 ; preds = %continue_after_recursive_free609, %continue_after_recursive_free459
+  %free_field_4 = getelementptr inbounds %GPT, ptr %struct_to_free, i32 0, i32 4
+  %field_val_to_free628 = load ptr, ptr %free_field_4, align 8
+  %is_not_null629 = icmp ne ptr %field_val_to_free628, null
+  br i1 %is_not_null629, label %recursive_free_struct630, label %continue_after_recursive_free631
 
-recursive_free_struct550:                         ; preds = %continue_after_recursive_free545
-  %free_field_0552 = getelementptr inbounds %Block, ptr %field_val_to_free548, i32 0, i32 0
-  %field_val_to_free553 = load ptr, ptr %free_field_0552, align 8
-  %is_not_null554 = icmp ne ptr %field_val_to_free553, null
-  br i1 %is_not_null554, label %recursive_free_struct555, label %continue_after_recursive_free556
+recursive_free_struct549:                         ; preds = %recursive_free_struct544
+  %free_field_0551 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free547, i32 0, i32 0
+  %field_val_to_free552 = load ptr, ptr %free_field_0551, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free552)
+  %free_field_1553 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free547, i32 0, i32 1
+  %field_val_to_free554 = load ptr, ptr %free_field_1553, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free554)
+  call void @free(ptr %field_val_to_free547)
+  br label %continue_after_recursive_free550
 
-continue_after_recursive_free551:                 ; preds = %continue_after_recursive_free614, %continue_after_recursive_free545
-  %free_field_3633 = getelementptr inbounds %GPT, ptr %struct_to_free, i32 0, i32 3
-  %field_val_to_free634 = load ptr, ptr %free_field_3633, align 8
-  %is_not_null635 = icmp ne ptr %field_val_to_free634, null
-  br i1 %is_not_null635, label %recursive_free_struct636, label %continue_after_recursive_free637
+continue_after_recursive_free550:                 ; preds = %recursive_free_struct549, %recursive_free_struct544
+  %free_field_1555 = getelementptr inbounds %Block, ptr %field_val_to_free542, i32 0, i32 1
+  %field_val_to_free556 = load ptr, ptr %free_field_1555, align 8
+  %is_not_null557 = icmp ne ptr %field_val_to_free556, null
+  br i1 %is_not_null557, label %recursive_free_struct558, label %continue_after_recursive_free559
 
-recursive_free_struct555:                         ; preds = %recursive_free_struct550
-  %free_field_0557 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free553, i32 0, i32 0
-  %field_val_to_free558 = load ptr, ptr %free_field_0557, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free558)
-  %free_field_1559 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free553, i32 0, i32 1
-  %field_val_to_free560 = load ptr, ptr %free_field_1559, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free560)
-  call void @free(ptr %field_val_to_free553)
-  br label %continue_after_recursive_free556
+recursive_free_struct558:                         ; preds = %continue_after_recursive_free550
+  %free_field_0560 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free556, i32 0, i32 0
+  %field_val_to_free561 = load ptr, ptr %free_field_0560, align 8
+  %is_not_null562 = icmp ne ptr %field_val_to_free561, null
+  br i1 %is_not_null562, label %recursive_free_struct563, label %continue_after_recursive_free564
 
-continue_after_recursive_free556:                 ; preds = %recursive_free_struct555, %recursive_free_struct550
-  %free_field_1561 = getelementptr inbounds %Block, ptr %field_val_to_free548, i32 0, i32 1
-  %field_val_to_free562 = load ptr, ptr %free_field_1561, align 8
-  %is_not_null563 = icmp ne ptr %field_val_to_free562, null
-  br i1 %is_not_null563, label %recursive_free_struct564, label %continue_after_recursive_free565
+continue_after_recursive_free559:                 ; preds = %continue_after_recursive_free591, %continue_after_recursive_free550
+  %free_field_2596 = getelementptr inbounds %Block, ptr %field_val_to_free542, i32 0, i32 2
+  %field_val_to_free597 = load ptr, ptr %free_field_2596, align 8
+  %is_not_null598 = icmp ne ptr %field_val_to_free597, null
+  br i1 %is_not_null598, label %recursive_free_struct599, label %continue_after_recursive_free600
 
-recursive_free_struct564:                         ; preds = %continue_after_recursive_free556
-  %free_field_0566 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free562, i32 0, i32 0
-  %field_val_to_free567 = load ptr, ptr %free_field_0566, align 8
-  %is_not_null568 = icmp ne ptr %field_val_to_free567, null
-  br i1 %is_not_null568, label %recursive_free_struct569, label %continue_after_recursive_free570
+recursive_free_struct563:                         ; preds = %recursive_free_struct558
+  %free_field_0565 = getelementptr inbounds %Linear, ptr %field_val_to_free561, i32 0, i32 0
+  %field_val_to_free566 = load ptr, ptr %free_field_0565, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free566)
+  %free_field_1567 = getelementptr inbounds %Linear, ptr %field_val_to_free561, i32 0, i32 1
+  %field_val_to_free568 = load ptr, ptr %free_field_1567, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free568)
+  call void @free(ptr %field_val_to_free561)
+  br label %continue_after_recursive_free564
 
-continue_after_recursive_free565:                 ; preds = %continue_after_recursive_free596, %continue_after_recursive_free556
-  %free_field_2601 = getelementptr inbounds %Block, ptr %field_val_to_free548, i32 0, i32 2
-  %field_val_to_free602 = load ptr, ptr %free_field_2601, align 8
-  %is_not_null603 = icmp ne ptr %field_val_to_free602, null
-  br i1 %is_not_null603, label %recursive_free_struct604, label %continue_after_recursive_free605
+continue_after_recursive_free564:                 ; preds = %recursive_free_struct563, %recursive_free_struct558
+  %free_field_1569 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free556, i32 0, i32 1
+  %field_val_to_free570 = load ptr, ptr %free_field_1569, align 8
+  %is_not_null571 = icmp ne ptr %field_val_to_free570, null
+  br i1 %is_not_null571, label %recursive_free_struct572, label %continue_after_recursive_free573
 
-recursive_free_struct569:                         ; preds = %recursive_free_struct564
-  %free_field_0571 = getelementptr inbounds %Linear, ptr %field_val_to_free567, i32 0, i32 0
-  %field_val_to_free572 = load ptr, ptr %free_field_0571, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free572)
-  %free_field_1573 = getelementptr inbounds %Linear, ptr %field_val_to_free567, i32 0, i32 1
-  %field_val_to_free574 = load ptr, ptr %free_field_1573, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free574)
-  call void @free(ptr %field_val_to_free567)
-  br label %continue_after_recursive_free570
+recursive_free_struct572:                         ; preds = %continue_after_recursive_free564
+  %free_field_0574 = getelementptr inbounds %Linear, ptr %field_val_to_free570, i32 0, i32 0
+  %field_val_to_free575 = load ptr, ptr %free_field_0574, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free575)
+  %free_field_1576 = getelementptr inbounds %Linear, ptr %field_val_to_free570, i32 0, i32 1
+  %field_val_to_free577 = load ptr, ptr %free_field_1576, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free577)
+  call void @free(ptr %field_val_to_free570)
+  br label %continue_after_recursive_free573
 
-continue_after_recursive_free570:                 ; preds = %recursive_free_struct569, %recursive_free_struct564
-  %free_field_1575 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free562, i32 0, i32 1
-  %field_val_to_free576 = load ptr, ptr %free_field_1575, align 8
-  %is_not_null577 = icmp ne ptr %field_val_to_free576, null
-  br i1 %is_not_null577, label %recursive_free_struct578, label %continue_after_recursive_free579
+continue_after_recursive_free573:                 ; preds = %recursive_free_struct572, %continue_after_recursive_free564
+  %free_field_2578 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free556, i32 0, i32 2
+  %field_val_to_free579 = load ptr, ptr %free_field_2578, align 8
+  %is_not_null580 = icmp ne ptr %field_val_to_free579, null
+  br i1 %is_not_null580, label %recursive_free_struct581, label %continue_after_recursive_free582
 
-recursive_free_struct578:                         ; preds = %continue_after_recursive_free570
-  %free_field_0580 = getelementptr inbounds %Linear, ptr %field_val_to_free576, i32 0, i32 0
-  %field_val_to_free581 = load ptr, ptr %free_field_0580, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free581)
-  %free_field_1582 = getelementptr inbounds %Linear, ptr %field_val_to_free576, i32 0, i32 1
-  %field_val_to_free583 = load ptr, ptr %free_field_1582, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free583)
-  call void @free(ptr %field_val_to_free576)
-  br label %continue_after_recursive_free579
+recursive_free_struct581:                         ; preds = %continue_after_recursive_free573
+  %free_field_0583 = getelementptr inbounds %Linear, ptr %field_val_to_free579, i32 0, i32 0
+  %field_val_to_free584 = load ptr, ptr %free_field_0583, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free584)
+  %free_field_1585 = getelementptr inbounds %Linear, ptr %field_val_to_free579, i32 0, i32 1
+  %field_val_to_free586 = load ptr, ptr %free_field_1585, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free586)
+  call void @free(ptr %field_val_to_free579)
+  br label %continue_after_recursive_free582
 
-continue_after_recursive_free579:                 ; preds = %recursive_free_struct578, %continue_after_recursive_free570
-  %free_field_2584 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free562, i32 0, i32 2
-  %field_val_to_free585 = load ptr, ptr %free_field_2584, align 8
-  %is_not_null586 = icmp ne ptr %field_val_to_free585, null
-  br i1 %is_not_null586, label %recursive_free_struct587, label %continue_after_recursive_free588
+continue_after_recursive_free582:                 ; preds = %recursive_free_struct581, %continue_after_recursive_free573
+  %free_field_3587 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free556, i32 0, i32 3
+  %field_val_to_free588 = load ptr, ptr %free_field_3587, align 8
+  %is_not_null589 = icmp ne ptr %field_val_to_free588, null
+  br i1 %is_not_null589, label %recursive_free_struct590, label %continue_after_recursive_free591
 
-recursive_free_struct587:                         ; preds = %continue_after_recursive_free579
-  %free_field_0589 = getelementptr inbounds %Linear, ptr %field_val_to_free585, i32 0, i32 0
-  %field_val_to_free590 = load ptr, ptr %free_field_0589, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free590)
-  %free_field_1591 = getelementptr inbounds %Linear, ptr %field_val_to_free585, i32 0, i32 1
-  %field_val_to_free592 = load ptr, ptr %free_field_1591, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free592)
-  call void @free(ptr %field_val_to_free585)
-  br label %continue_after_recursive_free588
+recursive_free_struct590:                         ; preds = %continue_after_recursive_free582
+  %free_field_0592 = getelementptr inbounds %Linear, ptr %field_val_to_free588, i32 0, i32 0
+  %field_val_to_free593 = load ptr, ptr %free_field_0592, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free593)
+  %free_field_1594 = getelementptr inbounds %Linear, ptr %field_val_to_free588, i32 0, i32 1
+  %field_val_to_free595 = load ptr, ptr %free_field_1594, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free595)
+  call void @free(ptr %field_val_to_free588)
+  br label %continue_after_recursive_free591
 
-continue_after_recursive_free588:                 ; preds = %recursive_free_struct587, %continue_after_recursive_free579
-  %free_field_3 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free562, i32 0, i32 3
-  %field_val_to_free593 = load ptr, ptr %free_field_3, align 8
-  %is_not_null594 = icmp ne ptr %field_val_to_free593, null
-  br i1 %is_not_null594, label %recursive_free_struct595, label %continue_after_recursive_free596
+continue_after_recursive_free591:                 ; preds = %recursive_free_struct590, %continue_after_recursive_free582
+  call void @free(ptr %field_val_to_free556)
+  br label %continue_after_recursive_free559
 
-recursive_free_struct595:                         ; preds = %continue_after_recursive_free588
-  %free_field_0597 = getelementptr inbounds %Linear, ptr %field_val_to_free593, i32 0, i32 0
-  %field_val_to_free598 = load ptr, ptr %free_field_0597, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free598)
-  %free_field_1599 = getelementptr inbounds %Linear, ptr %field_val_to_free593, i32 0, i32 1
-  %field_val_to_free600 = load ptr, ptr %free_field_1599, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free600)
-  call void @free(ptr %field_val_to_free593)
-  br label %continue_after_recursive_free596
+recursive_free_struct599:                         ; preds = %continue_after_recursive_free559
+  %free_field_0601 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free597, i32 0, i32 0
+  %field_val_to_free602 = load ptr, ptr %free_field_0601, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free602)
+  %free_field_1603 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free597, i32 0, i32 1
+  %field_val_to_free604 = load ptr, ptr %free_field_1603, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free604)
+  call void @free(ptr %field_val_to_free597)
+  br label %continue_after_recursive_free600
 
-continue_after_recursive_free596:                 ; preds = %recursive_free_struct595, %continue_after_recursive_free588
-  call void @free(ptr %field_val_to_free562)
-  br label %continue_after_recursive_free565
+continue_after_recursive_free600:                 ; preds = %recursive_free_struct599, %continue_after_recursive_free559
+  %free_field_3605 = getelementptr inbounds %Block, ptr %field_val_to_free542, i32 0, i32 3
+  %field_val_to_free606 = load ptr, ptr %free_field_3605, align 8
+  %is_not_null607 = icmp ne ptr %field_val_to_free606, null
+  br i1 %is_not_null607, label %recursive_free_struct608, label %continue_after_recursive_free609
 
-recursive_free_struct604:                         ; preds = %continue_after_recursive_free565
-  %free_field_0606 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free602, i32 0, i32 0
-  %field_val_to_free607 = load ptr, ptr %free_field_0606, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free607)
-  %free_field_1608 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free602, i32 0, i32 1
-  %field_val_to_free609 = load ptr, ptr %free_field_1608, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free609)
-  call void @free(ptr %field_val_to_free602)
-  br label %continue_after_recursive_free605
-
-continue_after_recursive_free605:                 ; preds = %recursive_free_struct604, %continue_after_recursive_free565
-  %free_field_3610 = getelementptr inbounds %Block, ptr %field_val_to_free548, i32 0, i32 3
-  %field_val_to_free611 = load ptr, ptr %free_field_3610, align 8
+recursive_free_struct608:                         ; preds = %continue_after_recursive_free600
+  %free_field_0610 = getelementptr inbounds %MLP, ptr %field_val_to_free606, i32 0, i32 0
+  %field_val_to_free611 = load ptr, ptr %free_field_0610, align 8
   %is_not_null612 = icmp ne ptr %field_val_to_free611, null
   br i1 %is_not_null612, label %recursive_free_struct613, label %continue_after_recursive_free614
 
-recursive_free_struct613:                         ; preds = %continue_after_recursive_free605
-  %free_field_0615 = getelementptr inbounds %MLP, ptr %field_val_to_free611, i32 0, i32 0
+continue_after_recursive_free609:                 ; preds = %continue_after_recursive_free623, %continue_after_recursive_free600
+  call void @free(ptr %field_val_to_free542)
+  br label %continue_after_recursive_free545
+
+recursive_free_struct613:                         ; preds = %recursive_free_struct608
+  %free_field_0615 = getelementptr inbounds %Linear, ptr %field_val_to_free611, i32 0, i32 0
   %field_val_to_free616 = load ptr, ptr %free_field_0615, align 8
-  %is_not_null617 = icmp ne ptr %field_val_to_free616, null
-  br i1 %is_not_null617, label %recursive_free_struct618, label %continue_after_recursive_free619
-
-continue_after_recursive_free614:                 ; preds = %continue_after_recursive_free628, %continue_after_recursive_free605
-  call void @free(ptr %field_val_to_free548)
-  br label %continue_after_recursive_free551
-
-recursive_free_struct618:                         ; preds = %recursive_free_struct613
-  %free_field_0620 = getelementptr inbounds %Linear, ptr %field_val_to_free616, i32 0, i32 0
-  %field_val_to_free621 = load ptr, ptr %free_field_0620, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free621)
-  %free_field_1622 = getelementptr inbounds %Linear, ptr %field_val_to_free616, i32 0, i32 1
-  %field_val_to_free623 = load ptr, ptr %free_field_1622, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free623)
-  call void @free(ptr %field_val_to_free616)
-  br label %continue_after_recursive_free619
-
-continue_after_recursive_free619:                 ; preds = %recursive_free_struct618, %recursive_free_struct613
-  %free_field_1624 = getelementptr inbounds %MLP, ptr %field_val_to_free611, i32 0, i32 1
-  %field_val_to_free625 = load ptr, ptr %free_field_1624, align 8
-  %is_not_null626 = icmp ne ptr %field_val_to_free625, null
-  br i1 %is_not_null626, label %recursive_free_struct627, label %continue_after_recursive_free628
-
-recursive_free_struct627:                         ; preds = %continue_after_recursive_free619
-  %free_field_0629 = getelementptr inbounds %Linear, ptr %field_val_to_free625, i32 0, i32 0
-  %field_val_to_free630 = load ptr, ptr %free_field_0629, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free630)
-  %free_field_1631 = getelementptr inbounds %Linear, ptr %field_val_to_free625, i32 0, i32 1
-  %field_val_to_free632 = load ptr, ptr %free_field_1631, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free632)
-  call void @free(ptr %field_val_to_free625)
-  br label %continue_after_recursive_free628
-
-continue_after_recursive_free628:                 ; preds = %recursive_free_struct627, %continue_after_recursive_free619
+  call void @tl_tensor_free(ptr %field_val_to_free616)
+  %free_field_1617 = getelementptr inbounds %Linear, ptr %field_val_to_free611, i32 0, i32 1
+  %field_val_to_free618 = load ptr, ptr %free_field_1617, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free618)
   call void @free(ptr %field_val_to_free611)
   br label %continue_after_recursive_free614
 
-recursive_free_struct636:                         ; preds = %continue_after_recursive_free551
-  %free_field_0638 = getelementptr inbounds %Block, ptr %field_val_to_free634, i32 0, i32 0
-  %field_val_to_free639 = load ptr, ptr %free_field_0638, align 8
-  %is_not_null640 = icmp ne ptr %field_val_to_free639, null
-  br i1 %is_not_null640, label %recursive_free_struct641, label %continue_after_recursive_free642
+continue_after_recursive_free614:                 ; preds = %recursive_free_struct613, %recursive_free_struct608
+  %free_field_1619 = getelementptr inbounds %MLP, ptr %field_val_to_free606, i32 0, i32 1
+  %field_val_to_free620 = load ptr, ptr %free_field_1619, align 8
+  %is_not_null621 = icmp ne ptr %field_val_to_free620, null
+  br i1 %is_not_null621, label %recursive_free_struct622, label %continue_after_recursive_free623
 
-continue_after_recursive_free637:                 ; preds = %continue_after_recursive_free701, %continue_after_recursive_free551
-  %free_field_4 = getelementptr inbounds %GPT, ptr %struct_to_free, i32 0, i32 4
-  %field_val_to_free720 = load ptr, ptr %free_field_4, align 8
-  %is_not_null721 = icmp ne ptr %field_val_to_free720, null
-  br i1 %is_not_null721, label %recursive_free_struct722, label %continue_after_recursive_free723
+recursive_free_struct622:                         ; preds = %continue_after_recursive_free614
+  %free_field_0624 = getelementptr inbounds %Linear, ptr %field_val_to_free620, i32 0, i32 0
+  %field_val_to_free625 = load ptr, ptr %free_field_0624, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free625)
+  %free_field_1626 = getelementptr inbounds %Linear, ptr %field_val_to_free620, i32 0, i32 1
+  %field_val_to_free627 = load ptr, ptr %free_field_1626, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free627)
+  call void @free(ptr %field_val_to_free620)
+  br label %continue_after_recursive_free623
 
-recursive_free_struct641:                         ; preds = %recursive_free_struct636
-  %free_field_0643 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free639, i32 0, i32 0
-  %field_val_to_free644 = load ptr, ptr %free_field_0643, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free644)
-  %free_field_1645 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free639, i32 0, i32 1
-  %field_val_to_free646 = load ptr, ptr %free_field_1645, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free646)
-  call void @free(ptr %field_val_to_free639)
-  br label %continue_after_recursive_free642
+continue_after_recursive_free623:                 ; preds = %recursive_free_struct622, %continue_after_recursive_free614
+  call void @free(ptr %field_val_to_free606)
+  br label %continue_after_recursive_free609
 
-continue_after_recursive_free642:                 ; preds = %recursive_free_struct641, %recursive_free_struct636
-  %free_field_1647 = getelementptr inbounds %Block, ptr %field_val_to_free634, i32 0, i32 1
-  %field_val_to_free648 = load ptr, ptr %free_field_1647, align 8
-  %is_not_null649 = icmp ne ptr %field_val_to_free648, null
-  br i1 %is_not_null649, label %recursive_free_struct650, label %continue_after_recursive_free651
+recursive_free_struct630:                         ; preds = %continue_after_recursive_free545
+  %free_field_0632 = getelementptr inbounds %Block, ptr %field_val_to_free628, i32 0, i32 0
+  %field_val_to_free633 = load ptr, ptr %free_field_0632, align 8
+  %is_not_null634 = icmp ne ptr %field_val_to_free633, null
+  br i1 %is_not_null634, label %recursive_free_struct635, label %continue_after_recursive_free636
 
-recursive_free_struct650:                         ; preds = %continue_after_recursive_free642
-  %free_field_0652 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free648, i32 0, i32 0
-  %field_val_to_free653 = load ptr, ptr %free_field_0652, align 8
-  %is_not_null654 = icmp ne ptr %field_val_to_free653, null
-  br i1 %is_not_null654, label %recursive_free_struct655, label %continue_after_recursive_free656
-
-continue_after_recursive_free651:                 ; preds = %continue_after_recursive_free683, %continue_after_recursive_free642
-  %free_field_2688 = getelementptr inbounds %Block, ptr %field_val_to_free634, i32 0, i32 2
-  %field_val_to_free689 = load ptr, ptr %free_field_2688, align 8
-  %is_not_null690 = icmp ne ptr %field_val_to_free689, null
-  br i1 %is_not_null690, label %recursive_free_struct691, label %continue_after_recursive_free692
-
-recursive_free_struct655:                         ; preds = %recursive_free_struct650
-  %free_field_0657 = getelementptr inbounds %Linear, ptr %field_val_to_free653, i32 0, i32 0
-  %field_val_to_free658 = load ptr, ptr %free_field_0657, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free658)
-  %free_field_1659 = getelementptr inbounds %Linear, ptr %field_val_to_free653, i32 0, i32 1
-  %field_val_to_free660 = load ptr, ptr %free_field_1659, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free660)
-  call void @free(ptr %field_val_to_free653)
-  br label %continue_after_recursive_free656
-
-continue_after_recursive_free656:                 ; preds = %recursive_free_struct655, %recursive_free_struct650
-  %free_field_1661 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free648, i32 0, i32 1
-  %field_val_to_free662 = load ptr, ptr %free_field_1661, align 8
-  %is_not_null663 = icmp ne ptr %field_val_to_free662, null
-  br i1 %is_not_null663, label %recursive_free_struct664, label %continue_after_recursive_free665
-
-recursive_free_struct664:                         ; preds = %continue_after_recursive_free656
-  %free_field_0666 = getelementptr inbounds %Linear, ptr %field_val_to_free662, i32 0, i32 0
-  %field_val_to_free667 = load ptr, ptr %free_field_0666, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free667)
-  %free_field_1668 = getelementptr inbounds %Linear, ptr %field_val_to_free662, i32 0, i32 1
-  %field_val_to_free669 = load ptr, ptr %free_field_1668, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free669)
-  call void @free(ptr %field_val_to_free662)
-  br label %continue_after_recursive_free665
-
-continue_after_recursive_free665:                 ; preds = %recursive_free_struct664, %continue_after_recursive_free656
-  %free_field_2670 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free648, i32 0, i32 2
-  %field_val_to_free671 = load ptr, ptr %free_field_2670, align 8
-  %is_not_null672 = icmp ne ptr %field_val_to_free671, null
-  br i1 %is_not_null672, label %recursive_free_struct673, label %continue_after_recursive_free674
-
-recursive_free_struct673:                         ; preds = %continue_after_recursive_free665
-  %free_field_0675 = getelementptr inbounds %Linear, ptr %field_val_to_free671, i32 0, i32 0
-  %field_val_to_free676 = load ptr, ptr %free_field_0675, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free676)
-  %free_field_1677 = getelementptr inbounds %Linear, ptr %field_val_to_free671, i32 0, i32 1
-  %field_val_to_free678 = load ptr, ptr %free_field_1677, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free678)
-  call void @free(ptr %field_val_to_free671)
-  br label %continue_after_recursive_free674
-
-continue_after_recursive_free674:                 ; preds = %recursive_free_struct673, %continue_after_recursive_free665
-  %free_field_3679 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free648, i32 0, i32 3
-  %field_val_to_free680 = load ptr, ptr %free_field_3679, align 8
-  %is_not_null681 = icmp ne ptr %field_val_to_free680, null
-  br i1 %is_not_null681, label %recursive_free_struct682, label %continue_after_recursive_free683
-
-recursive_free_struct682:                         ; preds = %continue_after_recursive_free674
-  %free_field_0684 = getelementptr inbounds %Linear, ptr %field_val_to_free680, i32 0, i32 0
-  %field_val_to_free685 = load ptr, ptr %free_field_0684, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free685)
-  %free_field_1686 = getelementptr inbounds %Linear, ptr %field_val_to_free680, i32 0, i32 1
-  %field_val_to_free687 = load ptr, ptr %free_field_1686, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free687)
-  call void @free(ptr %field_val_to_free680)
-  br label %continue_after_recursive_free683
-
-continue_after_recursive_free683:                 ; preds = %recursive_free_struct682, %continue_after_recursive_free674
-  call void @free(ptr %field_val_to_free648)
-  br label %continue_after_recursive_free651
-
-recursive_free_struct691:                         ; preds = %continue_after_recursive_free651
-  %free_field_0693 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free689, i32 0, i32 0
-  %field_val_to_free694 = load ptr, ptr %free_field_0693, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free694)
-  %free_field_1695 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free689, i32 0, i32 1
-  %field_val_to_free696 = load ptr, ptr %free_field_1695, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free696)
-  call void @free(ptr %field_val_to_free689)
-  br label %continue_after_recursive_free692
-
-continue_after_recursive_free692:                 ; preds = %recursive_free_struct691, %continue_after_recursive_free651
-  %free_field_3697 = getelementptr inbounds %Block, ptr %field_val_to_free634, i32 0, i32 3
-  %field_val_to_free698 = load ptr, ptr %free_field_3697, align 8
-  %is_not_null699 = icmp ne ptr %field_val_to_free698, null
-  br i1 %is_not_null699, label %recursive_free_struct700, label %continue_after_recursive_free701
-
-recursive_free_struct700:                         ; preds = %continue_after_recursive_free692
-  %free_field_0702 = getelementptr inbounds %MLP, ptr %field_val_to_free698, i32 0, i32 0
-  %field_val_to_free703 = load ptr, ptr %free_field_0702, align 8
-  %is_not_null704 = icmp ne ptr %field_val_to_free703, null
-  br i1 %is_not_null704, label %recursive_free_struct705, label %continue_after_recursive_free706
-
-continue_after_recursive_free701:                 ; preds = %continue_after_recursive_free715, %continue_after_recursive_free692
-  call void @free(ptr %field_val_to_free634)
-  br label %continue_after_recursive_free637
-
-recursive_free_struct705:                         ; preds = %recursive_free_struct700
-  %free_field_0707 = getelementptr inbounds %Linear, ptr %field_val_to_free703, i32 0, i32 0
-  %field_val_to_free708 = load ptr, ptr %free_field_0707, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free708)
-  %free_field_1709 = getelementptr inbounds %Linear, ptr %field_val_to_free703, i32 0, i32 1
-  %field_val_to_free710 = load ptr, ptr %free_field_1709, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free710)
-  call void @free(ptr %field_val_to_free703)
-  br label %continue_after_recursive_free706
-
-continue_after_recursive_free706:                 ; preds = %recursive_free_struct705, %recursive_free_struct700
-  %free_field_1711 = getelementptr inbounds %MLP, ptr %field_val_to_free698, i32 0, i32 1
-  %field_val_to_free712 = load ptr, ptr %free_field_1711, align 8
-  %is_not_null713 = icmp ne ptr %field_val_to_free712, null
-  br i1 %is_not_null713, label %recursive_free_struct714, label %continue_after_recursive_free715
-
-recursive_free_struct714:                         ; preds = %continue_after_recursive_free706
-  %free_field_0716 = getelementptr inbounds %Linear, ptr %field_val_to_free712, i32 0, i32 0
-  %field_val_to_free717 = load ptr, ptr %free_field_0716, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free717)
-  %free_field_1718 = getelementptr inbounds %Linear, ptr %field_val_to_free712, i32 0, i32 1
-  %field_val_to_free719 = load ptr, ptr %free_field_1718, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free719)
-  call void @free(ptr %field_val_to_free712)
-  br label %continue_after_recursive_free715
-
-continue_after_recursive_free715:                 ; preds = %recursive_free_struct714, %continue_after_recursive_free706
-  call void @free(ptr %field_val_to_free698)
-  br label %continue_after_recursive_free701
-
-recursive_free_struct722:                         ; preds = %continue_after_recursive_free637
-  %free_field_0724 = getelementptr inbounds %Block, ptr %field_val_to_free720, i32 0, i32 0
-  %field_val_to_free725 = load ptr, ptr %free_field_0724, align 8
-  %is_not_null726 = icmp ne ptr %field_val_to_free725, null
-  br i1 %is_not_null726, label %recursive_free_struct727, label %continue_after_recursive_free728
-
-continue_after_recursive_free723:                 ; preds = %continue_after_recursive_free787, %continue_after_recursive_free637
+continue_after_recursive_free631:                 ; preds = %continue_after_recursive_free695, %continue_after_recursive_free545
   %free_field_5 = getelementptr inbounds %GPT, ptr %struct_to_free, i32 0, i32 5
-  %field_val_to_free806 = load ptr, ptr %free_field_5, align 8
-  %is_not_null807 = icmp ne ptr %field_val_to_free806, null
-  br i1 %is_not_null807, label %recursive_free_struct808, label %continue_after_recursive_free809
+  %field_val_to_free714 = load ptr, ptr %free_field_5, align 8
+  %is_not_null715 = icmp ne ptr %field_val_to_free714, null
+  br i1 %is_not_null715, label %recursive_free_struct716, label %continue_after_recursive_free717
 
-recursive_free_struct727:                         ; preds = %recursive_free_struct722
-  %free_field_0729 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free725, i32 0, i32 0
-  %field_val_to_free730 = load ptr, ptr %free_field_0729, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free730)
-  %free_field_1731 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free725, i32 0, i32 1
-  %field_val_to_free732 = load ptr, ptr %free_field_1731, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free732)
-  call void @free(ptr %field_val_to_free725)
-  br label %continue_after_recursive_free728
+recursive_free_struct635:                         ; preds = %recursive_free_struct630
+  %free_field_0637 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free633, i32 0, i32 0
+  %field_val_to_free638 = load ptr, ptr %free_field_0637, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free638)
+  %free_field_1639 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free633, i32 0, i32 1
+  %field_val_to_free640 = load ptr, ptr %free_field_1639, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free640)
+  call void @free(ptr %field_val_to_free633)
+  br label %continue_after_recursive_free636
 
-continue_after_recursive_free728:                 ; preds = %recursive_free_struct727, %recursive_free_struct722
-  %free_field_1733 = getelementptr inbounds %Block, ptr %field_val_to_free720, i32 0, i32 1
-  %field_val_to_free734 = load ptr, ptr %free_field_1733, align 8
-  %is_not_null735 = icmp ne ptr %field_val_to_free734, null
-  br i1 %is_not_null735, label %recursive_free_struct736, label %continue_after_recursive_free737
+continue_after_recursive_free636:                 ; preds = %recursive_free_struct635, %recursive_free_struct630
+  %free_field_1641 = getelementptr inbounds %Block, ptr %field_val_to_free628, i32 0, i32 1
+  %field_val_to_free642 = load ptr, ptr %free_field_1641, align 8
+  %is_not_null643 = icmp ne ptr %field_val_to_free642, null
+  br i1 %is_not_null643, label %recursive_free_struct644, label %continue_after_recursive_free645
 
-recursive_free_struct736:                         ; preds = %continue_after_recursive_free728
-  %free_field_0738 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free734, i32 0, i32 0
-  %field_val_to_free739 = load ptr, ptr %free_field_0738, align 8
-  %is_not_null740 = icmp ne ptr %field_val_to_free739, null
-  br i1 %is_not_null740, label %recursive_free_struct741, label %continue_after_recursive_free742
+recursive_free_struct644:                         ; preds = %continue_after_recursive_free636
+  %free_field_0646 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free642, i32 0, i32 0
+  %field_val_to_free647 = load ptr, ptr %free_field_0646, align 8
+  %is_not_null648 = icmp ne ptr %field_val_to_free647, null
+  br i1 %is_not_null648, label %recursive_free_struct649, label %continue_after_recursive_free650
 
-continue_after_recursive_free737:                 ; preds = %continue_after_recursive_free769, %continue_after_recursive_free728
-  %free_field_2774 = getelementptr inbounds %Block, ptr %field_val_to_free720, i32 0, i32 2
-  %field_val_to_free775 = load ptr, ptr %free_field_2774, align 8
-  %is_not_null776 = icmp ne ptr %field_val_to_free775, null
-  br i1 %is_not_null776, label %recursive_free_struct777, label %continue_after_recursive_free778
+continue_after_recursive_free645:                 ; preds = %continue_after_recursive_free677, %continue_after_recursive_free636
+  %free_field_2682 = getelementptr inbounds %Block, ptr %field_val_to_free628, i32 0, i32 2
+  %field_val_to_free683 = load ptr, ptr %free_field_2682, align 8
+  %is_not_null684 = icmp ne ptr %field_val_to_free683, null
+  br i1 %is_not_null684, label %recursive_free_struct685, label %continue_after_recursive_free686
 
-recursive_free_struct741:                         ; preds = %recursive_free_struct736
-  %free_field_0743 = getelementptr inbounds %Linear, ptr %field_val_to_free739, i32 0, i32 0
-  %field_val_to_free744 = load ptr, ptr %free_field_0743, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free744)
-  %free_field_1745 = getelementptr inbounds %Linear, ptr %field_val_to_free739, i32 0, i32 1
-  %field_val_to_free746 = load ptr, ptr %free_field_1745, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free746)
-  call void @free(ptr %field_val_to_free739)
-  br label %continue_after_recursive_free742
+recursive_free_struct649:                         ; preds = %recursive_free_struct644
+  %free_field_0651 = getelementptr inbounds %Linear, ptr %field_val_to_free647, i32 0, i32 0
+  %field_val_to_free652 = load ptr, ptr %free_field_0651, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free652)
+  %free_field_1653 = getelementptr inbounds %Linear, ptr %field_val_to_free647, i32 0, i32 1
+  %field_val_to_free654 = load ptr, ptr %free_field_1653, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free654)
+  call void @free(ptr %field_val_to_free647)
+  br label %continue_after_recursive_free650
 
-continue_after_recursive_free742:                 ; preds = %recursive_free_struct741, %recursive_free_struct736
-  %free_field_1747 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free734, i32 0, i32 1
-  %field_val_to_free748 = load ptr, ptr %free_field_1747, align 8
-  %is_not_null749 = icmp ne ptr %field_val_to_free748, null
-  br i1 %is_not_null749, label %recursive_free_struct750, label %continue_after_recursive_free751
+continue_after_recursive_free650:                 ; preds = %recursive_free_struct649, %recursive_free_struct644
+  %free_field_1655 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free642, i32 0, i32 1
+  %field_val_to_free656 = load ptr, ptr %free_field_1655, align 8
+  %is_not_null657 = icmp ne ptr %field_val_to_free656, null
+  br i1 %is_not_null657, label %recursive_free_struct658, label %continue_after_recursive_free659
 
-recursive_free_struct750:                         ; preds = %continue_after_recursive_free742
-  %free_field_0752 = getelementptr inbounds %Linear, ptr %field_val_to_free748, i32 0, i32 0
-  %field_val_to_free753 = load ptr, ptr %free_field_0752, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free753)
-  %free_field_1754 = getelementptr inbounds %Linear, ptr %field_val_to_free748, i32 0, i32 1
-  %field_val_to_free755 = load ptr, ptr %free_field_1754, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free755)
-  call void @free(ptr %field_val_to_free748)
-  br label %continue_after_recursive_free751
+recursive_free_struct658:                         ; preds = %continue_after_recursive_free650
+  %free_field_0660 = getelementptr inbounds %Linear, ptr %field_val_to_free656, i32 0, i32 0
+  %field_val_to_free661 = load ptr, ptr %free_field_0660, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free661)
+  %free_field_1662 = getelementptr inbounds %Linear, ptr %field_val_to_free656, i32 0, i32 1
+  %field_val_to_free663 = load ptr, ptr %free_field_1662, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free663)
+  call void @free(ptr %field_val_to_free656)
+  br label %continue_after_recursive_free659
 
-continue_after_recursive_free751:                 ; preds = %recursive_free_struct750, %continue_after_recursive_free742
-  %free_field_2756 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free734, i32 0, i32 2
-  %field_val_to_free757 = load ptr, ptr %free_field_2756, align 8
-  %is_not_null758 = icmp ne ptr %field_val_to_free757, null
-  br i1 %is_not_null758, label %recursive_free_struct759, label %continue_after_recursive_free760
+continue_after_recursive_free659:                 ; preds = %recursive_free_struct658, %continue_after_recursive_free650
+  %free_field_2664 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free642, i32 0, i32 2
+  %field_val_to_free665 = load ptr, ptr %free_field_2664, align 8
+  %is_not_null666 = icmp ne ptr %field_val_to_free665, null
+  br i1 %is_not_null666, label %recursive_free_struct667, label %continue_after_recursive_free668
 
-recursive_free_struct759:                         ; preds = %continue_after_recursive_free751
-  %free_field_0761 = getelementptr inbounds %Linear, ptr %field_val_to_free757, i32 0, i32 0
-  %field_val_to_free762 = load ptr, ptr %free_field_0761, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free762)
-  %free_field_1763 = getelementptr inbounds %Linear, ptr %field_val_to_free757, i32 0, i32 1
-  %field_val_to_free764 = load ptr, ptr %free_field_1763, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free764)
-  call void @free(ptr %field_val_to_free757)
-  br label %continue_after_recursive_free760
+recursive_free_struct667:                         ; preds = %continue_after_recursive_free659
+  %free_field_0669 = getelementptr inbounds %Linear, ptr %field_val_to_free665, i32 0, i32 0
+  %field_val_to_free670 = load ptr, ptr %free_field_0669, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free670)
+  %free_field_1671 = getelementptr inbounds %Linear, ptr %field_val_to_free665, i32 0, i32 1
+  %field_val_to_free672 = load ptr, ptr %free_field_1671, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free672)
+  call void @free(ptr %field_val_to_free665)
+  br label %continue_after_recursive_free668
 
-continue_after_recursive_free760:                 ; preds = %recursive_free_struct759, %continue_after_recursive_free751
-  %free_field_3765 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free734, i32 0, i32 3
-  %field_val_to_free766 = load ptr, ptr %free_field_3765, align 8
-  %is_not_null767 = icmp ne ptr %field_val_to_free766, null
-  br i1 %is_not_null767, label %recursive_free_struct768, label %continue_after_recursive_free769
+continue_after_recursive_free668:                 ; preds = %recursive_free_struct667, %continue_after_recursive_free659
+  %free_field_3673 = getelementptr inbounds %CausalSelfAttention, ptr %field_val_to_free642, i32 0, i32 3
+  %field_val_to_free674 = load ptr, ptr %free_field_3673, align 8
+  %is_not_null675 = icmp ne ptr %field_val_to_free674, null
+  br i1 %is_not_null675, label %recursive_free_struct676, label %continue_after_recursive_free677
 
-recursive_free_struct768:                         ; preds = %continue_after_recursive_free760
-  %free_field_0770 = getelementptr inbounds %Linear, ptr %field_val_to_free766, i32 0, i32 0
-  %field_val_to_free771 = load ptr, ptr %free_field_0770, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free771)
-  %free_field_1772 = getelementptr inbounds %Linear, ptr %field_val_to_free766, i32 0, i32 1
-  %field_val_to_free773 = load ptr, ptr %free_field_1772, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free773)
-  call void @free(ptr %field_val_to_free766)
-  br label %continue_after_recursive_free769
+recursive_free_struct676:                         ; preds = %continue_after_recursive_free668
+  %free_field_0678 = getelementptr inbounds %Linear, ptr %field_val_to_free674, i32 0, i32 0
+  %field_val_to_free679 = load ptr, ptr %free_field_0678, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free679)
+  %free_field_1680 = getelementptr inbounds %Linear, ptr %field_val_to_free674, i32 0, i32 1
+  %field_val_to_free681 = load ptr, ptr %free_field_1680, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free681)
+  call void @free(ptr %field_val_to_free674)
+  br label %continue_after_recursive_free677
 
-continue_after_recursive_free769:                 ; preds = %recursive_free_struct768, %continue_after_recursive_free760
-  call void @free(ptr %field_val_to_free734)
-  br label %continue_after_recursive_free737
+continue_after_recursive_free677:                 ; preds = %recursive_free_struct676, %continue_after_recursive_free668
+  call void @free(ptr %field_val_to_free642)
+  br label %continue_after_recursive_free645
 
-recursive_free_struct777:                         ; preds = %continue_after_recursive_free737
-  %free_field_0779 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free775, i32 0, i32 0
-  %field_val_to_free780 = load ptr, ptr %free_field_0779, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free780)
-  %free_field_1781 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free775, i32 0, i32 1
-  %field_val_to_free782 = load ptr, ptr %free_field_1781, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free782)
-  call void @free(ptr %field_val_to_free775)
-  br label %continue_after_recursive_free778
+recursive_free_struct685:                         ; preds = %continue_after_recursive_free645
+  %free_field_0687 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free683, i32 0, i32 0
+  %field_val_to_free688 = load ptr, ptr %free_field_0687, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free688)
+  %free_field_1689 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free683, i32 0, i32 1
+  %field_val_to_free690 = load ptr, ptr %free_field_1689, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free690)
+  call void @free(ptr %field_val_to_free683)
+  br label %continue_after_recursive_free686
 
-continue_after_recursive_free778:                 ; preds = %recursive_free_struct777, %continue_after_recursive_free737
-  %free_field_3783 = getelementptr inbounds %Block, ptr %field_val_to_free720, i32 0, i32 3
-  %field_val_to_free784 = load ptr, ptr %free_field_3783, align 8
-  %is_not_null785 = icmp ne ptr %field_val_to_free784, null
-  br i1 %is_not_null785, label %recursive_free_struct786, label %continue_after_recursive_free787
+continue_after_recursive_free686:                 ; preds = %recursive_free_struct685, %continue_after_recursive_free645
+  %free_field_3691 = getelementptr inbounds %Block, ptr %field_val_to_free628, i32 0, i32 3
+  %field_val_to_free692 = load ptr, ptr %free_field_3691, align 8
+  %is_not_null693 = icmp ne ptr %field_val_to_free692, null
+  br i1 %is_not_null693, label %recursive_free_struct694, label %continue_after_recursive_free695
 
-recursive_free_struct786:                         ; preds = %continue_after_recursive_free778
-  %free_field_0788 = getelementptr inbounds %MLP, ptr %field_val_to_free784, i32 0, i32 0
-  %field_val_to_free789 = load ptr, ptr %free_field_0788, align 8
-  %is_not_null790 = icmp ne ptr %field_val_to_free789, null
-  br i1 %is_not_null790, label %recursive_free_struct791, label %continue_after_recursive_free792
+recursive_free_struct694:                         ; preds = %continue_after_recursive_free686
+  %free_field_0696 = getelementptr inbounds %MLP, ptr %field_val_to_free692, i32 0, i32 0
+  %field_val_to_free697 = load ptr, ptr %free_field_0696, align 8
+  %is_not_null698 = icmp ne ptr %field_val_to_free697, null
+  br i1 %is_not_null698, label %recursive_free_struct699, label %continue_after_recursive_free700
 
-continue_after_recursive_free787:                 ; preds = %continue_after_recursive_free801, %continue_after_recursive_free778
-  call void @free(ptr %field_val_to_free720)
-  br label %continue_after_recursive_free723
+continue_after_recursive_free695:                 ; preds = %continue_after_recursive_free709, %continue_after_recursive_free686
+  call void @free(ptr %field_val_to_free628)
+  br label %continue_after_recursive_free631
 
-recursive_free_struct791:                         ; preds = %recursive_free_struct786
-  %free_field_0793 = getelementptr inbounds %Linear, ptr %field_val_to_free789, i32 0, i32 0
-  %field_val_to_free794 = load ptr, ptr %free_field_0793, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free794)
-  %free_field_1795 = getelementptr inbounds %Linear, ptr %field_val_to_free789, i32 0, i32 1
-  %field_val_to_free796 = load ptr, ptr %free_field_1795, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free796)
-  call void @free(ptr %field_val_to_free789)
-  br label %continue_after_recursive_free792
+recursive_free_struct699:                         ; preds = %recursive_free_struct694
+  %free_field_0701 = getelementptr inbounds %Linear, ptr %field_val_to_free697, i32 0, i32 0
+  %field_val_to_free702 = load ptr, ptr %free_field_0701, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free702)
+  %free_field_1703 = getelementptr inbounds %Linear, ptr %field_val_to_free697, i32 0, i32 1
+  %field_val_to_free704 = load ptr, ptr %free_field_1703, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free704)
+  call void @free(ptr %field_val_to_free697)
+  br label %continue_after_recursive_free700
 
-continue_after_recursive_free792:                 ; preds = %recursive_free_struct791, %recursive_free_struct786
-  %free_field_1797 = getelementptr inbounds %MLP, ptr %field_val_to_free784, i32 0, i32 1
-  %field_val_to_free798 = load ptr, ptr %free_field_1797, align 8
-  %is_not_null799 = icmp ne ptr %field_val_to_free798, null
-  br i1 %is_not_null799, label %recursive_free_struct800, label %continue_after_recursive_free801
+continue_after_recursive_free700:                 ; preds = %recursive_free_struct699, %recursive_free_struct694
+  %free_field_1705 = getelementptr inbounds %MLP, ptr %field_val_to_free692, i32 0, i32 1
+  %field_val_to_free706 = load ptr, ptr %free_field_1705, align 8
+  %is_not_null707 = icmp ne ptr %field_val_to_free706, null
+  br i1 %is_not_null707, label %recursive_free_struct708, label %continue_after_recursive_free709
 
-recursive_free_struct800:                         ; preds = %continue_after_recursive_free792
-  %free_field_0802 = getelementptr inbounds %Linear, ptr %field_val_to_free798, i32 0, i32 0
-  %field_val_to_free803 = load ptr, ptr %free_field_0802, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free803)
-  %free_field_1804 = getelementptr inbounds %Linear, ptr %field_val_to_free798, i32 0, i32 1
-  %field_val_to_free805 = load ptr, ptr %free_field_1804, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free805)
-  call void @free(ptr %field_val_to_free798)
-  br label %continue_after_recursive_free801
+recursive_free_struct708:                         ; preds = %continue_after_recursive_free700
+  %free_field_0710 = getelementptr inbounds %Linear, ptr %field_val_to_free706, i32 0, i32 0
+  %field_val_to_free711 = load ptr, ptr %free_field_0710, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free711)
+  %free_field_1712 = getelementptr inbounds %Linear, ptr %field_val_to_free706, i32 0, i32 1
+  %field_val_to_free713 = load ptr, ptr %free_field_1712, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free713)
+  call void @free(ptr %field_val_to_free706)
+  br label %continue_after_recursive_free709
 
-continue_after_recursive_free801:                 ; preds = %recursive_free_struct800, %continue_after_recursive_free792
-  call void @free(ptr %field_val_to_free784)
-  br label %continue_after_recursive_free787
+continue_after_recursive_free709:                 ; preds = %recursive_free_struct708, %continue_after_recursive_free700
+  call void @free(ptr %field_val_to_free692)
+  br label %continue_after_recursive_free695
 
-recursive_free_struct808:                         ; preds = %continue_after_recursive_free723
-  %free_field_0810 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free806, i32 0, i32 0
-  %field_val_to_free811 = load ptr, ptr %free_field_0810, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free811)
-  %free_field_1812 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free806, i32 0, i32 1
-  %field_val_to_free813 = load ptr, ptr %free_field_1812, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free813)
-  call void @free(ptr %field_val_to_free806)
-  br label %continue_after_recursive_free809
+recursive_free_struct716:                         ; preds = %continue_after_recursive_free631
+  %free_field_0718 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free714, i32 0, i32 0
+  %field_val_to_free719 = load ptr, ptr %free_field_0718, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free719)
+  %free_field_1720 = getelementptr inbounds %LayerNorm, ptr %field_val_to_free714, i32 0, i32 1
+  %field_val_to_free721 = load ptr, ptr %free_field_1720, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free721)
+  call void @free(ptr %field_val_to_free714)
+  br label %continue_after_recursive_free717
 
-continue_after_recursive_free809:                 ; preds = %recursive_free_struct808, %continue_after_recursive_free723
+continue_after_recursive_free717:                 ; preds = %recursive_free_struct716, %continue_after_recursive_free631
   %free_field_6 = getelementptr inbounds %GPT, ptr %struct_to_free, i32 0, i32 6
-  %field_val_to_free814 = load ptr, ptr %free_field_6, align 8
-  %is_not_null815 = icmp ne ptr %field_val_to_free814, null
-  br i1 %is_not_null815, label %recursive_free_struct816, label %continue_after_recursive_free817
+  %field_val_to_free722 = load ptr, ptr %free_field_6, align 8
+  %is_not_null723 = icmp ne ptr %field_val_to_free722, null
+  br i1 %is_not_null723, label %recursive_free_struct724, label %continue_after_recursive_free725
 
-recursive_free_struct816:                         ; preds = %continue_after_recursive_free809
-  %free_field_0818 = getelementptr inbounds %Linear, ptr %field_val_to_free814, i32 0, i32 0
-  %field_val_to_free819 = load ptr, ptr %free_field_0818, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free819)
-  %free_field_1820 = getelementptr inbounds %Linear, ptr %field_val_to_free814, i32 0, i32 1
-  %field_val_to_free821 = load ptr, ptr %free_field_1820, align 8
-  call void @tl_tensor_free(ptr %field_val_to_free821)
-  call void @free(ptr %field_val_to_free814)
-  br label %continue_after_recursive_free817
+recursive_free_struct724:                         ; preds = %continue_after_recursive_free717
+  %free_field_0726 = getelementptr inbounds %Linear, ptr %field_val_to_free722, i32 0, i32 0
+  %field_val_to_free727 = load ptr, ptr %free_field_0726, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free727)
+  %free_field_1728 = getelementptr inbounds %Linear, ptr %field_val_to_free722, i32 0, i32 1
+  %field_val_to_free729 = load ptr, ptr %free_field_1728, align 8
+  call void @tl_tensor_free(ptr %field_val_to_free729)
+  call void @free(ptr %field_val_to_free722)
+  br label %continue_after_recursive_free725
 
-continue_after_recursive_free817:                 ; preds = %recursive_free_struct816, %continue_after_recursive_free809
+continue_after_recursive_free725:                 ; preds = %recursive_free_struct724, %continue_after_recursive_free717
   call void @free(ptr %struct_to_free)
   br label %continue_after_recursive_free
 }

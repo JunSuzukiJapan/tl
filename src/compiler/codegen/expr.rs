@@ -5,6 +5,47 @@ use inkwell::values::*;
 use std::collections::HashMap;
 
 impl<'ctx> CodeGenerator<'ctx> {
+    fn is_temporary_expr(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::BinOp(_, _, _)
+            | Expr::UnOp(_, _)
+            | Expr::FnCall(_, _)
+            | Expr::MethodCall(_, _, _)
+            | Expr::StaticMethodCall(_, _, _)
+            | Expr::StructInit(_, _)
+            | Expr::TensorLiteral(_) => true,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn is_safe_to_free(&self, expr: &Expr, ty: &Type) -> bool {
+        match ty {
+            Type::Tensor(_, _) => {
+                // Tensors originating from expressions (not variables) are always new allocations (R-values)
+                match expr {
+                     Expr::Variable(_) | Expr::FieldAccess(_, _) => false,
+                     _ => true,
+                }
+            }
+            Type::Struct(_) | Type::UserDefined(_) => {
+                match expr {
+                    // Fresh allocations are safe to free
+                    Expr::StaticMethodCall(_, _, _) | Expr::StructInit(_, _) => true,
+                    // Variables and Fields are L-values, not safe to free
+                    Expr::Variable(_) | Expr::FieldAccess(_, _) => false,
+                    // Method calls: Check recursively if the receiver was safe to free.
+                    // If obj is temporary, obj.method() result is treated as temporary (part of obj).
+                    // If obj is strictly safe (fresh), propagation says result is safe.
+                    // BUT: We will apply runtime check too.
+                    Expr::MethodCall(obj, _, _) => self.is_safe_to_free(obj, ty),
+                    // Other expressions?
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn gen_save_struct(
         &self,
         map: inkwell::values::BasicValueEnum<'ctx>,
@@ -423,7 +464,16 @@ impl<'ctx> CodeGenerator<'ctx> {
             Expr::BinOp(lhs, op, rhs) => {
                 let left = self.compile_expr(lhs)?;
                 let right = self.compile_expr(rhs)?;
-                self.compile_bin_op(left.0, left.1, right.0, right.1, op.clone())
+                let res = self.compile_bin_op(left.0, left.1.clone(), right.0, right.1.clone(), op.clone())?;
+                
+                // FIX: Free temporary operands
+                if self.is_safe_to_free(lhs, &left.1) {
+                    self.emit_recursive_free(left.0, &left.1)?;
+                }
+                if self.is_safe_to_free(rhs, &right.1) {
+                    self.emit_recursive_free(right.0, &right.1)?;
+                }
+                Ok(res)
             }
             Expr::TensorComprehension { indices, body } => {
                 // Generate a unique name for the temporary result
@@ -1989,28 +2039,97 @@ impl<'ctx> CodeGenerator<'ctx> {
                 ));
             };
 
-            let mut compiled_args = Vec::with_capacity(args.len() + 1);
-            compiled_args.push(obj_val.into()); // self
+            let mut compiled_args_vals = Vec::with_capacity(args.len() + 1);
+            let mut compiled_args_types = Vec::with_capacity(args.len());
+            
+            compiled_args_vals.push(obj_val.into()); // self
 
             for arg in args {
-                let (val, _) = self.compile_expr(arg)?;
-                compiled_args.push(val.into());
+                let (val, ty) = self.compile_expr(arg)?;
+                compiled_args_vals.push(val.into());
+                compiled_args_types.push((val, ty));
             }
 
             let call = self
                 .builder
-                .build_call(func_val, &compiled_args, "call_method")
+                .build_call(func_val, &compiled_args_vals, "call_method")
                 .map_err(|e| e.to_string())?;
+
+            // FIX: Free temporary receiver with Runtime Check
+
+            if self.is_safe_to_free(obj, &obj_ty) {
+                match obj_ty {
+                    Type::Struct(_) | Type::UserDefined(_) => {
+                         // Runtime Check: Free ONLY IF return_ptr != obj_ptr
+                         // If they are equal, it means self was returned (aliasing), so we transfer ownership to return value (don't free obj).
+                         // If they are diff, it means a new object was returned, so obj is garbage (free it).
+                         
+                         let obj_ptr = obj_val.into_pointer_value();
+                         
+                         // Try to interpret return value as pointer
+                         let ret_is_ptr = func_val.get_type().get_return_type().map(|t| t.is_pointer_type()).unwrap_or(false);
+                         
+                         if ret_is_ptr {
+                             let ret_ptr = match call.try_as_basic_value() {
+                                 inkwell::values::ValueKind::Basic(v) => Some(v.into_pointer_value()),
+                                 _ => None,
+                             };
+                             
+                             if let Some(ret_p) = ret_ptr {
+                                 let are_diff = self.builder.build_int_compare(
+                                     inkwell::IntPredicate::NE,
+                                     obj_ptr,
+                                     ret_p,
+                                     "diff_check"
+                                 ).map_err(|e| e.to_string())?;
+
+                                 let free_block = self.context.append_basic_block(
+                                     self.builder.get_insert_block().unwrap().get_parent().unwrap(),
+                                     "free_obj"
+                                 );
+                                 let skip_block = self.context.append_basic_block(
+                                     self.builder.get_insert_block().unwrap().get_parent().unwrap(),
+                                     "skip_free"
+                                 );
+
+                                 self.builder.build_conditional_branch(are_diff, free_block, skip_block).unwrap();
+
+                                 self.builder.position_at_end(free_block);
+                                 self.emit_recursive_free(obj_val, &obj_ty)?;
+                                 self.builder.build_unconditional_branch(skip_block).unwrap();
+
+                                 self.builder.position_at_end(skip_block);
+                             } else {
+                                 // Should not happen if Struct returns Struct
+                                 self.emit_recursive_free(obj_val, &obj_ty)?; 
+                             }
+                         } else {
+                             // Return void or scalar? Free obj.
+                             self.emit_recursive_free(obj_val, &obj_ty)?;
+                         }
+                    }
+                    _ => {
+                        // Tensors etc: Unconditional free (assuming methods don't return self alias for tensors usually, or handled by tensor copy)
+                        // Actually Tensor methods usually return new tensor. In-place methods return void.
+                        // So safe to free receiver.
+                        self.emit_recursive_free(obj_val, &obj_ty)?;
+                    }
+                }
+            }
+            
+            // FIX: Free temporary arguments
+            for (i, (val, ty)) in compiled_args_types.iter().enumerate() {
+                let arg_expr = &args[i];
+                if self.is_safe_to_free(arg_expr, ty) {
+                    self.emit_recursive_free(*val, ty)?;
+                }
+            }
 
             let ret_ty = self
                 .fn_return_types
                 .get(&final_name)
-                .map(|t| {
-                    // println!("DEBUG: Method {} return type: {:?}", final_name, t);
-                    t
-                })
-                .unwrap_or(&Type::Void)
-                .clone();
+                .map(|t| t.clone())
+                .unwrap_or(Type::Void);
 
             // if final_name.contains("forward") {
             //     println!(
@@ -2093,6 +2212,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     };
 
                     let fn_val = self.module.get_function("tl_tensor_get").unwrap();
+                    // panic!("DEBUG_PANIC: Reached get arm");
                     let call = self
                         .builder
                         .build_call(fn_val, &[obj_val.into(), idx_i64.into()], "get_res")
@@ -2102,6 +2222,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                         ValueKind::Basic(v) => v,
                         _ => return Err("Invalid get return".into()),
                     };
+                    
+                    // FIX: Free temporary receiver - FORCE CHECK
+
+                    let is_temp = matches!(obj, Expr::FnCall(_, _) | Expr::MethodCall(_, _, _) | Expr::BinOp(_, _, _) | Expr::StaticMethodCall(_, _, _) | Expr::TensorLiteral(_));
+                    if is_temp {
+                        self.emit_recursive_free(obj_val, &obj_ty)?;
+                    }
+
                     Ok((res, Type::F32))
                 }
                 "backward" => {
@@ -2288,17 +2416,36 @@ impl<'ctx> CodeGenerator<'ctx> {
                         ))?;
 
                         // Prepend object to args
-                        let mut compiled_args = Vec::with_capacity(args.len() + 1);
-                        compiled_args.push(obj_val.into());
+                        let mut compiled_args_vals = Vec::with_capacity(args.len() + 1);
+                        let mut compiled_args_types = Vec::with_capacity(args.len() + 1);
+
+                        compiled_args_vals.push(obj_val.into());
+                        // Keep track of types? obj is separate.
+
                         for arg in args {
-                            let (val, _) = self.compile_expr(arg)?;
-                            compiled_args.push(val.into());
+                            let (val, ty) = self.compile_expr(arg)?;
+                            compiled_args_vals.push(val.into());
+                            compiled_args_types.push((val, ty));
                         }
 
                         let call = self
                             .builder
-                            .build_call(fn_val, &compiled_args, "method_res")
+                            .build_call(fn_val, &compiled_args_vals, "method_res")
                             .map_err(|e| e.to_string())?;
+
+                        // FIX: Free temporary receiver
+                        if self.is_safe_to_free(obj, &obj_ty) {
+                             self.emit_recursive_free(obj_val, &obj_ty)?;
+                        }
+                        
+                        // FIX: Free temporary arguments
+                        for (i, (val, ty)) in compiled_args_types.iter().enumerate() {
+                            let arg_expr = &args[i];
+                            if self.is_safe_to_free(arg_expr, ty) {
+                                self.emit_recursive_free(*val, ty)?;
+                            }
+                        }
+
 
                         // Determine return type from fn_return_types map
                         let ret_type = self
@@ -2655,12 +2802,42 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (t_val, t_ty) = self.ensure_tensor_v2(&args[0], 0)?;
 
                 // Check if 2nd arg is Tensor/Array (Old behavior)
-                let (_, arg1_ty) = self.compile_expr(&args[1])?;
-                if (matches!(arg1_ty, Type::Tensor(_, _))
+                // Need to compile arg1 potentially to check type, but avoiding double compile side effects?
+                // compile_expr can have side effects.
+                // Re-compiling is BAD.
+                // We should compile arg1 ONCE.
+                // But previous code calls compile_expr(&args[1]) then maybe ensure_tensor_v2.
+                
+                // let's refactor slightly to just compile arg1.
+                let (arg1_val, arg1_ty) = self.compile_expr(&args[1])?;
+
+                let res_val_ty = if (matches!(arg1_ty, Type::Tensor(_, _))
                     || matches!(arg1_ty, Type::ScalarArray(_, _)))
                     && args.len() == 2
                 {
-                    let (s_val, _) = self.ensure_tensor_v2(&args[1], 1)?;
+                    // Case 1: reshape(tensor, shape_tensor)
+                    // We need s_val to be a Tensor pointer.
+                    let s_val = match arg1_ty {
+                        Type::Tensor(_, _) => arg1_val,
+                        Type::ScalarArray(ref inner_ty, len) => {
+                             // Convert Array to Tensor
+                             if **inner_ty != Type::I64 {
+                                 return Err("Reshape shape array must be I64".into());
+                             }
+                             let fn_name = "tl_tensor_from_i64_array";
+                             let fn_val = self.module.get_function(fn_name)
+                                 .ok_or("tl_tensor_from_i64_array not found")?;
+                             let ptr = arg1_val.into_pointer_value();
+                             let len_val = self.context.i64_type().const_int(len as u64, false);
+                             let call = self.builder.build_call(fn_val, &[ptr.into(), len_val.into()], "to_tensor").unwrap();
+                             match call.try_as_basic_value() {
+                                 inkwell::values::ValueKind::Basic(v) => v,
+                                 _ => return Err("tl_tensor_from_i64_array returned void".into()),
+                             }
+                        }
+                        _ => unreachable!(),
+                    };
+
                     let reshape_fn = self
                         .module
                         .get_function("tl_tensor_reshape")
@@ -2669,6 +2846,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .builder
                         .build_call(reshape_fn, &[t_val.into(), s_val.into()], "reshape_res")
                         .map_err(|e| e.to_string())?;
+                    
+                    // FIX: Free args
+                    if self.is_safe_to_free(&args[0], &t_ty) {
+                        self.emit_recursive_free(t_val.into(), &t_ty)?;
+                    }
+                    if self.is_safe_to_free(&args[1], &arg1_ty) {
+                         // Note: if we converted Array->Tensor, arg1_val is the Array pointer.
+                         // emit_recursive_free handles standard types.
+                         self.emit_recursive_free(arg1_val.into(), &arg1_ty)?;
+                    }
+
                     match call.try_as_basic_value() {
                         ValueKind::Basic(v) => {
                             let inner = if let Type::Tensor(ref i, _) = t_ty {
@@ -2680,32 +2868,48 @@ impl<'ctx> CodeGenerator<'ctx> {
                             } else {
                                 Box::new(Type::F32)
                             };
-                            return Ok((v, Type::Tensor(inner, 0)));
+                            Ok((v, Type::Tensor(inner, 0)))
                         }
                         _ => return Err("Invalid reshape return".into()),
                     }
-                }
-                // New behavior: Varargs dims (arg 1..N are ints)
-                let fn_val = self.module.get_function("tl_tensor_reshape_dims").unwrap();
-                let num_dims = args.len() - 1;
-                let i64_type = self.context.i64_type();
-                // Allocate array for dims
-                let dims_array_type = i64_type.array_type(num_dims as u32);
-                let dims_alloca = self
-                    .builder
-                    .build_alloca(dims_array_type, "dims_alloca")
-                    .map_err(|e| e.to_string())?;
-                // Store dims
-                for (i, arg) in args[1..].iter().enumerate() {
-                    let (val, val_ty) = self.compile_expr(arg)?;
-                    let val_int = if val_ty == Type::I32 {
+                } else {
+                    // Case 2: reshape(tensor, d1, d2, ...)
+                    // New behavior: Varargs dims (arg 1..N are ints)
+                    // arg1_val is already compiled (the first dim).
+                    
+                    let fn_val = self.module.get_function("tl_tensor_reshape_dims").unwrap();
+                    let num_dims = args.len() - 1;
+                    let i64_type = self.context.i64_type();
+                    // Allocate array for dims
+                    let dims_array_type = i64_type.array_type(num_dims as u32);
+                    
+                    // FIX: Create alloca in entry block to avoid loop stack explosion and verification errors
+                    let current_block = self.builder.get_insert_block().unwrap();
+                    let parent_fn = current_block.get_parent().unwrap();
+                    let entry = parent_fn.get_first_basic_block().unwrap();
+                    
+                    if let Some(first_instr) = entry.get_first_instruction() {
+                         self.builder.position_before(&first_instr);
+                    } else {
+                         self.builder.position_at_end(entry);
+                    }
+                    
+                    let dims_alloca = self
+                        .builder
+                        .build_alloca(dims_array_type, "dims_alloca")
+                        .map_err(|e| e.to_string())?;
+                        
+                    self.builder.position_at_end(current_block);
+                        
+                    // Store first dim (already compiled)
+                    let val_int = if arg1_ty == Type::I32 {
                         self.builder
-                            .build_int_z_extend(val.into_int_value(), i64_type, "ext")
+                            .build_int_z_extend(arg1_val.into_int_value(), i64_type, "ext")
                             .map_err(|e| e.to_string())?
                     } else {
-                        val.into_int_value()
+                        arg1_val.into_int_value()
                     };
-                    unsafe {
+                     unsafe {
                         let gep = self
                             .builder
                             .build_gep(
@@ -2713,76 +2917,119 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 dims_alloca,
                                 &[
                                     i64_type.const_int(0, false),
-                                    i64_type.const_int(i as u64, false),
+                                    i64_type.const_int(0, false),
                                 ],
-                                "dim_ptr",
+                                "dim_ptr_0",
                             )
                             .map_err(|e| e.to_string())?;
                         self.builder
                             .build_store(gep, val_int)
                             .map_err(|e| e.to_string())?;
                     }
-                }
-                // Pass pointer to first element
-                let first_elem_ptr = unsafe {
-                    self.builder
-                        .build_gep(
-                            dims_array_type,
-                            dims_alloca,
-                            &[i64_type.const_int(0, false), i64_type.const_int(0, false)],
-                            "dims_ptr",
-                        )
-                        .map_err(|e| e.to_string())?
-                };
-                let call = self
-                    .builder
-                    .build_call(
-                        fn_val,
-                        &[
-                            t_val.into(),
-                            first_elem_ptr.into(),
-                            i64_type.const_int(num_dims as u64, false).into(),
-                        ],
-                        "reshape_dims_res",
-                    )
-                    .map_err(|e| e.to_string())?;
-                let res = match call.try_as_basic_value() {
-                    ValueKind::Basic(v) => v,
-                    _ => return Err("Invalid reshape_dims return".into()),
-                };
-                let inner = if let Type::Tensor(ref i, _) = t_ty {
-                    if let Type::Void = **i {
-                        Box::new(Type::F32)
-                    } else {
-                        i.clone()
+
+                    // Store remaining dims
+                    for (i, arg) in args[2..].iter().enumerate() {
+                        let (val, val_ty) = self.compile_expr(arg)?;
+                        let val_int = if val_ty == Type::I32 {
+                            self.builder
+                                .build_int_z_extend(val.into_int_value(), i64_type, "ext")
+                                .map_err(|e| e.to_string())?
+                        } else {
+                            val.into_int_value()
+                        };
+                        unsafe {
+                            let gep = self
+                                .builder
+                                .build_gep(
+                                    dims_array_type,
+                                    dims_alloca,
+                                    &[
+                                        i64_type.const_int(0, false),
+                                        i64_type.const_int((i + 1) as u64, false),
+                                    ],
+                                    "dim_ptr",
+                                )
+                                .map_err(|e| e.to_string())?;
+                            self.builder
+                                .build_store(gep, val_int)
+                                .map_err(|e| e.to_string())?;
+                        }
                     }
-                } else {
-                    Box::new(Type::F32)
+                    
+                    // Pass pointer to first element
+                    let first_elem_ptr = unsafe {
+                        self.builder
+                            .build_gep(
+                                dims_array_type,
+                                dims_alloca,
+                                &[i64_type.const_int(0, false), i64_type.const_int(0, false)],
+                                "dims_ptr",
+                            )
+                            .map_err(|e| e.to_string())?
+                    };
+                    let call = self
+                        .builder
+                        .build_call(
+                            fn_val,
+                            &[
+                                t_val.into(),
+                                first_elem_ptr.into(),
+                                i64_type.const_int(num_dims as u64, false).into(),
+                            ],
+                            "reshape_dims_res",
+                        )
+                        .map_err(|e| e.to_string())?;
+                    
+                    // FIX: Free tensor arg (index 0)
+                    if self.is_safe_to_free(&args[0], &t_ty) {
+                        self.emit_recursive_free(t_val.into(), &t_ty)?;
+                    }
+                    // Dims are scalars, no need to free.
+
+                    let res = match call.try_as_basic_value() {
+                        ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid reshape_dims return".into()),
+                    };
+                    let inner = if let Type::Tensor(ref i, _) = t_ty {
+                        if let Type::Void = **i {
+                            Box::new(Type::F32)
+                        } else {
+                            i.clone()
+                        }
+                    } else {
+                        Box::new(Type::F32)
+                    };
+                    Ok((res, Type::Tensor(inner, 0)))
                 };
-                Ok((res, Type::Tensor(inner, 0)))
+                res_val_ty
             }
             "softmax" => {
                 if args.len() != 2 {
                     return Err("softmax requires 2 arguments".into());
                 }
-                let (arg0_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
-                let arg0_ty = Type::Tensor(Box::new(Type::F32), 0); // Simplified
+                let (arg0_val, arg0_ty) = self.ensure_tensor_v2(&args[0], 0)?;
+                // let arg0_ty = Type::Tensor(Box::new(Type::F32), 0);
                 let (arg1_val, _arg1_ty) = self.compile_expr(&args[1])?; // dim
 
-                // arg1 must be i64 (dim)
-                let fn_val = self
-                    .module
-                    .get_function("tl_tensor_softmax")
-                    .ok_or("tl_tensor_softmax not found")?;
+                let fn_val = self.module.get_function("tl_tensor_softmax").unwrap();
                 let call = self
                     .builder
-                    .build_call(fn_val, &[arg0_val.into(), arg1_val.into()], "softmax_res")
+                    .build_call(
+                        fn_val,
+                        &[arg0_val.into(), arg1_val.into_int_value().into()],
+                        "softmax_res",
+                    )
                     .map_err(|e| e.to_string())?;
-                let res = match call.try_as_basic_value() {
-                    ValueKind::Basic(v) => v,
-                    _ => return Err("Invalid softmax return".into()),
-                };
-                Ok((res, arg0_ty))
+
+                // FIX: Free arg0
+                if self.is_safe_to_free(&args[0], &arg0_ty) {
+                    self.emit_recursive_free(arg0_val.into(), &arg0_ty)?;
+                }
+
+                match call.try_as_basic_value() {
+                    ValueKind::Basic(v) => Ok((v, arg0_ty)),
+                    _ => Err("Invalid softmax return".into()),
+                }
             }
             "cross_entropy" => {
                 if args.len() != 2 {
@@ -2810,31 +3057,90 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 1 {
                     return Err("exp requires 1 argument".into());
                 }
-                let (arg_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
-                let arg_ty = Type::Tensor(Box::new(Type::F32), 0);
+                let (arg_val, arg_ty) = self.ensure_tensor_v2(&args[0], 0)?;
+                let ret_ty = Type::Tensor(Box::new(Type::F32), 0);
 
                 let fn_val = self.module.get_function("tl_tensor_exp").unwrap();
                 let call = self
                     .builder
                     .build_call(fn_val, &[arg_val.into()], "exp_res")
                     .map_err(|e| e.to_string())?;
-                let res = match call.try_as_basic_value() {
-                    ValueKind::Basic(v) => v,
-                    _ => return Err("Invalid exp return".into()),
-                };
-                Ok((res, arg_ty))
+
+                // FIX: Free arg
+                if self.is_safe_to_free(&args[0], &arg_ty) {
+                     self.emit_recursive_free(arg_val.into(), &arg_ty)?;
+                }
+
+                match call.try_as_basic_value() {
+                    ValueKind::Basic(v) => Ok((v, ret_ty)),
+                    _ => Err("Invalid exp return".into()),
+                }
             }
             "log" => {
                 if args.len() != 1 {
                     return Err("log requires 1 argument".into());
                 }
-                let (arg_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
-                let arg_ty = Type::Tensor(Box::new(Type::F32), 0);
+                let (arg_val, arg_ty) = self.ensure_tensor_v2(&args[0], 0)?;
+                let ret_ty = Type::Tensor(Box::new(Type::F32), 0);
 
                 let fn_val = self.module.get_function("tl_tensor_log").unwrap();
                 let call = self
                     .builder
                     .build_call(fn_val, &[arg_val.into()], "log_res")
+                    .map_err(|e| e.to_string())?;
+
+                // FIX: Free arg
+                if self.is_safe_to_free(&args[0], &arg_ty) {
+                     self.emit_recursive_free(arg_val.into(), &arg_ty)?;
+                }
+                
+                match call.try_as_basic_value() {
+                    ValueKind::Basic(v) => Ok((v, ret_ty)),
+                    _ => Err("Invalid log return".into()),
+                }
+            }
+            "pow" => {
+                if args.len() != 2 {
+                    return Err("pow requires 2 arguments".into());
+                }
+                let (t_val, t_ty) = self.ensure_tensor_v2(&args[0], 0)?;
+                let (exp_val, exp_ty) = self.ensure_tensor_v2(&args[1], 0)?; // Must be tensor for tl_tensor_pow(ptr, ptr)
+
+                let fn_val = self.module.get_function("tl_tensor_pow").unwrap();
+                let call = self
+                    .builder
+                    .build_call(
+                        fn_val,
+                        &[t_val.into(), exp_val.into()],
+                        "pow_res",
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                // FIX: Free args (both t_val and exp_val are temporary tensors)
+                if self.is_safe_to_free(&args[0], &t_ty) {
+                     self.emit_recursive_free(t_val.into(), &t_ty)?;
+                }
+                if self.is_safe_to_free(&args[1], &exp_ty) {
+                     self.emit_recursive_free(exp_val.into(), &exp_ty)?;
+                }
+
+                match call.try_as_basic_value() {
+                    ValueKind::Basic(v) => Ok((v, Type::Tensor(Box::new(Type::F32), 0))),
+                    _ => Err("Invalid pow return".into()),
+                }
+            }
+            "randn" => {
+                if args.len() < 1 {
+                    return Err("randn requires shape argument(s)".into());
+                }
+
+                let (arg_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
+                let arg_ty = Type::Tensor(Box::new(Type::F32), 0);
+
+                let fn_val = self.module.get_function("tl_tensor_randn").unwrap();
+                let call = self
+                    .builder
+                    .build_call(fn_val, &[arg_val.into(), self.context.bool_type().const_int(0, false).into()], "randn_res")
                     .unwrap();
                 let res = match call.try_as_basic_value() {
                     ValueKind::Basic(v) => v,
@@ -3227,24 +3533,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
                 Ok((res, Type::Tensor(Box::new(Type::F32), 1)))
             }
-            "pow" => {
-                if args.len() != 2 {
-                    return Err("pow requires 2 arguments".into());
-                }
-                // Use ensure_tensor for both args
-                let (base_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
-                let (exp_val, _) = self.ensure_tensor_v2(&args[1], 0)?;
-                let fn_val = self.module.get_function("tl_tensor_pow").unwrap();
-                let call = self
-                    .builder
-                    .build_call(fn_val, &[base_val.into(), exp_val.into()], "pow_res")
-                    .map_err(|e| e.to_string())?;
-                let res = match call.try_as_basic_value() {
-                    ValueKind::Basic(v) => v,
-                    _ => return Err("Invalid pow return".into()),
-                };
-                Ok((res, Type::Tensor(Box::new(Type::F32), 0)))
-            }
+
             _ => {
                 // Generic function call logic
                 let llvm_func_name = match name {
@@ -3468,6 +3757,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                             return Err("parameter requires 1 argument".into());
                         }
                         let (arg_val, arg_ty) = self.compile_expr(&args[0])?;
+                        
+                        // FIX: Unregister parameter from MemoryManager
+                        // Because parameters are long-lived (stored in registry), we don't want scope cleanup to free them.
+                        if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                             if matches!(arg_ty, Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)) {
+                                 let ptr = arg_val.into_pointer_value();
+                                 let cast_ptr = self.builder.build_pointer_cast(
+                                     ptr,
+                                     self.context.ptr_type(inkwell::AddressSpace::default()),
+                                     "cast_unreg_param"
+                                 ).unwrap();
+                                 self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                             }
+                        }
+
                         let fn_val = self
                             .module
                             .get_function("tl_register_parameter")
@@ -3501,15 +3805,29 @@ impl<'ctx> CodeGenerator<'ctx> {
                     "Function {} not found (resolved: {})",
                     name, resolved_name
                 ))?;
-                let mut compiled_args = Vec::new();
+
+                let mut compiled_args_vals = Vec::with_capacity(args.len());
+                let mut compiled_args_types = Vec::with_capacity(args.len());
+
                 for arg in args {
-                    let (val, _) = self.compile_expr(arg)?;
-                    compiled_args.push(val.into());
+                    let (val, ty) = self.compile_expr(arg)?;
+                    compiled_args_vals.push(val.into());
+                    compiled_args_types.push((val, ty));
                 }
+
                 let call = self
                     .builder
-                    .build_call(func, &compiled_args, "call_tmp")
+                    .build_call(func, &compiled_args_vals, "call_tmp")
                     .map_err(|e| e.to_string())?;
+                
+                // FIX: Free temporary arguments
+                for (i, (val, ty)) in compiled_args_types.iter().enumerate() {
+                    let arg_expr = &args[i];
+                    if self.is_safe_to_free(arg_expr, ty) {
+                        self.emit_recursive_free(*val, ty)?;
+                    }
+                }
+
                 // Lookup return type
                 let lookup_name = resolved_name.as_str();
                 let ret_type = self

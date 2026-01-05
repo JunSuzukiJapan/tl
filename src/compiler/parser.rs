@@ -687,7 +687,8 @@ fn parse_stmt(input: &str) -> IResult<&str, Stmt> {
 
 // --- Top Level ---
 fn parse_fn(input: &str) -> IResult<&str, FunctionDef> {
-    // fn name(arg: Type, ...) -> Type { ... }
+    // [extern] fn name(arg: Type, ...) -> Type { ... }
+    let (input, is_extern) = opt(ws(tag("extern")))(input)?;
     let (input, _) = tag("fn")(input)?;
     let (input, name) = ws(identifier)(input)?;
 
@@ -700,8 +701,13 @@ fn parse_fn(input: &str) -> IResult<&str, FunctionDef> {
 
     let (input, ret_type) = opt(preceded(ws(tag("->")), ws(parse_type)))(input)?;
 
-    // Body logic reused from parse_block
-    let (input, body) = parse_block(input)?;
+    // Body logic: if extern, expect semicolon and empty body. Else parse block.
+    let (input, body) = if is_extern.is_some() {
+        let (input, _) = ws(char(';'))(input)?;
+        (input, vec![])
+    } else {
+        parse_block(input)?
+    };
 
     Ok((
         input,
@@ -711,6 +717,7 @@ fn parse_fn(input: &str) -> IResult<&str, FunctionDef> {
             return_type: ret_type.unwrap_or(Type::Void),
             body,
             generics: vec![],
+            is_extern: is_extern.is_some(),
         },
     ))
 }

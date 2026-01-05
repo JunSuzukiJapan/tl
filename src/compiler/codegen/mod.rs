@@ -345,6 +345,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 return_type: Type::Void,
                 body: vec![],
                 generics: vec![],
+                is_extern: false,
             };
             synthetic_main = Some(syn_main);
             // We can't push reference to local variable easily here due to lifetimes.
@@ -361,6 +362,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // 3. Compile function bodies
         for func in &functions_refs {
+            if func.is_extern {
+                continue;
+            }
             let extra: &[Stmt] = if func.name == "main" {
                 &ast_module.tensor_decls
             } else {

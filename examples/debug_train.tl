@@ -86,41 +86,41 @@ fn train_epoch(model: GPT, lr: f32, epoch: i64) {
         let v_s_d10 = pow(s_d10, 1.0).get(0);
         let v_s_d100 = pow(s_d100, 1.0).get(0);
         
-        let data = [
-            v_i_d1, v_i_d10, 10.0, 
-            v_j_d1, v_j_d10, 11.0, 
-            v_s_d1, v_s_d10, v_s_d100, 
-            12.0, 12.0, 12.0
-        ];
+        // let data = [
+        //     v_i_d1, v_i_d10, 10.0, 
+        //     v_j_d1, v_j_d10, 11.0, 
+        //     v_s_d1, v_s_d10, v_s_d100, 
+        //     12.0, 12.0, 12.0
+        // ];
         
-        let target = [
-            v_i_d10, 10.0, 
-            v_j_d1, v_j_d10, 11.0, 
-            v_s_d1, v_s_d10, v_s_d100, 
-            12.0, 12.0, 12.0, 12.0
-        ];
+        // let target = [
+        //     v_i_d10, 10.0, 
+        //     v_j_d1, v_j_d10, 11.0, 
+        //     v_s_d1, v_s_d10, v_s_d100, 
+        //     12.0, 12.0, 12.0, 12.0
+        // ];
         
         print("Iter:");
         print(s);
 
-        print("P-ReshapeX");
-        let X = reshape(data, 1, 12);
-        print("P-ReshapeY");
-        let Y = reshape(target, 1, 12);
+        // print("P-ReshapeX");
+        // let X = reshape(data, 1, 12);
+        // print("P-ReshapeY");
+        // let Y = reshape(target, 1, 12);
         
-        print("P-Forward");
-        let logits = model.forward(X);
-        // print("Forward done");
-        let logits_flat = reshape(logits, 12, 13);
-        let Y_flat = reshape(Y, 12);
-        let loss = cross_entropy(logits_flat, Y_flat);
-        // print("Loss calculated");
+        // print("P-Forward");
+        // let logits = model.forward(X);
+        // // print("Forward done");
+        // let logits_flat = reshape(logits, 12, 13);
+        // let Y_flat = reshape(Y, 12);
+        // let loss = cross_entropy(logits_flat, Y_flat);
+        // // print("Loss calculated");
         
-        backward(loss);
-        // print("Backward done");
-        model.step(lr);
-        // print("Step done");
-        total_loss = loss.detach(true);
+        // backward(loss);
+        // // print("Backward done");
+        // model.step(lr);
+        // // print("Step done");
+        // total_loss = loss.detach(true);
         print("Loop End");
     }
     

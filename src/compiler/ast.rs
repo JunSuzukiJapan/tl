@@ -58,6 +58,7 @@ pub struct FunctionDef {
     pub return_type: Type,
     pub body: Vec<Stmt>,
     pub generics: Vec<String>, // <T>
+    pub is_extern: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

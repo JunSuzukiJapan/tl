@@ -134,7 +134,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         ty: &Type,
     ) -> Result<(), String> {
         match ty {
-            Type::Tensor(_, _) => {
+            Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
+                if !val.is_pointer_value() {
+                     panic!("Tensor value is not pointer: {:?}", val);
+                }
                  let free_fn = self
                     .module
                     .get_function("tl_tensor_free")
@@ -409,33 +412,26 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Fix: Ownership Transfer (Runtime -> Compiler)
                 // If the value is a temporary (registered in MemoryManager), we MUST unregister it.
                 // The variable 'name' will take ownership (should_free=true) and free it via recursive_free at scope exit.
-                match val_ty {
-                    Type::Struct(_) | Type::UserDefined(_) | Type::Tensor(_, _) => {
-                         if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
-                            let ptr = val_ir.into_pointer_value();
-                            let cast_ptr = self.builder.build_pointer_cast(
-                                ptr,
-                                self.context.ptr_type(inkwell::AddressSpace::default()),
-                                "cast_unreg_let"
-                            ).unwrap();
-                            self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                if self.is_safe_to_free(value, &val_ty) {
+                    match val_ty {
+                        Type::Struct(_) | Type::UserDefined(_) | Type::Tensor(_, _) => {
+                             if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                                let ptr = val_ir.into_pointer_value();
+                                let cast_ptr = self.builder.build_pointer_cast(
+                                    ptr,
+                                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                                    "cast_unreg_let"
+                                ).unwrap();
+                                self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                            }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
 
-                // Fix: Move Semantics for Struct/Tensor
-                // If initializing from a variable (let s = self), disable source's cleanup.
-                if let Expr::Variable(src_name) = value {
-                     if matches!(val_ty, Type::Struct(_) | Type::UserDefined(_) | Type::Tensor(_,_)) {
-                         for scope in self.variables.iter_mut().rev() {
-                             if let Some(entry) = scope.get_mut(src_name) {
-                                 entry.2 = false; // Disable free for source (Move)
-                                 break;
-                             }
-                         }
-                     }
-                }
+                // Removed: Move Semantics logic. 
+                // We default to CLONE for variables (see below), so we should NOT disable cleanup for the source.
+
 
                 // Convert ScalarArray to Tensor if explicitly requested as Tensor
                 if let Some(target_ty) = type_annotation {
@@ -1295,44 +1291,30 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 self.exit_scope();
 
-                // Increment index
+                // Increment index and Branch back to header
+                // ONLY if the body didn't terminate (e.g. return/break)
                 let body_end_block = self.builder.get_insert_block().unwrap();
-                let next_idx = self
-                    .builder
-                    .build_int_add(
-                        phi.as_basic_value().into_int_value(),
-                        i64_type.const_int(1, false),
-                        "next_idx",
-                    )
-                    .map_err(|e| e.to_string())?;
-
-                // Branch back to header
-                // Note: We need to cleanup the loop scope variables before branching back!
-                // exit_scope() above already popped the scope from the compiler's tracking,
-                // BUT it only emitted cleanup if the block wasn't terminated.
-                // Here, we haven't terminated yet (we are about to branch).
-                // Wait. exit_scope() was called at line 727.
-                // If line 727 emitted cleanup, then we are fine?
-                // Line 727: self.exit_scope().
-                // exit_scope checks is_terminated.
-                // At line 727, are we terminated?
-                // self.compile_stmt(stmt) might have terminated (e.g. Return/Break).
-                // If body ended naturally, we are NOT terminated. So exit_scope() emitted cleanup.
-                // So cleanup logic IS there.
-
-                // Why stack overflow?
-
-                // Maybe the cleanup is emitted AFTER the branch?
-                // No, exit_scope is called BEFORE `next_idx` and BEFORE `build_unconditional_branch`.
-
+                
                 if body_end_block.get_terminator().is_none() {
+                    let next_idx = self
+                        .builder
+                        .build_int_add(
+                            phi.as_basic_value().into_int_value(),
+                            i64_type.const_int(1, false),
+                            "next_idx",
+                        )
+                        .map_err(|e| e.to_string())?;
+
                     self.builder
                         .build_unconditional_branch(loop_header)
                         .map_err(|e| e.to_string())?;
+                        
+                    // Add PHI incoming edge from loop back
+                    phi.add_incoming(&[(&next_idx, body_end_block)]);
                 }
 
-                // Add PHI incoming edges
-                phi.add_incoming(&[(&start_val, preheader_block), (&next_idx, body_end_block)]);
+                // Add PHI incoming edge from start (always)
+                phi.add_incoming(&[(&start_val, preheader_block)]);
 
                 // Continue at loop end
                 self.builder.position_at_end(loop_end);
@@ -1408,26 +1390,16 @@ impl<'ctx> CodeGenerator<'ctx> {
             Stmt::Expr(expr) => {
                 let (val, ty) = self.compile_expr(expr)?;
                 
-                // Fix: Unregister result if it's discarded (Statement context)
-                // This prevents freeing 'self' when calling methods like 'model.step()' that return self.
-                // Trade-off: Genuine temporaries in statement position (e.g. 'Tensor::new();') will leak.
-                // But this prevents Use-After-Free crashes for the common builder/chaining pattern.
-                match ty {
-                    Type::Struct(_) | Type::UserDefined(_) | Type::Tensor(_, _) => {
-                         if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
-                             // Only unregister if it's a pointer value
-                             if val.is_pointer_value() {
-                                let ptr = val.into_pointer_value();
-                                let cast_ptr = self.builder.build_pointer_cast(
-                                    ptr,
-                                    self.context.ptr_type(inkwell::AddressSpace::default()),
-                                    "cast_unreg_expr"
-                                ).unwrap();
-                                self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
-                             }
-                        }
-                    }
-                    _ => {}
+                // FIX: Free result if it is temporary and safe to free
+                // This prevents leaking temporary Tensors or Structs created in statement position (e.g. Block::new(d))
+                // while preserving aliased returns like `model.step()` (MethodCall returning Struct).
+                if self.is_safe_to_free(expr, &ty) {
+                     self.emit_recursive_free(val, &ty)?;
+                } else {
+                     // If it's not safe to free (e.g. MethodCall returning Struct), we do nothing.
+                     // The value is discarded. Since we don't own it (it's an alias/borrow), we assume it lives elsewhere.
+                     // If it WAS a new object but we couldn't prove it (e.g. factory method), it LEAKS.
+                     // This is the chosen safety trade-off.
                 }
                 Ok(())
             }
