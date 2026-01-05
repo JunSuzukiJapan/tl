@@ -416,12 +416,11 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) {
     if !t.is_null() {
         unsafe {
             if arena::tl_arena_contains(t as *mut std::ffi::c_void) {
-                // Arena-allocated tensors should not be dropped individually
-                // The arena will handle cleanup when it's freed
-                // We just return without doing anything
-                return;
+                // Arena-allocated tensors MUST be dropped to release Candle resources (GPU memory, etc)
+                // The memory for OpaqueTensor itself is reclaimed by arena reset, but the inner content needs Drop.
+                std::ptr::drop_in_place(t);
             } else {
-                // Heap allocated, safe to free via Box
+                // Heap allocated, safe to free via Box (calls drop implicitly)
                 let _ = Box::from_raw(t);
             }
         }
@@ -431,6 +430,7 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) {
 #[no_mangle]
 pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
     if !t.is_null() {
+        // println!("DEBUG: tl_tensor_free called for {:?}", t); 
         // Unregister from memory manager if it was registered
         // (to prevent double-free on scope exit if manually freed)
         memory_manager::tl_mem_unregister(t as *mut std::ffi::c_void);

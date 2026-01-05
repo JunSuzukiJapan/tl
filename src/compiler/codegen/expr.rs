@@ -1139,6 +1139,35 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.builder
                 .build_store(field_ptr, val)
                 .map_err(|e| e.to_string())?;
+
+            // CRITICAL FIX: Unregister the field value from MemoryManager.
+            // Move semantics: The struct now owns this field.
+            // Current scope should NOT free it; the struct's recursive free will handle it.
+            match _ty {
+                Type::Tensor(_, _) => {
+                    if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                        let ptr = val.into_pointer_value();
+                        let cast_ptr = self.builder.build_pointer_cast(
+                            ptr,
+                            self.context.ptr_type(inkwell::AddressSpace::default()),
+                            "cast_unreg"
+                        ).unwrap();
+                        self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                    }
+                }
+                Type::Struct(_) | Type::UserDefined(_) => {
+                     if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                        let ptr = val.into_pointer_value();
+                        let cast_ptr = self.builder.build_pointer_cast(
+                            ptr,
+                            self.context.ptr_type(inkwell::AddressSpace::default()),
+                            "cast_unreg"
+                        ).unwrap();
+                        self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                    }
+                }
+                _ => {}
+            }
         }
 
         // Return the pointer directly (no load)
@@ -2008,27 +2037,33 @@ impl<'ctx> CodeGenerator<'ctx> {
                     ValueKind::Basic(v) => {
                         // FIX: User-defined methods unregister return value, so we must register it
                         // to prevent memory leaks (and keep graph alive for backprop).
-                        if let Type::Tensor(_, _) = ret_ty {
-                            // Only register if it's a tensor
-                            // Assumes user-defined methods always unregister.
-                            // Runtime methods are handled in the 'else' block below or specific matches.
-                            if let Some(reg_fn) = self.module.get_function("tl_mem_register_tensor")
-                            {
-                                let ptr = v.into_pointer_value();
-                                // Ensure pointer type match
-                                let cast_ptr = self
-                                    .builder
-                                    .build_pointer_cast(
-                                        ptr,
-                                        self.context.ptr_type(inkwell::AddressSpace::default()),
-                                        "cast_reg",
-                                    )
-                                    .map_err(|e| e.to_string())?;
+                        // FIX: User-defined methods unregister return value, so we must register it
+                        // to prevent memory leaks (and keep graph alive for backprop).
+                        match ret_ty {
+                            Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => {
+                                // Register if it's a Tensor or Struct
+                                if let Some(reg_fn) = if matches!(ret_ty, Type::Tensor(_, _)) {
+                                    self.module.get_function("tl_mem_register_tensor")
+                                } else {
+                                    self.module.get_function("tl_mem_register_struct")
+                                } {
+                                    let ptr = v.into_pointer_value();
+                                    // Ensure pointer type match
+                                    let cast_ptr = self
+                                        .builder
+                                        .build_pointer_cast(
+                                            ptr,
+                                            self.context.ptr_type(inkwell::AddressSpace::default()),
+                                            "cast_reg",
+                                        )
+                                        .map_err(|e| e.to_string())?;
 
-                                self.builder
-                                    .build_call(reg_fn, &[cast_ptr.into()], "")
-                                    .map_err(|e| e.to_string())?;
+                                    self.builder
+                                        .build_call(reg_fn, &[cast_ptr.into()], "")
+                                        .map_err(|e| e.to_string())?;
+                                }
                             }
+                            _ => {}
                         }
                         Ok((v, ret_ty))
                     }

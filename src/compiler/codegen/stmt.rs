@@ -128,6 +128,108 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(())
     }
 
+    pub(crate) fn emit_recursive_free(
+        &self,
+        val: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<(), String> {
+        match ty {
+            Type::Tensor(_, _) => {
+                 let free_fn = self
+                    .module
+                    .get_function("tl_tensor_free")
+                    .ok_or("tl_tensor_free not found")?;
+                self.builder
+                    .build_call(free_fn, &[val.into()], "")
+                    .map_err(|e| e.to_string())?;
+            }
+            Type::Struct(name) | Type::UserDefined(name) => {
+                if let Some(struct_def) = self.struct_defs.get(name) {
+                    let ptr = val.into_pointer_value();
+                    
+                    // Check for null before freeing
+                    let is_not_null = self.builder.build_is_not_null(ptr, "is_not_null")
+                        .map_err(|e| e.to_string())?;
+                    
+                    let free_block = self.context.append_basic_block(
+                        self.builder.get_insert_block().unwrap().get_parent().unwrap(),
+                        "recursive_free_struct",
+                    );
+                    let continue_block = self.context.append_basic_block(
+                        self.builder.get_insert_block().unwrap().get_parent().unwrap(),
+                        "continue_after_recursive_free",
+                    );
+
+                    self.builder
+                        .build_conditional_branch(is_not_null, free_block, continue_block)
+                        .map_err(|e| e.to_string())?;
+
+                    self.builder.position_at_end(free_block);
+
+                    let st_llvm_ty = *self.struct_types.get(name).unwrap();
+
+                    // Recursively free all fields
+                    for (i, (_, field_type)) in struct_def.fields.iter().enumerate() {
+                        if matches!(
+                            field_type,
+                            Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+                        ) {
+                            // GEP
+                            let field_ptr = self
+                                .builder
+                                .build_struct_gep(
+                                    st_llvm_ty,
+                                    ptr,
+                                    i as u32,
+                                    &format!("free_field_{}", i),
+                                )
+                                .map_err(|e| e.to_string())?;
+
+                            // Load
+                            let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                            let field_val = self
+                                .builder
+                                .build_load(load_type, field_ptr, "field_val_to_free")
+                                .map_err(|e| e.to_string())?;
+
+                            // Recurse
+                            self.emit_recursive_free(field_val, field_type)?;
+                        }
+                    }
+                    
+                    // Finally free the struct pointer itself
+                    // Use libc::free
+                    let free_fn = self.module.get_function("free").ok_or("libc free not found. make sure to declare it or use helper")
+                         .or_else(|_| {
+                             // Fallback: Check if we have a wrapper or just declare it?
+                             // runtime declares it usually. but CodeGenerator might not know it if not in builtins.
+                             // builtins::declare_runtime_functions should have it? No, it usually has tl_...
+                             // Let's assume 'free' is available or use a helper from runtime if exists.
+                             // Actually memory_manager uses libc::free internally.
+                             // Let's add specific declaration if missing or use a runtime wrapper.
+                             // For now, let's assume "free" is available in symbol table because we link libc?
+                             // Safest is to use `emit_free_call` helper if we had one.
+                             // Let's check if "free" exists in module.
+                             if self.module.get_function("free").is_none() {
+                                 let void_type = self.context.void_type();
+                                 let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                                 let fn_type = void_type.fn_type(&[ptr_type.into()], false);
+                                 self.module.add_function("free", fn_type, None);
+                             }
+                             Ok::<inkwell::values::FunctionValue<'_>, String>(self.module.get_function("free").unwrap())
+                         })?;
+                    
+                    self.builder.build_call(free_fn, &[ptr.into()], "").unwrap();
+
+                    self.builder.build_unconditional_branch(continue_block).unwrap();
+                    self.builder.position_at_end(continue_block);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     pub(crate) fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         match stmt {
             Stmt::FieldAssign { obj, field, value } => {
@@ -168,49 +270,54 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let (val, _) = self.compile_expr(value)?;
 
-                // NOTE: Removed explicit tensor clone to preserve gradient graph.
-                // Candle's Arc-based tensors should handle aliasing safely.
-                // Memory management (freeing old values) is preserved below.
-
-                // Free old value if Tensor
-                if let Type::Tensor(_, _) = field_type {
+                // Load old value to free it
+                if matches!(field_type, Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)) { 
                     let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                     let current_val = self
                         .builder
                         .build_load(load_type, field_ptr, "old_field_val")
                         .map_err(|e| e.to_string())?
-                        .into_pointer_value();
+                        .into_pointer_value(); // Valid even if null? Yes.
 
-                    // FIX: Manually free the old value because it's owned by the struct (unregistered).
-                    // If we don't free it, it leaks 100% since MemoryManager doesn't track it.
-                    // This potentially causes Use-After-Free if aliased, but leak is guaranteed otherwise.
-                    let free_fn = self
-                        .module
-                        .get_function("tl_tensor_free")
-                        .ok_or("tl_tensor_free not found")?;
+                    // Fix: Check for Self-Assignment (val == current_val)
+                    // If pointers are equal, DO NOT FREE.
+                    let val_ptr = val.into_pointer_value();
+                    let are_diff = self.builder.build_int_compare(
+                        inkwell::IntPredicate::NE,
+                        current_val,
+                        val_ptr,
+                        "cnt_free_diff"
+                    ).map_err(|e| e.to_string())?;
+                    
+                    let free_block = self.context.append_basic_block(
+                        self.builder.get_insert_block().unwrap().get_parent().unwrap(),
+                        "free_old_val"
+                    );
+                    let skip_block = self.context.append_basic_block(
+                        self.builder.get_insert_block().unwrap().get_parent().unwrap(),
+                        "skip_free"
+                    );
 
-                    self.builder
-                        .build_call(free_fn, &[current_val.into()], "")
-                        .map_err(|e| e.to_string())?;
+                    self.builder.build_conditional_branch(are_diff, free_block, skip_block).unwrap();
+
+                    self.builder.position_at_end(free_block);
+                    self.emit_recursive_free(current_val.into(), &field_type)?;
+                    self.builder.build_unconditional_branch(skip_block).unwrap();
+
+                    self.builder.position_at_end(skip_block);
                 }
 
                 self.builder
                     .build_store(field_ptr, val)
                     .map_err(|e| e.to_string())?;
 
-                // Fix for Use-After-Free:
-                // When assigning to a field, the value (Tensor/Struct) is now owned by the struct.
-                // The struct likely outlives the current scope (e.g. self).
-                // We MUST unregister the value from the current scope so it isn't freed when the function returns.
-                // Note: This currently leads to a leak if the struct is freed without recursive cleanup,
-                // but it prevents the critical Use-After-Free panic/segfault.
+                // Fix for Use-After-Free: Unregister the NEW value from current scope
+                // because it is now owned by the struct.
                 let unreg_fn = self.module.get_function("tl_mem_unregister");
                 if let Some(f) = unreg_fn {
                     let should_unregister = match &field_type {
                         Type::Tensor(_, _) => true,
                         Type::Struct(_) | Type::UserDefined(_) => true,
-                        // Strings are UserDefined("String") usually? Or primitive?
-                        // If String is struct, it's covered.
                         _ => false,
                     };
 
@@ -298,6 +405,37 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
 
                 let (mut val_ir, mut val_ty) = self.compile_expr(value)?;
+
+                // Fix: Ownership Transfer (Runtime -> Compiler)
+                // If the value is a temporary (registered in MemoryManager), we MUST unregister it.
+                // The variable 'name' will take ownership (should_free=true) and free it via recursive_free at scope exit.
+                match val_ty {
+                    Type::Struct(_) | Type::UserDefined(_) | Type::Tensor(_, _) => {
+                         if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                            let ptr = val_ir.into_pointer_value();
+                            let cast_ptr = self.builder.build_pointer_cast(
+                                ptr,
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "cast_unreg_let"
+                            ).unwrap();
+                            self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                        }
+                    }
+                    _ => {}
+                }
+
+                // Fix: Move Semantics for Struct/Tensor
+                // If initializing from a variable (let s = self), disable source's cleanup.
+                if let Expr::Variable(src_name) = value {
+                     if matches!(val_ty, Type::Struct(_) | Type::UserDefined(_) | Type::Tensor(_,_)) {
+                         for scope in self.variables.iter_mut().rev() {
+                             if let Some(entry) = scope.get_mut(src_name) {
+                                 entry.2 = false; // Disable free for source (Move)
+                                 break;
+                             }
+                         }
+                     }
+                }
 
                 // Convert ScalarArray to Tensor if explicitly requested as Tensor
                 if let Some(target_ty) = type_annotation {
@@ -482,6 +620,23 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let var_ptr = found_var_ptr.ok_or(format!("Variable {} not found", name))?;
                 let var_type = found_var_type.ok_or(format!("Variable {} not found", name))?;
+
+                // Fix: Ownership Transfer (Runtime -> Compiler)
+                // Unregister the new value (RHS) if it's a temporary.
+                match val_type {
+                    Type::Struct(_) | Type::UserDefined(_) | Type::Tensor(_, _) => {
+                         if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                            let ptr = val.into_pointer_value();
+                            let cast_ptr = self.builder.build_pointer_cast(
+                                ptr,
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "cast_unreg_assign"
+                            ).unwrap();
+                            self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                        }
+                    }
+                    _ => {}
+                }
 
                 if let Some(idxs) = indices {
                     if !idxs.is_empty() {
@@ -1251,7 +1406,29 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(())
             }
             Stmt::Expr(expr) => {
-                self.compile_expr(expr)?;
+                let (val, ty) = self.compile_expr(expr)?;
+                
+                // Fix: Unregister result if it's discarded (Statement context)
+                // This prevents freeing 'self' when calling methods like 'model.step()' that return self.
+                // Trade-off: Genuine temporaries in statement position (e.g. 'Tensor::new();') will leak.
+                // But this prevents Use-After-Free crashes for the common builder/chaining pattern.
+                match ty {
+                    Type::Struct(_) | Type::UserDefined(_) | Type::Tensor(_, _) => {
+                         if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                             // Only unregister if it's a pointer value
+                             if val.is_pointer_value() {
+                                let ptr = val.into_pointer_value();
+                                let cast_ptr = self.builder.build_pointer_cast(
+                                    ptr,
+                                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                                    "cast_unreg_expr"
+                                ).unwrap();
+                                self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                             }
+                        }
+                    }
+                    _ => {}
+                }
                 Ok(())
             }
         }

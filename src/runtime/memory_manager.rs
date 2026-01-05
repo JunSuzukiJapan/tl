@@ -54,18 +54,13 @@ impl MemoryManager {
             return;
         }
 
-        if let Some(offset) = self.arena_offsets.pop() {
-            // eprintln!("DEBUG: exit_scope, restoring arena offset to {}", offset);
-            super::arena::tl_arena_set_offset(offset);
-        }
-
         if let Some(allocations) = self.scopes.pop() {
             // Free all allocations in reverse order (LIFO)
             for record in allocations.into_iter().rev() {
                 unsafe {
                     match record.alloc_type {
                         AllocationType::Struct => {
-                            // eprintln!("DEBUG: exit_scope, freeing struct {:?}", record.ptr);
+                            // Structs are simple mallocs, just free
                             libc::free(record.ptr);
                         }
                         AllocationType::Tensor => {
@@ -76,11 +71,30 @@ impl MemoryManager {
                 }
             }
         }
+
+        if let Some(offset) = self.arena_offsets.pop() {
+            // Restoring arena offset AFTER dropping items is safer
+            // because dropping items (tensors) might technically access memory? 
+            // Although OpaqueTensor is just a wrapper...
+            super::arena::tl_arena_set_offset(offset);
+        }
+    }
+
+    /// Check if pointer is already registered in ANY scope
+    fn is_registered(&self, ptr: *mut c_void) -> bool {
+        for scope in &self.scopes {
+            if scope.iter().any(|r| r.ptr == ptr) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// Register a struct allocation in the current scope
     pub fn register_struct(&mut self, ptr: *mut c_void) {
-        // eprintln!("DEBUG: register_struct {:?}", ptr);
+        if self.is_registered(ptr) {
+            return;
+        }
         if let Some(scope) = self.scopes.last_mut() {
             scope.push(AllocationRecord {
                 ptr,
@@ -91,7 +105,9 @@ impl MemoryManager {
 
     /// Register a tensor allocation in the current scope
     pub fn register_tensor(&mut self, ptr: *mut OpaqueTensor) {
-        // eprintln!("DEBUG: register_tensor {:?}", ptr);
+        if self.is_registered(ptr as *mut c_void) {
+            return;
+        }
         if let Some(scope) = self.scopes.last_mut() {
             scope.push(AllocationRecord {
                 ptr: ptr as *mut c_void,
@@ -102,12 +118,12 @@ impl MemoryManager {
 
     /// Unregister a pointer (e.g., when it's reassigned)
     /// The memory won't be freed on scope exit
+    /// Unregister a pointer from the CURRENT scope only (for move semantics)
     pub fn unregister(&mut self, ptr: *mut c_void) {
-        for scope in self.scopes.iter_mut().rev() {
+        if let Some(scope) = self.scopes.last_mut() {
             if let Some(pos) = scope.iter().position(|r| r.ptr == ptr) {
                 // eprintln!("DEBUG: unregistering {:?}", ptr);
                 scope.remove(pos);
-                return;
             }
         }
     }
@@ -158,18 +174,9 @@ pub fn register_tensor_global(ptr: *mut OpaqueTensor) {
         // eprintln!("WARNING: Registering tensor without active scope");
         return;
     }
-    // Check if already registered in current scope to prevent double-free
-    if let Some(scope) = mgr.scopes.last() {
-        if scope.iter().any(|r| r.ptr == ptr as *mut c_void) {
-            return;
-        }
-    }
-
-    // Check if already registered in current scope to prevent double-free
-    if let Some(scope) = mgr.scopes.last() {
-        if scope.iter().any(|r| r.ptr == ptr as *mut c_void) {
-            return;
-        }
+    // Check if already registered in ANY scope to prevent double-free
+    if mgr.is_registered(ptr as *mut c_void) {
+        return;
     }
 
     mgr.register_tensor(ptr);

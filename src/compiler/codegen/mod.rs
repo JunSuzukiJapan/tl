@@ -87,6 +87,29 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     // Emit cleanup for the current scope (without popping).
     pub(crate) fn emit_top_scope_cleanup(&self) {
+        // Generate recursive free for all struct variables in current scope
+        if let Some(scope) = self.variables.last() {
+            for (_name, (val_enum, ty, should_free)) in scope {
+                 if *should_free {
+                     if matches!(ty, Type::Struct(_) | Type::UserDefined(_)) {
+                         // Load the struct pointer from the stack variable (Alloca)
+                         let ptr = val_enum.into_pointer_value();
+                         let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                         // We must check if the pointer stored in alloca is not null (unlikely for Let, but possible if modified)
+                         if let Ok(struct_val) = self.builder.build_load(load_type, ptr, "struct_to_free") {
+                             // Recursive free handles null check
+                             let _ = self.emit_recursive_free(struct_val, ty);
+
+                             // CRITICAL: Unregister from MemoryManager to prevent double-free via tl_mem_exit_scope
+                             if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                                 self.builder.build_call(unreg_fn, &[struct_val.into()], "").unwrap();
+                             }
+                         }
+                     }
+                 }
+            }
+        }
+
         if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
             self.builder.build_call(f, &[], "").unwrap();
         }
