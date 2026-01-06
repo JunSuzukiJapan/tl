@@ -49,16 +49,11 @@ impl GPT {
     } 
 }
 
-fn get_memory() -> i64 {
-    return tl_get_memory_mb();
-}
-
-fn train_epoch(model: GPT, lr: f32, epoch: i64) {
-    let total_loss = pow(0.0, 1.0);
-    // Training on random subset
-    let total_steps = 1000;
+fn train_epoch(model: GPT, lr: f32, epoch: i64) -> GPT {
+    let total_steps = 500;
     let stride = 137;
     let offset = epoch * 79; 
+    let total_loss = pow(0.0, 1.0);
 
     for s in range(0, total_steps) {
         let raw = s * stride + offset;
@@ -68,7 +63,6 @@ fn train_epoch(model: GPT, lr: f32, epoch: i64) {
 
         let sum = i + j;
         
-        // Reverse Digits Logic (Least Significant Digit First)
         let i_d10 = i / 10;
         let i_d1 = i - (i_d10 * 10);
         let j_d10 = j / 10;
@@ -99,61 +93,43 @@ fn train_epoch(model: GPT, lr: f32, epoch: i64) {
             v_s_d1, v_s_d10, v_s_d100, 
             12.0, 12.0, 12.0, 12.0
         ];
-        
-        print("Iter:");
-        print(s);
 
-        print("P-ReshapeX");
         let X = reshape(data, 1, 12);
-        print("P-ReshapeY");
         let Y = reshape(target, 1, 12);
         
-        print("P-Forward");
         let logits = model.forward(X);
-        // print("Forward done");
         let logits_flat = reshape(logits, 12, 13);
         let Y_flat = reshape(Y, 12);
         let loss = cross_entropy(logits_flat, Y_flat);
-        // print("Loss calculated");
         
         backward(loss);
-        // print("Backward done");
-        model.step(lr);
+        model = model.step(lr);
         total_loss = loss.detach(true);
-        print("Loop End");
     }
     
-    let mem_mb = get_memory();
-    print("Loss:"); print(total_loss); 
-    print("Memory(MB):"); print(mem_mb);
+    print("Epoch:"); print(epoch); print("Loss:"); print(total_loss);
+    return model;
 }
 
 fn main() {
     let vocab_size = 13;
     let d_model = 128; 
-    // 3 layers
     let model = GPT::new(vocab_size, d_model);
     
-    // Attempt to load existing parameters to resume training
-    if (1==1) { // Simple hack to execute load. Ideally check file existence but tl doesn't have `exists`.
-        // We know the file exists from previous run (if it didn't hang before first save).
-        // If it fails, runtime might panic. But we verified file exists (Epoch 8 saved).
-        print("Resuming training from model_2digit_rev.safetensors...");
-        load_all_params(model, "model_2digit_rev.safetensors");
-    }
+    // Resume from saved model
+    load_all_params(model, "model_2digit_rev.safetensors");
+    
+    let lr = 0.0001;  // Even lower LR for fine-tuning
+    let epochs = 50;
 
-    // Low LR for stability with deeper model
-    let lr = 0.0005; 
-    let epochs = 20; // Additional 20 epochs
-
-    print("Training 2-digit addition (Reverse Digits, 3-Layer) - RESUME");
+    print("Training 2-digit addition - 50 more epochs (resume, very low LR)");
 
     for epoch in range(0, epochs) {
-        print("Epoch:");
-        print(epoch);
-        train_epoch(model, lr, epoch);
-        // Save every epoch to prevent loss on hang
-        save_all_params(model, "model_2digit_rev.safetensors");
+        model = train_epoch(model, lr, epoch);
+        // Save every 10 epochs
+        if epoch - ((epoch / 10) * 10) == 9 {
+            save_all_params(model, "model_2digit_rev.safetensors");
+        }
     }
     print("Training Complete!");
     save_all_params(model, "model_2digit_rev.safetensors");

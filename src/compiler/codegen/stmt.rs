@@ -1315,17 +1315,71 @@ impl<'ctx> CodeGenerator<'ctx> {
             Stmt::Expr(expr) => {
                 let (val, ty) = self.compile_expr(expr)?;
                 
-                // FIX: Free result if it is temporary and safe to free
-                // This prevents leaking temporary Tensors or Structs created in statement position (e.g. Block::new(d))
-                // while preserving aliased returns like `model.step()` (MethodCall returning Struct).
-                if self.is_safe_to_free(expr, &ty) {
-                     self.emit_recursive_free(val, &ty)?;
-                } else {
-                     // If it's not safe to free (e.g. MethodCall returning Struct), we do nothing.
-                     // The value is discarded. Since we don't own it (it's an alias/borrow), we assume it lives elsewhere.
-                     // If it WAS a new object but we couldn't prove it (e.g. factory method), it LEAKS.
-                     // This is the chosen safety trade-off.
+                // FIX: Handle discarded return values properly to prevent use-after-free bugs.
+                // When calling `model.step(lr);` without using the result:
+                // - The step method may modify `self` and return a new struct
+                // - If we don't capture the return value, the original variable becomes invalid
+                // - We need to register the return value as a temporary so it gets freed at scope exit
+                
+                match &ty {
+                    Type::Struct(_) | Type::UserDefined(_) => {
+                        // For struct return values: Register as a temporary variable
+                        // This is equivalent to `let _ = expr;`
+                        // The struct and its fields will be properly freed at scope exit
+                        static DISCARD_ID: std::sync::atomic::AtomicUsize = 
+                            std::sync::atomic::AtomicUsize::new(0);
+                        let id = DISCARD_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let temp_name = format!("_discard_{}", id);
+                        
+                        let current_function = self
+                            .builder
+                            .get_insert_block()
+                            .unwrap()
+                            .get_parent()
+                            .unwrap();
+                        
+                        let alloca = self.create_entry_block_alloca(current_function, &temp_name, &ty);
+                        self.builder.build_store(alloca, val).map_err(|e| e.to_string())?;
+                        
+                        // Register in current scope with should_free=true
+                        // This ensures the struct gets freed when the scope exits
+                        self.variables
+                            .last_mut()
+                            .unwrap()
+                            .insert(temp_name, (alloca.into(), ty.clone(), true));
+                    }
+                    Type::Tensor(_, _) => {
+                        // For tensor return values: Free directly if safe, otherwise register as temp
+                        if self.is_safe_to_free(expr, &ty) {
+                            self.emit_recursive_free(val, &ty)?;
+                        } else {
+                            // Register as temporary to be freed at scope exit
+                            static TENSOR_DISCARD_ID: std::sync::atomic::AtomicUsize = 
+                                std::sync::atomic::AtomicUsize::new(0);
+                            let id = TENSOR_DISCARD_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let temp_name = format!("_tensor_discard_{}", id);
+                            
+                            let current_function = self
+                                .builder
+                                .get_insert_block()
+                                .unwrap()
+                                .get_parent()
+                                .unwrap();
+                            
+                            let alloca = self.create_entry_block_alloca(current_function, &temp_name, &ty);
+                            self.builder.build_store(alloca, val).map_err(|e| e.to_string())?;
+                            
+                            self.variables
+                                .last_mut()
+                                .unwrap()
+                                .insert(temp_name, (alloca.into(), ty.clone(), true));
+                        }
+                    }
+                    _ => {
+                        // Primitive types: no action needed (no memory to manage)
+                    }
                 }
+                
                 Ok(())
             }
         }
