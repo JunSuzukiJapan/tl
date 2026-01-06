@@ -2,16 +2,12 @@
 source_filename = "main"
 target datalayout = "e-m:o-i64:64-i128:128-n32:64-S128"
 
-@str_literal = private unnamed_addr constant [27 x i8] c"Test: VarBuilder functions\00", align 1
-@str_literal.104 = private unnamed_addr constant [12 x i8] c"test_weight\00", align 1
-@str_literal.105 = private unnamed_addr constant [10 x i8] c"test_bias\00", align 1
-@str_literal.106 = private unnamed_addr constant [19 x i8] c"Created parameters\00", align 1
-@str_literal.107 = private unnamed_addr constant [6 x i8] c"Loss:\00", align 1
-@str_literal.108 = private unnamed_addr constant [12 x i8] c"test_weight\00", align 1
-@str_literal.109 = private unnamed_addr constant [10 x i8] c"test_bias\00", align 1
-@str_literal.110 = private unnamed_addr constant [17 x i8] c"Weight gradient:\00", align 1
-@str_literal.111 = private unnamed_addr constant [15 x i8] c"Bias gradient:\00", align 1
-@str_literal.112 = private unnamed_addr constant [20 x i8] c"Parameters updated!\00", align 1
+@str_literal = private unnamed_addr constant [29 x i8] c"Starting memory leak test...\00", align 1
+@str_literal.106 = private unnamed_addr constant [21 x i8] c"Initial memory (MB):\00", align 1
+@str_literal.107 = private unnamed_addr constant [6 x i8] c"Iter:\00", align 1
+@str_literal.108 = private unnamed_addr constant [10 x i8] c"Mem (MB):\00", align 1
+@str_literal.109 = private unnamed_addr constant [16 x i8] c"Final Mem (MB):\00", align 1
+@str_literal.110 = private unnamed_addr constant [6 x i8] c"Done.\00", align 1
 
 declare void @tl_print_i64(i64)
 
@@ -423,94 +419,151 @@ declare ptr @tl_alloc_tmp.102(i64)
 
 declare void @tl_free_tmp.103(ptr)
 
+declare i64 @tl_get_memory_mb.104()
+
+declare void @tl_print_i64.105(i64)
+
 define void @main() {
 entry:
-  %gb = alloca ptr, align 16
-  %gw = alloca ptr, align 16
+  %end = alloca i64, align 16
+  %cur = alloca i64, align 16
   %loss = alloca ptr, align 16
-  %output = alloca ptr, align 16
+  %w = alloca ptr, align 16
+  %z = alloca ptr, align 16
+  %y = alloca ptr, align 16
+  %conv_buf10 = alloca [2 x float], align 4
   %x = alloca ptr, align 16
   %conv_buf = alloca [2 x float], align 4
-  %bias = alloca ptr, align 16
-  %weight = alloca ptr, align 16
+  %i = alloca i64, align 16
+  %start_mem = alloca i64, align 16
   call void @tl_mem_enter_scope()
-  call void @tl_arena_init(i64 1026048)
+  call void @tl_arena_init(i64 409600)
   call void @tl_print_string(ptr @str_literal)
+  %call_tmp = call i64 @tl_get_memory_mb()
+  store i64 %call_tmp, ptr %start_mem, align 8
+  call void @tl_print_string(ptr @str_literal.106)
+  %start_mem1 = load i64, ptr %start_mem, align 8
+  call void @tl_print_i64(i64 %start_mem1)
+  br label %for_header
+
+for_header:                                       ; preds = %merge, %entry
+  %for_idx = phi i64 [ %next_idx, %merge ], [ 0, %entry ]
+  %for_cond = icmp slt i64 %for_idx, 5000
+  br i1 %for_cond, label %for_body, label %for_end
+
+for_body:                                         ; preds = %for_header
+  call void @tl_mem_enter_scope()
+  store i64 %for_idx, ptr %i, align 8
   %arr_malloc = call ptr @malloc(i64 mul (i64 ptrtoint (ptr getelementptr (i64, ptr null, i32 1) to i64), i64 2))
   call void @tl_mem_register_struct(ptr %arr_malloc)
   %elem_ptr = getelementptr inbounds i64, ptr %arr_malloc, i64 0
-  store i64 10, ptr %elem_ptr, align 8
-  %elem_ptr1 = getelementptr inbounds i64, ptr %arr_malloc, i64 1
-  store i64 5, ptr %elem_ptr1, align 8
-  %static_call = call ptr @tl_varbuilder_get(ptr @str_literal.104, i64 2, ptr %arr_malloc)
-  call void @tl_mem_unregister(ptr %static_call)
-  store ptr %static_call, ptr %weight, align 8
-  %arr_malloc2 = call ptr @malloc(i64 ptrtoint (ptr getelementptr (i64, ptr null, i32 1) to i64))
-  call void @tl_mem_register_struct(ptr %arr_malloc2)
-  %elem_ptr3 = getelementptr inbounds i64, ptr %arr_malloc2, i64 0
-  store i64 5, ptr %elem_ptr3, align 8
-  %static_call4 = call ptr @tl_varbuilder_get(ptr @str_literal.105, i64 1, ptr %arr_malloc2)
-  call void @tl_mem_unregister(ptr %static_call4)
-  store ptr %static_call4, ptr %bias, align 8
-  call void @tl_print_string(ptr @str_literal.106)
-  %weight5 = load ptr, ptr %weight, align 8
-  call void @tl_tensor_print(ptr %weight5)
-  %bias6 = load ptr, ptr %bias, align 8
-  call void @tl_tensor_print(ptr %bias6)
-  %arr_malloc7 = call ptr @malloc(i64 mul (i64 ptrtoint (ptr getelementptr (i64, ptr null, i32 1) to i64), i64 2))
-  call void @tl_mem_register_struct(ptr %arr_malloc7)
-  %elem_ptr8 = getelementptr inbounds i64, ptr %arr_malloc7, i64 0
-  store i64 4, ptr %elem_ptr8, align 8
-  %elem_ptr9 = getelementptr inbounds i64, ptr %arr_malloc7, i64 1
-  store i64 10, ptr %elem_ptr9, align 8
-  %src = getelementptr inbounds i64, ptr %arr_malloc7, i64 0
+  store i64 128, ptr %elem_ptr, align 8
+  %elem_ptr2 = getelementptr inbounds i64, ptr %arr_malloc, i64 1
+  store i64 128, ptr %elem_ptr2, align 8
+  %src = getelementptr inbounds i64, ptr %arr_malloc, i64 0
   %l = load i64, ptr %src, align 8
   %c = sitofp i64 %l to float
   %dst = getelementptr inbounds float, ptr %conv_buf, i64 0
   store float %c, ptr %dst, align 4
-  %src10 = getelementptr inbounds i64, ptr %arr_malloc7, i64 1
-  %l11 = load i64, ptr %src10, align 8
-  %c12 = sitofp i64 %l11 to float
-  %dst13 = getelementptr inbounds float, ptr %conv_buf, i64 1
-  store float %c12, ptr %dst13, align 4
+  %src3 = getelementptr inbounds i64, ptr %arr_malloc, i64 1
+  %l4 = load i64, ptr %src3, align 8
+  %c5 = sitofp i64 %l4 to float
+  %dst6 = getelementptr inbounds float, ptr %conv_buf, i64 1
+  store float %c5, ptr %dst6, align 4
   %shape_arr = alloca [1 x i64], align 8
   %shape_ptr = getelementptr inbounds [1 x i64], ptr %shape_arr, i64 0, i64 0
   store i64 2, ptr %shape_ptr, align 8
   %converted_tensor = call ptr @tl_tensor_new(ptr %conv_buf, i64 1, ptr %shape_arr)
-  %static_call14 = call ptr @tl_tensor_randn(ptr %converted_tensor, i1 false)
-  call void @tl_mem_unregister(ptr %static_call14)
-  store ptr %static_call14, ptr %x, align 8
-  %x15 = load ptr, ptr %x, align 8
-  %weight16 = load ptr, ptr %weight, align 8
-  %matmul_res = call ptr @tl_tensor_matmul(ptr %x15, ptr %weight16)
-  %bias17 = load ptr, ptr %bias, align 8
-  %binop_res = call ptr @tl_tensor_add(ptr %matmul_res, ptr %bias17)
-  call void @tl_tensor_free(ptr %matmul_res)
+  %static_call = call ptr @tl_tensor_randn(ptr %converted_tensor, i1 true)
+  call void @tl_mem_unregister(ptr %static_call)
+  store ptr %static_call, ptr %x, align 8
+  %arr_malloc7 = call ptr @malloc(i64 mul (i64 ptrtoint (ptr getelementptr (i64, ptr null, i32 1) to i64), i64 2))
+  call void @tl_mem_register_struct(ptr %arr_malloc7)
+  %elem_ptr8 = getelementptr inbounds i64, ptr %arr_malloc7, i64 0
+  store i64 128, ptr %elem_ptr8, align 8
+  %elem_ptr9 = getelementptr inbounds i64, ptr %arr_malloc7, i64 1
+  store i64 128, ptr %elem_ptr9, align 8
+  %src11 = getelementptr inbounds i64, ptr %arr_malloc7, i64 0
+  %l12 = load i64, ptr %src11, align 8
+  %c13 = sitofp i64 %l12 to float
+  %dst14 = getelementptr inbounds float, ptr %conv_buf10, i64 0
+  store float %c13, ptr %dst14, align 4
+  %src15 = getelementptr inbounds i64, ptr %arr_malloc7, i64 1
+  %l16 = load i64, ptr %src15, align 8
+  %c17 = sitofp i64 %l16 to float
+  %dst18 = getelementptr inbounds float, ptr %conv_buf10, i64 1
+  store float %c17, ptr %dst18, align 4
+  %shape_arr19 = alloca [1 x i64], align 8
+  %shape_ptr20 = getelementptr inbounds [1 x i64], ptr %shape_arr19, i64 0, i64 0
+  store i64 2, ptr %shape_ptr20, align 8
+  %converted_tensor21 = call ptr @tl_tensor_new(ptr %conv_buf10, i64 1, ptr %shape_arr19)
+  %static_call22 = call ptr @tl_tensor_randn(ptr %converted_tensor21, i1 true)
+  call void @tl_mem_unregister(ptr %static_call22)
+  store ptr %static_call22, ptr %y, align 8
+  %x23 = load ptr, ptr %x, align 8
+  %y24 = load ptr, ptr %y, align 8
+  %binop_res = call ptr @tl_tensor_add(ptr %x23, ptr %y24)
   call void @tl_mem_unregister(ptr %binop_res)
-  store ptr %binop_res, ptr %output, align 8
-  %output18 = load ptr, ptr %output, align 8
-  %sum_res = call ptr @tl_tensor_sum(ptr %output18)
+  store ptr %binop_res, ptr %z, align 8
+  %z25 = load ptr, ptr %z, align 8
+  %x26 = load ptr, ptr %x, align 8
+  %binop_res27 = call ptr @tl_tensor_mul(ptr %z25, ptr %x26)
+  call void @tl_mem_unregister(ptr %binop_res27)
+  store ptr %binop_res27, ptr %w, align 8
+  %w28 = load ptr, ptr %w, align 8
+  %sum_res = call ptr @tl_tensor_sum(ptr %w28)
   call void @tl_mem_unregister(ptr %sum_res)
   store ptr %sum_res, ptr %loss, align 8
-  call void @tl_print_string(ptr @str_literal.107)
-  %loss19 = load ptr, ptr %loss, align 8
-  call void @tl_tensor_print(ptr %loss19)
-  %loss20 = load ptr, ptr %loss, align 8
-  call void @tl_tensor_backward(ptr %loss20)
-  %static_call21 = call ptr @tl_varbuilder_grad(ptr @str_literal.108)
-  call void @tl_mem_unregister(ptr %static_call21)
-  store ptr %static_call21, ptr %gw, align 8
-  %static_call22 = call ptr @tl_varbuilder_grad(ptr @str_literal.109)
-  call void @tl_mem_unregister(ptr %static_call22)
-  store ptr %static_call22, ptr %gb, align 8
+  %loss29 = load ptr, ptr %loss, align 8
+  call void @tl_tensor_backward(ptr %loss29)
+  %i30 = load i64, ptr %i, align 8
+  %i31 = load i64, ptr %i, align 8
+  %divtmp = sdiv i64 %i31, 250
+  %multmp = mul i64 %divtmp, 250
+  %subtmp = sub i64 %i30, %multmp
+  %eqtmp = icmp eq i64 %subtmp, 0
+  br i1 %eqtmp, label %then, label %else
+
+for_end:                                          ; preds = %for_header
+  %call_tmp39 = call i64 @tl_get_memory_mb()
+  store i64 %call_tmp39, ptr %end, align 8
+  call void @tl_print_string(ptr @str_literal.109)
+  %end40 = load i64, ptr %end, align 8
+  call void @tl_print_i64(i64 %end40)
   call void @tl_print_string(ptr @str_literal.110)
-  %gw23 = load ptr, ptr %gw, align 8
-  call void @tl_tensor_print(ptr %gw23)
-  call void @tl_print_string(ptr @str_literal.111)
-  %gb24 = load ptr, ptr %gb, align 8
-  call void @tl_tensor_print(ptr %gb24)
-  call void @tl_update_all_params(float 0x3F847AE140000000)
-  call void @tl_print_string(ptr @str_literal.112)
   call void @tl_mem_exit_scope()
   ret void
+
+then:                                             ; preds = %for_body
+  call void @tl_mem_enter_scope()
+  %call_tmp32 = call i64 @tl_get_memory_mb()
+  store i64 %call_tmp32, ptr %cur, align 8
+  call void @tl_print_string(ptr @str_literal.107)
+  %i33 = load i64, ptr %i, align 8
+  call void @tl_print_i64(i64 %i33)
+  call void @tl_print_string(ptr @str_literal.108)
+  %cur34 = load i64, ptr %cur, align 8
+  call void @tl_print_i64(i64 %cur34)
+  call void @tl_mem_exit_scope()
+  br label %merge
+
+else:                                             ; preds = %for_body
+  call void @tl_mem_enter_scope()
+  call void @tl_mem_exit_scope()
+  br label %merge
+
+merge:                                            ; preds = %else, %then
+  %tensor_to_free = load ptr, ptr %z, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free)
+  %tensor_to_free35 = load ptr, ptr %loss, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free35)
+  %tensor_to_free36 = load ptr, ptr %w, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free36)
+  %tensor_to_free37 = load ptr, ptr %x, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free37)
+  %tensor_to_free38 = load ptr, ptr %y, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free38)
+  call void @tl_mem_exit_scope()
+  %next_idx = add i64 %for_idx, 1
+  br label %for_header
 }

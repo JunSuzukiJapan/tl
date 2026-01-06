@@ -105,6 +105,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                                  self.builder.build_call(unreg_fn, &[struct_val.into()], "").unwrap();
                              }
                          }
+                     } else if matches!(ty, Type::Tensor(_, _)) {
+                         let ptr = val_enum.into_pointer_value();
+                         let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                         if let Ok(tensor_val) = self.builder.build_load(load_type, ptr, "tensor_to_free") {
+                             let _ = self.emit_recursive_free(tensor_val, ty);
+                         }
                      }
                  }
             }

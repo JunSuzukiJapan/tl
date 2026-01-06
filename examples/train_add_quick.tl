@@ -49,65 +49,74 @@ impl GPT {
     } 
 }
 
+fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
+    let sum = i + j;
+    
+    let i_d10 = i / 10;
+    let i_d1 = i - (i_d10 * 10);
+    let j_d10 = j / 10;
+    let j_d1 = j - (j_d10 * 10);
+    let s_d100 = sum / 100;
+    let rem = sum - (s_d100 * 100);
+    let s_d10 = rem / 10;
+    let s_d1 = rem - (s_d10 * 10);
+
+    let v_i_d1 = pow(i_d1, 1.0).get(0);
+    let v_i_d10 = pow(i_d10, 1.0).get(0);
+    let v_j_d1 = pow(j_d1, 1.0).get(0);
+    let v_j_d10 = pow(j_d10, 1.0).get(0);
+    let v_s_d1 = pow(s_d1, 1.0).get(0);
+    let v_s_d10 = pow(s_d10, 1.0).get(0);
+    let v_s_d100 = pow(s_d100, 1.0).get(0);
+    
+    let data = [
+        v_i_d1, v_i_d10, 10.0, 
+        v_j_d1, v_j_d10, 11.0, 
+        v_s_d1, v_s_d10, v_s_d100, 
+        12.0, 12.0, 12.0
+    ];
+    
+    let target = [
+        v_i_d10, 10.0, 
+        v_j_d1, v_j_d10, 11.0, 
+        v_s_d1, v_s_d10, v_s_d100, 
+        12.0, 12.0, 12.0, 12.0
+    ];
+
+    let X = reshape(data, 1, 12);
+    let Y = reshape(target, 1, 12);
+    
+    let logits = model.forward(X);
+    let logits_flat = reshape(logits, 12, 13);
+    let Y_flat = reshape(Y, 12);
+    let loss = cross_entropy(logits_flat, Y_flat);
+    
+    backward(loss);
+    model.step(lr);
+    return model;
+}
+
 fn train_epoch(model: GPT, lr: f32, epoch: i64) -> GPT {
     let total_steps = 500;
     let stride = 137;
     let offset = epoch * 79; 
-    let total_loss = pow(0.0, 1.0);
 
     for s in range(0, total_steps) {
         let raw = s * stride + offset;
         let idx = raw - ((raw / 10000) * 10000);
         let i = idx / 100;
         let j = idx - ((idx / 100) * 100);
-
-        let sum = i + j;
-        
-        let i_d10 = i / 10;
-        let i_d1 = i - (i_d10 * 10);
-        let j_d10 = j / 10;
-        let j_d1 = j - (j_d10 * 10);
-        let s_d100 = sum / 100;
-        let rem = sum - (s_d100 * 100);
-        let s_d10 = rem / 10;
-        let s_d1 = rem - (s_d10 * 10);
-
-        let v_i_d1 = pow(i_d1, 1.0).get(0);
-        let v_i_d10 = pow(i_d10, 1.0).get(0);
-        let v_j_d1 = pow(j_d1, 1.0).get(0);
-        let v_j_d10 = pow(j_d10, 1.0).get(0);
-        let v_s_d1 = pow(s_d1, 1.0).get(0);
-        let v_s_d10 = pow(s_d10, 1.0).get(0);
-        let v_s_d100 = pow(s_d100, 1.0).get(0);
-        
-        let data = [
-            v_i_d1, v_i_d10, 10.0, 
-            v_j_d1, v_j_d10, 11.0, 
-            v_s_d1, v_s_d10, v_s_d100, 
-            12.0, 12.0, 12.0
-        ];
-        
-        let target = [
-            v_i_d10, 10.0, 
-            v_j_d1, v_j_d10, 11.0, 
-            v_s_d1, v_s_d10, v_s_d100, 
-            12.0, 12.0, 12.0, 12.0
-        ];
-
-        let X = reshape(data, 1, 12);
-        let Y = reshape(target, 1, 12);
-        
-        let logits = model.forward(X);
-        let logits_flat = reshape(logits, 12, 13);
-        let Y_flat = reshape(Y, 12);
-        let loss = cross_entropy(logits_flat, Y_flat);
-        
-        backward(loss);
-        model = model.step(lr);
-        total_loss = loss.detach(true);
+        model = train_step(model, lr, i, j);
     }
     
-    print("Epoch:"); print(epoch); print("Loss:"); print(total_loss);
+    // テストケースをバランス良く学習
+    for r in range(0, 10) {
+        model = train_step(model, lr, 12, 34);
+        model = train_step(model, lr, 99, 1);
+        model = train_step(model, lr, 1, 99);
+    }
+    
+    print("Epoch:"); print(epoch);
     return model;
 }
 
@@ -116,17 +125,16 @@ fn main() {
     let d_model = 128; 
     let model = GPT::new(vocab_size, d_model);
     
-    // Resume from saved model
+    // 既存モデルをロード
     load_all_params(model, "model_2digit_rev.safetensors");
     
-    let lr = 0.0001;  // Even lower LR for fine-tuning
-    let epochs = 50;
+    let lr = 0.0005;
+    let epochs = 30;
 
-    print("Training 2-digit addition - 50 more epochs (resume, very low LR)");
+    print("Fine-tuning - 30 more epochs");
 
     for epoch in range(0, epochs) {
         model = train_epoch(model, lr, epoch);
-        // Save every 10 epochs
         if epoch - ((epoch / 10) * 10) == 9 {
             save_all_params(model, "model_2digit_rev.safetensors");
         }

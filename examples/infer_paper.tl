@@ -11,6 +11,7 @@ fn argmax(t: Tensor<f32, 1>) -> i64 {
     return idx;
 }
 
+// 論文設定に合わせたモデル定義 (train_paper.tlと同じ)
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { fn new(i: i64, o: i64) -> Linear { return Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)); } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { return matmul(x, self.W) + self.b; } }
 struct Embedding { w: Tensor<f32, 2> }
@@ -18,20 +19,19 @@ impl Embedding { fn new(v: i64, d: i64) -> Embedding { return Embedding((Tensor:
 struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
 impl LayerNorm { fn new(d: i64) -> LayerNorm { return LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)); } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { return x + self.b; } }
 struct CausalSelfAttention { q_proj: Linear, k_proj: Linear, v_proj: Linear, p_proj: Linear }
-impl CausalSelfAttention { fn new(d: i64) -> CausalSelfAttention { return CausalSelfAttention(Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d)); } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { let q = self.q_proj.forward(x); let k = self.k_proj.forward(x); let v = self.v_proj.forward(x); let y = matmul(softmax(tril(matmul(q, transpose(k, 1, 2))*0.08839, 0), 2), v); return self.p_proj.forward(y); } }
+impl CausalSelfAttention { fn new(d: i64) -> CausalSelfAttention { return CausalSelfAttention(Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d)); } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { let q = self.q_proj.forward(x); let k = self.k_proj.forward(x); let v = self.v_proj.forward(x); let y = matmul(softmax(tril(matmul(q, transpose(k, 1, 2))*0.0625, 0), 2), v); return self.p_proj.forward(y); } }
 struct MLP { f: Linear, p: Linear }
 impl MLP { fn new(d: i64) -> MLP { return MLP(Linear::new(d, d*4), Linear::new(d*4, d)); } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { return self.p.forward(relu(self.f.forward(x))); } }
 struct Block { l1: LayerNorm, a: CausalSelfAttention, l2: LayerNorm, m: MLP }
 impl Block { fn new(d: i64) -> Block { return Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)); } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { let x = x + self.a.forward(self.l1.forward(x)); return x + self.m.forward(self.l2.forward(x)); } }
 
-// 3-Layer GPT (Inference only)
-struct GPT { w: Embedding, wp: Embedding, b1: Block, b2: Block, b3: Block, l: LayerNorm, h: Linear }
-impl GPT { 
-    fn new(v: i64, d: i64) -> GPT { 
-        return GPT(
+// 2-Layer GPT
+struct GPT2 { w: Embedding, wp: Embedding, b1: Block, b2: Block, l: LayerNorm, h: Linear }
+impl GPT2 { 
+    fn new(v: i64, d: i64) -> GPT2 { 
+        return GPT2(
             Embedding::new(v, d), 
             Embedding::new(12, d), 
-            Block::new(d), 
             Block::new(d), 
             Block::new(d), 
             LayerNorm::new(d), 
@@ -46,35 +46,32 @@ impl GPT {
         let x = tok_emb + pos_emb;
         let x = self.b1.forward(x);
         let x = self.b2.forward(x);
-        let x = self.b3.forward(x);
         return self.h.forward(self.l.forward(x)); 
     } 
 }
 
 fn main() {
     let vocab_size = 13;
-    let d_model = 128; 
+    let d_model = 256; 
     
-    print("Model Inference - Autoregressive");
-    let model = GPT::new(vocab_size, d_model);
+    print("Inference with Paper Settings (2-Layers, d_model=256)");
+    let model = GPT2::new(vocab_size, d_model);
     
-    load_all_params(model, "model_2digit_rev.safetensors");
-    print("Parameters Loaded.");
+    load_all_params(model, "model_paper.safetensors");
+    print("Parameters Loaded from model_paper.safetensors");
     
-    // Test 12 + 34 = 46
-    // 逆順: 2, 1, +, 4, 3, =, 6, 4, 0
+    // Autoregressive Inference Logic using PAD=12
+    
+    // Test 12 + 34 = 46 (Reverse: 6, 4, 0)
     print("Test: 12 + 34 = 46");
     print("Expected (Reverse): 6, 4, 0");
     
-    // Step 1: Predict first result digit
-    // 入力: [2, 1, +, 4, 3, =, PAD, PAD, PAD, PAD, PAD, PAD]
     let data1 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0];
     let input1 = reshape(data1, 1, 12);
     let logits1 = model.forward(input1);
     let logits1_flat = reshape(logits1, 12, 13);
     let p1 = argmax(logits1_flat.slice(5, 1));
     
-    // Step 2: Use predicted p1
     let v1 = pow(p1, 1.0).get(0);
     let data2 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, v1, 12.0, 12.0, 12.0, 12.0, 12.0];
     let input2 = reshape(data2, 1, 12);
@@ -82,7 +79,6 @@ fn main() {
     let logits2_flat = reshape(logits2, 12, 13);
     let p2 = argmax(logits2_flat.slice(6, 1));
     
-    // Step 3: Use predicted p1, p2
     let v2 = pow(p2, 1.0).get(0);
     let data3 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, v1, v2, 12.0, 12.0, 12.0, 12.0];
     let input3 = reshape(data3, 1, 12);
@@ -92,7 +88,7 @@ fn main() {
     
     print("Predicted:"); print(p1); print(p2); print(p3);
     
-    // Test 99 + 1 = 100
+    // Test 99 + 1 = 100 (Reverse: 0, 0, 1)
     print("Test: 99 + 1 = 100");
     print("Expected (Reverse): 0, 0, 1");
     
