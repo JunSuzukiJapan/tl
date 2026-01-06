@@ -5,6 +5,7 @@ pub mod memory_manager; // Arena allocator for tensor memory optimization
 pub mod registry;
 pub mod stdlib;
 pub mod tensor_pool;
+pub mod checkpoint;
 
 use crate::runtime::device::get_device;
 use candle_core::Tensor;
@@ -43,23 +44,28 @@ pub struct OpaqueTensor(
 // OpaqueTensor pointers are raw pointers in C-ABI and should be freed via tl_mem_exit_scope.
 
 // Helper to create and register an OpaqueTensor from a Candle Tensor
-// This ensures that all intermediate tensors are tracked and freed by the memory manager.
-fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
+// NOTE: Do NOT register here - caller is responsible for lifetime management.
+// Registering here causes tensors to be freed when the function scope exits,
+// even if the tensor is returned and stored in a struct.
+// even if the tensor is returned and stored in a struct.
+pub(crate) fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
     let boxed = Box::new(OpaqueTensor(t, None, None));
     let ptr = Box::into_raw(boxed);
-    memory_manager::register_tensor_global(ptr);
+    // memory_manager::register_tensor_global(ptr);
     ptr
 }
 
 // Helper to create and register an OpaqueTensor from a Candle Var
-fn make_var(v: candle_core::Var) -> *mut OpaqueTensor {
+// Helper to create and register an OpaqueTensor from a Candle Var
+pub(crate) fn make_var(v: candle_core::Var) -> *mut OpaqueTensor {
     let t_ref = v.as_tensor().clone();
     let var_arc = Arc::new(v);
 
     let boxed = Box::new(OpaqueTensor(t_ref, Some(var_arc), None));
     let ptr = Box::into_raw(boxed);
 
-    memory_manager::register_tensor_global(ptr);
+    // NOTE: Do NOT register here - caller is responsible for lifetime management.
+    // memory_manager::register_tensor_global(ptr);
     ptr
 }
 
@@ -88,6 +94,59 @@ pub extern "C" fn tl_tensor_new(
     make_tensor(tensor)
 }
 
+// tl_tensor_argmax(t: *mut, dim: i64, keep_dim: bool) -> *mut
+#[no_mangle]
+pub extern "C" fn tl_tensor_argmax(
+    t: *mut OpaqueTensor,
+    dim: i64,
+    keep_dim: bool,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let ten = &(*t).0;
+        match ten.argmax_keepdim(dim as usize) {
+            Ok(res) => {
+                let final_res = if keep_dim { res } else { res.squeeze(dim as usize).unwrap_or(res) };
+                make_tensor(final_res)
+            },
+            Err(e) => {
+                eprintln!("tl_tensor_argmax error: {}", e);
+                std::ptr::null_mut()
+            }
+        }
+    }
+}
+
+// tl_tensor_item_i64(t: *mut) -> i64
+// Extract single scalar value from a 0-D or 1-element tensor
+#[no_mangle]
+pub extern "C" fn tl_tensor_item_i64(t: *mut OpaqueTensor) -> i64 {
+    unsafe {
+        let ten = &(*t).0;
+        // Try to get as scalar i64 directly
+        match ten.to_scalar::<i64>() {
+            Ok(v) => v,
+            Err(_) => {
+                // Try f32 and cast
+                 match ten.to_scalar::<f32>() {
+                    Ok(v) => v as i64,
+                    Err(e) => {
+                         // Convert to 1D vec and take first?
+                         let dims = ten.dims();
+                         let elem_count: usize = dims.iter().product();
+                         if elem_count == 1 {
+                             // This is slow but generic
+                             let v = ten.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+                             v[0] as i64
+                         } else {
+                             eprintln!("tl_tensor_item_i64 error: Tensor has {} elements, expected 1. Error: {}", elem_count, e);
+                             0
+                         }
+                    }
+                }
+            }
+        }
+    }
+}
 // Function to create a tensor that requires gradients (similar to Var, but returning Tensor)
 // Actually Var is a wrapper around Tensor. For backprop to work, we usually use Var or
 // create a tensor and then watch it? Candle's graph is dynamic.
@@ -97,34 +156,32 @@ pub extern "C" fn tl_tensor_new(
 // Let's explicitly add a helper for creating vars.
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_randn(
-    shape_tensor: *mut OpaqueTensor,
-    requires_grad: bool,
+pub extern "C" fn tl_tensor_randn_debug(
+    rank: usize,
+    shape: *const usize,
+    req_grad: bool,
 ) -> *mut OpaqueTensor {
-    // Basic randn implementation
+    if shape.is_null() {
+        return std::ptr::null_mut();
+    }
     let shape_data: Vec<usize> = unsafe {
-        let t = &(*shape_tensor).0;
-        t.flatten_all()
-            .unwrap()
-            .to_vec1::<f32>()
-            .unwrap()
-            .iter()
-            .map(|&x| x as usize)
-            .collect()
+        std::slice::from_raw_parts(shape, rank).to_vec()
     };
-    let shape_slice = &shape_data[..];
+
     let device = get_device();
 
-    // Create random tensor
-    let t = Tensor::randn(0.0f32, 1.0f32, shape_slice, &device).unwrap();
+    // Create random tensor: mean=0.0, std=1.0
+    // Correct signature: randn(mean, std, shape, device)
+    let t = Tensor::randn(0.0f32, 1.0f32, &shape_data[..], &device).unwrap();
 
-    if requires_grad {
-        // Create a Var and generate OpaqueTensor
+    let ptr = if req_grad {
         let var = candle_core::Var::from_tensor(&t).unwrap();
         make_var(var)
     } else {
         make_tensor(t)
-    }
+    };
+
+    ptr
 }
 
 /// Create a 1D Tensor from an i64 array (for reshape shape arguments)
@@ -384,9 +441,12 @@ pub extern "C" fn tl_tensor_cross_entropy(
         // NLL
         let loss = candle_nn::loss::nll(&log_sm, &t_u32).unwrap();
 
+
         make_tensor(loss)
     }
 }
+
+
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_detach(t: *mut OpaqueTensor, req_grad: bool) -> *mut OpaqueTensor {
@@ -419,11 +479,30 @@ pub extern "C" fn tl_tensor_enable_grad(t: *mut OpaqueTensor) {
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_print(t: *mut OpaqueTensor) {
+pub extern "C" fn tl_tensor_print(t: *const OpaqueTensor) {
+    if t.is_null() {
+        println!("Tensor(NULL)");
+        return;
+    }
     unsafe {
         let tensor = &(*t).0;
         println!("{}", tensor);
     }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_print_2(t: *const OpaqueTensor) {
+    tl_tensor_print(t);
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_print_1(t: *const OpaqueTensor) {
+    tl_tensor_print(t);
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_print_3(t: *const OpaqueTensor) {
+    tl_tensor_print(t);
 }
 
 /// Internal function to free tensor resources without unregistering
@@ -446,7 +525,7 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) {
 #[no_mangle]
 pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
     if !t.is_null() {
-        // println!("DEBUG: tl_tensor_free called for {:?}", t); 
+
         // Unregister from memory manager if it was registered
         // (to prevent double-free on scope exit if manually freed)
         memory_manager::tl_mem_unregister(t as *mut std::ffi::c_void);
@@ -457,6 +536,7 @@ pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
+
     unsafe {
         let tensor = &(*t).0;
         let var_ref = &(*t).1;
@@ -466,20 +546,17 @@ pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
         let cloned_var = var_ref.as_ref().map(Arc::clone);
         let boxed = Box::new(OpaqueTensor(cloned, cloned_var, None));
 
-        let ptr = if arena::tl_arena_is_active() {
-            let size = std::mem::size_of::<OpaqueTensor>() as i64;
-            let arena_ptr = arena::tl_arena_malloc(size) as *mut OpaqueTensor;
-            if !arena_ptr.is_null() {
-                std::ptr::write(arena_ptr, *boxed);
-                arena_ptr
-            } else {
-                Box::into_raw(boxed)
-            }
-        } else {
-            Box::into_raw(boxed)
-        };
+        // NOTE: Do NOT use arena allocator here.
+        // Arena allocations are reset on scope exit, causing memory reuse.
+        // Cloned tensors must persist beyond the clone function's scope.
+        let ptr = Box::into_raw(boxed);
 
-        memory_manager::register_tensor_global(ptr);
+        // NOTE: Do NOT register cloned tensor here.
+        // The cloned tensor is returned to the caller (e.g., Embedding constructor).
+        // The caller should manage its lifetime and register it if needed.
+        // Registering here causes immediate freeing when the clone function's scope exits.
+        // memory_manager::register_tensor_global(ptr);
+
         ptr
     }
 }
@@ -564,6 +641,11 @@ pub extern "C" fn tl_print_i64(v: i64) {
 }
 
 #[no_mangle]
+pub extern "C" fn tl_print_ptr(_ptr: *const std::ffi::c_void) {
+    // Debug function - no output in production
+}
+
+#[no_mangle]
 pub extern "C" fn tl_print_f32(v: c_float) {
     println!("{}", v);
 }
@@ -582,6 +664,7 @@ pub extern "C" fn tl_print_string(s: *const std::os::raw::c_char) {
 
 pub fn force_link() {
     let _ = tl_print_string as *const ();
+    let _ = tl_clear_grads as *const ();
 }
 
 #[no_mangle]
@@ -672,6 +755,12 @@ pub extern "C" fn tl_tensor_backward(t: *mut OpaqueTensor) {
     }
 }
 
+#[no_mangle]
+pub extern "C" fn tl_clear_grads() {
+    LATEST_GRADS.with(|g| {
+        *g.borrow_mut() = None;
+    });
+}
 #[no_mangle]
 pub extern "C" fn tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
@@ -982,22 +1071,30 @@ pub extern "C" fn tl_tensor_embedding(
     indices: *mut OpaqueTensor,
     weights: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
-    let indices = unsafe { &(*indices).0 };
-    let weights = unsafe { &(*weights).0 };
+    let indices_tensor = unsafe { &(*indices).0 };
+    let weights_tensor = unsafe { &(*weights).0 };
+    let w_dims = weights_tensor.dims();
+    let _i_dims = indices_tensor.dims();
 
+    if w_dims.len() != 2 {
+        // Handle error or specific case for non-2D weights
+        // For now, let's just panic as it's an unexpected shape for embedding weights
+        panic!("Embedding weights must be 2-dimensional, got {:?}", w_dims);
+    }
     // Input indices might be F32 if coming from literals.
-    let indices_u32 = indices.to_dtype(candle_core::DType::U32).unwrap();
+    let indices_u32 = indices_tensor.to_dtype(candle_core::DType::U32).unwrap();
 
     // 1. Flatten indices to 1D
     let flat_indices = indices_u32.flatten_all().unwrap();
-    // 2. Index Select on dim 0 of weights (gather)
-    let gathered = weights.index_select(&flat_indices, 0).unwrap();
+    // 2. Select embeddings
+    // index_select operates on dimension 0
+    let out = weights_tensor.index_select(&flat_indices, 0).unwrap();
 
-    // 3. Reshape result to [indices.shape, weights.dim(-1)]
-    let mut new_shape = indices.dims().to_vec();
-    new_shape.push(weights.dim(candle_core::D::Minus1).unwrap());
+    // 3. Reshape output
+    let mut out_shape = indices_tensor.dims().to_vec();
+    out_shape.push(weights_tensor.dim(candle_core::D::Minus1).unwrap());
 
-    let res = gathered.reshape(new_shape).unwrap();
+    let res = out.reshape(out_shape).unwrap();
 
     make_tensor(res)
 }

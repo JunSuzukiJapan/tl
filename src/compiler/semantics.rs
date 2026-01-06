@@ -686,6 +686,39 @@ impl SemanticAnalyzer {
                 }
             }
             Expr::FnCall(name, args) => {
+                if name == "checkpoint" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    // Special handling for arg 0: Must be obj.method (FieldAccess)
+                    // We cannot call check_expr on it because methods are not fields.
+                    if let Expr::FieldAccess(obj_expr, _method_name) = &args[0] {
+                        let _obj_type = self.check_expr(obj_expr)?;
+                        // Ideally check if method exists, but we trust codegen or runtime for now.
+                        // Or check struct definition if obj_type is Struct.
+                    } else {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::UserDefined("obj.method".into()),
+                            found: Type::Void, // placeholder
+                        });
+                    }
+                    
+                    let t1 = self.check_expr(&args[1])?;
+                    if !matches!(t1, Type::Tensor(_, _)) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Tensor(Box::new(Type::Void), 0),
+                            found: t1,
+                        });
+                    }
+                    
+                    // Return generic tensor
+                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                }
+
                 if name == "cross_entropy" {
                     if args.len() != 2 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -723,30 +756,70 @@ impl SemanticAnalyzer {
                     }
                     let t0 = self.check_expr(&args[0])?;
                     let t1 = self.check_expr(&args[1])?;
-                    // Allow Tensor, F32, I64
-                    match &t0 {
-                        Type::Tensor(_, _) | Type::F32 | Type::I64 => {}
-                        _ => {
-                            return Err(SemanticError::TypeMismatch {
-                                expected: Type::Tensor(Box::new(Type::Void), 0),
-                                found: t0,
-                            })
-                        }
+                     if !matches!(t0, Type::Tensor(_, _)) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Tensor(Box::new(Type::Void), 0),
+                            found: t0,
+                        });
                     }
-                    match &t1 {
-                        Type::Tensor(_, _) | Type::F32 | Type::I64 => {}
-                        _ => {
-                            return Err(SemanticError::TypeMismatch {
-                                expected: Type::Tensor(Box::new(Type::Void), 0),
-                                found: t1,
-                            })
-                        }
+                    if !matches!(t1, Type::Tensor(_, _)) {
+                         return Err(SemanticError::TypeMismatch {
+                            expected: Type::Tensor(Box::new(Type::Void), 0),
+                            found: t1,
+                        });
                     }
-                    // Return type is same as first arg (preserving shape usually, or broadcasted)
-                    // For simplicity assume resulting type is similar to input or just Tensor
-                    // Let's return t0 for now.
-                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                    return Ok(t0);
                 }
+
+                if name == "argmax" {
+                    // argmax(tensor, dim) -> tensor(f32 indices, need to be careful with type or just return tensor)
+                    // runtime returns Tensor<i64> conceptually but OpaqueTensor wraps generic.
+                    // We'll treat it as Tensor<f32/i64> (generic tensor)
+                    if args.len() != 2 {
+                         return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    let t = self.check_expr(&args[0])?;
+                     if !matches!(t, Type::Tensor(_, _)) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Tensor(Box::new(Type::Void), 0),
+                            found: t,
+                        });
+                    }
+                    let dim = self.check_expr(&args[1])?;
+                    if !matches!(dim, Type::I64) {
+                         return Err(SemanticError::TypeMismatch {
+                            expected: Type::I64,
+                            found: dim,
+                        });
+                    }
+                    // Returns generic Tensor
+                    return Ok(Type::Tensor(Box::new(Type::F32), 1));
+                }
+
+                if name == "item" {
+                    // item(tensor) -> i64 (for this specific builtin)
+                     if args.len() != 1 {
+                         return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    let t = self.check_expr(&args[0])?;
+                    if !matches!(t, Type::Tensor(_, _)) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Tensor(Box::new(Type::Void), 0),
+                            found: t,
+                        });
+                    }
+                    return Ok(Type::I64);
+                }
+
+
                 if name == "enable_grad" {
                     if args.len() != 1 {
                         return Err(SemanticError::ArgumentCountMismatch {

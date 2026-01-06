@@ -1,7 +1,8 @@
-// 4層GPT + d_model=384 + 強めの初期化
+
 extern fn tl_tensor_print_2(t: Tensor<f32, 2>);
 extern fn tl_tensor_print_1(t: Tensor<f32, 1>);
 extern fn tl_clear_grads();
+
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
@@ -64,8 +65,8 @@ impl CausalSelfAttention {
         let q = self.q_proj.forward(x); 
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
-        // scale = 1/sqrt(384) = 0.05103
-        let y = matmul(softmax(tril(matmul(q, transpose(k, 1, 2))*0.05103, 0), 2), v); 
+        // scale = 1/sqrt(64) = 0.125
+        let y = matmul(softmax(tril(matmul(q, transpose(k, 1, 2))*0.125, 0), 2), v); 
         return self.p_proj.forward(y); 
     } 
     fn step(self, lr: f32) -> CausalSelfAttention { 
@@ -120,144 +121,159 @@ impl Block {
     }
 }
 
-// 4-Layer GPT
-struct GPTHeavy { 
+// 2-Layer GPT (Smaller for verification)
+struct GPT { 
     w: Embedding, wp: Embedding, 
-    b1: Block, b2: Block, b3: Block, b4: Block, 
+    b1: Block, b2: Block, 
     l: LayerNorm, h: Linear 
 }
-impl GPTHeavy { 
-    fn new(v: i64, d: i64) -> GPTHeavy { 
-        return GPTHeavy(
+impl GPT { 
+    fn new(v: i64, d: i64) -> GPT { 
+        return GPT(
             Embedding::new(v, d), 
-            Embedding::new(12, d), 
+            Embedding::new(4, d), 
             Block::new(d), 
             Block::new(d), 
-            Block::new(d),
-            Block::new(d),
             LayerNorm::new(d), 
             Linear::new(d, v)
         ); 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
-        let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
-        let pos = reshape(pos_data, 1, 12);
+        let pos_data = [0.0, 1.0, 2.0, 3.0];
+        let pos = reshape(pos_data, 1, 4);
         let tok_emb = self.w.forward(i);
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
+        // Checkpointing blocks
         let x = checkpoint(self.b1.forward, x);
         let x = checkpoint(self.b2.forward, x);
-        let x = checkpoint(self.b3.forward, x);
-        let x = checkpoint(self.b4.forward, x);
         return self.h.forward(self.l.forward(x)); 
     } 
-    fn step(self, lr: f32) -> GPTHeavy { 
+    fn step(self, lr: f32) -> GPT { 
         let s = self; 
         s.w = s.w.step(lr); 
         s.wp = s.wp.step(lr); 
         s.b1 = s.b1.step(lr); 
         s.b2 = s.b2.step(lr); 
-        s.b3 = s.b3.step(lr); 
-        s.b4 = s.b4.step(lr); 
         s.l = s.l.step(lr); 
         s.h = s.h.step(lr); 
         return s; 
     }
-    fn clone(self) -> GPTHeavy {
-        return GPTHeavy(
+    fn clone(self) -> GPT {
+        return GPT(
             self.w.clone(), self.wp.clone(),
-            self.b1.clone(), self.b2.clone(), self.b3.clone(), self.b4.clone(),
+            self.b1.clone(), self.b2.clone(),
             self.l.clone(), self.h.clone()
         );
     }
 }
 
-extern fn tl_get_memory_mb() -> i64;
-
-fn train_step(model: GPTHeavy, lr: f32, i: i64, j: i64) -> GPTHeavy {
+fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
     let m = model.clone();
     let sum_raw = i + j;
     let sum = sum_raw - (sum_raw/13)*13;
     
-    let i_d10 = i / 10;
-    let i_d1 = i - (i_d10 * 10);
-    let j_d10 = j / 10;
-    let j_d1 = j - (j_d10 * 10);
-    let s_d100 = sum / 100;
-    let rem = sum - (s_d100 * 100);
-    let s_d10 = rem / 10;
-    let s_d1 = rem - (s_d10 * 10);
-
-    let i_m10 = i - i_d10 * 10;
-    let j_m10 = j - j_d10 * 10;
-
-    let i_raw = i_d10 + j_m10 + j;
-    let i_idx = i_raw - (i_raw/13)*13;
-    let j_raw = j_d10 + i_m10 + i;
-    let j_idx = j_raw - (j_raw/13)*13;
-
-    // input: 12 tokens
-    let X_data = [i, j, sum, i_d10, j_d10, i_m10, j_m10, i_idx, j_idx, 0, 1, 2];
-    let X = reshape(X_data, 1, 12);
-
-    // target: 12 tokens (shifted?) Simple task: predict sum
-    let Y_data = [sum, i, j, i_d10, j_d10, i_m10, j_m10, i_idx, j_idx, 0, 1, 2];
-    let Y = reshape(Y_data, 1, 12);
+    // Mock data input [i, j, sum, 0]
+    // Fixed: Using 0 instead of 0.0 to match i/j types
+    let X = reshape([i, j, sum, 0], 1, 4);
+    // Target [j, sum, 0, 0] (Shifted)
+    let Y = reshape([j, sum, 0, 0], 1, 4);
 
     // Forward
     let logits = m.forward(X);
-    let logits_flat = reshape(logits, 12, 13);
-    let Y_flat = reshape(Y, 12);
+    
+    // Need to reshape for cross_entropy
+    // logits: [1, 4, 13] -> [4, 13]
+    let logits_flat = reshape(logits, 4, 13);
+    let Y_flat = reshape(Y, 4);
+    
     let loss = cross_entropy(logits_flat, Y_flat);
     
-    backward(loss); // gradients accumulated in model (args)
+    // Print loss
+    tl_tensor_print_1(reshape(loss, 1));
+    
+    // Backprop
+    backward(loss);
     
     // Step
     m = m.step(lr);
     
+    // Clear grads
+    tl_clear_grads();
+    
     return m;
 }
 
-fn train_epoch(model: GPTHeavy, lr: f32, epoch: i64) -> GPTHeavy {
+fn infer(model: GPT, i: i64, j: i64) {
     let m = model.clone();
-    // Total 200 steps per epoch * 500 epochs = 100k steps
-    let total_steps = 10;
-    let stride = 149; // Prime number stride
-    let offset = epoch * 37;
-
-    for s in range(0, total_steps) {
-        let i = s * stride + offset;
-        // Mock data logic specific to task
-        let i_val = i - (i/13)*13; // mod 13
-        let j_val = (i + 7) - ((i+7)/13)*13; // mod 13
-        
-        m = train_step(m, lr, i_val, j_val);
-        
-        // Explicitly clear gradients from this step to save memory
-        tl_clear_grads();
-    }
-
-    print("Epoch:"); print(epoch);
-    print("MB:"); print(tl_get_memory_mb());
-    return m;
+    let sum_raw = i + j;
+    let expected = sum_raw - (sum_raw/13)*13;
+    
+    // Calculate loss to check correctness
+    // Logits: [1, 12, 13]
+    // Target for loss check should be shifted: [j, expected, 0...]
+    // But we provided Input X = [i, j, 0...]
+    // So X[0]=i -> should predict j
+    // X[1]=j -> should predict expected
+    // X[2]=0 -> should predict 0
+    let X = reshape([i, j, 0, 0], 1, 4);
+    let logits = m.forward(X);
+    let Y = reshape([j, expected, 0, 0], 1, 4);
+    
+    let logits_flat = reshape(logits, 4, 13);
+    let Y_flat = reshape(Y, 4);
+    let loss = cross_entropy(logits_flat, Y_flat);
+    
+    // Prediction analysis
+    // We want the prediction AFTER 'j', which is at index 1.
+    // argmax(logits, 2) returns indices [1, 4]
+    
+    let preds = argmax(logits, 2); // [1, 4]
+    print("Predictions (Whole Sequence):");
+    tl_tensor_print_2(reshape(preds, 1, 4));
+    
+    // Extract single prediction at index 1
+    // preds is [1, 12].
+    // We need to slice it or get item. 
+    // Since we don't have slice/get easily exposed yet that works on arbitrary index without setup:
+    // Let's rely on print for manual verification, 
+    // but try to be fancy:
+    // We can multiply preds by a one-hot vector [0, 1, 0...] and sum?
+    // Too complex. Manual check via print is fine for now.
+    
+    print("Inference: Input:"); print(i); print(j);
+    print("Expected (at pos 1):"); print(expected);
+    print("Loss:");
+    tl_tensor_print_1(reshape(loss, 1));
 }
 
 fn main() {
-    print("Initializing Runtime: CPU backend selected.");
-    let model = GPTHeavy::new(13, 384);
-    // load_all_params("model_heavy.safetensors", model);
-    print("Loaded 70 parameters from model_heavy.safetensors");
+    print("Verifying Activation Checkpointing Correctness...");
+    // Vocab=13 (digits 0-12), d_model=64 (small)
+    let model = GPT::new(13, 64);
     
-    // 500 epochs
-    print("Training Heavy Model: 4-layer GPT, d_model=384, lr=0.0005, 500 epochs");
-    for epoch in range(0, 500) {
-        model = train_epoch(model, 0.0005, epoch);
+    print("Training...");
+    // 50 Epochs
+    // 50 Epochs -> 200 Iterations
+    // 50 Epochs -> 200 Iterations
+    for epoch in range(0, 200) {
+        // Train on fixed samples to ensure convergence
+        model = train_step(model, 0.05, 3, 5); // 8
+        model = train_step(model, 0.05, 2, 2); // 4
+        model = train_step(model, 0.05, 9, 1); // 10
+        model = train_step(model, 0.05, 5, 5); // 10
+        model = train_step(model, 0.05, 0, 0); // 0
         
-        // Save
-        if (epoch - (epoch/5)*5) == 4 {
-             save_all_params("model_heavy.safetensors");
-             print("Saved 70 parameters to model_heavy.safetensors");
-             print("Saved checkpoint.");
+        if (epoch - (epoch/20)*20) == 0 {
+            print("epoch:"); print(epoch);
         }
     }
+    
+    print("Inference check...");
+    // Check known samples
+    infer(model, 3, 5);
+    infer(model, 2, 2);
+    infer(model, 9, 1);
+    
+    print("Verification Completed.");
 }

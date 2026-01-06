@@ -92,10 +92,8 @@ impl MemoryManager {
 
     /// Register a struct allocation in the current scope
     pub fn register_struct(&mut self, ptr: *mut c_void) {
-        if self.is_registered(ptr) {
-            return;
-        }
         if let Some(scope) = self.scopes.last_mut() {
+
             scope.push(AllocationRecord {
                 ptr,
                 alloc_type: AllocationType::Struct,
@@ -105,10 +103,8 @@ impl MemoryManager {
 
     /// Register a tensor allocation in the current scope
     pub fn register_tensor(&mut self, ptr: *mut OpaqueTensor) {
-        if self.is_registered(ptr as *mut c_void) {
-            return;
-        }
         if let Some(scope) = self.scopes.last_mut() {
+
             scope.push(AllocationRecord {
                 ptr: ptr as *mut c_void,
                 alloc_type: AllocationType::Tensor,
@@ -120,10 +116,11 @@ impl MemoryManager {
     /// The memory won't be freed on scope exit
     /// Unregister a pointer from the CURRENT scope only (for move semantics)
     pub fn unregister(&mut self, ptr: *mut c_void) {
-        if let Some(scope) = self.scopes.last_mut() {
+        // Iterate scopes in reverse order to find the pointer (most recent first)
+        for scope in self.scopes.iter_mut().rev() {
             if let Some(pos) = scope.iter().position(|r| r.ptr == ptr) {
-                // eprintln!("DEBUG: unregistering {:?}", ptr);
                 scope.remove(pos);
+                return;
             }
         }
     }
@@ -192,6 +189,7 @@ pub extern "C" fn tl_mem_register_tensor(ptr: *mut OpaqueTensor) {
 #[no_mangle]
 pub extern "C" fn tl_mem_unregister(ptr: *mut c_void) {
     if !ptr.is_null() {
+
         let mut mgr = MEMORY_MANAGER.lock().unwrap();
         mgr.unregister(ptr);
     }

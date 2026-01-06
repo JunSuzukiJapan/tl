@@ -46,6 +46,75 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
+    /// Register a tensor with the memory manager for automatic cleanup
+    /// This should be called for intermediate expression results (BinOp, MethodCall, etc.)
+    /// The tensor will be freed when exit_scope is called, unless it's unregistered first
+    pub(crate) fn emit_register_tensor(
+        &self,
+        val: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<(), String> {
+        // Only register tensors
+        if !matches!(ty, Type::Tensor(_, _)) {
+            return Ok(());
+        }
+
+        let reg_fn = self
+            .module
+            .get_function("tl_mem_register_tensor")
+            .ok_or("tl_mem_register_tensor not found")?;
+        
+        let ptr = val.into_pointer_value();
+        let cast_ptr = self
+            .builder
+            .build_pointer_cast(
+                ptr,
+                self.context.ptr_type(inkwell::AddressSpace::default()),
+                "reg_tensor_ptr",
+            )
+            .map_err(|e| e.to_string())?;
+        
+        self.builder
+            .build_call(reg_fn, &[cast_ptr.into()], "")
+            .map_err(|e| e.to_string())?;
+        
+        Ok(())
+    }
+
+    /// Unregister a tensor from the memory manager (ownership transfer)
+    /// This should be called when a tensor is moved to a variable, struct field, or return value
+    pub(crate) fn emit_unregister_tensor(
+        &self,
+        val: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<(), String> {
+        // Only unregister tensors
+        if !matches!(ty, Type::Tensor(_, _)) {
+            return Ok(());
+        }
+
+        let unreg_fn = self
+            .module
+            .get_function("tl_mem_unregister")
+            .ok_or("tl_mem_unregister not found")?;
+        
+        let ptr = val.into_pointer_value();
+        let cast_ptr = self
+            .builder
+            .build_pointer_cast(
+                ptr,
+                self.context.ptr_type(inkwell::AddressSpace::default()),
+                "unreg_tensor_ptr",
+            )
+            .map_err(|e| e.to_string())?;
+        
+        self.builder
+            .build_call(unreg_fn, &[cast_ptr.into()], "")
+            .map_err(|e| e.to_string())?;
+        
+        Ok(())
+    }
+
     pub(crate) fn gen_save_struct(
         &self,
         map: inkwell::values::BasicValueEnum<'ctx>,
@@ -466,13 +535,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let right = self.compile_expr(rhs)?;
                 let res = self.compile_bin_op(left.0, left.1.clone(), right.0, right.1.clone(), op.clone())?;
                 
-                // FIX: Free temporary operands
-                if self.is_safe_to_free(lhs, &left.1) {
-                    self.emit_recursive_free(left.0, &left.1)?;
-                }
-                if self.is_safe_to_free(rhs, &right.1) {
-                    self.emit_recursive_free(right.0, &right.1)?;
-                }
+                // Register intermediate tensor result for automatic cleanup
+                // It will be unregistered when ownership is transferred (let, return, struct field)
+                self.emit_register_tensor(res.0, &res.1)?;
+                
                 Ok(res)
             }
             Expr::TensorComprehension { indices, body } => {
@@ -1112,6 +1178,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         name: &str,
         fields: &[(String, Expr)],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+
         let struct_type = *self
             .struct_types
             .get(name)
@@ -1230,6 +1297,79 @@ impl<'ctx> CodeGenerator<'ctx> {
         method_name: &str,
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        // Optimization for Tensor::randn (Bypass lookup)
+        if type_name == "Tensor" && method_name == "randn" {
+
+             if args.is_empty() {
+                return Err("Tensor::randn requires shape argument".into());
+             }
+
+             if let Expr::TensorLiteral(el) = &args[0] {
+                 let i64_type = self.context.i64_type();
+                 let mut vals = Vec::new();
+                 for e in el {
+                     let (v, t) = self.compile_expr(e)?;
+                      let int_val = match t {
+                         Type::I64 => v.into_int_value(),
+                         Type::I32 => self.builder.build_int_z_extend(v.into_int_value(), i64_type, "ext").map_err(|e| e.to_string())?,
+                         _ => return Err(format!("Dimension must be integer, found {:?}", t)),
+                     };
+                     vals.push(int_val);
+                 }
+                 
+                 // DEBUG: Print dimensions at runtime to verify order
+                 let print_fn = self.module.get_function("tl_print_i64").unwrap();
+                 for v in &vals {
+                     self.builder.build_call(print_fn, &[(*v).into()], "debug_idx").map_err(|e| e.to_string())?;
+                 }
+
+                 let rank = el.len();
+                 
+                 // Entry block alloca
+                 let current_block = self.builder.get_insert_block().unwrap();
+                 let function = current_block.get_parent().unwrap();
+                 let entry_block = function.get_first_basic_block().unwrap();
+                 let entry_builder = self.context.create_builder();
+                 if let Some(first_instr) = entry_block.get_first_instruction() {
+                     entry_builder.position_before(&first_instr);
+                 } else {
+                     entry_builder.position_at_end(entry_block);
+                 }
+
+                 let shape_array_type = i64_type.array_type(rank as u32);
+                 let shape_alloca = entry_builder.build_alloca(shape_array_type, "shape_arr").map_err(|e| e.to_string())?;
+
+                 for (i, val) in vals.iter().enumerate() {
+                      let ptr = unsafe { self.builder.build_in_bounds_gep(shape_array_type, shape_alloca, &[i64_type.const_int(0, false), i64_type.const_int(i as u64, false)], "tmp").map_err(|e| e.to_string())? };
+                      self.builder.build_store(ptr, *val).map_err(|e| e.to_string())?;
+                 }
+                 
+                 let req_grad = if args.len() > 1 {
+                     let (v, _) = self.compile_expr(&args[1])?;
+                     v.into_int_value() 
+                 } else {
+                     self.context.bool_type().const_int(0, false)
+                 };
+                 
+                 let f = self.module.get_function("tl_tensor_randn_debug").ok_or("tl_tensor_randn_debug not found")?;
+                 let call = self.builder.build_call(f, &[
+                     i64_type.const_int(rank as u64, false).into(),
+                     shape_alloca.into(),
+                     req_grad.into()
+                 ], "randn_res").map_err(|e| e.to_string())?;
+                 
+                 match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => {
+                        // Register intermediate tensor result for automatic cleanup
+                        let result_ty = Type::Tensor(Box::new(Type::F32), rank);
+                        self.emit_register_tensor(v, &result_ty)?;
+                        return Ok((v, result_ty));
+                    }
+                    _ => return Err("Invalid call return".into()),
+                 }
+             }
+        }
+
         // 1. Resolve Mangled Name
         let mangled_name = format!("tl_{}_{}", type_name, method_name);
         let stdlib_name = format!("tl_{}_{}", type_name.to_lowercase(), method_name);
@@ -1248,6 +1388,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // 3. Compile Args
         let mut compiled_args = Vec::new();
+
 
         // Special handling for VarBuilder::get(name, shape...)
         if type_name == "VarBuilder" && method_name == "get" {
@@ -1370,32 +1511,121 @@ impl<'ctx> CodeGenerator<'ctx> {
                     compiled_args.push(ptr_cast.into());
                 }
             }
-        } else if type_name == "Tensor" && method_name == "randn" {
+        } else if { println!("Checking Static: {}::{}", type_name, method_name); type_name == "Tensor" && method_name == "randn" } {
+            println!("  -> Optimized randn path");
             // Special handling for Tensor::randn(shape, requires_grad)
-            // The runtime expects (shape_tensor: *mut OpaqueTensor, requires_grad: bool)
-            // But the shape argument may be a ScalarArray [] which needs to be converted to a tensor
-
             if args.is_empty() {
                 return Err("Tensor::randn requires shape argument".into());
             }
 
-            // Compile shape argument - this should be a tensor or array
-            let shape_arg = &args[0];
-            let (shape_tensor, _) = self.ensure_tensor_v2(shape_arg, 1)?;
-            compiled_args.push(shape_tensor.into());
+            // Check if shape is a literal to use optimized path (bypasses EnsureTensor -> Tensor_randn reversal bug)
+            if let Expr::TensorLiteral(el) = &args[0] {
+                 let i64_type = self.context.i64_type();
+                 let mut vals = Vec::new();
+                 for e in el {
+                     let (v, t) = self.compile_expr(e)?;
+                     let int_val = match t {
+                         Type::I64 => v.into_int_value(),
+                         Type::I32 => self.builder.build_int_z_extend(v.into_int_value(), i64_type, "ext").map_err(|e| e.to_string())?,
+                         _ => return Err(format!("Dimension must be integer, found {:?}", t)),
+                     };
+                     vals.push(int_val);
+                 }
+                 let rank = el.len();
+                 
+                 // Entry block alloca for shape array
+                 let current_block = self.builder.get_insert_block().unwrap();
+                 let function = current_block.get_parent().unwrap();
+                 let entry_block = function.get_first_basic_block().unwrap();
+                 let entry_builder = self.context.create_builder();
+                 if let Some(first_instr) = entry_block.get_first_instruction() {
+                     entry_builder.position_before(&first_instr);
+                 } else {
+                     entry_builder.position_at_end(entry_block);
+                 }
 
-            // Compile requires_grad argument (default to false if not provided)
-            if args.len() > 1 {
-                let (val, _) = self.compile_expr(&args[1])?;
-                compiled_args.push(val.into());
+                 let shape_array_type = i64_type.array_type(rank as u32);
+                 let shape_alloca = entry_builder.build_alloca(shape_array_type, "shape_arr").map_err(|e| e.to_string())?;
+                 
+                 // Store values
+                 for (i, val) in vals.iter().enumerate() {
+                     let ptr = unsafe {
+                         self.builder.build_in_bounds_gep(shape_array_type, shape_alloca, &[i64_type.const_int(0, false), i64_type.const_int(i as u64, false)], "ptr").map_err(|e| e.to_string())?
+                     };
+                     self.builder.build_store(ptr, *val).map_err(|e| e.to_string())?;
+                 }
+
+                 let req_grad = if args.len() > 1 {
+                     let (v, _) = self.compile_expr(&args[1])?;
+                     v.into_int_value() 
+                 } else {
+                     self.context.bool_type().const_int(0, false)
+                 };
+                 
+                 // Use tl_tensor_randn (rank, shape_ptr, req_grad)
+                 let f = self.module.get_function("tl_tensor_randn").ok_or("tl_tensor_randn not found")?;
+                 let call = self.builder.build_call(f, &[
+                     i64_type.const_int(rank as u64, false).into(),
+                     shape_alloca.into(),
+                     req_grad.into()
+                 ], "randn_res").map_err(|e| e.to_string())?;
+                 
+                 // Result conversion logic in match block handles cleanup
+                 match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => {
+                        compiled_args.push(v.into()); // Dummy push to satisfy existing flow or return early?
+                        // Actually existing flow continues to build_call(func). We must RETURN here or skip later call.
+                        // The structure of this if-else block assumes we populate compiled_args then call `func`.
+                        // But here we CALLED `tl_tensor_randn` already.
+                        // So we should return the result directly.
+                        return Ok((v, Type::Tensor(Box::new(Type::F32), rank)));
+                    }
+                    _ => return Err("Invalid call return".into()),
+                 }
             } else {
-                compiled_args.push(self.context.bool_type().const_int(0, false).into());
+                // Compile shape argument - this should be a tensor or array
+                let shape_arg = &args[0];
+                let (shape_tensor, _) = self.ensure_tensor_v2(shape_arg, 1)?;
+                compiled_args.push(shape_tensor.into());
+    
+                // Compile requires_grad argument (default to false if not provided)
+                if args.len() > 1 {
+                    let (val, _) = self.compile_expr(&args[1])?;
+                    compiled_args.push(val.into());
+                } else {
+                    compiled_args.push(self.context.bool_type().const_int(0, false).into());
+                }
             }
         } else {
             // Generic handling
             for arg in args {
                 let (val, _) = self.compile_expr(arg)?;
                 compiled_args.push(val.into());
+
+                // Fix: Move semantics for Constructor calls (static 'new')
+                // If we are calling Struct::new, we assume arguments are moved into the struct.
+                // We must remove variables from scope to prevent cleanup form freeing them.
+                if method_name == "new" && self.struct_defs.contains_key(type_name) {
+                    if let Expr::Variable(var_name) = arg {
+                         for scope in self.variables.iter_mut().rev() {
+                             // Check if should be moved (Tensors and Structs only)
+                             let mut should_remove = false;
+                             if let Some((_, ty, _)) = scope.get(var_name) {
+
+                                 if matches!(ty, Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)) {
+                                     should_remove = true;
+                                 }
+                             }
+
+                             if should_remove {
+                                 if let Some(_) = scope.remove(var_name) {
+
+                                      break;
+                                 }
+                             }
+                         }
+                    }
+                }
             }
         }
 
@@ -1413,7 +1643,13 @@ impl<'ctx> CodeGenerator<'ctx> {
             .unwrap_or(Type::Void);
 
         match call.try_as_basic_value() {
-            inkwell::values::ValueKind::Basic(v) => Ok((v, ret_ty)),
+            inkwell::values::ValueKind::Basic(v) => {
+                // Register intermediate tensor result for automatic cleanup
+                if matches!(ret_ty, Type::Tensor(_, _)) {
+                    self.emit_register_tensor(v, &ret_ty)?;
+                }
+                Ok((v, ret_ty))
+            }
             _ => Ok((
                 self.context.i64_type().const_int(0, false).into(),
                 Type::Void,
@@ -2066,8 +2302,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                          // TODO: Implement proper ownership tracking for heap-allocated structs if needed.
                     }
                     Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
-                        // Tensors: Unconditional free (methods usually return new tensor, not self alias)
-                        self.emit_recursive_free(obj_val, &obj_ty)?;
+                        // DISABLED: Freeing input tensor after method call causes Use-After-Free
+                        // when the result is used in a larger expression chain.
+                        // Example: (tensor * 0.1).detach() - freeing (tensor * 0.1) breaks the chain.
+                        // self.emit_recursive_free(obj_val, &obj_ty)?;
                     }
                     _ => {
                         // Other types: do nothing
@@ -2242,15 +2480,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => return Err("Invalid detach return".into()),
                     };
 
-                    if self.is_safe_to_free(obj, &obj_ty) {
-                        self.emit_recursive_free(obj_val, &obj_ty)?;
-                    }
-                    if !args.is_empty() {
-                         // We compiled args[0] to req_grad inside the block but didn't keep the (val, ty).
-                         // However req_grad is i1/bool, so safe to free?
-                         // compile_expr creates constants or loads variables.
-                         // Primitives (i64, bool) don't need freeing.
-                    }
+                    // Register intermediate tensor result for automatic cleanup
+                    self.emit_register_tensor(res, &obj_ty)?;
 
                     Ok((res, obj_ty))
                 }
@@ -2266,9 +2497,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => return Err("Invalid grad return".into()),
                     };
 
-                    if self.is_safe_to_free(obj, &obj_ty) {
-                        self.emit_recursive_free(obj_val, &obj_ty)?;
-                    }
+                    // Register intermediate tensor result for automatic cleanup
+                    self.emit_register_tensor(res, &obj_ty)?;
 
                     Ok((res, obj_ty))
                 }
@@ -2284,9 +2514,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => return Err("Invalid contiguous return".into()),
                     };
 
-                    if self.is_safe_to_free(obj, &obj_ty) {
-                        self.emit_recursive_free(obj_val, &obj_ty)?;
-                    }
+                    // Register intermediate tensor result for automatic cleanup
+                    self.emit_register_tensor(res, &obj_ty)?;
 
                     Ok((res, obj_ty))
                 }
@@ -2523,7 +2752,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         name: &str,
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+
         if let Some(struct_def) = self.struct_defs.get(name).cloned() {
+
             let st_llvm_ty = *self.struct_types.get(name).unwrap();
             let size = st_llvm_ty.size_of().unwrap();
             let malloc_fn = self
@@ -2558,7 +2789,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 ));
             }
             for (i, arg_expr) in args.iter().enumerate() {
-                let (val, _) = self.compile_expr(arg_expr)?;
+                let (val, ty) = self.compile_expr(arg_expr)?;
                 let field_ptr = self
                     .builder
                     .build_struct_gep(st_llvm_ty, struct_ptr, i as u32, "init_field")
@@ -2566,10 +2797,128 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder
                     .build_store(field_ptr, val)
                     .map_err(|e| e.to_string())?;
+                
+                // Fix: Unregister from memory manager (Move semantics)
+                if let Type::Tensor(_, _) = ty {
+                    let unreg_fn = self.module.get_function("tl_mem_unregister").expect("tl_mem_unregister not found");
+                    let ptr = val.into_pointer_value();
+                    let cast_ptr = self.builder.build_pointer_cast(
+                        ptr,
+                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                        "cast_unreg_arg"
+                    ).unwrap();
+                    self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+
+                    // Fix: If argument is a variable, mark it as moved to prevent scope cleanup free
+                    if let Expr::Variable(var_name) = arg_expr {
+                        for scope in self.variables.iter_mut().rev() {
+                             // Check if should be moved (Tensors and Structs only)
+                             let mut should_remove = false;
+                             if let Some((_, ty, _)) = scope.get(var_name) {
+                                 if matches!(ty, Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)) {
+                                     should_remove = true;
+                                 }
+                             }
+
+                             if should_remove {
+                                 if let Some(_) = scope.remove(var_name) {
+                                      break;
+                                 }
+                             }
+                        }
+                    }
+                }
             }
             return Ok((struct_ptr.into(), Type::Struct(name.to_string())));
         }
         match name {
+            "checkpoint" => {
+                if args.len() != 2 {
+                     return Err("checkpoint requires 2 arguments: (method_ref, input)".into());
+                }
+                // Parse args[0] as obj.method
+                let (obj_ptr, fn_ptr) = if let Expr::FieldAccess(obj_expr, method_name) = &args[0] {
+                     let (obj_val, obj_ty) = self.compile_expr(obj_expr)?;
+                     
+                     // Get struct type
+                     let struct_name = match obj_ty {
+                          Type::Struct(n) | Type::UserDefined(n) => n,
+                          _ => return Err("checkpoint arg 1 must be object.method".into()),
+                     };
+                     
+                     // Find function: Struct_Method
+                     let fn_name = format!("tl_{}_{}", struct_name, method_name);
+                     let fn_val = self.module.get_function(&fn_name).ok_or(format!("Method {} not found", fn_name))?;
+                     
+                     // Cast function to void pointer
+                     let fn_ptr_val = fn_val.as_global_value().as_pointer_value();
+                     let void_fn_ptr = self.builder.build_bit_cast(fn_ptr_val, self.context.ptr_type(inkwell::AddressSpace::default()), "fn_void_ptr").map_err(|e| e.to_string())?;
+                     
+                     let obj_ptr = self.builder.build_bit_cast(obj_val.into_pointer_value(), self.context.ptr_type(inkwell::AddressSpace::default()), "obj_void_ptr").map_err(|e| e.to_string())?;
+                     
+                     (obj_ptr, void_fn_ptr)
+                } else {
+                     return Err("checkpoint first argument must be 'obj.method'".into());
+                };
+                
+                // Compile input
+                let (arg_val, arg_ty) = self.compile_expr(&args[1])?;
+                if !matches!(arg_ty, Type::Tensor(_,_)) {
+                      return Err("checkpoint input must be tensor".into());
+                }
+                
+                // Call runtime
+                let cp_fn = self.module.get_function("tl_checkpoint").expect("tl_checkpoint not found");
+                let arg_ptr = self.builder.build_bit_cast(arg_val.into_pointer_value(), self.context.ptr_type(inkwell::AddressSpace::default()), "arg_cast").map_err(|e| e.to_string())?;
+                
+                let call = self.builder.build_call(cp_fn, &[obj_ptr.into(), fn_ptr.into(), arg_ptr.into()], "checkpoint_res").map_err(|e| e.to_string())?;
+                
+                let res_val = match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v,
+                    _ => return Err("tl_checkpoint did not return a value".into()),
+                };
+                
+                // Register result
+                let res_ty = Type::Tensor(Box::new(Type::F32), 1);
+                self.emit_register_tensor(res_val, &res_ty)?;
+                
+                return Ok((res_val, res_ty));
+            }
+            "argmax" => {
+                if args.len() != 2 {
+                    return Err("argmax requires 2 arguments: (tensor, dim)".into());
+                }
+                let (t_val, _) = self.compile_expr(&args[0])?;
+                let (dim_val, _) = self.compile_expr(&args[1])?;
+                
+                let argmax_fn = self.module.get_function("tl_tensor_argmax").expect("tl_tensor_argmax not found");
+                
+                // keep_dim = false by default for built-in argmax(t, dim)
+                let keep_dim_val = self.context.bool_type().const_int(0, false);
+                
+                let call = self.builder.build_call(argmax_fn, &[t_val.into(), dim_val.into(), keep_dim_val.into()], "argmax_res").map_err(|e| e.to_string())?;
+                
+                let res_val = match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v,
+                    _ => return Err("tl_tensor_argmax did not return a value".into()),
+                };
+                let res_ty = Type::Tensor(Box::new(Type::F32), 1); // Generic
+                self.emit_register_tensor(res_val, &res_ty)?;
+                return Ok((res_val, res_ty));
+            }
+            "item" => {
+                 if args.len() != 1 {
+                    return Err("item requires 1 argument: (tensor)".into());
+                }
+                let (t_val, _) = self.compile_expr(&args[0])?;
+                let item_fn = self.module.get_function("tl_tensor_item_i64").expect("tl_tensor_item_i64 not found");
+                let call = self.builder.build_call(item_fn, &[t_val.into()], "item_res").map_err(|e| e.to_string())?;
+                let res_val = match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v,
+                    _ => return Err("tl_tensor_item_i64 did not return a value".into()),
+                };
+                return Ok((res_val, Type::I64));
+            }
             "register_modules" => {
                 if args.len() != 1 {
                     return Err("register_modules requires 1 argument (struct)".into());
@@ -3186,10 +3535,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (arg_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
                 let arg_ty = Type::Tensor(Box::new(Type::F32), 0);
 
-                let fn_val = self.module.get_function("tl_tensor_randn").unwrap();
+                let f = self.module.get_function("tl_tensor_randn_debug").unwrap();
                 let call = self
                     .builder
-                    .build_call(fn_val, &[arg_val.into(), self.context.bool_type().const_int(0, false).into()], "randn_res")
+                    .build_call(f, &[arg_val.into(), self.context.bool_type().const_int(0, false).into()], "randn_res")
                     .unwrap();
                 let res = match call.try_as_basic_value() {
                     ValueKind::Basic(v) => v,
@@ -3782,7 +4131,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .bool_type()
                             .const_int(if requires_grad { 1 } else { 0 }, false);
-                        let f = self.module.get_function("tl_tensor_randn").unwrap();
+                        let f = self.module.get_function("tl_tensor_randn_debug").unwrap();
                         let call = self
                             .builder
                             .build_call(

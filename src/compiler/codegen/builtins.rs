@@ -37,6 +37,10 @@ pub fn declare_runtime_functions<'ctx>(
     let print_str_type = void_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_print_string", print_str_type);
 
+    // tl_print_ptr for debugging tensor pointers
+    let print_ptr_type = void_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_print_ptr", print_ptr_type);
+
     // malloc(size: i64) -> *u8
     let malloc_type = void_ptr.fn_type(&[i64_type.into()], false);
     add_fn("malloc", malloc_type);
@@ -84,6 +88,9 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_print(t: *mut) -> void
     let print_type = void_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_tensor_print", print_type);
+    add_fn("tl_tensor_print_1", print_type.clone());
+    add_fn("tl_tensor_print_2", print_type.clone());
+    add_fn("tl_tensor_print_3", print_type.clone());
 
     // tl_tensor_get(t: *mut, index: usize) -> f32 (Simplification: 1D get)
     let get_type = f32_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
@@ -131,6 +138,23 @@ pub fn declare_runtime_functions<'ctx>(
     let i32_type = context.i32_type();
     let tril_type = void_ptr.fn_type(&[void_ptr.into(), i32_type.into()], false);
     add_fn("tl_tensor_tril", tril_type);
+    
+    // Explicitly add tl_clear_grads
+    let clear_grads_type = void_type.fn_type(&[], false);
+    add_fn("tl_clear_grads", clear_grads_type);
+    
+    // Manual mapping for tl_clear_grads to avoid dlsym issues
+    if let Some(f) = module.get_function("tl_clear_grads") {
+        execution_engine.add_global_mapping(&f, runtime::tl_clear_grads as usize);
+    }
+
+    // tl_checkpoint(ctx: *mut, func: *mut, input: *mut) -> *mut
+    let checkpoint_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_checkpoint", checkpoint_type);
+    
+    if let Some(f) = module.get_function("tl_checkpoint") {
+        execution_engine.add_global_mapping(&f, runtime::checkpoint::tl_checkpoint as usize);
+    }
 
     // tl_tensor_sum_dim(t: *mut Tensor, dim: usize, keep: bool) -> *mut Tensor
     // usize -> i64 on 64-bit
@@ -217,8 +241,16 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_reshape", reshape_tensor_type);
 
     // Randn
-    let randn_type = void_ptr.fn_type(&[void_ptr.into(), context.bool_type().into()], false);
-    add_fn("tl_tensor_randn", randn_type);
+    // tl_tensor_randn(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor
+    let randn_type = void_ptr.fn_type(
+        &[
+            i64_type.into(),            // Rank
+            void_ptr.into(),            // Shape Ptr
+            context.bool_type().into(), // Req Grad
+        ],
+        false,
+    );
+    add_fn("tl_tensor_randn_debug", randn_type);
 
     // VarBuilder
     // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize)
@@ -384,6 +416,9 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_print_i64") {
         execution_engine.add_global_mapping(&f, runtime::tl_print_i64 as *const () as usize);
     }
+    if let Some(f) = module.get_function("tl_print_ptr") {
+        execution_engine.add_global_mapping(&f, runtime::tl_print_ptr as *const () as usize);
+    }
     if let Some(f) = module.get_function("tl_tensor_new") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_new as usize);
     }
@@ -398,6 +433,15 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_print") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_print as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_print_1") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_print_1 as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_print_2") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_print_2 as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_print_3") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_print_3 as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_free") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_free as usize);
@@ -433,8 +477,8 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::registry::tl_register_tensor as usize);
     }
     // Additional mappings from previous list...
-    if let Some(f) = module.get_function("tl_tensor_randn") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_randn as usize);
+    if let Some(f) = module.get_function("tl_tensor_randn_debug") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_randn_debug as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_backward") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_backward as usize);
@@ -650,7 +694,12 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_free as usize);
     }
 
-    // Populate return types for lookups
+    if let Some(f) = module.get_function("tl_tensor_argmax") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_argmax as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_item_i64") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_item_i64 as usize);
+    } // End of function
     let tensor_type = Type::Tensor(Box::new(Type::F32), 1); // Common return type for many tensor ops
 
     fn_return_types.insert("tl_tensor_new".to_string(), tensor_type.clone());
@@ -659,10 +708,14 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_tensor_neg".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_slice".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_print".to_string(), Type::Void);
+    fn_return_types.insert("tl_tensor_print_1".to_string(), Type::Void);
+    fn_return_types.insert("tl_tensor_print_2".to_string(), Type::Void);
+    fn_return_types.insert("tl_tensor_print_3".to_string(), Type::Void);
     fn_return_types.insert("tl_print_i64".to_string(), Type::Void);
     fn_return_types.insert("tl_print_f32".to_string(), Type::Void);
     fn_return_types.insert("tl_tensor_len".to_string(), Type::I64);
     fn_return_types.insert("tl_tensor_get".to_string(), Type::F32);
+    fn_return_types.insert("tl_tensor_dim".to_string(), Type::I64);
     // Add missing types that were likely in the original file but I need to make sure are present
     fn_return_types.insert("tl_tensor_transpose".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_reshape".to_string(), tensor_type.clone());
@@ -688,14 +741,7 @@ pub fn declare_runtime_functions<'ctx>(
     module.add_function("tl_tensor_reshape", tensor_reshape_type, None);
 
     // tl_tensor_randn(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor
-    let randn_type = void_ptr.fn_type(
-        &[
-            void_ptr.into(),            // Shape Tensor
-            context.bool_type().into(), // Req Grad
-        ],
-        false,
-    );
-    module.add_function("tl_tensor_randn", randn_type, None);
+
 
     // VarBuilder-based parameter management (following Candle's official pattern)
     // tl_varbuilder_get(name: *const c_char, rank: i64, shape: *const usize) -> *mut OpaqueTensor
@@ -754,6 +800,15 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_add_parameter(name: *str, t: *mut Tensor) -> void
     let add_param_type = void_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     module.add_function("tl_add_parameter", add_param_type, None);
+
+    // tl_tensor_argmax(t: *mut, dim: i64, keep_dim: bool) -> *mut
+    let argmax_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), context.bool_type().into()], false);
+    module.add_function("tl_tensor_argmax", argmax_type, None);
+
+    // tl_tensor_item_i64(t: *mut) -> i64
+    let item_i64_type = i64_type.fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_tensor_item_i64", item_i64_type, None);
+
 
     // tl_load_all_params(path: *const i8) -> void
     let load_all_type = void_type.fn_type(&[i8_ptr.into()], false);

@@ -1,0 +1,444 @@
+warning: unused variable: `tril_type`
+   --> src/compiler/codegen/builtins.rs:139:9
+    |
+139 |     let tril_type = void_ptr.fn_type(&...
+    |         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_tril_type`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unnecessary `unsafe` block
+   --> src/compiler/codegen/builtins.rs:148:5
+    |
+148 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+    |
+    = note: `#[warn(unused_unsafe)]` on by default
+
+warning: unused variable: `i_dims`
+    --> src/runtime/mod.rs:1021:9
+     |
+1021 |     let i_dims = indices_tensor.dims();
+     |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_i_dims`
+
+warning: methods `is_temporary_expr` and `emit_unregister_tensor` are never used
+  --> src/compiler/codegen/expr.rs:8:8
+   |
+7  | impl<'ctx> CodeGenerator<'ctx> {
+   | ------------------------------ methods in this implementation
+8  |     fn is_temporary_expr(&self, expr: &Expr...
+   |        ^^^^^^^^^^^^^^^^^
+...
+86 |     pub(crate) fn emit_unregister_tensor(
+   |                   ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: `tl` (bin "tl") generated 4 warnings
+    Finished `release` profile [optimized] target(s) in 0.14s
+     Running `target/release/tl run examples/train_heavy.tl`
+Running file: "examples/train_heavy.tl"
+Checking Static: Linear::new
+Checking Static: Linear::new
+Checking Static: Linear::new
+Checking Static: Linear::new
+Checking Static: Linear::new
+Checking Static: Linear::new
+Checking Static: LayerNorm::new
+Checking Static: CausalSelfAttention::new
+Checking Static: LayerNorm::new
+Checking Static: MLP::new
+Checking Static: Embedding::new
+Checking Static: Embedding::new
+Checking Static: Block::new
+Checking Static: Block::new
+Checking Static: Block::new
+Checking Static: Block::new
+Checking Static: LayerNorm::new
+Checking Static: Linear::new
+Checking Static: GPTHeavy::new
+Executing main...
+Initializing Runtime: CPU backend selected.
+13
+384
+Initializing Runtime: CPU backend selected.
+12
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+1536
+1536
+1536
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+1536
+1536
+1536
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+1536
+1536
+1536
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+384
+1536
+1536
+1536
+384
+384
+384
+384
+384
+13
+13
+Loaded 70 parameters from model_heavy.safetensors
+Training Heavy Model: 4-layer GPT, d_model=384, lr=0.0005, 500 epochs
+Epoch:
+0
+MB:
+392
+Epoch:
+1
+MB:
+691
+Epoch:
+2
+MB:
+998
+Epoch:
+3
+MB:
+1294
+Epoch:
+4
+MB:
+1591
+Saved 0 parameters to model_heavy.safetensors
+Saved 70 parameters to model_heavy.safetensors
+Saved checkpoint.
+Epoch:
+5
+MB:
+1890
+Epoch:
+6
+MB:
+2188
+Epoch:
+7
+MB:
+2485
+Epoch:
+8
+MB:
+2784
+Epoch:
+9
+MB:
+3080
+Saved 0 parameters to model_heavy.safetensors
+Saved 70 parameters to model_heavy.safetensors
+Saved checkpoint.
+Epoch:
+10
+MB:
+3379
+Epoch:
+11
+MB:
+3676
+Epoch:
+12
+MB:
+3973
+Epoch:
+13
+MB:
+4271
+Epoch:
+14
+MB:
+4569
+Saved 0 parameters to model_heavy.safetensors
+Saved 70 parameters to model_heavy.safetensors
+Saved checkpoint.
+Epoch:
+15
+MB:
+4867
+Epoch:
+16
+MB:
+5164
+Epoch:
+17
+MB:
+5463
+Epoch:
+18
+MB:
+5760
+Epoch:
+19
+MB:
+6057
+Saved 0 parameters to model_heavy.safetensors
+Saved 70 parameters to model_heavy.safetensors
+Saved checkpoint.
+Epoch:
+20
+MB:
+6357
+Epoch:
+21
+MB:
+6654
+Epoch:
+22
+MB:
+6952
+Epoch:
+23
+MB:
+7250
+Epoch:
+24
+MB:
+7548
+Saved 0 parameters to model_heavy.safetensors
+Saved 70 parameters to model_heavy.safetensors
+Saved checkpoint.
+Epoch:
+25
+MB:
+7845
+Epoch:
+26
+MB:
+8142
+Epoch:
+27
+MB:
+8441
+Epoch:
+28
+MB:
+8738
+Epoch:
+29
+MB:
+9032
+Saved 0 parameters to model_heavy.safetensors
+Saved 70 parameters to model_heavy.safetensors
+Saved checkpoint.
+Epoch:
+30
+MB:
+9326
+Epoch:
+31
+MB:
+9624
+Epoch:
+32
+MB:
+9921
+Epoch:
+33
+MB:
+10219
+Epoch:
+34
+MB:
+10517
+Saved 0 parameters to model_heavy.safetensors
+Saved 70 parameters to model_heavy.safetensors
+Saved checkpoint.
+Epoch:
+35
+MB:
+10825
+Epoch:
+36
+MB:
+11115
+Epoch:
+37
+MB:
+11413
+Epoch:
+38
+MB:
+11711
+Epoch:
+39
+MB:
+12009
+Saved 0 parameters to model_heavy.safetensors
+Saved 70 parameters to model_heavy.safetensors
+Saved checkpoint.
+Epoch:
+40
+MB:
+12308
+Epoch:
+41
+MB:
+12604
+Epoch:
+42
+MB:
+12902
+Epoch:
+43
+MB:
+13202
+Epoch:
+44
+MB:
+13498
+Saved 0 parameters to model_heavy.safetensors
+Saved 70 parameters to model_heavy.safetensors
+Saved checkpoint.
+Epoch:
+45
+MB:
+13798
+Epoch:
+46
+MB:
+14097
+Epoch:
+47
+MB:
+14394
+Epoch:
+48
+MB:
+14694
+Epoch:
+49
+MB:
+14992
+Saved 0 parameters to model_heavy.safetensors
+Saved 70 parameters to model_heavy.safetensors
+Saved checkpoint.
+Epoch:
+50
+MB:
+15290
+Epoch:
+51
+MB:
+15587
+Epoch:
+52
+MB:
+15880
+Epoch:
+53
+MB:
+16183
+Epoch:
+54
+MB:
+16475
+Saved 0 parameters to model_heavy.safetensors
+Saved 70 parameters to model_heavy.safetensors
+Saved checkpoint.
+Epoch:
+55
+MB:
+16774
+Epoch:
+56
+MB:
+17073
+Epoch:
+57
+MB:
+17369
+Epoch:
+58
+MB:
+17668
+Epoch:
+59
+MB:
+17965
+Saved 0 parameters to model_heavy.safetensors
+Saved 70 parameters to model_heavy.safetensors
+Saved checkpoint.
+Epoch:
+60
+MB:
+18263
+Epoch:
+61
+MB:
+18561
