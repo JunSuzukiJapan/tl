@@ -1,5 +1,6 @@
 // src/compiler/ast.rs
 #![allow(dead_code)]
+use std::collections::HashMap;
 
 /// Dimension: either a constant, a variable, or a symbolic name
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -113,6 +114,11 @@ pub enum Stmt {
     While {
         cond: Expr,
         body: Vec<Stmt>,
+    },
+    Use {
+        path: Vec<String>,
+        alias: Option<String>,
+        items: Vec<String>,
     },
 }
 
@@ -231,4 +237,6 @@ pub struct Module {
     pub relations: Vec<RelationDecl>,
     pub rules: Vec<Rule>,
     pub queries: Vec<Expr>,
+    pub imports: Vec<String>,
+    pub submodules: HashMap<String, Module>,
 }

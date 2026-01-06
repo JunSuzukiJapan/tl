@@ -34,21 +34,26 @@ fn sp<'a, E: nom::error::ParseError<&'a str>>(input: &'a str) -> IResult<&'a str
 // --- Identifiers ---
 use nom::combinator::verify;
 
-fn identifier(input: &str) -> IResult<&str, String> {
-    let segment = recognize(pair(
+fn simple_identifier(input: &str) -> IResult<&str, String> {
+    let (input, s) = recognize(pair(
         alt((alpha1, tag("_"))),
         take_while(|c: char| c.is_alphanumeric() || c == '_'),
-    ));
+    ))(input)?;
+    Ok((input, s.to_string()))
+}
 
+fn identifier(input: &str) -> IResult<&str, String> {
     // Allow usage of :: for namespaces (e.g. File::open)
     verify(
-        map(recognize(separated_list1(tag("::"), segment)), |s: &str| {
-            s.to_string()
-        }),
+        map(
+            recognize(separated_list1(tag("::"), simple_identifier)),
+            |s: &str| s.to_string(),
+        ),
         |s: &String| {
             let keywords = vec![
                 "fn", "struct", "impl", "let", "if", "else", "return", "for", "in", "while",
                 "true", "false", "f32", "f64", "i32", "i64", "bool", "usize", "void", "Tensor",
+                "mod", "use",
             ];
             !keywords.contains(&s.as_str())
         },
@@ -670,6 +675,46 @@ fn parse_field_assign(input: &str) -> IResult<&str, Stmt> {
     }
 }
 
+fn parse_use_stmt(input: &str) -> IResult<&str, Stmt> {
+    let (input, _) = tag("use")(input)?;
+    let (input, path_segments) = separated_list1(ws(tag("::")), ws(simple_identifier))(input)?;
+
+    // Check for ":: {" to handle multi-import
+    let (input, multi_items) = opt(preceded(
+        ws(tag("::")),
+        delimited(
+            ws(char('{')),
+            separated_list1(ws(char(',')), ws(simple_identifier)),
+            ws(char('}')),
+        ),
+    ))(input)?;
+
+    if let Some(items) = multi_items {
+        let (input, _) = ws(char(';'))(input)?;
+        Ok((
+            input,
+            Stmt::Use {
+                path: path_segments,
+                alias: None,
+                items,
+            },
+        ))
+    } else {
+        // Single import, check for "as Alias"
+        let (input, alias) = opt(preceded(ws(tag("as")), ws(simple_identifier)))(input)?;
+        let (input, _) = ws(char(';'))(input)?;
+
+        Ok((
+            input,
+            Stmt::Use {
+                path: path_segments,
+                alias,
+                items: vec![],
+            },
+        ))
+    }
+}
+
 fn parse_stmt(input: &str) -> IResult<&str, Stmt> {
     ws(alt((
         parse_let_stmt,
@@ -677,10 +722,10 @@ fn parse_stmt(input: &str) -> IResult<&str, Stmt> {
         parse_field_assign,
         parse_return_stmt,
         parse_if_stmt,
-        parse_if_stmt,
         parse_for_stmt,
         parse_while_stmt,
         parse_block_stmt,
+        parse_use_stmt,
         parse_expr_stmt,
     )))(input)
 }
@@ -910,6 +955,16 @@ fn parse_impl(input: &str) -> IResult<&str, ImplBlock> {
     ))
 }
 
+// --- Imports ---
+use std::collections::HashMap;
+
+fn parse_mod_decl(input: &str) -> IResult<&str, String> {
+    let (input, _) = tag("mod")(input)?;
+    let (input, name) = ws(identifier)(input)?;
+    let (input, _) = ws(char(';'))(input)?;
+    Ok((input, name))
+}
+
 // --- Top Level ---
 // Re-define parse_module logic
 pub fn parse(input: &str) -> anyhow::Result<Module> {
@@ -920,6 +975,7 @@ pub fn parse(input: &str) -> anyhow::Result<Module> {
     let mut relations = vec![];
     let mut rules = vec![];
     let mut queries = vec![];
+    let mut imports = vec![];
     let mut remaining = input;
 
     while !remaining.trim().is_empty() {
@@ -932,6 +988,9 @@ pub fn parse(input: &str) -> anyhow::Result<Module> {
             remaining = next;
         } else if let Ok((next, f)) = ws(parse_fn)(remaining) {
             functions.push(f);
+            remaining = next;
+        } else if let Ok((next, m)) = ws(parse_mod_decl)(remaining) {
+            imports.push(m);
             remaining = next;
         } else if let Ok((next, t)) = ws(parse_tensor_decl)(remaining) {
             tensor_decls.push(t);
@@ -964,5 +1023,7 @@ pub fn parse(input: &str) -> anyhow::Result<Module> {
         relations,
         rules,
         queries,
+        imports,
+        submodules: HashMap::new(),
     })
 }

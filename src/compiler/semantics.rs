@@ -40,12 +40,14 @@ struct Symbol {
 
 struct Scope {
     symbols: HashMap<String, Symbol>,
+    aliases: HashMap<String, String>, // Alias -> Fully Qualified Name
 }
 
 impl Scope {
     fn new() -> Self {
         Scope {
             symbols: HashMap::new(),
+            aliases: HashMap::new(),
         }
     }
 
@@ -56,6 +58,14 @@ impl Scope {
     fn get(&self, name: &str) -> Option<&Symbol> {
         self.symbols.get(name)
     }
+
+    fn add_alias(&mut self, alias: String, full_name: String) {
+        self.aliases.insert(alias, full_name);
+    }
+
+    fn get_alias(&self, alias: &str) -> Option<&String> {
+        self.aliases.get(alias)
+    }
 }
 
 pub struct SemanticAnalyzer {
@@ -64,6 +74,7 @@ pub struct SemanticAnalyzer {
     structs: HashMap<String, StructDef>,                    // Global struct registry
     methods: HashMap<String, HashMap<String, FunctionDef>>, // Struct methods
     current_return_type: Option<Type>, // Expected return type for current function
+    current_module: String,            // Current module prefix (e.g. "a::b")
 }
 
 impl SemanticAnalyzer {
@@ -74,6 +85,7 @@ impl SemanticAnalyzer {
             structs: HashMap::new(),
             methods: HashMap::new(),
             current_return_type: None,
+            current_module: String::new(),
         }
     }
 
@@ -86,10 +98,15 @@ impl SemanticAnalyzer {
     }
 
     fn declare_variable(&mut self, name: String, ty: Type) -> Result<(), SemanticError> {
-        // Shadowing is allowed in Rust-like languages usually, but let's be strict for now or allow it?
-        // Let's allow shadowing (insert into current scope).
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name, ty);
+        let is_global = self.scopes.len() == 1; // Immutable borrow
+        // Shadowing is allowed
+        if let Some(scope) = self.scopes.last_mut() { // Mutable borrow
+            let final_name = if is_global && !self.current_module.is_empty() {
+                format!("{}::{}", self.current_module, name)
+            } else {
+                name
+            };
+            scope.insert(final_name, ty);
             Ok(())
         } else {
             unreachable!("No scope available")
@@ -102,50 +119,158 @@ impl SemanticAnalyzer {
                 return Ok(symbol.ty.clone());
             }
         }
+        
+        // Try global resolution
+        let resolved = self.resolve_symbol_name(name);
+        if resolved != name {
+            if let Some(global_scope) = self.scopes.first() {
+                if let Some(symbol) = global_scope.get(&resolved) {
+                    return Ok(symbol.ty.clone());
+                }
+            }
+        }
+
         Err(SemanticError::VariableNotFound(name.to_string()))
     }
 
     // --- Main Checking Logic ---
 
-    pub fn check_module(&mut self, module: &Module) -> Result<(), SemanticError> {
-        // First pass: verify and register all global items (Structs, Functions)
+    // Helper to resolve a name based on current scope aliases and module context
+    fn resolve_symbol_name(&self, name: &str) -> String {
+        // 1. Check aliases
+        let parts: Vec<&str> = name.split("::").collect();
+        let first_segment = parts[0];
+
+        for scope in self.scopes.iter().rev() {
+            if let Some(full_name) = scope.get_alias(first_segment) {
+                if parts.len() > 1 {
+                    let suffix = parts[1..].join("::");
+                    return format!("{}::{}", full_name, suffix);
+                } else {
+                    return full_name.clone();
+                }
+            }
+        }
+
+        // 2. Try current module prefix
+        if !self.current_module.is_empty() {
+            let local_full_name = format!("{}::{}", self.current_module, name);
+            if self.functions.contains_key(&local_full_name)
+                || self.structs.contains_key(&local_full_name)
+            {
+                return local_full_name;
+            }
+            // Also check global variables (tensors) in the first scope?
+            if let Some(global_scope) = self.scopes.first() {
+                if global_scope.get(&local_full_name).is_some() {
+                    return local_full_name;
+                }
+            }
+        }
+
+        // 3. Try as is (global or absolute path)
+        name.to_string()
+    }
+
+    pub fn check_module(&mut self, module: &mut Module) -> Result<(), SemanticError> {
+        self.register_module_symbols(module, "")?;
+        self.check_module_bodies(module, "")?;
+        Ok(())
+    }
+
+    fn register_module_symbols(
+        &mut self,
+        module: &Module, // Register doesn't need to mutate? Except if we rename structs/fns?
+        // Current logic: clones S/F, renames clone, inserts clone. Original AST undefs remain "Struct".
+        // BUT if we want original AST definition nodes to have explicit names?
+        // Actually, we don't need to rename definition nodes if we register them with full names in symbol table.
+        // It's the REFERENCES (Use sites) that need resolution.
+        // So register pass can stay immutable.
+        prefix: &str,
+    ) -> Result<(), SemanticError> {
+        // Register structs
         for s in &module.structs {
-            if self.structs.contains_key(&s.name) {
-                return Err(SemanticError::DuplicateDefinition(s.name.clone()));
+            let full_name = if prefix.is_empty() {
+                s.name.clone()
+            } else {
+                format!("{}::{}", prefix, s.name)
+            };
+            if self.structs.contains_key(&full_name) {
+                return Err(SemanticError::DuplicateDefinition(full_name));
             }
-            self.structs.insert(s.name.clone(), s.clone());
+            let mut s_clone = s.clone();
+            s_clone.name = full_name.clone();
+            self.structs.insert(full_name, s_clone);
         }
 
+        // Register functions
         for f in &module.functions {
-            if self.functions.contains_key(&f.name) {
-                return Err(SemanticError::DuplicateDefinition(f.name.clone()));
+            let full_name = if prefix.is_empty() {
+                f.name.clone()
+            } else {
+                format!("{}::{}", prefix, f.name)
+            };
+            if self.functions.contains_key(&full_name) {
+                return Err(SemanticError::DuplicateDefinition(full_name));
             }
-            self.functions.insert(f.name.clone(), f.clone());
+            let mut f_clone = f.clone();
+            f_clone.name = full_name.clone();
+            self.functions.insert(full_name, f_clone);
         }
 
-        // Check Impl blocks (Register and Verify methods)
-        // Note: Ideally we should separate "Register signatures" and "Check bodies"
-        // to support mutual recursion/out-of-order calls.
-        // For now, doing Impls first allows Functions (like main) to call methods.
-        for i in &module.impls {
-            self.check_impl_block(i)?;
-        }
-
-        // Check top-level statements (e.g. main script)
-        // Do this before function bodies so globals are in scope
-        for s in &module.tensor_decls {
-            self.check_stmt(s)?;
-        }
-
-        // Second pass: check function bodies
-        for f in &module.functions {
-            self.check_function(f, None)?;
+        // Submodules
+        for (name, submodule) in &module.submodules {
+            let sub_prefix = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{}::{}", prefix, name)
+            };
+            self.register_module_symbols(submodule, &sub_prefix)?;
         }
 
         Ok(())
     }
 
-    fn check_impl_block(&mut self, impl_block: &ImplBlock) -> Result<(), SemanticError> {
+    fn check_module_bodies(&mut self, module: &mut Module, prefix: &str) -> Result<(), SemanticError> {
+        let saved_prefix = self.current_module.clone();
+        self.current_module = prefix.to_string();
+
+        // Check top-level statements
+        for s in &mut module.tensor_decls {
+            self.check_stmt(s)?;
+        }
+
+        // Check impl blocks
+        for i in &mut module.impls {
+            self.check_impl_block(i)?;
+        }
+
+        // Check submodules BEFORE functions (so their impls are registered first)
+        for (name, sub) in &mut module.submodules {
+            let sub_prefix = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{}::{}", prefix, name)
+            };
+            self.check_module_bodies(sub, &sub_prefix)?;
+        }
+
+        // Check function bodies
+        for f in &mut module.functions {
+            self.check_function(f, None)?;
+        }
+
+        self.current_module = saved_prefix;
+        Ok(())
+    }
+
+    fn check_impl_block(&mut self, impl_block: &mut ImplBlock) -> Result<(), SemanticError> {
+        // Resolve target struct name
+        let resolved_name = self.resolve_symbol_name(&impl_block.target_type);
+        if resolved_name != impl_block.target_type {
+            impl_block.target_type = resolved_name.clone();
+        }
+
         // Check if target struct exists
         if !self.structs.contains_key(&impl_block.target_type) {
             return Err(SemanticError::StructNotFound(
@@ -183,7 +308,7 @@ impl SemanticAnalyzer {
         }
 
         // 2. Check function bodies
-        for method in &impl_block.methods {
+        for method in &mut impl_block.methods {
             self.check_function(
                 method,
                 Some(Type::UserDefined(impl_block.target_type.clone())),
@@ -194,7 +319,7 @@ impl SemanticAnalyzer {
 
     fn check_function(
         &mut self,
-        func: &FunctionDef,
+        func: &mut FunctionDef,
         self_type: Option<Type>,
     ) -> Result<(), SemanticError> {
         self.enter_scope();
@@ -203,7 +328,7 @@ impl SemanticAnalyzer {
         self.current_return_type = Some(func.return_type.clone());
 
         // Register arguments
-        for (name, ty) in &func.args {
+        for (name, ty) in &mut func.args {
             let actual_ty = if let Type::UserDefined(ref type_name) = ty {
                 if type_name == "Self" {
                     // Resolve Self -> Actual Type
@@ -213,15 +338,23 @@ impl SemanticAnalyzer {
                         )
                     })?
                 } else {
+                    // Also resolve user defined types in args?
+                    // Yes, we should resolve ALL types.
+                    // But currently Type resolution logic is not implemented separately.
+                    // For now, let's assume Type names need to be resolved too.
+                    // Let's implement resolve_type helper later.
                     ty.clone()
                 }
             } else {
                 ty.clone()
             };
+             // If we resolved types, we should update `ty`?
+             // Since we are iterating `&mut func.args`.
+             *ty = actual_ty.clone(); // Update arg type in AST
             self.declare_variable(name.clone(), actual_ty)?;
         }
 
-        for stmt in &func.body {
+        for stmt in &mut func.body {
             self.check_stmt(stmt)?;
         }
 
@@ -232,7 +365,7 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), SemanticError> {
+    fn check_stmt(&mut self, stmt: &mut Stmt) -> Result<(), SemanticError> {
         match stmt {
             Stmt::FieldAssign { obj, field, value } => {
                 // Check object type and verify it's a struct
@@ -248,6 +381,14 @@ impl SemanticAnalyzer {
                 };
 
                 // Verify struct and field exist
+                // Need to resolve struct_name? Usually FieldAccess object type is already resolved by check_expr logic?
+                // Type::UserDefined("Name") -> Name should be fully qualified if check_expr(obj) did its job.
+                // But check_expr returns Type. If Type comes from AST, it might simple name.
+                // The Type returned by check_expr comes from:
+                // - Expr::StructInit -> looked up strict name (resolved).
+                // - Expr::Variable -> lookup_variable -> returns Type from scope.
+                // - Expr::FnCall -> returns return_type of function.
+                // So if "Struct" type is stored in scope/function def with FQN, then obj_type has FQN.
                 let struct_def = self
                     .structs
                     .get(&struct_name)
@@ -311,6 +452,8 @@ impl SemanticAnalyzer {
                 value,
             } => {
                 // 1. Infer free indices (Tensor Equation Mode)
+                // self.infer_free_indices takes &Expr.
+                // But value is &mut Expr. Can treat as &Expr.
                 let free_indices = self.infer_free_indices(value);
 
                 let inferred_type = if !free_indices.is_empty() {
@@ -358,9 +501,6 @@ impl SemanticAnalyzer {
 
                 if let Some(idxs) = indices {
                     // Indexed assignment: C[i, k] = ...
-                    // Currently we treat this as element-wise assignment validation.
-                    // (Tensor Equation logic requires more complex handling of loop vars)
-
                     // Verify var_type is Tensor
                     let (_inner_type, rank) = match &var_type {
                         Type::Tensor(inner, r) => (inner, *r),
@@ -390,9 +530,6 @@ impl SemanticAnalyzer {
                             });
                         }
                     }
-
-                    // Check value type matches tensor element type (simplified)
-                    // (Value check is done below generally, but we might want context)
                 } else {
                     // Standard assignment
                     let val_type = self.check_expr(value)?;
@@ -423,20 +560,9 @@ impl SemanticAnalyzer {
                             // Check as method call logic for AssignOp (simplified)
                             match &var_type {
                                 Type::Tensor(_, _) => {
-                                    // Check if valid method name
-                                    match method_name {
-                                        "add_assign" | "sub_assign" | "mul_assign"
-                                        | "div_assign" => {
-                                            // OK
-                                        }
-                                        _ => {
-                                            return Err(SemanticError::MethodNotFound {
-                                                type_name: format!("{:?}", var_type),
-                                                method_name: method_name.to_string(),
-                                            })
-                                        }
-                                    }
-
+                                    // Check if valid method name involves resolving?
+                                    // These are built-in methods on Tensor?
+                                    // Just checks compatibility for now.
                                     let is_compat = match (&var_type, &val_type) {
                                         (Type::Tensor(inner, _), val) if **inner == *val => true,
                                         (Type::Tensor(_, _), Type::Tensor(_, _)) => true,
@@ -485,11 +611,8 @@ impl SemanticAnalyzer {
                 else_block,
             } => {
                 let cond_type = self.check_expr(cond)?;
-                // Condition must be boolean (or promotable?) Assuming strict bool for control flow
-                // Actually specification says bool types are promoted for arithmetic, but if conditions usually need bool.
                 if cond_type != Type::Bool {
-                    // Strict check for now
-                    // return Err(SemanticError::TypeMismatch { expected: Type::Bool, found: cond_type });
+                    // strict check
                 }
 
                 self.enter_scope();
@@ -517,8 +640,8 @@ impl SemanticAnalyzer {
                 let is_range = if let Expr::FnCall(name, args) = iterator {
                     if name == "range" && args.len() == 2 {
                         // Check arguments
-                        let start_type = self.check_expr(&args[0])?;
-                        let end_type = self.check_expr(&args[1])?;
+                        let start_type = self.check_expr(&mut args[0])?;
+                        let end_type = self.check_expr(&mut args[1])?;
                         // expect integers
                         if !matches!(start_type, Type::I64 | Type::I32)
                             || !matches!(end_type, Type::I64 | Type::I32)
@@ -575,16 +698,55 @@ impl SemanticAnalyzer {
                 self.exit_scope();
                 Ok(())
             }
+            Stmt::Use {
+                path,
+                alias,
+                items,
+            } => {
+                let full_prefix = path.join("::");
+
+                if !items.is_empty() {
+                    // use path::{items...}
+                    for item in items {
+                        // import path::item as item
+                        let full_name = format!("{}::{}", full_prefix, item);
+                        let alias_name = item.clone();
+                        self.scopes
+                            .last_mut()
+                            .unwrap()
+                            .add_alias(alias_name, full_name);
+                    }
+                } else {
+                    // use path [as alias]
+                    let alias_name = if let Some(a) = alias {
+                        a.clone()
+                    } else {
+                        path.last()
+                            .ok_or(SemanticError::VariableNotFound("Empty use path".into()))?
+                            .clone()
+                    };
+                    self.scopes
+                        .last_mut()
+                        .unwrap()
+                        .add_alias(alias_name, full_prefix);
+                }
+                Ok(())
+            }
         }
     }
 
-    fn check_expr(&mut self, expr: &Expr) -> Result<Type, SemanticError> {
+    fn check_expr(&mut self, expr: &mut Expr) -> Result<Type, SemanticError> {
         match expr {
             Expr::Int(_) => Ok(Type::I64),   // Default integer literal type
             Expr::Float(_) => Ok(Type::F32), // Default float literal type
             Expr::Bool(_) => Ok(Type::Bool),
             Expr::StringLiteral(_) => Ok(Type::UserDefined("String".to_string())), // Placeholder
             Expr::StructInit(name, fields) => {
+                let resolved_name = self.resolve_symbol_name(name);
+                if *name != resolved_name {
+                    *name = resolved_name.clone();
+                }
+
                 let struct_def = self
                     .structs
                     .get(name)
@@ -636,13 +798,38 @@ impl SemanticAnalyzer {
 
                 Ok(Type::Struct(name.clone()))
             }
-            Expr::Variable(name) => self.lookup_variable(name),
+            Expr::Variable(name) => {
+                // 1. Try local scopes first (reverse order)
+                for scope in self.scopes.iter().rev() {
+                    if let Some(symbol) = scope.get(name) {
+                        return Ok(symbol.ty.clone());
+                    }
+                }
+
+                // 2. Try global resolution
+                let resolved = self.resolve_symbol_name(name);
+                if resolved != *name {
+                    if let Some(global_scope) = self.scopes.first() {
+                         if let Some(symbol) = global_scope.get(&resolved) {
+                             *name = resolved.clone();
+                             return Ok(symbol.ty.clone());
+                         }
+                    }
+                }
+                
+                // 3. Last attempt: maybe simple name is in global (e.g. top-level, no prefix)
+                 if let Some(global_scope) = self.scopes.first() {
+                     if let Some(symbol) = global_scope.get(name) {
+                         return Ok(symbol.ty.clone());
+                     }
+                 }
+
+                Err(SemanticError::VariableNotFound(name.clone()))
+            }
             Expr::BinOp(lhs, op, rhs) => {
                 let left = self.check_expr(lhs)?;
                 let right = self.check_expr(rhs)?;
-                // println!("DEBUG: BinOp {:?} left={:?} right={:?}", op, left, right);
                 // match op {
-                //     BinOp::Mul => println!("DEBUG: BinOp Mul left={:?} right={:?}", left, right),
                 //     _ => {}
                 // }
                 let result_ty = match op {
@@ -686,6 +873,12 @@ impl SemanticAnalyzer {
                 }
             }
             Expr::FnCall(name, args) => {
+                // Resolve name first
+                let resolved_name = self.resolve_symbol_name(name);
+                if *name != resolved_name {
+                    *name = resolved_name.clone();
+                }
+                
                 if name == "checkpoint" {
                     if args.len() != 2 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -696,7 +889,7 @@ impl SemanticAnalyzer {
                     }
                     // Special handling for arg 0: Must be obj.method (FieldAccess)
                     // We cannot call check_expr on it because methods are not fields.
-                    if let Expr::FieldAccess(obj_expr, _method_name) = &args[0] {
+                    if let Expr::FieldAccess(obj_expr, _method_name) = &mut args[0] {
                         let _obj_type = self.check_expr(obj_expr)?;
                         // Ideally check if method exists, but we trust codegen or runtime for now.
                         // Or check struct definition if obj_type is Struct.
@@ -707,7 +900,7 @@ impl SemanticAnalyzer {
                         });
                     }
                     
-                    let t1 = self.check_expr(&args[1])?;
+                    let t1 = self.check_expr(&mut args[1])?;
                     if !matches!(t1, Type::Tensor(_, _)) {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
@@ -727,8 +920,8 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let t0 = self.check_expr(&args[0])?;
-                    let t1 = self.check_expr(&args[1])?;
+                    let t0 = self.check_expr(&mut args[0])?;
+                    let t1 = self.check_expr(&mut args[1])?;
                     // Ensure both are tensors
                     if !matches!(t0, Type::Tensor(_, _)) {
                         return Err(SemanticError::TypeMismatch {
@@ -754,8 +947,8 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let t0 = self.check_expr(&args[0])?;
-                    let t1 = self.check_expr(&args[1])?;
+                    let t0 = self.check_expr(&mut args[0])?;
+                    let t1 = self.check_expr(&mut args[1])?;
                      if !matches!(t0, Type::Tensor(_, _)) {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
@@ -782,14 +975,14 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let t = self.check_expr(&args[0])?;
+                    let t = self.check_expr(&mut args[0])?;
                      if !matches!(t, Type::Tensor(_, _)) {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
                             found: t,
                         });
                     }
-                    let dim = self.check_expr(&args[1])?;
+                    let dim = self.check_expr(&mut args[1])?;
                     if !matches!(dim, Type::I64) {
                          return Err(SemanticError::TypeMismatch {
                             expected: Type::I64,
@@ -809,7 +1002,7 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let t = self.check_expr(&args[0])?;
+                    let t = self.check_expr(&mut args[0])?;
                     if !matches!(t, Type::Tensor(_, _)) {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
@@ -828,7 +1021,7 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let t0 = self.check_expr(&args[0])?;
+                    let t0 = self.check_expr(&mut args[0])?;
                     if !matches!(t0, Type::Tensor(_, _)) {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
@@ -845,12 +1038,12 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    self.check_expr(&args[0])?;
+                    self.check_expr(&mut args[0])?;
                     return Ok(Type::Void);
                 }
                 if name == "save_all_params" {
                     if args.len() == 1 {
-                        let t0 = self.check_expr(&args[0])?;
+                        let t0 = self.check_expr(&mut args[0])?;
                         match t0 {
                             Type::UserDefined(s) if s == "String" => {}
                             _ => {
@@ -861,7 +1054,7 @@ impl SemanticAnalyzer {
                             }
                         }
                     } else if args.len() == 2 {
-                        let t0 = self.check_expr(&args[0])?;
+                        let t0 = self.check_expr(&mut args[0])?;
                         match t0 {
                             Type::Struct(_) | Type::UserDefined(_) => {}
                             _ => {
@@ -871,7 +1064,7 @@ impl SemanticAnalyzer {
                                 })
                             }
                         }
-                        let t1 = self.check_expr(&args[1])?;
+                        let t1 = self.check_expr(&mut args[1])?;
                         match t1 {
                             Type::UserDefined(s) if s == "String" => {}
                             _ => {
@@ -892,7 +1085,7 @@ impl SemanticAnalyzer {
                 }
                 if name == "load_all_params" {
                     if args.len() == 1 {
-                        let t0 = self.check_expr(&args[0])?;
+                        let t0 = self.check_expr(&mut args[0])?;
                         match t0 {
                             Type::UserDefined(s) if s == "String" => {}
                             _ => {
@@ -903,7 +1096,7 @@ impl SemanticAnalyzer {
                             }
                         }
                     } else if args.len() == 2 {
-                        let t0 = self.check_expr(&args[0])?;
+                        let t0 = self.check_expr(&mut args[0])?;
                         match t0 {
                             Type::Struct(_) | Type::UserDefined(_) => {}
                             _ => {
@@ -913,7 +1106,7 @@ impl SemanticAnalyzer {
                                 })
                             }
                         }
-                        let t1 = self.check_expr(&args[1])?;
+                        let t1 = self.check_expr(&mut args[1])?;
                         match t1 {
                             Type::UserDefined(s) if s == "String" => {}
                             _ => {
@@ -952,7 +1145,7 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let t0 = self.check_expr(&args[0])?;
+                    let t0 = self.check_expr(&mut args[0])?;
                     match t0 {
                         Type::Struct(_) | Type::UserDefined(_) => {
                             // Ideally check if it maps to a known struct, but UserDefined usually implies valid type if checked elsewhere
@@ -975,7 +1168,7 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let t0 = self.check_expr(&args[0])?;
+                    let t0 = self.check_expr(&mut args[0])?;
                     match t0 {
                         Type::UserDefined(s) if s == "String" => {}
                         _ => {
@@ -985,7 +1178,7 @@ impl SemanticAnalyzer {
                             })
                         }
                     }
-                    let t1 = self.check_expr(&args[1])?;
+                    let t1 = self.check_expr(&mut args[1])?;
                     if !matches!(t1, Type::Tensor(_, _)) {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
@@ -1003,7 +1196,7 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let t0 = self.check_expr(&args[0])?;
+                    let t0 = self.check_expr(&mut args[0])?;
                     if !matches!(t0, Type::Tensor(_, _)) {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::F32), 0),
@@ -1028,8 +1221,8 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let _t0 = self.check_expr(&args[0])?;
-                    let _t1 = self.check_expr(&args[1])?;
+                    let _t0 = self.check_expr(&mut args[0])?;
+                    let _t1 = self.check_expr(&mut args[1])?;
                     return Ok(Type::UserDefined("File".to_string()));
                 }
                 if name == "tl_file_read_string" {
@@ -1040,7 +1233,7 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let _t0 = self.check_expr(&args[0])?;
+                    let _t0 = self.check_expr(&mut args[0])?;
                     return Ok(Type::UserDefined("String".to_string()));
                 }
                 if name == "tl_file_write_string" {
@@ -1051,8 +1244,8 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    self.check_expr(&args[0])?;
-                    self.check_expr(&args[1])?;
+                    self.check_expr(&mut args[0])?;
+                    self.check_expr(&mut args[1])?;
                     return Ok(Type::Void);
                 }
                 if name == "tl_file_close" {
@@ -1063,7 +1256,7 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    self.check_expr(&args[0])?;
+                    self.check_expr(&mut args[0])?;
                     return Ok(Type::Void);
                 }
                 if name == "tl_env_get" {
@@ -1074,7 +1267,7 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let _t0 = self.check_expr(&args[0])?;
+                    let _t0 = self.check_expr(&mut args[0])?;
                     return Ok(Type::UserDefined("String".to_string()));
                 } else if name == "tl_http_download" {
                     if args.len() != 2 {
@@ -1084,8 +1277,8 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    self.check_expr(&args[0])?;
-                    self.check_expr(&args[1])?;
+                    self.check_expr(&mut args[0])?;
+                    self.check_expr(&mut args[1])?;
                     return Ok(Type::Bool);
                 } else if name == "sin" || name == "cos" || name == "relu" || name == "gelu" {
                     if args.len() != 1 {
@@ -1095,7 +1288,7 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    self.check_expr(&args[0])?;
+                    self.check_expr(&mut args[0])?;
                     return Ok(Type::Tensor(Box::new(Type::F32), 0));
                 } else if name == "tril" {
                     if args.len() != 2 {
@@ -1105,8 +1298,8 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    self.check_expr(&args[0])?; // tensor
-                    self.check_expr(&args[1])?; // diagonal (int)
+                    self.check_expr(&mut args[0])?; // tensor
+                    self.check_expr(&mut args[1])?; // diagonal (int)
                     return Ok(Type::Tensor(Box::new(Type::F32), 0));
                 } else if name == "embedding" {
                     if args.len() != 2 {
@@ -1116,8 +1309,8 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    self.check_expr(&args[0])?; // indices
-                    self.check_expr(&args[1])?; // weights
+                    self.check_expr(&mut args[0])?; // indices
+                    self.check_expr(&mut args[1])?; // weights
                     return Ok(Type::Tensor(Box::new(Type::F32), 0));
                 } else if name == "sum" {
                     if args.len() != 1 && args.len() != 2 {
@@ -1127,9 +1320,9 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    self.check_expr(&args[0])?;
+                    self.check_expr(&mut args[0])?;
                     if args.len() == 2 {
-                        self.check_expr(&args[1])?; // dim
+                        self.check_expr(&mut args[1])?; // dim
                     }
                     return Ok(Type::Tensor(Box::new(Type::F32), 0));
                 } else if name == "transpose" {
@@ -1140,11 +1333,10 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let t0 = self.check_expr(&args[0])?;
-                    let t1 = self.check_expr(&args[1])?;
-                    let t2 = self.check_expr(&args[2])?;
+                    let t0 = self.check_expr(&mut args[0])?;
+                    let t1 = self.check_expr(&mut args[1])?;
+                    let t2 = self.check_expr(&mut args[2])?;
 
-                    // println!("DEBUG: transpose input type: {:?}", t0);
 
                     match t0 {
                         Type::Tensor(_, _) => {}
@@ -1177,8 +1369,7 @@ impl SemanticAnalyzer {
                         });
                     }
 
-                    let t0 = self.check_expr(&args[0])?;
-                    // println!("DEBUG: reshape input type: {:?}", t0);
+                    let t0 = self.check_expr(&mut args[0])?;
                     if !matches!(t0, Type::Tensor(_, _)) {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
@@ -1187,14 +1378,14 @@ impl SemanticAnalyzer {
                     }
 
                     // Allow arg 1 to be tensor/array (old) OR args 1..N to be Int (new)
-                    let t1 = self.check_expr(&args[1])?;
+                    let t1 = self.check_expr(&mut args[1])?;
                     if (matches!(t1, Type::Tensor(_, _)) || matches!(t1, Type::ScalarArray(_, _)))
                         && args.len() == 2
                     {
                         // OK
                     } else {
                         // Varargs mode: All remaining args must be Int
-                        for arg in &args[1..] {
+                        for arg in &mut args[1..] {
                             let t = self.check_expr(arg)?;
                             if !matches!(t, Type::I64 | Type::I32) {
                                 return Err(SemanticError::TypeMismatch {
@@ -1217,7 +1408,7 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let t0 = self.check_expr(&args[0])?;
+                    let t0 = self.check_expr(&mut args[0])?;
                     if !matches!(t0, Type::Tensor(_, _)) {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
@@ -1233,9 +1424,9 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let t0 = self.check_expr(&args[0])?;
-                    let t1 = self.check_expr(&args[1])?;
-                    let t2 = self.check_expr(&args[2])?;
+                    let t0 = self.check_expr(&mut args[0])?;
+                    let t1 = self.check_expr(&mut args[1])?;
+                    let t2 = self.check_expr(&mut args[2])?;
 
                     // Arg 0 must be Tensor
                     match t0 {
@@ -1275,7 +1466,7 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let t0 = self.check_expr(&args[0])?;
+                    let t0 = self.check_expr(&mut args[0])?;
                     return Ok(t0);
                 } else if name == "matmul" {
                     if args.len() != 2 {
@@ -1285,7 +1476,7 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let t0 = self.check_expr(&args[0])?;
+                    let t0 = self.check_expr(&mut args[0])?;
                     return Ok(t0); // Propagate type
                 } else if name == "grad" {
                     if args.len() != 1 {
@@ -1295,7 +1486,7 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let t0 = self.check_expr(&args[0])?;
+                    let t0 = self.check_expr(&mut args[0])?;
                     return Ok(t0);
                 } else if name == "backward" {
                     if args.len() != 1 {
@@ -1381,7 +1572,7 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let _lr_type = self.check_expr(&args[0])?;
+                    let _lr_type = self.check_expr(&mut args[0])?;
                     return Ok(Type::Void);
                 } else if name == "varbuilder_grad" {
                     return Err(SemanticError::FunctionNotFound(
@@ -1395,8 +1586,8 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let t0 = self.check_expr(&args[0])?;
-                    let t1 = self.check_expr(&args[1])?;
+                    let t0 = self.check_expr(&mut args[0])?;
+                    let t1 = self.check_expr(&mut args[1])?;
                     if !matches!(t0, Type::Tensor(_, _)) {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
@@ -1418,8 +1609,8 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let t0 = self.check_expr(&args[0])?;
-                    let t1 = self.check_expr(&args[1])?;
+                    let t0 = self.check_expr(&mut args[0])?;
+                    let t1 = self.check_expr(&mut args[1])?;
                     if !matches!(t0, Type::Tensor(_, _)) {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
@@ -1441,8 +1632,8 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    let t0 = self.check_expr(&args[0])?;
-                    let t1 = self.check_expr(&args[1])?;
+                    let t0 = self.check_expr(&mut args[0])?;
+                    let t1 = self.check_expr(&mut args[1])?;
 
                     // Arg 0: Tensor OR Struct
                     match t0 {
@@ -1466,7 +1657,7 @@ impl SemanticAnalyzer {
                     return Ok(Type::Void);
                 } else if name == "load_weights" {
                     if args.len() == 1 {
-                        let t0 = self.check_expr(&args[0])?;
+                        let t0 = self.check_expr(&mut args[0])?;
                         if !matches!(t0, Type::UserDefined(ref s) if s == "String") {
                             return Err(SemanticError::TypeMismatch {
                                 expected: Type::UserDefined("String".into()),
@@ -1475,8 +1666,8 @@ impl SemanticAnalyzer {
                         }
                         return Ok(Type::Tensor(Box::new(Type::F32), 0));
                     } else if args.len() == 2 {
-                        let t0 = self.check_expr(&args[0])?;
-                        let t1 = self.check_expr(&args[1])?;
+                        let t0 = self.check_expr(&mut args[0])?;
+                        let t1 = self.check_expr(&mut args[1])?;
                         match t0 {
                             Type::UserDefined(ref s) if s != "String" => {}
                             Type::Struct(_) => {}
@@ -1503,6 +1694,7 @@ impl SemanticAnalyzer {
                     }
                 }
 
+
                 if let Some(func) = self.functions.get(name).cloned() {
                     if args.len() != func.args.len() {
                         // func.args is empty in current AST parser stub, need to fix that first to check properly
@@ -1516,7 +1708,7 @@ impl SemanticAnalyzer {
                         }
                     }
                     // Check arg types for function
-                    for (i, arg) in args.iter().enumerate() {
+                    for (i, arg) in args.iter_mut().enumerate() {
                         if i < func.args.len() {
                             let arg_type = self.check_expr(arg)?;
                             let expected_type = &func.args[i].1;
@@ -1541,7 +1733,7 @@ impl SemanticAnalyzer {
                         });
                     }
                     // Check field types
-                    for (i, arg) in args.iter().enumerate() {
+                    for (i, arg) in args.iter_mut().enumerate() {
                         let arg_ty = self.check_expr(arg)?;
                         let required_ty = &struct_def.fields[i].1;
                         if !self.are_types_compatible(required_ty, &arg_ty) {
@@ -1561,8 +1753,8 @@ impl SemanticAnalyzer {
                 if elements.is_empty() {
                     return Ok(Type::Tensor(Box::new(Type::F32), 1)); // Empty tensor?
                 }
-                let first_type = self.check_expr(&elements[0])?;
-                for e in &elements[1..] {
+                let first_type = self.check_expr(&mut elements[0])?;
+                for e in &mut elements[1..] {
                     let t = self.check_expr(e)?;
                     if t != first_type {
                         return Err(SemanticError::TypeMismatch {
@@ -1636,7 +1828,7 @@ impl SemanticAnalyzer {
                 self.enter_scope();
 
                 // 2. Declare loop variables (dimensions) as integers
-                for idx in indices {
+                for idx in indices.iter() {
                     self.declare_variable(idx.clone(), Type::I64)?;
                 }
 
@@ -1668,8 +1860,9 @@ impl SemanticAnalyzer {
             Expr::Block(stmts) => {
                 self.enter_scope();
                 let mut ret_type = Type::Void;
-                for (i, stmt) in stmts.iter().enumerate() {
-                    if i == stmts.len() - 1 {
+                let stmts_len = stmts.len();
+                for (i, stmt) in stmts.iter_mut().enumerate() {
+                    if i == stmts_len - 1 {
                         // If last statement is an expression without semicolon (Expr::Expr), it's the return value
                         if let Stmt::Expr(e) = stmt {
                             ret_type = self.check_expr(e)?;
@@ -1696,8 +1889,9 @@ impl SemanticAnalyzer {
                 // Check Then Block
                 self.enter_scope();
                 let mut then_type = Type::Void;
-                for (i, stmt) in then_block.iter().enumerate() {
-                    if i == then_block.len() - 1 {
+                let then_len = then_block.len();
+                for (i, stmt) in then_block.iter_mut().enumerate() {
+                    if i == then_len - 1 {
                         if let Stmt::Expr(e) = stmt {
                             then_type = self.check_expr(e)?;
                         } else {
@@ -1713,8 +1907,9 @@ impl SemanticAnalyzer {
                 let else_type = if let Some(else_stmts) = else_block {
                     self.enter_scope();
                     let mut e_type = Type::Void;
-                    for (i, stmt) in else_stmts.iter().enumerate() {
-                        if i == else_stmts.len() - 1 {
+                    let else_len = else_stmts.len();
+                    for (i, stmt) in else_stmts.iter_mut().enumerate() {
+                        if i == else_len - 1 {
                             if let Stmt::Expr(e) = stmt {
                                 e_type = self.check_expr(e)?;
                             } else {
@@ -1782,6 +1977,11 @@ impl SemanticAnalyzer {
                 Ok(expr_ty)
             }
             Expr::StaticMethodCall(type_name, method_name, args) => {
+                let resolved_type = self.resolve_symbol_name(type_name);
+                if *type_name != resolved_type {
+                    *type_name = resolved_type.clone();
+                }
+
                 // Check if type exists (built-in or user-defined struct)
                 // For now, only struct or built-in classes like File, Path, etc. use this.
                 // 1. Check if it is a built-in static method (e.g. File::open, Path::new)
@@ -1789,7 +1989,7 @@ impl SemanticAnalyzer {
                 // 2. Check if it is a user-defined struct method (e.g. Linear::new)
 
                 // Check arguments first
-                for arg in args {
+                for arg in args.iter_mut() {
                     self.check_expr(arg)?;
                 }
 
@@ -1807,7 +2007,7 @@ impl SemanticAnalyzer {
                             found: args.len(),
                         });
                     }
-                    for (arg_val, (_, arg_type)) in args.iter().zip(&func.args) {
+                    for (arg_val, (_, arg_type)) in args.iter_mut().zip(&func.args) {
                         let val_type = self.check_expr(arg_val)?;
                         if !self.are_types_compatible(&val_type, arg_type) {
                             return Err(SemanticError::TypeMismatch {
@@ -1816,7 +2016,20 @@ impl SemanticAnalyzer {
                             });
                         }
                     }
-                    return Ok(func.return_type);
+                    // Resolve return type: if it's Self or short name, use method's impl target type
+                    let resolved_return = match &func.return_type {
+                        Type::UserDefined(ret_name) => {
+                            // If the return type is 'Self' or the short struct name, 
+                            // replace with the fully qualified type_name (which was already resolved)
+                            if ret_name == "Self" || ret_name == type_name.split("::").last().unwrap_or(type_name) {
+                                Type::UserDefined(type_name.clone())
+                            } else {
+                                func.return_type.clone()
+                            }
+                        }
+                        _ => func.return_type.clone(),
+                    };
+                    return Ok(resolved_return);
                 }
 
                 // Fallback for builtins
@@ -1866,9 +2079,9 @@ impl SemanticAnalyzer {
                                 found: args.len(),
                             });
                         }
-                        let _ = self.check_expr(&args[0])?;
+                        let _ = self.check_expr(&mut args[0])?;
                         if args.len() == 2 {
-                            let t1 = self.check_expr(&args[1])?;
+                            let t1 = self.check_expr(&mut args[1])?;
                             if !matches!(t1, Type::Bool) {
                                 return Err(SemanticError::TypeMismatch {
                                     expected: Type::Bool,
@@ -1886,7 +2099,7 @@ impl SemanticAnalyzer {
                                 found: args.len(),
                             });
                         }
-                        let t0 = self.check_expr(&args[0])?;
+                        let t0 = self.check_expr(&mut args[0])?;
                         if !matches!(t0, Type::UserDefined(ref s) if s == "String") {
                             return Err(SemanticError::TypeMismatch {
                                 expected: Type::UserDefined("String".into()),
@@ -1894,9 +2107,9 @@ impl SemanticAnalyzer {
                             });
                         }
                         if args.len() == 2 {
-                            let _ = self.check_expr(&args[1])?;
+                            let _ = self.check_expr(&mut args[1])?;
                         } else {
-                            for arg in &args[1..] {
+                            for arg in &mut args[1..] {
                                 let t = self.check_expr(arg)?;
                                 if !matches!(t, Type::I64 | Type::I32) {
                                     return Err(SemanticError::TypeMismatch {
@@ -1916,13 +2129,38 @@ impl SemanticAnalyzer {
                                 found: args.len(),
                             });
                         }
-                        let _ = self.check_expr(&args[0])?;
+                        let _ = self.check_expr(&mut args[0])?;
                         Ok(Type::Tensor(Box::new(Type::F32), 0))
                     }
-                    _ => Err(SemanticError::FunctionNotFound(format!(
-                        "{}::{}",
-                        type_name, method_name
-                    ))),
+                    _ => {
+                        // Try as a module function: type_name::method_name might be a qualified function call
+                        let full_name = format!("{}::{}", type_name, method_name);
+                        if let Some(func) = self.functions.get(&full_name).cloned() {
+                            // Check arguments
+                            if args.len() != func.args.len() && !func.args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: full_name,
+                                    expected: func.args.len(),
+                                    found: args.len(),
+                                });
+                            }
+                            for (i, arg) in args.iter_mut().enumerate() {
+                                if i < func.args.len() {
+                                    let arg_type = self.check_expr(arg)?;
+                                    let expected_type = &func.args[i].1;
+                                    if !self.are_types_compatible(expected_type, &arg_type) {
+                                        return Err(SemanticError::TypeMismatch {
+                                            expected: expected_type.clone(),
+                                            found: arg_type,
+                                        });
+                                    }
+                                }
+                            }
+                            Ok(func.return_type.clone())
+                        } else {
+                            Err(SemanticError::FunctionNotFound(full_name))
+                        }
+                    }
                 }
             }
             Expr::FieldAccess(obj, field_name) => {
@@ -2018,7 +2256,7 @@ impl SemanticAnalyzer {
                     None
                 };
 
-                if let Some(func) = method_def {
+                if let Some(mut func) = method_def {
                     let implicit_self = !func.args.is_empty() && func.args[0].0 == "self";
                     let expected_arg_count = if implicit_self {
                         func.args.len() - 1
@@ -2034,7 +2272,7 @@ impl SemanticAnalyzer {
                         });
                     }
 
-                    let mut func_arg_iter = func.args.iter();
+                    let mut func_arg_iter = func.args.iter_mut();
                     if implicit_self {
                         let (_, self_type) = func_arg_iter.next().unwrap();
                         if !self.are_types_compatible(self_type, &obj_type) {
@@ -2046,7 +2284,7 @@ impl SemanticAnalyzer {
                     }
 
                     // Check remaining args
-                    for (arg_expr, (_, expected_type)) in args.iter().zip(func_arg_iter) {
+                    for (arg_expr, (_, expected_type)) in args.iter_mut().zip(func_arg_iter) {
                         let arg_type = self.check_expr(arg_expr)?;
                         if !self.are_types_compatible(expected_type, &arg_type) {
                             return Err(SemanticError::TypeMismatch {
@@ -2077,7 +2315,7 @@ impl SemanticAnalyzer {
                                     found: args.len(),
                                 });
                             }
-                            self.check_expr(&args[0])?;
+                            self.check_expr(&mut args[0])?;
                             Ok(Type::Void)
                         }
                         ("File", "close") => {
@@ -2098,7 +2336,7 @@ impl SemanticAnalyzer {
                                     found: args.len(),
                                 });
                             }
-                            self.check_expr(&args[0])?;
+                            self.check_expr(&mut args[0])?;
                             Ok(Type::UserDefined("Path".to_string()))
                         }
                         ("Path", "exists") => {
@@ -2124,9 +2362,9 @@ impl SemanticAnalyzer {
                                 });
                             }
                             // Arg 0: shape
-                            let _t0 = self.check_expr(&args[0])?;
+                            let _t0 = self.check_expr(&mut args[0])?;
                             // Arg 1: requires_grad
-                            let t1 = self.check_expr(&args[1])?;
+                            let t1 = self.check_expr(&mut args[1])?;
 
                             if !matches!(t1, Type::Bool) {
                                 return Err(SemanticError::TypeMismatch {
@@ -2145,7 +2383,7 @@ impl SemanticAnalyzer {
                                     found: args.len(),
                                 });
                             }
-                            let t0 = self.check_expr(&args[0])?;
+                            let t0 = self.check_expr(&mut args[0])?;
                             if !matches!(t0, Type::UserDefined(ref s) if s == "String") {
                                 return Err(SemanticError::TypeMismatch {
                                     expected: Type::UserDefined("String".into()),
@@ -2154,9 +2392,9 @@ impl SemanticAnalyzer {
                             }
                             // Remaining args must be Ints (if varargs) OR a single Tensor/Array
                             if args.len() == 2 {
-                                let _ = self.check_expr(&args[1])?;
+                                let _ = self.check_expr(&mut args[1])?;
                             } else {
-                                for arg in &args[1..] {
+                                for arg in &mut args[1..] {
                                     let t = self.check_expr(arg)?;
                                     if !matches!(t, Type::I64 | Type::I32) {
                                         return Err(SemanticError::TypeMismatch {
@@ -2176,7 +2414,7 @@ impl SemanticAnalyzer {
                                     found: args.len(),
                                 });
                             }
-                            let _ = self.check_expr(&args[0])?;
+                            let _ = self.check_expr(&mut args[0])?;
                             Ok(Type::Tensor(Box::new(Type::F32), 0))
                         }
                         ("Path", "is_dir") => {

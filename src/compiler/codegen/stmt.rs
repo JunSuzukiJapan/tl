@@ -170,6 +170,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     pub(crate) fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         match stmt {
+            Stmt::Use { .. } => Ok(()),
             Stmt::FieldAssign { obj, field, value } => {
                 let (obj_val, obj_ty) = self.compile_expr(obj)?;
                 let struct_name = match obj_ty {

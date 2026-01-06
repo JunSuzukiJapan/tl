@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand};
 use inkwell::context::Context as InkwellContext;
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "tlc")]
@@ -51,14 +51,12 @@ fn main() -> Result<()> {
     match &cli.command {
         Commands::Check { file } => {
             println!("Checking file: {:?}", file);
-            let content = fs::read_to_string(file)
-                .with_context(|| format!("Failed to read file {:?}", file))?;
-            match compiler::parser::parse(&content) {
-                Ok(ast) => {
+            match load_module_recursive(file.clone()) {
+                Ok(mut ast) => {
                     println!("Syntax OK");
                     // Perform Semantic Analysis
                     let mut analyzer = SemanticAnalyzer::new();
-                    match analyzer.check_module(&ast) {
+                    match analyzer.check_module(&mut ast) {
                         Ok(_) => println!("Semantics OK"),
                         Err(e) => {
                             eprintln!("Semantic check failed: {}", e);
@@ -77,21 +75,17 @@ fn main() -> Result<()> {
             std::env::set_var("TL_DEVICE", device);
             crate::runtime::force_link();
             println!("Running file: {:?}", file);
-            let content = fs::read_to_string(file)
-                .with_context(|| format!("Failed to read file {:?}", file))?;
-
-            // 1. Parser
-            let ast = match compiler::parser::parse(&content) {
+            let mut ast = match load_module_recursive(file.clone()) {
                 Ok(ast) => ast,
                 Err(e) => {
-                    eprintln!("Parse error: {}", e);
+                    eprintln!("Load error: {}", e);
                     std::process::exit(1);
                 }
             };
 
             // 2. Semantics
             let mut analyzer = SemanticAnalyzer::new();
-            if let Err(e) = analyzer.check_module(&ast) {
+            if let Err(e) = analyzer.check_module(&mut ast) {
                 eprintln!("Semantic error: {}", e);
                 std::process::exit(1);
             }
@@ -133,21 +127,17 @@ fn main() -> Result<()> {
         }
         Commands::Build { file, output: _ } => {
             println!("Building file: {:?}", file);
-            let content = fs::read_to_string(file)
-                .with_context(|| format!("Failed to read file {:?}", file))?;
-
-            // 1. Parser
-            let ast = match compiler::parser::parse(&content) {
+            let mut ast = match load_module_recursive(file.clone()) {
                 Ok(ast) => ast,
                 Err(e) => {
-                    eprintln!("Parse error: {}", e);
+                    eprintln!("Load error: {}", e);
                     std::process::exit(1);
                 }
             };
 
             // 2. Semantics
             let mut analyzer = SemanticAnalyzer::new();
-            if let Err(e) = analyzer.check_module(&ast) {
+            if let Err(e) = analyzer.check_module(&mut ast) {
                 eprintln!("Semantic error: {}", e);
                 std::process::exit(1);
             }
@@ -265,4 +255,33 @@ fn is_trivially_true(body: &[compiler::ast::Atom]) -> bool {
         return true;
     }
     false
+}
+
+fn load_module_recursive(path: PathBuf) -> Result<compiler::ast::Module> {
+    let content = fs::read_to_string(&path)
+        .with_context(|| format!("Failed to read file {:?}", path))?;
+
+    let mut module = compiler::parser::parse(&content)
+        .with_context(|| format!("Failed to parse file {:?}", path))?;
+
+    let parent_dir = path.parent().unwrap_or(Path::new("."));
+
+    for import_name in &module.imports {
+        // Resolve import path
+        // If `mod foo;` in `src/main.tl`, look for `src/foo.tl`
+        let import_path = parent_dir.join(format!("{}.tl", import_name));
+
+        if !import_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Module {} not found at {:?}",
+                import_name,
+                import_path
+            ));
+        }
+
+        let submodule = load_module_recursive(import_path)?;
+        module.submodules.insert(import_name.clone(), submodule);
+    }
+
+    Ok(module)
 }
