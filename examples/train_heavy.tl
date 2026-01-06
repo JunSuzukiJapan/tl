@@ -196,7 +196,7 @@ fn train_step(model: GPTHeavy, lr: f32, i: i64, j: i64) -> GPTHeavy {
     let loss = cross_entropy(logits_flat, Y_flat);
     
     backward(loss);
-    model.step(lr);
+    model = model.step(lr);
     return model;
 }
 

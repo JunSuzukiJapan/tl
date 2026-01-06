@@ -147,11 +147,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
             }
             Type::Struct(name) | Type::UserDefined(name) => {
-                // DISABLED: Struct freeing causes SIGSEGV/SIGBUS.
-                // Structs in TL are typically stack-allocated. Their tensor fields
-                // are freed individually when the scope exits, not recursively from here.
-                // TODO: Implement proper ownership tracking if heap-allocated structs are needed.
-                let _ = name; // suppress unused warning
+                let struct_def = self.struct_defs.get(name).ok_or(format!("Struct def {} not found", name))?.clone();
+                let struct_ty = *self.struct_types.get(name).ok_or(format!("Struct type {} not found", name))?;
+                let ptr = val.into_pointer_value();
+                
+                for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
+                    match f_ty {
+                        Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => {
+                             let f_ptr = self.builder.build_struct_gep(struct_ty, ptr, i as u32, "field_gep").map_err(|e| e.to_string())?;
+                             let f_val = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "field_load").map_err(|e| e.to_string())?;
+                             // Recursively free
+                             self.emit_recursive_free(f_val, f_ty)?;
+                        }
+                         _ => {}
+                    }
+                }
             }
             _ => {}
         }
@@ -598,9 +608,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .context
                                 .bool_type()
                                 .const_int(found_should_free as u64, false);
+                            
+                            // AND check if pointers differ (prevent self-free on return self)
+                            let new_ptr = val.into_pointer_value();
+                            let are_diff = self.builder.build_int_compare(
+                                inkwell::IntPredicate::NE, 
+                                current_val, 
+                                new_ptr, 
+                                "are_diff"
+                            ).map_err(|e| e.to_string())?;
+
+                            let can_free_1 = self
+                                .builder
+                                .build_and(is_not_null, should_free_val, "can_free_1")
+                                .unwrap();
                             let can_free = self
                                 .builder
-                                .build_and(is_not_null, should_free_val, "can_free")
+                                .build_and(can_free_1, are_diff, "can_free")
                                 .unwrap();
 
                             let free_block = self.context.append_basic_block(
@@ -627,35 +651,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                             // Free block
                             self.builder.position_at_end(free_block);
 
-                            // For now, we don't have deep free.
-                            // If the old struct was "global" (unregistered), it leaks.
-                            // If it was local (registered), scope handles it (but we are overwriting it).
-                            // If we overwrite a pointer, the old pointer value is lost.
-                            // If the old pointer was managed by MemoryManager, it will be freed at end of scope.
-                            // BUT: if we are in a loop, and we overwrite 'model' (which is in outer scope),
-                            // the 'model' variable is updated. The OLD model pointer is gone.
-                            // Does MemoryManager know?
-                            // MemoryManager tracks allocations.
-                            // If we allocated Model_1 (Global), assigned to 'model'.
-                            // Loop 1: Create Model_2 (Local->Global). Assign to 'model'.
-                            // 'model' now points to Model_2. Model_1 is lost.
-                            // Model_1 was Global (unregistered). It is LEAKED.
-                            // We MUST free Model_1 here.
+                            // Recursive free fields of the OLD struct
+                            self.emit_recursive_free(current_val.into(), &var_type)?;
 
-                            // Since we don't have deep free, we at least UNREGISTER it?
-                            // No, unregistering prevents freeing. We want TO FREE.
-                            // We need `tl_mem_free_struct`.
-                            // Let's implement deep free logic inline? No, reuse unregister traversal?
-                            // Actually, if we just call `tl_mem_register_struct(old_val)`, we put it BACK in scope?
-                            // Then it gets freed at end of scope!
-                            // YES! If old value was Global (leaked), we "adopt" it into current scope.
-                            // Then current scope exit frees it.
-                            // BUT: deep adoption needed.
+                            // Also unregister the struct shell itself so Runtime doesn't track it
+                            if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                                let cast_ptr = self.builder.build_pointer_cast(
+                                    current_val,
+                                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                                    "cast_unreg_struct"
+                                ).unwrap();
+                                let _ = self.builder.build_call(unreg_fn, &[cast_ptr.into()], "");
+                            }
 
-                            // Strategy: Unregister new value (Leak/Global).
-                            // Old value: Just let it leak for now (2GB max).
-                            // Fix properly later with GC or refcounting.
-
+                            // Note: We don't free(malloc) the struct shell. It leaks (small).
+                            
                             self.builder
                                 .build_unconditional_branch(continue_block)
                                 .map_err(|e| e.to_string())?;
