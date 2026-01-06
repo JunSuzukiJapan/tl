@@ -809,6 +809,10 @@ skip_free31:                                      ; preds = %free_old_val30, %sk
   %unreg_field_1 = getelementptr inbounds %Linear, ptr %s32, i32 0, i32 1
   %field_val33 = load ptr, ptr %unreg_field_1, align 8
   call void @tl_mem_unregister(ptr %field_val33)
+  %tensor_to_free = load ptr, ptr %gW, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free)
+  %tensor_to_free34 = load ptr, ptr %gb, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free34)
   call void @tl_mem_exit_scope()
   ret ptr %s32
 }
@@ -919,6 +923,8 @@ skip_free:                                        ; preds = %free_old_val, %entr
   %unreg_field_0 = getelementptr inbounds %Embedding, ptr %s13, i32 0, i32 0
   %field_val = load ptr, ptr %unreg_field_0, align 8
   call void @tl_mem_unregister(ptr %field_val)
+  %tensor_to_free = load ptr, ptr %g, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free)
   call void @tl_mem_exit_scope()
   ret ptr %s13
 }
@@ -1056,6 +1062,8 @@ skip_free:                                        ; preds = %free_old_val, %entr
   %unreg_field_1 = getelementptr inbounds %LayerNorm, ptr %s13, i32 0, i32 1
   %field_val14 = load ptr, ptr %unreg_field_1, align 8
   call void @tl_mem_unregister(ptr %field_val14)
+  %tensor_to_free = load ptr, ptr %gb, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free)
   call void @tl_mem_exit_scope()
   ret ptr %s13
 }
@@ -1186,6 +1194,14 @@ entry:
   %call_method17 = call ptr @tl_Linear_forward(ptr %p_proj, ptr %y16)
   call void @tl_mem_register_tensor(ptr %call_method17)
   call void @tl_mem_unregister(ptr %call_method17)
+  %tensor_to_free = load ptr, ptr %y, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free)
+  %tensor_to_free18 = load ptr, ptr %k, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free18)
+  %tensor_to_free19 = load ptr, ptr %v, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free19)
+  %tensor_to_free20 = load ptr, ptr %q, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free20)
   call void @tl_mem_exit_scope()
   ret ptr %call_method17
 }
@@ -1596,6 +1612,8 @@ entry:
   %binop_res15 = call ptr @tl_tensor_add(ptr %x9, ptr %call_method14)
   call void @tl_tensor_free(ptr %call_method14)
   call void @tl_mem_unregister(ptr %binop_res15)
+  %tensor_to_free = load ptr, ptr %x8, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free)
   call void @tl_mem_exit_scope()
   ret ptr %binop_res15
 }
@@ -2300,6 +2318,16 @@ entry:
   call void @tl_tensor_free(ptr %call_method44)
   call void @tl_mem_register_tensor(ptr %call_method45)
   call void @tl_mem_unregister(ptr %call_method45)
+  %tensor_to_free = load ptr, ptr %pos_data, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free)
+  %tensor_to_free46 = load ptr, ptr %x40, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free46)
+  %tensor_to_free47 = load ptr, ptr %pos_emb, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free47)
+  %tensor_to_free48 = load ptr, ptr %tok_emb, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free48)
+  %tensor_to_free49 = load ptr, ptr %pos, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free49)
   call void @tl_mem_exit_scope()
   ret ptr %call_method45
 }
@@ -3486,6 +3514,24 @@ entry:
   %unreg_field_1384 = getelementptr inbounds %Linear, ptr %field_val381, i32 0, i32 1
   %field_val385 = load ptr, ptr %unreg_field_1384, align 8
   call void @tl_mem_unregister(ptr %field_val385)
+  %tensor_to_free = load ptr, ptr %X, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free)
+  %tensor_to_free386 = load ptr, ptr %Y_flat, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free386)
+  %tensor_to_free387 = load ptr, ptr %data, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free387)
+  %struct_to_free = load ptr, ptr %_discard_0, align 8
+  call void @tl_mem_unregister(ptr %struct_to_free)
+  %tensor_to_free388 = load ptr, ptr %logits, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free388)
+  %tensor_to_free389 = load ptr, ptr %Y, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free389)
+  %tensor_to_free390 = load ptr, ptr %target, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free390)
+  %tensor_to_free391 = load ptr, ptr %logits_flat, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free391)
+  %tensor_to_free392 = load ptr, ptr %loss, align 8
+  call void @tl_tensor_free(ptr %tensor_to_free392)
   call void @tl_mem_exit_scope()
   ret ptr %model158
 }
