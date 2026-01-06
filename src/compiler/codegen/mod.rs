@@ -76,33 +76,23 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
-    fn emit_all_scopes_cleanup(&self) {
-        if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
-            // Only clean up scopes pushed WITHIN the current function
-            for _ in 0..(self.variables.len() - self.fn_entry_scope_depth) {
-                self.builder.build_call(f, &[], "").unwrap();
-            }
-        }
-    }
-
-    // Emit cleanup for the current scope (without popping).
-    pub(crate) fn emit_top_scope_cleanup(&self) {
-        // Generate recursive free for all struct variables in current scope
-        if let Some(scope) = self.variables.last() {
+    // Helper to generate free calls for variables in a specific scope index
+    fn emit_cleanup_vars_in_scope(&self, scope_idx: usize) {
+        if let Some(scope) = self.variables.get(scope_idx) {
             for (_name, (val_enum, ty, should_free)) in scope {
                  if *should_free {
                      if matches!(ty, Type::Struct(_) | Type::UserDefined(_)) {
                          // Load the struct pointer from the stack variable (Alloca)
                          let ptr = val_enum.into_pointer_value();
                          let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                         // We must check if the pointer stored in alloca is not null (unlikely for Let, but possible if modified)
+                         // We must check if the pointer stored in alloca is not null
                          if let Ok(struct_val) = self.builder.build_load(load_type, ptr, "struct_to_free") {
                              // Recursive free handles null check
                              let _ = self.emit_recursive_free(struct_val, ty);
 
                              // CRITICAL: Unregister from MemoryManager to prevent double-free via tl_mem_exit_scope
                              if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
-                                 self.builder.build_call(unreg_fn, &[struct_val.into()], "").unwrap();
+                                 let _ = self.builder.build_call(unreg_fn, &[struct_val.into()], "");
                              }
                          }
                      } else if matches!(ty, Type::Tensor(_, _)) {
@@ -115,6 +105,31 @@ impl<'ctx> CodeGenerator<'ctx> {
                  }
             }
         }
+    }
+
+    fn emit_all_scopes_cleanup(&self) {
+        if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
+            // Only clean up scopes pushed WITHIN the current function
+            // Iterate in REVERSE order (from inner to outer)
+            let start = self.fn_entry_scope_depth;
+            let end = self.variables.len();
+            
+            for i in (start..end).rev() {
+                // 1. Emit cleanup for variables in this scope
+                self.emit_cleanup_vars_in_scope(i);
+                
+                // 2. Call runtime exit_scope
+                self.builder.build_call(f, &[], "").unwrap();
+            }
+        }
+    }
+
+    // Emit cleanup for the current scope (without popping).
+    pub(crate) fn emit_top_scope_cleanup(&self) {
+        if self.variables.is_empty() { return; }
+        
+        // Cleanup current scope
+        self.emit_cleanup_vars_in_scope(self.variables.len() - 1);
 
         if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
             self.builder.build_call(f, &[], "").unwrap();
