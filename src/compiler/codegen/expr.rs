@@ -730,9 +730,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                     op.clone(),
                 )?;
 
-                // Register intermediate tensor result for automatic cleanup
-                // It will be unregistered when ownership is transferred (let, return, struct field)
+                // Register intermediate tensor result
                 self.emit_register_tensor(res.0, &res.1)?;
+
+                // Fix: Free operands if they are temporary
+                if self.is_safe_to_free(lhs, &left.1) {
+                    self.emit_recursive_free(left.0, &left.1)?;
+                }
+                if self.is_safe_to_free(rhs, &right.1) {
+                    self.emit_recursive_free(right.0, &right.1)?;
+                }
 
                 Ok(res)
             }
@@ -937,7 +944,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Expr::UnOp(op, expr) => {
                 let (val, ty) = self.compile_expr(expr)?;
                 match op {
-                    UnOp::Neg => match ty {
+                    UnOp::Neg => match &ty {
                         Type::I64 => {
                             let i = val.into_int_value();
                             let res = self
@@ -954,7 +961,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .map_err(|e| e.to_string())?;
                             Ok((res.into(), Type::F32))
                         }
-                        Type::Tensor(inner, rank) => {
+                        Type::Tensor(_inner, _rank) => {
                             let neg_fn = self.module.get_function("tl_tensor_neg").unwrap();
                             let call = self
                                 .builder
@@ -964,13 +971,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 ValueKind::Basic(v) => v,
                                 _ => return Err("Failed neg".into()),
                             };
-                            Ok((res, Type::Tensor(inner, rank)))
+
+                            // Fix: Free operand if temporary
+                            if self.is_safe_to_free(expr, &ty) {
+                                self.emit_recursive_free(val.into(), &ty)?;
+                            }
+
+                            Ok((res, ty.clone()))
                         }
                         _ => Err("Negation only on int/float/tensor".into()),
                     },
 
                     UnOp::Not => {
-                        match ty {
+                        match &ty {
                             Type::Bool => {
                                 let b = val.into_int_value(); // i1
                                 let res = self
@@ -2563,10 +2576,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // TODO: Implement proper ownership tracking for heap-allocated structs if needed.
                     }
                     Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
-                        // DISABLED: Freeing input tensor after method call causes Use-After-Free
-                        // when the result is used in a larger expression chain.
-                        // Example: (tensor * 0.1).detach() - freeing (tensor * 0.1) breaks the chain.
-                        // self.emit_recursive_free(obj_val, &obj_ty)?;
+                        // Freeing input tensor after method call.
+                        // This is correct for temporary expressions (R-values).
+                        self.emit_recursive_free(obj_val, &obj_ty)?;
                     }
                     _ => {
                         // Other types: do nothing

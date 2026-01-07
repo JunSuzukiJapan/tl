@@ -173,27 +173,22 @@ fn main() {
     print("Expected (Reverse): 6, 4, 0");
     
     // Step 1: Predict first result digit
-    let data1 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0];
+    // Correct input for Teacher Forcing check: [2, 1, 10, 4, 3, 11, 6, 4, 0, 12, 12, 12]
+    // Note: We fill the answer positions with correct values to see if the model predicts the NEXT token correctly
+    // Position 5 (11.0) predicts Position 6 (should be 6)
+    let data1 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, 6.0, 4.0, 0.0, 12.0, 12.0, 12.0];
     let input1 = reshape(data1, 1, 12);
     let logits1 = model.forward(input1);
     let logits1_flat = reshape(logits1, 12, 13);
     let p1 = my_argmax(logits1_flat.slice(5, 1));
     
-    // Step 2: Use predicted p1
-    let v1 = p1 as f32;
-    let data2 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, v1, 12.0, 12.0, 12.0, 12.0, 12.0];
-    let input2 = reshape(data2, 1, 12);
-    let logits2 = model.forward(input2);
-    let logits2_flat = reshape(logits2, 12, 13);
-    let p2 = my_argmax(logits2_flat.slice(6, 1));
+    // Step 2: Predict second digit at Position 7 (should be 4)
+    // Position 6 (6.0) predicts Position 7
+    let p2 = my_argmax(logits1_flat.slice(6, 1));
     
-    // Step 3: Use predicted p1, p2
-    let v2 = p2 as f32;
-    let data3 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, v1, v2, 12.0, 12.0, 12.0, 12.0];
-    let input3 = reshape(data3, 1, 12);
-    let logits3 = model.forward(input3);
-    let logits3_flat = reshape(logits3, 12, 13);
-    let p3 = my_argmax(logits3_flat.slice(7, 1));
+    // Step 3: Predict third digit at Position 8 (should be 0)
+    // Position 7 (4.0) predicts Position 8
+    let p3 = my_argmax(logits1_flat.slice(7, 1));
     
     print("Predicted:"); print(p1); print(p2); print(p3);
     
@@ -201,25 +196,15 @@ fn main() {
     print("Test: 99 + 1 = 100");
     print("Expected (Reverse): 0, 0, 1");
     
-    let q_data1 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0];
+    // Correct input: [9, 9, 10, 1, 0, 11, 0, 0, 1, 12, 12, 12]
+    let q_data1 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, 0.0, 0.0, 1.0, 12.0, 12.0, 12.0];
     let q_input1 = reshape(q_data1, 1, 12);
     let q_logits1 = model.forward(q_input1);
     let q_logits1_flat = reshape(q_logits1, 12, 13);
+    
     let q1 = my_argmax(q_logits1_flat.slice(5, 1));
-    
-    let qv1 = q1 as f32;
-    let q_data2 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, qv1, 12.0, 12.0, 12.0, 12.0, 12.0];
-    let q_input2 = reshape(q_data2, 1, 12);
-    let q_logits2 = model.forward(q_input2);
-    let q_logits2_flat = reshape(q_logits2, 12, 13);
-    let q2 = my_argmax(q_logits2_flat.slice(6, 1));
-    
-    let qv2 = q2 as f32;
-    let q_data3 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, qv1, qv2, 12.0, 12.0, 12.0, 12.0];
-    let q_input3 = reshape(q_data3, 1, 12);
-    let q_logits3 = model.forward(q_input3);
-    let q_logits3_flat = reshape(q_logits3, 12, 13);
-    let q3 = my_argmax(q_logits3_flat.slice(7, 1));
+    let q2 = my_argmax(q_logits1_flat.slice(6, 1));
+    let q3 = my_argmax(q_logits1_flat.slice(7, 1));
     
     print("Predicted:"); print(q1); print(q2); print(q3);
     

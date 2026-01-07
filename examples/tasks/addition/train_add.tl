@@ -293,18 +293,28 @@ fn train_epoch(model: GPT, lr: f32, epoch: i64) -> GPT {
     return model;
 }
 
+fn get_memory() -> i64 {
+    return tl_get_memory_mb();
+}
+
 fn main() {
     let vocab_size = 13;
     let d_model = 128; 
     let model = GPT::new(vocab_size, d_model);
     
     let lr = 0.0005;
-    let epochs = 30;
+    let epochs = 100;
 
-    print("Training 2-digit addition (Explicit Implementation)");
+    print("Training 2-digit addition (Explicit Implementation) - 100 Epochs");
 
     for epoch in range(0, epochs) {
         model = train_epoch(model, lr, epoch);
+        if epoch - ((epoch / 5) * 5) == 0 {
+             let mem = get_memory();
+             print("Epoch:"); print(epoch);
+             print("Mem(MB):"); print(mem);
+             save_all_params(model, "model_add.safetensors");
+        }
     }
     
     print("Training Complete!");

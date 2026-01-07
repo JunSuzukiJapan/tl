@@ -827,15 +827,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Handle assignment operator (e.g., +=, -=, =)
                 let final_val = match op {
                     AssignOp::Assign => {
-                        // Free old value if it is a Struct
-                        if matches!(var_type, Type::Struct(_) | Type::UserDefined(_)) {
+                        // Free old value if it is a Struct OR Tensor
+                        if matches!(
+                            var_type,
+                            Type::Struct(_) | Type::UserDefined(_) | Type::Tensor(_, _)
+                        ) {
                             let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                             let current_val = self
                                 .builder
                                 .build_load(
                                     load_type,
                                     var_ptr.into_pointer_value(),
-                                    "old_struct_to_free",
+                                    "old_val_to_free",
                                 )
                                 .map_err(|e| e.to_string())?
                                 .into_pointer_value();
