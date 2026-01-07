@@ -64,6 +64,27 @@ When a variable is shadowed (`let x = ...; let x = ...;`), the old variable's ha
 #### D. Structs & Vectors
 - **Recursive Free**: When a container (Struct or Vec) is released, the runtime recursively iterates through its fields/elements and calls **Release** on them.
 
+### 4. Structure Memory Management Strategy
+
+**Allocation**:
+- Structs are allocated on the heap via `malloc` but are **not refcounted** in the same way as tensors. They are simple Containers.
+- However, Structs *containing* Tensors act as "Owners" of those tensors.
+
+**Lifecycle**:
+1.  **Creation (`StructInit`)**:
+    -   Memory is allocated (`malloc`).
+    -   Fields are populated. If a field is a Tensor, the struct **Acquires** it (Ref += 1) via `emit_deep_clone`.
+    -   The Struct pointer is registered to the Scope (`tl_mem_register_struct`).
+
+2.  **Usage**:
+    -   Passed by pointer.
+    -   Function Returns: When returning a struct, the compiler performs a **Shallow Copy** of the fields to a pre-allocated return slot (SRET). Since it's a copy of the *container* but the *content pointers* remain the same, we do NOT Acquire/Release the fields again during return to avoid overhead, relying on the caller to manage the new container instance.
+
+3.  **Destruction**:
+    -   When a struct goes out of scope, the runtime calls `free_struct`.
+    -   **Recursive Free**: Crucially, this function iterates over all fields. If a field is a Tensor or another Struct, it calls `release` or `free` on it.
+    -   `free(struct_ptr)` is called last.
+
 ---
 
 ## [Japanese] メモリ管理戦略
@@ -123,3 +144,25 @@ TensorLogicは、**参照カウント (Reference Counting)** と **スコープ�
 
 #### D. 構造体とベクタ
 - **再帰的解放**: コンテナ（構造体やVec）が解放される際、ランタイムはそのフィールドや要素を再帰的に走査し、それぞれの要素に対して **Release** を呼び出します。
+
+### 4. 構造体のメモリ管理戦略
+
+**割り当て (Allocation)**:
+- 構造体は `malloc` によってヒープに割り当てられますが、テンソルのような **参照カウント管理は行われません**。これらは単なるコンテナとして扱われます。
+- ただし、テンソルを *含む* 構造体は、それらのテンソルの「所有者」として機能します。
+
+**ライフサイクル**:
+
+1.  **作成 (`StructInit`)**:
+    -   メモリが割り当てられます (`malloc`)。
+    -   フィールドが埋められます。フィールドがテンソルである場合、構造体はそれを **Acquire** (Ref += 1) します (`emit_deep_clone` 経由)。これにより、テンソルは構造体が存在する限り生存します。
+    -   構造体自体のポインタがスコープに登録されます (`tl_mem_register_struct`)。
+
+2.  **使用**:
+    -   ポインタ渡しで関数に渡されます。
+    -   **関数戻り値**: 構造体を返す際、コンパイラは呼び出し元が確保した戻り値用スロット (SRET) にフィールドの **シャローコピー (Shallow Copy)** を行います。コンテナは複製されますが、中身のポインタ（テンソル）は同じものを指すため、戻り値処理中に再度の Acquire/Release は行いません（呼び出し元が新しいコンテナインスタンスを管理します）。
+
+3.  **破棄 (Destruction)**:
+    -   構造体がスコープを抜ける際、ランタイムは `free_struct` を呼び出します。
+    -   **再帰的解放 (Recursive Free)**: 重要な点として、この関数はすべてのフィールドを走査します。フィールドがテンソルや別の構造体である場合、それらに対して `release` または `free` を呼び出します。
+    -   最後に `free(struct_ptr)` が呼び出され、コンテナ自体のメモリが解放されます。
