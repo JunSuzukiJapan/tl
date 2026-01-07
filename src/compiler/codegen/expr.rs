@@ -5,20 +5,6 @@ use inkwell::values::*;
 use std::collections::HashMap;
 
 impl<'ctx> CodeGenerator<'ctx> {
-    fn is_temporary_expr(&self, expr: &Expr) -> bool {
-        match expr {
-            Expr::BinOp(_, _, _)
-            | Expr::UnOp(_, _)
-            | Expr::FnCall(_, _)
-            | Expr::MethodCall(_, _, _)
-            | Expr::StaticMethodCall(_, _, _)
-            | Expr::StructInit(_, _)
-            | Expr::As(_, _)
-            | Expr::TensorLiteral(_) => true,
-            _ => false,
-        }
-    }
-
     pub(crate) fn is_safe_to_free(&self, expr: &Expr, ty: &Type) -> bool {
         match ty {
             Type::Tensor(_, _) => {
@@ -84,38 +70,6 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     /// Unregister a tensor from the memory manager (ownership transfer)
     /// This should be called when a tensor is moved to a variable, struct field, or return value
-    pub(crate) fn emit_unregister_tensor(
-        &self,
-        val: BasicValueEnum<'ctx>,
-        ty: &Type,
-    ) -> Result<(), String> {
-        // Only unregister tensors
-        if !matches!(ty, Type::Tensor(_, _)) {
-            return Ok(());
-        }
-
-        let unreg_fn = self
-            .module
-            .get_function("tl_mem_unregister")
-            .ok_or("tl_mem_unregister not found")?;
-
-        let ptr = val.into_pointer_value();
-        let cast_ptr = self
-            .builder
-            .build_pointer_cast(
-                ptr,
-                self.context.ptr_type(inkwell::AddressSpace::default()),
-                "unreg_tensor_ptr",
-            )
-            .map_err(|e| e.to_string())?;
-
-        self.builder
-            .build_call(unreg_fn, &[cast_ptr.into()], "")
-            .map_err(|e| e.to_string())?;
-
-        Ok(())
-    }
-
     pub(crate) fn gen_save_struct(
         &self,
         map: inkwell::values::BasicValueEnum<'ctx>,
@@ -487,10 +441,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 // val is pointer to [i64; N]
                                 let ptr = val.into_pointer_value();
                                 // cast to i64*
-                                let i64_ptr_ty = self
-                                    .context
-                                    .i64_type()
-                                    .ptr_type(inkwell::AddressSpace::default());
+                                let i64_ptr_ty =
+                                    self.context.ptr_type(inkwell::AddressSpace::default());
                                 let cast_ptr = self
                                     .builder
                                     .build_pointer_cast(ptr, i64_ptr_ty, "cast_ptr")

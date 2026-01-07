@@ -1452,7 +1452,6 @@ impl SemanticAnalyzer {
                         _ => unreachable!(),
                     };
                     return Ok(Type::Tensor(inner_type, 0));
-                    unreachable!("t0 verified as tensor above");
                 } else if name == "len" {
                     if args.len() != 1 {
                         return Err(SemanticError::ArgumentCountMismatch {

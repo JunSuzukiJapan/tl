@@ -149,9 +149,7 @@ impl MemoryManager {
             if *count == 0 {
                 println!("DEBUG: Freeing Tensor {:p}", ptr);
                 self.tensor_refcounts.remove(&ptr);
-                unsafe {
-                    super::free_tensor_resources(ptr as *mut OpaqueTensor);
-                }
+                super::free_tensor_resources(ptr as *mut OpaqueTensor);
             }
         }
     }
