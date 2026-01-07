@@ -78,7 +78,9 @@ When a variable is shadowed (`let x = ...; let x = ...;`), the old variable's ha
 
 2.  **Usage**:
     -   Passed by pointer.
-    -   Function Returns: When returning a struct, the compiler performs a **Shallow Copy** of the fields to a pre-allocated return slot (SRET). Since it's a copy of the *container* but the *content pointers* remain the same, we do NOT Acquire/Release the fields again during return to avoid overhead, relying on the caller to manage the new container instance.
+    -   **Function Returns**:
+        -   **Caller Responsibility**: The caller must allocate memory for the returned struct and pass it as a hidden first argument (SRET). The caller is also responsible for freeing this memory.
+        -   **Shallow Copy**: The compiler performs a **Shallow Copy** of the fields to the pre-allocated return slot. Since it's a copy of the *container* but the *content pointers* remain the same, we do NOT Acquire/Release the fields again during return to avoid overhead, relying on the caller to manage the new container instance.
 
 3.  **Destruction**:
     -   When a struct goes out of scope, the runtime calls `free_struct`.
@@ -160,7 +162,9 @@ TensorLogicは、**参照カウント (Reference Counting)** と **スコープ�
 
 2.  **使用**:
     -   ポインタ渡しで関数に渡されます。
-    -   **関数戻り値**: 構造体を返す際、コンパイラは呼び出し元が確保した戻り値用スロット (SRET) にフィールドの **シャローコピー (Shallow Copy)** を行います。コンテナは複製されますが、中身のポインタ（テンソル）は同じものを指すため、戻り値処理中に再度の Acquire/Release は行いません（呼び出し元が新しいコンテナインスタンスを管理します）。
+    -   **関数戻り値**:
+        -   **呼び出し元の責任**: 構造体を返す場合、**呼び出し元** が戻り値用のメモリを確保し、隠れ第一引数 (SRET) として渡す必要があります。また、このメモリの解放も呼び出し元の責任です。
+        -   **シャローコピー**: コンパイラは確保された戻り値用スロットにフィールドの **シャローコピー (Shallow Copy)** を行います。コンテナは複製されますが、中身のポインタ（テンソル）は同じものを指すため、戻り値処理中に再度の Acquire/Release は行いません（呼び出し元が新しいコンテナインスタンスを管理します）。
 
 3.  **破棄 (Destruction)**:
     -   構造体がスコープを抜ける際、ランタイムは `free_struct` を呼び出します。
