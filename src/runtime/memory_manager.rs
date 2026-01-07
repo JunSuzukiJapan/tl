@@ -37,7 +37,7 @@ unsafe impl Sync for MemoryManager {}
 impl MemoryManager {
     pub fn new() -> Self {
         MemoryManager {
-            scopes: Vec::new(),
+            scopes: vec![Vec::new()], // Start with Global Scope
             arena_offsets: Vec::new(),
             tensor_refcounts: HashMap::new(),
         }
@@ -56,7 +56,7 @@ impl MemoryManager {
     /// CRITICAL: This MUST free all unfreed memory in the scope
     pub fn exit_scope(&mut self) {
         println!("DEBUG: Exit Scope. Start Depth: {}", self.scopes.len());
-        if self.scopes.is_empty() {
+        if self.scopes.len() <= 1 {
             return;
         }
 
@@ -162,22 +162,14 @@ impl MemoryManager {
     pub fn unregister(&mut self, ptr: *mut c_void) {
         // Iterate scopes in reverse order to find the pointer (most recent first)
         for scope in self.scopes.iter_mut().rev() {
-            if let Some(pos) = scope.iter().position(|r| r.ptr == ptr) {
+            // Use rposition to find the NEWEST record (handling duplicates/reuse correctly)
+            if let Some(pos) = scope.iter().rposition(|r| r.ptr == ptr) {
                 scope.remove(pos);
-                // When unregistering from scope, we effectively release the scope's "ownership".
-                // BUT, typically `unregister` is used when ownership is moved to something else
-                // that will eventually free it?
-                // OR, it's used to prevent double-free.
-                // With refcounting, we should simply decrement.
-                // However, existing semantics of `unregister` might be "forget about this".
-                // Let's keep existing behavior: Remove from scope record.
-                // We ALSO need to decrement refcount because scope no longer owns it.
-                // BUT if we are moving to a struct, the struct will `acquire` it.
-                // So sequence:
-                // 1. `acquire` (struct field) -> ref=2
-                // 2. `unregister` (variable) -> remove from scope, release scope's ref -> ref=1
-                // Correct.
-                self.release_tensor_ptr(ptr);
+                // CRITICAL FIX: Do NOT release refcount.
+                // Unregister means "Remove from Scope Ownership".
+                // The RefCount (1) is transferred to the caller (Variable, Struct, etc).
+                // If we release, we drop RefCount to 0 and Free!
+                println!("DEBUG: Unregistered {:p} from scope (Move)", ptr);
                 return;
             }
         }
@@ -229,8 +221,18 @@ pub fn register_tensor_global(ptr: *mut OpaqueTensor) {
         return;
     }
     // Check if already registered in ANY scope to prevent double-free
+    // BUT only if it is still alive (tracked in refcounts)
     if mgr.is_registered(ptr as *mut c_void) {
-        return;
+        if mgr.tensor_refcounts.contains_key(&(ptr as *mut c_void)) {
+            return;
+        }
+        // If not in refcounts, it's a stale record (freed). Allow address reuse.
+        println!(
+            "DEBUG: Address reuse detected for {:p}, purging stale record.",
+            ptr
+        );
+        // Remove the stale record to prevent confusion
+        mgr.unregister(ptr as *mut c_void);
     }
 
     mgr.register_tensor(ptr);
@@ -287,28 +289,28 @@ mod tests {
     #[test]
     fn test_basic_scope() {
         let mut mgr = MemoryManager::new();
-        assert_eq!(mgr.scopes.len(), 0);
+        assert_eq!(mgr.scopes.len(), 1); // Global scope
         mgr.enter_scope();
-        assert_eq!(mgr.scopes.len(), 1);
+        assert_eq!(mgr.scopes.len(), 2);
         mgr.exit_scope();
-        assert_eq!(mgr.scopes.len(), 0);
+        assert_eq!(mgr.scopes.len(), 1);
     }
 
     #[test]
     fn test_nested_scopes() {
         let mut mgr = MemoryManager::new();
         mgr.enter_scope();
-        assert_eq!(mgr.scopes.len(), 1);
-        mgr.enter_scope();
         assert_eq!(mgr.scopes.len(), 2);
         mgr.enter_scope();
+        assert_eq!(mgr.scopes.len(), 3);
+        mgr.enter_scope(); // Extra push from original code??
+        assert_eq!(mgr.scopes.len(), 4);
+        mgr.exit_scope();
         assert_eq!(mgr.scopes.len(), 3);
         mgr.exit_scope();
         assert_eq!(mgr.scopes.len(), 2);
         mgr.exit_scope();
         assert_eq!(mgr.scopes.len(), 1);
-        mgr.exit_scope();
-        assert_eq!(mgr.scopes.len(), 0);
     }
 
     #[test]

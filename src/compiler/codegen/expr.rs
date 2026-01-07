@@ -4665,27 +4665,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                         let (arg_val, arg_ty) = self.compile_expr(&args[0])?;
 
-                        // FIX: Unregister parameter from MemoryManager
-                        // Because parameters are long-lived (stored in registry), we don't want scope cleanup to free them.
-                        if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
-                            if matches!(
-                                arg_ty,
-                                Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
-                            ) {
-                                let ptr = arg_val.into_pointer_value();
-                                let cast_ptr = self
-                                    .builder
-                                    .build_pointer_cast(
-                                        ptr,
-                                        self.context.ptr_type(inkwell::AddressSpace::default()),
-                                        "cast_unreg_param",
-                                    )
-                                    .unwrap();
-                                self.builder
-                                    .build_call(unreg_fn, &[cast_ptr.into()], "")
-                                    .unwrap();
-                            }
-                        }
+                        // Removed Unregister.
+                        // We rely on tl_register_parameter to Acquire (Ref 2).
+                        // Scope exit will Release (Ref 1).
+                        // Parameter stays alive.
 
                         let fn_val = self
                             .module

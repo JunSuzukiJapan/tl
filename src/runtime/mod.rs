@@ -52,6 +52,7 @@ pub(crate) fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
     let boxed = Box::new(OpaqueTensor(t, None, None));
     let ptr = Box::into_raw(boxed);
     memory_manager::register_tensor_global(ptr);
+    println!("DEBUG: Alloc Tensor {:p} (make_tensor)", ptr);
     ptr
 }
 
@@ -66,6 +67,7 @@ pub(crate) fn make_var(v: candle_core::Var) -> *mut OpaqueTensor {
 
     // NOTE: Caller is responsible for lifetime management.
     memory_manager::register_tensor_global(ptr);
+    println!("DEBUG: Alloc Tensor {:p} (make_var)", ptr);
     ptr
 }
 
@@ -91,7 +93,9 @@ pub extern "C" fn tl_tensor_new(
         t_cpu
     };
 
-    make_tensor(tensor)
+    let res = make_tensor(tensor);
+    // println!("DEBUG: Alloc Tensor {:p}", res); // Handled in make_tensor
+    res
 }
 
 // tl_tensor_argmax(t: *mut, dim: i64, keep_dim: bool) -> *mut
@@ -1401,6 +1405,9 @@ pub extern "C" fn tl_register_parameter(t: *mut OpaqueTensor) -> *mut OpaqueTens
         let data = varmap.data();
         let mut data_guard = data.lock().unwrap();
         data_guard.insert(name, var_arc.as_ref().clone());
+
+        // CRITICAL: Acquire reference to keep OpaqueTensor alive (owned by Global Registry concepts)
+        memory_manager::tl_tensor_acquire(t);
 
         t // Return same pointer
     }

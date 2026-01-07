@@ -564,43 +564,10 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let (mut val_ir, mut val_ty) = self.compile_expr(value)?;
 
-                // Fix: Ownership Transfer (Runtime -> Compiler)
-                // If the value is a temporary (registered in MemoryManager), we MUST unregister it.
-                // The variable 'name' will take ownership (should_free=true) and free it via recursive_free at scope exit.
-                if self.is_safe_to_free(value, &val_ty) {
-                    match val_ty {
-                        Type::Struct(_) | Type::UserDefined(_) | Type::Tensor(_, _) => {
-                            if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
-                                let ptr = val_ir.into_pointer_value();
-                                let cast_ptr = self
-                                    .builder
-                                    .build_pointer_cast(
-                                        ptr,
-                                        self.context.ptr_type(inkwell::AddressSpace::default()),
-                                        "cast_unreg_let",
-                                    )
-                                    .unwrap();
-
-                                // Fix: Must ACQUIRE before UNREGISTER to transfer ownership (Ref 1 -> 2 -> 1)
-                                if let Type::Tensor(_, _) = val_ty {
-                                    if let Some(acquire_fn) =
-                                        self.module.get_function("tl_tensor_acquire")
-                                    {
-                                        // Reuse cast_ptr
-                                        self.builder
-                                            .build_call(acquire_fn, &[cast_ptr.into()], "")
-                                            .unwrap();
-                                    }
-                                }
-
-                                self.builder
-                                    .build_call(unreg_fn, &[cast_ptr.into()], "")
-                                    .unwrap();
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                // Ownership: Shared. The temporary (value) remains in scope and will be released at scope exit.
+                // The variable (name) acquires a NEW reference via deep_clone below.
+                // We do NOT unregister the temporary. Ref 1 (Temp) + Ref 1 (Var) = 2.
+                // Temp Scope Exit -> -1. Var Scope Exit -> -1. Total 0. Safe.
 
                 // Removed: Move Semantics logic.
                 // We default to CLONE for variables (see below), so we should NOT disable cleanup for the source.
@@ -617,15 +584,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
 
                 // Variable Assignment: Deep Clone (Struct Copy + Tensor Acquire)
-                // This replaces the old "Move Semantics" where we unset should_free on the source.
-                // Now we simply acquire a new reference, allowing both variables to live independently.
-                if let Expr::Variable(_) = value {
-                    if matches!(
-                        val_ty,
-                        Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
-                    ) {
-                        val_ir = self.emit_deep_clone(val_ir, &val_ty)?;
-                    }
+                // We MUST Acquire (clone) because the source is either a temporary (Ref 1) that will be released later,
+                // or another variable (Ref 1) that we are sharing.
+                if matches!(
+                    val_ty,
+                    Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+                ) {
+                    val_ir = self.emit_deep_clone(val_ir, &val_ty)?;
                 }
 
                 let current_function = self
@@ -646,9 +611,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // So for our language semantics, we treat shadowing as "replacing".
                         // Use-case: `let x = ...; let x = ...;`
                         if *should_free {
-                            // CRITICAL FIX: Unregister shadowed value from MemoryManager
-                            // Without this, the old value stays registered and gets double-freed
-                            if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                            // CRITICAL FIX: Release shadowed value.
+                            // Shadowing destroys the old variable handle, so we must release its ownership.
+                            if let Some(release_fn) = self.module.get_function("tl_tensor_release")
+                            {
                                 // Load the actual pointer value from the alloca
                                 let ptr_type =
                                     self.context.ptr_type(inkwell::AddressSpace::default());
@@ -662,7 +628,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .map_err(|e| e.to_string())?;
 
                                 self.builder
-                                    .build_call(unreg_fn, &[old_value.into()], "")
+                                    .build_call(release_fn, &[old_value.into()], "")
                                     .map_err(|e| e.to_string())?;
                             }
                         }
