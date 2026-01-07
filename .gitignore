@@ -3,3 +3,5 @@ Papers/
 
 dump.ll
 *.safetensors
+
+debug_logs/
