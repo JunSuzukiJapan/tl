@@ -99,8 +99,9 @@ impl SemanticAnalyzer {
 
     fn declare_variable(&mut self, name: String, ty: Type) -> Result<(), SemanticError> {
         let is_global = self.scopes.len() == 1; // Immutable borrow
-        // Shadowing is allowed
-        if let Some(scope) = self.scopes.last_mut() { // Mutable borrow
+                                                // Shadowing is allowed
+        if let Some(scope) = self.scopes.last_mut() {
+            // Mutable borrow
             let final_name = if is_global && !self.current_module.is_empty() {
                 format!("{}::{}", self.current_module, name)
             } else {
@@ -119,7 +120,7 @@ impl SemanticAnalyzer {
                 return Ok(symbol.ty.clone());
             }
         }
-        
+
         // Try global resolution
         let resolved = self.resolve_symbol_name(name);
         if resolved != name {
@@ -231,7 +232,11 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    fn check_module_bodies(&mut self, module: &mut Module, prefix: &str) -> Result<(), SemanticError> {
+    fn check_module_bodies(
+        &mut self,
+        module: &mut Module,
+        prefix: &str,
+    ) -> Result<(), SemanticError> {
         let saved_prefix = self.current_module.clone();
         self.current_module = prefix.to_string();
 
@@ -348,9 +353,9 @@ impl SemanticAnalyzer {
             } else {
                 ty.clone()
             };
-             // If we resolved types, we should update `ty`?
-             // Since we are iterating `&mut func.args`.
-             *ty = actual_ty.clone(); // Update arg type in AST
+            // If we resolved types, we should update `ty`?
+            // Since we are iterating `&mut func.args`.
+            *ty = actual_ty.clone(); // Update arg type in AST
             self.declare_variable(name.clone(), actual_ty)?;
         }
 
@@ -698,11 +703,7 @@ impl SemanticAnalyzer {
                 self.exit_scope();
                 Ok(())
             }
-            Stmt::Use {
-                path,
-                alias,
-                items,
-            } => {
+            Stmt::Use { path, alias, items } => {
                 let full_prefix = path.join("::");
 
                 if !items.is_empty() {
@@ -810,19 +811,19 @@ impl SemanticAnalyzer {
                 let resolved = self.resolve_symbol_name(name);
                 if resolved != *name {
                     if let Some(global_scope) = self.scopes.first() {
-                         if let Some(symbol) = global_scope.get(&resolved) {
-                             *name = resolved.clone();
-                             return Ok(symbol.ty.clone());
-                         }
+                        if let Some(symbol) = global_scope.get(&resolved) {
+                            *name = resolved.clone();
+                            return Ok(symbol.ty.clone());
+                        }
                     }
                 }
-                
+
                 // 3. Last attempt: maybe simple name is in global (e.g. top-level, no prefix)
-                 if let Some(global_scope) = self.scopes.first() {
-                     if let Some(symbol) = global_scope.get(name) {
-                         return Ok(symbol.ty.clone());
-                     }
-                 }
+                if let Some(global_scope) = self.scopes.first() {
+                    if let Some(symbol) = global_scope.get(name) {
+                        return Ok(symbol.ty.clone());
+                    }
+                }
 
                 Err(SemanticError::VariableNotFound(name.clone()))
             }
@@ -878,7 +879,7 @@ impl SemanticAnalyzer {
                 if *name != resolved_name {
                     *name = resolved_name.clone();
                 }
-                
+
                 if name == "checkpoint" {
                     if args.len() != 2 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -899,7 +900,7 @@ impl SemanticAnalyzer {
                             found: Type::Void, // placeholder
                         });
                     }
-                    
+
                     let t1 = self.check_expr(&mut args[1])?;
                     if !matches!(t1, Type::Tensor(_, _)) {
                         return Err(SemanticError::TypeMismatch {
@@ -907,7 +908,7 @@ impl SemanticAnalyzer {
                             found: t1,
                         });
                     }
-                    
+
                     // Return generic tensor
                     return Ok(Type::Tensor(Box::new(Type::F32), 0));
                 }
@@ -949,14 +950,14 @@ impl SemanticAnalyzer {
                     }
                     let t0 = self.check_expr(&mut args[0])?;
                     let t1 = self.check_expr(&mut args[1])?;
-                     if !matches!(t0, Type::Tensor(_, _)) {
+                    if !matches!(t0, Type::Tensor(_, _)) {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
                             found: t0,
                         });
                     }
                     if !matches!(t1, Type::Tensor(_, _)) {
-                         return Err(SemanticError::TypeMismatch {
+                        return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
                             found: t1,
                         });
@@ -969,14 +970,14 @@ impl SemanticAnalyzer {
                     // runtime returns Tensor<i64> conceptually but OpaqueTensor wraps generic.
                     // We'll treat it as Tensor<f32/i64> (generic tensor)
                     if args.len() != 2 {
-                         return Err(SemanticError::ArgumentCountMismatch {
+                        return Err(SemanticError::ArgumentCountMismatch {
                             name: name.clone(),
                             expected: 2,
                             found: args.len(),
                         });
                     }
                     let t = self.check_expr(&mut args[0])?;
-                     if !matches!(t, Type::Tensor(_, _)) {
+                    if !matches!(t, Type::Tensor(_, _)) {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
                             found: t,
@@ -984,7 +985,7 @@ impl SemanticAnalyzer {
                     }
                     let dim = self.check_expr(&mut args[1])?;
                     if !matches!(dim, Type::I64) {
-                         return Err(SemanticError::TypeMismatch {
+                        return Err(SemanticError::TypeMismatch {
                             expected: Type::I64,
                             found: dim,
                         });
@@ -995,8 +996,8 @@ impl SemanticAnalyzer {
 
                 if name == "item" {
                     // item(tensor) -> i64 (for this specific builtin)
-                     if args.len() != 1 {
-                         return Err(SemanticError::ArgumentCountMismatch {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
                             name: name.clone(),
                             expected: 1,
                             found: args.len(),
@@ -1011,7 +1012,6 @@ impl SemanticAnalyzer {
                     }
                     return Ok(Type::I64);
                 }
-
 
                 if name == "enable_grad" {
                     if args.len() != 1 {
@@ -1336,7 +1336,6 @@ impl SemanticAnalyzer {
                     let t0 = self.check_expr(&mut args[0])?;
                     let t1 = self.check_expr(&mut args[1])?;
                     let t2 = self.check_expr(&mut args[2])?;
-
 
                     match t0 {
                         Type::Tensor(_, _) => {}
@@ -1694,7 +1693,6 @@ impl SemanticAnalyzer {
                     }
                 }
 
-
                 if let Some(func) = self.functions.get(name).cloned() {
                     if args.len() != func.args.len() {
                         // func.args is empty in current AST parser stub, need to fix that first to check properly
@@ -1976,6 +1974,40 @@ impl SemanticAnalyzer {
                 // or I64 for count
                 Ok(expr_ty)
             }
+            Expr::As(expr, target_type) => {
+                let source_type = self.check_expr(expr)?;
+
+                // Allow trivial cast
+                if source_type == *target_type {
+                    return Ok(target_type.clone());
+                }
+
+                // Cast logic
+                match (&source_type, &*target_type) {
+                    (Type::Tensor(_inner_src, rank), Type::Tensor(inner_dst, _)) => {
+                        // e.g. Tensor<i64> as Tensor<f32>
+                        Ok(Type::Tensor(inner_dst.clone(), *rank))
+                    }
+                    (Type::Tensor(_, rank), primitive)
+                        if matches!(primitive, Type::F32 | Type::I64 | Type::I32 | Type::Bool) =>
+                    {
+                        // `tensor as f32` -> Tensor<f32, rank>
+                        Ok(Type::Tensor(Box::new(primitive.clone()), *rank))
+                    }
+                    (Type::I64, Type::F32) => Ok(Type::F32),
+                    (Type::F32, Type::I64) => Ok(Type::I64),
+                    (Type::I64, Type::I32) => Ok(Type::I32),
+                    (Type::I32, Type::I64) => Ok(Type::I64),
+                    (Type::Bool, Type::I64) => Ok(Type::I64),
+                    (Type::I64, Type::Bool) => Ok(Type::Bool),
+                    (Type::Bool, Type::F32) => Ok(Type::F32),
+                    (Type::F32, Type::Bool) => Ok(Type::Bool),
+                    _ => Err(SemanticError::TypeMismatch {
+                        expected: target_type.clone(),
+                        found: source_type,
+                    }),
+                }
+            }
             Expr::StaticMethodCall(type_name, method_name, args) => {
                 let resolved_type = self.resolve_symbol_name(type_name);
                 if *type_name != resolved_type {
@@ -2019,9 +2051,11 @@ impl SemanticAnalyzer {
                     // Resolve return type: if it's Self or short name, use method's impl target type
                     let resolved_return = match &func.return_type {
                         Type::UserDefined(ret_name) => {
-                            // If the return type is 'Self' or the short struct name, 
+                            // If the return type is 'Self' or the short struct name,
                             // replace with the fully qualified type_name (which was already resolved)
-                            if ret_name == "Self" || ret_name == type_name.split("::").last().unwrap_or(type_name) {
+                            if ret_name == "Self"
+                                || ret_name == type_name.split("::").last().unwrap_or(type_name)
+                            {
                                 Type::UserDefined(type_name.clone())
                             } else {
                                 func.return_type.clone()
@@ -2531,19 +2565,18 @@ impl SemanticAnalyzer {
                     self.collect_indices(arg, indices);
                 }
             }
+            Expr::As(expr, _) => {
+                self.collect_indices(expr, indices);
+            }
             Expr::IfExpr(cond, _then_block, _else_block) => {
                 self.collect_indices(cond, indices);
-                // Recurse into blocks? Stmts might have exprs.
-                // But IndexAccess usually in expressions.
-                // This is simple helper. Ideally we traverse fully.
-                // For now, assume indexes strictly inside the logic.
-                // Blocks contain Stmts. Need Stmt traversal?
-                // Probably overkill for simple Equations.
-                // Let's postpone block traversal inside equation.
             }
-            Expr::Block(_) => {
-                // Skip blocks for now
-            }
+            Expr::Block(_) => {}
+            Expr::TensorComprehension { .. } => {} // New scope, indices are bound? Or recurse body?
+            // Comprehension indices are bound, but body free vars are free.
+            // But usually we don't nest equations like this.
+            // For now skip or simple recurse body?
+            // Skip for safety to avoid over-capturing.
             _ => {}
         }
     }

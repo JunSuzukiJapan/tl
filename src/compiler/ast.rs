@@ -161,6 +161,9 @@ pub enum Expr {
     MethodCall(Box<Expr>, String, Vec<Expr>),
     StaticMethodCall(String, String, Vec<Expr>), // Type::method(args)
 
+    // Cast: expr as Type
+    As(Box<Expr>, Type),
+
     // Control
     IfExpr(Box<Expr>, Vec<Stmt>, Option<Vec<Stmt>>),
     Block(Vec<Stmt>),

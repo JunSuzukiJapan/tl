@@ -2,10 +2,10 @@ pub mod arena;
 pub mod device;
 pub mod memory_manager; // Arena allocator for tensor memory optimization
 
+pub mod checkpoint;
 pub mod registry;
 pub mod stdlib;
 pub mod tensor_pool;
-pub mod checkpoint;
 
 use crate::runtime::device::get_device;
 use candle_core::Tensor;
@@ -105,9 +105,13 @@ pub extern "C" fn tl_tensor_argmax(
         let ten = &(*t).0;
         match ten.argmax_keepdim(dim as usize) {
             Ok(res) => {
-                let final_res = if keep_dim { res } else { res.squeeze(dim as usize).unwrap_or(res) };
+                let final_res = if keep_dim {
+                    res
+                } else {
+                    res.squeeze(dim as usize).unwrap_or(res)
+                };
                 make_tensor(final_res)
-            },
+            }
             Err(e) => {
                 eprintln!("tl_tensor_argmax error: {}", e);
                 std::ptr::null_mut()
@@ -127,20 +131,20 @@ pub extern "C" fn tl_tensor_item_i64(t: *mut OpaqueTensor) -> i64 {
             Ok(v) => v,
             Err(_) => {
                 // Try f32 and cast
-                 match ten.to_scalar::<f32>() {
+                match ten.to_scalar::<f32>() {
                     Ok(v) => v as i64,
                     Err(e) => {
-                         // Convert to 1D vec and take first?
-                         let dims = ten.dims();
-                         let elem_count: usize = dims.iter().product();
-                         if elem_count == 1 {
-                             // This is slow but generic
-                             let v = ten.flatten_all().unwrap().to_vec1::<f32>().unwrap();
-                             v[0] as i64
-                         } else {
-                             eprintln!("tl_tensor_item_i64 error: Tensor has {} elements, expected 1. Error: {}", elem_count, e);
-                             0
-                         }
+                        // Convert to 1D vec and take first?
+                        let dims = ten.dims();
+                        let elem_count: usize = dims.iter().product();
+                        if elem_count == 1 {
+                            // This is slow but generic
+                            let v = ten.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+                            v[0] as i64
+                        } else {
+                            eprintln!("tl_tensor_item_i64 error: Tensor has {} elements, expected 1. Error: {}", elem_count, e);
+                            0
+                        }
                     }
                 }
             }
@@ -164,9 +168,7 @@ pub extern "C" fn tl_tensor_randn_debug(
     if shape.is_null() {
         return std::ptr::null_mut();
     }
-    let shape_data: Vec<usize> = unsafe {
-        std::slice::from_raw_parts(shape, rank).to_vec()
-    };
+    let shape_data: Vec<usize> = unsafe { std::slice::from_raw_parts(shape, rank).to_vec() };
 
     let device = get_device();
 
@@ -186,16 +188,13 @@ pub extern "C" fn tl_tensor_randn_debug(
 
 /// Create a 1D Tensor from an i64 array (for reshape shape arguments)
 #[no_mangle]
-pub extern "C" fn tl_tensor_from_i64_array(
-    data: *const i64,
-    len: usize,
-) -> *mut OpaqueTensor {
+pub extern "C" fn tl_tensor_from_i64_array(data: *const i64, len: usize) -> *mut OpaqueTensor {
     let data_slice = unsafe { slice::from_raw_parts(data, len) };
     let device = get_device();
-    
+
     // Convert i64 to f32 for Tensor (Candle tensors are typically f32)
     let data_f32: Vec<f32> = data_slice.iter().map(|&x| x as f32).collect();
-    
+
     let tensor = Tensor::from_slice(&data_f32, &[len], &device).unwrap();
     make_tensor(tensor)
 }
@@ -441,12 +440,9 @@ pub extern "C" fn tl_tensor_cross_entropy(
         // NLL
         let loss = candle_nn::loss::nll(&log_sm, &t_u32).unwrap();
 
-
         make_tensor(loss)
     }
 }
-
-
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_detach(t: *mut OpaqueTensor, req_grad: bool) -> *mut OpaqueTensor {
@@ -525,7 +521,6 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) {
 #[no_mangle]
 pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
     if !t.is_null() {
-
         // Unregister from memory manager if it was registered
         // (to prevent double-free on scope exit if manually freed)
         memory_manager::tl_mem_unregister(t as *mut std::ffi::c_void);
@@ -536,7 +531,6 @@ pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
-
     unsafe {
         let tensor = &(*t).0;
         let var_ref = &(*t).1;
@@ -1388,6 +1382,20 @@ pub extern "C" fn tl_free_tmp(ptr: *mut c_void) {
     unsafe {
         libc::free(ptr);
     }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_to_f32(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    let res = t.to_dtype(candle_core::DType::F32).unwrap();
+    make_tensor(res)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_to_i64(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    let res = t.to_dtype(candle_core::DType::I64).unwrap();
+    make_tensor(res)
 }
 
 #[cfg(test)]

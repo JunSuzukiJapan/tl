@@ -350,16 +350,28 @@ fn parse_postfix(input: &str) -> IResult<&str, Expr> {
     )(input)
 }
 
+// Cast: expr as Type
+fn parse_cast(input: &str) -> IResult<&str, Expr> {
+    let (input, lhs) = parse_postfix(input)?;
+
+    // Handle optional "as Type" chain
+    nom::multi::fold_many0(
+        pair(ws(tag("as")), parse_type),
+        move || lhs.clone(),
+        |acc, (_, ty)| Expr::As(Box::new(acc), ty),
+    )(input)
+}
+
 // 1. Unary: - !
 fn parse_unary(input: &str) -> IResult<&str, Expr> {
     alt((
-        map(pair(ws(char('-')), parse_postfix), |(_, expr)| {
+        map(pair(ws(char('-')), parse_cast), |(_, expr)| {
             Expr::UnOp(UnOp::Neg, Box::new(expr))
         }),
-        map(pair(ws(char('!')), parse_postfix), |(_, expr)| {
+        map(pair(ws(char('!')), parse_cast), |(_, expr)| {
             Expr::UnOp(UnOp::Not, Box::new(expr))
         }),
-        parse_postfix,
+        parse_cast,
     ))(input)
 }
 
@@ -474,7 +486,7 @@ fn parse_let_stmt(input: &str) -> IResult<&str, Stmt> {
     let (input, _) = tag("let")(input)?;
     let (input, _) = space1(input)?;
     let (input, name) = identifier(input)?;
-    
+
     // Optional indices for tensor comprehension: [i, j]
     let (input, indices) = opt(delimited(
         tuple((char('['), space0)),
