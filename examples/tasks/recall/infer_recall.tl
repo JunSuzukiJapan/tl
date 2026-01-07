@@ -301,9 +301,9 @@ fn gen_data(step: i64) -> Tensor<f32, 2> {
     return reshape(arr, 1, 14);
 }
 
-// Recall Task Training Script
-// This script trains a GPT model on the Associative Recall task.
-// It saves the trained model weights to "recall_weights.safetensors".
+// Recall Task Inference Script
+// This script loads a trained GPT model from "recall_weights.safetensors"
+// and verifies its performance on new data.
 
 fn main() {
     let vocab_size = 30;
@@ -311,58 +311,59 @@ fn main() {
     let max_len = 32;
     
     let model = GPT::new(vocab_size, d_model, max_len);
-    let lr = 0.01;
     
-    print("Starting Associative Recall Training...");
-    print("Format: K1 V1 ... K6 V6 Query -> Target");
+    print("Loading trained model weights from recall_weights.safetensors...");
+    load_weights(model, "recall_weights.safetensors");
+    print("Model loaded successfully.");
     
-    // Training Loop
-    for i in range(0, 2500) {
-        let data = gen_data(i); // [1, 14]
-        
-        // Input: 0..12 (13 tokens)
-        let in_seq = [
-             data.get(0), data.get(1),
-             data.get(2), data.get(3),
-             data.get(4), data.get(5),
-             data.get(6), data.get(7),
-             data.get(8), data.get(9),
-             data.get(10), data.get(11),
-             data.get(12)
+    print("Running Inference on Validation Set...");
+    print("Format: Pred / Target -> Result");
+    
+    let correct_count = 0;
+    let total_count = 20;
+    let start_idx = 10000;
+    
+    for i in range(start_idx, start_idx + total_count) {
+        let val_data = gen_data(i);
+        let val_in = [
+            val_data.get(0), val_data.get(1),
+            val_data.get(2), val_data.get(3),
+            val_data.get(4), val_data.get(5),
+            val_data.get(6), val_data.get(7),
+            val_data.get(8), val_data.get(9),
+            val_data.get(10), val_data.get(11),
+            val_data.get(12)
         ];
-        let X = reshape(in_seq, 1, 13);
+        let val_X = reshape(val_in, 1, 13);
+        let val_logits = model.forward(val_X);
         
-        let targets_arr = [
-             data.get(1), data.get(2),
-             data.get(3), data.get(4),
-             data.get(5), data.get(6),
-             data.get(7), data.get(8),
-             data.get(9), data.get(10),
-             data.get(11), data.get(12),
-             data.get(13)
-        ];
-        let Y_temp = reshape(targets_arr, 1, 13);
-        let Y = reshape(Y_temp, 13);
+        let val_logits_flat = reshape(val_logits, 13, 30);
+        let val_logits_1d = reshape(val_logits_flat, 390);
+        let last_row = slice(val_logits_1d, 360, 30); // 12 * 30 = 360
         
-        let logits = model.forward(X);
-        let logits_flat = reshape(logits, 13, 30);
+        // Double cast workaround for argmax U32 -> F32 issue
+        let pred_t = argmax(last_row, 0);
+        let pred_t_i64 = pred_t as Tensor<i64, 1>;
+        let pred_t_f32 = pred_t_i64 as Tensor<f32, 1>;
+        let pred = pred_t_f32.get(0) as i64;
         
-        let loss = cross_entropy(logits_flat, Y);
+        let target = val_data.get(13) as i64;
         
-        backward(loss);
-        model = model.step(lr);
+        print("Sample:"); print(i);
+        print("Pred:"); print(pred);
+        print("Target:"); print(target);
         
-        let loss_val = loss.get(0); // Scalar loss
-        
-        if i - ((i / 100) * 100) == 0 {
-             print("Step:"); print(i);
-             print("Loss:"); print(loss_val);
+        if pred == target {
+            print("Result: Correct");
+            correct_count = correct_count + 1;
+        } else {
+            print("Result: Wrong");
         }
     }
     
-    print("Training Complete.");
-    
-    print("Saving model weights to recall_weights.safetensors...");
-    save_weights(model, "recall_weights.safetensors");
-    print("Model saved.");
+    print("Inference Complete.");
+    print("Accuracy:");
+    print(correct_count);
+    print("Correct out of");
+    print(total_count);
 }
