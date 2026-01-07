@@ -61,6 +61,18 @@ pub fn declare_runtime_functions<'ctx>(
     let get_md_type = f32_type.fn_type(&[void_ptr.into(), i64_ptr.into(), i64_type.into()], false);
     add_fn("tl_tensor_get_f32_md", get_md_type);
 
+    // tl_tensor_set_f32_md(t: *mut OpaqueTensor, indices: *const i64, rank: usize, val: f32) -> *mut OpaqueTensor
+    let set_md_type = void_ptr.fn_type(
+        &[
+            void_ptr.into(),
+            i64_ptr.into(),
+            i64_type.into(),
+            f32_type.into(),
+        ],
+        false,
+    );
+    add_fn("tl_tensor_set_f32_md", set_md_type);
+
     // tl_tensor_new(data: *const f32, rank: usize, shape: *const usize) -> *mut OpaqueTensor
     let new_type = void_ptr.fn_type(&[f32_ptr.into(), i64_type.into(), usize_ptr.into()], false);
     add_fn("tl_tensor_new", new_type);
@@ -585,6 +597,13 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_map_free") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_free as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_set_f32_md") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_set_f32_md as usize);
+    }
+    if let Some(f) = module.get_function("tl_mem_unregister") {
+        execution_engine
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_unregister as usize);
     }
     if let Some(f) = module.get_function("tl_load_all_params") {
         execution_engine.add_global_mapping(&f, runtime::tl_load_all_params as usize);

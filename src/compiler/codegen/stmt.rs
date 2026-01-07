@@ -136,9 +136,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         match ty {
             Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
                 if !val.is_pointer_value() {
-                     panic!("Tensor value is not pointer: {:?}", val);
+                    panic!("Tensor value is not pointer: {:?}", val);
                 }
-                 let free_fn = self
+                let free_fn = self
                     .module
                     .get_function("tl_tensor_free")
                     .ok_or("tl_tensor_free not found")?;
@@ -147,19 +147,36 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
             }
             Type::Struct(name) | Type::UserDefined(name) => {
-                let struct_def = self.struct_defs.get(name).ok_or(format!("Struct def {} not found", name))?.clone();
-                let struct_ty = *self.struct_types.get(name).ok_or(format!("Struct type {} not found", name))?;
+                let struct_def = self
+                    .struct_defs
+                    .get(name)
+                    .ok_or(format!("Struct def {} not found", name))?
+                    .clone();
+                let struct_ty = *self
+                    .struct_types
+                    .get(name)
+                    .ok_or(format!("Struct type {} not found", name))?;
                 let ptr = val.into_pointer_value();
-                
+
                 for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
                     match f_ty {
                         Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => {
-                             let f_ptr = self.builder.build_struct_gep(struct_ty, ptr, i as u32, "field_gep").map_err(|e| e.to_string())?;
-                             let f_val = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "field_load").map_err(|e| e.to_string())?;
-                             // Recursively free
-                             self.emit_recursive_free(f_val, f_ty)?;
+                            let f_ptr = self
+                                .builder
+                                .build_struct_gep(struct_ty, ptr, i as u32, "field_gep")
+                                .map_err(|e| e.to_string())?;
+                            let f_val = self
+                                .builder
+                                .build_load(
+                                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                                    f_ptr,
+                                    "field_load",
+                                )
+                                .map_err(|e| e.to_string())?;
+                            // Recursively free
+                            self.emit_recursive_free(f_val, f_ty)?;
                         }
-                         _ => {}
+                        _ => {}
                     }
                 }
             }
@@ -210,7 +227,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (val, _) = self.compile_expr(value)?;
 
                 // Load old value to free it
-                if matches!(field_type, Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)) { 
+                if matches!(
+                    field_type,
+                    Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+                ) {
                     let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                     let current_val = self
                         .builder
@@ -221,23 +241,36 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Fix: Check for Self-Assignment (val == current_val)
                     // If pointers are equal, DO NOT FREE.
                     let val_ptr = val.into_pointer_value();
-                    let are_diff = self.builder.build_int_compare(
-                        inkwell::IntPredicate::NE,
-                        current_val,
-                        val_ptr,
-                        "cnt_free_diff"
-                    ).map_err(|e| e.to_string())?;
-                    
+                    let are_diff = self
+                        .builder
+                        .build_int_compare(
+                            inkwell::IntPredicate::NE,
+                            current_val,
+                            val_ptr,
+                            "cnt_free_diff",
+                        )
+                        .map_err(|e| e.to_string())?;
+
                     let free_block = self.context.append_basic_block(
-                        self.builder.get_insert_block().unwrap().get_parent().unwrap(),
-                        "free_old_val"
+                        self.builder
+                            .get_insert_block()
+                            .unwrap()
+                            .get_parent()
+                            .unwrap(),
+                        "free_old_val",
                     );
                     let skip_block = self.context.append_basic_block(
-                        self.builder.get_insert_block().unwrap().get_parent().unwrap(),
-                        "skip_free"
+                        self.builder
+                            .get_insert_block()
+                            .unwrap()
+                            .get_parent()
+                            .unwrap(),
+                        "skip_free",
                     );
 
-                    self.builder.build_conditional_branch(are_diff, free_block, skip_block).unwrap();
+                    self.builder
+                        .build_conditional_branch(are_diff, free_block, skip_block)
+                        .unwrap();
 
                     self.builder.position_at_end(free_block);
                     self.emit_recursive_free(current_val.into(), &field_type)?;
@@ -351,23 +384,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if self.is_safe_to_free(value, &val_ty) {
                     match val_ty {
                         Type::Struct(_) | Type::UserDefined(_) | Type::Tensor(_, _) => {
-                             if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                            if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
                                 let ptr = val_ir.into_pointer_value();
-                                let cast_ptr = self.builder.build_pointer_cast(
-                                    ptr,
-                                    self.context.ptr_type(inkwell::AddressSpace::default()),
-                                    "cast_unreg_let"
-                                ).unwrap();
-                                self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                                let cast_ptr = self
+                                    .builder
+                                    .build_pointer_cast(
+                                        ptr,
+                                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                                        "cast_unreg_let",
+                                    )
+                                    .unwrap();
+                                self.builder
+                                    .build_call(unreg_fn, &[cast_ptr.into()], "")
+                                    .unwrap();
                             }
                         }
                         _ => {}
                     }
                 }
 
-                // Removed: Move Semantics logic. 
+                // Removed: Move Semantics logic.
                 // We default to CLONE for variables (see below), so we should NOT disable cleanup for the source.
-
 
                 // Convert ScalarArray to Tensor if explicitly requested as Tensor
                 if let Some(target_ty) = type_annotation {
@@ -515,22 +552,228 @@ impl<'ctx> CodeGenerator<'ctx> {
                 op,
                 value,
             } => {
-                if let Some(_idxs) = indices {
-                    // Determine if this is a supported tensor equation assignment
-                    if *op == AssignOp::Assign {
-                        // C[i, k] = ...
-                        // In-place tensor update would require rewriting into existing buffer.
-                        // Current design uses 'let C[i,k] = ...' for tensor equations which creates new tensors.
-                        // This is an intentional limitation - users should use 'let' for tensor equations.
-                        return Err(
-                            "In-place indexed assignment not supported. Use 'let C[i,k] = ...' for tensor equations."
-                                .into(),
-                        );
-                    } else {
-                        return Err(
-                            "Only direct assignment supported for tensor equations currently"
-                                .into(),
-                        );
+                if let Some(idxs) = indices {
+                    if !idxs.is_empty() {
+                        if *op != AssignOp::Assign {
+                            return Err(
+                                "Only direct assignment (=) supported for indexed assignment"
+                                    .into(),
+                            );
+                        }
+
+                        // 1. Resolve variable
+                        let mut found_var_ptr = None;
+                        let mut found_var_type = None;
+                        for scope in self.variables.iter().rev() {
+                            if let Some((v, t, _)) = scope.get(name) {
+                                found_var_ptr = Some(*v);
+                                found_var_type = Some(t.clone());
+                                break;
+                            }
+                        }
+                        let var_ptr =
+                            found_var_ptr.ok_or(format!("Variable {} not found", name))?;
+                        let var_type =
+                            found_var_type.ok_or(format!("Variable {} not found", name))?;
+
+                        // 2. Compile Value
+                        let (val_ir, val_ty) = self.compile_expr(value)?;
+
+                        match var_type {
+                            Type::ScalarArray(elem_ty, _len) => {
+                                if idxs.len() != 1 {
+                                    return Err("ScalarArray only supports 1D indexing".into());
+                                }
+                                // Load Array Pointer
+                                let ptr_type =
+                                    self.context.ptr_type(inkwell::AddressSpace::default());
+                                let array_ptr = self
+                                    .builder
+                                    .build_load(ptr_type, var_ptr.into_pointer_value(), "arr_ptr")
+                                    .map_err(|e| e.to_string())?
+                                    .into_pointer_value();
+
+                                // Compile Index
+                                let (idx_val, idx_ty) = self.compile_expr(&idxs[0])?;
+                                let idx_int = match idx_ty {
+                                    Type::I64 => idx_val.into_int_value(),
+                                    Type::I32 => self
+                                        .builder
+                                        .build_int_z_extend(
+                                            idx_val.into_int_value(),
+                                            self.context.i64_type(),
+                                            "zext",
+                                        )
+                                        .unwrap(),
+                                    _ => return Err("Index must be integer".into()),
+                                };
+
+                                // GEP
+                                let elem_llvm_ty: inkwell::types::BasicTypeEnum =
+                                    match elem_ty.as_ref() {
+                                        Type::I64 => self.context.i64_type().into(),
+                                        Type::F32 => self.context.f32_type().into(),
+                                        _ => self.context.i64_type().into(),
+                                    };
+
+                                let elem_ptr = unsafe {
+                                    self.builder
+                                        .build_in_bounds_gep(
+                                            elem_llvm_ty,
+                                            array_ptr,
+                                            &[idx_int],
+                                            "elem_ptr",
+                                        )
+                                        .map_err(|e| e.to_string())?
+                                };
+
+                                // Cast logic
+                                // (If needed, e.g. i64 -> f32?)
+                                // Assume types match for now or basic int/float check above
+
+                                self.builder
+                                    .build_store(elem_ptr, val_ir)
+                                    .map_err(|e| e.to_string())?;
+                                return Ok(());
+                            }
+                            Type::Tensor(_, _) => {
+                                // Compile Indices to Array
+                                let i64_type = self.context.i64_type();
+                                let idx_array_type = i64_type.array_type(idxs.len() as u32);
+
+                                let current_block = self.builder.get_insert_block().unwrap();
+                                let function = current_block.get_parent().unwrap();
+                                let entry_block = function.get_first_basic_block().unwrap();
+                                let entry_builder = self.context.create_builder();
+                                if let Some(first_instr) = entry_block.get_first_instruction() {
+                                    entry_builder.position_before(&first_instr);
+                                } else {
+                                    entry_builder.position_at_end(entry_block);
+                                }
+                                let idx_ptr_alloca = entry_builder
+                                    .build_alloca(idx_array_type, "indices_arr")
+                                    .map_err(|e| e.to_string())?;
+
+                                for (i, idx_expr) in idxs.iter().enumerate() {
+                                    let (val, ty) = self.compile_expr(idx_expr)?;
+                                    let int_val = match ty {
+                                        Type::I64 => val.into_int_value(),
+                                        Type::I32 => self
+                                            .builder
+                                            .build_int_z_extend(
+                                                val.into_int_value(),
+                                                i64_type,
+                                                "ext",
+                                            )
+                                            .unwrap(),
+                                        _ => return Err("Index must be int".into()),
+                                    };
+                                    let ptr = unsafe {
+                                        self.builder
+                                            .build_in_bounds_gep(
+                                                idx_array_type,
+                                                idx_ptr_alloca,
+                                                &[
+                                                    i64_type.const_int(0, false),
+                                                    i64_type.const_int(i as u64, false),
+                                                ],
+                                                "idx_ptr",
+                                            )
+                                            .map_err(|e| e.to_string())?
+                                    };
+                                    self.builder
+                                        .build_store(ptr, int_val)
+                                        .map_err(|e| e.to_string())?;
+                                }
+
+                                // Load current tensor ptr
+                                let load_type =
+                                    self.context.ptr_type(inkwell::AddressSpace::default());
+                                let current_tensor = self
+                                    .builder
+                                    .build_load(load_type, var_ptr.into_pointer_value(), "curr_t")
+                                    .unwrap();
+
+                                // Call set fxn
+                                let set_fn = self
+                                    .module
+                                    .get_function("tl_tensor_set_f32_md")
+                                    .ok_or("tl_tensor_set_f32_md not found")?;
+
+                                let idx_ptr_cast = self
+                                    .builder
+                                    .build_pointer_cast(
+                                        idx_ptr_alloca,
+                                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                                        "idx_cast",
+                                    )
+                                    .unwrap();
+
+                                // Ensure Val is F32
+                                let f32_val = match val_ty {
+                                    Type::F32 => val_ir.into_float_value(),
+                                    Type::I64 => self
+                                        .builder
+                                        .build_signed_int_to_float(
+                                            val_ir.into_int_value(),
+                                            self.context.f32_type(),
+                                            "f32_cast",
+                                        )
+                                        .unwrap(),
+                                    _ => {
+                                        return Err(
+                                            "Assignment value must be convertible to f32".into()
+                                        )
+                                    }
+                                };
+
+                                let call = self
+                                    .builder
+                                    .build_call(
+                                        set_fn,
+                                        &[
+                                            current_tensor.into(),
+                                            idx_ptr_cast.into(),
+                                            i64_type.const_int(idxs.len() as u64, false).into(),
+                                            f32_val.into(),
+                                        ],
+                                        "new_t",
+                                    )
+                                    .unwrap();
+
+                                let new_tensor_ptr = match call.try_as_basic_value() {
+                                    inkwell::values::ValueKind::Basic(v) => v,
+                                    _ => return Err("tl_tensor_set_f32_md returned void".into()),
+                                };
+
+                                // Free Old Tensor
+                                let free_fn = self
+                                    .module
+                                    .get_function("tl_tensor_free")
+                                    .ok_or("tl_tensor_free not found")?;
+                                self.builder
+                                    .build_call(free_fn, &[current_tensor.into()], "")
+                                    .map_err(|e| e.to_string())?;
+
+                                // Store New Tensor
+                                self.builder
+                                    .build_store(var_ptr.into_pointer_value(), new_tensor_ptr)
+                                    .map_err(|e| e.to_string())?;
+
+                                // Scope Promotion / Registration
+                                if !self.is_outer_scope(name) {
+                                    self.emit_register_tensor(new_tensor_ptr, &var_type)?;
+                                }
+
+                                return Ok(());
+                            }
+                            _ => {
+                                return Err(
+                                    "Indexed assignment only supported for Tensor and ScalarArray"
+                                        .into(),
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -557,14 +800,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Unregister the new value (RHS) if it's a temporary.
                 match val_type {
                     Type::Struct(_) | Type::UserDefined(_) | Type::Tensor(_, _) => {
-                         if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                        if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
                             let ptr = val.into_pointer_value();
-                            let cast_ptr = self.builder.build_pointer_cast(
-                                ptr,
-                                self.context.ptr_type(inkwell::AddressSpace::default()),
-                                "cast_unreg_assign"
-                            ).unwrap();
-                            self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                            let cast_ptr = self
+                                .builder
+                                .build_pointer_cast(
+                                    ptr,
+                                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                                    "cast_unreg_assign",
+                                )
+                                .unwrap();
+                            self.builder
+                                .build_call(unreg_fn, &[cast_ptr.into()], "")
+                                .unwrap();
                         }
                     }
                     _ => {}
@@ -609,15 +857,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .context
                                 .bool_type()
                                 .const_int(found_should_free as u64, false);
-                            
+
                             // AND check if pointers differ (prevent self-free on return self)
                             let new_ptr = val.into_pointer_value();
-                            let are_diff = self.builder.build_int_compare(
-                                inkwell::IntPredicate::NE, 
-                                current_val, 
-                                new_ptr, 
-                                "are_diff"
-                            ).map_err(|e| e.to_string())?;
+                            let are_diff = self
+                                .builder
+                                .build_int_compare(
+                                    inkwell::IntPredicate::NE,
+                                    current_val,
+                                    new_ptr,
+                                    "are_diff",
+                                )
+                                .map_err(|e| e.to_string())?;
 
                             let can_free_1 = self
                                 .builder
@@ -657,16 +908,19 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                             // Also unregister the struct shell itself so Runtime doesn't track it
                             if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
-                                let cast_ptr = self.builder.build_pointer_cast(
-                                    current_val,
-                                    self.context.ptr_type(inkwell::AddressSpace::default()),
-                                    "cast_unreg_struct"
-                                ).unwrap();
+                                let cast_ptr = self
+                                    .builder
+                                    .build_pointer_cast(
+                                        current_val,
+                                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                                        "cast_unreg_struct",
+                                    )
+                                    .unwrap();
                                 let _ = self.builder.build_call(unreg_fn, &[cast_ptr.into()], "");
                             }
 
                             // Note: We don't free(malloc) the struct shell. It leaks (small).
-                            
+
                             self.builder
                                 .build_unconditional_branch(continue_block)
                                 .map_err(|e| e.to_string())?;
@@ -1230,7 +1484,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Increment index and Branch back to header
                 // ONLY if the body didn't terminate (e.g. return/break)
                 let body_end_block = self.builder.get_insert_block().unwrap();
-                
+
                 if body_end_block.get_terminator().is_none() {
                     let next_idx = self
                         .builder
@@ -1244,7 +1498,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.builder
                         .build_unconditional_branch(loop_header)
                         .map_err(|e| e.to_string())?;
-                        
+
                     // Add PHI incoming edge from loop back
                     phi.add_incoming(&[(&next_idx, body_end_block)]);
                 }
@@ -1325,33 +1579,36 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             Stmt::Expr(expr) => {
                 let (val, ty) = self.compile_expr(expr)?;
-                
+
                 // FIX: Handle discarded return values properly to prevent use-after-free bugs.
                 // When calling `model.step(lr);` without using the result:
                 // - The step method may modify `self` and return a new struct
                 // - If we don't capture the return value, the original variable becomes invalid
                 // - We need to register the return value as a temporary so it gets freed at scope exit
-                
+
                 match &ty {
                     Type::Struct(_) | Type::UserDefined(_) => {
                         // For struct return values: Register as a temporary variable
                         // This is equivalent to `let _ = expr;`
                         // The struct and its fields will be properly freed at scope exit
-                        static DISCARD_ID: std::sync::atomic::AtomicUsize = 
+                        static DISCARD_ID: std::sync::atomic::AtomicUsize =
                             std::sync::atomic::AtomicUsize::new(0);
                         let id = DISCARD_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         let temp_name = format!("_discard_{}", id);
-                        
+
                         let current_function = self
                             .builder
                             .get_insert_block()
                             .unwrap()
                             .get_parent()
                             .unwrap();
-                        
-                        let alloca = self.create_entry_block_alloca(current_function, &temp_name, &ty);
-                        self.builder.build_store(alloca, val).map_err(|e| e.to_string())?;
-                        
+
+                        let alloca =
+                            self.create_entry_block_alloca(current_function, &temp_name, &ty);
+                        self.builder
+                            .build_store(alloca, val)
+                            .map_err(|e| e.to_string())?;
+
                         // Register in current scope with should_free=true
                         // This ensures the struct gets freed when the scope exits
                         self.variables
@@ -1365,21 +1622,25 @@ impl<'ctx> CodeGenerator<'ctx> {
                             self.emit_recursive_free(val, &ty)?;
                         } else {
                             // Register as temporary to be freed at scope exit
-                            static TENSOR_DISCARD_ID: std::sync::atomic::AtomicUsize = 
+                            static TENSOR_DISCARD_ID: std::sync::atomic::AtomicUsize =
                                 std::sync::atomic::AtomicUsize::new(0);
-                            let id = TENSOR_DISCARD_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let id = TENSOR_DISCARD_ID
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             let temp_name = format!("_tensor_discard_{}", id);
-                            
+
                             let current_function = self
                                 .builder
                                 .get_insert_block()
                                 .unwrap()
                                 .get_parent()
                                 .unwrap();
-                            
-                            let alloca = self.create_entry_block_alloca(current_function, &temp_name, &ty);
-                            self.builder.build_store(alloca, val).map_err(|e| e.to_string())?;
-                            
+
+                            let alloca =
+                                self.create_entry_block_alloca(current_function, &temp_name, &ty);
+                            self.builder
+                                .build_store(alloca, val)
+                                .map_err(|e| e.to_string())?;
+
                             self.variables
                                 .last_mut()
                                 .unwrap()
@@ -1390,7 +1651,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // Primitive types: no action needed (no memory to manage)
                     }
                 }
-                
+
                 Ok(())
             }
         }
@@ -1665,6 +1926,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let fn_name = match op {
                     BinOp::Add => "tl_tensor_add",
                     BinOp::Mul => "tl_tensor_mul",
+                    BinOp::Div => "tl_tensor_div",
+                    BinOp::Sub => "tl_tensor_sub",
                     _ => return Err("Unsupported tensor op".into()),
                 };
                 let fn_val = self
@@ -1725,6 +1988,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let fn_name = match op {
                     BinOp::Add => "tl_tensor_add",
                     BinOp::Mul => "tl_tensor_mul",
+                    BinOp::Div => "tl_tensor_div",
+                    BinOp::Sub => "tl_tensor_sub",
                     _ => return Err("Unsupported tensor op".into()),
                 };
                 let fn_val = self

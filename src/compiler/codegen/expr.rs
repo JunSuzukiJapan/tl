@@ -1507,7 +1507,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                 return Err("Tensor::randn requires shape argument".into());
             }
 
-            if let Expr::TensorLiteral(el) = &args[0] {
+            let elements_ref = if let Expr::TensorLiteral(el) = &args[0] {
+                Some(el)
+            } else if let Expr::TensorConstLiteral(el) = &args[0] {
+                Some(el)
+            } else {
+                None
+            };
+
+            if let Some(el) = elements_ref {
                 let i64_type = self.context.i64_type();
                 let mut vals = Vec::new();
                 for e in el {
@@ -1521,14 +1529,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => return Err(format!("Dimension must be integer, found {:?}", t)),
                     };
                     vals.push(int_val);
-                }
-
-                // DEBUG: Print dimensions at runtime to verify order
-                let print_fn = self.module.get_function("tl_print_i64").unwrap();
-                for v in &vals {
-                    self.builder
-                        .build_call(print_fn, &[(*v).into()], "debug_idx")
-                        .map_err(|e| e.to_string())?;
                 }
 
                 let rank = el.len();
@@ -1744,11 +1744,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     compiled_args.push(ptr_cast.into());
                 }
             }
-        } else if {
-            println!("Checking Static: {}::{}", type_name, method_name);
-            type_name == "Tensor" && method_name == "randn"
-        } {
-            println!("  -> Optimized randn path");
+        } else if type_name == "Tensor" && method_name == "randn" {
+            // Optimized randn path
             // Special handling for Tensor::randn(shape, requires_grad)
             if args.is_empty() {
                 return Err("Tensor::randn requires shape argument".into());

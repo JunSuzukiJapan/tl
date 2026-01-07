@@ -130,20 +130,30 @@ pub extern "C" fn tl_tensor_item_i64(t: *mut OpaqueTensor) -> i64 {
         match ten.to_scalar::<i64>() {
             Ok(v) => v,
             Err(_) => {
-                // Try f32 and cast
-                match ten.to_scalar::<f32>() {
+                // Try u32 (argmax returns U32)
+                match ten.to_scalar::<u32>() {
                     Ok(v) => v as i64,
-                    Err(e) => {
-                        // Convert to 1D vec and take first?
-                        let dims = ten.dims();
-                        let elem_count: usize = dims.iter().product();
-                        if elem_count == 1 {
-                            // This is slow but generic
-                            let v = ten.flatten_all().unwrap().to_vec1::<f32>().unwrap();
-                            v[0] as i64
-                        } else {
-                            eprintln!("tl_tensor_item_i64 error: Tensor has {} elements, expected 1. Error: {}", elem_count, e);
-                            0
+                    Err(_) => {
+                        // Try f32 and cast
+                        match ten.to_scalar::<f32>() {
+                            Ok(v) => v as i64,
+                            Err(e) => {
+                                // Convert to 1D vec and take first?
+                                let dims = ten.dims();
+                                let elem_count: usize = dims.iter().product();
+                                if elem_count == 1 {
+                                    // Try u32 vec first (for argmax results)
+                                    if let Ok(v) = ten.flatten_all().unwrap().to_vec1::<u32>() {
+                                        return v[0] as i64;
+                                    }
+                                    // Fallback to f32
+                                    let v = ten.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+                                    v[0] as i64
+                                } else {
+                                    eprintln!("tl_tensor_item_i64 error: Tensor has {} elements, expected 1. Error: {}", elem_count, e);
+                                    0
+                                }
+                            }
                         }
                     }
                 }
@@ -620,6 +630,46 @@ pub extern "C" fn tl_tensor_get(t: *mut OpaqueTensor, idx: i64) -> c_float {
 }
 
 #[no_mangle]
+pub extern "C" fn tl_tensor_set_f32_md(
+    t: *mut OpaqueTensor,
+    indices: *const i64,
+    rank: usize,
+    val: c_float,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let tensor = &(*t).0;
+        let idxs = slice::from_raw_parts(indices, rank);
+        let idxs_usize: Vec<usize> = idxs.iter().map(|&x| x as usize).collect();
+
+        // Calculate flat index
+        let dims = tensor.dims();
+        let mut flat_idx = 0;
+        let mut stride = 1;
+        // Strides are usually computed from right to left assuming contiguous C order
+        for i in (0..rank).rev() {
+            flat_idx += idxs_usize[i] * stride;
+            stride *= dims[i];
+        }
+
+        // Slow path: converting to Vec, updating, and recreating Tensor
+        // Efficient enough for small tensors in examples.
+        let mut data = tensor.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+        if flat_idx < data.len() {
+            data[flat_idx] = val;
+        } else {
+            eprintln!(
+                "Index out of bounds in tensor_set: {} >= {}",
+                flat_idx,
+                data.len()
+            );
+        }
+
+        let new_tensor = Tensor::from_vec(data, tensor.shape(), tensor.device()).unwrap();
+        make_tensor(new_tensor)
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn tl_tensor_slice(t: *mut OpaqueTensor, start: i64, len: i64) -> *mut OpaqueTensor {
     unsafe {
         let tensor = &(*t).0;
@@ -659,6 +709,10 @@ pub extern "C" fn tl_print_string(s: *const std::os::raw::c_char) {
 pub fn force_link() {
     let _ = tl_print_string as *const ();
     let _ = tl_clear_grads as *const ();
+    let _ = tl_tensor_randn_debug as *const ();
+    let _ = tl_tensor_set_f32_md as *const ();
+    let _ = tl_tensor_free as *const ();
+    let _ = memory_manager::tl_mem_unregister as *const ();
 }
 
 #[no_mangle]
