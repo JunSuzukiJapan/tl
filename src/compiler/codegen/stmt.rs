@@ -257,6 +257,115 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 }
             }
+            Type::Vec(inner_ty) => {
+                // Only support Vec<Tensor> or Vec<Struct> (pointer-sized elements) for now
+                if matches!(
+                    inner_ty.as_ref(),
+                    Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+                ) {
+                    let len_fn = self
+                        .module
+                        .get_function("tl_vec_void_len")
+                        .ok_or("tl_vec_void_len not found")?;
+                    let get_fn = self
+                        .module
+                        .get_function("tl_vec_void_get")
+                        .ok_or("tl_vec_void_get not found")?;
+                    let free_fn = self
+                        .module
+                        .get_function("tl_vec_void_free")
+                        .ok_or("tl_vec_void_free not found")?;
+
+                    let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let ptr = val.into_pointer_value();
+                    let cast_ptr = self
+                        .builder
+                        .build_pointer_cast(ptr, void_ptr_type, "vec_ptr")
+                        .unwrap();
+
+                    // Get Length
+                    let len_call = self
+                        .builder
+                        .build_call(len_fn, &[cast_ptr.into()], "len")
+                        .map_err(|e| e.to_string())?;
+                    let len_val = match len_call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => {
+                            if v.is_int_value() {
+                                v.into_int_value()
+                            } else {
+                                return Err(format!("len returned non-int: {:?}", v));
+                            }
+                        }
+                        _ => return Err("len call returned non-basic value".to_string()),
+                    };
+
+                    // Loop Setup
+                    let current_bb = self.builder.get_insert_block().unwrap();
+                    let func = current_bb.get_parent().unwrap();
+                    let loop_bb = self.context.append_basic_block(func, "vec_free_loop");
+                    let body_bb = self.context.append_basic_block(func, "vec_free_body");
+                    let end_bb = self.context.append_basic_block(func, "vec_free_end");
+
+                    self.builder
+                        .build_unconditional_branch(loop_bb)
+                        .map_err(|e| e.to_string())?;
+
+                    // Loop Header (Condition)
+                    self.builder.position_at_end(loop_bb);
+                    let i64_type = self.context.i64_type();
+                    let idx_phi = self
+                        .builder
+                        .build_phi(i64_type, "i")
+                        .map_err(|e| e.to_string())?;
+                    idx_phi.add_incoming(&[(&i64_type.const_int(0, false), current_bb)]);
+
+                    let idx_val = idx_phi.as_basic_value().into_int_value();
+                    let cmp = self
+                        .builder
+                        .build_int_compare(inkwell::IntPredicate::ULT, idx_val, len_val, "cmp")
+                        .map_err(|e| e.to_string())?;
+                    self.builder
+                        .build_conditional_branch(cmp, body_bb, end_bb)
+                        .map_err(|e| e.to_string())?;
+
+                    // Loop Body
+                    self.builder.position_at_end(body_bb);
+                    let elem_ptr_call = self
+                        .builder
+                        .build_call(get_fn, &[cast_ptr.into(), idx_val.into()], "elem_ptr")
+                        .map_err(|e| e.to_string())?;
+                    let elem_ptr_void = match elem_ptr_call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("elem_ptr call returned non-basic value".to_string()),
+                    };
+
+                    let cast_elem = self
+                        .builder
+                        .build_pointer_cast(
+                            elem_ptr_void.into_pointer_value(),
+                            void_ptr_type,
+                            "cast_elem",
+                        )
+                        .unwrap();
+                    self.emit_recursive_free(cast_elem.into(), inner_ty)?;
+
+                    // Increment and Jump
+                    let next_idx = self
+                        .builder
+                        .build_int_add(idx_val, i64_type.const_int(1, false), "next_i")
+                        .map_err(|e| e.to_string())?;
+                    idx_phi.add_incoming(&[(&next_idx, body_bb)]);
+                    self.builder
+                        .build_unconditional_branch(loop_bb)
+                        .map_err(|e| e.to_string())?;
+
+                    // End
+                    self.builder.position_at_end(end_bb);
+                    self.builder
+                        .build_call(free_fn, &[cast_ptr.into()], "")
+                        .map_err(|e| e.to_string())?;
+                }
+            }
             _ => {}
         }
         Ok(())

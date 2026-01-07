@@ -98,6 +98,17 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_release(t: *mut) -> void
     add_fn("tl_tensor_release", free_type);
 
+    // tl_vec_void_len(ptr: *mut) -> usize
+    let len_type = i64_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_vec_void_len", len_type);
+
+    // tl_vec_void_get(ptr: *mut, idx: usize) -> *mut
+    let get_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_vec_void_get", get_type);
+
+    // tl_vec_void_free(ptr: *mut) -> void
+    add_fn("tl_vec_void_free", free_type);
+
     // tl_tensor_add(a: *mut, b: *mut) -> *mut
     let bin_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_tensor_add", bin_type);
@@ -478,6 +489,15 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_len") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_len as usize);
+    }
+    if let Some(f) = module.get_function("tl_vec_void_len") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_void_len as usize);
+    }
+    if let Some(f) = module.get_function("tl_vec_void_get") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_void_get as usize);
+    }
+    if let Some(f) = module.get_function("tl_vec_void_free") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_void_free as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_dim") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_dim as usize);

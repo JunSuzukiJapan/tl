@@ -1457,6 +1457,43 @@ pub extern "C" fn tl_tensor_to_i64(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     make_tensor(res)
 }
 
+#[no_mangle]
+pub extern "C" fn tl_vec_void_len(ptr: *mut std::ffi::c_void) -> usize {
+    if ptr.is_null() {
+        return 0;
+    }
+    unsafe {
+        let vec = &*(ptr as *mut Vec<*mut std::ffi::c_void>);
+        vec.len()
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_vec_void_get(ptr: *mut std::ffi::c_void, idx: usize) -> *mut std::ffi::c_void {
+    if ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        let vec = &*(ptr as *mut Vec<*mut std::ffi::c_void>);
+        if idx < vec.len() {
+            vec[idx]
+        } else {
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_vec_void_free(ptr: *mut std::ffi::c_void) {
+    if !ptr.is_null() {
+        unsafe {
+            // Reconstruct Vec from raw pointer to drop the container
+            // This frees the Vec struct logic (cap/len/buffer pointer)
+            let _ = Box::from_raw(ptr as *mut Vec<*mut std::ffi::c_void>);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
