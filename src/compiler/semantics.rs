@@ -7,6 +7,8 @@ use thiserror::Error;
 pub enum SemanticError {
     #[error("Variable not found: {0}")]
     VariableNotFound(String),
+    #[error("Variable has been moved: {0}")]
+    VariableMoved(String),
     #[error("Type mismatch: expected {expected:?}, found {found:?}")]
     TypeMismatch { expected: Type, found: Type },
     #[error("Function not found: {0}")]
@@ -35,7 +37,8 @@ struct Symbol {
     #[allow(dead_code)]
     name: String,
     ty: Type,
-    // potentially more info like mutability, shape info (if constant)
+    is_moved: bool, // Track if variable has been moved
+                    // potentially more info like mutability, shape info (if constant)
 }
 
 struct Scope {
@@ -52,11 +55,22 @@ impl Scope {
     }
 
     fn insert(&mut self, name: String, ty: Type) {
-        self.symbols.insert(name.clone(), Symbol { name, ty });
+        self.symbols.insert(
+            name.clone(),
+            Symbol {
+                name,
+                ty,
+                is_moved: false,
+            },
+        );
     }
 
     fn get(&self, name: &str) -> Option<&Symbol> {
         self.symbols.get(name)
+    }
+
+    fn get_mut(&mut self, name: &str) -> Option<&mut Symbol> {
+        self.symbols.get_mut(name)
     }
 
     fn add_alias(&mut self, alias: String, full_name: String) {
@@ -117,6 +131,10 @@ impl SemanticAnalyzer {
     fn lookup_variable(&self, name: &str) -> Result<Type, SemanticError> {
         for scope in self.scopes.iter().rev() {
             if let Some(symbol) = scope.get(name) {
+                // Check if variable has been moved
+                if symbol.is_moved {
+                    return Err(SemanticError::VariableMoved(name.to_string()));
+                }
                 return Ok(symbol.ty.clone());
             }
         }
@@ -126,12 +144,33 @@ impl SemanticAnalyzer {
         if resolved != name {
             if let Some(global_scope) = self.scopes.first() {
                 if let Some(symbol) = global_scope.get(&resolved) {
+                    if symbol.is_moved {
+                        return Err(SemanticError::VariableMoved(name.to_string()));
+                    }
                     return Ok(symbol.ty.clone());
                 }
             }
         }
 
         Err(SemanticError::VariableNotFound(name.to_string()))
+    }
+
+    /// Mark a variable as moved (ownership transferred)
+    fn mark_moved(&mut self, name: &str) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(symbol) = scope.get_mut(name) {
+                symbol.is_moved = true;
+                return;
+            }
+        }
+    }
+
+    /// Check if a type requires move semantics (ownership transfer)
+    fn is_moveable_type(&self, ty: &Type) -> bool {
+        matches!(
+            ty,
+            Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+        )
     }
 
     // --- Main Checking Logic ---
@@ -493,7 +532,15 @@ impl SemanticAnalyzer {
                     inferred_type
                 };
 
-                self.declare_variable(name.clone(), final_type)?;
+                self.declare_variable(name.clone(), final_type.clone())?;
+
+                // Move semantics: If RHS is a variable of moveable type, mark it as moved
+                if let Expr::Variable(source_var) = value {
+                    if self.is_moveable_type(&final_type) {
+                        self.mark_moved(source_var);
+                    }
+                }
+
                 Ok(())
             }
             Stmt::Assign {
@@ -950,17 +997,20 @@ impl SemanticAnalyzer {
                     }
                     let t0 = self.check_expr(&mut args[0])?;
                     let t1 = self.check_expr(&mut args[1])?;
-                    if !matches!(t0, Type::Tensor(_, _)) {
+                    if !matches!(t0, Type::Tensor(_, _) | Type::F32 | Type::I64) {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
                             found: t0,
                         });
                     }
-                    if !matches!(t1, Type::Tensor(_, _)) {
+                    if !matches!(t1, Type::Tensor(_, _) | Type::F32 | Type::I64) {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
                             found: t1,
                         });
+                    }
+                    if matches!(t0, Type::F32 | Type::I64) {
+                        return Ok(Type::Tensor(Box::new(Type::F32), 0));
                     }
                     return Ok(t0);
                 }
@@ -1369,7 +1419,8 @@ impl SemanticAnalyzer {
                     }
 
                     let t0 = self.check_expr(&mut args[0])?;
-                    if !matches!(t0, Type::Tensor(_, _)) {
+                    // Allow Tensor OR ScalarArray
+                    if !matches!(t0, Type::Tensor(_, _) | Type::ScalarArray(_, _)) {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
                             found: t0,
@@ -1395,9 +1446,12 @@ impl SemanticAnalyzer {
                         }
                     }
 
-                    if let Type::Tensor(inner, _) = t0 {
-                        return Ok(Type::Tensor(inner, 0));
-                    }
+                    let inner_type = match t0 {
+                        Type::Tensor(inner, _) => inner,
+                        Type::ScalarArray(inner, _) => inner,
+                        _ => unreachable!(),
+                    };
+                    return Ok(Type::Tensor(inner_type, 0));
                     unreachable!("t0 verified as tensor above");
                 } else if name == "len" {
                     if args.len() != 1 {
@@ -2274,6 +2328,63 @@ impl SemanticAnalyzer {
                             // contiguous() returns the same tensor type
                             return Ok(obj_type.clone());
                         }
+                        if method_name == "matmul" {
+                            if args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 1,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(obj_type.clone()); // Returns Tensor
+                        }
+                        if method_name == "reshape" {
+                            if args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 1,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "relu"
+                            || method_name == "gelu"
+                            || method_name == "sin"
+                            || method_name == "cos"
+                            || method_name == "sigmoid"
+                            || method_name == "tanh"
+                        {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "softmax" || method_name == "log_softmax" {
+                            if args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 1,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "item" {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(Type::F32); // item() returns scalar float usually
+                        }
+
                         return Ok(Type::Void); // Fallback
                     }
                     _ => {
@@ -2502,6 +2613,9 @@ impl SemanticAnalyzer {
     }
 
     fn are_types_compatible(&self, t1: &Type, t2: &Type) -> bool {
+        if matches!(t1, Type::Void) || matches!(t2, Type::Void) {
+            return true;
+        }
         if t1 == t2 {
             return true;
         }

@@ -51,7 +51,7 @@ pub struct OpaqueTensor(
 pub(crate) fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
     let boxed = Box::new(OpaqueTensor(t, None, None));
     let ptr = Box::into_raw(boxed);
-    // memory_manager::register_tensor_global(ptr);
+    memory_manager::register_tensor_global(ptr);
     ptr
 }
 
@@ -64,8 +64,8 @@ pub(crate) fn make_var(v: candle_core::Var) -> *mut OpaqueTensor {
     let boxed = Box::new(OpaqueTensor(t_ref, Some(var_arc), None));
     let ptr = Box::into_raw(boxed);
 
-    // NOTE: Do NOT register here - caller is responsible for lifetime management.
-    // memory_manager::register_tensor_global(ptr);
+    // NOTE: Caller is responsible for lifetime management.
+    memory_manager::register_tensor_global(ptr);
     ptr
 }
 
@@ -531,11 +531,7 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) {
 #[no_mangle]
 pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
     if !t.is_null() {
-        // Unregister from memory manager if it was registered
-        // (to prevent double-free on scope exit if manually freed)
-        memory_manager::tl_mem_unregister(t as *mut std::ffi::c_void);
-
-        free_tensor_resources(t);
+        memory_manager::tl_tensor_release(t);
     }
 }
 
@@ -1351,6 +1347,15 @@ pub extern "C" fn tl_load_all_params(path: *const std::os::raw::c_char) {
 pub extern "C" fn tl_add_parameter(name: *const std::os::raw::c_char, t: *mut OpaqueTensor) {
     use std::ffi::CStr;
     unsafe {
+        println!(
+            "tl_add_parameter called for {} with ptr {:p}",
+            CStr::from_ptr(name).to_string_lossy(),
+            t
+        );
+        if t.is_null() {
+            println!("ERROR: tl_add_parameter got NULL ptr");
+            return;
+        }
         let name_str = CStr::from_ptr(name).to_str().unwrap().to_string();
         let tensor_wrapper = &*t;
 

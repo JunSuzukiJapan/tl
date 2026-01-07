@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ffi::c_void;
 
 use super::OpaqueTensor;
@@ -23,6 +24,9 @@ pub struct MemoryManager {
     scopes: Vec<Vec<AllocationRecord>>,
     // Stack of arena offsets corresponding to each scope
     arena_offsets: Vec<usize>,
+    // Tensor reference counts: ptr -> refcount
+    // When refcount reaches 0, tensor is freed
+    tensor_refcounts: HashMap<*mut c_void, usize>,
 }
 
 // SAFETY: MemoryManager contains raw pointers but they are only accessed
@@ -35,21 +39,23 @@ impl MemoryManager {
         MemoryManager {
             scopes: Vec::new(),
             arena_offsets: Vec::new(),
+            tensor_refcounts: HashMap::new(),
         }
     }
 
     /// Enter a new scope
     pub fn enter_scope(&mut self) {
         self.scopes.push(Vec::new());
+        println!("DEBUG: Enter Scope. Depth: {}", self.scopes.len());
         // Save current arena offset
         let offset = super::arena::tl_arena_get_offset();
         self.arena_offsets.push(offset);
-        // eprintln!("DEBUG: enter_scope (offset={})", offset);
     }
 
     /// Exit current scope and free ALL allocations in that scope
     /// CRITICAL: This MUST free all unfreed memory in the scope
     pub fn exit_scope(&mut self) {
+        println!("DEBUG: Exit Scope. Start Depth: {}", self.scopes.len());
         if self.scopes.is_empty() {
             return;
         }
@@ -64,8 +70,8 @@ impl MemoryManager {
                             libc::free(record.ptr);
                         }
                         AllocationType::Tensor => {
-                            let tensor_ptr = record.ptr as *mut OpaqueTensor;
-                            super::free_tensor_resources(tensor_ptr);
+                            // Decrement refcount for scope ownership
+                            self.release_tensor_ptr(record.ptr);
                         }
                     }
                 }
@@ -73,9 +79,6 @@ impl MemoryManager {
         }
 
         if let Some(offset) = self.arena_offsets.pop() {
-            // Restoring arena offset AFTER dropping items is safer
-            // because dropping items (tensors) might technically access memory? 
-            // Although OpaqueTensor is just a wrapper...
             super::arena::tl_arena_set_offset(offset);
         }
     }
@@ -93,7 +96,6 @@ impl MemoryManager {
     /// Register a struct allocation in the current scope
     pub fn register_struct(&mut self, ptr: *mut c_void) {
         if let Some(scope) = self.scopes.last_mut() {
-
             scope.push(AllocationRecord {
                 ptr,
                 alloc_type: AllocationType::Struct,
@@ -104,11 +106,53 @@ impl MemoryManager {
     /// Register a tensor allocation in the current scope
     pub fn register_tensor(&mut self, ptr: *mut OpaqueTensor) {
         if let Some(scope) = self.scopes.last_mut() {
+            // Initial refcount = 1 (owned by scope)
+            let count = self.tensor_refcounts.entry(ptr as *mut c_void).or_insert(0);
+            if *count == 0 {
+                *count = 1;
+                println!("DEBUG: Register Tensor {:p} (New).", ptr);
+            } else {
+                println!(
+                    "DEBUG: Register Tensor {:p} (Existing count: {}).",
+                    ptr, *count
+                );
+            }
 
             scope.push(AllocationRecord {
                 ptr: ptr as *mut c_void,
                 alloc_type: AllocationType::Tensor,
             });
+        } else {
+            println!("DEBUG: register_tensor called but scopes empty!");
+        }
+    }
+
+    /// Increase reference count
+    pub fn acquire_tensor_ptr(&mut self, ptr: *mut c_void) {
+        if ptr.is_null() {
+            println!("Warning: Attempt to acquire NULL tensor ptr");
+            return;
+        }
+        let count = self.tensor_refcounts.entry(ptr).or_insert(0);
+        *count += 1;
+        println!("Acquire Tensor {:p}, count: {}", ptr, *count);
+    }
+
+    /// Decrease reference count and free if 0
+    pub fn release_tensor_ptr(&mut self, ptr: *mut c_void) {
+        if ptr.is_null() {
+            return;
+        }
+        if let Some(count) = self.tensor_refcounts.get_mut(&ptr) {
+            *count -= 1;
+            println!("DEBUG: Release Tensor {:p}, new count: {}", ptr, *count);
+            if *count == 0 {
+                println!("DEBUG: Freeing Tensor {:p}", ptr);
+                self.tensor_refcounts.remove(&ptr);
+                unsafe {
+                    super::free_tensor_resources(ptr as *mut OpaqueTensor);
+                }
+            }
         }
     }
 
@@ -120,6 +164,20 @@ impl MemoryManager {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(pos) = scope.iter().position(|r| r.ptr == ptr) {
                 scope.remove(pos);
+                // When unregistering from scope, we effectively release the scope's "ownership".
+                // BUT, typically `unregister` is used when ownership is moved to something else
+                // that will eventually free it?
+                // OR, it's used to prevent double-free.
+                // With refcounting, we should simply decrement.
+                // However, existing semantics of `unregister` might be "forget about this".
+                // Let's keep existing behavior: Remove from scope record.
+                // We ALSO need to decrement refcount because scope no longer owns it.
+                // BUT if we are moving to a struct, the struct will `acquire` it.
+                // So sequence:
+                // 1. `acquire` (struct field) -> ref=2
+                // 2. `unregister` (variable) -> remove from scope, release scope's ref -> ref=1
+                // Correct.
+                self.release_tensor_ptr(ptr);
                 return;
             }
         }
@@ -167,8 +225,7 @@ pub fn register_tensor_global(ptr: *mut OpaqueTensor) {
     // Check if we have an active scope
     if mgr.scopes.is_empty() {
         // No active scope
-        // This should not happen in normal usage but prevents crash
-        // eprintln!("WARNING: Registering tensor without active scope");
+        println!("WARNING: Registering tensor without active scope");
         return;
     }
     // Check if already registered in ANY scope to prevent double-free
@@ -189,9 +246,27 @@ pub extern "C" fn tl_mem_register_tensor(ptr: *mut OpaqueTensor) {
 #[no_mangle]
 pub extern "C" fn tl_mem_unregister(ptr: *mut c_void) {
     if !ptr.is_null() {
-
+        println!("DEBUG: Unregistering {:p}", ptr);
         let mut mgr = MEMORY_MANAGER.lock().unwrap();
         mgr.unregister(ptr);
+    }
+}
+
+/// Increase tensor reference count
+#[no_mangle]
+pub extern "C" fn tl_tensor_acquire(ptr: *mut OpaqueTensor) {
+    if !ptr.is_null() {
+        let mut mgr = MEMORY_MANAGER.lock().unwrap();
+        mgr.acquire_tensor_ptr(ptr as *mut c_void);
+    }
+}
+
+/// Decrease tensor reference count
+#[no_mangle]
+pub extern "C" fn tl_tensor_release(ptr: *mut OpaqueTensor) {
+    if !ptr.is_null() {
+        let mut mgr = MEMORY_MANAGER.lock().unwrap();
+        mgr.release_tensor_ptr(ptr as *mut c_void);
     }
 }
 

@@ -92,6 +92,12 @@ pub fn declare_runtime_functions<'ctx>(
     let clone_type = void_ptr.fn_type(&[void_ptr.into()], false);
     add_fn("tl_tensor_clone", clone_type);
 
+    // tl_tensor_acquire(t: *mut) -> void
+    add_fn("tl_tensor_acquire", free_type);
+
+    // tl_tensor_release(t: *mut) -> void
+    add_fn("tl_tensor_release", free_type);
+
     // tl_tensor_add(a: *mut, b: *mut) -> *mut
     let bin_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_tensor_add", bin_type);
@@ -461,6 +467,14 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_clone") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_clone as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_acquire") {
+        execution_engine
+            .add_global_mapping(&f, runtime::memory_manager::tl_tensor_acquire as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_release") {
+        execution_engine
+            .add_global_mapping(&f, runtime::memory_manager::tl_tensor_release as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_len") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_len as usize);

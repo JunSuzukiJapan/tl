@@ -128,6 +128,83 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(())
     }
 
+    /// Copy struct contents from src to dst pointer (used for sret)
+    pub(crate) fn emit_struct_copy(
+        &self,
+        dst: inkwell::values::PointerValue<'ctx>,
+        src: inkwell::values::PointerValue<'ctx>,
+        ty: &Type,
+    ) -> Result<(), String> {
+        match ty {
+            Type::Struct(name) | Type::UserDefined(name) => {
+                let struct_def = self
+                    .struct_defs
+                    .get(name)
+                    .ok_or(format!("Struct {} not found", name))?
+                    .clone();
+                let st_llvm_ty = *self
+                    .struct_types
+                    .get(name)
+                    .ok_or(format!("LLVM struct type {} not found", name))?;
+
+                for (i, (field_name, field_ty)) in struct_def.fields.iter().enumerate() {
+                    let src_field_ptr = self
+                        .builder
+                        .build_struct_gep(st_llvm_ty, src, i as u32, &format!("src_{}", field_name))
+                        .map_err(|e| e.to_string())?;
+                    let dst_field_ptr = self
+                        .builder
+                        .build_struct_gep(st_llvm_ty, dst, i as u32, &format!("dst_{}", field_name))
+                        .map_err(|e| e.to_string())?;
+
+                    // Load field value from src
+                    let llvm_field_ty: inkwell::types::BasicTypeEnum = match field_ty {
+                        Type::F32 => self.context.f32_type().into(),
+                        Type::I64 => self.context.i64_type().into(),
+                        Type::I32 => self.context.i32_type().into(),
+                        Type::Bool => self.context.bool_type().into(),
+                        Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => self
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
+                        _ => self.context.i64_type().into(),
+                    };
+
+                    let field_val = self
+                        .builder
+                        .build_load(llvm_field_ty, src_field_ptr, "field_val")
+                        .map_err(|e| e.to_string())?;
+
+                    // Deep Copy Logic:
+                    // If field is Tensor/Struct/UserDefined, use emit_deep_clone (Recursively acquire/copy)
+                    // Currently emit_deep_clone mallocs new structs, but here we want to store into dst_field_ptr.
+                    // But emit_deep_clone returns a Value (Pointer to new struct or Tensor Ptr).
+                    // So we store that Value into dst_field_ptr.
+                    // This means dst (SRET buffer) will hold Pointers to the Deep Copied fields.
+                    // This matches tl semantics (Structs contain pointers).
+                    let store_val = if matches!(
+                        field_ty,
+                        Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+                    ) {
+                        self.emit_deep_clone(field_val, field_ty)?
+                    } else {
+                        field_val
+                    };
+
+                    // Store to dst
+                    self.builder
+                        .build_store(dst_field_ptr, store_val)
+                        .map_err(|e| e.to_string())?;
+                }
+                Ok(())
+            }
+            _ => Err(format!(
+                "emit_struct_copy called on non-struct type: {:?}",
+                ty
+            )),
+        }
+    }
+
     pub(crate) fn emit_recursive_free(
         &self,
         val: BasicValueEnum<'ctx>,
@@ -140,8 +217,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 let free_fn = self
                     .module
-                    .get_function("tl_tensor_free")
-                    .ok_or("tl_tensor_free not found")?;
+                    .get_function("tl_tensor_release")
+                    .ok_or("tl_tensor_release not found")?;
                 self.builder
                     .build_call(free_fn, &[val.into()], "")
                     .map_err(|e| e.to_string())?;
@@ -394,6 +471,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                                         "cast_unreg_let",
                                     )
                                     .unwrap();
+
+                                // Fix: Must ACQUIRE before UNREGISTER to transfer ownership (Ref 1 -> 2 -> 1)
+                                if let Type::Tensor(_, _) = val_ty {
+                                    if let Some(acquire_fn) =
+                                        self.module.get_function("tl_tensor_acquire")
+                                    {
+                                        // Reuse cast_ptr
+                                        self.builder
+                                            .build_call(acquire_fn, &[cast_ptr.into()], "")
+                                            .unwrap();
+                                    }
+                                }
+
                                 self.builder
                                     .build_call(unreg_fn, &[cast_ptr.into()], "")
                                     .unwrap();
@@ -417,27 +507,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 }
 
-                // Clone if alias (initializing from variable or field)
-                let val_ir = if matches!(value, Expr::Variable(_) | Expr::FieldAccess(_, _)) {
-                    if let Type::Tensor(_, _) = val_ty {
-                        let clone_fn = self
-                            .module
-                            .get_function("tl_tensor_clone")
-                            .expect("tl_tensor_clone not found");
-                        let call = self
-                            .builder
-                            .build_call(clone_fn, &[val_ir.into()], "cloned")
-                            .map_err(|e| e.to_string())?;
-                        match call.try_as_basic_value() {
-                            inkwell::values::ValueKind::Basic(v) => v,
-                            _ => return Err("Clone returned void".into()),
-                        }
-                    } else {
-                        val_ir
+                // Variable Assignment: Deep Clone (Struct Copy + Tensor Acquire)
+                // This replaces the old "Move Semantics" where we unset should_free on the source.
+                // Now we simply acquire a new reference, allowing both variables to live independently.
+                if let Expr::Variable(_) = value {
+                    if matches!(
+                        val_ty,
+                        Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+                    ) {
+                        val_ir = self.emit_deep_clone(val_ir, &val_ty)?;
                     }
-                } else {
-                    val_ir
-                };
+                }
 
                 let current_function = self
                     .builder
@@ -528,22 +608,63 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 let (val, ty) = self.compile_expr(expr)?;
 
-                // IMPORTANT: Unregister the return value from MemoryManager
-                // so it survives emit_all_scopes_cleanup
-                // This prevents the return value from being freed when we exit the function scope
-                self.emit_recursive_unregister(val, &ty)?;
+                // Check if this is a struct return (uses sret)
+                let uses_sret = matches!(ty, Type::Struct(_) | Type::UserDefined(_));
 
-                // Emit cleanup for ALL active scopes (reverse order)
-                self.emit_all_scopes_cleanup();
+                // IMPORTANT: Do NOT unregister. Instead Acquire/Copy to preserve for caller.
+                // If we unregister, it releases (decrements refcount).
+                // If we exit scope, it releases (decrements refcount).
+                // Result: Double decrement -> Free.
+                // Fix:
+                // 1. For SRET: emit_struct_copy (above) now does Deep Copy + Acquire.
+                // 2. For Tensor Return: We must Acquire.
+                if !uses_sret {
+                    if let Type::Tensor(_, _) = ty {
+                        if let Some(acquire_fn) = self.module.get_function("tl_tensor_acquire") {
+                            let ptr = val.into_pointer_value();
+                            let void_ptr_type =
+                                self.context.ptr_type(inkwell::AddressSpace::default());
+                            let cast_ptr = self
+                                .builder
+                                .build_pointer_cast(ptr, void_ptr_type, "cast_aq_ret")
+                                .unwrap();
+                            self.builder
+                                .build_call(acquire_fn, &[cast_ptr.into()], "")
+                                .unwrap();
+                        }
+                    }
+                }
 
-                // NOTE: Do NOT pop self.variables here!
-                // Reason: compile_expr() above may contain recursive function calls
-                // If we pop scopes here, those recursive calls will lose access to variables
-                // The compiler's variable stack will be cleaned up naturally after function compilation
+                if uses_sret {
+                    // CRITICAL: Copy to sret BEFORE cleanup to avoid stale pointer access
+                    // Get the sret pointer (first parameter)
+                    let current_fn = self
+                        .builder
+                        .get_insert_block()
+                        .and_then(|b| b.get_parent())
+                        .ok_or("No current function")?;
+                    let sret_ptr = current_fn
+                        .get_nth_param(0)
+                        .ok_or("Sret function missing sret parameter")?
+                        .into_pointer_value();
 
-                self.builder
-                    .build_return(Some(&val))
-                    .map_err(|e| e.to_string())?;
+                    // Copy struct contents to sret pointer BEFORE cleanup
+                    let src_ptr = val.into_pointer_value();
+                    self.emit_struct_copy(sret_ptr, src_ptr, &ty)?;
+
+                    // NOW emit cleanup for ALL active scopes (reverse order)
+                    self.emit_all_scopes_cleanup();
+
+                    // Return void
+                    self.builder.build_return(None).map_err(|e| e.to_string())?;
+                } else {
+                    // Normal return: cleanup then return value
+                    self.emit_all_scopes_cleanup();
+
+                    self.builder
+                        .build_return(Some(&val))
+                        .map_err(|e| e.to_string())?;
+                }
                 Ok(())
             }
             Stmt::Assign {
@@ -778,7 +899,29 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
 
                 // Compile value first
-                let (val, val_type) = self.compile_expr(value)?;
+                let (val_base, val_type) = self.compile_expr(value)?;
+
+                // Clone if alias (initializing from variable or field) to prevent sharing pointers
+                let val = if matches!(value, Expr::Variable(_) | Expr::FieldAccess(_, _)) {
+                    if let Type::Tensor(_, _) = val_type {
+                        let clone_fn = self
+                            .module
+                            .get_function("tl_tensor_clone")
+                            .ok_or("tl_tensor_clone not found")?;
+                        let call = self
+                            .builder
+                            .build_call(clone_fn, &[val_base.into()], "cloned")
+                            .map_err(|e| e.to_string())?;
+                        match call.try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(v) => v,
+                            _ => return Err("Clone returned void".into()),
+                        }
+                    } else {
+                        val_base
+                    }
+                } else {
+                    val_base
+                };
 
                 // Lookup variable
                 let mut found_var_ptr = None;
@@ -797,7 +940,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let var_type = found_var_type.ok_or(format!("Variable {} not found", name))?;
 
                 // Fix: Ownership Transfer (Runtime -> Compiler)
-                // Unregister the new value (RHS) if it's a temporary.
+                // Unregister the new value (RHS) to take ownership.
                 match val_type {
                     Type::Struct(_) | Type::UserDefined(_) | Type::Tensor(_, _) => {
                         if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
@@ -932,77 +1075,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             self.builder.position_at_end(continue_block);
                         }
 
-                        // Free old value if it is a Tensor
-                        if let Type::Tensor(_, _) = var_type {
-                            let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                            let current_val = self
-                                .builder
-                                .build_load(load_type, var_ptr.into_pointer_value(), "old_val")
-                                .map_err(|e| e.to_string())?
-                                .into_pointer_value();
-
-                            // Only free if not null
-                            let null_ptr = load_type.const_null();
-                            let is_not_null = self
-                                .builder
-                                .build_int_compare(
-                                    inkwell::IntPredicate::NE,
-                                    current_val,
-                                    null_ptr,
-                                    "is_not_null",
-                                )
-                                .map_err(|e| e.to_string())?;
-
-                            // AND also check if we own it
-                            let should_free_val = self
-                                .context
-                                .bool_type()
-                                .const_int(found_should_free as u64, false);
-                            let can_free = self
-                                .builder
-                                .build_and(is_not_null, should_free_val, "can_free")
-                                .unwrap();
-
-                            let free_block = self.context.append_basic_block(
-                                self.builder
-                                    .get_insert_block()
-                                    .unwrap()
-                                    .get_parent()
-                                    .unwrap(),
-                                "free_block",
-                            );
-                            let continue_block = self.context.append_basic_block(
-                                self.builder
-                                    .get_insert_block()
-                                    .unwrap()
-                                    .get_parent()
-                                    .unwrap(),
-                                "continue_block",
-                            );
-
-                            self.builder
-                                .build_conditional_branch(can_free, free_block, continue_block)
-                                .map_err(|e| e.to_string())?;
-
-                            self.builder.position_at_end(free_block);
-                            // FIX: Restore manual free for Stmt::Assign.
-                            // This ensures that if we overwrite a promoted variable (outer scope), we free its old value.
-                            // Safety: tl_tensor_free handles unregistering to prevent double-free if registered.
-                            let free_fn = self
-                                .module
-                                .get_function("tl_tensor_free")
-                                .ok_or("tl_tensor_free not found")?;
-
-                            self.builder
-                                .build_call(free_fn, &[current_val.into()], "")
-                                .map_err(|e| e.to_string())?;
-
-                            self.builder
-                                .build_unconditional_branch(continue_block)
-                                .map_err(|e| e.to_string())?;
-
-                            self.builder.position_at_end(continue_block);
-                        }
+                        // Duplicate Tensor free logic removed
 
                         let new_val_basic = val;
 
@@ -2093,6 +2166,117 @@ impl<'ctx> CodeGenerator<'ctx> {
                 "Type mismatch in BinOp {:?}: {:?} vs {:?}",
                 op, lhs_type, rhs_type
             )),
+        }
+    }
+    /// Deep clone a value (Tensor or Struct containing Tensors)
+    pub(crate) fn emit_deep_clone(
+        &self,
+        val: inkwell::values::BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
+        match ty {
+            Type::Tensor(_, _) => {
+                // Shared Ownership: Acquire reference, return same pointer
+                let acquire_fn = self
+                    .module
+                    .get_function("tl_tensor_acquire")
+                    .ok_or("tl_tensor_acquire not found")?;
+
+                // Cast to void ptr for acquire function
+                let ptr = val.into_pointer_value();
+                let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                let cast_ptr = self
+                    .builder
+                    .build_pointer_cast(ptr, void_ptr_type, "cast_tensor_ptr")
+                    .unwrap();
+
+                self.builder
+                    .build_call(acquire_fn, &[cast_ptr.into()], "")
+                    .map_err(|e| e.to_string())?;
+
+                // Return the SAME pointer
+                Ok(val)
+            }
+            Type::Struct(name) | Type::UserDefined(name) => {
+                let struct_def = self
+                    .struct_defs
+                    .get(name)
+                    .ok_or(format!("Struct {} definition not found", name))?;
+                let st_llvm_ty = *self
+                    .struct_types
+                    .get(name)
+                    .ok_or("LLVM Struct type not found")?;
+
+                let new_struct_ptr = self
+                    .builder
+                    .build_malloc(st_llvm_ty, &format!("copy_{}", name))
+                    .map_err(|e| e.to_string())?;
+
+                // Register with MemoryManager (important for nested structs which are not Variables)
+                // Actually, if it's a field, it's owned by the parent struct.
+                // The parent struct's free will recursively free this.
+                // But wait, standard malloc isn't tracked by MemoryManager unless registered.
+                // If we use recursive_free for the parent, it calls libc::free on fields.
+                // So checking registration is not strictly needed for fields if recursive_free handles it.
+                // However, for consistency/debug, we could register? No, let's stick to recursive_free logic.
+
+                let src_ptr = val.into_pointer_value();
+
+                for (i, (field_name, field_ty)) in struct_def.fields.iter().enumerate() {
+                    let src_field_ptr = self
+                        .builder
+                        .build_struct_gep(
+                            st_llvm_ty,
+                            src_ptr,
+                            i as u32,
+                            &format!("src_{}", field_name),
+                        )
+                        .map_err(|e| e.to_string())?;
+                    let dst_field_ptr = self
+                        .builder
+                        .build_struct_gep(
+                            st_llvm_ty,
+                            new_struct_ptr,
+                            i as u32,
+                            &format!("dst_{}", field_name),
+                        )
+                        .map_err(|e| e.to_string())?;
+
+                    let val = match field_ty {
+                        Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => {
+                            let loaded = self
+                                .builder
+                                .build_load(
+                                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                                    src_field_ptr,
+                                    "f_val",
+                                )
+                                .map_err(|e| e.to_string())?;
+                            self.emit_deep_clone(loaded, field_ty)?
+                        }
+                        _ => {
+                            let llvm_ty: inkwell::types::BasicTypeEnum = match field_ty {
+                                Type::F32 => self.context.f32_type().into(),
+                                Type::I64 => self.context.i64_type().into(),
+                                Type::I32 => self.context.i32_type().into(),
+                                Type::Bool => self.context.bool_type().into(),
+                                _ => {
+                                    return Err(format!("Unsupported clone field: {:?}", field_ty))
+                                }
+                            };
+                            self.builder
+                                .build_load(llvm_ty, src_field_ptr, "prim_val")
+                                .map_err(|e| e.to_string())?
+                        }
+                    };
+
+                    self.builder
+                        .build_store(dst_field_ptr, val)
+                        .map_err(|e| e.to_string())?;
+                }
+                Ok(new_struct_ptr.into())
+            }
+            _ => Ok(val),
         }
     }
 }

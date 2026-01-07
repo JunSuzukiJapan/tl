@@ -214,10 +214,22 @@ impl<'ctx> CodeGenerator<'ctx> {
             for method in &imp.methods {
                 let mangled_name = format!("tl_{}_{}", imp.target_type, method.name);
 
+                // Check if this method returns a struct (requires sret)
+                let uses_sret =
+                    matches!(&method.return_type, Type::Struct(_) | Type::UserDefined(_));
+
                 let mut param_types: Vec<BasicMetadataTypeEnum> = Vec::new();
 
-                // Add 'self' param type explicitly if we want strict compatibility,
-                // but parser puts 'self' in args so we treat it as arg 0.
+                // If sret, add hidden pointer argument at the beginning
+                if uses_sret {
+                    param_types.push(
+                        self.context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
+                    );
+                }
+
+                // Add regular arguments
                 for (_arg_name, arg_ty) in &method.args {
                     let resolved_ty = if let Type::UserDefined(name) = arg_ty {
                         if name == "Self" {
@@ -243,26 +255,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .into(),
                         _ => self
                             .context
-                            .ptr_type(inkwell::AddressSpace::default()) // Fallback
+                            .ptr_type(inkwell::AddressSpace::default())
                             .into(),
                     };
                     param_types.push(ty);
                 }
 
-                let fn_type = match &method.return_type {
-                    Type::F32 => self.context.f32_type().fn_type(&param_types, false),
-                    Type::I64 => self.context.i64_type().fn_type(&param_types, false),
-                    Type::Bool => self.context.bool_type().fn_type(&param_types, false),
-                    Type::Void => self.context.void_type().fn_type(&param_types, false),
-                    Type::Tensor(_, _) => self
-                        .context
-                        .ptr_type(inkwell::AddressSpace::default())
-                        .fn_type(&param_types, false),
-                    Type::Struct(_) | Type::UserDefined(_) => self
-                        .context
-                        .ptr_type(inkwell::AddressSpace::default())
-                        .fn_type(&param_types, false),
-                    _ => self.context.void_type().fn_type(&param_types, false),
+                // Build function type
+                let fn_type = if uses_sret {
+                    self.context.void_type().fn_type(&param_types, false)
+                } else {
+                    match &method.return_type {
+                        Type::F32 => self.context.f32_type().fn_type(&param_types, false),
+                        Type::I64 => self.context.i64_type().fn_type(&param_types, false),
+                        Type::Bool => self.context.bool_type().fn_type(&param_types, false),
+                        Type::Void => self.context.void_type().fn_type(&param_types, false),
+                        Type::Tensor(_, _) => self
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .fn_type(&param_types, false),
+                        _ => self.context.void_type().fn_type(&param_types, false),
+                    }
                 };
 
                 let _function = self.module.add_function(&mangled_name, fn_type, None);
@@ -286,7 +299,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.fn_entry_scope_depth = self.variables.len();
                 self.enter_scope();
 
-                // Get params and store them
+                // Check if this method uses sret
+                let uses_sret =
+                    matches!(&method.return_type, Type::Struct(_) | Type::UserDefined(_));
+                let param_offset = if uses_sret { 1 } else { 0 };
+
+                // Get params and store them (skip sret param if present)
                 for (i, (arg_name, arg_ty)) in method.args.iter().enumerate() {
                     let resolved_ty = if let Type::UserDefined(name) = arg_ty {
                         if name == "Self" {
@@ -298,7 +316,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         arg_ty.clone()
                     };
 
-                    if let Some(param_val) = function.get_nth_param(i as u32) {
+                    if let Some(param_val) = function.get_nth_param((i + param_offset) as u32) {
                         param_val.set_name(arg_name);
                         let alloca =
                             self.create_entry_block_alloca(function, arg_name, &resolved_ty);
@@ -445,25 +463,22 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn compile_fn_proto(&mut self, func: &FunctionDef) -> Result<FunctionValue<'ctx>, String> {
         self.fn_return_types
             .insert(func.name.clone(), func.return_type.clone());
-        let ret_type: Option<inkwell::types::BasicTypeEnum> = match &func.return_type {
-            Type::Void => None, // Void is not BasicValue
-            Type::I64 => Some(self.context.i64_type().into()),
-            Type::F32 => Some(self.context.f32_type().into()),
-            Type::Bool => Some(self.context.bool_type().into()),
-            Type::Tensor(_, _) => Some(
-                self.context
-                    .ptr_type(inkwell::AddressSpace::default())
-                    .into(),
-            ),
-            Type::Struct(_) | Type::UserDefined(_) => Some(
-                self.context
-                    .ptr_type(inkwell::AddressSpace::default())
-                    .into(),
-            ),
-            _ => Some(self.context.i64_type().into()), // default
-        };
+
+        // Check if this function returns a struct (requires sret)
+        let uses_sret = matches!(&func.return_type, Type::Struct(_) | Type::UserDefined(_));
 
         let mut args_types = Vec::new();
+
+        // If sret, add hidden pointer argument at the beginning
+        if uses_sret {
+            args_types.push(
+                self.context
+                    .ptr_type(inkwell::AddressSpace::default())
+                    .into(),
+            );
+        }
+
+        // Add regular arguments
         for (_, val) in &func.args {
             let arg_ty: inkwell::types::BasicMetadataTypeEnum = match val {
                 Type::I64 => self.context.i64_type().into(),
@@ -482,17 +497,43 @@ impl<'ctx> CodeGenerator<'ctx> {
             args_types.push(arg_ty);
         }
 
-        let fn_type = match ret_type {
-            Some(inkwell::types::BasicTypeEnum::IntType(i)) => i.fn_type(&args_types, false),
-            Some(inkwell::types::BasicTypeEnum::FloatType(f)) => f.fn_type(&args_types, false),
-            Some(inkwell::types::BasicTypeEnum::PointerType(p)) => p.fn_type(&args_types, false),
-            _ => self.context.void_type().fn_type(&args_types, false), // Void fallback
+        // Build function type
+        let fn_type = if uses_sret {
+            // Sret functions return void
+            self.context.void_type().fn_type(&args_types, false)
+        } else {
+            let ret_type: Option<inkwell::types::BasicTypeEnum> = match &func.return_type {
+                Type::Void => None,
+                Type::I64 => Some(self.context.i64_type().into()),
+                Type::F32 => Some(self.context.f32_type().into()),
+                Type::Bool => Some(self.context.bool_type().into()),
+                Type::Tensor(_, _) => Some(
+                    self.context
+                        .ptr_type(inkwell::AddressSpace::default())
+                        .into(),
+                ),
+                _ => Some(self.context.i64_type().into()),
+            };
+            match ret_type {
+                Some(inkwell::types::BasicTypeEnum::IntType(i)) => i.fn_type(&args_types, false),
+                Some(inkwell::types::BasicTypeEnum::FloatType(f)) => f.fn_type(&args_types, false),
+                Some(inkwell::types::BasicTypeEnum::PointerType(p)) => {
+                    p.fn_type(&args_types, false)
+                }
+                _ => self.context.void_type().fn_type(&args_types, false),
+            }
         };
 
         let val = self.module.add_function(&func.name, fn_type, None);
 
         // Add param names for debug
-        for (i, arg) in val.get_param_iter().enumerate() {
+        let param_offset = if uses_sret { 1 } else { 0 };
+        if uses_sret {
+            if let Some(sret_param) = val.get_nth_param(0) {
+                sret_param.set_name("sret");
+            }
+        }
+        for (i, arg) in val.get_param_iter().skip(param_offset).enumerate() {
             arg.set_name(&func.args[i].0);
         }
 
@@ -512,17 +553,45 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.fn_entry_scope_depth = self.variables.len();
         self.enter_scope(); // Function scope
 
-        // Register arguments
-        for (i, arg) in function.get_param_iter().enumerate() {
+        // Check if this function uses sret
+        let uses_sret = matches!(&func.return_type, Type::Struct(_) | Type::UserDefined(_));
+        let param_offset = if uses_sret { 1 } else { 0 };
+
+        // Register arguments (skip sret param if present)
+        for (i, arg) in function.get_param_iter().skip(param_offset).enumerate() {
             let (arg_name, arg_type) = &func.args[i];
             let alloca = self.create_entry_block_alloca(function, arg_name, arg_type);
-            self.builder.build_store(alloca, arg).unwrap();
 
-            // Insert into current scope
+            // Apply DeepClone (Struct Copy + Tensor Acquire) to arguments
+            // This ensures function scope owns its arguments (shared tensors)
+            let acquired_arg = if matches!(
+                arg_type,
+                Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+            ) {
+                self.emit_deep_clone(arg.into(), arg_type).unwrap()
+            } else {
+                arg.into()
+            };
+
+            match acquired_arg {
+                inkwell::values::BasicValueEnum::PointerValue(p) => {
+                    self.builder.build_store(alloca, p).unwrap()
+                }
+                inkwell::values::BasicValueEnum::FloatValue(f) => {
+                    self.builder.build_store(alloca, f).unwrap()
+                }
+                inkwell::values::BasicValueEnum::IntValue(v) => {
+                    self.builder.build_store(alloca, v).unwrap()
+                }
+                _ => panic!("Unsupported arg type"),
+            };
+
+            // Insert into current scope with should_free=true
+            // Arguments are now "owned" (shared) by the function scope and must be released on exit
             self.variables
                 .last_mut()
                 .unwrap()
-                .insert(arg_name.clone(), (alloca.into(), arg_type.clone(), false));
+                .insert(arg_name.clone(), (alloca.into(), arg_type.clone(), true));
         }
 
         // Initialize Arena in main if needed
