@@ -317,10 +317,10 @@ mod tests {
         mgr.enter_scope();
         let ptr = dummy_ptr(0x1000);
         mgr.register_struct(ptr);
-        assert_eq!(mgr.scopes[0].len(), 1);
-        assert_eq!(mgr.scopes[0][0].ptr, ptr);
+        assert_eq!(mgr.scopes[1].len(), 1);
+        assert_eq!(mgr.scopes[1][0].ptr, ptr);
         assert!(matches!(
-            mgr.scopes[0][0].alloc_type,
+            mgr.scopes[1][0].alloc_type,
             AllocationType::Struct
         ));
     }
@@ -331,10 +331,10 @@ mod tests {
         mgr.enter_scope();
         let ptr = dummy_tensor_ptr(0x2000);
         mgr.register_tensor(ptr);
-        assert_eq!(mgr.scopes[0].len(), 1);
-        assert_eq!(mgr.scopes[0][0].ptr, ptr as *mut c_void);
+        assert_eq!(mgr.scopes[1].len(), 1);
+        assert_eq!(mgr.scopes[1][0].ptr, ptr as *mut c_void);
         assert!(matches!(
-            mgr.scopes[0][0].alloc_type,
+            mgr.scopes[1][0].alloc_type,
             AllocationType::Tensor
         ));
     }
@@ -349,11 +349,11 @@ mod tests {
         mgr.register_struct(ptr1);
         mgr.register_struct(ptr2);
         mgr.register_struct(ptr3);
-        assert_eq!(mgr.scopes[0].len(), 3);
+        assert_eq!(mgr.scopes[1].len(), 3);
         mgr.unregister(ptr2);
-        assert_eq!(mgr.scopes[0].len(), 2);
-        assert_eq!(mgr.scopes[0][0].ptr, ptr1);
-        assert_eq!(mgr.scopes[0][1].ptr, ptr3);
+        assert_eq!(mgr.scopes[1].len(), 2);
+        assert_eq!(mgr.scopes[1][0].ptr, ptr1);
+        assert_eq!(mgr.scopes[1][1].ptr, ptr3);
     }
 
     #[test]
@@ -362,14 +362,14 @@ mod tests {
         mgr.enter_scope();
         mgr.register_struct(dummy_ptr(0x1000));
         mgr.unregister(dummy_ptr(0x9999));
-        assert_eq!(mgr.scopes[0].len(), 1);
+        assert_eq!(mgr.scopes[1].len(), 1);
     }
 
     #[test]
     fn test_exit_scope_empty() {
         let mut mgr = MemoryManager::new();
         mgr.exit_scope();
-        assert_eq!(mgr.scopes.len(), 0);
+        assert_eq!(mgr.scopes.len(), 1);
     }
 
     #[test]
