@@ -312,11 +312,11 @@ fn main() {
     print("Starting Associative Recall Training...");
     print("Format: K1 V1 ... K6 V6 Query -> Target");
     
-    let total_loss = 0.0;
-    
-    for i in range(0, 500) {
+    // Training Loop
+    for i in range(0, 2500) {
         let data = gen_data(i); // [1, 14]
         
+        // Input: 0..12 (13 tokens)
         let in_seq = [
              data.get(0), data.get(1),
              data.get(2), data.get(3),
@@ -328,6 +328,11 @@ fn main() {
         ];
         let X = reshape(in_seq, 1, 13);
         
+        // Target: 13 (1 token) - We only care about the last prediction really,
+        // but for training we usually train on all next-tokens.
+        // However, for this task, only the last token (answer) is strictly defined by the "Recall" logic structure.
+        // Intermediate tokens are just next-token prediction.
+        // Let's train on all.
         let targets_arr = [
              data.get(1), data.get(2),
              data.get(3), data.get(4),
@@ -348,15 +353,56 @@ fn main() {
         backward(loss);
         model = model.step(lr);
         
-        total_loss = loss.detach(true);
+        let loss_val = loss.get(0); // Scalar loss
         
         if i - ((i / 50) * 50) == 0 {
              print("Step:"); print(i);
-             print("Loss:"); print(total_loss);
+             print("Loss:"); print(loss_val);
+             
+             // Validation / Inference check
+             let val_data = gen_data(i + 10000);
+             let val_in = [
+                 val_data.get(0), val_data.get(1),
+                 val_data.get(2), val_data.get(3),
+                 val_data.get(4), val_data.get(5),
+                 val_data.get(6), val_data.get(7),
+                 val_data.get(8), val_data.get(9),
+                 val_data.get(10), val_data.get(11),
+                 val_data.get(12)
+             ];
+             let val_X = reshape(val_in, 1, 13);
+             let val_logits = model.forward(val_X);
+             
+             // Last position logits: [0, 12, :]
+             // We need to extract it. 
+             // tl doesn't have fancy slicing yet? slice(tensor, start, len).
+             // Reshape val_logits to [13, 30] and take 12th row?
+             // Since scalar get/slice is limited, let's just use argmax on the whole last row if possible.
+             // Or better: reshape to [13, 30].
+             let val_logits_flat = reshape(val_logits, 13, 30);
+             // We want 12th row.
+             // Since we can't easily slice a row, let's use `slice` if available.
+             // slice(t, start, len). But 1D slice?
+             // If flat is [13*30], start = 12*30, len=30.
+             let val_logits_1d = reshape(val_logits_flat, 390);
+             let last_row = slice(val_logits_1d, 360, 30); // 12 * 30 = 360
+             
+             let pred_t = argmax(last_row, 0);
+             let pred_t_i64 = pred_t as Tensor<i64, 1>;
+             let pred_t_f32 = pred_t_i64 as Tensor<f32, 1>;
+             let pred = pred_t_f32.get(0) as i64;
+             // let pred = 0;
+             let target = val_data.get(13) as i64;
+             
+             print("Pred:"); print(pred);
+             print("Target:"); print(target);
+             if pred == target {
+                 print("Result: Correct");
+             } else {
+                 print("Result: Wrong");
+             }
         }
     }
     
     print("Training Complete.");
-    print("Final Loss:");
-    print(total_loss);
 }
