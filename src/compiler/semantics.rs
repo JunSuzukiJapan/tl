@@ -2189,6 +2189,27 @@ impl SemanticAnalyzer {
                     ("Image", "width") => Ok(Type::I64),
                     ("Image", "height") => Ok(Type::I64),
                     // --- New Static Methods for Refactor ---
+                    ("Tensor", "zeros") => {
+                        // Tensor::zeros(shape, requires_grad)
+                        if args.is_empty() || args.len() > 2 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::zeros".into(),
+                                expected: 2,
+                                found: args.len(),
+                            });
+                        }
+                        let _ = self.check_expr(&mut args[0])?;
+                        if args.len() == 2 {
+                            let t1 = self.check_expr(&mut args[1])?;
+                            if !matches!(t1, Type::Bool) {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::Bool,
+                                    found: t1,
+                                });
+                            }
+                        }
+                        Ok(Type::Tensor(Box::new(Type::F32), 0))
+                    }
                     ("Tensor", "randn") => {
                         // Tensor::randn(shape, requires_grad)
                         if args.is_empty() || args.len() > 2 {

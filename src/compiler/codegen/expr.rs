@@ -1548,6 +1548,109 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
+        // Optimization for Tensor::zeros (Bypass lookup)
+        if type_name == "Tensor" && method_name == "zeros" {
+            if args.is_empty() {
+                return Err("Tensor::zeros requires shape argument".into());
+            }
+
+            let elements_ref = if let Expr::TensorLiteral(el) = &args[0] {
+                Some(el)
+            } else if let Expr::TensorConstLiteral(el) = &args[0] {
+                Some(el)
+            } else {
+                None
+            };
+
+            if let Some(el) = elements_ref {
+                let i64_type = self.context.i64_type();
+                let mut vals = Vec::new();
+                for e in el {
+                    let (v, t) = self.compile_expr(e)?;
+                    let int_val = match t {
+                        Type::I64 => v.into_int_value(),
+                        Type::I32 => self
+                            .builder
+                            .build_int_z_extend(v.into_int_value(), i64_type, "ext")
+                            .map_err(|e| e.to_string())?,
+                        _ => return Err(format!("Dimension must be integer, found {:?}", t)),
+                    };
+                    vals.push(int_val);
+                }
+
+                let rank = el.len();
+
+                // Entry block alloca
+                let current_block = self.builder.get_insert_block().unwrap();
+                let function = current_block.get_parent().unwrap();
+                let entry_block = function.get_first_basic_block().unwrap();
+                let entry_builder = self.context.create_builder();
+                if let Some(first_instr) = entry_block.get_first_instruction() {
+                    entry_builder.position_before(&first_instr);
+                } else {
+                    entry_builder.position_at_end(entry_block);
+                }
+
+                let shape_array_type = i64_type.array_type(rank as u32);
+                let shape_alloca = entry_builder
+                    .build_alloca(shape_array_type, "shape_arr")
+                    .map_err(|e| e.to_string())?;
+
+                for (i, val) in vals.iter().enumerate() {
+                    let ptr = unsafe {
+                        self.builder
+                            .build_in_bounds_gep(
+                                shape_array_type,
+                                shape_alloca,
+                                &[
+                                    i64_type.const_int(0, false),
+                                    i64_type.const_int(i as u64, false),
+                                ],
+                                "tmp",
+                            )
+                            .map_err(|e| e.to_string())?
+                    };
+                    self.builder
+                        .build_store(ptr, *val)
+                        .map_err(|e| e.to_string())?;
+                }
+
+                let req_grad = if args.len() > 1 {
+                    let (v, _) = self.compile_expr(&args[1])?;
+                    v.into_int_value()
+                } else {
+                    self.context.bool_type().const_int(0, false)
+                };
+
+                let f = self
+                    .module
+                    .get_function("tl_tensor_zeros")
+                    .ok_or("tl_tensor_zeros not found")?;
+                let call = self
+                    .builder
+                    .build_call(
+                        f,
+                        &[
+                            i64_type.const_int(rank as u64, false).into(),
+                            shape_alloca.into(),
+                            req_grad.into(),
+                        ],
+                        "zeros_res",
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => {
+                        // Register intermediate tensor result for automatic cleanup
+                        let result_ty = Type::Tensor(Box::new(Type::F32), rank);
+                        self.emit_register_tensor(v, &result_ty)?;
+                        return Ok((v, result_ty));
+                    }
+                    _ => return Err("Invalid call return".into()),
+                }
+            }
+        }
+
         // 1. Resolve Mangled Name
         let mangled_name = format!("tl_{}_{}", type_name, method_name);
         let stdlib_name = format!("tl_{}_{}", type_name.to_lowercase(), method_name);

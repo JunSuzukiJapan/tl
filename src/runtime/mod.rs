@@ -200,7 +200,34 @@ pub extern "C" fn tl_tensor_randn_debug(
     ptr
 }
 
+#[no_mangle]
+pub extern "C" fn tl_tensor_zeros(
+    rank: usize,
+    shape: *const usize,
+    req_grad: bool,
+) -> *mut OpaqueTensor {
+    if shape.is_null() {
+        return std::ptr::null_mut();
+    }
+    let shape_data: Vec<usize> = unsafe { std::slice::from_raw_parts(shape, rank).to_vec() };
+
+    let device = get_device();
+
+    // Create zero tensor
+    let t = Tensor::zeros(&shape_data[..], candle_core::DType::F32, &device).unwrap();
+
+    let ptr = if req_grad {
+        let var = candle_core::Var::from_tensor(&t).unwrap();
+        make_var(var)
+    } else {
+        make_tensor(t)
+    };
+
+    ptr
+}
+
 /// Create a 1D Tensor from an i64 array (for reshape shape arguments)
+
 #[no_mangle]
 pub extern "C" fn tl_tensor_from_i64_array(data: *const i64, len: usize) -> *mut OpaqueTensor {
     let data_slice = unsafe { slice::from_raw_parts(data, len) };

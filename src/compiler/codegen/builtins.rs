@@ -282,7 +282,20 @@ pub fn declare_runtime_functions<'ctx>(
     );
     add_fn("tl_tensor_randn_debug", randn_type);
 
+    // tl_tensor_zeros(rank, shape_ptr, req_grad) -> OpaqueTensor*
+    let zeros_type = void_ptr.fn_type(
+        &[
+            i64_type.into(),            // rank
+            usize_ptr.into(),           // shape pointer
+            context.bool_type().into(), // req_grad
+        ],
+        false,
+    );
+
+    add_fn("tl_tensor_zeros", zeros_type);
+
     // VarBuilder
+
     // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize)
     let varbuilder_get_type =
         void_ptr.fn_type(&[i8_ptr.into(), i64_type.into(), usize_ptr.into()], false);
@@ -526,6 +539,9 @@ pub fn declare_runtime_functions<'ctx>(
     // Additional mappings from previous list...
     if let Some(f) = module.get_function("tl_tensor_randn_debug") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_randn_debug as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_zeros") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_zeros as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_backward") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_backward as usize);
