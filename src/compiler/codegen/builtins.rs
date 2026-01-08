@@ -759,7 +759,41 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_to_i64") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_to_i64 as usize);
-    } // End of function
+    }
+
+    // Vec<u8> mappings
+    if let Some(f) = module.get_function("tl_vec_u8_new") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_new as usize);
+    }
+    if let Some(f) = module.get_function("tl_vec_u8_with_capacity") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_with_capacity as usize);
+    }
+    if let Some(f) = module.get_function("tl_vec_u8_len") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_len as usize);
+    }
+    if let Some(f) = module.get_function("tl_vec_u8_get") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_get as usize);
+    }
+    if let Some(f) = module.get_function("tl_vec_u8_set") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_set as usize);
+    }
+    if let Some(f) = module.get_function("tl_vec_u8_push") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_push as usize);
+    }
+    if let Some(f) = module.get_function("tl_vec_u8_free") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_free as usize);
+    }
+
+    // Binary file I/O mappings
+    if let Some(f) = module.get_function("tl_file_read_binary") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_read_binary as usize);
+    }
+    if let Some(f) = module.get_function("tl_file_write_binary") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_write_binary as usize);
+    }
+
+    // End of function
+
     let tensor_type = Type::Tensor(Box::new(Type::F32), 1); // Common return type for many tensor ops
 
     fn_return_types.insert("tl_tensor_new".to_string(), tensor_type.clone());
@@ -1224,4 +1258,64 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_env_set".to_string(), Type::Void);
     fn_return_types.insert("tl_system_time".to_string(), Type::F32); // Using F32 as default float for now
     fn_return_types.insert("tl_system_sleep".to_string(), Type::Void);
+
+    // --- Vec<u8> support for binary data ---
+    let u8_type = context.i8_type();
+
+    // tl_vec_u8_new() -> *mut Vec<u8>
+    let vec_u8_new_type = ptr_type.fn_type(&[], false);
+    module.add_function("tl_vec_u8_new", vec_u8_new_type, None);
+    fn_return_types.insert("tl_vec_u8_new".to_string(), Type::Vec(Box::new(Type::U8)));
+
+    // tl_vec_u8_with_capacity(cap: usize) -> *mut Vec<u8>
+    let vec_u8_with_cap_type = ptr_type.fn_type(&[i64_type.into()], false);
+    module.add_function("tl_vec_u8_with_capacity", vec_u8_with_cap_type, None);
+    fn_return_types.insert(
+        "tl_vec_u8_with_capacity".to_string(),
+        Type::Vec(Box::new(Type::U8)),
+    );
+
+    // tl_vec_u8_len(ptr) -> usize
+    let vec_u8_len_type = i64_type.fn_type(&[ptr_type.into()], false);
+    module.add_function("tl_vec_u8_len", vec_u8_len_type, None);
+    fn_return_types.insert("tl_vec_u8_len".to_string(), Type::I64);
+
+    // tl_vec_u8_get(ptr, idx) -> u8
+    let vec_u8_get_type = u8_type.fn_type(&[ptr_type.into(), i64_type.into()], false);
+    module.add_function("tl_vec_u8_get", vec_u8_get_type, None);
+    fn_return_types.insert("tl_vec_u8_get".to_string(), Type::U8);
+
+    // tl_vec_u8_set(ptr, idx, val) -> void
+    let vec_u8_set_type =
+        void_type.fn_type(&[ptr_type.into(), i64_type.into(), u8_type.into()], false);
+    module.add_function("tl_vec_u8_set", vec_u8_set_type, None);
+    fn_return_types.insert("tl_vec_u8_set".to_string(), Type::Void);
+
+    // tl_vec_u8_push(ptr, val) -> void
+    let vec_u8_push_type = void_type.fn_type(&[ptr_type.into(), u8_type.into()], false);
+    module.add_function("tl_vec_u8_push", vec_u8_push_type, None);
+    fn_return_types.insert("tl_vec_u8_push".to_string(), Type::Void);
+
+    // tl_vec_u8_free(ptr) -> void
+    let vec_u8_free_type = void_type.fn_type(&[ptr_type.into()], false);
+    module.add_function("tl_vec_u8_free", vec_u8_free_type, None);
+    fn_return_types.insert("tl_vec_u8_free".to_string(), Type::Void);
+
+    // --- Binary file I/O ---
+    let i8_ptr = context.ptr_type(inkwell::AddressSpace::default());
+
+    // tl_file_read_binary(path) -> *mut Vec<u8>
+    let file_read_binary_type = ptr_type.fn_type(&[i8_ptr.into()], false);
+    module.add_function("tl_file_read_binary", file_read_binary_type, None);
+    fn_return_types.insert(
+        "tl_file_read_binary".to_string(),
+        Type::Vec(Box::new(Type::U8)),
+    );
+
+    // tl_file_write_binary(path, data) -> bool
+    let file_write_binary_type = context
+        .bool_type()
+        .fn_type(&[i8_ptr.into(), ptr_type.into()], false);
+    module.add_function("tl_file_write_binary", file_write_binary_type, None);
+    fn_return_types.insert("tl_file_write_binary".to_string(), Type::Bool);
 }

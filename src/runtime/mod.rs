@@ -1501,6 +1501,73 @@ pub extern "C" fn tl_vec_void_free(ptr: *mut std::ffi::c_void) {
     }
 }
 
+// --- Vec<u8> support for binary data ---
+
+#[no_mangle]
+pub extern "C" fn tl_vec_u8_new() -> *mut Vec<u8> {
+    Box::into_raw(Box::new(Vec::<u8>::new()))
+}
+
+#[no_mangle]
+pub extern "C" fn tl_vec_u8_with_capacity(cap: usize) -> *mut Vec<u8> {
+    Box::into_raw(Box::new(Vec::<u8>::with_capacity(cap)))
+}
+
+#[no_mangle]
+pub extern "C" fn tl_vec_u8_len(ptr: *mut Vec<u8>) -> usize {
+    if ptr.is_null() {
+        return 0;
+    }
+    unsafe { (*ptr).len() }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_vec_u8_get(ptr: *mut Vec<u8>, idx: usize) -> u8 {
+    if ptr.is_null() {
+        return 0;
+    }
+    unsafe {
+        let vec = &*ptr;
+        if idx < vec.len() {
+            vec[idx]
+        } else {
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_vec_u8_set(ptr: *mut Vec<u8>, idx: usize, val: u8) {
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        let vec = &mut *ptr;
+        if idx < vec.len() {
+            vec[idx] = val;
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_vec_u8_push(ptr: *mut Vec<u8>, val: u8) {
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        (*ptr).push(val);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_vec_u8_free(ptr: *mut Vec<u8>) {
+    if !ptr.is_null() {
+        unsafe {
+            let _ = Box::from_raw(ptr);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

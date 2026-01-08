@@ -80,6 +80,41 @@ pub extern "C" fn tl_file_close(file: *mut File) {
     }
 }
 
+// --- Binary File I/O ---
+
+#[no_mangle]
+pub extern "C" fn tl_file_read_binary(path: *const c_char) -> *mut Vec<u8> {
+    if path.is_null() {
+        return std::ptr::null_mut();
+    }
+    let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+
+    match std::fs::read(path_str.as_ref()) {
+        Ok(data) => Box::into_raw(Box::new(data)),
+        Err(e) => {
+            eprintln!("tl_file_read_binary error: {}", e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_file_write_binary(path: *const c_char, data: *mut Vec<u8>) -> bool {
+    if path.is_null() || data.is_null() {
+        return false;
+    }
+    let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+    let data_vec = unsafe { &*data };
+
+    match std::fs::write(path_str.as_ref(), data_vec) {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!("tl_file_write_binary error: {}", e);
+            false
+        }
+    }
+}
+
 // --- Path ---
 
 use std::path::PathBuf;
