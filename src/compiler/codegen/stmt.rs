@@ -1376,6 +1376,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Check if iterator is a range (BinOp with ".." conceptually - we detect 0..n pattern)
                 // Or if it's a tensor/variable
                 let (start_val, end_val, is_tensor_iter) = match iterator {
+                    Expr::Range(start, end) => {
+                        let (s, _) = self.compile_expr(start)?;
+                        let (e, _) = self.compile_expr(end)?;
+                        (s.into_int_value(), e.into_int_value(), false)
+                    }
                     Expr::FnCall(name, args) if name == "range" => {
                         // range(start, end)
                         if args.len() != 2 {

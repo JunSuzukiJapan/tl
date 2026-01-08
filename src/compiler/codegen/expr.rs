@@ -365,16 +365,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                 ))
             }
             Expr::StringLiteral(s) => {
-                // Create a global string constant and return pointer to it
                 let global_str = self
                     .builder
-                    .build_global_string_ptr(s, "str_literal")
+                    .build_global_string_ptr(s, "str_lit")
                     .map_err(|e| e.to_string())?;
-                Ok((
-                    global_str.as_pointer_value().into(),
-                    Type::UserDefined("String".to_string()),
-                ))
+                let ptr = global_str.as_pointer_value();
+                let ptr_as_int = self
+                    .builder
+                    .build_ptr_to_int(ptr, self.context.i64_type(), "str_ptr_int")
+                    .map_err(|e| e.to_string())?;
+
+                Ok((ptr_as_int.into(), Type::UserDefined("String".to_string())))
             }
+            Expr::Range(_, _) => Err("Expr::Range should only appear in For loops".to_string()),
             Expr::As(expr, target_type) => {
                 let (val, source_type) = self.compile_expr(expr)?;
                 if source_type == *target_type {

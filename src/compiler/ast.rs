@@ -140,6 +140,7 @@ pub enum Expr {
     Int(i64),
     Bool(bool),
     StringLiteral(String),
+    Range(Box<Expr>, Box<Expr>), // start..end
     TensorComprehension {
         indices: Vec<String>,
         body: Box<Expr>,

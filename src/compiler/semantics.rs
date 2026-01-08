@@ -689,40 +689,45 @@ impl SemanticAnalyzer {
             } => {
                 // Check if iterator is range(start, end)
                 // This is a special case for the compiler intrinsic 'range'
-                let is_range = if let Expr::FnCall(name, args) = iterator {
-                    if name == "range" && args.len() == 2 {
-                        // Check arguments
+                let elem_type = match iterator {
+                    Expr::Range(start, end) => {
+                        let start_ty = self.check_expr(start)?;
+                        let end_ty = self.check_expr(end)?;
+                        if !matches!(start_ty, Type::I64 | Type::I32)
+                            || !matches!(end_ty, Type::I64 | Type::I32)
+                        {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::I64,
+                                found: start_ty,
+                            });
+                        }
+                        Type::I64
+                    }
+                    Expr::FnCall(name, args) if name == "range" && args.len() == 2 => {
+                        // Deprecated range() function check
                         let start_type = self.check_expr(&mut args[0])?;
                         let end_type = self.check_expr(&mut args[1])?;
-                        // expect integers
                         if !matches!(start_type, Type::I64 | Type::I32)
                             || !matches!(end_type, Type::I64 | Type::I32)
                         {
                             return Err(SemanticError::TypeMismatch {
                                 expected: Type::I64,
-                                found: start_type, // simplified error
+                                found: start_type,
                             });
                         }
-                        true
-                    } else {
-                        false
+                        Type::I64
                     }
-                } else {
-                    false
-                };
-
-                let elem_type = if is_range {
-                    Type::I64
-                } else {
-                    let iter_type = self.check_expr(iterator)?;
-                    match iter_type {
-                        Type::Tensor(t, 1) => *t,
-                        Type::TensorShaped(t, _) => *t, // Allow iterating shaped tensors?
-                        _ => {
-                            return Err(SemanticError::TypeMismatch {
-                                expected: Type::Tensor(Box::new(Type::F32), 1),
-                                found: iter_type,
-                            })
+                    _ => {
+                        let iter_type = self.check_expr(iterator)?;
+                        match iter_type {
+                            Type::Tensor(t, 1) => *t,
+                            Type::TensorShaped(t, _) => *t,
+                            _ => {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::Tensor(Box::new(Type::F32), 1),
+                                    found: iter_type,
+                                })
+                            }
                         }
                     }
                 };
@@ -845,6 +850,20 @@ impl SemanticAnalyzer {
                 }
 
                 Ok(Type::Struct(name.clone()))
+            }
+            Expr::Range(start, end) => {
+                let s_ty = self.check_expr(start)?;
+                let e_ty = self.check_expr(end)?;
+                if !matches!(s_ty, Type::I64 | Type::I32) || !matches!(e_ty, Type::I64 | Type::I32)
+                {
+                    return Err(SemanticError::TypeMismatch {
+                        expected: Type::I64,
+                        found: s_ty,
+                    });
+                }
+                // Range expression itself doesn't evaluate to a runtime value outside of for-loops yet,
+                // but we return Void or a placeholder.
+                Ok(Type::Void)
             }
             Expr::Variable(name) => {
                 // 1. Try local scopes first (reverse order)

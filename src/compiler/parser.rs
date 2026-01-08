@@ -474,9 +474,22 @@ fn parse_logical_or(input: &str) -> IResult<&str, Expr> {
     )(input)
 }
 
+// 8. Range: ..
+fn parse_range(input: &str) -> IResult<&str, Expr> {
+    let (input, start) = parse_logical_or(input)?;
+
+    let (input, end) = opt(preceded(ws(tag("..")), parse_logical_or))(input)?;
+
+    if let Some(end_expr) = end {
+        Ok((input, Expr::Range(Box::new(start), Box::new(end_expr))))
+    } else {
+        Ok((input, start))
+    }
+}
+
 // Top level Expr
 fn parse_expr(input: &str) -> IResult<&str, Expr> {
-    parse_logical_or(input)
+    parse_range(input)
 }
 
 // --- Statements ---
