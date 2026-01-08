@@ -1,4 +1,4 @@
-// MNIST Simple Test - Using correct argmax syntax
+// MNIST Simple Test - Method Syntax
 
 struct Linear {
     W: Tensor<f32, 2>,
@@ -19,7 +19,7 @@ impl Linear {
 }
 
 fn main() {
-    print("Simple MNIST test");
+    print("Simple MNIST test: Method Syntax");
     
     // Load image pixels
     let pixels = Image::load_grayscale("examples/tasks/mnist/data/test.png");
@@ -36,10 +36,8 @@ fn main() {
     // Forward
     let logits = model.forward(input);
     
-    // Get argmax using function syntax
-    let logits_flat = reshape(logits, 10);
-    let pred_tensor = argmax(logits_flat, 0);
-    let pred = pred_tensor.get(0) as i64;
+    // Get argmax using method syntax and item_i64
+    let pred = logits.argmax(1, false).item_i64();
     print("Prediction (random):"); print(pred);
     
     print("Done!");

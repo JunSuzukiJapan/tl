@@ -1598,6 +1598,70 @@ impl SemanticAnalyzer {
                         });
                     }
                     return Ok(Type::I64);
+                } else if name == "tl_file_read_binary" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    let t = self.check_expr(&mut args[0])?;
+                    if !matches!(&t, Type::UserDefined(s) if s == "String") {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::UserDefined("String".into()),
+                            found: t,
+                        });
+                    }
+                    return Ok(Type::Vec(Box::new(Type::U8)));
+                } else if name == "tl_vec_u8_read_i32_be" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&mut args[0])?;
+                    if !matches!(t0, Type::Vec(ref inner) if **inner == Type::U8) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Vec(Box::new(Type::U8)),
+                            found: t0,
+                        });
+                    }
+                    // Arg 1: Index (int)
+                    let t1 = self.check_expr(&mut args[1])?;
+                    if !matches!(t1, Type::I64 | Type::I32) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::I64,
+                            found: t1,
+                        });
+                    }
+                    return Ok(Type::I64);
+                } else if name == "tl_tensor_from_vec_u8" {
+                    if args.len() != 4 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 4,
+                            found: args.len(),
+                        });
+                    }
+                    for arg in args.iter_mut() {
+                        let _ = self.check_expr(arg)?;
+                    }
+                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                } else if name == "tl_tensor_from_u8_labels" {
+                    if args.len() != 3 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 3,
+                            found: args.len(),
+                        });
+                    }
+                    for arg in args.iter_mut() {
+                        let _ = self.check_expr(arg)?;
+                    }
+                    return Ok(Type::Tensor(Box::new(Type::I64), 1));
                 } else if name == "tl_arena_get_offset" || name == "tl_arena_get_capacity" {
                     if !args.is_empty() {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -2068,9 +2132,9 @@ impl SemanticAnalyzer {
 
                 // Cast logic
                 match (&source_type, &*target_type) {
-                    (Type::Tensor(_inner_src, rank), Type::Tensor(inner_dst, _)) => {
-                        // e.g. Tensor<i64> as Tensor<f32>
-                        Ok(Type::Tensor(inner_dst.clone(), *rank))
+                    (Type::Tensor(_inner_src, _), Type::Tensor(inner_dst, target_rank)) => {
+                        // Trust the cast target for rank
+                        Ok(Type::Tensor(inner_dst.clone(), *target_rank))
                     }
                     (Type::Tensor(_, rank), primitive)
                         if matches!(primitive, Type::F32 | Type::I64 | Type::I32 | Type::Bool) =>
@@ -2435,6 +2499,52 @@ impl SemanticAnalyzer {
                                 });
                             }
                             return Ok(Type::F32); // item() returns scalar float usually
+                        }
+                        if method_name == "item_i64" {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(Type::I64);
+                        }
+                        if method_name == "to_i64" {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
+                            match obj_type {
+                                Type::Tensor(_, rank) => {
+                                    return Ok(Type::Tensor(Box::new(Type::I64), rank))
+                                }
+                                _ => {
+                                    return Err(SemanticError::TypeMismatch {
+                                        expected: Type::Tensor(Box::new(Type::Void), 0),
+                                        found: obj_type.clone(),
+                                    })
+                                }
+                            }
+                        }
+                        if method_name == "argmax" {
+                            if args.len() != 2 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 2,
+                                    found: args.len(),
+                                });
+                            }
+                            // Returns tensor of indices (now converted to F32 in runtime)
+                            match obj_type {
+                                Type::Tensor(inner, _) => {
+                                    return Ok(Type::Tensor(inner.clone(), 0))
+                                } // Rank unknown/flexible, reuse inner type or F32
+                                _ => return Ok(obj_type.clone()),
+                            }
                         }
 
                         return Ok(Type::Void); // Fallback

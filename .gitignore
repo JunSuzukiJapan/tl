@@ -5,3 +5,6 @@ dump.ll
 *.safetensors
 
 debug_logs/
+
+examples/tasks/mnist/data/
+*.ubyte

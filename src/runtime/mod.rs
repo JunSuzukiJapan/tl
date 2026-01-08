@@ -114,7 +114,11 @@ pub extern "C" fn tl_tensor_argmax(
                 } else {
                     res.squeeze(dim as usize).unwrap_or(res)
                 };
-                make_tensor(final_res)
+                // Ensure result is F32 to match system expectation
+                let final_f32 = final_res
+                    .to_dtype(candle_core::DType::F32)
+                    .unwrap_or(final_res);
+                make_tensor(final_f32)
             }
             Err(e) => {
                 eprintln!("tl_tensor_argmax error: {}", e);
@@ -616,6 +620,85 @@ pub extern "C" fn tl_tensor_len(t: *mut OpaqueTensor) -> i64 {
 }
 
 #[no_mangle]
+pub extern "C" fn tl_vec_u8_read_i32_be(ptr: *mut Vec<u8>, idx: i64) -> i64 {
+    unsafe {
+        let vec = &*ptr;
+        let idx = idx as usize;
+        if idx + 4 > vec.len() {
+            return 0;
+        }
+        let sub = &vec[idx..idx + 4];
+        let val = u32::from_be_bytes(sub.try_into().unwrap());
+        val as i64
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_from_vec_u8(
+    ptr: *mut Vec<u8>,
+    offset: i64,
+    shape_ptr: *const i64,
+    rank: usize,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let vec = &*ptr;
+        let offset = offset as usize;
+        let shape_slice = std::slice::from_raw_parts(shape_ptr, rank);
+        let shape: Vec<usize> = shape_slice.iter().map(|&x| x as usize).collect();
+
+        let total_elements: usize = shape.iter().product();
+
+        if offset + total_elements > vec.len() {
+            eprintln!(
+                "tl_tensor_from_vec_u8: Not enough elements. Needed {}, have {} (offset {})",
+                total_elements,
+                vec.len() - offset,
+                offset
+            );
+            panic!("tl_tensor_from_vec_u8: Out of bounds");
+        }
+
+        let sub_vec = &vec[offset..offset + total_elements];
+        let data_f32: Vec<f32> = sub_vec.iter().map(|&b| b as f32 / 255.0).collect();
+
+        let tensor =
+            candle_core::Tensor::from_vec(data_f32, shape, &candle_core::Device::Cpu).unwrap();
+
+        let tensor_with_grad = OpaqueTensor(tensor, None, None);
+
+        Box::into_raw(Box::new(tensor_with_grad))
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_from_u8_labels(
+    ptr: *mut Vec<u8>,
+    offset: i64,
+    count: i64,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let vec = &*ptr;
+        let offset = offset as usize;
+        let count = count as usize;
+
+        if offset + count > vec.len() {
+            panic!("tl_tensor_from_u8_labels: Out of bounds");
+        }
+
+        let sub_vec = &vec[offset..offset + count];
+        let data_i64: Vec<i64> = sub_vec.iter().map(|&b| b as i64).collect();
+        let shape = vec![count];
+
+        let tensor =
+            candle_core::Tensor::from_vec(data_i64, shape, &candle_core::Device::Cpu).unwrap();
+
+        let tensor_with_grad = OpaqueTensor(tensor, None, None);
+
+        Box::into_raw(Box::new(tensor_with_grad))
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn tl_tensor_get(t: *mut OpaqueTensor, idx: i64) -> c_float {
     unsafe {
         if t.is_null() {
@@ -625,35 +708,20 @@ pub extern "C" fn tl_tensor_get(t: *mut OpaqueTensor, idx: i64) -> c_float {
         let tensor = &(*t).0;
         let i = idx as usize;
 
-        // Handle rank 0 (scalar)
-        if tensor.rank() == 0 {
-            if i != 0 {
-                println!("WARNING: tl_tensor_get on scalar with non-zero index {}", i);
-            }
-            if let Ok(scalar) = tensor.to_scalar::<f32>() {
-                return scalar;
-            }
+        // Generic scalar extraction
+        let scalar_val = tensor.flatten_all().unwrap().get(i).unwrap();
+        match scalar_val.dtype() {
+            candle_core::DType::F32 => scalar_val.to_scalar::<f32>().unwrap(),
+            candle_core::DType::I64 => scalar_val.to_scalar::<i64>().unwrap() as f32,
+            candle_core::DType::U8 => scalar_val.to_scalar::<u8>().unwrap() as f32,
+            dt => panic!("tl_tensor_get: Unsupported dtype {:?}", dt),
         }
-
-        // Fast path: if 1D tensor on CPU, use narrow+to_scalar
-        if tensor.rank() == 1 && !tensor.device().is_cuda() && !tensor.device().is_metal() {
-            if let Ok(elem) = tensor.narrow(0, i, 1) {
-                if let Ok(scalar) = elem.to_scalar::<f32>() {
-                    return scalar;
-                }
-            }
-        }
-
-        // Fallback for multi-dim or GPU tensors
-        let val: f32 = tensor
-            .flatten_all()
-            .unwrap()
-            .get(i)
-            .unwrap()
-            .to_scalar()
-            .unwrap();
-        val
     }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_item(t: *mut OpaqueTensor) -> c_float {
+    tl_tensor_get(t, 0)
 }
 
 #[no_mangle]

@@ -767,8 +767,14 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_argmax") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_argmax as usize);
     }
+    if let Some(f) = module.get_function("tl_tensor_to_i64") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_to_i64 as usize);
+    }
     if let Some(f) = module.get_function("tl_tensor_item_i64") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_item_i64 as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_item") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_item as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_to_f32") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_to_f32 as usize);
@@ -789,6 +795,15 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_vec_u8_get") {
         execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_get as usize);
+    }
+    if let Some(f) = module.get_function("tl_vec_u8_read_i32_be") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_read_i32_be as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_from_vec_u8") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_from_vec_u8 as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_from_u8_labels") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_from_u8_labels as usize);
     }
     if let Some(f) = module.get_function("tl_vec_u8_set") {
         execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_set as usize);
@@ -934,10 +949,28 @@ pub fn declare_runtime_functions<'ctx>(
         false,
     );
     module.add_function("tl_tensor_argmax", argmax_type, None);
+    fn_return_types.insert(
+        "tl_tensor_argmax".to_string(),
+        Type::Tensor(Box::new(Type::F32), 0),
+    );
+
+    // tl_tensor_item(t: *mut) -> f32
+    let item_type = f32_type.fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_tensor_item", item_type, None);
+    fn_return_types.insert("tl_tensor_item".to_string(), Type::F32);
 
     // tl_tensor_item_i64(t: *mut) -> i64
     let item_i64_type = i64_type.fn_type(&[void_ptr.into()], false);
     module.add_function("tl_tensor_item_i64", item_i64_type, None);
+    fn_return_types.insert("tl_tensor_item_i64".to_string(), Type::I64);
+
+    // tl_tensor_to_i64(t: *mut) -> *mut
+    let to_i64_type = void_ptr.fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_tensor_to_i64", to_i64_type, None);
+    fn_return_types.insert(
+        "tl_tensor_to_i64".to_string(),
+        Type::Tensor(Box::new(Type::I64), 0),
+    );
 
     // tl_load_all_params(path: *const i8) -> void
     let load_all_type = void_type.fn_type(&[i8_ptr.into()], false);
@@ -1311,6 +1344,36 @@ pub fn declare_runtime_functions<'ctx>(
     let vec_u8_get_type = u8_type.fn_type(&[ptr_type.into(), i64_type.into()], false);
     module.add_function("tl_vec_u8_get", vec_u8_get_type, None);
     fn_return_types.insert("tl_vec_u8_get".to_string(), Type::U8);
+
+    // tl_vec_u8_read_i32_be(ptr, idx) -> i64
+    let vec_u8_read_i32_type = i64_type.fn_type(&[ptr_type.into(), i64_type.into()], false);
+    module.add_function("tl_vec_u8_read_i32_be", vec_u8_read_i32_type, None);
+    fn_return_types.insert("tl_vec_u8_read_i32_be".to_string(), Type::I64);
+
+    // tl_tensor_from_vec_u8(ptr, offset, shape_ptr, rank) -> tensor_ptr
+    let tensor_from_vec_type = ptr_type.fn_type(
+        &[
+            ptr_type.into(),
+            i64_type.into(),
+            ptr_type.into(),
+            i64_type.into(),
+        ],
+        false,
+    );
+    module.add_function("tl_tensor_from_vec_u8", tensor_from_vec_type, None);
+    fn_return_types.insert(
+        "tl_tensor_from_vec_u8".to_string(),
+        Type::Tensor(Box::new(Type::F32), 0),
+    );
+
+    // tl_tensor_from_u8_labels(ptr, offset, count) -> tensor_ptr
+    let tensor_from_labels_type =
+        ptr_type.fn_type(&[ptr_type.into(), i64_type.into(), i64_type.into()], false);
+    module.add_function("tl_tensor_from_u8_labels", tensor_from_labels_type, None);
+    fn_return_types.insert(
+        "tl_tensor_from_u8_labels".to_string(),
+        Type::Tensor(Box::new(Type::I64), 1),
+    );
 
     // tl_vec_u8_set(ptr, idx, val) -> void
     let vec_u8_set_type =
