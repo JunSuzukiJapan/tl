@@ -212,7 +212,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Pass 1: Declare all methods (Prototypes) and register return types
         for imp in impls {
             for method in &imp.methods {
-                let mangled_name = format!("tl_{}_{}", imp.target_type, method.name);
+                let simple_target = if imp.target_type.contains("::") {
+                    imp.target_type.split("::").last().unwrap()
+                } else {
+                    &imp.target_type
+                };
+                let mangled_name = format!("tl_{}_{}", simple_target, method.name);
 
                 // Check if this method returns a struct (requires sret)
                 let uses_sret = matches!(&method.return_type, Type::Void /* SRET DISABLED */);
@@ -290,7 +295,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Pass 2: Compile Bodies
         for imp in impls {
             for method in &imp.methods {
-                let mangled_name = format!("tl_{}_{}", imp.target_type, method.name);
+                let simple_target = if imp.target_type.contains("::") {
+                    imp.target_type.split("::").last().unwrap()
+                } else {
+                    &imp.target_type
+                };
+                let mangled_name = format!("tl_{}_{}", simple_target, method.name);
                 let function = self
                     .module
                     .get_function(&mangled_name)
@@ -368,6 +378,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             &self.execution_engine,
             &mut self.fn_return_types,
         );
+
+        // Compile submodules recursively
+        for (_name, submodule) in &ast_module.submodules {
+            self.compile_module(submodule)?;
+        }
 
         // 1. Declare structs (types) and methods
         // 1. Declare structs (types) and methods

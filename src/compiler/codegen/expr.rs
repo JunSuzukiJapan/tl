@@ -236,14 +236,20 @@ impl<'ctx> CodeGenerator<'ctx> {
         struct_name: &str,
         prefix: String,
     ) -> Result<(), String> {
+        let simple_name = if struct_name.contains("::") {
+            struct_name.split("::").last().unwrap()
+        } else {
+            struct_name
+        };
+
         let def = self
             .struct_defs
-            .get(struct_name)
+            .get(simple_name)
             .ok_or(format!("Struct definition '{}' not found", struct_name))?;
 
         let struct_ty = *self
             .struct_types
-            .get(struct_name)
+            .get(simple_name)
             .ok_or("Struct LLVM type not found")?;
 
         for (i, (field_name, field_type)) in def.fields.iter().enumerate() {
@@ -563,9 +569,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                     _ => return Err(format!("Field access on non-struct type {:?}", obj_ty)),
                 };
 
+                let simple_struct_name = if struct_name.contains("::") {
+                    struct_name.split("::").last().unwrap()
+                } else {
+                    &struct_name
+                };
+
                 let struct_def = self
                     .struct_defs
-                    .get(&struct_name)
+                    .get(simple_struct_name)
                     .ok_or(format!("Struct definition for {} not found", struct_name))?;
 
                 let field_idx = struct_def
@@ -580,7 +592,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 if obj_val.is_pointer_value() {
                     let ptr = obj_val.into_pointer_value();
-                    let st_llvm_ty = self.struct_types.get(&struct_name).unwrap();
+                    let st_llvm_ty = self.struct_types.get(simple_struct_name).unwrap();
 
                     let field_ptr = self
                         .builder
@@ -686,13 +698,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Register intermediate tensor result
                 self.emit_register_tensor(res.0, &res.1)?;
 
-                // Fix: Free operands if they are temporary
-                if self.is_safe_to_free(lhs, &left.1) {
-                    self.emit_recursive_free(left.0, &left.1)?;
-                }
-                if self.is_safe_to_free(rhs, &right.1) {
-                    self.emit_recursive_free(right.0, &right.1)?;
-                }
+                // MEMORY STRATEGY FIX: Removed manual emit_recursive_free for operands.
+                // Operands are already registered in scope and will be released by exit_scope.
+                // Manual release here caused double-free (scope release + manual release).
 
                 Ok(res)
             }
@@ -1439,6 +1447,107 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok((struct_ptr.into(), Type::Struct(name.to_string())))
     }
 
+    fn compile_tuple_struct_init(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        let struct_type = *self
+            .struct_types
+            .get(name)
+            .ok_or(format!("Struct type {} not found in codegen", name))?;
+
+        let struct_def = self
+            .struct_defs
+            .get(name)
+            .ok_or(format!("Struct definition {} not found", name))?
+            .clone();
+
+        if args.len() != struct_def.fields.len() {
+            return Err(format!(
+                "Field count mismatch for struct {}: expected {}, found {}",
+                name,
+                struct_def.fields.len(),
+                args.len()
+            ));
+        }
+
+        // 1. Heap Allocation
+        let malloc_fn = self
+            .module
+            .get_function("malloc")
+            .ok_or("malloc not found")?;
+        let size = struct_type
+            .size_of()
+            .ok_or(format!("Cannot determine size of struct {}", name))?;
+        let call = self
+            .builder
+            .build_call(malloc_fn, &[size.into()], "struct_malloc")
+            .map_err(|e| e.to_string())?;
+        let raw_ptr = match call.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+            _ => return Err("malloc returned invalid value".into()),
+        };
+
+        // 2. Register
+        if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
+            let cast_ptr = self
+                .builder
+                .build_pointer_cast(
+                    raw_ptr,
+                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                    "cast_ptr",
+                )
+                .unwrap();
+            self.builder
+                .build_call(register_fn, &[cast_ptr.into()], "")
+                .map_err(|e| e.to_string())?;
+        }
+
+        let struct_ptr = self
+            .builder
+            .build_pointer_cast(
+                raw_ptr,
+                self.context.ptr_type(inkwell::AddressSpace::default()),
+                "struct_ptr",
+            )
+            .map_err(|e| e.to_string())?;
+
+        for (i, arg_expr) in args.iter().enumerate() {
+            let (val, _ty) = self.compile_expr(arg_expr)?;
+            let field_ptr = self
+                .builder
+                .build_struct_gep(
+                    struct_type,
+                    struct_ptr,
+                    i as u32,
+                    &format!("{}.{}", name, i),
+                )
+                .map_err(|e| e.to_string())?;
+
+            let store_val = if matches!(
+                _ty,
+                Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+            ) {
+                self.emit_deep_clone(val, &_ty)?
+            } else {
+                val
+            };
+            self.builder
+                .build_store(field_ptr, store_val)
+                .map_err(|e| e.to_string())?;
+
+            // Move Semantics Removed (same as compile_struct_init):
+            // We now use RefCounting/DeepCopy. Source variable should remain valid (Shared ownership).
+            // Cleanup at end of scope will decrement refcount (balancing the Acquire in emit_deep_clone).
+            // No manual unregister. No removal from scope.
+        }
+
+        // Return the pointer directly (no load)
+        // Struct remains registered in scope; caller (Stmt::Let) will deep_clone it
+        Ok((struct_ptr.into(), Type::Struct(name.to_string())))
+    }
+
     fn compile_static_method_call(
         &mut self,
         type_name: &str,
@@ -1652,8 +1761,13 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // 1. Resolve Mangled Name
-        let mangled_name = format!("tl_{}_{}", type_name, method_name);
-        let stdlib_name = format!("tl_{}_{}", type_name.to_lowercase(), method_name);
+        let simple_type_name = if type_name.contains("::") {
+            type_name.split("::").last().unwrap()
+        } else {
+            type_name
+        };
+        let mangled_name = format!("tl_{}_{}", simple_type_name, method_name);
+        let stdlib_name = format!("tl_{}_{}", simple_type_name.to_lowercase(), method_name);
 
         // 2. Lookup Function
         let (func, actual_name) = if let Some(f) = self.module.get_function(&mangled_name) {
@@ -2729,26 +2843,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .build_call(func_val, &compiled_args_vals, "call_method")
                 .map_err(|e| e.to_string())?;
 
-            // FIX: Free temporary receiver with Runtime Check
-            if self.is_safe_to_free(obj, &obj_ty) {
-                match obj_ty {
-                    Type::Struct(_) | Type::UserDefined(_) => {
-                        // DISABLED: Struct/UserDefined freeing is too complex and causes SIGSEGV/SIGBUS.
-                    }
-                    Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
-                        self.emit_recursive_free(obj_val, &obj_ty)?;
-                    }
-                    _ => {}
-                }
-            }
-
-            // FIX: Free temporary arguments
-            for (i, (val, ty)) in compiled_args_types.iter().enumerate() {
-                let arg_expr = &args[i];
-                if self.is_safe_to_free(arg_expr, ty) {
-                    self.emit_recursive_free(*val, ty)?;
-                }
-            }
+            // MEMORY STRATEGY FIX: Removed manual emit_recursive_free for receiver and args.
+            // All temporaries are registered in scope and will be released by exit_scope.
+            // Manual release here caused double-free (scope release + manual release).
 
             if uses_sret {
                 // For sret calls, return the sret buffer pointer
@@ -3169,6 +3266,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         name: &str,
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        let llvm_func_name = name;
         if let Some(struct_def) = self.struct_defs.get(name).cloned() {
             let st_llvm_ty = *self.struct_types.get(name).unwrap();
             let size = st_llvm_ty.size_of().unwrap();
@@ -4741,12 +4839,29 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
                 // Lookup return type FIRST to handle sret
                 // Handle static method syntax: Type::method -> tl_type_method
-                let resolved_name = if llvm_func_name.contains("::") {
+                let resolved_name = if self.module.get_function(llvm_func_name).is_some() {
+                    llvm_func_name.to_string()
+                } else if llvm_func_name.contains("::") {
                     let parts: Vec<&str> = llvm_func_name.split("::").collect();
-                    if parts.len() == 2 {
-                        let type_name = parts[0];
-                        let method = parts[1];
-                        format!("tl_{}_{}", type_name.to_lowercase(), method)
+                    // Try to resolve simple name (last part) specifically for module imports
+                    // where definition is simple name but call is qualified.
+                    if let Some(last) = parts.last() {
+                        if self.module.get_function(last).is_some() {
+                            last.to_string()
+                        } else if parts.len() >= 2 {
+                            let type_name = parts[parts.len() - 2];
+                            let method = parts[parts.len() - 1];
+                            // Try user-defined type mangling (Case Sensitive) first
+                            let mangled = format!("tl_{}_{}", type_name, method);
+                            if self.module.get_function(&mangled).is_some() {
+                                mangled
+                            } else {
+                                // Try Stdlib/Primitive mangling (lowercase)
+                                format!("tl_{}_{}", type_name.to_lowercase(), method)
+                            }
+                        } else {
+                            llvm_func_name.to_string()
+                        }
                     } else {
                         llvm_func_name.to_string()
                     }
@@ -4761,10 +4876,28 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .cloned()
                     .unwrap_or(Type::Void);
 
-                let func = self.module.get_function(&resolved_name).ok_or(format!(
-                    "Function {} not found (resolved: {})",
-                    name, resolved_name
-                ))?;
+                let func_opt = self.module.get_function(&resolved_name);
+
+                let func = if let Some(f) = func_opt {
+                    f
+                } else {
+                    // Fallback to Struct Initialization
+                    let simple_name = if name.contains("::") {
+                        let s = name.split("::").last().unwrap();
+                        s
+                    } else {
+                        (name as &str)
+                    };
+
+                    if self.struct_defs.contains_key(simple_name) {
+                        return self.compile_tuple_struct_init(simple_name, args);
+                    }
+
+                    return Err(format!(
+                        "Function {} not found (resolved: {})",
+                        name, resolved_name
+                    ));
+                };
 
                 let mut compiled_args_vals = Vec::with_capacity(args.len() + 1);
                 let mut compiled_args_types = Vec::with_capacity(args.len());

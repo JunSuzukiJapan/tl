@@ -382,10 +382,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                     _ => return Err(format!("Field assignment on non-struct type {:?}", obj_ty)),
                 };
 
+                let simple_struct_name = if struct_name.contains("::") {
+                    struct_name.split("::").last().unwrap()
+                } else {
+                    &struct_name
+                };
+
                 let (field_idx, field_type) = {
                     let struct_def = self
                         .struct_defs
-                        .get(&struct_name)
+                        .get(simple_struct_name)
                         .ok_or(format!("Struct definition for {} not found", struct_name))?;
 
                     let idx = struct_def
@@ -403,7 +409,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     return Err("Cannot assign field of non-pointer struct".into());
                 }
                 let ptr = obj_val.into_pointer_value();
-                let st_llvm_ty = *self.struct_types.get(&struct_name).unwrap();
+                let st_llvm_ty = *self.struct_types.get(simple_struct_name).unwrap();
 
                 let field_ptr = self
                     .builder
@@ -693,20 +699,41 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Fix:
                 // 1. For SRET: emit_struct_copy (above) now does Deep Copy + Acquire.
                 // 2. For Tensor Return: We must Acquire.
+                // 3. For Struct Return: We must Unregister to prevent exit_scope from freeing it.
                 if !uses_sret {
-                    if let Type::Tensor(_, _) = ty {
-                        if let Some(acquire_fn) = self.module.get_function("tl_tensor_acquire") {
-                            let ptr = val.into_pointer_value();
-                            let void_ptr_type =
-                                self.context.ptr_type(inkwell::AddressSpace::default());
-                            let cast_ptr = self
-                                .builder
-                                .build_pointer_cast(ptr, void_ptr_type, "cast_aq_ret")
-                                .unwrap();
-                            self.builder
-                                .build_call(acquire_fn, &[cast_ptr.into()], "")
-                                .unwrap();
+                    match &ty {
+                        Type::Tensor(_, _) => {
+                            if let Some(acquire_fn) = self.module.get_function("tl_tensor_acquire")
+                            {
+                                let ptr = val.into_pointer_value();
+                                let void_ptr_type =
+                                    self.context.ptr_type(inkwell::AddressSpace::default());
+                                let cast_ptr = self
+                                    .builder
+                                    .build_pointer_cast(ptr, void_ptr_type, "cast_aq_ret")
+                                    .unwrap();
+                                self.builder
+                                    .build_call(acquire_fn, &[cast_ptr.into()], "")
+                                    .unwrap();
+                            }
                         }
+                        Type::Struct(_) | Type::UserDefined(_) => {
+                            // CRITICAL FIX: Unregister struct from scope to transfer ownership to caller.
+                            // Without this, exit_scope will free the struct before the caller can use it.
+                            if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                                let ptr = val.into_pointer_value();
+                                let void_ptr_type =
+                                    self.context.ptr_type(inkwell::AddressSpace::default());
+                                let cast_ptr = self
+                                    .builder
+                                    .build_pointer_cast(ptr, void_ptr_type, "cast_unreg_ret")
+                                    .unwrap();
+                                self.builder
+                                    .build_call(unreg_fn, &[cast_ptr.into()], "")
+                                    .unwrap();
+                            }
+                        }
+                        _ => {}
                     }
                 }
 
@@ -2313,13 +2340,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                     return Ok(val);
                 }
 
+                let simple_name = if name.contains("::") {
+                    name.split("::").last().unwrap()
+                } else {
+                    name
+                };
+
                 let struct_def = self
                     .struct_defs
-                    .get(name)
+                    .get(simple_name)
                     .ok_or(format!("Struct {} definition not found", name))?;
                 let st_llvm_ty = *self
                     .struct_types
-                    .get(name)
+                    .get(simple_name)
                     .ok_or("LLVM Struct type not found")?;
 
                 let new_struct_ptr = self

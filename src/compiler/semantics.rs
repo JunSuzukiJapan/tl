@@ -2799,6 +2799,17 @@ impl SemanticAnalyzer {
             }
             (Type::UserDefined(n1), Type::Struct(n2)) => n1 == n2,
             (Type::Struct(n1), Type::UserDefined(n2)) => n1 == n2,
+            (Type::UserDefined(n1), Type::UserDefined(n2)) => {
+                if n1 == n2 {
+                    return true;
+                }
+                // Partial match for module imports: "Linear" vs "mod::Linear"
+                if n1.ends_with(&format!("::{}", n2)) || n2.ends_with(&format!("::{}", n1)) {
+                    return true;
+                }
+                false
+            }
+            (Type::Struct(n1), Type::UserDefined(n2)) => n1 == n2,
             // Promotions
             (Type::F64, Type::F32) => true,
             (Type::I64, Type::I32) => true,
