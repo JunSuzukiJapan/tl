@@ -1419,10 +1419,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 _ty,
                 Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
             ) {
-                println!(
-                    "DEBUG: compiling StructInit field {} type {:?} - Emit Deep Clone",
-                    field_name, _ty
-                );
                 self.emit_deep_clone(val, &_ty)?
             } else {
                 val
@@ -1852,7 +1848,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .cloned()
                 .unwrap_or(Type::Void);
 
-            let uses_sret = matches!(ret_ty, Type::Struct(_) | Type::UserDefined(_));
+            let uses_sret = false; /* SRET DISABLED */
 
             // If sret, allocate buffer ON HEAP and add as first argument
             let sret_buf = if uses_sret {
@@ -2576,7 +2572,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .cloned()
                 .unwrap_or(Type::Void);
 
-            let uses_sret = matches!(ret_ty, Type::Struct(_) | Type::UserDefined(_));
+            let uses_sret = false; /* SRET DISABLED */
 
             let mut compiled_args_vals = Vec::with_capacity(args.len() + 2);
             let mut compiled_args_types = Vec::with_capacity(args.len());
@@ -4669,47 +4665,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let mut compiled_args_types = Vec::with_capacity(args.len());
 
                 // Handle SRET: If return type is Struct/UserDefined, allocate memory and pass as first arg
-                let sret_ptr = if matches!(ret_type, Type::Struct(_) | Type::UserDefined(_)) {
-                    let struct_name = match &ret_type {
-                        Type::Struct(n) | Type::UserDefined(n) => n,
-                        _ => unreachable!(),
-                    };
-
-                    let st_llvm_ty = *self
-                        .struct_types
-                        .get(struct_name)
-                        .ok_or(format!("Struct type {} not found for sret", struct_name))?;
-
-                    // Must malloc because structs are heap-managed (escape analysis is too hard)
-                    let malloc_fn = self
-                        .module
-                        .get_function("malloc")
-                        .ok_or("malloc not found")?;
-                    let size = st_llvm_ty.size_of().unwrap();
-                    let call = self
-                        .builder
-                        .build_call(malloc_fn, &[size.into()], "sret_malloc")
-                        .unwrap();
-                    let raw_ptr = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-                        _ => return Err("malloc returned invalid value".into()),
-                    };
-
-                    // Cast to opaque struct ptr
-                    let struct_ptr = self
-                        .builder
-                        .build_pointer_cast(
-                            raw_ptr,
-                            self.context.ptr_type(inkwell::AddressSpace::default()),
-                            "sret_ptr",
-                        )
-                        .unwrap();
-
-                    compiled_args_vals.push(struct_ptr.into());
-                    Some(struct_ptr)
-                } else {
-                    None
-                };
+                let sret_ptr: Option<inkwell::values::PointerValue> = None; /* SRET DISABLED */
 
                 for arg in args {
                     let (val, ty) = self.compile_expr(arg)?;

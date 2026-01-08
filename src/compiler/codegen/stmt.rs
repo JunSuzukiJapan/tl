@@ -684,7 +684,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (val, ty) = self.compile_expr(expr)?;
 
                 // Check if this is a struct return (uses sret)
-                let uses_sret = matches!(ty, Type::Struct(_) | Type::UserDefined(_));
+                let uses_sret = false; /* SRET DISABLED */
 
                 // IMPORTANT: Do NOT unregister. Instead Acquire/Copy to preserve for caller.
                 // If we unregister, it releases (decrements refcount).
@@ -1916,34 +1916,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
             (Type::UserDefined(s1), Type::UserDefined(s2)) if s1 == "String" && s2 == "String" => {
-                let strcmp_fn = self
-                    .module
-                    .get_function("strcmp")
-                    .ok_or("strcmp not found")?;
-                let cmp = self
-                    .builder
-                    .build_call(strcmp_fn, &[lhs.into(), rhs.into()], "strcmp_res")
-                    .map_err(|e| e.to_string())?;
-
-                let cmp_val = match cmp.try_as_basic_value() {
-                    ValueKind::Basic(v) => v.into_int_value(),
-                    _ => return Err("Invalid strcmp return".into()),
-                };
-
-                let zero = self.context.i32_type().const_zero();
-                let res = match op {
-                    BinOp::Eq => self.builder.build_int_compare(
-                        inkwell::IntPredicate::EQ,
-                        cmp_val,
-                        zero,
-                        "streq",
-                    ),
-                    BinOp::Neq => self.builder.build_int_compare(
-                        inkwell::IntPredicate::NE,
-                        cmp_val,
-                        zero,
-                        "strneq",
-                    ),
+                match op {
                     BinOp::Add => {
                         let concat_fn = self
                             .module
@@ -1957,13 +1930,43 @@ impl<'ctx> CodeGenerator<'ctx> {
                             ValueKind::Basic(v) => v,
                             _ => return Err("Invalid string concat return".into()),
                         };
-                        return Ok((res_val, Type::UserDefined("String".to_string())));
+                        Ok((res_val, Type::UserDefined("String".to_string())))
                     }
-                    _ => return Err("Only ==, !=, and + supported for Strings".into()),
-                }
-                .map_err(|e| e.to_string())?;
+                    BinOp::Eq | BinOp::Neq => {
+                        let strcmp_fn = self
+                            .module
+                            .get_function("strcmp")
+                            .ok_or("strcmp not found")?;
+                        let cmp = self
+                            .builder
+                            .build_call(strcmp_fn, &[lhs.into(), rhs.into()], "strcmp_res")
+                            .map_err(|e| e.to_string())?;
 
-                Ok((res.into(), Type::Bool))
+                        let cmp_val = match cmp.try_as_basic_value() {
+                            ValueKind::Basic(v) => v.into_int_value(),
+                            _ => return Err("Invalid strcmp return".into()),
+                        };
+                        let zero = self.context.i32_type().const_zero();
+                        let res = match op {
+                            BinOp::Eq => self.builder.build_int_compare(
+                                inkwell::IntPredicate::EQ,
+                                cmp_val,
+                                zero,
+                                "streq",
+                            ),
+                            BinOp::Neq => self.builder.build_int_compare(
+                                inkwell::IntPredicate::NE,
+                                cmp_val,
+                                zero,
+                                "strneq",
+                            ),
+                            _ => unreachable!(),
+                        }
+                        .map_err(|e| e.to_string())?;
+                        Ok((res.into(), Type::Bool))
+                    }
+                    _ => Err("Only ==, !=, and + supported for Strings".into()),
+                }
             }
 
             (Type::Bool, Type::Bool) => {
@@ -2273,6 +2276,43 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(val)
             }
             Type::Struct(name) | Type::UserDefined(name) => {
+                // HACK: Built-in types (String, File) are opaque pointers
+                if name == "String" {
+                    // Deep clone string -> strdup (via tl_string_concat("", s) or similar)
+                    // We can use tl_string_concat(s, "")
+                    let concat_fn = self
+                        .module
+                        .get_function("tl_string_concat")
+                        .ok_or("tl_string_concat not found")?;
+
+                    let s_ptr = val.into_pointer_value();
+                    let empty = self
+                        .builder
+                        .build_global_string_ptr("", "empty_str")
+                        .unwrap()
+                        .as_pointer_value();
+
+                    let call_site = self
+                        .builder
+                        .build_call(concat_fn, &[s_ptr.into(), empty.into()], "str_clone")
+                        .unwrap();
+
+                    let new_str = match call_site.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Failed to clone string".to_string()),
+                    };
+                    return Ok(new_str);
+                } else if name == "File" {
+                    // File handle cannot be deeply cloned easily. Return shallow copy (pointer).
+                    return Ok(val);
+                } else if name == "Path" {
+                    // Shallow copy for Path
+                    return Ok(val);
+                } else if name == "Env" || name == "Http" {
+                    // Virtual static classes or opaque
+                    return Ok(val);
+                }
+
                 let struct_def = self
                     .struct_defs
                     .get(name)

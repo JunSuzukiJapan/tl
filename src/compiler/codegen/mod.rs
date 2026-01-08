@@ -215,8 +215,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let mangled_name = format!("tl_{}_{}", imp.target_type, method.name);
 
                 // Check if this method returns a struct (requires sret)
-                let uses_sret =
-                    matches!(&method.return_type, Type::Struct(_) | Type::UserDefined(_));
+                let uses_sret = matches!(&method.return_type, Type::Void /* SRET DISABLED */);
 
                 let mut param_types: Vec<BasicMetadataTypeEnum> = Vec::new();
 
@@ -274,6 +273,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .fn_type(&param_types, false),
+                        Type::Struct(_) | Type::UserDefined(_) => self
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .fn_type(&param_types, false),
                         _ => self.context.void_type().fn_type(&param_types, false),
                     }
                 };
@@ -300,8 +303,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.enter_scope();
 
                 // Check if this method uses sret
-                let uses_sret =
-                    matches!(&method.return_type, Type::Struct(_) | Type::UserDefined(_));
+                let uses_sret = false; /* SRET DISABLED */
                 let param_offset = if uses_sret { 1 } else { 0 };
 
                 // Get params and store them (skip sret param if present)
@@ -465,7 +467,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .insert(func.name.clone(), func.return_type.clone());
 
         // Check if this function returns a struct (requires sret)
-        let uses_sret = matches!(&func.return_type, Type::Struct(_) | Type::UserDefined(_));
+        let uses_sret = false; /* SRET DISABLED */
 
         let mut args_types = Vec::new();
 
@@ -512,6 +514,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),
                 ),
+                Type::Struct(_) | Type::UserDefined(_) => Some(
+                    self.context
+                        .ptr_type(inkwell::AddressSpace::default())
+                        .into(),
+                ),
                 _ => Some(self.context.i64_type().into()),
             };
             match ret_type {
@@ -554,7 +561,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.enter_scope(); // Function scope
 
         // Check if this function uses sret
-        let uses_sret = matches!(&func.return_type, Type::Struct(_) | Type::UserDefined(_));
+        let uses_sret = false; /* SRET DISABLED */
         let param_offset = if uses_sret { 1 } else { 0 };
 
         // Register arguments (skip sret param if present)

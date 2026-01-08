@@ -279,14 +279,14 @@ impl SemanticAnalyzer {
         let saved_prefix = self.current_module.clone();
         self.current_module = prefix.to_string();
 
-        // Check top-level statements
-        for s in &mut module.tensor_decls {
-            self.check_stmt(s)?;
-        }
-
-        // Check impl blocks
+        // Check impl blocks (Register methods first)
         for i in &mut module.impls {
             self.check_impl_block(i)?;
+        }
+
+        // Check top-level statements (e.g. tensor_decls)
+        for s in &mut module.tensor_decls {
+            self.check_stmt(s)?;
         }
 
         // Check submodules BEFORE functions (so their impls are registered first)
@@ -2104,8 +2104,6 @@ impl SemanticAnalyzer {
                     // Resolve return type: if it's Self or short name, use method's impl target type
                     let resolved_return = match &func.return_type {
                         Type::UserDefined(ret_name) => {
-                            // If the return type is 'Self' or the short struct name,
-                            // replace with the fully qualified type_name (which was already resolved)
                             if ret_name == "Self"
                                 || ret_name == type_name.split("::").last().unwrap_or(type_name)
                             {
