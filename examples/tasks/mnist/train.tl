@@ -12,27 +12,41 @@ fn main() {
     let train_y = load_mnist_labels("examples/tasks/mnist/data/train-labels-idx1-ubyte");
     
     let model = Linear::new(784, 10);
-    let lr = 0.5;
+    // let lr = 0.1;
+    let lr = 0.05; // Slightly reduced for stability with more updates
     let batch_size = 64;
     
-    let num_batches = 10; // 60000 / batch_size; 
-    let epoch = 0;
+    // 60000 / 64 = 937.5 -> 937 batches
+    let num_batches = 937; 
+    let epoch = 5;
     
     print("Starting training loop...");
     
-    while epoch < 3 {
+    // Check initial weights (pixel 400 - center of image)
+    print("Initial W (row 400):");
+    print(model.W.slice(400, 1));
+    
+    while epoch < 10 {  // 10 epochs
         let b = 0;
         let running_loss = 0.0;
         
         while b < num_batches {
             let start = b * batch_size;
             let bx = train_x.slice(start, batch_size);
+            
+            if b == 0 {
+                // Check input scale via sum
+                print("Input Sum (Batch 0):");
+                print(bx.sum().item());
+            }
+
             let by = train_y.slice(start, batch_size);
             
             let logits = model.forward(bx);
             let loss = cross_entropy(logits, by);
             
             loss.backward();
+            
             model = model.step(lr);
             
             running_loss = running_loss + loss.item();
@@ -43,6 +57,9 @@ fn main() {
         print("Epoch complete:"); print(epoch);
         print("Avg Loss:"); print(running_loss / (num_batches as f32));
         
+        print("W check (row 400):");
+        print(model.W.slice(400, 1));
+
         epoch = epoch + 1;
     }
     

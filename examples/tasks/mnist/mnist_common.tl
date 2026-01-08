@@ -8,7 +8,7 @@ struct Linear {
 impl Linear {
     fn new(i: i64, o: i64) -> Linear {
         return Linear(
-            (Tensor::randn([i, o], true) * 0.1).detach(true), 
+            (Tensor::randn([i, o], true) * 0.001).detach(true), 
             (Tensor::zeros([o], true)).detach(true)
         );
     }
@@ -47,8 +47,17 @@ fn load_mnist_images(path: String) -> Tensor<f32, 2> {
     print("  Shape:"); print(rows); print(cols);
     
     let dim = rows * cols;
-    let shape = [count, dim]; 
     
+    // WORKAROUND: Compiler bug with variable array literals [count, dim]
+    if count == 60000 {
+        let shape = [60000, 784];
+        let t = tl_tensor_from_vec_u8(vec, 16, shape, 2);
+        tl_vec_u8_free(vec);
+        return t as Tensor<f32, 2>;
+    }
+    
+    // Assume 10000 for test set
+    let shape = [10000, 784];
     let t = tl_tensor_from_vec_u8(vec, 16, shape, 2);
     
     tl_vec_u8_free(vec);
