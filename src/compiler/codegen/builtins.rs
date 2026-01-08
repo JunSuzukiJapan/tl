@@ -792,6 +792,17 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_write_binary as usize);
     }
 
+    // Image loading mappings
+    if let Some(f) = module.get_function("tl_image_load_grayscale") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_image_load_grayscale as usize);
+    }
+    if let Some(f) = module.get_function("tl_image_width") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_image_width as usize);
+    }
+    if let Some(f) = module.get_function("tl_image_height") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_image_height as usize);
+    }
+
     // End of function
 
     let tensor_type = Type::Tensor(Box::new(Type::F32), 1); // Common return type for many tensor ops
@@ -1318,4 +1329,23 @@ pub fn declare_runtime_functions<'ctx>(
         .fn_type(&[i8_ptr.into(), ptr_type.into()], false);
     module.add_function("tl_file_write_binary", file_write_binary_type, None);
     fn_return_types.insert("tl_file_write_binary".to_string(), Type::Bool);
+
+    // --- Image loading functions ---
+
+    // tl_image_load_grayscale(path) -> *mut Vec<u8>
+    let image_load_type = ptr_type.fn_type(&[i8_ptr.into()], false);
+    module.add_function("tl_image_load_grayscale", image_load_type, None);
+    fn_return_types.insert(
+        "tl_image_load_grayscale".to_string(),
+        Type::Vec(Box::new(Type::U8)),
+    );
+
+    // tl_image_width(path) -> i64
+    let image_dim_type = i64_type.fn_type(&[i8_ptr.into()], false);
+    module.add_function("tl_image_width", image_dim_type, None);
+    fn_return_types.insert("tl_image_width".to_string(), Type::I64);
+
+    // tl_image_height(path) -> i64
+    module.add_function("tl_image_height", image_dim_type, None);
+    fn_return_types.insert("tl_image_height".to_string(), Type::I64);
 }

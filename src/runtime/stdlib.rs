@@ -115,6 +115,55 @@ pub extern "C" fn tl_file_write_binary(path: *const c_char, data: *mut Vec<u8>) 
     }
 }
 
+// --- Image Loading ---
+
+#[no_mangle]
+pub extern "C" fn tl_image_load_grayscale(path: *const c_char) -> *mut Vec<u8> {
+    if path.is_null() {
+        return std::ptr::null_mut();
+    }
+    let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+
+    match image::open(path_str.as_ref()) {
+        Ok(img) => {
+            // Convert to grayscale and get raw pixels
+            let gray = img.to_luma8();
+            let pixels: Vec<u8> = gray.into_raw();
+            Box::into_raw(Box::new(pixels))
+        }
+        Err(e) => {
+            eprintln!("tl_image_load_grayscale error: {}", e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_image_width(path: *const c_char) -> i64 {
+    if path.is_null() {
+        return 0;
+    }
+    let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+
+    match image::image_dimensions(path_str.as_ref()) {
+        Ok((w, _)) => w as i64,
+        Err(_) => 0,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_image_height(path: *const c_char) -> i64 {
+    if path.is_null() {
+        return 0;
+    }
+    let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+
+    match image::image_dimensions(path_str.as_ref()) {
+        Ok((_, h)) => h as i64,
+        Err(_) => 0,
+    }
+}
+
 // --- Path ---
 
 use std::path::PathBuf;

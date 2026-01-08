@@ -1330,6 +1330,37 @@ impl SemanticAnalyzer {
                     self.check_expr(&mut args[0])?;
                     self.check_expr(&mut args[1])?;
                     return Ok(Type::Bool);
+                } else if name == "tl_vec_u8_len" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    self.check_expr(&mut args[0])?;
+                    return Ok(Type::I64);
+                } else if name == "tl_vec_u8_get" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    self.check_expr(&mut args[0])?;
+                    self.check_expr(&mut args[1])?;
+                    return Ok(Type::U8);
+                } else if name == "tl_vec_u8_free" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    self.check_expr(&mut args[0])?;
+                    return Ok(Type::Void);
                 } else if name == "sin" || name == "cos" || name == "relu" || name == "gelu" {
                     if args.len() != 1 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -2154,6 +2185,9 @@ impl SemanticAnalyzer {
                     }
                     ("Http", "get") => Ok(Type::UserDefined("String".into())),
                     ("Http", "download") => Ok(Type::Bool),
+                    ("Image", "load_grayscale") => Ok(Type::Vec(Box::new(Type::U8))),
+                    ("Image", "width") => Ok(Type::I64),
+                    ("Image", "height") => Ok(Type::I64),
                     // --- New Static Methods for Refactor ---
                     ("Tensor", "randn") => {
                         // Tensor::randn(shape, requires_grad)

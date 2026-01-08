@@ -645,7 +645,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 Type::I64 => self.context.i64_type().into(),
                                 Type::F32 => self.context.f32_type().into(),
                                 Type::Bool => self.context.bool_type().into(),
-                                Type::Tensor(_, _) => self
+                                Type::Tensor(_, _) | Type::Vec(_) => self
                                     .context
                                     .ptr_type(inkwell::AddressSpace::default())
                                     .into(),
@@ -655,6 +655,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .into(),
                                 _ => self.context.i64_type().into(), // Fallback
                             };
+
                             let loaded = self
                                 .builder
                                 .build_load(llvm_ty, ptr, name)
@@ -2426,7 +2427,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Tensor(_, _)
             | Type::UserDefined(_)
             | Type::Struct(_)
-            | Type::ScalarArray(_, _) => self
+            | Type::ScalarArray(_, _)
+            | Type::Vec(_) => self
                 .context
                 .ptr_type(inkwell::AddressSpace::default())
                 .into(),
