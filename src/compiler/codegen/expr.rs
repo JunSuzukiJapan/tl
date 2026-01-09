@@ -3088,20 +3088,14 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             compiled_args_vals.push(obj_val.into()); // self
 
-            // Move Semantics: If obj is a variable, null it out in the caller scope
-            if let Expr::Variable(name) = obj {
-                self.null_out_variable(name).map_err(|e| e.to_string())?;
-            }
+            // Move semantics disabled: keep receiver valid after method calls.
 
             for arg in args {
                 let (val, ty) = self.compile_expr(arg)?;
                 compiled_args_vals.push(val.into());
                 compiled_args_types.push((val, ty));
 
-                // Move Semantics: If arg is a variable, null it out
-                if let Expr::Variable(name) = arg {
-                    self.null_out_variable(name).map_err(|e| e.to_string())?;
-                }
+                // Move semantics disabled: keep arguments valid after method calls.
             }
 
             // Call the method
@@ -5254,13 +5248,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 for arg in args {
                     let (mut val, mut ty) = self.compile_expr(arg)?;
 
-                    // Move Semantics: If arg is a variable, null it out
-                    if let Expr::Variable(name) = arg {
-                        // FIX: Allow reuse for known non-consuming functions like string concatenation
-                        if resolved_name != "tl_string_concat" {
-                            self.null_out_variable(name).map_err(|e| e.to_string())?;
-                        }
-                    }
+                    // Move Semantics disabled: function arguments remain valid after calls.
 
                     // Auto-convert ScalarArray to Tensor
                     // Functions in Runtime expecting Tensor arguments need OpaqueTensor*, not [T; N]*

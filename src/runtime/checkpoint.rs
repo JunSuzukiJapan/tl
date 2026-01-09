@@ -1,5 +1,5 @@
 use candle_core::{Tensor, CustomOp1, Layout, Shape, Result};
-use crate::runtime::{OpaqueTensor, make_tensor};
+use crate::runtime::{device::get_device, make_tensor, OpaqueTensor};
 use std::ffi::c_void;
 use std::ops::Deref;
 
@@ -27,15 +27,22 @@ impl CustomOp1 for TlCheckpointOp {
         // Assuming F32 for now
         let data = s1.as_slice::<f32>()?;
         let shape = l.shape();
-        // Create a new tensor on CPU
-        let t = Tensor::from_slice(data, shape, &candle_core::Device::Cpu)?;
+        // Create tensor on current device
+        let device = get_device();
+        let t_cpu = Tensor::from_slice(data, shape, &candle_core::Device::Cpu)?;
+        let t = if device.is_metal() || device.is_cuda() {
+            t_cpu.to_device(&device)?
+        } else {
+            t_cpu
+        };
         
         let t_ptr = make_tensor(t);
         let out_ptr = (self.func.0)(self.ctx.0, t_ptr);
         
         let out_opaque = unsafe { &*out_ptr };
         let out_tensor = &out_opaque.0;
-        let (storage, out_layout) = out_tensor.storage_and_layout();
+        let out_cpu = out_tensor.to_device(&candle_core::Device::Cpu)?;
+        let (storage, out_layout) = out_cpu.storage_and_layout();
         
         // We need to return CpuStorage.
         // Assuming Output is on CPU.

@@ -28,6 +28,7 @@ extern fn tl_tensor_transpose(t: Tensor<f32, 4>, d0: i64, d1: i64) -> Tensor<f32
 extern fn tl_tensor_cat2(a: Tensor<f32, 2>, b: Tensor<f32, 2>, dim: i64) -> Tensor<f32, 2>;
 extern fn tl_tensor_reshape_dims(t: Tensor<f32, 2>, dims: Tensor<i64, 1>, n: i64) -> Tensor<f32, 4>;
 extern fn tl_tensor_get_shape(t: Tensor<f32, 2>) -> Tensor<i64, 1>;
+extern fn tl_tensor_device_id(t: Tensor<f32, 2>) -> i64;
 
 extern fn tl_tensor_rope_new_cos(dim: i64, len: i64, theta: f32) -> Tensor<f32, 2>;
 extern fn tl_tensor_rope_new_sin(dim: i64, len: i64, theta: f32) -> Tensor<f32, 2>;
@@ -248,7 +249,7 @@ fn main() {
     print("TinyLlama Chatbot Verification");
     
     // 0. Set device (auto-detect Metal on macOS)
-    set_device("auto");
+    set_device("metal");
     print("Device initialized.");
     
     // 1. Load model
@@ -280,8 +281,8 @@ fn main() {
     // Loop for generation
     print("Starting generation...");
     
-    // We will generate 20 tokens
-    for step in 0..20 {
+    // We will generate 1 token (debug)
+    for step in 0..1 {
         print("Loop step:");
         print(tokens);
         // Embed tokens
@@ -302,13 +303,25 @@ fn main() {
             current_x = blk.forward(current_x, cos, sin, seq_len);
         }
         print("Blocks done.");
+        print("DEBUG: starting output norm");
         
         // Final RMSNorm and Output Projection
         let norm = RMSNorm::new(weights, "output_norm.weight");
         let output = Linear::from_map(weights, "output.weight");
+        print("DEBUG: output.weight");
+        print(output.weight);
+        print("DEBUG: output.weight device_id");
+        print(tl_tensor_device_id(output.weight));
         
+        print("DEBUG: running norm.forward");
         let x_norm = norm.forward(current_x);
+        print("DEBUG: x_norm");
+        print(x_norm);
+        print("DEBUG: x_norm device_id");
+        print(tl_tensor_device_id(x_norm));
+        print("DEBUG: running output.forward (matmul)");
         let logits = output.forward(x_norm);
+        print("DEBUG: output.forward done");
         
         // Argmax on last token
         // logits: [seq, vocab]
@@ -329,9 +342,4 @@ fn main() {
     print("Generation complete.");
     return 0;
 }
-
-
-
-
-
 

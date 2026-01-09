@@ -607,6 +607,17 @@ pub extern "C" fn tl_tensor_print(t: *const OpaqueTensor) {
 }
 
 #[no_mangle]
+pub extern "C" fn tl_tensor_device_id(t: *const OpaqueTensor) -> i64 {
+    if t.is_null() {
+        return -1;
+    }
+    unsafe {
+        let tensor = &(*t).0;
+        device_to_id(tensor.device()) as i64
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn tl_tensor_print_2(t: *const OpaqueTensor) {
     tl_tensor_print(t);
 }
@@ -757,8 +768,14 @@ pub extern "C" fn tl_tensor_from_vec_u8(
         let sub_vec = &vec[offset..offset + total_elements];
         let data_f32: Vec<f32> = sub_vec.iter().map(|&b| b as f32 / 255.0).collect();
 
-        let tensor =
+        let device = get_device();
+        let t_cpu =
             candle_core::Tensor::from_vec(data_f32, shape, &candle_core::Device::Cpu).unwrap();
+        let tensor = if device.is_metal() || device.is_cuda() {
+            t_cpu.to_device(&device).unwrap()
+        } else {
+            t_cpu
+        };
 
         let tensor_with_grad = OpaqueTensor(tensor, None, None);
 
@@ -785,8 +802,14 @@ pub extern "C" fn tl_tensor_from_u8_labels(
         let data_i64: Vec<i64> = sub_vec.iter().map(|&b| b as i64).collect();
         let shape = vec![count];
 
-        let tensor =
+        let device = get_device();
+        let t_cpu =
             candle_core::Tensor::from_vec(data_i64, shape, &candle_core::Device::Cpu).unwrap();
+        let tensor = if device.is_metal() || device.is_cuda() {
+            t_cpu.to_device(&device).unwrap()
+        } else {
+            t_cpu
+        };
 
         let tensor_with_grad = OpaqueTensor(tensor, None, None);
 
@@ -929,8 +952,20 @@ pub extern "C" fn tl_tensor_to_device(
 
     let target_device = match device_str {
         "cpu" => candle_core::Device::Cpu,
-        "cuda" => candle_core::Device::new_cuda(0).unwrap_or(candle_core::Device::Cpu), // Fallback?
-        "metal" => candle_core::Device::new_metal(0).unwrap_or(candle_core::Device::Cpu),
+        "cuda" => match candle_core::Device::new_cuda(0) {
+            Ok(device) => device,
+            Err(e) => {
+                eprintln!("Failed to initialize CUDA device: {}", e);
+                return std::ptr::null_mut();
+            }
+        },
+        "metal" => match candle_core::Device::new_metal(0) {
+            Ok(device) => device,
+            Err(e) => {
+                eprintln!("Failed to initialize Metal device: {}", e);
+                return std::ptr::null_mut();
+            }
+        },
         _ => return tensor,
     };
 
@@ -949,6 +984,7 @@ pub fn force_link() {
     let _ = tl_set_device as *const ();
     let _ = tl_tensor_to_device as *const ();
     let _ = tl_print_string as *const ();
+    let _ = tl_tensor_device_id as *const ();
     let _ = tl_clear_grads as *const ();
     let _ = tl_tensor_randn_debug as *const ();
     let _ = tl_tensor_set_f32_md as *const ();
@@ -1488,6 +1524,11 @@ pub extern "C" fn tl_tensor_matmul(
             t_a.dims(),
             t_b.dims()
         );
+        println!(
+            "DEBUG: tl_tensor_matmul a.device_id={} b.device_id={}",
+            device_to_id(t_a.device()),
+            device_to_id(t_b.device())
+        );
 
         // Make tensors contiguous before matmul to avoid striding issues
         let t_a_contig = t_a.contiguous().unwrap();
@@ -1605,7 +1646,7 @@ pub extern "C" fn tl_tensor_new_causal_mask(dim: i64) -> *mut OpaqueTensor {
     // Tril (inc diag) = 0.0
     // Upper = -1e9
     let d = dim as usize;
-    let device = candle_core::Device::Cpu;
+    let device = get_device();
     // Manual tril logic:
     // row >= col
     let idx = Tensor::arange(0u32, d as u32, &device).unwrap();
@@ -1651,7 +1692,21 @@ pub extern "C" fn tl_tensor_map_get(
         let key = c_str.to_string_lossy();
 
         if let Some(t) = map_ref.get(key.as_ref()) {
-            make_tensor(t.clone())
+            let device = get_device();
+            let t_on_device = if device_to_id(t.device()) == device_to_id(&device) {
+                t.clone()
+            } else {
+                t.to_device(&device).unwrap()
+            };
+            println!(
+                "DEBUG: tl_tensor_map_get '{}' device_id={} -> {}",
+                key,
+                device_to_id(t.device()),
+                device_to_id(&device)
+            );
+            let map_mut = &mut (*map_ptr).0;
+            map_mut.insert(key.to_string(), t_on_device.clone());
+            make_tensor(t_on_device)
         } else {
             // Panic or Return Null? Panic for now standard behavior
             panic!("Weight '{}' not found in loaded file.", key);
@@ -1842,8 +1897,14 @@ pub extern "C" fn tl_tensor_get_shape(t: *mut OpaqueTensor) -> *mut OpaqueTensor
     unsafe {
         let t = &(*t).0;
         let dims: Vec<i64> = t.dims().iter().map(|&d| d as i64).collect();
-        let shape_tensor =
+        let device = get_device();
+        let t_cpu =
             Tensor::from_vec(dims.clone(), (dims.len(),), &candle_core::Device::Cpu).unwrap();
+        let shape_tensor = if device.is_metal() || device.is_cuda() {
+            t_cpu.to_device(&device).unwrap()
+        } else {
+            t_cpu
+        };
         make_tensor(shape_tensor)
     }
 }

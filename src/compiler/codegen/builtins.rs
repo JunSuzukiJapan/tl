@@ -552,6 +552,10 @@ pub fn declare_runtime_functions<'ctx>(
         void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), i64_type.into()], false);
     add_fn("tl_tensor_cat_i64", cat_i64_type);
 
+    // tl_tensor_device_id(t) -> i64
+    let device_id_type = i64_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_tensor_device_id", device_id_type);
+
     // --- Global Mappings ---
     // Mapping symbols is critical for JIT.
     // We do it here to keep CodeGenerator::new clean.
@@ -594,6 +598,9 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_print_3") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_print_3 as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_device_id") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_device_id as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_free") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_free as usize);
@@ -1038,6 +1045,7 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_tensor_neg".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_slice".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_print".to_string(), Type::Void);
+    fn_return_types.insert("tl_tensor_device_id".to_string(), Type::I64);
     fn_return_types.insert("tl_tensor_print_1".to_string(), Type::Void);
     fn_return_types.insert("tl_tensor_print_2".to_string(), Type::Void);
     fn_return_types.insert("tl_tensor_print_3".to_string(), Type::Void);

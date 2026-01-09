@@ -1,6 +1,6 @@
 use crate::runtime::memory_manager; // Used implicitly? No, but keep to match other files if needed. Actually it was warned used.
                                     // use crate::runtime::mod::{make_tensor, OpaqueTensor}; // Fixed in previous step to `use crate::runtime::{make_tensor, OpaqueTensor};`
-use crate::runtime::{make_tensor, OpaqueTensor};
+use crate::runtime::{device::get_device, make_tensor, OpaqueTensor};
 use candle_core::{DType, Device, Tensor};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -39,7 +39,13 @@ pub extern "C" fn tl_tokenizer_encode(tokenizer: i64, prompt: *const c_char) -> 
             Ok(encoding) => {
                 let ids: Vec<i64> = encoding.get_ids().iter().map(|&x| x as i64).collect();
                 let len = ids.len();
-                let tensor = Tensor::from_vec(ids, (1, len), &Device::Cpu).unwrap(); // [1, Seq]
+                let device = get_device();
+                let t_cpu = Tensor::from_vec(ids, (1, len), &Device::Cpu).unwrap(); // [1, Seq]
+                let tensor = if device.is_metal() || device.is_cuda() {
+                    t_cpu.to_device(&device).unwrap()
+                } else {
+                    t_cpu
+                };
                 make_tensor(tensor)
             }
             Err(e) => {
@@ -109,11 +115,12 @@ pub extern "C" fn tl_gguf_load(path: *const c_char) -> i64 {
             //    println!("GGUF Tensor: {}", tensor_name);
             // }
 
+            let device = get_device();
             for (tensor_name, qtensor_info) in content.tensor_infos.iter() {
                 let qtensor = qtensor_info
                     .read(&mut file, content.tensor_data_offset, &Device::Cpu)
                     .expect("failed to read qtensor");
-                let tensor = qtensor.dequantize(&Device::Cpu).unwrap();
+                let tensor = qtensor.dequantize(&device).unwrap();
 
                 // Insert Tensor (not OpaqueTensor)
                 map.0.insert(tensor_name.clone(), tensor);
@@ -274,10 +281,11 @@ pub extern "C" fn tl_tensor_rope_new_cos(dim: i64, len: i64, theta: f32) -> *mut
             .step_by(2)
             .map(|i| 1.0 / (theta.powf(i as f64 / dim as f64) as f32))
             .collect();
-        let inv_freq_t = Tensor::from_vec(inv_freq, (1, dim / 2), &Device::Cpu).unwrap();
+        let device = get_device();
+        let inv_freq_t = Tensor::from_vec(inv_freq, (1, dim / 2), &device).unwrap();
 
         let t: Vec<f32> = (0..len).map(|i| i as f32).collect();
-        let t_tensor = Tensor::from_vec(t, (len, 1), &Device::Cpu).unwrap();
+        let t_tensor = Tensor::from_vec(t, (len, 1), &device).unwrap();
 
         let freqs = t_tensor.matmul(&inv_freq_t).unwrap();
         let cos = freqs.cos().unwrap();
@@ -297,10 +305,11 @@ pub extern "C" fn tl_tensor_rope_new_sin(dim: i64, len: i64, theta: f32) -> *mut
             .step_by(2)
             .map(|i| 1.0 / (theta.powf(i as f64 / dim as f64) as f32))
             .collect();
-        let inv_freq_t = Tensor::from_vec(inv_freq, (1, dim / 2), &Device::Cpu).unwrap();
+        let device = get_device();
+        let inv_freq_t = Tensor::from_vec(inv_freq, (1, dim / 2), &device).unwrap();
 
         let t: Vec<f32> = (0..len).map(|i| i as f32).collect();
-        let t_tensor = Tensor::from_vec(t, (len, 1), &Device::Cpu).unwrap();
+        let t_tensor = Tensor::from_vec(t, (len, 1), &device).unwrap();
 
         let freqs = t_tensor.matmul(&inv_freq_t).unwrap();
         let sin = freqs.sin().unwrap();

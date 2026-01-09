@@ -31,27 +31,23 @@ impl DeviceManager {
     }
 
     fn init_device(requested_device: &str) -> (Device, DeviceType) {
-        // Priority: CUDA -> Metal -> CPU if auto
-        if requested_device == "cuda"
-            || (requested_device == "auto" && candle_core::utils::cuda_is_available())
-        {
+        // Explicit requests should never silently fall back.
+        if requested_device == "cuda" {
             #[cfg(feature = "cuda")]
             {
                 info!("Initializing Runtime: CUDA backend selected.");
                 match Device::new_cuda(0) {
                     Ok(device) => return (device, DeviceType::Cuda),
-                    Err(e) => error!("Failed to initialize CUDA: {}. Falling back.", e),
+                    Err(e) => panic!("CUDA requested but initialization failed: {}", e),
                 }
             }
             #[cfg(not(feature = "cuda"))]
-            if requested_device == "cuda" {
-                warn!("CUDA requested but 'cuda' feature not enabled.");
+            {
+                panic!("CUDA requested but 'cuda' feature not enabled.");
             }
         }
 
-        if requested_device == "metal"
-            || (requested_device == "auto" && candle_core::utils::metal_is_available())
-        {
+        if requested_device == "metal" {
             #[cfg(feature = "metal")]
             {
                 info!("Initializing Runtime: Metal backend selected.");
@@ -59,16 +55,38 @@ impl DeviceManager {
                     Ok(device) => {
                         if check_metal_health(&device) {
                             return (device, DeviceType::Metal);
-                        } else {
-                            warn!("Metal backend failed self-test (returned incorrect results). Falling back to CPU.");
                         }
+                        panic!("Metal backend failed self-test.");
                     }
-                    Err(e) => error!("Failed to initialize Metal: {}. Falling back.", e),
+                    Err(e) => panic!("Metal requested but initialization failed: {}", e),
                 }
             }
             #[cfg(not(feature = "metal"))]
-            if requested_device == "metal" {
-                warn!("Metal requested but 'metal' feature not enabled.");
+            {
+                panic!("Metal requested but 'metal' feature not enabled.");
+            }
+        }
+
+        // Auto: Priority CUDA -> Metal -> CPU.
+        if requested_device == "auto" && candle_core::utils::cuda_is_available() {
+            #[cfg(feature = "cuda")]
+            {
+                info!("Initializing Runtime: CUDA backend selected.");
+                if let Ok(device) = Device::new_cuda(0) {
+                    return (device, DeviceType::Cuda);
+                }
+            }
+        }
+
+        if requested_device == "auto" && candle_core::utils::metal_is_available() {
+            #[cfg(feature = "metal")]
+            {
+                info!("Initializing Runtime: Metal backend selected.");
+                if let Ok(device) = Device::new_metal(0) {
+                    if check_metal_health(&device) {
+                        return (device, DeviceType::Metal);
+                    }
+                }
             }
         }
 
