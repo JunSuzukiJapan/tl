@@ -314,53 +314,71 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let f32_type = self.context.f32_type();
                 let rank_val = i64_type.const_int(1, false);
 
-                // Current function for alloca
-                let current_block = self.builder.get_insert_block().unwrap();
-                let parent_fn = current_block.get_parent().unwrap();
-
-                // If element type is NOT F32, we must convert the data to a new F32 buffer
-                let data_ptr = if !matches!(elem_ty.as_ref(), Type::F32) {
-                    let f32_array_type = f32_type.array_type(len as u32);
-                    // Use manual alloca for array
-                    let entry_builder = self.context.create_builder();
-                    let entry = parent_fn.get_first_basic_block().unwrap();
-                    if let Some(fi) = entry.get_first_instruction() {
-                        entry_builder.position_before(&fi);
-                    } else {
-                        entry_builder.position_at_end(entry);
-                    }
-                    let new_buf = entry_builder
-                        .build_alloca(f32_array_type, "conv_buf")
-                        .unwrap();
-
-                    // Copy and convert
-                    for i in 0..len {
-                        let idx = i64_type.const_int(i as u64, false);
-                        let src_ptr = unsafe {
-                            self.builder
-                                .build_in_bounds_gep(
-                                    i64_type,
-                                    val.into_pointer_value(),
-                                    &[idx],
-                                    "src",
-                                )
-                                .unwrap()
-                        };
-                        let loaded = self.builder.build_load(i64_type, src_ptr, "l").unwrap();
-                        let f_val = self
+                let (data_ptr, tensor_type, func_name) = match elem_ty.as_ref() {
+                    Type::I64 => {
+                        // Cast [N x i64]* to i64*
+                        let ptr = val.into_pointer_value();
+                        let i64_ptr_type = i64_type.ptr_type(inkwell::AddressSpace::default());
+                        let cast_ptr = self
                             .builder
-                            .build_signed_int_to_float(loaded.into_int_value(), f32_type, "c")
+                            .build_pointer_cast(ptr, i64_ptr_type, "i64_ptr_cast")
                             .unwrap();
-                        let dst_ptr = unsafe {
-                            self.builder
-                                .build_in_bounds_gep(f32_type, new_buf, &[idx], "dst")
-                                .unwrap()
-                        };
-                        self.builder.build_store(dst_ptr, f_val).unwrap();
+
+                        (
+                            cast_ptr,
+                            Type::Tensor(Box::new(Type::I64), 1),
+                            "tl_tensor_new_i64",
+                        )
                     }
-                    new_buf.into()
-                } else {
-                    val
+                    _ => {
+                        // Convert to F32, create F32 tensor
+                        // Current function for alloca
+                        let current_block = self.builder.get_insert_block().unwrap();
+                        let parent_fn = current_block.get_parent().unwrap();
+                        let f32_array_type = f32_type.array_type(len as u32);
+                        // Use manual alloca for array
+                        let entry_builder = self.context.create_builder();
+                        let entry = parent_fn.get_first_basic_block().unwrap();
+                        if let Some(fi) = entry.get_first_instruction() {
+                            entry_builder.position_before(&fi);
+                        } else {
+                            entry_builder.position_at_end(entry);
+                        }
+                        let new_buf = entry_builder
+                            .build_alloca(f32_array_type, "conv_buf")
+                            .unwrap();
+
+                        // Copy and convert
+                        for i in 0..len {
+                            let idx = i64_type.const_int(i as u64, false);
+                            let src_ptr = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(
+                                        i64_type, // Assuming src is i64
+                                        val.into_pointer_value(),
+                                        &[idx],
+                                        "src",
+                                    )
+                                    .unwrap()
+                            };
+                            let loaded = self.builder.build_load(i64_type, src_ptr, "l").unwrap();
+                            let f_val = self
+                                .builder
+                                .build_signed_int_to_float(loaded.into_int_value(), f32_type, "c")
+                                .unwrap();
+                            let dst_ptr = unsafe {
+                                self.builder
+                                    .build_in_bounds_gep(f32_type, new_buf, &[idx], "dst")
+                                    .unwrap()
+                            };
+                            self.builder.build_store(dst_ptr, f_val).unwrap();
+                        }
+                        (
+                            new_buf,
+                            Type::Tensor(Box::new(Type::F32), 1),
+                            "tl_tensor_new",
+                        )
+                    }
                 };
 
                 // Shape array on stack
@@ -385,8 +403,8 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let tensor_new_fn = self
                     .module
-                    .get_function("tl_tensor_new")
-                    .ok_or("tl_tensor_new not found")?;
+                    .get_function(func_name)
+                    .ok_or(format!("{} not found", func_name))?;
                 let shape_ptr_cast = self
                     .builder
                     .build_pointer_cast(
@@ -406,8 +424,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
 
                 match call.try_as_basic_value() {
-                    ValueKind::Basic(v) => Ok((v, Type::Tensor(Box::new(Type::F32), 1))),
-                    _ => Err("tl_tensor_new returned void".into()),
+                    ValueKind::Basic(v) => Ok((v, tensor_type)),
+                    _ => Err(format!("{} returned void", func_name)),
                 }
             }
             Type::F32 | Type::I64 => {

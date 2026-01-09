@@ -2665,6 +2665,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
             }
 
+            // Cast raw_ptr (i8*) to typed ptr (i64* or f32*)
+            let typed_ptr_type = llvm_elem_type.ptr_type(inkwell::AddressSpace::default());
+            let typed_ptr = self
+                .builder
+                .build_pointer_cast(raw_ptr, typed_ptr_type, "typed_arr_ptr")
+                .map_err(|e| e.to_string())?;
+
             // Populate array
             for (i, val) in flat_data.iter().enumerate() {
                 let v: inkwell::values::BasicValueEnum = if all_ints {
@@ -2676,12 +2683,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.builder
                         .build_in_bounds_gep(
                             llvm_elem_type,
-                            raw_ptr,
+                            typed_ptr,
                             &[self.context.i64_type().const_int(i as u64, false)],
-                            "elem_ptr",
+                            "inv_idx",
                         )
                         .map_err(|e| e.to_string())?
                 };
+
                 self.builder
                     .build_store(elem_ptr, v)
                     .map_err(|e| e.to_string())?;
@@ -3775,6 +3783,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .ok_or(format!("{} not found", print_fn_name))?;
 
                         let array_ptr = arg_val.into_pointer_value();
+                        let typed_ptr_type =
+                            llvm_elem_type.ptr_type(inkwell::AddressSpace::default());
+                        let typed_ptr = self
+                            .builder
+                            .build_pointer_cast(array_ptr, typed_ptr_type, "print_typed_ptr")
+                            .map_err(|e| e.to_string())?;
 
                         for i in 0..len {
                             let idx = i64_type.const_int(i as u64, false);
@@ -3782,7 +3796,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 self.builder
                                     .build_in_bounds_gep(
                                         llvm_elem_type,
-                                        array_ptr,
+                                        typed_ptr,
                                         &[idx],
                                         "elem_ptr",
                                     )
@@ -5120,7 +5134,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let sret_ptr: Option<inkwell::values::PointerValue> = None; /* SRET DISABLED */
 
                 for arg in args {
-                    let (val, ty) = self.compile_expr(arg)?;
+                    let (mut val, mut ty) = self.compile_expr(arg)?;
+
+                    // Auto-convert ScalarArray to Tensor
+                    // Functions in Runtime expecting Tensor arguments need OpaqueTensor*, not [T; N]*
+                    if let Type::ScalarArray(_, _) = ty {
+                        let (new_val, new_ty) = self.ensure_tensor_v2(arg, 0)?;
+                        val = new_val.try_into().unwrap(); // BasicValueEnum
+                        ty = new_ty;
+                    }
+
                     compiled_args_vals.push(val.into());
                     compiled_args_types.push((val, ty));
                 }

@@ -31,7 +31,7 @@ extern fn tl_tensor_get_shape(t: Tensor<f32, 2>) -> Tensor<i64, 1>;
 
 extern fn tl_tensor_rope_new_cos(dim: i64, len: i64, theta: f32) -> Tensor<f32, 2>;
 extern fn tl_tensor_rope_new_sin(dim: i64, len: i64, theta: f32) -> Tensor<f32, 2>;
-extern fn tl_tensor_embedding(indices: Tensor<i64, 2>, weights: Tensor<f32, 2>) -> Tensor<f32, 3>;
+extern fn tl_tensor_embedding(tokens: Tensor<i64, 1>, weights: Tensor<f32, 2>) -> Tensor<f32, 2>;
 extern fn tl_tensor_add(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
 extern fn tl_tensor_reshape_3d_to_2d(t: Tensor<f32, 3>, dims: Tensor<i64, 1>, n: i64) -> Tensor<f32, 2>;
 
@@ -39,8 +39,8 @@ extern fn tl_tensor_reshape_3d_to_2d(t: Tensor<f32, 3>, dims: Tensor<i64, 1>, n:
 extern fn tl_tensor_narrow(t: Tensor<f32, 2>, dim: i64, start: i64, length: i64) -> Tensor<f32, 2>;
 extern fn tl_tensor_repeat_interleave(t: Tensor<f32, 4>, repeats: i64, dim: i64) -> Tensor<f32, 4>;
 extern fn tl_tensor_argmax(t: Tensor<f32, 2>, dim: i64, keep_dim: bool) -> Tensor<i64, 1>;
-
 extern fn tl_tensor_new_causal_mask(dim: i64) -> Tensor<f32, 2>;
+extern fn tl_tensor_cat_i64(a: Tensor<i64, 1>, b: Tensor<i64, 1>, dim: i64) -> Tensor<i64, 1>;
 
 // --- Structs ---
 
@@ -128,8 +128,8 @@ impl Attention {
         };
     }
     
-    fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>) -> Tensor<f32, 2> {
-        // x: [seq, dim] = [2, 2048]
+    fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, seq_len: i64) -> Tensor<f32, 2> {
+        // x: [seq, dim]
         // TinyLlama: 32 Q heads, 4 K/V heads (GQA group ratio = 8)
         
         // 1. Project Q, K, V
@@ -139,19 +139,19 @@ impl Attention {
         
         // 2. Reshape to multi-head format
         // Q: [seq, 2048] -> [1, seq, 32, 64]
-        let q_shape = [1, 2, 32, 64];
+        let q_shape = [1, seq_len, 32, 64];
         let q4 = tl_tensor_reshape_dims(q, q_shape, 4);
         
         // K/V: [seq, 256] -> [1, seq, 4, 64]
-        let kv_shape = [1, 2, 4, 64];
+        let kv_shape = [1, seq_len, 4, 64];
         let k4 = tl_tensor_reshape_dims(k, kv_shape, 4);
         let v4 = tl_tensor_reshape_dims(v, kv_shape, 4);
         
         // 3. Slice RoPE cos/sin for current sequence length
-        // cos/sin: [max_len, head_dim/2] = [2048, 32]
-        // We need [seq, head_dim/2] = [2, 32]
-        let cos_slice = tl_tensor_narrow(cos, 0, 0, 2);
-        let sin_slice = tl_tensor_narrow(sin, 0, 0, 2);
+        // cos/sin: [max_len, head_dim/2]
+        // We need [seq, head_dim/2]
+        let cos_slice = tl_tensor_narrow(cos, 0, 0, seq_len);
+        let sin_slice = tl_tensor_narrow(sin, 0, 0, seq_len);
         
         // 4. Apply RoPE to Q and K (apply_rope handles broadcasting internally)
         let q_rot = tl_tensor_apply_rope(q4, cos_slice, sin_slice);
@@ -167,18 +167,15 @@ impl Attention {
         let k_trans = tl_tensor_transpose(k_exp, 1, 2);
         let v_trans = tl_tensor_transpose(v_exp, 1, 2);
         
-
-        
         // 8. Compute attention scores: Q @ K.T / sqrt(d)
         let k_t = tl_tensor_transpose(k_trans, 2, 3);
         let scores = tl_tensor_matmul_4d(q_trans, k_t);
         
         // Add causal mask
-        // mask: [seq, seq] = [2, 2]
-        let mask = tl_tensor_new_causal_mask(2); 
+        let mask = tl_tensor_new_causal_mask(seq_len); 
         
-        // Reshape mask to [1, 1, 2, 2]
-        let mask_shape = [1, 1, 2, 2];
+        // Reshape mask to [1, 1, seq, seq]
+        let mask_shape = [1, 1, seq_len, seq_len];
         let mask_4d = tl_tensor_reshape_dims(mask, mask_shape, 4);
         
         // Add mask to scores
@@ -198,8 +195,8 @@ impl Attention {
         // 11. Transpose back: [B, H, S, D] -> [B, S, H, D]
         let ctx_trans = tl_tensor_transpose(context, 1, 2);
         
-        // 12. Flatten: [1, 2, 32, 64] -> [2, 2048]
-        let out_shape = [2, 2048];
+        // 12. Flatten: [1, seq, 32, 64] -> [seq, 2048]
+        let out_shape = [seq_len, 2048];
         let flat = tl_tensor_reshape_2d(ctx_trans, out_shape, 2);
         
         // 13. Output projection
@@ -233,10 +230,10 @@ impl TransformerBlock {
         };
     }
     
-    fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>) -> Tensor<f32, 2> {
+    fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, seq_len: i64) -> Tensor<f32, 2> {
         // Pre-norm attention
         let h = self.attn_norm.forward(x);
-        let attn_out = self.attn.forward(h, cos, sin);
+        let attn_out = self.attn.forward(h, cos, sin, seq_len);
         let x2 = tl_tensor_add(x, attn_out);
         
         // Pre-norm FFN
@@ -263,109 +260,65 @@ fn main() {
     let tok = tl_tokenizer_new(tokenizer_path);
     print("Loaded!");
     
-    // 2. Encode prompt
-    let prompt = "Hello";
-    let tokens = tl_tokenizer_encode(tok, prompt);
-    print("Encoded tokens:");
-    print(tokens);
-    
-    // 3. Load embedding weights and lookup
-    print("Loading embedding weights...");
-    let embed_w = tl_tensor_map_get(weights, "token_embd.weight");
-    print("Embedding lookup...");
-    let x_3d = tl_tensor_embedding(tokens, embed_w);
-    print("Embedded 3D:");
-    print(x_3d);
-    
-    // Reshape [1, seq, dim] -> [seq, dim]
-    let new_shape = [2, 2048];  // Use literal Tensor directly
-    let x = tl_tensor_reshape_3d_to_2d(x_3d, new_shape, 2);
-    print("Reshaped to 2D:");
-    print(x);
-    
+
     // 4. Precompute RoPE
     print("Precomputing RoPE...");
     let cos = tl_tensor_rope_new_cos(64, 2048, 10000.0);
     let sin = tl_tensor_rope_new_sin(64, 2048, 10000.0);
     
-    // 5. Forward through all 22 layers
-    print("Starting forward pass through 22 layers...");
+    // 4. Token Generation Loop
+    print("Loading embedding weights...");
+    let w_embedding = tl_tensor_map_get(weights, "token_embd.weight");
     
-    // We use a loop 0..22
-    // Note: 'x' is updated in each iteration.
-    // In tl, variable reassignment with let shadowing inside loop might be tricky if not careful with scope.
-    // But we can mutate a variable if it was mutable? No, tl doesn't have 'mut' keyword yet in typical way,
-    // but we can reassign or shadow.
-    // Actually, simply shadowing 'x' inside loop won't update the outer 'x' for next iteration easily
-    // unless we use a mutable variable pattern or manual recursion.
-    // BUT, 'tl' loop implementation:
-    // for i in 0..22 { ... }
+    // Initial tokens: [1, 15043] ("Hello")
+    let tokens = [1, 15043];
+    print("Tokens created:");
+    print(tokens);
+    let seq_len = 2; // Initial length
     
-    // Workaround for lack of mutable outer variable update in loop (if that's a limitation):
-    // Construct a list of blocks? No, too much memory.
-    // We need to update 'current_x' through the layers.
+    // Loop for generation
+    print("Starting generation...");
     
-    // Let's rely on shadowing or see if we can use a pointer swap or tensor copy?
-    // Wait, 'x' is a Tensor handle.
-    // If I do: `x = block.forward(x, ...)` inside loop, does it update outer x?
-    // "tl" language spec: does it support reassignment? 
-    // `let x = ...` shadows. `x = ...` (assignment) if implemented.
-    
-    // Assuming assignment works (stmt::Assign).
-    // If not, we might need a manual unrolled loop or recursion.
-    // Let's try standard loop with reassignment.
-    
-    let current_x = x;
-    
-    for i in 0..22 {
-        print("Layer:");
-        print(i);
+    // We will generate 20 tokens
+    for step in 0..20 {
+        print("Loop step:");
+        print(tokens);
+        // Embed tokens
+        let x = tl_tensor_embedding(tokens, w_embedding);
         
-        let block = TransformerBlock::from_map(weights, i);
-        let next_x = block.forward(current_x, cos, sin);
+        let current_x = x;
         
-        // Output from forward is new tensor. 
-        // We need to update current_x.
-        // Assuming assignment is supported for updating local vars.
-        current_x = next_x;  
+        // Transformer Blocks Loop
+        for i in 0..22 {
+            let blk = TransformerBlock::from_map(weights, i);
+            current_x = blk.forward(current_x, cos, sin, seq_len);
+        }
+        
+        // Final RMSNorm and Output Projection
+        let norm = RMSNorm::new(weights, "output_norm.weight");
+        let output = Linear::from_map(weights, "output.weight");
+        
+        let x_norm = norm.forward(current_x);
+        let logits = output.forward(x_norm);
+        
+        // Argmax on last token
+        // logits: [seq, vocab]
+        // Get last row: narrow(dim=0, start=seq_len-1, len=1)
+        let last_logits = tl_tensor_narrow(logits, 0, seq_len - 1, 1);
+        let next_token = tl_tensor_argmax(last_logits, 1, false); // [1]
+        
+        // Print progress
+        print("Generated token.");
+        
+        // Append to tokens
+        tokens = tl_tensor_cat_i64(tokens, next_token, 0);
+        
+        // Update seq_len
+        seq_len = seq_len + 1;
     }
-    
-    
-    print("Forward pass complete.");
-    print("Final output shape:");
-    print(tl_tensor_get_shape(current_x));
-    
-    // 7. Final RMSNorm and Output Projection
-    print("Final Norm and Output...");
-    let norm = RMSNorm::new(weights, "output_norm.weight");
-    let output = Linear::from_map(weights, "output.weight"); // This is just a linear layer, not full MLP
-    
-    // Norm
-    let x_norm = norm.forward(current_x);
-    
-    // Output Projection [seq, dim] -> [seq, vocab]
-    let logits = output.forward(x_norm);
-    print("Logits shape:");
-    print(tl_tensor_get_shape(logits));
-    
-    // 8. Argmax to get token ID
-    // We want the last token's prediction.
-    // logits: [seq, vocab]
-    // argmax(dim=1) -> [seq] indices
-    let pred = tl_tensor_argmax(logits, 1, false);
-    print("Predicted tokens:");
-    print(pred);
-    
-    // Decode the last token
-    // We need to implement tensor indexing or slice to get the last element?
-    // Or just decode the whole sequence of predictions?
-    // tokenizer_decode expects 'tok' (handle) and 'ids' (Tensor<i64, 2>)
-    // pred is Tensor<i64, 1>. We need to reshape to [1, seq] or similar?
-    // tl_tokenizer_decode signature: (tok: i64, ids: Tensor<i64, 2>) -> String
-    
-    // Reshape [seq] -> [1, seq]
-    // Skip reshaping for now as we don't have generic reshape.
-    // Just print the prediction tensor.
+
+    print("Generation complete.");
+    return 0;
 }
 
 

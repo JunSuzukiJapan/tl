@@ -81,6 +81,11 @@ pub fn declare_runtime_functions<'ctx>(
     let from_i64_type = void_ptr.fn_type(&[i64_ptr.into(), i64_type.into()], false);
     add_fn("tl_tensor_from_i64_array", from_i64_type);
 
+    // tl_tensor_new_i64(data: *const i64, rank: usize, shape: *const usize) -> *mut OpaqueTensor
+    let new_i64_type =
+        void_ptr.fn_type(&[i64_ptr.into(), i64_type.into(), usize_ptr.into()], false);
+    add_fn("tl_tensor_new_i64", new_i64_type);
+
     let binop_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_tensor_sub", binop_type);
 
@@ -526,6 +531,11 @@ pub fn declare_runtime_functions<'ctx>(
     let causal_mask_type = void_ptr.fn_type(&[i64_type.into()], false);
     add_fn("tl_tensor_new_causal_mask", causal_mask_type);
 
+    // tl_tensor_cat_i64(a, b, dim) -> t
+    let cat_i64_type =
+        void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_tensor_cat_i64", cat_i64_type);
+
     // --- Global Mappings ---
     // Mapping symbols is critical for JIT.
     // We do it here to keep CodeGenerator::new clean.
@@ -932,6 +942,9 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_new_causal_mask") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_new_causal_mask as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_cat_i64") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_cat_i64 as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_narrow") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_narrow as usize);
@@ -1496,6 +1509,7 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_tensor_rope_new_cos".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_rope_new_sin".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_new_causal_mask".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_cat_i64".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_narrow".to_string(), tensor_type.clone());
     fn_return_types.insert(
         "tl_tensor_repeat_interleave".to_string(),

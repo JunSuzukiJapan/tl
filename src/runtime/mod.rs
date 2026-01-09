@@ -74,9 +74,9 @@ pub(crate) fn make_var(v: candle_core::Var) -> *mut OpaqueTensor {
 
 // --- File I/O ---
 
-#[no_mangle] // Existing functions continue...
+#[no_mangle]
 pub extern "C" fn tl_tensor_new(
-    data: *const c_float,
+    data: *const f32,
     rank: usize,
     shape: *const usize,
 ) -> *mut OpaqueTensor {
@@ -85,8 +85,7 @@ pub extern "C" fn tl_tensor_new(
     let data_slice = unsafe { slice::from_raw_parts(data, num_elements) };
 
     let device = get_device();
-    // Create tensor from slice
-    // Workaround: Create on CPU then move to device to ensure data upload works reliably
+    // Create on CPU first for stability
     let t_cpu = Tensor::from_slice(data_slice, shape_slice, &candle_core::Device::Cpu).unwrap();
     let tensor = if device.is_metal() || device.is_cuda() {
         t_cpu.to_device(&device).unwrap()
@@ -94,9 +93,29 @@ pub extern "C" fn tl_tensor_new(
         t_cpu
     };
 
-    let res = make_tensor(tensor);
-    // println!("DEBUG: Alloc Tensor {:p}", res); // Handled in make_tensor
-    res
+    make_tensor(tensor)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_new_i64(
+    data: *const i64,
+    rank: usize,
+    shape: *const usize,
+) -> *mut OpaqueTensor {
+    let shape_slice = unsafe { slice::from_raw_parts(shape, rank) };
+    let num_elements: usize = shape_slice.iter().product();
+    let data_slice = unsafe { slice::from_raw_parts(data, num_elements) };
+
+    let device = get_device();
+    // Create on CPU first for stability
+    let t_cpu = Tensor::from_slice(data_slice, shape_slice, &candle_core::Device::Cpu).unwrap();
+    let tensor = if device.is_metal() || device.is_cuda() {
+        t_cpu.to_device(&device).unwrap()
+    } else {
+        t_cpu
+    };
+
+    make_tensor(tensor)
 }
 
 // tl_tensor_argmax(t: *mut, dim: i64, keep_dim: bool) -> *mut
@@ -809,6 +828,7 @@ pub fn force_link() {
     let _ = tl_tensor_set_f32_md as *const ();
     let _ = tl_tensor_free as *const ();
     let _ = memory_manager::tl_mem_unregister as *const ();
+    let _ = tl_tensor_reshape_dims as *const ();
 }
 
 #[no_mangle]
@@ -1040,23 +1060,26 @@ pub extern "C" fn tl_tensor_reshape(
 #[no_mangle]
 pub extern "C" fn tl_tensor_reshape_dims(
     t: *mut OpaqueTensor,
-    dims: *const i64,
+    dims_tensor_ptr: *mut OpaqueTensor,
     num_dims: i64,
 ) -> *mut OpaqueTensor {
     unsafe {
-        // use std::io::Write;
-        // println!("DEBUG: reshape_dims t={:p} dims={:p} num={}", t, dims, num_dims);
-        // std::io::stdout().flush().unwrap();
-        if t.is_null() || dims.is_null() {
+        if t.is_null() || dims_tensor_ptr.is_null() {
             panic!("Null pointer passed to reshape_dims");
         }
         let tensor = &(*t).0;
-        let dims_slice = std::slice::from_raw_parts(dims, num_dims as usize);
-        // println!("DEBUG: dims_slice={:?}", dims_slice);
-        // std::io::stdout().flush().unwrap();
-        let new_shape: Vec<usize> = dims_slice.iter().map(|&x| x as usize).collect();
-        // println!("DEBUG: new_shape={:?}", new_shape);
-        // std::io::stdout().flush().unwrap();
+        let dims_tensor = &(*dims_tensor_ptr).0;
+
+        let dims_i64 = if dims_tensor.dtype() == candle_core::DType::F32 {
+            // println!("DEBUG: casting dims F32 -> I64");
+            dims_tensor.to_dtype(candle_core::DType::I64).unwrap()
+        } else {
+            dims_tensor.clone()
+        };
+
+        let dims_vec: Vec<i64> = dims_i64.flatten_all().unwrap().to_vec1().unwrap();
+        let new_shape: Vec<usize> = dims_vec.iter().map(|&x| x as usize).collect();
+
         match tensor.reshape(new_shape) {
             Ok(result) => make_tensor(result),
             Err(e) => {
@@ -1266,11 +1289,8 @@ pub extern "C" fn tl_tensor_embedding(
     let indices_tensor = unsafe { &(*indices).0 };
     let weights_tensor = unsafe { &(*weights).0 };
     let w_dims = weights_tensor.dims();
-    let _i_dims = indices_tensor.dims();
 
     if w_dims.len() != 2 {
-        // Handle error or specific case for non-2D weights
-        // For now, let's just panic as it's an unexpected shape for embedding weights
         panic!("Embedding weights must be 2-dimensional, got {:?}", w_dims);
     }
     // Input indices might be F32 if coming from literals.
@@ -1441,6 +1461,20 @@ pub extern "C" fn tl_tensor_new_causal_mask(dim: i64) -> *mut OpaqueTensor {
     // where mask_u8 == 1 ? zeros : neg_inf
     let mask = mask_u8.where_cond(&zeros, &neg_inf).unwrap();
     make_tensor(mask)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_cat_i64(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+    dim: i64,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let t_a = &(*a).0;
+        let t_b = &(*b).0;
+        let result = Tensor::cat(&[t_a, t_b], dim as usize).unwrap();
+        make_tensor(result)
+    }
 }
 
 #[no_mangle]

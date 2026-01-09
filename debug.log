@@ -1,0 +1,297 @@
+warning: unnecessary parentheses around block return value
+    --> src/compiler/codegen/expr.rs:5103:25
+     |
+5103 |                         (name as &str)
+     |                         ^            ^
+     |
+     = note: `#[warn(unused_parens)]` on by default
+help: remove these parentheses
+     |
+5103 -                         (name as &str)
+5103 +                         name as &str
+     |
+
+warning: unused import: `crate::runtime::memory_manager`
+ --> src/runtime/llm.rs:1:5
+  |
+1 | use crate::runtime::memory_manager; // Used implicitl...
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused variable: `llvm_func_name`
+    --> src/compiler/codegen/expr.rs:3483:13
+     |
+3483 |         let llvm_func_name = name;
+     |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_llvm_func_name`
+     |
+     = note: `#[warn(unused_variables)]` on by default
+
+warning: unnecessary `unsafe` block
+   --> src/runtime/llm.rs:268:5
+    |
+268 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+    |
+    = note: `#[warn(unused_unsafe)]` on by default
+
+warning: unnecessary `unsafe` block
+   --> src/runtime/llm.rs:291:5
+    |
+291 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: `tl` (bin "tl") generated 5 warnings (run `cargo fix --bin "tl"` to apply 2 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running `target/debug/tl run examples/apps/chatbot.tl`
+Running file: "examples/apps/chatbot.tl"
+Executing main...
+DEBUG: Enter Scope. Depth: 2
+TinyLlama Chatbot Verification
+Loading GGUF...
+DEBUG: GGUF Load Map Ptr: 0xa5b1e9c80
+Loading Tokenizer...
+DEBUG: Tokenizer New Ptr: 0xa5ae27000
+Loaded!
+Precomputing RoPE...
+DEBUG: Register Tensor 0xa5b117ba0 (New).
+DEBUG: Alloc Tensor 0xa5b117ba0 (make_tensor)
+Acquire Tensor 0xa5b117ba0, count: 2
+DEBUG: Register Tensor 0xa5b117c90 (New).
+DEBUG: Alloc Tensor 0xa5b117c90 (make_tensor)
+Acquire Tensor 0xa5b117c90, count: 2
+Loading embedding weights...
+DEBUG: Register Tensor 0xa5b117fc0 (New).
+DEBUG: Alloc Tensor 0xa5b117fc0 (make_tensor)
+Acquire Tensor 0xa5b117fc0, count: 2
+Tokens created:
+1
+15043
+Starting generation...
+DEBUG: Enter Scope. Depth: 3
+Loop step:
+1
+15043
+Initializing Runtime: CPU backend selected.
+DEBUG: Register Tensor 0xa5b117ae0 (New).
+DEBUG: Alloc Tensor 0xa5b117ae0 (make_tensor)
+DEBUG: tl_tensor_embedding start. indices: 0xa5b117ae0, weights: 0xa5b117fc0
+DEBUG: Got indices tensor ref.
+DEBUG: Got weights tensor ref.
+DEBUG: Got w_dims [32000, 2048].
+DEBUG: Got i_dims [2].
+DEBUG: Converting indices to U32...
+DEBUG: Converted indices.
+DEBUG: Flattened indices.
+DEBUG: out_shape initial: [2]
+DEBUG: out_shape final: [2, 2048]
+DEBUG: Register Tensor 0xa5b1179f0 (New).
+DEBUG: Alloc Tensor 0xa5b1179f0 (make_tensor)
+Acquire Tensor 0xa5b1179f0, count: 2
+Acquire Tensor 0xa5b1179f0, count: 3
+DEBUG: Enter Scope. Depth: 4
+DEBUG: Enter Scope. Depth: 5
+DEBUG: Enter Scope. Depth: 6
+DEBUG: Register Tensor 0xa5b117c30 (New).
+DEBUG: Alloc Tensor 0xa5b117c30 (make_tensor)
+Acquire Tensor 0xa5b117c30, count: 2
+Acquire Tensor 0xa5b117c30, count: 3
+DEBUG: Unregistering 0xa5c403d40
+DEBUG: Unregistered 0xa5c403d40 from scope (Move)
+DEBUG: Release Tensor 0xa5b117c30, new count: 2
+DEBUG: Exit Scope. Start Depth: 6
+DEBUG: Release Tensor 0xa5b117c30, new count: 1
+DEBUG: Enter Scope. Depth: 6
+DEBUG: Register Tensor 0xa5b117db0 (New).
+DEBUG: Alloc Tensor 0xa5b117db0 (make_tensor)
+Acquire Tensor 0xa5b117db0, count: 2
+Acquire Tensor 0xa5b117db0, count: 3
+DEBUG: Unregistering 0xa5c403d10
+DEBUG: Unregistered 0xa5c403d10 from scope (Move)
+DEBUG: Release Tensor 0xa5b117db0, new count: 2
+DEBUG: Exit Scope. Start Depth: 6
+DEBUG: Release Tensor 0xa5b117db0, new count: 1
+DEBUG: Enter Scope. Depth: 6
+DEBUG: Enter Scope. Depth: 7
+DEBUG: Register Tensor 0xa5b117b70 (New).
+DEBUG: Alloc Tensor 0xa5b117b70 (make_tensor)
+Acquire Tensor 0xa5b117b70, count: 2
+Acquire Tensor 0xa5b117b70, count: 3
+DEBUG: Unregistering 0xa5b204060
+DEBUG: Unregistered 0xa5b204060 from scope (Move)
+DEBUG: Release Tensor 0xa5b117b70, new count: 2
+DEBUG: Exit Scope. Start Depth: 7
+DEBUG: Release Tensor 0xa5b117b70, new count: 1
+DEBUG: Enter Scope. Depth: 7
+DEBUG: Register Tensor 0xa5b117f00 (New).
+DEBUG: Alloc Tensor 0xa5b117f00 (make_tensor)
+Acquire Tensor 0xa5b117f00, count: 2
+Acquire Tensor 0xa5b117f00, count: 3
+DEBUG: Unregistering 0xa5b204070
+DEBUG: Unregistered 0xa5b204070 from scope (Move)
+DEBUG: Release Tensor 0xa5b117f00, new count: 2
+DEBUG: Exit Scope. Start Depth: 7
+DEBUG: Release Tensor 0xa5b117f00, new count: 1
+DEBUG: Enter Scope. Depth: 7
+DEBUG: Register Tensor 0xa5b117ed0 (New).
+DEBUG: Alloc Tensor 0xa5b117ed0 (make_tensor)
+Acquire Tensor 0xa5b117ed0, count: 2
+Acquire Tensor 0xa5b117ed0, count: 3
+DEBUG: Unregistering 0xa5b204080
+DEBUG: Unregistered 0xa5b204080 from scope (Move)
+DEBUG: Release Tensor 0xa5b117ed0, new count: 2
+DEBUG: Exit Scope. Start Depth: 7
+DEBUG: Release Tensor 0xa5b117ed0, new count: 1
+DEBUG: Enter Scope. Depth: 7
+DEBUG: Register Tensor 0xa5b117de0 (New).
+DEBUG: Alloc Tensor 0xa5b117de0 (make_tensor)
+Acquire Tensor 0xa5b117de0, count: 2
+Acquire Tensor 0xa5b117de0, count: 3
+DEBUG: Unregistering 0xa5b204090
+DEBUG: Unregistered 0xa5b204090 from scope (Move)
+DEBUG: Release Tensor 0xa5b117de0, new count: 2
+DEBUG: Exit Scope. Start Depth: 7
+DEBUG: Release Tensor 0xa5b117de0, new count: 1
+Acquire Tensor 0xa5b117b70, count: 2
+Acquire Tensor 0xa5b117f00, count: 2
+Acquire Tensor 0xa5b117ed0, count: 2
+Acquire Tensor 0xa5b117de0, count: 2
+DEBUG: Unregistering 0xa5ad6c540
+DEBUG: Unregistered 0xa5ad6c540 from scope (Move)
+DEBUG: Release Tensor 0xa5b117f00, new count: 1
+DEBUG: Unregistering 0xa5b204070
+DEBUG: Release Tensor 0xa5b117ed0, new count: 1
+DEBUG: Unregistering 0xa5b204080
+DEBUG: Release Tensor 0xa5b117de0, new count: 1
+DEBUG: Unregistering 0xa5b204090
+DEBUG: Release Tensor 0xa5b117b70, new count: 1
+DEBUG: Unregistering 0xa5b204060
+DEBUG: Exit Scope. Start Depth: 6
+DEBUG: Enter Scope. Depth: 6
+DEBUG: Enter Scope. Depth: 7
+DEBUG: Register Tensor 0xa5b117a50 (New).
+DEBUG: Alloc Tensor 0xa5b117a50 (make_tensor)
+Acquire Tensor 0xa5b117a50, count: 2
+Acquire Tensor 0xa5b117a50, count: 3
+DEBUG: Unregistering 0xa5b2040c0
+DEBUG: Unregistered 0xa5b2040c0 from scope (Move)
+DEBUG: Release Tensor 0xa5b117a50, new count: 2
+DEBUG: Exit Scope. Start Depth: 7
+DEBUG: Release Tensor 0xa5b117a50, new count: 1
+DEBUG: Enter Scope. Depth: 7
+DEBUG: Register Tensor 0xa5b117ab0 (New).
+DEBUG: Alloc Tensor 0xa5b117ab0 (make_tensor)
+Acquire Tensor 0xa5b117ab0, count: 2
+Acquire Tensor 0xa5b117ab0, count: 3
+DEBUG: Unregistering 0xa5b2040d0
+DEBUG: Unregistered 0xa5b2040d0 from scope (Move)
+DEBUG: Release Tensor 0xa5b117ab0, new count: 2
+DEBUG: Exit Scope. Start Depth: 7
+DEBUG: Release Tensor 0xa5b117ab0, new count: 1
+DEBUG: Enter Scope. Depth: 7
+DEBUG: Register Tensor 0xa5b117e10 (New).
+DEBUG: Alloc Tensor 0xa5b117e10 (make_tensor)
+Acquire Tensor 0xa5b117e10, count: 2
+Acquire Tensor 0xa5b117e10, count: 3
+DEBUG: Unregistering 0xa5b2040e0
+DEBUG: Unregistered 0xa5b2040e0 from scope (Move)
+DEBUG: Release Tensor 0xa5b117e10, new count: 2
+DEBUG: Exit Scope. Start Depth: 7
+DEBUG: Release Tensor 0xa5b117e10, new count: 1
+Acquire Tensor 0xa5b117a50, count: 2
+Acquire Tensor 0xa5b117ab0, count: 2
+Acquire Tensor 0xa5b117e10, count: 2
+DEBUG: Unregistering 0xa5b258160
+DEBUG: Unregistered 0xa5b258160 from scope (Move)
+DEBUG: Release Tensor 0xa5b117e10, new count: 1
+DEBUG: Unregistering 0xa5b2040e0
+DEBUG: Release Tensor 0xa5b117ab0, new count: 1
+DEBUG: Unregistering 0xa5b2040d0
+DEBUG: Release Tensor 0xa5b117a50, new count: 1
+DEBUG: Unregistering 0xa5b2040c0
+DEBUG: Exit Scope. Start Depth: 6
+Acquire Tensor 0xa5b117c30, count: 2
+Acquire Tensor 0xa5b117db0, count: 2
+Acquire Tensor 0xa5b117b70, count: 2
+Acquire Tensor 0xa5b117f00, count: 2
+Acquire Tensor 0xa5b117ed0, count: 2
+Acquire Tensor 0xa5b117de0, count: 2
+Acquire Tensor 0xa5b117a50, count: 2
+Acquire Tensor 0xa5b117ab0, count: 2
+Acquire Tensor 0xa5b117e10, count: 2
+DEBUG: Unregistering 0xa5b258180
+DEBUG: Unregistered 0xa5b258180 from scope (Move)
+DEBUG: Release Tensor 0xa5b117a50, new count: 1
+DEBUG: Release Tensor 0xa5b117ab0, new count: 1
+DEBUG: Release Tensor 0xa5b117e10, new count: 1
+DEBUG: Unregistering 0xa5b258160
+DEBUG: Unregistering 0xa5b204050
+DEBUG: Release Tensor 0xa5b117c30, new count: 1
+DEBUG: Unregistering 0xa5c403d40
+DEBUG: Release Tensor 0xa5b117db0, new count: 1
+DEBUG: Unregistering 0xa5c403d10
+DEBUG: Release Tensor 0xa5b117b70, new count: 1
+DEBUG: Release Tensor 0xa5b117f00, new count: 1
+DEBUG: Release Tensor 0xa5b117ed0, new count: 1
+DEBUG: Release Tensor 0xa5b117de0, new count: 1
+DEBUG: Unregistering 0xa5ad6c540
+DEBUG: Exit Scope. Start Depth: 5
+DEBUG: Enter Scope. Depth: 5
+DEBUG: Enter Scope. Depth: 6
+DEBUG: Register Tensor 0xa5b117b40 (New).
+DEBUG: Alloc Tensor 0xa5b117b40 (make_tensor)
+Acquire Tensor 0xa5b117b40, count: 2
+DEBUG: Exit Scope. Start Depth: 6
+DEBUG: Release Tensor 0xa5b117b40, new count: 1
+DEBUG: Register Tensor 0xa5b117b40 (Existing count: 1).
+Acquire Tensor 0xa5b117b40, count: 2
+DEBUG: Enter Scope. Depth: 6
+DEBUG: Enter Scope. Depth: 7
+DEBUG: Register Tensor 0xa5b117f90 (New).
+DEBUG: Alloc Tensor 0xa5b117f90 (make_tensor)
+Acquire Tensor 0xa5b117f90, count: 2
+DEBUG: Register Tensor 0xa5b117f60 (New).
+DEBUG: Alloc Tensor 0xa5b117f60 (make_tensor)
+Acquire Tensor 0xa5b117f60, count: 2
+Acquire Tensor 0xa5b117f60, count: 3
+DEBUG: Release Tensor 0xa5b117f90, new count: 1
+DEBUG: Exit Scope. Start Depth: 7
+DEBUG: Release Tensor 0xa5b117f60, new count: 2
+DEBUG: Release Tensor 0xa5b117f90, new count: 0
+DEBUG: Freeing Tensor 0xa5b117f90
+DEBUG: Register Tensor 0xa5b117f60 (Existing count: 2).
+Acquire Tensor 0xa5b117f60, count: 3
+DEBUG: Enter Scope. Depth: 7
+DEBUG: Register Tensor 0xa5b117f90 (New).
+DEBUG: Alloc Tensor 0xa5b117f90 (make_tensor)
+Acquire Tensor 0xa5b117f90, count: 2
+DEBUG: Register Tensor 0xa5b117bd0 (New).
+DEBUG: Alloc Tensor 0xa5b117bd0 (make_tensor)
+Acquire Tensor 0xa5b117bd0, count: 2
+Acquire Tensor 0xa5b117bd0, count: 3
+DEBUG: Release Tensor 0xa5b117f90, new count: 1
+DEBUG: Exit Scope. Start Depth: 7
+DEBUG: Release Tensor 0xa5b117bd0, new count: 2
+DEBUG: Release Tensor 0xa5b117f90, new count: 0
+DEBUG: Freeing Tensor 0xa5b117f90
+DEBUG: Register Tensor 0xa5b117bd0 (Existing count: 2).
+Acquire Tensor 0xa5b117bd0, count: 3
+DEBUG: Enter Scope. Depth: 7
+DEBUG: Register Tensor 0xa5b117f90 (New).
+DEBUG: Alloc Tensor 0xa5b117f90 (make_tensor)
+Acquire Tensor 0xa5b117f90, count: 2
+DEBUG: Register Tensor 0xa5b117e40 (New).
+DEBUG: Alloc Tensor 0xa5b117e40 (make_tensor)
+Acquire Tensor 0xa5b117e40, count: 2
+Acquire Tensor 0xa5b117e40, count: 3
+DEBUG: Release Tensor 0xa5b117f90, new count: 1
+DEBUG: Exit Scope. Start Depth: 7
+DEBUG: Release Tensor 0xa5b117e40, new count: 2
+DEBUG: Release Tensor 0xa5b117f90, new count: 0
+DEBUG: Freeing Tensor 0xa5b117f90
+DEBUG: Register Tensor 0xa5b117e40 (Existing count: 2).
+Acquire Tensor 0xa5b117e40, count: 3
+DEBUG: Register Tensor 0xa5b117f90 (New).
+DEBUG: Alloc Tensor 0xa5b117f90 (make_tensor)
+Acquire Tensor 0xa5b117f90, count: 2
+Error reshaping tensor: shape mismatch in reshape, lhs: [2, 2048], rhs: [44463994304, 0, 9223372036854775808, 4]
