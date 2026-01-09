@@ -592,10 +592,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Variable Assignment: Deep Clone (Struct Copy + Tensor Acquire)
                 // We MUST Acquire (clone) because the source is either a temporary (Ref 1) that will be released later,
                 // or another variable (Ref 1) that we are sharing.
-                if matches!(
-                    val_ty,
-                    Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
-                ) {
+                // EXCEPTION: For Structs returned from StructInit or StaticMethodCall, the SRET/malloc is already
+                // registered. We just use the pointer directly. Deep cloning would create a NEW struct and the old
+                // one would be freed on scope exit (double-free or use-after-free).
+                let should_deep_clone = match &val_ty {
+                    Type::Tensor(_, _) => true, // Tensors always need Acquire
+                    Type::Struct(_) | Type::UserDefined(_) => {
+                        // Check if RHS is StructInit or StaticMethodCall - if so, struct is fresh and registered
+                        !matches!(
+                            value,
+                            Expr::StructInit(_, _) | Expr::StaticMethodCall(_, _, _)
+                        )
+                    }
+                    _ => false,
+                };
+                if should_deep_clone {
                     val_ir = self.emit_deep_clone(val_ir, &val_ty)?;
                 }
 

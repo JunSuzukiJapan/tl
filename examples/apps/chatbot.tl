@@ -31,6 +31,8 @@ extern fn tl_tensor_get_shape(t: Tensor<f32, 2>) -> Tensor<i64, 1>;
 
 extern fn tl_tensor_rope_new_cos(dim: i64, len: i64, theta: f32) -> Tensor<f32, 2>;
 extern fn tl_tensor_rope_new_sin(dim: i64, len: i64, theta: f32) -> Tensor<f32, 2>;
+extern fn tl_tensor_embedding(indices: Tensor<i64, 2>, weights: Tensor<f32, 2>) -> Tensor<f32, 2>;
+extern fn tl_tensor_add(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
 
 // --- Structs ---
 
@@ -155,12 +157,55 @@ impl Attention {
         // Transpose back [B, H, S, D] -> [B, S, H, D]
         let ctx_trans = tl_tensor_transpose(context, 1, 2);
         
-        return x; // Still placeholder
+        // Flatten [B, S, H, D] -> [B*S, Dim]
+        let out_shape = [1, 2048];
+        let flat = tl_tensor_reshape_2d(ctx_trans, out_shape, 2);
+        
+        // O projection
+        let out = self.o_proj.forward(flat);
+        return out;
     }
 }
 
+struct TransformerBlock {
+    attn_norm: RMSNorm,
+    ffn_norm: RMSNorm,
+    attn: Attention,
+    mlp: MLP,
+}
 
-
+impl TransformerBlock {
+    fn from_map(map: i64, layer_idx: i64) -> TransformerBlock {
+        // Build weight name prefix: "blk.X"
+        let prefix = tl_string_concat("blk.", tl_string_from_int(layer_idx));
+        
+        let attn_norm = RMSNorm::new(map, tl_string_concat(prefix, ".attn_norm.weight"));
+        let ffn_norm = RMSNorm::new(map, tl_string_concat(prefix, ".ffn_norm.weight"));
+        let attn = Attention::from_map(map, tl_string_concat(prefix, ".attn"));
+        let mlp = MLP::from_map(map, tl_string_concat(prefix, ".ffn"));
+        
+        return TransformerBlock { 
+            attn_norm: attn_norm, 
+            ffn_norm: ffn_norm, 
+            attn: attn, 
+            mlp: mlp 
+        };
+    }
+    
+    fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>) -> Tensor<f32, 2> {
+        // Pre-norm attention
+        let h = self.attn_norm.forward(x);
+        let attn_out = self.attn.forward(h, cos, sin);
+        let x2 = tl_tensor_add(x, attn_out);
+        
+        // Pre-norm FFN
+        let h2 = self.ffn_norm.forward(x2);
+        let ffn_out = self.mlp.forward(h2);
+        let out = tl_tensor_add(x2, ffn_out);
+        
+        return out;
+    }
+}
 
 extern fn tl_tensor_reshape_2d(t: Tensor<f32, 4>, dims: Tensor<i64, 1>, n: i64) -> Tensor<f32, 2>;
 
@@ -183,18 +228,28 @@ fn main() {
     print("Encoded tokens:");
     print(tokens);
     
-    // 3. Precompute RoPE
-    print("Precomputing RoPE...");
-    let cos = tl_tensor_rope_new_cos(64, 2048, 10000.0);
-    let sin = tl_tensor_rope_new_sin(64, 2048, 10000.0);
+    // 3. Create 4 Linear layers
+    print("Creating Linear q...");
+    let q = Linear::from_map(weights, "blk.0.attn_q.weight");
+    print("q created.");
     
-    // 4. Instantiate layer 0 components
-    print("Creating Layer 0 components...");
-    let block_norm = RMSNorm::new(weights, "blk.0.attn_norm.weight");
-    let mlp = MLP::from_map(weights, "blk.0.ffn");
-    let attn = Attention::from_map(weights, "blk.0.attn");
+    print("Creating Linear k...");
+    let k = Linear::from_map(weights, "blk.0.attn_k.weight");
+    print("k created.");
     
-    print("All components created successfully!");
-    print("Transformer architecture verified.");
+    print("Creating Linear v...");
+    let v = Linear::from_map(weights, "blk.0.attn_v.weight");
+    print("v created.");
+    
+    print("Creating Linear o...");
+    let o = Linear::from_map(weights, "blk.0.attn_output.weight");
+    print("o created.");
+    
+    print("All 4 Linear layers verified!");
 }
+
+
+
+
+
 
