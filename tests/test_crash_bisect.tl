@@ -152,7 +152,7 @@ impl Attention {
         let sin_slice = tl_tensor_narrow(sin, 0, 0, seq_len);
         
         // 4. Apply RoPE to Q and K (apply_rope handles broadcasting internally)
-        let q_rot = tl_tensor_apply_rope(q4, cos_slice, sin_slice);
+        let q_rot = tl_tensor_apply_rope(q4, cos_slice.clone(), sin_slice.clone());
         let k_rot = tl_tensor_apply_rope(k4, cos_slice, sin_slice);
         
         // 6. GQA: Repeat K/V heads to match Q heads (4 -> 32, repeat 8x)
@@ -173,8 +173,7 @@ impl Attention {
         let mask = tl_tensor_new_causal_mask(seq_len); 
         
         // Reshape mask to [1, 1, seq, seq]
-        let mask_shape = [1, 1, seq_len, seq_len];
-        let mask_4d = tl_tensor_reshape_dims(mask, mask_shape, 4);
+        let mask_4d = tl_tensor_reshape_dims(mask, [1, 1, seq_len, seq_len], 4);
         
         // Add mask to scores
         let scores = tl_tensor_add_4d(scores, mask_4d);
@@ -194,8 +193,7 @@ impl Attention {
         let ctx_trans = tl_tensor_transpose(context, 1, 2);
         
         // 12. Flatten: [1, seq, 32, 64] -> [seq, 2048]
-        let out_shape = [seq_len, 2048];
-        let flat = tl_tensor_reshape_2d(ctx_trans, out_shape, 2);
+        let flat = tl_tensor_reshape_2d(ctx_trans, [seq_len, 2048], 2);
         
         // 13. Output projection
         let out = self.o_proj.forward(flat);

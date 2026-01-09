@@ -152,7 +152,7 @@ impl Attention {
         let sin_slice = tl_tensor_narrow(sin, 0, 0, seq_len);
         
         // 4. Apply RoPE to Q and K (apply_rope handles broadcasting internally)
-        let q_rot = tl_tensor_apply_rope(q4, cos_slice, sin_slice);
+        let q_rot = tl_tensor_apply_rope(q4, cos_slice.clone(), sin_slice.clone());
         let k_rot = tl_tensor_apply_rope(k4, cos_slice, sin_slice);
         
         // 6. GQA: Repeat K/V heads to match Q heads (4 -> 32, repeat 8x)
