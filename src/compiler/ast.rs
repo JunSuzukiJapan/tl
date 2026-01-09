@@ -46,6 +46,9 @@ pub enum Type {
     // Optimized small constant array (elements up to 4, stored as scalars)
     ScalarArray(Box<Type>, usize), // (element_type, length)
 
+    // Tuple type: (Type, Type, ...)
+    Tuple(Vec<Type>),
+
     // Generic placeholder
     UserDefined(String),
 
@@ -140,6 +143,7 @@ pub enum Expr {
     Int(i64),
     Bool(bool),
     StringLiteral(String),
+    Tuple(Vec<Expr>),            // (a, b, c)
     Range(Box<Expr>, Box<Expr>), // start..end
     TensorComprehension {
         indices: Vec<String>,
@@ -151,6 +155,7 @@ pub enum Expr {
     // Variables & Access
     Variable(String),
     IndexAccess(Box<Expr>, Vec<Expr>), // Name[i, j]
+    TupleAccess(Box<Expr>, usize),     // Name.0
     FieldAccess(Box<Expr>, String),    // self.field
 
     // Ops

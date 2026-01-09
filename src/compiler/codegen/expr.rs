@@ -364,19 +364,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::Bool,
                 ))
             }
-            Expr::StringLiteral(s) => {
-                let global_str = self
-                    .builder
-                    .build_global_string_ptr(s, "str_lit")
-                    .map_err(|e| e.to_string())?;
-                let ptr = global_str.as_pointer_value();
-                let ptr_as_int = self
-                    .builder
-                    .build_ptr_to_int(ptr, self.context.i64_type(), "str_ptr_int")
-                    .map_err(|e| e.to_string())?;
+            Expr::StringLiteral(s) => self.compile_string_literal(s),
 
-                Ok((ptr_as_int.into(), Type::UserDefined("String".to_string())))
-            }
             Expr::Range(_, _) => Err("Expr::Range should only appear in For loops".to_string()),
             Expr::As(expr, target_type) => {
                 let (val, source_type) = self.compile_expr(expr)?;
@@ -664,7 +653,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .context
                                     .ptr_type(inkwell::AddressSpace::default())
                                     .into(),
-                                Type::Struct(_) | Type::UserDefined(_) => self
+                                Type::Struct(_) | Type::UserDefined(_) | Type::Tuple(_) => self
                                     .context
                                     .ptr_type(inkwell::AddressSpace::default())
                                     .into(),
@@ -707,6 +696,10 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 Ok(res)
             }
+
+            Expr::Tuple(exprs) => self.compile_tuple(exprs),
+            Expr::TupleAccess(expr, idx) => self.compile_tuple_access(expr, *idx),
+
             Expr::TensorComprehension { indices, body } => {
                 // Generate a unique name for the temporary result
                 static NEXT_ID: std::sync::atomic::AtomicUsize =
@@ -1318,7 +1311,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Type::I64 => self.context.i64_type().into(),
                         Type::F32 => self.context.f32_type().into(),
                         Type::Bool => self.context.bool_type().into(),
-                        Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => self
+                        Type::Tensor(_, _)
+                        | Type::Struct(_)
+                        | Type::UserDefined(_)
+                        | Type::Tuple(_) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
@@ -1429,7 +1425,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             // For Structs: deep copy struct memory (prevent dangling pointer when local var dies), share tensors.
             let store_val = if matches!(
                 _ty,
-                Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+                Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) | Type::Tuple(_)
             ) {
                 self.emit_deep_clone(val, &_ty)?
             } else {
@@ -1448,6 +1444,195 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Return the pointer directly (no load)
         Ok((struct_ptr.into(), Type::Struct(name.to_string())))
+    }
+
+    fn compile_string_literal(&self, s: &str) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        let str_val = self
+            .builder
+            .build_global_string_ptr(s, "str_lit")
+            .map_err(|e| e.to_string())?
+            .as_pointer_value();
+
+        // Create String object
+        let new_fn = self
+            .module
+            .get_function("tl_string_new")
+            .ok_or("tl_string_new not found")?;
+        let call = self
+            .builder
+            .build_call(new_fn, &[str_val.into()], "string_obj")
+            .map_err(|e| e.to_string())?;
+        let ptr = match call.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v,
+            _ => return Err("tl_string_new returned void".into()),
+        };
+
+        Ok((ptr, Type::UserDefined("String".to_string())))
+    }
+
+    fn compile_tuple(&mut self, elements: &[Expr]) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        let mut vals = Vec::new();
+        let mut types = Vec::new();
+        let mut llvm_types = Vec::new();
+
+        for e in elements {
+            let (val, ty) = self.compile_expr(e)?;
+            vals.push(val);
+            types.push(ty.clone());
+            llvm_types.push(self.get_llvm_type(&ty)?);
+        }
+
+        let tuple_struct_type = self.context.struct_type(&llvm_types, false);
+
+        // Malloc
+        // We use malloc to ensure it survives if returned (and managed by owner).
+        // Similar to StructInit.
+        let size = tuple_struct_type
+            .size_of()
+            .ok_or("Cannot get size of tuple")?;
+        let malloc_fn = self
+            .module
+            .get_function("malloc")
+            .ok_or("malloc not found")?;
+        let call = self
+            .builder
+            .build_call(malloc_fn, &[size.into()], "tuple_malloc")
+            .map_err(|e| e.to_string())?;
+        let raw_ptr = match call.try_as_basic_value() {
+            ValueKind::Basic(v) => v.into_pointer_value(),
+            _ => return Err("malloc returned instruction value".into()),
+        };
+
+        // Cast to tuple struct pointer
+        let tuple_ptr = self
+            .builder
+            .build_pointer_cast(
+                raw_ptr,
+                self.context.ptr_type(inkwell::AddressSpace::default()),
+                "tuple_ptr",
+            )
+            .map_err(|e| e.to_string())?;
+
+        // Store elements
+        for (i, (val, ty)) in vals.iter().zip(types.iter()).enumerate() {
+            let field_ptr = self
+                .builder
+                .build_struct_gep(tuple_struct_type, tuple_ptr, i as u32, "tuple_field")
+                .map_err(|e| e.to_string())?;
+            self.builder
+                .build_store(field_ptr, *val)
+                .map_err(|e| e.to_string())?;
+
+            // Ownership transfer: Unregister from scope if it's a temp/managed type
+            if matches!(
+                ty,
+                Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) | Type::Tuple(_)
+            ) {
+                let unreg_fn = self
+                    .module
+                    .get_function("tl_mem_unregister")
+                    .ok_or("tl_mem_unregister not found")?;
+                let val_ptr = val.into_pointer_value();
+                let cast_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        val_ptr,
+                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                        "cast_unreg_elem",
+                    )
+                    .unwrap();
+                self.builder
+                    .build_call(unreg_fn, &[cast_ptr.into()], "")
+                    .unwrap();
+
+                // If element was a variable, we need to remove it from scope tracking appropriately?
+                // compile_expr for variable returns a LOADed value usually, or the pointer?
+                // compile_expr(Variable) returns (Load(alloca), Type).
+                // So 'val' is the pointer to the object (if Struct/Tensor).
+                // For Variables, we might need similar logic to StructInit to prevent double-free if we "move" it.
+                // But generally tuple construction is: let t = (a, b); -> t owns copies of a and b (ref copy).
+                // If a, b are variables, we are COPYING the reference. So we should ACQUIRE?
+                // Wait, StructInit unregisters?
+                // StructInit logic:
+                // if arg is Variable: remove from scope (Move semantics?) -> Logic says "should_remove = true".
+                // Yes, StructInit implements Move semantics for variables passed to it.
+                // So let's replicate that for Tuple.
+                if let Expr::Variable(var_name) = &elements[i] {
+                    // Search and remove variable from scope to prevent automatic free at end of scope
+                    // Effectively "Moving" ownership to the tuple.
+                    for scope in self.variables.iter_mut().rev() {
+                        let mut should_remove = false;
+                        if let Some((_, var_ty, _)) = scope.get(var_name) {
+                            if matches!(
+                                var_ty,
+                                Type::Tensor(_, _)
+                                    | Type::Struct(_)
+                                    | Type::UserDefined(_)
+                                    | Type::Tuple(_)
+                            ) {
+                                should_remove = true;
+                            }
+                        }
+                        if should_remove {
+                            scope.remove(var_name); // Remove from tracking -> No free at exit_scope
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok((tuple_ptr.into(), Type::Tuple(types)))
+    }
+
+    fn compile_tuple_access(
+        &mut self,
+        expr: &Expr,
+        idx: usize,
+    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        let (tuple_val, tuple_ty) = self.compile_expr(expr)?;
+
+        let element_types = match tuple_ty {
+            Type::Tuple(ts) => ts,
+            _ => return Err(format!("Expected tuple type, found {:?}", tuple_ty)),
+        };
+
+        if idx >= element_types.len() {
+            return Err(format!(
+                "Tuple index {} out of bounds (len {})",
+                idx,
+                element_types.len()
+            ));
+        }
+        let field_ty = element_types[idx].clone();
+
+        // tuple_val should be a pointer to the tuple struct (i8*)
+        if !tuple_val.is_pointer_value() {
+            return Err("Tuple value is not a pointer".into());
+        }
+        let tuple_ptr = tuple_val.into_pointer_value();
+
+        // Reconstruct LLVM struct type for GEP
+        let mut llvm_types = Vec::new();
+        for ty in &element_types {
+            llvm_types.push(self.get_llvm_type(ty)?);
+        }
+        let tuple_struct_type = self.context.struct_type(&llvm_types, false);
+
+        // GEP
+        let field_ptr = self
+            .builder
+            .build_struct_gep(tuple_struct_type, tuple_ptr, idx as u32, "tuple_access")
+            .map_err(|e| e.to_string())?;
+
+        // Load
+        let llvm_field_ty = self.get_llvm_type(&field_ty)?;
+        let val = self
+            .builder
+            .build_load(llvm_field_ty, field_ptr, "tuple_elem")
+            .map_err(|e| e.to_string())?;
+
+        Ok((val, field_ty))
     }
 
     fn compile_tuple_struct_init(
@@ -1530,7 +1715,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             let store_val = if matches!(
                 _ty,
-                Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+                Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) | Type::Tuple(_)
             ) {
                 self.emit_deep_clone(val, &_ty)?
             } else {
@@ -1797,7 +1982,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             if args.len() > 2 {
                 // Varargs -> Compile as TensorLiteral (which produces a Tensor)
-                // For VarBuilder::getAll(name, rank, shape_ptr), we need to extract rank and shape from the tensor.
+                // For Varbuilder::getAll(name, rank, shape_ptr), we need to extract rank and shape from the tensor.
                 // But wait, if we revert to rank, shape_ptr... we can't easily extract from OpaqueTensor in LLVM IR without calls.
                 // Actually, if we use Varargs, we know the rank (args.len()-1) and we can construct the shape array directly!
 
@@ -2117,7 +2302,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                             if let Some((_, ty, _)) = scope.get(var_name) {
                                 if matches!(
                                     ty,
-                                    Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+                                    Type::Tensor(_, _)
+                                        | Type::Struct(_)
+                                        | Type::UserDefined(_)
+                                        | Type::Tuple(_)
                                 ) {
                                     should_remove = true;
                                 }
@@ -2625,6 +2813,44 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok((res, Type::Tensor(Box::new(Type::F32), rank)))
     }
 
+    // Helper to get LLVM BasicType from tl::Type
+    pub(crate) fn get_llvm_type(
+        &self,
+        ty: &Type,
+    ) -> Result<inkwell::types::BasicTypeEnum<'ctx>, String> {
+        match ty {
+            Type::I64 => Ok(self.context.i64_type().into()),
+            Type::I32 => Ok(self.context.i32_type().into()), // Support I32
+            Type::F32 => Ok(self.context.f32_type().into()),
+            Type::Bool => Ok(self.context.bool_type().into()),
+            Type::Tensor(_, _) => Ok(self
+                .context
+                .ptr_type(inkwell::AddressSpace::default())
+                .into()),
+            Type::UserDefined(_) | Type::Struct(_) => {
+                // Return pointer type for structs
+                Ok(self
+                    .context
+                    .ptr_type(inkwell::AddressSpace::default())
+                    .into())
+            }
+            Type::ScalarArray(_, _) => Ok(self
+                .context
+                .ptr_type(inkwell::AddressSpace::default())
+                .into()),
+            Type::Vec(_) => Ok(self
+                .context
+                .ptr_type(inkwell::AddressSpace::default())
+                .into()),
+            Type::Tuple(_) => Ok(self
+                .context
+                .ptr_type(inkwell::AddressSpace::default())
+                .into()),
+            Type::Void => Err("Void type has no LLVM BasicType".into()),
+            _ => Err(format!("Unsupported type for get_llvm_type: {:?}", ty)),
+        }
+    }
+
     pub(crate) fn create_entry_block_alloca(
         &self,
         function: FunctionValue<'ctx>,
@@ -2638,23 +2864,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             None => builder.position_at_end(entry),
         }
 
-        let llvm_type: inkwell::types::BasicTypeEnum = match ty {
-            Type::I64 => self.context.i64_type().into(),
-            Type::F32 => self.context.f32_type().into(),
-            // Tensor is a pointer to OpaqueTensor struct.
-            // We represent it as a generic pointer (ptr) in LLVM 15+, or i8* in older.
-            // Inkwell Context has ptr_type
-            Type::Tensor(_, _)
-            | Type::UserDefined(_)
-            | Type::Struct(_)
-            | Type::ScalarArray(_, _)
-            | Type::Vec(_) => self
-                .context
-                .ptr_type(inkwell::AddressSpace::default())
-                .into(),
-            _ => self.context.i64_type().into(),
-        };
-
+        let llvm_type: inkwell::types::BasicTypeEnum = self
+            .get_llvm_type(ty)
+            .unwrap_or_else(|e| panic!("Failed to get LLVM type for alloca: {}", e));
         let alloca = builder.build_alloca(llvm_type, name).unwrap();
         if let Some(instr) = alloca.as_instruction_value() {
             // Force 16-byte alignment to satisfy SIMD/slice requirements
@@ -2922,9 +3134,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let is_temp = matches!(
                         obj,
                         Expr::FnCall(_, _)
-                            | Expr::MethodCall(_, _, _)
-                            | Expr::BinOp(_, _, _)
-                            | Expr::StaticMethodCall(_, _, _)
+                            | Expr::StructInit(_, _)
+                            | Expr::Tuple(_)
                             | Expr::TensorLiteral(_)
                     );
                     if is_temp {

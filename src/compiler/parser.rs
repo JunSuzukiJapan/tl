@@ -96,8 +96,39 @@ fn parse_user_type(input: &str) -> IResult<&str, Type> {
     map(identifier, Type::UserDefined)(input)
 }
 
+fn parse_tuple_type(input: &str) -> IResult<&str, Type> {
+    // (Type, Type, ...)
+    let (input, types) = delimited(
+        ws(char('(')),
+        separated_list0(ws(char(',')), parse_type),
+        ws(char(')')),
+    )(input)?;
+
+    // If only one type and no trailing comma (ambiguous with grouping), treat as just that type?
+    // But for types, (T) is usually same as T.
+    // However, for tuple types, we usually want explicit Tuple variant if it's meant to be a tuple.
+    // Rust: (i32) is i32. (i32,) is tuple.
+    // For simplicity, let's say if we parsed multiple types, it's a tuple.
+    // If 0, it's void? Or empty tuple.
+    // If 1, return the type directly (grouping behavior).
+    // TODO: support (T,) syntax for 1-element tuple type if needed.
+
+    if types.is_empty() {
+        Ok((input, Type::Void)) // Unit type
+    } else if types.len() == 1 {
+        Ok((input, types[0].clone()))
+    } else {
+        Ok((input, Type::Tuple(types)))
+    }
+}
+
 fn parse_type(input: &str) -> IResult<&str, Type> {
-    alt((parse_tensor_type, parse_primitive_type, parse_user_type))(input)
+    alt((
+        parse_tensor_type,
+        parse_primitive_type,
+        parse_tuple_type,
+        parse_user_type,
+    ))(input)
 }
 
 // --- Expressions ---
@@ -275,8 +306,30 @@ fn parse_primary(input: &str) -> IResult<&str, Expr> {
         parse_struct_init, // Must come before parse_variable
         parse_variable,
         parse_block_expr,
-        delimited(ws(char('(')), parse_expr, ws(char(')'))),
+        parse_block_expr,
+        parse_tuple_or_grouping,
     )))(input)
+}
+
+fn parse_tuple_or_grouping(input: &str) -> IResult<&str, Expr> {
+    let (input, _) = ws(char('('))(input)?;
+    let (input, mut exprs) = separated_list0(ws(char(',')), parse_expr)(input)?;
+    // check for trailing comma to distinguish (expr,) from (expr)
+    let (input, trailing_comma) = opt(ws(char(',')))(input)?;
+    let (input, _) = ws(char(')'))(input)?;
+
+    if exprs.is_empty() {
+        // () -> Unit tuple (represented as empty tuple)
+        // Or should we have a Unit literal?
+        // Let's use empty tuple for now.
+        Ok((input, Expr::Tuple(vec![])))
+    } else if exprs.len() == 1 && trailing_comma.is_none() {
+        // (expr) -> grouping
+        Ok((input, exprs.remove(0)))
+    } else {
+        // (expr, ...) or (expr,) -> tuple
+        Ok((input, Expr::Tuple(exprs)))
+    }
 }
 
 // Postfix: Call, Index, Field, Method
@@ -308,6 +361,11 @@ fn parse_postfix(input: &str) -> IResult<&str, Expr> {
             map(
                 preceded(char('.'), identifier),
                 |name| (2, vec![], None, Some(name)), // Tag 2 for Field/Method
+            ),
+            // Tuple Access: .0, .1, etc.
+            map(
+                preceded(char('.'), digit1),
+                |idx_str: &str| (3, vec![], None, Some(idx_str.to_string())), // Tag 3 for Tuple Access
             ),
         ))),
         move || init.clone(),
@@ -344,6 +402,10 @@ fn parse_postfix(input: &str) -> IResult<&str, Expr> {
                 }
                 1 => Expr::IndexAccess(Box::new(acc), idxs.unwrap()),
                 2 => Expr::FieldAccess(Box::new(acc), name.unwrap()),
+                3 => {
+                    let idx = name.unwrap().parse::<usize>().unwrap_or(0);
+                    Expr::TupleAccess(Box::new(acc), idx)
+                }
                 _ => unreachable!(),
             }
         },

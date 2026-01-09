@@ -30,6 +30,10 @@ pub enum SemanticError {
     },
     #[error("Unknown function: {0}")]
     UnknownFunction(String),
+    #[error("Tuple index out of bounds: index {0} is out of bounds for tuple of size {1}")]
+    TupleIndexOutOfBounds(usize, usize),
+    #[error("Cannot index into non-tuple type: {0:?}")]
+    NotATuple(Type),
 }
 
 #[derive(Clone, Debug)]
@@ -794,6 +798,25 @@ impl SemanticAnalyzer {
             Expr::Float(_) => Ok(Type::F32), // Default float literal type
             Expr::Bool(_) => Ok(Type::Bool),
             Expr::StringLiteral(_) => Ok(Type::UserDefined("String".to_string())), // Placeholder
+            Expr::Tuple(exprs) => {
+                let mut types = Vec::new();
+                for e in exprs {
+                    types.push(self.check_expr(e)?);
+                }
+                Ok(Type::Tuple(types))
+            }
+            Expr::TupleAccess(expr, idx) => {
+                let ty = self.check_expr(expr)?;
+                if let Type::Tuple(types) = ty {
+                    if *idx < types.len() {
+                        Ok(types[*idx].clone())
+                    } else {
+                        Err(SemanticError::TupleIndexOutOfBounds(*idx, types.len()))
+                    }
+                } else {
+                    Err(SemanticError::NotATuple(ty))
+                }
+            }
             Expr::StructInit(name, fields) => {
                 let resolved_name = self.resolve_symbol_name(name);
                 if *name != resolved_name {
@@ -2816,6 +2839,17 @@ impl SemanticAnalyzer {
             {
                 true
             }
+            (Type::Tuple(ts1), Type::Tuple(ts2)) => {
+                if ts1.len() != ts2.len() {
+                    return false;
+                }
+                for (t1, t2) in ts1.iter().zip(ts2.iter()) {
+                    if !self.are_types_compatible(t1, t2) {
+                        return false;
+                    }
+                }
+                true
+            }
             (Type::UserDefined(n1), Type::Struct(n2)) => n1 == n2,
             (Type::Struct(n1), Type::UserDefined(n2)) => n1 == n2,
             (Type::UserDefined(n1), Type::UserDefined(n2)) => {
@@ -2828,7 +2862,7 @@ impl SemanticAnalyzer {
                 }
                 false
             }
-            (Type::Struct(n1), Type::UserDefined(n2)) => n1 == n2,
+
             // Promotions
             (Type::F64, Type::F32) => true,
             (Type::I64, Type::I32) => true,

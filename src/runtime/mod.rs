@@ -1663,6 +1663,22 @@ pub extern "C" fn tl_vec_u8_free(ptr: *mut Vec<u8>) {
     }
 }
 
+// String helper
+#[no_mangle]
+pub extern "C" fn tl_string_new(s: *const std::os::raw::c_char) -> *mut std::os::raw::c_char {
+    if s.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        let len = libc::strlen(s);
+        let dest = libc::malloc(len + 1) as *mut std::os::raw::c_char;
+        if !dest.is_null() {
+            libc::strcpy(dest, s);
+        }
+        dest
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

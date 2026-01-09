@@ -346,6 +346,9 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_register_parameter", register_param_type);
 
     // String ops
+    let str_new_type = i8_ptr.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_string_new", str_new_type);
+
     let str_concat_type = i8_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
     add_fn("tl_string_concat", str_concat_type);
 
@@ -660,6 +663,9 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_register_parameter") {
         execution_engine.add_global_mapping(&f, runtime::tl_register_parameter as usize);
+    }
+    if let Some(f) = module.get_function("tl_string_new") {
+        execution_engine.add_global_mapping(&f, runtime::tl_string_new as usize);
     }
 
     // VarBuilder-based parameter management

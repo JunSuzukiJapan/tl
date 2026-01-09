@@ -2427,9 +2427,74 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .build_store(dst_field_ptr, val)
                         .map_err(|e| e.to_string())?;
                 }
+                // Return new struct ptr
                 Ok(new_struct_ptr.into())
             }
-            _ => Ok(val),
+            Type::Tuple(ts) => {
+                // 1. Allocate tuple struct
+                let mut llvm_types = Vec::new();
+                for t in ts {
+                    llvm_types.push(self.get_llvm_type(t)?);
+                }
+                let tuple_struct_type = self.context.struct_type(&llvm_types, false);
+
+                let size = tuple_struct_type
+                    .size_of()
+                    .ok_or("Cannot get size of tuple")?;
+                let malloc_fn = self
+                    .module
+                    .get_function("malloc")
+                    .ok_or("malloc not found")?;
+                let call = self
+                    .builder
+                    .build_call(malloc_fn, &[size.into()], "tuple_malloc")
+                    .map_err(|e| e.to_string())?;
+                let raw_ptr = match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                    _ => return Err("malloc returned invalid value".into()),
+                };
+
+                let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                let tuple_ptr = self
+                    .builder
+                    .build_pointer_cast(raw_ptr, ptr_type, "tuple_ptr")
+                    .unwrap();
+
+                // 2. Deep clone elements
+                let src_ptr = val.into_pointer_value(); // Source tuple pointer
+                let src_cast = self
+                    .builder
+                    .build_pointer_cast(src_ptr, ptr_type, "src_tuple_cast")
+                    .unwrap();
+
+                for (i, ty) in ts.iter().enumerate() {
+                    // Load field from src
+                    let field_gep = self
+                        .builder
+                        .build_struct_gep(tuple_struct_type, src_cast, i as u32, "src_field_gep")
+                        .map_err(|e| e.to_string())?;
+                    let field_llvm_ty = self.get_llvm_type(ty)?;
+                    let field_val = self
+                        .builder
+                        .build_load(field_llvm_ty, field_gep, "src_field_val")
+                        .map_err(|e| e.to_string())?;
+
+                    // RECURSIVE DEEP CLONE
+                    let cloned_val = self.emit_deep_clone(field_val, ty)?;
+
+                    // Store into dst
+                    let dst_gep = self
+                        .builder
+                        .build_struct_gep(tuple_struct_type, tuple_ptr, i as u32, "dst_field_gep")
+                        .map_err(|e| e.to_string())?;
+                    self.builder
+                        .build_store(dst_gep, cloned_val)
+                        .map_err(|e| e.to_string())?;
+                }
+
+                Ok(tuple_ptr.into())
+            }
+            _ => Ok(val), // Primitives copy by value
         }
     }
 }
