@@ -53,6 +53,31 @@ pub struct OpaqueTensor(
 #[track_caller]
 pub(crate) fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
     let caller = std::panic::Location::caller();
+    let num_elements = t.elem_count();
+    let dtype_id = dtype_to_id(t.dtype());
+    let device_id = device_to_id(t.device());
+
+    // Try to acquire from pool first
+    if let Ok(mut pool) = memory_manager::TENSOR_POOL.lock() {
+        if let Some(ptr) = pool.acquire(num_elements, dtype_id, device_id) {
+            unsafe {
+                // Reuse the OpaqueTensor, replace inner Tensor
+                (*ptr).0 = t;
+                (*ptr).1 = None; // Clear Var reference
+                (*ptr).2 = None; // Clear grad reference
+            }
+            memory_manager::register_tensor_global(ptr);
+            println!(
+                "DEBUG: Reuse Tensor {:p} (pool) from {}:{}",
+                ptr,
+                caller.file(),
+                caller.line()
+            );
+            return ptr;
+        }
+    }
+
+    // No pooled tensor available, allocate new
     let boxed = Box::new(OpaqueTensor(t, None, None));
     let ptr = Box::into_raw(boxed);
     memory_manager::register_tensor_global(ptr);
@@ -63,6 +88,28 @@ pub(crate) fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
         caller.line()
     );
     ptr
+}
+
+/// Convert DType to u8 for pool key
+fn dtype_to_id(dtype: candle_core::DType) -> u8 {
+    match dtype {
+        candle_core::DType::F32 => 0,
+        candle_core::DType::F64 => 1,
+        candle_core::DType::I64 => 2,
+        candle_core::DType::U32 => 3,
+        candle_core::DType::U8 => 4,
+        candle_core::DType::F16 => 5,
+        candle_core::DType::BF16 => 6,
+    }
+}
+
+/// Convert Device to u8 for pool key
+fn device_to_id(device: &candle_core::Device) -> u8 {
+    match device {
+        candle_core::Device::Cpu => 0,
+        candle_core::Device::Cuda(_) => 1,
+        candle_core::Device::Metal(_) => 2,
+    }
 }
 
 // Helper to create and register an OpaqueTensor from a Candle Var
@@ -578,23 +625,36 @@ pub extern "C" fn tl_tensor_print_3(t: *const OpaqueTensor) {
 /// Used by MemoryManager to avoid deadlock
 pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) {
     println!(
-        "DEBUG: free_tensor_resources called with {:p} [mod.rs:572]",
+        "DEBUG: free_tensor_resources called with {:p} [mod.rs:626]",
         t
     );
     if !t.is_null() {
         unsafe {
+            // Skip arena-allocated tensors (they are NOT poolable)
             if arena::tl_arena_contains(t as *mut std::ffi::c_void) {
                 // Arena-allocated tensors MUST be dropped to release Candle resources (GPU memory, etc)
                 // The memory for OpaqueTensor itself is reclaimed by arena reset, but the inner content needs Drop.
-                println!("DEBUG: Arena drop_in_place {:p} [mod.rs:578]", t);
+                println!("DEBUG: Arena drop_in_place {:p}", t);
                 std::ptr::drop_in_place(t);
-                println!("DEBUG: Arena drop_in_place DONE {:p} [mod.rs:580]", t);
-            } else {
-                // Heap allocated, safe to free via Box (calls drop implicitly)
-                println!("DEBUG: Box::from_raw {:p} [mod.rs:583]", t);
-                let _ = Box::from_raw(t);
-                println!("DEBUG: Box::from_raw DONE {:p} [mod.rs:585]", t);
+                return;
             }
+
+            // Try to release to pool (heap-allocated tensors only)
+            let tensor = &(*t).0;
+            let num_elements = tensor.elem_count();
+            let dtype_id = dtype_to_id(tensor.dtype());
+            let device_id = device_to_id(tensor.device());
+
+            if let Ok(mut pool) = memory_manager::TENSOR_POOL.lock() {
+                if pool.release(t, num_elements, dtype_id, device_id) {
+                    // Successfully added to pool, do NOT free
+                    return;
+                }
+            }
+
+            // Pool is full or lock failed, actually free
+            println!("DEBUG: Box::from_raw {:p} (pool full or no pool)", t);
+            let _ = Box::from_raw(t);
         }
     }
 }

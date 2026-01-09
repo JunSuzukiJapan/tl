@@ -3,6 +3,100 @@ use std::ffi::c_void;
 
 use super::OpaqueTensor;
 
+/// Tensor pool for memory reuse
+/// Key: (num_elements, dtype_id, device_id)
+/// This avoids frequent malloc/free by reusing freed tensors of the same size
+pub struct TensorPool {
+    // (num_elements, dtype_id, device_id) -> Vec<*mut OpaqueTensor>
+    free_list: HashMap<(usize, u8, u8), Vec<*mut OpaqueTensor>>,
+    max_per_size: usize,
+}
+
+// SAFETY: TensorPool contains raw pointers but they are only accessed
+// from C code in a single-threaded context (LLVM JIT execution)
+unsafe impl Send for TensorPool {}
+unsafe impl Sync for TensorPool {}
+
+impl TensorPool {
+    pub fn new() -> Self {
+        TensorPool {
+            free_list: HashMap::new(),
+            max_per_size: 32, // Max tensors per size bucket
+        }
+    }
+
+    /// Try to acquire a tensor from the pool
+    /// Returns None if no matching tensor is available
+    pub fn acquire(
+        &mut self,
+        num_elements: usize,
+        dtype_id: u8,
+        device_id: u8,
+    ) -> Option<*mut OpaqueTensor> {
+        let key = (num_elements, dtype_id, device_id);
+        if let Some(list) = self.free_list.get_mut(&key) {
+            if let Some(ptr) = list.pop() {
+                println!(
+                    "DEBUG: TensorPool acquire {:p} (elements={}, dtype={}, device={})",
+                    ptr, num_elements, dtype_id, device_id
+                );
+                return Some(ptr);
+            }
+        }
+        None
+    }
+
+    /// Release a tensor to the pool
+    /// Returns true if the tensor was added to the pool, false if pool is full
+    pub fn release(
+        &mut self,
+        ptr: *mut OpaqueTensor,
+        num_elements: usize,
+        dtype_id: u8,
+        device_id: u8,
+    ) -> bool {
+        let key = (num_elements, dtype_id, device_id);
+        let list = self.free_list.entry(key).or_insert_with(Vec::new);
+
+        if list.len() < self.max_per_size {
+            list.push(ptr);
+            println!(
+                "DEBUG: TensorPool release {:p} (elements={}, dtype={}, device={}, pool_size={})",
+                ptr,
+                num_elements,
+                dtype_id,
+                device_id,
+                list.len()
+            );
+            true
+        } else {
+            // Pool is full, tensor should be freed
+            println!(
+                "DEBUG: TensorPool full for (elements={}, dtype={}, device={}), freeing {:p}",
+                num_elements, dtype_id, device_id, ptr
+            );
+            false
+        }
+    }
+
+    /// Clear all tensors from the pool (actually free them)
+    pub fn clear(&mut self) {
+        for (_, list) in self.free_list.drain() {
+            for ptr in list {
+                unsafe {
+                    println!("DEBUG: TensorPool clearing {:p}", ptr);
+                    let _ = Box::from_raw(ptr);
+                }
+            }
+        }
+    }
+}
+
+// Global tensor pool instance
+lazy_static::lazy_static! {
+    pub static ref TENSOR_POOL: std::sync::Mutex<TensorPool> = std::sync::Mutex::new(TensorPool::new());
+}
+
 /// Type of allocation being tracked
 #[derive(Debug, Clone, Copy)]
 enum AllocationType {
