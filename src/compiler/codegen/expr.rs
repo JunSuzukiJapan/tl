@@ -3361,6 +3361,40 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.emit_register_tensor(res, &obj_ty)?;
                     Ok((res, obj_ty))
                 }
+                "to" | "to_device" => {
+                    if args.len() != 1 {
+                        return Err(format!(
+                            "{} requires 1 argument (device name string)",
+                            method
+                        ));
+                    }
+                    let (dev_val, dev_ty) = self.compile_expr(&args[0])?;
+                    if !matches!(&dev_ty, Type::UserDefined(s) if s == "String") {
+                        return Err("Device name must be a string".into());
+                    }
+
+                    let fn_val = self
+                        .module
+                        .get_function("tl_tensor_to_device")
+                        .ok_or("Runtime fn tl_tensor_to_device not found")?;
+
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into(), dev_val.into()], "to_dev_res")
+                        .map_err(|e| e.to_string())?;
+
+                    let res = match call.try_as_basic_value() {
+                        ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from to_device".into()),
+                    };
+
+                    if self.is_safe_to_free(obj, &obj_ty) {
+                        self.emit_recursive_free(obj_val, &obj_ty)?;
+                    }
+
+                    self.emit_register_tensor(res, &obj_ty)?;
+                    Ok((res, obj_ty))
+                }
                 "add_assign" | "sub_assign" | "mul_assign" | "div_assign" => {
                     if args.len() != 1 {
                         return Err(format!("{} requires 1 argument", method));
@@ -3578,6 +3612,29 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Ok((struct_ptr.into(), Type::Struct(name.to_string())));
         }
         match name {
+            "set_device" => {
+                if args.len() != 1 {
+                    return Err("set_device requires 1 argument (device name string)".into());
+                }
+                let (dev_val, dev_ty) = self.compile_expr(&args[0])?;
+                if !matches!(&dev_ty, Type::UserDefined(s) if s == "String") {
+                    return Err("set_device argument must be a string".into());
+                }
+
+                let fn_val = self
+                    .module
+                    .get_function("tl_set_device")
+                    .ok_or("Runtime fn tl_set_device not found")?;
+
+                self.builder
+                    .build_call(fn_val, &[dev_val.into()], "")
+                    .map_err(|e| e.to_string())?;
+
+                Ok((
+                    self.context.i64_type().const_int(0, false).into(),
+                    Type::Void,
+                ))
+            }
             "checkpoint" => {
                 if args.len() != 2 {
                     return Err("checkpoint requires 2 arguments: (method_ref, input)".into());

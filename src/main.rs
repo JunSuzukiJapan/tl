@@ -46,6 +46,7 @@ enum Commands {
 }
 
 fn main() -> Result<()> {
+    env_logger::init();
     let cli = Cli::parse();
 
     match &cli.command {
@@ -258,8 +259,8 @@ fn is_trivially_true(body: &[compiler::ast::Atom]) -> bool {
 }
 
 fn load_module_recursive(path: PathBuf) -> Result<compiler::ast::Module> {
-    let content = fs::read_to_string(&path)
-        .with_context(|| format!("Failed to read file {:?}", path))?;
+    let content =
+        fs::read_to_string(&path).with_context(|| format!("Failed to read file {:?}", path))?;
 
     let mut module = compiler::parser::parse(&content)
         .with_context(|| format!("Failed to parse file {:?}", path))?;

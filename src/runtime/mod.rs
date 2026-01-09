@@ -821,7 +821,56 @@ pub extern "C" fn tl_print_string(s: *const std::os::raw::c_char) {
     }
 }
 
+#[no_mangle]
+pub extern "C" fn tl_set_device(name: *const i8) {
+    if name.is_null() {
+        return;
+    }
+    let c_str = unsafe { std::ffi::CStr::from_ptr(name) };
+    if let Ok(r_str) = c_str.to_str() {
+        crate::runtime::device::DEVICE_MANAGER
+            .lock()
+            .unwrap()
+            .set_device(r_str);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_to_device(
+    tensor: *mut OpaqueTensor,
+    device_name: *const i8,
+) -> *mut OpaqueTensor {
+    if tensor.is_null() || device_name.is_null() {
+        return tensor;
+    } // Or panic?
+
+    let c_str = unsafe { std::ffi::CStr::from_ptr(device_name) };
+    let device_str = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return tensor,
+    };
+
+    let target_device = match device_str {
+        "cpu" => candle_core::Device::Cpu,
+        "cuda" => candle_core::Device::new_cuda(0).unwrap_or(candle_core::Device::Cpu), // Fallback?
+        "metal" => candle_core::Device::new_metal(0).unwrap_or(candle_core::Device::Cpu),
+        _ => return tensor,
+    };
+
+    let t = unsafe { &(*tensor).0 };
+    match t.to_device(&target_device) {
+        Ok(new_t) => make_tensor(new_t),
+        Err(e) => {
+            eprintln!("Failed to move tensor to device: {}", e);
+            tensor // Return original? Or make a copy? Returning original might be confusing with ownership.
+                   // Ideally we should return a new tensor even if failed? No, panic on error.
+        }
+    }
+}
+
 pub fn force_link() {
+    let _ = tl_set_device as *const ();
+    let _ = tl_tensor_to_device as *const ();
     let _ = tl_print_string as *const ();
     let _ = tl_clear_grads as *const ();
     let _ = tl_tensor_randn_debug as *const ();

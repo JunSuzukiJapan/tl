@@ -1,5 +1,6 @@
 use candle_core::Device;
 use lazy_static::lazy_static;
+use log::{error, info, warn};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug)]
@@ -14,32 +15,37 @@ pub struct DeviceManager {
     current_device: Device,
     #[allow(dead_code)]
     device_type: DeviceType,
+    generation: usize,
 }
 
 impl DeviceManager {
     pub fn new() -> Self {
         let requested_device = std::env::var("TL_DEVICE").unwrap_or_else(|_| "auto".to_string());
+        let (device, device_type) = Self::init_device(&requested_device);
 
+        DeviceManager {
+            current_device: device,
+            device_type,
+            generation: 1,
+        }
+    }
+
+    fn init_device(requested_device: &str) -> (Device, DeviceType) {
         // Priority: CUDA -> Metal -> CPU if auto
         if requested_device == "cuda"
             || (requested_device == "auto" && candle_core::utils::cuda_is_available())
         {
             #[cfg(feature = "cuda")]
             {
-                println!("Initializing Runtime: CUDA backend selected.");
+                info!("Initializing Runtime: CUDA backend selected.");
                 match Device::new_cuda(0) {
-                    Ok(device) => {
-                        return DeviceManager {
-                            current_device: device,
-                            device_type: DeviceType::Cuda,
-                        }
-                    }
-                    Err(e) => eprintln!("Failed to initialize CUDA: {}. Falling back.", e),
+                    Ok(device) => return (device, DeviceType::Cuda),
+                    Err(e) => error!("Failed to initialize CUDA: {}. Falling back.", e),
                 }
             }
             #[cfg(not(feature = "cuda"))]
             if requested_device == "cuda" {
-                eprintln!("CUDA requested but 'cuda' feature not enabled.");
+                warn!("CUDA requested but 'cuda' feature not enabled.");
             }
         }
 
@@ -48,36 +54,43 @@ impl DeviceManager {
         {
             #[cfg(feature = "metal")]
             {
-                println!("Initializing Runtime: Metal backend selected.");
+                info!("Initializing Runtime: Metal backend selected.");
                 match Device::new_metal(0) {
                     Ok(device) => {
                         if check_metal_health(&device) {
-                            return DeviceManager {
-                                current_device: device,
-                                device_type: DeviceType::Metal,
-                            };
+                            return (device, DeviceType::Metal);
                         } else {
-                            eprintln!("WARNING: Metal backend failed self-test (returned incorrect results). Falling back to CPU.");
+                            warn!("Metal backend failed self-test (returned incorrect results). Falling back to CPU.");
                         }
                     }
-                    Err(e) => eprintln!("Failed to initialize Metal: {}. Falling back.", e),
+                    Err(e) => error!("Failed to initialize Metal: {}. Falling back.", e),
                 }
             }
             #[cfg(not(feature = "metal"))]
             if requested_device == "metal" {
-                eprintln!("Metal requested but 'metal' feature not enabled.");
+                warn!("Metal requested but 'metal' feature not enabled.");
             }
         }
 
-        println!("Initializing Runtime: CPU backend selected.");
-        DeviceManager {
-            current_device: Device::Cpu,
-            device_type: DeviceType::Cpu,
-        }
+        info!("Initializing Runtime: CPU backend selected.");
+        (Device::Cpu, DeviceType::Cpu)
+    }
+
+    pub fn set_device(&mut self, name: &str) {
+        let (device, device_type) = Self::init_device(name);
+        self.current_device = device;
+        self.device_type = device_type;
+        self.generation += 1;
+        GLOBAL_DEVICE_GENERATION.store(self.generation, std::sync::atomic::Ordering::Relaxed);
+        info!("Device switched to: {:?}", self.device_type);
     }
 
     pub fn device(&self) -> &Device {
         &self.current_device
+    }
+
+    pub fn generation(&self) -> usize {
+        self.generation
     }
 }
 
@@ -122,17 +135,32 @@ lazy_static! {
         Arc::new(Mutex::new(DeviceManager::new()));
 }
 
+// Atomic generation counter exposed for fast checks
+pub static GLOBAL_DEVICE_GENERATION: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(1);
+
 // Thread-local cached device to avoid repeated Mutex locks
 thread_local! {
-    static CACHED_DEVICE: std::cell::RefCell<Option<Device>> = const { std::cell::RefCell::new(None) };
+    // Cache stores (Device, Generation)
+    static CACHED_DEVICE: std::cell::RefCell<Option<(Device, usize)>> = const { std::cell::RefCell::new(None) };
 }
 
 pub fn get_device() -> Device {
     CACHED_DEVICE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        if cache.is_none() {
-            *cache = Some(DEVICE_MANAGER.lock().unwrap().device().clone());
+        let mut cache_ref = cache.borrow_mut();
+        let global_gen = GLOBAL_DEVICE_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
+
+        let needs_update = if let Some((_, gen)) = *cache_ref {
+            gen != global_gen
+        } else {
+            true
+        };
+
+        if needs_update {
+            let manager = DEVICE_MANAGER.lock().unwrap();
+            *cache_ref = Some((manager.device().clone(), manager.generation));
         }
-        cache.as_ref().unwrap().clone()
+
+        cache_ref.as_ref().unwrap().0.clone()
     })
 }

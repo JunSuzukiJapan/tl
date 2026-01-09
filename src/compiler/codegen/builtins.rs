@@ -41,6 +41,14 @@ pub fn declare_runtime_functions<'ctx>(
     let print_ptr_type = void_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_print_ptr", print_ptr_type);
 
+    // tl_set_device(name: *const i8) -> void
+    let set_dev_type = void_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_set_device", set_dev_type);
+
+    // tl_tensor_to_device(tensor: *mut Opaque, name: *const i8) -> *mut Opaque
+    let to_dev_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_tensor_to_device", to_dev_type);
+
     // malloc(size: i64) -> *u8
     let malloc_type = void_ptr.fn_type(&[i64_type.into()], false);
     add_fn("malloc", malloc_type);
@@ -189,6 +197,14 @@ pub fn declare_runtime_functions<'ctx>(
 
     if let Some(f) = module.get_function("tl_checkpoint") {
         execution_engine.add_global_mapping(&f, runtime::checkpoint::tl_checkpoint as usize);
+    }
+
+    if let Some(f) = module.get_function("tl_set_device") {
+        execution_engine.add_global_mapping(&f, runtime::tl_set_device as usize);
+    }
+
+    if let Some(f) = module.get_function("tl_tensor_to_device") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_to_device as usize);
     }
 
     // tl_tensor_sum_dim(t: *mut Tensor, dim: usize, keep: bool) -> *mut Tensor
