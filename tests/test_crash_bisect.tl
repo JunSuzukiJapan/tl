@@ -214,13 +214,22 @@ struct TransformerBlock {
 
 impl TransformerBlock {
     fn from_map(map: i64, layer_idx: i64) -> TransformerBlock {
+        print("Block::from_map start");
         // Build weight name prefix: "blk.X"
         let prefix = tl_string_concat("blk.", tl_string_from_int(layer_idx));
+        print("Block::from_map prefix built");
         
         let attn_norm = RMSNorm::new(map, tl_string_concat(prefix, ".attn_norm.weight"));
+        print("Block::from_map attn_norm done");
+        
         let ffn_norm = RMSNorm::new(map, tl_string_concat(prefix, ".ffn_norm.weight"));
+        print("Block::from_map ffn_norm done");
+        
         let attn = Attention::from_map(map, tl_string_concat(prefix, ".attn"));
+        print("Block::from_map attn done");
+        
         let mlp = MLP::from_map(map, tl_string_concat(prefix, ".ffn"));
+        print("Block::from_map mlp done");
         
         return TransformerBlock { 
             attn_norm: attn_norm, 

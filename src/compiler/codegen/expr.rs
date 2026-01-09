@@ -5256,7 +5256,10 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                     // Move Semantics: If arg is a variable, null it out
                     if let Expr::Variable(name) = arg {
-                        self.null_out_variable(name).map_err(|e| e.to_string())?;
+                        // FIX: Allow reuse for known non-consuming functions like string concatenation
+                        if resolved_name != "tl_string_concat" {
+                            self.null_out_variable(name).map_err(|e| e.to_string())?;
+                        }
                     }
 
                     // Auto-convert ScalarArray to Tensor
