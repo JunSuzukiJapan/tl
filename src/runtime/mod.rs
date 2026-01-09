@@ -1562,6 +1562,17 @@ pub extern "C" fn tl_tensor_to_i64(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 }
 
 #[no_mangle]
+pub extern "C" fn tl_tensor_get_shape(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    unsafe {
+        let t = &(*t).0;
+        let dims: Vec<i64> = t.dims().iter().map(|&d| d as i64).collect();
+        let shape_tensor =
+            Tensor::from_vec(dims.clone(), (dims.len(),), &candle_core::Device::Cpu).unwrap();
+        make_tensor(shape_tensor)
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn tl_vec_void_len(ptr: *mut std::ffi::c_void) -> usize {
     if ptr.is_null() {
         return 0;

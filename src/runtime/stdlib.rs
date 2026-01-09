@@ -22,6 +22,15 @@ pub extern "C" fn tl_string_concat(s1: *const c_char, s2: *const c_char) -> *mut
     }
 }
 
+#[no_mangle]
+pub extern "C" fn tl_string_from_int(val: i64) -> *mut c_char {
+    let s = val.to_string();
+    match CString::new(s) {
+        Ok(c_str) => c_str.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 // --- File I/O ---
 
 #[no_mangle]

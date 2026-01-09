@@ -254,10 +254,6 @@ pub fn declare_runtime_functions<'ctx>(
     let map_load_type = void_ptr.fn_type(&[i8_ptr.into()], false);
     add_fn("tl_tensor_map_load", map_load_type);
 
-    // tl_tensor_map_get(map, name) -> *mut Tensor
-    let map_get_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
-    add_fn("tl_tensor_map_get", map_get_type);
-
     // tl_tensor_map_free(map)
     let map_free_type = void_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_tensor_map_free", map_free_type);
@@ -477,9 +473,36 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_silu(t: *mut) -> *mut
     add_fn("tl_tensor_silu", unary_type);
 
+    // tl_tensor_cat2(a: *mut, b: *mut, dim: i64) -> *mut
+    let cat2_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_tensor_cat2", cat2_type);
+
+    // tl_tensor_rms_norm(x: *mut, w: *mut, eps: f32) -> *mut
+    let rms_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), f32_type.into()], false);
+    add_fn("tl_tensor_rms_norm", rms_type);
+
     // tl_tensor_apply_rope(x: *mut, cos: *mut, sin: *mut) -> *mut
     let rope_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_tensor_apply_rope", rope_type);
+
+    // Aliases for different ranks
+    add_fn("tl_tensor_transpose_2d", transpose_type);
+    add_fn("tl_tensor_matmul_4d", bin_type);
+    add_fn("tl_tensor_add_4d", bin_type);
+    add_fn("tl_tensor_silu_4d", unary_type);
+    let tensor_reshape_2d_type =
+        void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_tensor_reshape_2d", tensor_reshape_2d_type);
+
+    // Map get alias
+    let map_get_type = void_ptr.fn_type(&[i64_type.into(), i8_ptr.into()], false);
+    add_fn("tl_tensor_map_get_1d", map_get_type);
+
+    // RoPE Factories: tl_tensor_rope_new_cos(dim: i64, len: i64, theta: f32) -> *mut
+    let rope_new_type =
+        void_ptr.fn_type(&[i64_type.into(), i64_type.into(), f32_type.into()], false);
+    add_fn("tl_tensor_rope_new_cos", rope_new_type);
+    add_fn("tl_tensor_rope_new_sin", rope_new_type);
 
     // --- Global Mappings ---
     // Mapping symbols is critical for JIT.
@@ -855,6 +878,45 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_apply_rope") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_apply_rope as usize);
     }
+    if let Some(f) = module.get_function("tl_tensor_rms_norm") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_rms_norm as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_cat2") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_cat2 as usize);
+    }
+
+    // Alias Mappings
+    if let Some(f) = module.get_function("tl_tensor_transpose_2d") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_transpose as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_matmul_4d") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_matmul as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_add_4d") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_add as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_silu_4d") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_silu as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_scale") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_mul as usize);
+    }
+
+    if let Some(f) = module.get_function("tl_tensor_rope_new_cos") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_rope_new_cos as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_rope_new_sin") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_rope_new_sin as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_get_shape") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_get_shape as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_reshape_2d") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_reshape_dims as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_map_get_1d") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get as usize);
+    }
 
     if let Some(f) = module.get_function("tl_vec_u8_get") {
         execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_get as usize);
@@ -1174,6 +1236,9 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_string_concat") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_concat as usize);
     }
+    if let Some(f) = module.get_function("tl_string_from_int") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_int as usize);
+    }
     if let Some(f) = module.get_function("tl_file_open") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_open as usize);
     }
@@ -1251,6 +1316,10 @@ pub fn declare_runtime_functions<'ctx>(
     // Return types
     fn_return_types.insert(
         "tl_string_concat".to_string(),
+        Type::UserDefined("String".to_string()),
+    );
+    fn_return_types.insert(
+        "tl_string_from_int".to_string(),
         Type::UserDefined("String".to_string()),
     );
     fn_return_types.insert(
@@ -1379,6 +1448,23 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_free_tmp".to_string(), Type::Void);
 
     fn_return_types.insert("tl_env_set".to_string(), Type::Void);
+    fn_return_types.insert("tl_tensor_cat2".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_rms_norm".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_silu".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_apply_rope".to_string(), tensor_type.clone());
+
+    // Alias Returns
+    fn_return_types.insert("tl_tensor_transpose_2d".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_matmul_4d".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_add_4d".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_silu_4d".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_scale".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_rope_new_cos".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_rope_new_sin".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_get_shape".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_reshape_2d".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_map_get_1d".to_string(), tensor_type.clone());
+
     fn_return_types.insert("tl_system_time".to_string(), Type::F32); // Using F32 as default float for now
     fn_return_types.insert("tl_system_sleep".to_string(), Type::Void);
 

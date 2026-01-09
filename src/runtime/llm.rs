@@ -153,6 +153,59 @@ pub extern "C" fn tl_tensor_silu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 }
 
 #[no_mangle]
+pub extern "C" fn tl_tensor_rms_norm(
+    x: *mut OpaqueTensor,
+    w: *mut OpaqueTensor,
+    eps: f32,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let x_t = &(*x).0;
+        let w_t = &(*w).0;
+
+        // RMSNorm: x * rsqrt(mean(x^2) + eps) * w
+        let x_dtype = x_t.dtype();
+        let internal_dtype = match x_dtype {
+            DType::F16 | DType::BF16 => DType::F32,
+            d => d,
+        };
+
+        let hidden_size = x_t.dim(x_t.rank() - 1).unwrap();
+        let x_f32 = x_t.to_dtype(internal_dtype).unwrap();
+        let sum_sq = x_f32.sqr().unwrap().sum_keepdim(x_t.rank() - 1).unwrap();
+        let mean_sq = (sum_sq / (hidden_size as f64)).unwrap();
+        let rsqrt = (mean_sq + (eps as f64))
+            .unwrap()
+            .sqrt()
+            .unwrap()
+            .recip()
+            .unwrap();
+
+        let norm_x = x_f32
+            .broadcast_mul(&rsqrt)
+            .unwrap()
+            .to_dtype(x_dtype)
+            .unwrap();
+        let result = norm_x.broadcast_mul(w_t).unwrap();
+
+        make_tensor(result)
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_cat2(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+    dim: i64,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let a_t = &(*a).0;
+        let b_t = &(*b).0;
+        let result = Tensor::cat(&[a_t, b_t], dim as usize).unwrap();
+        make_tensor(result)
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn tl_tensor_apply_rope(
     x: *mut OpaqueTensor,
     cos: *mut OpaqueTensor,
@@ -194,4 +247,50 @@ pub extern "C" fn tl_tensor_apply_rope(
 #[no_mangle]
 pub extern "C" fn tl_string_as_ptr(s: *const c_char) -> *const c_char {
     s
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_rope_new_cos(dim: i64, len: i64, theta: f32) -> *mut OpaqueTensor {
+    unsafe {
+        let dim = dim as usize;
+        let len = len as usize;
+        let theta = theta as f64;
+
+        let inv_freq: Vec<f32> = (0..dim)
+            .step_by(2)
+            .map(|i| 1.0 / (theta.powf(i as f64 / dim as f64) as f32))
+            .collect();
+        let inv_freq_t = Tensor::from_vec(inv_freq, (1, dim / 2), &Device::Cpu).unwrap();
+
+        let t: Vec<f32> = (0..len).map(|i| i as f32).collect();
+        let t_tensor = Tensor::from_vec(t, (len, 1), &Device::Cpu).unwrap();
+
+        let freqs = t_tensor.matmul(&inv_freq_t).unwrap();
+        let cos = freqs.cos().unwrap();
+
+        make_tensor(cos)
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_rope_new_sin(dim: i64, len: i64, theta: f32) -> *mut OpaqueTensor {
+    unsafe {
+        let dim = dim as usize;
+        let len = len as usize;
+        let theta = theta as f64;
+
+        let inv_freq: Vec<f32> = (0..dim)
+            .step_by(2)
+            .map(|i| 1.0 / (theta.powf(i as f64 / dim as f64) as f32))
+            .collect();
+        let inv_freq_t = Tensor::from_vec(inv_freq, (1, dim / 2), &Device::Cpu).unwrap();
+
+        let t: Vec<f32> = (0..len).map(|i| i as f32).collect();
+        let t_tensor = Tensor::from_vec(t, (len, 1), &Device::Cpu).unwrap();
+
+        let freqs = t_tensor.matmul(&inv_freq_t).unwrap();
+        let sin = freqs.sin().unwrap();
+
+        make_tensor(sin)
+    }
 }
