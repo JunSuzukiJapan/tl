@@ -449,6 +449,38 @@ pub fn declare_runtime_functions<'ctx>(
     let arena_capacity = i64_type.fn_type(&[], false);
     add_fn("tl_arena_get_capacity", arena_capacity);
 
+    // --- LLM Builtins ---
+    // tl_tokenizer_new(path: *const c_char) -> *mut OpaqueTokenizer (void*)
+    let tok_new_type = void_ptr.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_tokenizer_new", tok_new_type);
+
+    // tl_tokenizer_encode(tok: *mut, prompt: *const c_char) -> *mut OpaqueTensor
+    let tok_enc_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_tokenizer_encode", tok_enc_type);
+
+    // tl_tokenizer_decode(tok: *mut, ids: *mut OpaqueTensor) -> *const c_char
+    let tok_dec_type = i8_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_tokenizer_decode", tok_dec_type);
+
+    // tl_gguf_load(path: *const c_char) -> *mut Map
+    let gguf_load_type = void_ptr.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_gguf_load", gguf_load_type);
+
+    // tl_tensor_map_get(map: *mut, name: *const c_char) -> *mut Tensor
+    let map_get_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_tensor_map_get", map_get_type);
+
+    // tl_tensor_cat(tensors: *mut Vec, dim: i64) -> *mut Tensor
+    let cat_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_tensor_cat", cat_type);
+
+    // tl_tensor_silu(t: *mut) -> *mut
+    add_fn("tl_tensor_silu", unary_type);
+
+    // tl_tensor_apply_rope(x: *mut, cos: *mut, sin: *mut) -> *mut
+    let rope_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_tensor_apply_rope", rope_type);
+
     // --- Global Mappings ---
     // Mapping symbols is critical for JIT.
     // We do it here to keep CodeGenerator::new clean.
@@ -799,6 +831,33 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_vec_u8_len") {
         execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_len as usize);
     }
+
+    // --- LLM Mappings ---
+    if let Some(f) = module.get_function("tl_tokenizer_new") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_new as usize);
+    }
+    if let Some(f) = module.get_function("tl_tokenizer_encode") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_encode as usize);
+    }
+    if let Some(f) = module.get_function("tl_tokenizer_decode") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_decode as usize);
+    }
+    if let Some(f) = module.get_function("tl_gguf_load") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_gguf_load as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_map_get") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_cat") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_cat as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_silu") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_silu as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_apply_rope") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_apply_rope as usize);
+    }
+
     if let Some(f) = module.get_function("tl_vec_u8_get") {
         execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_get as usize);
     }

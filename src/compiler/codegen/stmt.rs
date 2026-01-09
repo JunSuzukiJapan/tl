@@ -763,9 +763,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Normal return: cleanup then return value
                     self.emit_all_scopes_cleanup();
 
-                    self.builder
-                        .build_return(Some(&val))
-                        .map_err(|e| e.to_string())?;
+                    // Get current function return type
+                    let current_block = self.builder.get_insert_block().unwrap();
+                    let current_fn = current_block.get_parent().unwrap();
+                    let fn_name = current_fn.get_name().to_str().unwrap();
+                    let ret_ty = self
+                        .fn_return_types
+                        .get(fn_name)
+                        .cloned()
+                        .unwrap_or(Type::Void);
+
+                    if ret_ty == Type::Void {
+                        self.builder.build_return(None).map_err(|e| e.to_string())?;
+                    } else {
+                        self.builder
+                            .build_return(Some(&val))
+                            .map_err(|e| e.to_string())?;
+                    }
                 }
                 Ok(())
             }

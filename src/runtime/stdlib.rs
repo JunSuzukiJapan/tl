@@ -185,30 +185,36 @@ pub extern "C" fn tl_path_join(base: *mut PathBuf, part: *const c_char) -> *mut 
 }
 
 #[no_mangle]
-pub extern "C" fn tl_path_exists(path: *mut PathBuf) -> bool {
+pub extern "C" fn tl_path_exists(path: *const c_char) -> bool {
     if path.is_null() {
         return false;
     }
-    let path = unsafe { &*path };
-    path.exists()
+    unsafe {
+        let p = CStr::from_ptr(path).to_string_lossy();
+        std::path::Path::new(p.as_ref()).exists()
+    }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_path_is_dir(path: *mut PathBuf) -> bool {
+pub extern "C" fn tl_path_is_dir(path: *const c_char) -> bool {
     if path.is_null() {
         return false;
     }
-    let path = unsafe { &*path };
-    path.is_dir()
+    unsafe {
+        let p = CStr::from_ptr(path).to_string_lossy();
+        std::path::Path::new(p.as_ref()).is_dir()
+    }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_path_is_file(path: *mut PathBuf) -> bool {
+pub extern "C" fn tl_path_is_file(path: *const c_char) -> bool {
     if path.is_null() {
         return false;
     }
-    let path = unsafe { &*path };
-    path.is_file()
+    unsafe {
+        let p = CStr::from_ptr(path).to_string_lossy();
+        std::path::Path::new(p.as_ref()).is_file()
+    }
 }
 
 #[no_mangle]

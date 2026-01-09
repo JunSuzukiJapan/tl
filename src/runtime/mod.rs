@@ -3,6 +3,7 @@ pub mod device;
 pub mod memory_manager; // Arena allocator for tensor memory optimization
 
 pub mod checkpoint;
+pub mod llm;
 pub mod registry;
 pub mod stdlib;
 pub mod tensor_pool;
