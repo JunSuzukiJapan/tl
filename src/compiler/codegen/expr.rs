@@ -3392,7 +3392,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         self.emit_recursive_free(obj_val, &obj_ty)?;
                     }
 
-                    self.emit_register_tensor(res, &obj_ty)?;
+                    // Note: Do NOT call emit_register_tensor here.
+                    // tl_tensor_to_device already registers via make_tensor internally.
                     Ok((res, obj_ty))
                 }
                 "add_assign" | "sub_assign" | "mul_assign" | "div_assign" => {
