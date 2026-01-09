@@ -133,19 +133,17 @@ impl Attention {
         // TinyLlama: 32 Q heads, 4 K/V heads (GQA group ratio = 8)
         
         // 1. Project Q, K, V
-        let q = self.q_proj.forward(x);  // [seq, 2048]
-        let k = self.k_proj.forward(x);  // [seq, 256]
-        let v = self.v_proj.forward(x);  // [seq, 256]
+        let q = self.q_proj.forward(x.clone());  // [seq, 2048]
+        let k = self.k_proj.forward(x.clone());  // [seq, 256]
+        let v = self.v_proj.forward(x);          // [seq, 256]
         
         // 2. Reshape to multi-head format
         // Q: [seq, 2048] -> [1, seq, 32, 64]
-        let q_shape = [1, seq_len, 32, 64];
-        let q4 = tl_tensor_reshape_dims(q, q_shape, 4);
+        let q4 = tl_tensor_reshape_dims(q, [1, seq_len, 32, 64], 4);
         
         // K/V: [seq, 256] -> [1, seq, 4, 64]
-        let kv_shape = [1, seq_len, 4, 64];
-        let k4 = tl_tensor_reshape_dims(k, kv_shape, 4);
-        let v4 = tl_tensor_reshape_dims(v, kv_shape, 4);
+        let k4 = tl_tensor_reshape_dims(k, [1, seq_len, 4, 64], 4);
+        let v4 = tl_tensor_reshape_dims(v, [1, seq_len, 4, 64], 4);
         
         // 3. Slice RoPE cos/sin for current sequence length
         // cos/sin: [max_len, head_dim/2]
@@ -175,8 +173,7 @@ impl Attention {
         let mask = tl_tensor_new_causal_mask(seq_len); 
         
         // Reshape mask to [1, 1, seq, seq]
-        let mask_shape = [1, 1, seq_len, seq_len];
-        let mask_4d = tl_tensor_reshape_dims(mask, mask_shape, 4);
+        let mask_4d = tl_tensor_reshape_dims(mask, [1, 1, seq_len, seq_len], 4);
         
         // Add mask to scores
         let scores = tl_tensor_add_4d(scores, mask_4d);
@@ -196,8 +193,7 @@ impl Attention {
         let ctx_trans = tl_tensor_transpose(context, 1, 2);
         
         // 12. Flatten: [1, seq, 32, 64] -> [seq, 2048]
-        let out_shape = [seq_len, 2048];
-        let flat = tl_tensor_reshape_2d(ctx_trans, out_shape, 2);
+        let flat = tl_tensor_reshape_2d(ctx_trans, [seq_len, 2048], 2);
         
         // 13. Output projection
         let out = self.o_proj.forward(flat);
@@ -232,12 +228,12 @@ impl TransformerBlock {
     
     fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, seq_len: i64) -> Tensor<f32, 2> {
         // Pre-norm attention
-        let h = self.attn_norm.forward(x);
+        let h = self.attn_norm.forward(x.clone());
         let attn_out = self.attn.forward(h, cos, sin, seq_len);
         let x2 = tl_tensor_add(x, attn_out);
         
         // Pre-norm FFN
-        let h2 = self.ffn_norm.forward(x2);
+        let h2 = self.ffn_norm.forward(x2.clone());
         let ffn_out = self.mlp.forward(h2);
         let out = tl_tensor_add(x2, ffn_out);
         
@@ -294,10 +290,18 @@ fn main() {
         let current_x = x;
         
         // Transformer Blocks Loop
+        print("Starting Transformer blocks...");
         for i in 0..22 {
+            // print("Layer:");
+            // print(i); 
+            // print is costly? well, let's print every layer for now to debug
+            let msg = tl_string_concat("Layer ", tl_string_from_int(i));
+            print(msg);
+            
             let blk = TransformerBlock::from_map(weights, i);
             current_x = blk.forward(current_x, cos, sin, seq_len);
         }
+        print("Blocks done.");
         
         // Final RMSNorm and Output Projection
         let norm = RMSNorm::new(weights, "output_norm.weight");

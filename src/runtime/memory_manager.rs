@@ -108,20 +108,25 @@ impl MemoryManager {
         if let Some(scope) = self.scopes.last_mut() {
             // Initial refcount = 1 (owned by scope)
             let count = self.tensor_refcounts.entry(ptr as *mut c_void).or_insert(0);
-            if *count == 0 {
+            let is_new = *count == 0;
+            if is_new {
                 *count = 1;
                 println!("DEBUG: Register Tensor {:p} (New).", ptr);
+                // CRITICAL FIX: Only add to scope for NEW allocations.
+                // Existing tensors already have scope entries.
+                scope.push(AllocationRecord {
+                    ptr: ptr as *mut c_void,
+                    alloc_type: AllocationType::Tensor,
+                });
             } else {
+                // Tensor already registered and has refcount.
+                // Acquire increases the refcount to account for the new reference.
+                *count += 1;
                 println!(
-                    "DEBUG: Register Tensor {:p} (Existing count: {}).",
+                    "DEBUG: Register Tensor {:p} (Existing, Acquired count: {}).",
                     ptr, *count
                 );
             }
-
-            scope.push(AllocationRecord {
-                ptr: ptr as *mut c_void,
-                alloc_type: AllocationType::Tensor,
-            });
         } else {
             println!("DEBUG: register_tensor called but scopes empty!");
         }

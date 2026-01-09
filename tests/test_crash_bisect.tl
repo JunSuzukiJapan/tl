@@ -133,19 +133,17 @@ impl Attention {
         // TinyLlama: 32 Q heads, 4 K/V heads (GQA group ratio = 8)
         
         // 1. Project Q, K, V
-        let q = self.q_proj.forward(x);  // [seq, 2048]
-        let k = self.k_proj.forward(x);  // [seq, 256]
-        let v = self.v_proj.forward(x);  // [seq, 256]
+        let q = self.q_proj.forward(x.clone());  // [seq, 2048]
+        let k = self.k_proj.forward(x.clone());  // [seq, 256]
+        let v = self.v_proj.forward(x);          // [seq, 256]
         
         // 2. Reshape to multi-head format
         // Q: [seq, 2048] -> [1, seq, 32, 64]
-        let q_shape = [1, seq_len, 32, 64];
-        let q4 = tl_tensor_reshape_dims(q, q_shape, 4);
+        let q4 = tl_tensor_reshape_dims(q, [1, seq_len, 32, 64], 4);
         
         // K/V: [seq, 256] -> [1, seq, 4, 64]
-        let kv_shape = [1, seq_len, 4, 64];
-        let k4 = tl_tensor_reshape_dims(k, kv_shape, 4);
-        let v4 = tl_tensor_reshape_dims(v, kv_shape, 4);
+        let k4 = tl_tensor_reshape_dims(k, [1, seq_len, 4, 64], 4);
+        let v4 = tl_tensor_reshape_dims(v, [1, seq_len, 4, 64], 4);
         
         // 3. Slice RoPE cos/sin for current sequence length
         // cos/sin: [max_len, head_dim/2]
@@ -240,7 +238,17 @@ impl TransformerBlock {
     }
     
     fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, seq_len: i64) -> Tensor<f32, 2> {
-        return x;
+        // Pre-norm attention
+        let h = self.attn_norm.forward(x.clone());
+        let attn_out = self.attn.forward(h, cos, sin, seq_len);
+        let x2 = tl_tensor_add(x, attn_out);
+        
+        // Pre-norm FFN
+        let h2 = self.ffn_norm.forward(x2.clone());
+        let ffn_out = self.mlp.forward(h2);
+        let out = tl_tensor_add(x2, ffn_out);
+        
+        return out;
     }
 }
 

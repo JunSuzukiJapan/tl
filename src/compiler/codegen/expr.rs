@@ -5280,8 +5280,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
 
                 // FIX: Free temporary arguments
+                // CRITICAL: Do NOT free Tensor types here.
+                // Tensors are registered to scope via make_tensor and will be freed on scope exit.
+                // Calling emit_recursive_free here causes double-free.
                 for (i, (val, ty)) in compiled_args_types.iter().enumerate() {
                     let arg_expr = &args[i];
+                    // Skip Tensor types - they are scope-managed
+                    if matches!(ty, Type::Tensor(_, _)) {
+                        continue;
+                    }
                     if self.is_safe_to_free(arg_expr, ty) {
                         self.emit_recursive_free(*val, ty)?;
                     }

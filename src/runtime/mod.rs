@@ -50,11 +50,18 @@ pub struct OpaqueTensor(
 // Registering here causes tensors to be freed when the function scope exits,
 // even if the tensor is returned and stored in a struct.
 // even if the tensor is returned and stored in a struct.
+#[track_caller]
 pub(crate) fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
+    let caller = std::panic::Location::caller();
     let boxed = Box::new(OpaqueTensor(t, None, None));
     let ptr = Box::into_raw(boxed);
     memory_manager::register_tensor_global(ptr);
-    println!("DEBUG: Alloc Tensor {:p} (make_tensor)", ptr);
+    println!(
+        "DEBUG: Alloc Tensor {:p} (make_tensor) from {}:{}",
+        ptr,
+        caller.file(),
+        caller.line()
+    );
     ptr
 }
 
@@ -1124,7 +1131,10 @@ pub extern "C" fn tl_tensor_reshape_dims(
 ) -> *mut OpaqueTensor {
     unsafe {
         if t.is_null() || dims_tensor_ptr.is_null() {
-            panic!("Null pointer passed to reshape_dims");
+            panic!(
+                "Null pointer passed to reshape_dims: t={:?}, dims={:?}",
+                t, dims_tensor_ptr
+            );
         }
         let tensor = &(*t).0;
         let dims_tensor = &(*dims_tensor_ptr).0;
