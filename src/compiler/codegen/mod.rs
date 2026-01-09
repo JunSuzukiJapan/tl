@@ -160,6 +160,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     /// Null out a variable (Move Semantics) so it won't be double-freed
+    #[allow(dead_code)]
     pub(crate) fn null_out_variable(&self, name: &str) -> Result<(), String> {
         for scope in self.variables.iter().rev() {
             if let Some((val, ty, _should_free)) = scope.get(name) {

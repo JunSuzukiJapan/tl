@@ -318,7 +318,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::I64 => {
                         // Cast [N x i64]* to i64*
                         let ptr = val.into_pointer_value();
-                        let i64_ptr_type = i64_type.ptr_type(inkwell::AddressSpace::default());
+                        let i64_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
                         let cast_ptr = self
                             .builder
                             .build_pointer_cast(ptr, i64_ptr_type, "i64_ptr_cast")

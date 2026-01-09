@@ -1,5 +1,5 @@
-use crate::runtime::memory_manager; // Used implicitly? No, but keep to match other files if needed. Actually it was warned used.
-                                    // use crate::runtime::mod::{make_tensor, OpaqueTensor}; // Fixed in previous step to `use crate::runtime::{make_tensor, OpaqueTensor};`
+// use crate::runtime::memory_manager; // Used implicitly? No, but keep to match other files if needed. Actually it was warned used.
+// use crate::runtime::mod::{make_tensor, OpaqueTensor}; // Fixed in previous step to `use crate::runtime::{make_tensor, OpaqueTensor};`
 use crate::runtime::{device::get_device, make_tensor, OpaqueTensor};
 use candle_core::{DType, Device, Tensor};
 use std::ffi::{CStr, CString};
@@ -301,48 +301,44 @@ pub extern "C" fn tl_string_as_ptr(s: *const c_char) -> *const c_char {
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_rope_new_cos(dim: i64, len: i64, theta: f32) -> *mut OpaqueTensor {
-    unsafe {
-        let dim = dim as usize;
-        let len = len as usize;
-        let theta = theta as f64;
+    let dim = dim as usize;
+    let len = len as usize;
+    let theta = theta as f64;
 
-        let inv_freq: Vec<f32> = (0..dim)
-            .step_by(2)
-            .map(|i| 1.0 / (theta.powf(i as f64 / dim as f64) as f32))
-            .collect();
-        let device = get_device();
-        let inv_freq_t = Tensor::from_vec(inv_freq, (1, dim / 2), &device).unwrap();
+    let inv_freq: Vec<f32> = (0..dim)
+        .step_by(2)
+        .map(|i| 1.0 / (theta.powf(i as f64 / dim as f64) as f32))
+        .collect();
+    let device = get_device();
+    let inv_freq_t = Tensor::from_vec(inv_freq, (1, dim / 2), &device).unwrap();
 
-        let t: Vec<f32> = (0..len).map(|i| i as f32).collect();
-        let t_tensor = Tensor::from_vec(t, (len, 1), &device).unwrap();
+    let t: Vec<f32> = (0..len).map(|i| i as f32).collect();
+    let t_tensor = Tensor::from_vec(t, (len, 1), &device).unwrap();
 
-        let freqs = t_tensor.matmul(&inv_freq_t).unwrap();
-        let cos = freqs.cos().unwrap();
+    let freqs = t_tensor.matmul(&inv_freq_t).unwrap();
+    let cos = freqs.cos().unwrap();
 
-        make_tensor(cos)
-    }
+    make_tensor(cos)
 }
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_rope_new_sin(dim: i64, len: i64, theta: f32) -> *mut OpaqueTensor {
-    unsafe {
-        let dim = dim as usize;
-        let len = len as usize;
-        let theta = theta as f64;
+    let dim = dim as usize;
+    let len = len as usize;
+    let theta = theta as f64;
 
-        let inv_freq: Vec<f32> = (0..dim)
-            .step_by(2)
-            .map(|i| 1.0 / (theta.powf(i as f64 / dim as f64) as f32))
-            .collect();
-        let device = get_device();
-        let inv_freq_t = Tensor::from_vec(inv_freq, (1, dim / 2), &device).unwrap();
+    let inv_freq: Vec<f32> = (0..dim)
+        .step_by(2)
+        .map(|i| 1.0 / (theta.powf(i as f64 / dim as f64) as f32))
+        .collect();
+    let device = get_device();
+    let inv_freq_t = Tensor::from_vec(inv_freq, (1, dim / 2), &device).unwrap();
 
-        let t: Vec<f32> = (0..len).map(|i| i as f32).collect();
-        let t_tensor = Tensor::from_vec(t, (len, 1), &device).unwrap();
+    let t: Vec<f32> = (0..len).map(|i| i as f32).collect();
+    let t_tensor = Tensor::from_vec(t, (len, 1), &device).unwrap();
 
-        let freqs = t_tensor.matmul(&inv_freq_t).unwrap();
-        let sin = freqs.sin().unwrap();
+    let freqs = t_tensor.matmul(&inv_freq_t).unwrap();
+    let sin = freqs.sin().unwrap();
 
-        make_tensor(sin)
-    }
+    make_tensor(sin)
 }

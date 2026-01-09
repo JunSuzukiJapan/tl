@@ -2627,7 +2627,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // DISABLED: This causes ABI mismatch with functions expecting OpaqueTensor* (Tensor<T,N>).
         // Until ScalarArray can be auto-converted or functions support it, we must force OpaqueTensor.
         if false && rank == 1 && len <= 8 && len > 0 {
-            let (elem_ty, llvm_elem_type): (Type, inkwell::types::BasicTypeEnum) = if all_ints {
+            let (_elem_ty, _llvm_elem_type): (Type, inkwell::types::BasicTypeEnum) = if all_ints {
                 (Type::I64, self.context.i64_type().into())
             } else {
                 (Type::F32, self.context.f32_type().into())
@@ -3561,7 +3561,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         name: &str,
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        let llvm_func_name = name;
+        let _llvm_func_name = name;
         if let Some(struct_def) = self.struct_defs.get(name).cloned() {
             let st_llvm_ty = *self.struct_types.get(name).unwrap();
             let size = st_llvm_ty.size_of().unwrap();
@@ -3896,7 +3896,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                         let array_ptr = arg_val.into_pointer_value();
                         let typed_ptr_type =
-                            llvm_elem_type.ptr_type(inkwell::AddressSpace::default());
+                            self.context.ptr_type(inkwell::AddressSpace::default());
                         let typed_ptr = self
                             .builder
                             .build_pointer_cast(array_ptr, typed_ptr_type, "print_typed_ptr")
@@ -5226,7 +5226,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let s = name.split("::").last().unwrap();
                         s
                     } else {
-                        (name as &str)
+                        name as &str
                     };
 
                     if self.struct_defs.contains_key(simple_name) {

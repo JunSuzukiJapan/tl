@@ -1242,7 +1242,7 @@ pub extern "C" fn tl_tensor_reshape(
 pub extern "C" fn tl_tensor_reshape_dims(
     t: *mut OpaqueTensor,
     dims_tensor_ptr: *mut OpaqueTensor,
-    num_dims: i64,
+    _num_dims: i64,
 ) -> *mut OpaqueTensor {
     unsafe {
         if t.is_null() || dims_tensor_ptr.is_null() {

@@ -80,6 +80,7 @@ impl TensorPool {
     }
 
     /// Clear all tensors from the pool (actually free them)
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         for (_, list) in self.free_list.drain() {
             for ptr in list {

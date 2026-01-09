@@ -1,6 +1,6 @@
 use candle_core::Device;
 use lazy_static::lazy_static;
-use log::{error, info, warn};
+use log::info;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug)]
@@ -107,6 +107,7 @@ impl DeviceManager {
         &self.current_device
     }
 
+    #[allow(dead_code)]
     pub fn generation(&self) -> usize {
         self.generation
     }
