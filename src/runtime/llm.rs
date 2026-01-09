@@ -10,28 +10,31 @@ use tokenizers::Tokenizer;
 pub struct OpaqueTokenizer(pub Tokenizer);
 
 #[no_mangle]
-pub extern "C" fn tl_tokenizer_new(path: *const c_char) -> *mut OpaqueTokenizer {
+pub extern "C" fn tl_tokenizer_new(path: *const c_char) -> i64 {
     unsafe {
         let path_str = CStr::from_ptr(path).to_str().unwrap();
         match Tokenizer::from_file(path_str) {
-            Ok(tokenizer) => Box::into_raw(Box::new(OpaqueTokenizer(tokenizer))),
+            Ok(tokenizer) => {
+                let ptr = Box::into_raw(Box::new(OpaqueTokenizer(tokenizer)));
+                println!("DEBUG: Tokenizer New Ptr: {:p}", ptr);
+                ptr as i64
+            }
             Err(e) => {
                 eprintln!("Failed to load tokenizer from {}: {}", path_str, e);
-                std::ptr::null_mut()
+                0
             }
         }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tokenizer_encode(
-    tokenizer: *mut OpaqueTokenizer,
-    prompt: *const c_char,
-) -> *mut OpaqueTensor {
+pub extern "C" fn tl_tokenizer_encode(tokenizer: i64, prompt: *const c_char) -> *mut OpaqueTensor {
     unsafe {
+        let tokenizer_ptr = tokenizer as *mut OpaqueTokenizer;
+        println!("DEBUG: Tokenizer Encode Ptr: {:p}", tokenizer_ptr);
         let prompt_str = CStr::from_ptr(prompt).to_str().unwrap();
         println!("DEBUG: Tokenizer encode input: '{}'", prompt_str);
-        let t = &(*tokenizer).0;
+        let t = &(*tokenizer_ptr).0;
         match t.encode(prompt_str, true) {
             Ok(encoding) => {
                 let ids: Vec<i64> = encoding.get_ids().iter().map(|&x| x as i64).collect();
@@ -48,12 +51,9 @@ pub extern "C" fn tl_tokenizer_encode(
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tokenizer_decode(
-    tokenizer: *mut OpaqueTokenizer,
-    ids: *mut OpaqueTensor,
-) -> *mut c_char {
+pub extern "C" fn tl_tokenizer_decode(tokenizer: i64, ids: *mut OpaqueTensor) -> *mut c_char {
     unsafe {
-        let t = &(*tokenizer).0;
+        let t = &(*(tokenizer as *mut OpaqueTokenizer)).0;
         let tensor = &(*ids).0;
 
         // Flatten to 1D and get values
@@ -91,7 +91,7 @@ pub extern "C" fn tl_tokenizer_decode(
 use crate::runtime::OpaqueTensorMap;
 
 #[no_mangle]
-pub extern "C" fn tl_gguf_load(path: *const c_char) -> *mut OpaqueTensorMap {
+pub extern "C" fn tl_gguf_load(path: *const c_char) -> i64 {
     unsafe {
         let path_str = CStr::from_ptr(path).to_str().unwrap();
 
@@ -100,19 +100,27 @@ pub extern "C" fn tl_gguf_load(path: *const c_char) -> *mut OpaqueTensorMap {
             .expect("failed to read gguf");
 
         let map_ptr = Box::into_raw(Box::new(OpaqueTensorMap(std::collections::HashMap::new())));
-        let map = &mut *map_ptr;
+        {
+            let map = &mut *map_ptr;
+            println!("DEBUG: GGUF Load Map Ptr: {:p}", map_ptr);
 
-        for (tensor_name, qtensor_info) in content.tensor_infos.iter() {
-            let qtensor = qtensor_info
-                .read(&mut file, content.tensor_data_offset, &Device::Cpu)
-                .expect("failed to read qtensor");
-            let tensor = qtensor.dequantize(&Device::Cpu).unwrap();
+            // Print keys to debug
+            // for tensor_name in content.tensor_infos.keys() {
+            //    println!("GGUF Tensor: {}", tensor_name);
+            // }
 
-            // Insert Tensor (not OpaqueTensor)
-            map.0.insert(tensor_name.clone(), tensor);
+            for (tensor_name, qtensor_info) in content.tensor_infos.iter() {
+                let qtensor = qtensor_info
+                    .read(&mut file, content.tensor_data_offset, &Device::Cpu)
+                    .expect("failed to read qtensor");
+                let tensor = qtensor.dequantize(&Device::Cpu).unwrap();
+
+                // Insert Tensor (not OpaqueTensor)
+                map.0.insert(tensor_name.clone(), tensor);
+            }
         }
 
-        map_ptr
+        map_ptr as i64
     }
 }
 

@@ -450,24 +450,24 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_arena_get_capacity", arena_capacity);
 
     // --- LLM Builtins ---
-    // tl_tokenizer_new(path: *const c_char) -> *mut OpaqueTokenizer (void*)
-    let tok_new_type = void_ptr.fn_type(&[i8_ptr.into()], false);
+    // tl_tokenizer_new(path: *const c_char) -> i64 (handle)
+    let tok_new_type = i64_type.fn_type(&[i8_ptr.into()], false);
     add_fn("tl_tokenizer_new", tok_new_type);
 
-    // tl_tokenizer_encode(tok: *mut, prompt: *const c_char) -> *mut OpaqueTensor
-    let tok_enc_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
+    // tl_tokenizer_encode(tok: i64, prompt: *const c_char) -> *mut OpaqueTensor
+    let tok_enc_type = void_ptr.fn_type(&[i64_type.into(), i8_ptr.into()], false);
     add_fn("tl_tokenizer_encode", tok_enc_type);
 
-    // tl_tokenizer_decode(tok: *mut, ids: *mut OpaqueTensor) -> *const c_char
-    let tok_dec_type = i8_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    // tl_tokenizer_decode(tok: i64, ids: *mut OpaqueTensor) -> *const c_char
+    let tok_dec_type = i8_ptr.fn_type(&[i64_type.into(), void_ptr.into()], false);
     add_fn("tl_tokenizer_decode", tok_dec_type);
 
-    // tl_gguf_load(path: *const c_char) -> *mut Map
-    let gguf_load_type = void_ptr.fn_type(&[i8_ptr.into()], false);
+    // tl_gguf_load(path: *const c_char) -> Map Handle (i64)
+    let gguf_load_type = i64_type.fn_type(&[i8_ptr.into()], false);
     add_fn("tl_gguf_load", gguf_load_type);
 
-    // tl_tensor_map_get(map: *mut, name: *const c_char) -> *mut Tensor
-    let map_get_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
+    // tl_tensor_map_get(map: i64, name: *const c_char) -> *mut Tensor
+    let map_get_type = void_ptr.fn_type(&[i64_type.into(), i8_ptr.into()], false);
     add_fn("tl_tensor_map_get", map_get_type);
 
     // tl_tensor_cat(tensors: *mut Vec, dim: i64) -> *mut Tensor
@@ -839,9 +839,7 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tokenizer_encode") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_encode as usize);
     }
-    if let Some(f) = module.get_function("tl_tokenizer_decode") {
-        execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_decode as usize);
-    }
+    /* Decode removed for now */
     if let Some(f) = module.get_function("tl_gguf_load") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_gguf_load as usize);
     }

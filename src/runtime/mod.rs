@@ -1365,11 +1365,12 @@ pub extern "C" fn tl_tensor_map_load(path: *const std::os::raw::c_char) -> *mut 
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_map_get(
-    map: *mut OpaqueTensorMap,
+    map: i64,
     name: *const std::os::raw::c_char,
 ) -> *mut OpaqueTensor {
     unsafe {
-        let map_ref = &(*map).0;
+        let map_ptr = map as *mut OpaqueTensorMap;
+        let map_ref = &(*map_ptr).0;
         let c_str = std::ffi::CStr::from_ptr(name);
         let key = c_str.to_string_lossy();
 
