@@ -3616,10 +3616,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if args.len() != 1 {
                     return Err("set_device requires 1 argument (device name string)".into());
                 }
-                let (dev_val, dev_ty) = self.compile_expr(&args[0])?;
-                if !matches!(&dev_ty, Type::UserDefined(s) if s == "String") {
-                    return Err("set_device argument must be a string".into());
-                }
+
+                // For string literals, pass the raw i8* directly instead of going through tl_string_new
+                let dev_ptr = if let Expr::StringLiteral(s) = &args[0] {
+                    self.builder
+                        .build_global_string_ptr(s, "dev_str")
+                        .map_err(|e| e.to_string())?
+                        .as_pointer_value()
+                        .into()
+                } else {
+                    // For String variables, we'd need to extract the internal pointer.
+                    // For now, just compile and pass (may need runtime adjustment).
+                    let (dev_val, dev_ty) = self.compile_expr(&args[0])?;
+                    if !matches!(&dev_ty, Type::UserDefined(s) if s == "String") {
+                        return Err("set_device argument must be a string".into());
+                    }
+                    dev_val
+                };
 
                 let fn_val = self
                     .module
@@ -3627,7 +3640,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .ok_or("Runtime fn tl_set_device not found")?;
 
                 self.builder
-                    .build_call(fn_val, &[dev_val.into()], "")
+                    .build_call(fn_val, &[dev_ptr.into()], "")
                     .map_err(|e| e.to_string())?;
 
                 Ok((

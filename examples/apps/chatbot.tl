@@ -250,6 +250,10 @@ extern fn tl_tensor_reshape_2d(t: Tensor<f32, 4>, dims: Tensor<i64, 1>, n: i64) 
 fn main() {
     print("TinyLlama Chatbot Verification");
     
+    // 0. Set device (auto-detect Metal on macOS)
+    set_device("auto");
+    print("Device initialized.");
+    
     // 1. Load model
     let model_path = "/Users/junsuzuki/.llm/models/tinyllama-1.1b-chat-q4_0.gguf";
     let tokenizer_path = "/Users/junsuzuki/.llm/models/tokenizer.json";

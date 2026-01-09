@@ -969,6 +969,25 @@ impl SemanticAnalyzer {
                     *name = resolved_name.clone();
                 }
 
+                // Handle set_device builtin
+                if name == "set_device" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    let arg_ty = self.check_expr(&mut args[0])?;
+                    if !matches!(&arg_ty, Type::UserDefined(s) if s == "String") {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::UserDefined("String".into()),
+                            found: arg_ty,
+                        });
+                    }
+                    return Ok(Type::Void);
+                }
+
                 if name == "checkpoint" {
                     if args.len() != 2 {
                         return Err(SemanticError::ArgumentCountMismatch {
