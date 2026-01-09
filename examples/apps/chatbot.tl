@@ -38,6 +38,9 @@ extern fn tl_tensor_reshape_3d_to_2d(t: Tensor<f32, 3>, dims: Tensor<i64, 1>, n:
 // RoPE/GQA support
 extern fn tl_tensor_narrow(t: Tensor<f32, 2>, dim: i64, start: i64, length: i64) -> Tensor<f32, 2>;
 extern fn tl_tensor_repeat_interleave(t: Tensor<f32, 4>, repeats: i64, dim: i64) -> Tensor<f32, 4>;
+extern fn tl_tensor_argmax(t: Tensor<f32, 2>, dim: i64, keep_dim: bool) -> Tensor<i64, 1>;
+
+extern fn tl_tensor_new_causal_mask(dim: i64) -> Tensor<f32, 2>;
 
 // --- Structs ---
 
@@ -164,9 +167,22 @@ impl Attention {
         let k_trans = tl_tensor_transpose(k_exp, 1, 2);
         let v_trans = tl_tensor_transpose(v_exp, 1, 2);
         
+
+        
         // 8. Compute attention scores: Q @ K.T / sqrt(d)
         let k_t = tl_tensor_transpose(k_trans, 2, 3);
         let scores = tl_tensor_matmul_4d(q_trans, k_t);
+        
+        // Add causal mask
+        // mask: [seq, seq] = [2, 2]
+        let mask = tl_tensor_new_causal_mask(2); 
+        
+        // Reshape mask to [1, 1, 2, 2]
+        let mask_shape = [1, 1, 2, 2];
+        let mask_4d = tl_tensor_reshape_dims(mask, mask_shape, 4);
+        
+        // Add mask to scores
+        let scores = tl_tensor_add_4d(scores, mask_4d);
         
         // Scale by 1/sqrt(head_dim) = 1/sqrt(64) = 0.125
         // Skip for now due to tl_tensor_scale segfault
@@ -272,18 +288,84 @@ fn main() {
     let cos = tl_tensor_rope_new_cos(64, 2048, 10000.0);
     let sin = tl_tensor_rope_new_sin(64, 2048, 10000.0);
     
-    // 5. Create TransformerBlock for layer 0
-    print("Creating TransformerBlock 0...");
-    let block0 = TransformerBlock::from_map(weights, 0);
-    print("TransformerBlock created.");
+    // 5. Forward through all 22 layers
+    print("Starting forward pass through 22 layers...");
     
-    // 6. Forward through layer 0
-    print("Forward through layer 0...");
-    let x1 = block0.forward(x, cos, sin);
-    print("Output after layer 0:");
-    print(x1);
+    // We use a loop 0..22
+    // Note: 'x' is updated in each iteration.
+    // In tl, variable reassignment with let shadowing inside loop might be tricky if not careful with scope.
+    // But we can mutate a variable if it was mutable? No, tl doesn't have 'mut' keyword yet in typical way,
+    // but we can reassign or shadow.
+    // Actually, simply shadowing 'x' inside loop won't update the outer 'x' for next iteration easily
+    // unless we use a mutable variable pattern or manual recursion.
+    // BUT, 'tl' loop implementation:
+    // for i in 0..22 { ... }
     
-    print("Single layer forward pass verified!");
+    // Workaround for lack of mutable outer variable update in loop (if that's a limitation):
+    // Construct a list of blocks? No, too much memory.
+    // We need to update 'current_x' through the layers.
+    
+    // Let's rely on shadowing or see if we can use a pointer swap or tensor copy?
+    // Wait, 'x' is a Tensor handle.
+    // If I do: `x = block.forward(x, ...)` inside loop, does it update outer x?
+    // "tl" language spec: does it support reassignment? 
+    // `let x = ...` shadows. `x = ...` (assignment) if implemented.
+    
+    // Assuming assignment works (stmt::Assign).
+    // If not, we might need a manual unrolled loop or recursion.
+    // Let's try standard loop with reassignment.
+    
+    let current_x = x;
+    
+    for i in 0..22 {
+        print("Layer:");
+        print(i);
+        
+        let block = TransformerBlock::from_map(weights, i);
+        let next_x = block.forward(current_x, cos, sin);
+        
+        // Output from forward is new tensor. 
+        // We need to update current_x.
+        // Assuming assignment is supported for updating local vars.
+        current_x = next_x;  
+    }
+    
+    
+    print("Forward pass complete.");
+    print("Final output shape:");
+    print(tl_tensor_get_shape(current_x));
+    
+    // 7. Final RMSNorm and Output Projection
+    print("Final Norm and Output...");
+    let norm = RMSNorm::new(weights, "output_norm.weight");
+    let output = Linear::from_map(weights, "output.weight"); // This is just a linear layer, not full MLP
+    
+    // Norm
+    let x_norm = norm.forward(current_x);
+    
+    // Output Projection [seq, dim] -> [seq, vocab]
+    let logits = output.forward(x_norm);
+    print("Logits shape:");
+    print(tl_tensor_get_shape(logits));
+    
+    // 8. Argmax to get token ID
+    // We want the last token's prediction.
+    // logits: [seq, vocab]
+    // argmax(dim=1) -> [seq] indices
+    let pred = tl_tensor_argmax(logits, 1, false);
+    print("Predicted tokens:");
+    print(pred);
+    
+    // Decode the last token
+    // We need to implement tensor indexing or slice to get the last element?
+    // Or just decode the whole sequence of predictions?
+    // tokenizer_decode expects 'tok' (handle) and 'ids' (Tensor<i64, 2>)
+    // pred is Tensor<i64, 1>. We need to reshape to [1, seq] or similar?
+    // tl_tokenizer_decode signature: (tok: i64, ids: Tensor<i64, 2>) -> String
+    
+    // Reshape [seq] -> [1, seq]
+    // Skip reshaping for now as we don't have generic reshape.
+    // Just print the prediction tensor.
 }
 
 

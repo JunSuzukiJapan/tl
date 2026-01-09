@@ -522,6 +522,10 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_rope_new_cos", rope_new_type);
     add_fn("tl_tensor_rope_new_sin", rope_new_type);
 
+    // Causal Mask: tl_tensor_new_causal_mask(dim: i64) -> tensor
+    let causal_mask_type = void_ptr.fn_type(&[i64_type.into()], false);
+    add_fn("tl_tensor_new_causal_mask", causal_mask_type);
+
     // --- Global Mappings ---
     // Mapping symbols is critical for JIT.
     // We do it here to keep CodeGenerator::new clean.
@@ -925,6 +929,9 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_rope_new_sin") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_rope_new_sin as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_new_causal_mask") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_new_causal_mask as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_narrow") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_narrow as usize);
@@ -1488,6 +1495,7 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_tensor_scale".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_rope_new_cos".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_rope_new_sin".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_new_causal_mask".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_narrow".to_string(), tensor_type.clone());
     fn_return_types.insert(
         "tl_tensor_repeat_interleave".to_string(),

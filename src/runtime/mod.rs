@@ -115,11 +115,11 @@ pub extern "C" fn tl_tensor_argmax(
                 } else {
                     res.squeeze(dim as usize).unwrap_or(res)
                 };
-                // Ensure result is F32 to match system expectation
-                let final_f32 = final_res
-                    .to_dtype(candle_core::DType::F32)
+                // Ensure result is I64 for index usage in tl
+                let final_i64 = final_res
+                    .to_dtype(candle_core::DType::I64)
                     .unwrap_or(final_res);
-                make_tensor(final_f32)
+                make_tensor(final_i64)
             }
             Err(e) => {
                 eprintln!("tl_tensor_argmax error: {}", e);
@@ -1415,6 +1415,32 @@ pub extern "C" fn tl_tensor_map_load(path: *const std::os::raw::c_char) -> *mut 
         let opaque = OpaqueTensorMap(map);
         Box::into_raw(Box::new(opaque))
     }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_new_causal_mask(dim: i64) -> *mut OpaqueTensor {
+    // Return [dim, dim] matrix.
+    // Tril (inc diag) = 0.0
+    // Upper = -1e9
+    let d = dim as usize;
+    let device = candle_core::Device::Cpu;
+    // Manual tril logic:
+    // row >= col
+    let idx = Tensor::arange(0u32, d as u32, &device).unwrap();
+    let row_idx = idx.reshape((d, 1)).unwrap().broadcast_as((d, d)).unwrap();
+    let col_idx = idx.reshape((1, d)).unwrap().broadcast_as((d, d)).unwrap();
+    let mask_u8 = col_idx.le(&row_idx).unwrap(); // 1 where col <= row (tril)
+
+    // We want 0 in lower (where mask_u8 is 1), and -inf in upper (where mask_u8 is 0).
+    let neg_inf = Tensor::new(-1e9f32, &device)
+        .unwrap()
+        .broadcast_as((d, d))
+        .unwrap();
+    let zeros = Tensor::zeros((d, d), candle_core::DType::F32, &device).unwrap();
+
+    // where mask_u8 == 1 ? zeros : neg_inf
+    let mask = mask_u8.where_cond(&zeros, &neg_inf).unwrap();
+    make_tensor(mask)
 }
 
 #[no_mangle]
