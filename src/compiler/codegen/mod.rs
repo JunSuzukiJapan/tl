@@ -159,6 +159,28 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.variables.pop();
     }
 
+    /// Null out a variable (Move Semantics) so it won't be double-freed
+    pub(crate) fn null_out_variable(&self, name: &str) -> Result<(), String> {
+        for scope in self.variables.iter().rev() {
+            if let Some((val, ty, _should_free)) = scope.get(name) {
+                // Only for types that would be freed recursively
+                if matches!(
+                    ty,
+                    Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+                ) {
+                    let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let null_ptr = ptr_type.const_null();
+
+                    self.builder
+                        .build_store(val.into_pointer_value(), null_ptr)
+                        .map_err(|e| e.to_string())?;
+                }
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
     fn compile_struct_defs(&mut self, structs: &[StructDef]) -> Result<(), String> {
         // Pass 1: Opaque
         for s in structs {
@@ -443,6 +465,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // Apply LLVM optimizations
+        if let Err(e) = self.module.verify() {
+            println!("LLVM Module Verify Failed: {}", e.to_string());
+            // self.module.print_to_stderr();
+            // return Err("Module verification failed".into());
+        }
+
         self.apply_optimizations();
 
         self.module.print_to_file("dump.ll").unwrap();

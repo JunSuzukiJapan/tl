@@ -13,6 +13,7 @@ use candle_core::Tensor;
 // Import candle_nn
 use std::cell::RefCell;
 use std::ffi::{c_float, c_void};
+use std::io::Write;
 use std::slice;
 use std::sync::{Arc, Mutex};
 
@@ -569,15 +570,23 @@ pub extern "C" fn tl_tensor_print_3(t: *const OpaqueTensor) {
 /// Internal function to free tensor resources without unregistering
 /// Used by MemoryManager to avoid deadlock
 pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) {
+    println!(
+        "DEBUG: free_tensor_resources called with {:p} [mod.rs:572]",
+        t
+    );
     if !t.is_null() {
         unsafe {
             if arena::tl_arena_contains(t as *mut std::ffi::c_void) {
                 // Arena-allocated tensors MUST be dropped to release Candle resources (GPU memory, etc)
                 // The memory for OpaqueTensor itself is reclaimed by arena reset, but the inner content needs Drop.
+                println!("DEBUG: Arena drop_in_place {:p} [mod.rs:578]", t);
                 std::ptr::drop_in_place(t);
+                println!("DEBUG: Arena drop_in_place DONE {:p} [mod.rs:580]", t);
             } else {
                 // Heap allocated, safe to free via Box (calls drop implicitly)
+                println!("DEBUG: Box::from_raw {:p} [mod.rs:583]", t);
                 let _ = Box::from_raw(t);
+                println!("DEBUG: Box::from_raw DONE {:p} [mod.rs:585]", t);
             }
         }
     }
@@ -817,6 +826,7 @@ pub extern "C" fn tl_print_string(s: *const std::os::raw::c_char) {
     unsafe {
         if let Ok(c_str) = std::ffi::CStr::from_ptr(s).to_str() {
             println!("{}", c_str);
+            let _ = std::io::stdout().flush();
         }
     }
 }
@@ -1842,15 +1852,19 @@ pub extern "C" fn tl_vec_u8_free(ptr: *mut Vec<u8>) {
 // String helper
 #[no_mangle]
 pub extern "C" fn tl_string_new(s: *const std::os::raw::c_char) -> *mut std::os::raw::c_char {
+    println!("DEBUG: tl_string_new called with {:p}", s);
     if s.is_null() {
+        println!("DEBUG: tl_string_new - input is null");
         return std::ptr::null_mut();
     }
     unsafe {
         let len = libc::strlen(s);
+        println!("DEBUG: tl_string_new - strlen={}", len);
         let dest = libc::malloc(len + 1) as *mut std::os::raw::c_char;
         if !dest.is_null() {
             libc::strcpy(dest, s);
         }
+        println!("DEBUG: tl_string_new - returning {:p}", dest);
         dest
     }
 }

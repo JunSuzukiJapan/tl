@@ -248,86 +248,49 @@ impl TransformerBlock {
 extern fn tl_tensor_reshape_2d(t: Tensor<f32, 4>, dims: Tensor<i64, 1>, n: i64) -> Tensor<f32, 2>;
 
 fn main() {
-    print("DEBUG: main() start - line 251");
-    print("TinyLlama Chatbot Verification");
+    print("Test 1: start");
     
-    // 0. Set device (auto-detect Metal on macOS)
     set_device("auto");
-    print("Device initialized.");
+    print("Test 2: set_device done");
     
-    // 1. Load model
     let model_path = "/Users/junsuzuki/.llm/models/tinyllama-1.1b-chat-q4_0.gguf";
-    let tokenizer_path = "/Users/junsuzuki/.llm/models/tokenizer.json";
-    
     print("Loading GGUF...");
     let weights = tl_gguf_load(model_path);
-    print("Loading Tokenizer...");
-    let tok = tl_tokenizer_new(tokenizer_path);
-    print("Loaded!");
+    print("Test 4: GGUF loaded");
     
-
-    // 4. Precompute RoPE
     print("Precomputing RoPE...");
     let cos = tl_tensor_rope_new_cos(64, 2048, 10000.0);
     let sin = tl_tensor_rope_new_sin(64, 2048, 10000.0);
+    print("Test 6: RoPE done");
     
-    // 4. Token Generation Loop
     print("Loading embedding weights...");
     let w_embedding = tl_tensor_map_get(weights, "token_embd.weight");
+    print("Test 7: Embedding loaded");
     
-    // Initial tokens: [1, 15043] ("Hello")
     let tokens = [1, 15043];
-    print("Tokens created:");
-    print(tokens);
-    let seq_len = 2; // Initial length
+    print("Test 8: Tokens created");
     
-    // Loop for generation
-    print("Starting generation...");
+    let seq_len = 2;
     
-    // We will generate 20 tokens
-    for step in 0..20 {
-        print("Loop step:");
-        print(tokens);
-        // Embed tokens
+    print("Starting loop...");
+    
+    // Just 1 step
+    for step in 0..1 {
+        print("Loop step 0");
         let x = tl_tensor_embedding(tokens, w_embedding);
+        print("Embedding done");
         
         let current_x = x;
         
-        // Transformer Blocks Loop
-        for i in 0..22 {
+        // Just 1 layer to test
+        for i in 0..1 {
+            print("Layer 0 init...");
             let blk = TransformerBlock::from_map(weights, i);
+            print("Layer 0 forward...");
             current_x = blk.forward(current_x, cos, sin, seq_len);
+            print("Layer 0 done");
         }
         
-        // Final RMSNorm and Output Projection
-        let norm = RMSNorm::new(weights, "output_norm.weight");
-        let output = Linear::from_map(weights, "output.weight");
-        
-        let x_norm = norm.forward(current_x);
-        let logits = output.forward(x_norm);
-        
-        // Argmax on last token
-        // logits: [seq, vocab]
-        // Get last row: narrow(dim=0, start=seq_len-1, len=1)
-        let last_logits = tl_tensor_narrow(logits, 0, seq_len - 1, 1);
-        let next_token = tl_tensor_argmax(last_logits, 1, false); // [1]
-        
-        // Print progress
-        print("Generated token.");
-        
-        // Append to tokens
-        tokens = tl_tensor_cat_i64(tokens, next_token, 0);
-        
-        // Update seq_len
-        seq_len = seq_len + 1;
+        print("Loop done");
     }
-
-    print("Generation complete.");
-    return 0;
 }
-
-
-
-
-
-

@@ -215,6 +215,24 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if !val.is_pointer_value() {
                     panic!("Tensor value is not pointer: {:?}", val);
                 }
+                let ptr = val.into_pointer_value();
+
+                // Runtime Null Check
+                let current_block = self.builder.get_insert_block().unwrap();
+                let func = current_block.get_parent().unwrap();
+                let free_block = self.context.append_basic_block(func, "free_tensor");
+                let merge_block = self.context.append_basic_block(func, "after_free");
+
+                let is_null = self
+                    .builder
+                    .build_is_null(ptr, "is_null")
+                    .map_err(|e| e.to_string())?;
+                self.builder
+                    .build_conditional_branch(is_null, merge_block, free_block)
+                    .map_err(|e| e.to_string())?;
+
+                self.builder.position_at_end(free_block);
+
                 let free_fn = self
                     .module
                     .get_function("tl_tensor_release")
@@ -222,8 +240,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder
                     .build_call(free_fn, &[val.into()], "")
                     .map_err(|e| e.to_string())?;
+
+                self.builder
+                    .build_unconditional_branch(merge_block)
+                    .map_err(|e| e.to_string())?;
+                self.builder.position_at_end(merge_block);
             }
             Type::Struct(name) | Type::UserDefined(name) => {
+                // Skip String
+                if name == "String" {
+                    return Ok(());
+                }
+
                 let struct_def = self
                     .struct_defs
                     .get(name)
@@ -234,6 +262,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .get(name)
                     .ok_or(format!("Struct type {} not found", name))?;
                 let ptr = val.into_pointer_value();
+
+                // Runtime Null Check
+                let current_block = self.builder.get_insert_block().unwrap();
+                let func = current_block.get_parent().unwrap();
+                let free_block = self.context.append_basic_block(func, "free_struct");
+                let merge_block = self.context.append_basic_block(func, "after_free");
+
+                let is_null = self
+                    .builder
+                    .build_is_null(ptr, "is_null")
+                    .map_err(|e| e.to_string())?;
+                self.builder
+                    .build_conditional_branch(is_null, merge_block, free_block)
+                    .map_err(|e| e.to_string())?;
+
+                self.builder.position_at_end(free_block);
 
                 for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
                     match f_ty {
@@ -256,6 +300,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => {}
                     }
                 }
+
+                self.builder
+                    .build_unconditional_branch(merge_block)
+                    .map_err(|e| e.to_string())?;
+                self.builder.position_at_end(merge_block);
             }
             Type::Vec(inner_ty) => {
                 // Only support Vec<Tensor> or Vec<Struct> (pointer-sized elements) for now
@@ -1874,6 +1923,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         rhs_type: Type,
         op: BinOp,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        eprintln!("Compile BinOp: {:?} {:?} {:?}", op, lhs_type, rhs_type);
         match (&lhs_type, &rhs_type) {
             (Type::I64, Type::I64) => {
                 let l = lhs.into_int_value();

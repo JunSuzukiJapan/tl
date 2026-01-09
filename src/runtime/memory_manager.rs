@@ -145,10 +145,17 @@ impl MemoryManager {
         }
         if let Some(count) = self.tensor_refcounts.get_mut(&ptr) {
             *count -= 1;
-            println!("DEBUG: Release Tensor {:p}, new count: {}", ptr, *count);
+            println!(
+                "DEBUG: Release Tensor {:p}, new count: {} [memory_manager.rs:148]",
+                ptr, *count
+            );
             if *count == 0 {
-                println!("DEBUG: Freeing Tensor {:p}", ptr);
+                println!("DEBUG: Freeing Tensor {:p} [memory_manager.rs:150]", ptr);
                 self.tensor_refcounts.remove(&ptr);
+                println!(
+                    "DEBUG: Calling free_tensor_resources {:p} [memory_manager.rs:152]",
+                    ptr
+                );
                 super::free_tensor_resources(ptr as *mut OpaqueTensor);
             }
         }

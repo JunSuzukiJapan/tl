@@ -72,6 +72,7 @@ impl Drop for Arena {
 /// Initialize arena with specified capacity in bytes
 #[no_mangle]
 pub extern "C" fn tl_arena_init(capacity: i64) {
+    println!("DEBUG: tl_arena_init called with capacity={}", capacity);
     if capacity <= 0 {
         panic!("Arena capacity must be positive, got {}", capacity);
     }
@@ -83,6 +84,7 @@ pub extern "C" fn tl_arena_init(capacity: i64) {
         }
         let arena = Arena::new(capacity as usize);
         *arena_ref = Some(arena);
+        println!("DEBUG: tl_arena_init done");
     });
 }
 

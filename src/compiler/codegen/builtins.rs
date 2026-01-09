@@ -571,6 +571,9 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_new") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_new as usize);
     }
+    if let Some(f) = module.get_function("tl_tensor_new_i64") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_new_i64 as usize);
+    }
     if let Some(f) = module.get_function("tl_tensor_from_i64_array") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_from_i64_array as usize);
     }
@@ -1027,6 +1030,7 @@ pub fn declare_runtime_functions<'ctx>(
     let tensor_type = Type::Tensor(Box::new(Type::F32), 1); // Common return type for many tensor ops
 
     fn_return_types.insert("tl_tensor_new".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_new_i64".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_to_f32".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_to_i64".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_add".to_string(), tensor_type.clone());
