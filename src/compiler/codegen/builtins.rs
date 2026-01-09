@@ -493,6 +493,7 @@ pub fn declare_runtime_functions<'ctx>(
     let tensor_reshape_2d_type =
         void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), i64_type.into()], false);
     add_fn("tl_tensor_reshape_2d", tensor_reshape_2d_type);
+    add_fn("tl_tensor_reshape_3d_to_2d", tensor_reshape_2d_type); // alias
 
     // Map get alias
     let map_get_type = void_ptr.fn_type(&[i64_type.into(), i8_ptr.into()], false);
@@ -912,6 +913,9 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_get_shape as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_reshape_2d") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_reshape_dims as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_reshape_3d_to_2d") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_reshape_dims as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_map_get_1d") {
@@ -1463,6 +1467,10 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_tensor_rope_new_sin".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_get_shape".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_reshape_2d".to_string(), tensor_type.clone());
+    fn_return_types.insert(
+        "tl_tensor_reshape_3d_to_2d".to_string(),
+        tensor_type.clone(),
+    );
     fn_return_types.insert("tl_tensor_map_get_1d".to_string(), tensor_type.clone());
 
     fn_return_types.insert("tl_system_time".to_string(), Type::F32); // Using F32 as default float for now
