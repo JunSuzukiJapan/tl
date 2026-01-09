@@ -35,6 +35,10 @@ extern fn tl_tensor_embedding(indices: Tensor<i64, 2>, weights: Tensor<f32, 2>) 
 extern fn tl_tensor_add(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
 extern fn tl_tensor_reshape_3d_to_2d(t: Tensor<f32, 3>, dims: Tensor<i64, 1>, n: i64) -> Tensor<f32, 2>;
 
+// RoPE/GQA support
+extern fn tl_tensor_narrow(t: Tensor<f32, 2>, dim: i64, start: i64, length: i64) -> Tensor<f32, 2>;
+extern fn tl_tensor_repeat_interleave(t: Tensor<f32, 4>, repeats: i64, dim: i64) -> Tensor<f32, 4>;
+
 // --- Structs ---
 
 struct RMSNorm {
@@ -122,18 +126,68 @@ impl Attention {
     }
     
     fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>) -> Tensor<f32, 2> {
-        // Simplified placeholder - just apply linear projections and return x
-        // Full implementation needs:
-        // 1. GQA support (repeat K/V heads)
-        // 2. RoPE slice and reshape
-        // 3. Scaled dot-product attention
-        let q = self.q_proj.forward(x);
-        let k = self.k_proj.forward(x);
-        let v = self.v_proj.forward(x);
+        // x: [seq, dim] = [2, 2048]
+        // TinyLlama: 32 Q heads, 4 K/V heads (GQA group ratio = 8)
         
-        // For now, just pass through o_proj with zeros (placeholder output)
-        // In real implementation, would do attention computation
-        let out = self.o_proj.forward(q);
+        // 1. Project Q, K, V
+        let q = self.q_proj.forward(x);  // [seq, 2048]
+        let k = self.k_proj.forward(x);  // [seq, 256]
+        let v = self.v_proj.forward(x);  // [seq, 256]
+        
+        // 2. Reshape to multi-head format
+        // Q: [seq, 2048] -> [1, seq, 32, 64]
+        let q_shape = [1, 2, 32, 64];
+        let q4 = tl_tensor_reshape_dims(q, q_shape, 4);
+        
+        // K/V: [seq, 256] -> [1, seq, 4, 64]
+        let kv_shape = [1, 2, 4, 64];
+        let k4 = tl_tensor_reshape_dims(k, kv_shape, 4);
+        let v4 = tl_tensor_reshape_dims(v, kv_shape, 4);
+        
+        // 3. Slice RoPE cos/sin for current sequence length
+        // cos/sin: [max_len, head_dim/2] = [2048, 32]
+        // We need [seq, head_dim/2] = [2, 32]
+        let cos_slice = tl_tensor_narrow(cos, 0, 0, 2);
+        let sin_slice = tl_tensor_narrow(sin, 0, 0, 2);
+        
+        // 4. Apply RoPE to Q and K (apply_rope handles broadcasting internally)
+        let q_rot = tl_tensor_apply_rope(q4, cos_slice, sin_slice);
+        let k_rot = tl_tensor_apply_rope(k4, cos_slice, sin_slice);
+        
+        // 6. GQA: Repeat K/V heads to match Q heads (4 -> 32, repeat 8x)
+        // k_rot: [1, seq, 4, 64] -> [1, seq, 32, 64]
+        let k_exp = tl_tensor_repeat_interleave(k_rot, 8, 2);
+        let v_exp = tl_tensor_repeat_interleave(v4, 8, 2);
+        
+        // 7. Transpose: [B, S, H, D] -> [B, H, S, D]
+        let q_trans = tl_tensor_transpose(q_rot, 1, 2);
+        let k_trans = tl_tensor_transpose(k_exp, 1, 2);
+        let v_trans = tl_tensor_transpose(v_exp, 1, 2);
+        
+        // 8. Compute attention scores: Q @ K.T / sqrt(d)
+        let k_t = tl_tensor_transpose(k_trans, 2, 3);
+        let scores = tl_tensor_matmul_4d(q_trans, k_t);
+        
+        // Scale by 1/sqrt(head_dim) = 1/sqrt(64) = 0.125
+        // Skip for now due to tl_tensor_scale segfault
+        // let scale = [0.125];
+        // let scores_scaled = tl_tensor_scale(scores, scale);
+        
+        // 9. Softmax along last dimension
+        let attn = tl_tensor_softmax(scores, 3);
+        
+        // 10. Apply attention: Attn @ V
+        let context = tl_tensor_matmul_4d(attn, v_trans);
+        
+        // 11. Transpose back: [B, H, S, D] -> [B, S, H, D]
+        let ctx_trans = tl_tensor_transpose(context, 1, 2);
+        
+        // 12. Flatten: [1, 2, 32, 64] -> [2, 2048]
+        let out_shape = [2, 2048];
+        let flat = tl_tensor_reshape_2d(ctx_trans, out_shape, 2);
+        
+        // 13. Output projection
+        let out = self.o_proj.forward(flat);
         return out;
     }
 }

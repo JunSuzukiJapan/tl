@@ -212,15 +212,11 @@ pub extern "C" fn tl_tensor_apply_rope(
     sin: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
     unsafe {
-        let x_t = &(*x).0; // [..., D]
-        let cos_t = &(*cos).0; // [..., D/2]
-        let sin_t = &(*sin).0; // [..., D/2]
+        let x_t = &(*x).0; // [B, S, H, D]
+        let cos_t = &(*cos).0; // [S, D/2]
+        let sin_t = &(*sin).0; // [S, D/2]
 
-        // candle_nn::rotary_emb::rope(x, cos, sin)
-        // We need to match shapes.
-        // Assuming x is [B, S, H, D] or similar.
-        // cos/sin usually [B, S, 1, D/2] or Broadcastable.
-
+        // x is [B, S, H, D]. We split into two halves along D.
         let d_m2 = x_t.dim(x_t.rank() - 1).unwrap();
         // x1 = x[..., :D/2], x2 = x[..., D/2:]
         let x1 = x_t.narrow(x_t.rank() - 1, 0, d_m2 / 2).unwrap();
@@ -231,12 +227,30 @@ pub extern "C" fn tl_tensor_apply_rope(
         let rotated_cat = Tensor::cat(&[&x2_neg, &x1], x_t.rank() - 1).unwrap();
 
         // (x * cos) + (rotate_half(x) * sin)
-        // We need to broadcast cos/sin to x's shape.
-        // x: [B, S, H, D]
-        // cos: [S, D] or [1, S, 1, D]
+        // x1/x2: [B, S, H, D/2]
+        // cos/sin: [S, D/2] -> reshape to [1, S, 1, D/2] for broadcast
+        let cos_4d = cos_t
+            .reshape((1, cos_t.dim(0).unwrap(), 1, cos_t.dim(1).unwrap()))
+            .unwrap();
+        let sin_4d = sin_t
+            .reshape((1, sin_t.dim(0).unwrap(), 1, sin_t.dim(1).unwrap()))
+            .unwrap();
 
-        let x_cos = x_t.broadcast_mul(cos_t).unwrap();
-        let rot_sin = rotated_cat.broadcast_mul(sin_t).unwrap();
+        // Need to broadcast cos/sin to match x shape - they apply to both halves
+        // For RoPE: x1 * cos + (-x2) * sin and x2 * cos + x1 * sin
+        // Simplified as: x * cos + rotated * sin (where rotated has same shape as x)
+        // But our rotated_cat is [-x2, x1] so the math is slightly different
+        // Standard RoPE: out = x * cos + rotate_half(x) * sin
+        // rotate_half swaps and negates: [..., -x2, x1]
+
+        // Since cos/sin are [1, S, 1, D/2] and x is [B, S, H, D]:
+        // We need cos/sin repeated for D dimension
+        // cat cos with cos to get [1, S, 1, D]
+        let cos_full = Tensor::cat(&[&cos_4d, &cos_4d], 3).unwrap();
+        let sin_full = Tensor::cat(&[&sin_4d, &sin_4d], 3).unwrap();
+
+        let x_cos = x_t.broadcast_mul(&cos_full).unwrap();
+        let rot_sin = rotated_cat.broadcast_mul(&sin_full).unwrap();
 
         let result = (x_cos + rot_sin).unwrap();
         make_tensor(result)

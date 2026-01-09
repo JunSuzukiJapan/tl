@@ -1119,6 +1119,54 @@ pub extern "C" fn tl_tensor_log(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 
 // --- Transformer Support ---
 
+// Narrow/Slice: Extract a slice along a dimension
+// (t, dim, start, length) -> t[..., start:start+length, ...]
+#[no_mangle]
+pub extern "C" fn tl_tensor_narrow(
+    t: *mut OpaqueTensor,
+    dim: i64,
+    start: i64,
+    length: i64,
+) -> *mut OpaqueTensor {
+    let tensor = unsafe { &(*t).0 };
+    let result = tensor
+        .narrow(dim as usize, start as usize, length as usize)
+        .unwrap();
+    make_tensor(result)
+}
+
+// Repeat interleave: Repeat elements along a dimension
+// Used for GQA to expand K/V heads to match Q heads
+// (t, repeats, dim) -> expanded tensor
+#[no_mangle]
+pub extern "C" fn tl_tensor_repeat_interleave(
+    t: *mut OpaqueTensor,
+    repeats: i64,
+    dim: i64,
+) -> *mut OpaqueTensor {
+    let tensor = unsafe { &(*t).0 };
+    let dim = dim as usize;
+    let repeats = repeats as usize;
+
+    // Manual repeat interleave implementation:
+    // For each position along dim, repeat the slice 'repeats' times
+    let dims = tensor.dims();
+    let dim_size = dims[dim];
+
+    let mut slices = Vec::new();
+    for i in 0..dim_size {
+        let slice = tensor.narrow(dim, i, 1).unwrap();
+        for _ in 0..repeats {
+            slices.push(slice.clone());
+        }
+    }
+
+    // Concatenate all slices
+    let slice_refs: Vec<&Tensor> = slices.iter().collect();
+    let result = Tensor::cat(&slice_refs, dim).unwrap();
+    make_tensor(result)
+}
+
 #[no_mangle]
 pub extern "C" fn tl_tensor_sin(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
@@ -1261,13 +1309,19 @@ pub extern "C" fn tl_tensor_matmul(
         let t_a = &(*a).0;
         let t_b = &(*b).0;
 
+        // Make tensors contiguous before matmul to avoid striding issues
+        let t_a_contig = t_a.contiguous().unwrap();
+        let t_b_contig = t_b.contiguous().unwrap();
+
         // Use broadcast_matmul to support [B, S, D] x [D, O] -> [B, S, O]
-        let result = t_a.broadcast_matmul(t_b).unwrap_or_else(|_| {
-            // Fallback to strict matmul if broadcast fails or if not needed?
-            // Actually broadcast_matmul typically covers strict matmul too.
-            // But let's unwrap and panic with message if fails.
-            t_a.matmul(t_b).unwrap()
-        });
+        let result = t_a_contig
+            .broadcast_matmul(&t_b_contig)
+            .unwrap_or_else(|_| {
+                // Fallback to strict matmul if broadcast fails or if not needed?
+                // Actually broadcast_matmul typically covers strict matmul too.
+                // But let's unwrap and panic with message if fails.
+                t_a_contig.matmul(&t_b_contig).unwrap()
+            });
         make_tensor(result)
     }
 }
