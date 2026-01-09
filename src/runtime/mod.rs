@@ -1009,10 +1009,28 @@ pub extern "C" fn tl_tensor_transpose(
     dim0: usize,
     dim1: usize,
 ) -> *mut OpaqueTensor {
+    println!(
+        "DEBUG: tl_tensor_transpose ENTER t={:p} dim0={} dim1={}",
+        t, dim0, dim1
+    );
+    if t.is_null() {
+        println!("ERROR: tl_tensor_transpose received NULL pointer");
+        std::process::abort();
+    }
     unsafe {
         let tensor = &(*t).0;
+        println!(
+            "DEBUG: tl_tensor_transpose tensor.shape={:?}",
+            tensor.dims()
+        );
         let result = tensor.transpose(dim0, dim1).unwrap();
-        make_tensor(result)
+        println!(
+            "DEBUG: tl_tensor_transpose result.shape={:?}",
+            result.dims()
+        );
+        let ptr = make_tensor(result);
+        println!("DEBUG: tl_tensor_transpose EXIT result={:p}", ptr);
+        ptr
     }
 }
 
@@ -1454,9 +1472,22 @@ pub extern "C" fn tl_tensor_matmul(
     a: *mut OpaqueTensor,
     b: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
+    println!("DEBUG: tl_tensor_matmul ENTER a={:p} b={:p}", a, b);
+    if a.is_null() || b.is_null() {
+        println!(
+            "ERROR: tl_tensor_matmul received NULL pointer a={:p} b={:p}",
+            a, b
+        );
+        std::process::abort();
+    }
     unsafe {
         let t_a = &(*a).0;
         let t_b = &(*b).0;
+        println!(
+            "DEBUG: tl_tensor_matmul a.shape={:?} b.shape={:?}",
+            t_a.dims(),
+            t_b.dims()
+        );
 
         // Make tensors contiguous before matmul to avoid striding issues
         let t_a_contig = t_a.contiguous().unwrap();
@@ -1471,7 +1502,9 @@ pub extern "C" fn tl_tensor_matmul(
                 // But let's unwrap and panic with message if fails.
                 t_a_contig.matmul(&t_b_contig).unwrap()
             });
-        make_tensor(result)
+        let ptr = make_tensor(result);
+        println!("DEBUG: tl_tensor_matmul EXIT result={:p}", ptr);
+        ptr
     }
 }
 

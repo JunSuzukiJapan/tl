@@ -93,7 +93,7 @@ impl MLP {
     }
     
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
-        let g = self.gate_proj.forward(x);
+        let g = self.gate_proj.forward(x.clone());
         let u = self.up_proj.forward(x);
         let silu_g = tl_tensor_silu(g);
         let gu = silu_g * u; 
