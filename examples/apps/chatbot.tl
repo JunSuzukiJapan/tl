@@ -5,10 +5,12 @@ extern fn tl_path_exists(path: String) -> bool;
 extern fn tl_file_read_string(path: String) -> String;
 extern fn tl_string_from_int(val: i64) -> String;
 extern fn tl_string_concat(s1: String, s2: String) -> String;
+extern fn tl_read_line(prompt: String) -> String;
+extern fn tl_prompt(prompt: String) -> String;
 
 extern fn tl_tokenizer_new(path: String) -> i64;
-extern fn tl_tokenizer_encode(tok: i64, prompt: String) -> Tensor<i64, 2>;
-extern fn tl_tokenizer_decode(tok: i64, ids: Tensor<i64, 2>) -> String;
+extern fn tl_tokenizer_encode(tok: i64, prompt: String) -> Tensor<i64, 1>;
+extern fn tl_tokenizer_decode(tok: i64, ids: Tensor<i64, 1>) -> String;
 
 extern fn tl_gguf_load(path: String) -> i64;
 extern fn tl_tensor_map_get(map: i64, name: String) -> Tensor<f32, 2>;
@@ -42,6 +44,9 @@ extern fn tl_tensor_repeat_interleave(t: Tensor<f32, 4>, repeats: i64, dim: i64)
 extern fn tl_tensor_argmax(t: Tensor<f32, 2>, dim: i64, keep_dim: bool) -> Tensor<i64, 1>;
 extern fn tl_tensor_new_causal_mask(dim: i64) -> Tensor<f32, 2>;
 extern fn tl_tensor_cat_i64(a: Tensor<i64, 1>, b: Tensor<i64, 1>, dim: i64) -> Tensor<i64, 1>;
+extern fn tl_tensor_len(t: Tensor<i64, 1>) -> i64;
+extern fn tl_tensor_item_i64(t: Tensor<i64, 1>) -> i64;
+extern fn tl_print_ptr(p: Tensor<i64, 1>); 
 
 // --- Structs ---
 
@@ -249,7 +254,7 @@ fn main() {
     print("TinyLlama Chatbot Verification");
     
     // 0. Set device (auto-detect Metal on macOS)
-    set_device("metal");
+    // set_device("metal");
     print("Device initialized.");
     
     // 1. Load model
@@ -270,76 +275,56 @@ fn main() {
     
     // 4. Token Generation Loop
     print("Loading embedding weights...");
-    let w_embedding = tl_tensor_map_get(weights, "token_embd.weight");
-    
-    // Initial tokens: [1, 15043] ("Hello")
-    let tokens = [1, 15043];
-    print("Tokens created:");
-    print(tokens);
-    let seq_len = 2; // Initial length
-    
-    // Loop for generation
-    print("Starting generation...");
-    
-    // We will generate 1 token (debug)
-    for step in 0..1 {
-        print("Loop step:");
-        print(tokens);
-        // Embed tokens
-        let x = tl_tensor_embedding(tokens, w_embedding);
-        
-        let current_x = x;
-        
-        // Transformer Blocks Loop
-        print("Starting Transformer blocks...");
-        for i in 0..22 {
-            // print("Layer:");
-            // print(i); 
-            // print is costly? well, let's print every layer for now to debug
-            let msg = tl_string_concat("Layer ", tl_string_from_int(i));
-            print(msg);
-            
-            let blk = TransformerBlock::from_map(weights, i);
-            current_x = blk.forward(current_x, cos, sin, seq_len);
-        }
-        print("Blocks done.");
-        print("DEBUG: starting output norm");
-        
-        // Final RMSNorm and Output Projection
-        let norm = RMSNorm::new(weights, "output_norm.weight");
-        let output = Linear::from_map(weights, "output.weight");
-        print("DEBUG: output.weight");
-        print(output.weight);
-        print("DEBUG: output.weight device_id");
-        print(tl_tensor_device_id(output.weight));
-        
-        print("DEBUG: running norm.forward");
-        let x_norm = norm.forward(current_x);
-        print("DEBUG: x_norm");
-        print(x_norm);
-        print("DEBUG: x_norm device_id");
-        print(tl_tensor_device_id(x_norm));
-        print("DEBUG: running output.forward (matmul)");
-        let logits = output.forward(x_norm);
-        print("DEBUG: output.forward done");
-        
-        // Argmax on last token
-        // logits: [seq, vocab]
-        // Get last row: narrow(dim=0, start=seq_len-1, len=1)
-        let last_logits = tl_tensor_narrow(logits, 0, seq_len - 1, 1);
-        let next_token = tl_tensor_argmax(last_logits, 1, false); // [1]
-        
-        // Print progress
-        print("Generated token.");
-        
-        // Append to tokens
-        tokens = tl_tensor_cat_i64(tokens, next_token, 0);
-        
-        // Update seq_len
-        seq_len = seq_len + 1;
+    // Chat Loop
+    while true {
+       let user_input = tl_read_line("User> ");
+       
+       // Handle exit
+       // if user_input == "exit" { return 0; } // String comparison not fully easy yet without libc strcmp exposed directly or helper
+       
+       let prompt = "<|user|>\n";
+       let prompt = tl_string_concat(prompt, user_input);
+       let prompt = tl_string_concat(prompt, "</s>\n<|assistant|>\n");
+       
+       // print("DEBUG: Encoding...");
+       let tokens = tl_tokenizer_encode(tok, prompt);
+       
+       // print("DEBUG: Encoded");
+       let len = tl_tensor_len(tokens);
+       // print("DEBUG: Len computed");
+         
+         let w_embedding = tl_tensor_map_get(weights, "token_embd.weight");
+         let x = tl_tensor_embedding(tokens, w_embedding);
+         print("DEBUG: Embedded inside loop");
+         
+         // Transformer Block Test
+         let blk = TransformerBlock::from_map(weights, 0);
+         let out = blk.forward(x, cos, sin, len);
+         print("DEBUG: Transformer Block 0 Forward Done");
+         
+         // Output Head Test
+         let norm = RMSNorm::new(weights, "output_norm.weight");
+         let output = Linear::from_map(weights, "output.weight");
+         
+         let x_norm = norm.forward(out);
+         let logits = output.forward(x_norm);
+         print("DEBUG: Logits Computed");
+         
+         // Argmax
+         // Argmax
+         let last_logits = tl_tensor_narrow(logits, 0, len - 1, 1);
+         let next_token = tl_tensor_argmax(last_logits, 1, false); 
+         
+         // Decode
+         let token_str = tl_tokenizer_decode(tok, next_token);
+         print(token_str);
+
+         // BYPASS TEST REMOVED
+
+         if 1 == 1 {
+             return 0;
+         }
     }
 
-    print("Generation complete.");
-    return 0;
 }
 

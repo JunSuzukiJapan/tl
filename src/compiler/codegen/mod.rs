@@ -473,7 +473,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         self.apply_optimizations();
 
-        self.module.print_to_file("dump.ll").unwrap();
+        // self.module.print_to_file("dump.ll").unwrap();
         Ok(())
     }
 

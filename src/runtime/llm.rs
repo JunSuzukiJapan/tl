@@ -40,7 +40,7 @@ pub extern "C" fn tl_tokenizer_encode(tokenizer: i64, prompt: *const c_char) -> 
                 let ids: Vec<i64> = encoding.get_ids().iter().map(|&x| x as i64).collect();
                 let len = ids.len();
                 let device = get_device();
-                let t_cpu = Tensor::from_vec(ids, (1, len), &Device::Cpu).unwrap(); // [1, Seq]
+                let t_cpu = Tensor::from_vec(ids, (len,), &Device::Cpu).unwrap(); // [Seq]
                 let tensor = if device.is_metal() || device.is_cuda() {
                     t_cpu.to_device(&device).unwrap()
                 } else {
@@ -59,13 +59,39 @@ pub extern "C" fn tl_tokenizer_encode(tokenizer: i64, prompt: *const c_char) -> 
 #[no_mangle]
 pub extern "C" fn tl_tokenizer_decode(tokenizer: i64, ids: *mut OpaqueTensor) -> *mut c_char {
     unsafe {
+        eprintln!(
+            "DEBUG: tl_tokenizer_decode called with tokenizer={}, ids={:p}",
+            tokenizer, ids
+        );
+
         let t = &(*(tokenizer as *mut OpaqueTokenizer)).0;
-        let tensor = &(*ids).0;
+        eprintln!("DEBUG: Tokenizer ref obtained");
+
+        if ids.is_null() {
+            eprintln!("DEBUG: ids is null!");
+            return CString::new("").unwrap().into_raw();
+        }
+
+        let tensor_wrapper = &(*ids);
+        eprintln!("DEBUG: Tensor wrapper obtained");
+
+        // Check tensor validity if possible or just access
+        let tensor = &tensor_wrapper.0;
+        eprintln!("DEBUG: Tensor ref obtained: {:?}", tensor);
 
         // Flatten to 1D and get values
         // Expecting [1, 1] or [N] tensor of I64
-        let tensor_i64 = tensor.flatten_all().unwrap();
+        let tensor_i64 = match tensor.flatten_all() {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("DEBUG: Flatten failed: {}", e);
+                return CString::new("").unwrap().into_raw();
+            }
+        };
+        eprintln!("DEBUG: Tensor flattened");
+
         let vec_i64 = tensor_i64.to_vec1::<i64>().unwrap_or_else(|_| {
+            eprintln!("DEBUG: Fallback to float conversion");
             // Fallback if float
             tensor_i64
                 .to_dtype(DType::F32)
@@ -76,12 +102,15 @@ pub extern "C" fn tl_tokenizer_decode(tokenizer: i64, ids: *mut OpaqueTensor) ->
                 .map(|&x| x as i64)
                 .collect()
         });
+        eprintln!("DEBUG: Vec i64 obtained: {:?}", vec_i64);
 
         // Convert i64 -> u32
         let vec_u32: Vec<u32> = vec_i64.iter().map(|&x| x as u32).collect();
+        eprintln!("DEBUG: Vec u32 ready: {:?}", vec_u32);
 
         match t.decode(&vec_u32, true) {
             Ok(s) => {
+                eprintln!("DEBUG: Decode success: \'{}\'", s);
                 let c_string = CString::new(s).unwrap();
                 c_string.into_raw()
             }

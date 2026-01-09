@@ -6,6 +6,35 @@ use std::os::raw::c_char;
 // --- Strings ---
 
 #[no_mangle]
+pub extern "C" fn tl_prompt(prompt: *const c_char) -> *mut c_char {
+    // Print prompt
+    if !prompt.is_null() {
+        let p = unsafe { CStr::from_ptr(prompt).to_string_lossy() };
+        print!("{}", p);
+        let _ = std::io::stdout().flush();
+    }
+
+    // Read line
+    let mut buffer = String::new();
+    match std::io::stdin().read_line(&mut buffer) {
+        Ok(_) => {
+            // Remove trailing newline
+            let trimmed = buffer.trim_end().to_string();
+            match CString::new(trimmed) {
+                Ok(c_str) => c_str.into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            }
+        }
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_read_line(prompt: *const c_char) -> *mut c_char {
+    tl_prompt(prompt)
+}
+
+#[no_mangle]
 pub extern "C" fn tl_string_concat(s1: *const c_char, s2: *const c_char) -> *mut c_char {
     if s1.is_null() || s2.is_null() {
         return std::ptr::null_mut();

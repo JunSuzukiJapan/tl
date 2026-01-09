@@ -563,6 +563,9 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_print_string") {
         execution_engine.add_global_mapping(&f, runtime::tl_print_string as *const () as usize);
     }
+    if let Some(f) = module.get_function("tl_prompt") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_prompt as *const () as usize);
+    }
     if let Some(f) = module.get_function("tl_print_f32") {
         execution_engine.add_global_mapping(&f, runtime::tl_print_f32 as *const () as usize);
     }
