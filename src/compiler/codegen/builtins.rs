@@ -416,6 +416,10 @@ pub fn declare_runtime_functions<'ctx>(
     let env_set_type = void_type.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
     add_fn("tl_env_set", env_set_type);
 
+    // tl_read_line(prompt: *const i8) -> *mut i8
+    let read_line_type = i8_ptr.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_read_line", read_line_type);
+
     // System
     let sys_time_type = f32_type.fn_type(&[], false); // Return f32 timestamp
     add_fn("tl_system_time", sys_time_type);
@@ -923,7 +927,9 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tokenizer_encode") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_encode as usize);
     }
-    /* Decode removed for now */
+    if let Some(f) = module.get_function("tl_tokenizer_decode") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_decode as usize);
+    }
     if let Some(f) = module.get_function("tl_gguf_load") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_gguf_load as usize);
     }
@@ -1368,6 +1374,9 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_system_sleep") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_system_sleep as usize);
     }
+    if let Some(f) = module.get_function("tl_read_line") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_read_line as usize);
+    }
 
     // Memory Manager mappings
     if let Some(f) = module.get_function("tl_mem_enter_scope") {
@@ -1433,6 +1442,10 @@ pub fn declare_runtime_functions<'ctx>(
     );
     fn_return_types.insert(
         "tl_env_get".to_string(),
+        Type::UserDefined("String".to_string()),
+    );
+    fn_return_types.insert(
+        "tl_read_line".to_string(),
         Type::UserDefined("String".to_string()),
     );
 

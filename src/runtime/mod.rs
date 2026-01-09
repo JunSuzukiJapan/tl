@@ -2034,20 +2034,6 @@ pub extern "C" fn tl_string_new(s: *const std::os::raw::c_char) -> *mut std::os:
     }
 }
 
-// Ensure runtime functions are kept alive from dead code elimination
-#[no_mangle]
-pub fn tl_runtime_keep_alive() {
-    let funcs: Vec<*const c_void> = vec![
-        llm::tl_tokenizer_decode as *const c_void,
-        llm::tl_tokenizer_encode as *const c_void,
-        llm::tl_tokenizer_new as *const c_void,
-        tl_tensor_argmax as *const c_void,
-        llm::tl_gguf_load as *const c_void,
-        stdlib::tl_read_line as *const c_void,
-    ];
-    std::hint::black_box(funcs);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

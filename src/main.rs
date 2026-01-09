@@ -75,7 +75,7 @@ fn main() -> Result<()> {
             // Set device environment variable
             std::env::set_var("TL_DEVICE", device);
             crate::runtime::force_link();
-            crate::runtime::tl_runtime_keep_alive();
+            // crate::runtime::tl_runtime_keep_alive();
             println!("Running file: {:?}", file);
             let mut ast = match load_module_recursive(file.clone()) {
                 Ok(ast) => ast,
