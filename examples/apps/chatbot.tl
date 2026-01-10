@@ -189,7 +189,47 @@ impl Attention {
         // Update Cache with full K/V for this layer
         tl_kv_cache_update(cache, layer_idx, k_total.clone(), v_total.clone());
         
-        return x;
+        // 5. Expand K, V for GQA (4 heads -> 32 heads, factor 8)
+        let k_wide = tl_tensor_repeat_interleave(k_total, 8, 1);
+        let v_wide = tl_tensor_repeat_interleave(v_total, 8, 1);
+        
+        // 6. Attention Scores (Q * K^T)
+        // Q: [1, seq_len, 32, 64] -> Q_trans: [1, 32, seq_len, 64]
+        let q_trans = tl_tensor_transpose(q_rope, 1, 2);
+        // K_wide: [1, 32, total_len, 64] -> K_keys: [1, 32, 64, total_len]
+        let k_keys = tl_tensor_transpose(k_wide, 2, 3);
+        
+        // scores: [1, 32, seq_len, total_len]
+        let scores = tl_tensor_matmul_4d(q_trans, k_keys);
+        
+        // 7. Scale, Mask, Softmax
+        // scale = 1.0 / sqrt(head_dim) = 1.0 / sqrt(64) = 0.125
+        let scores_scaled = scores * 0.125;
+        
+        let scores_masked = if seq_len > 1 {
+            let mask = tl_tensor_new_causal_mask(seq_len);
+            let mask_shape = [1, 1, seq_len, seq_len];
+            let mask_4d = tl_tensor_reshape_dims(mask, mask_shape, 4);
+            tl_tensor_add_4d(scores_scaled, mask_4d)
+        } else {
+            scores_scaled
+        };
+        
+        let probs = tl_tensor_softmax(scores_masked, 3); // Softmax over total_len dim
+        
+        // 8. Attn Output (probs * V)
+        // probs: [1, 32, seq_len, total_len]
+        // v_wide: [1, 32, total_len, 64] 
+        // attn_out: [1, 32, seq_len, 64]
+        let attn_out = tl_tensor_matmul_4d(probs, v_wide);
+        
+        // 9. Merge heads and Project
+        // attn_out -> [1, seq_len, 32, 64]
+        let attn_merged = tl_tensor_transpose(attn_out, 1, 2);
+        let out_shape = [seq_len, 2048];
+        let attn_flat = tl_tensor_reshape_2d(attn_merged, out_shape, 2);
+        
+        return self.o_proj.forward(attn_flat);
     }
 }
 
