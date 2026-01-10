@@ -558,7 +558,7 @@ pub extern "C" fn tl_tensor_sample(
 
         // Apply temperature
         let temp_t = if temp <= 0.0 { 1.0 } else { temp };
-        let logits_scaled = (logits_flat.to_dtype(DType::F64).unwrap() / (temp_t as f64)).unwrap();
+        let logits_scaled = (&logits_flat / (temp_t as f64)).unwrap();
 
         // Softmax to get probabilities
         let probs = candle_nn::ops::softmax(&logits_scaled, 0).unwrap();
