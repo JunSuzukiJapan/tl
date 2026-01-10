@@ -29,10 +29,12 @@ pub fn declare_runtime_functions<'ctx>(
     };
 
     let print_i64_type = void_type.fn_type(&[i64_type.into()], false);
-    add_fn("tl_print_i64", print_i64_type);
+    add_fn("tl_print_i64", print_i64_type.clone());
+    add_fn("tl_display_i64", print_i64_type);
 
     let print_f32_type = void_type.fn_type(&[f32_type.into()], false);
-    add_fn("tl_print_f32", print_f32_type);
+    add_fn("tl_print_f32", print_f32_type.clone());
+    add_fn("tl_display_f32", print_f32_type);
 
     let print_str_type = void_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_print_string", print_str_type.clone());
@@ -128,9 +130,9 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_add", bin_type);
     add_fn("tl_tensor_mul", bin_type);
 
-    // tl_tensor_print(t: *mut) -> void
     let print_type = void_type.fn_type(&[void_ptr.into()], false);
-    add_fn("tl_tensor_print", print_type);
+    add_fn("tl_tensor_print", print_type.clone());
+    add_fn("tl_tensor_display", print_type.clone());
     add_fn("tl_tensor_print_1", print_type.clone());
     add_fn("tl_tensor_print_2", print_type.clone());
     add_fn("tl_tensor_print_3", print_type.clone());
@@ -582,8 +584,14 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_print_f32") {
         execution_engine.add_global_mapping(&f, runtime::tl_print_f32 as *const () as usize);
     }
+    if let Some(f) = module.get_function("tl_display_f32") {
+        execution_engine.add_global_mapping(&f, runtime::tl_display_f32 as *const () as usize);
+    }
     if let Some(f) = module.get_function("tl_print_i64") {
         execution_engine.add_global_mapping(&f, runtime::tl_print_i64 as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_display_i64") {
+        execution_engine.add_global_mapping(&f, runtime::tl_display_i64 as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_print_ptr") {
         execution_engine.add_global_mapping(&f, runtime::tl_print_ptr as *const () as usize);
@@ -605,6 +613,9 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_print") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_print as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_display") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_display as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_print_1") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_print_1 as usize);

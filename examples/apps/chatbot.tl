@@ -37,7 +37,6 @@ extern fn tl_tensor_argmax(t: Tensor<f32, 2>, d: i64, k: bool) -> Tensor<i64, 1>
 extern fn tl_tensor_len(t: Tensor<i64, 1>) -> i64;
 extern fn tl_tensor_item_i64(t: Tensor<i64, 1>) -> i64;
 extern fn tl_tensor_cat_i64(a: Tensor<i64, 1>, b: Tensor<i64, 1>, d: i64) -> Tensor<i64, 1>;
-extern fn tl_display_string(s: String) -> void;
 
 struct Linear { w: Tensor<f32, 2> }
 impl Linear {
@@ -78,14 +77,19 @@ impl Attention {
         let v_4d = tl_tensor_reshape_dims(self.v.forward(x.clone()), [1, sl, 4, 64], 4);
         let cs = tl_tensor_narrow(cos, 0, sp, sl);
         let ss = tl_tensor_narrow(sin, 0, sp, sl);
-        let kt = tl_tensor_transpose(tl_tensor_apply_rope(k_4d, cs, ss), 1, 2);
+        let qr = tl_tensor_apply_rope(q_4d, cs, ss);
+        let kr = tl_tensor_apply_rope(k_4d, cs, ss);
+        let kt = tl_tensor_transpose(kr, 1, 2);
         let vt = tl_tensor_transpose(v_4d, 1, 2);
         let k_tot = if sp == 0 { kt } else { tl_tensor_cat_4d(tl_kv_cache_get_k(ch, li), kt, 2) };
         let v_tot = if sp == 0 { vt } else { tl_tensor_cat_4d(tl_kv_cache_get_v(ch, li), vt, 2) };
         tl_kv_cache_update(ch, li, k_tot.clone(), v_tot.clone());
-        let qt = tl_tensor_transpose(tl_tensor_apply_rope(q_4d, cs, ss), 1, 2);
-        let sm = if sl > 1 { tl_tensor_add_4d(tl_tensor_scale(tl_tensor_matmul_4d(qt, tl_tensor_transpose(tl_tensor_repeat_interleave(k_tot, 8, 1), 2, 3)), 0.125), tl_tensor_reshape_dims(tl_tensor_new_causal_mask(sl), [1, 1, sl, sl], 4)) } else { tl_tensor_scale(tl_tensor_matmul_4d(qt, tl_tensor_transpose(tl_tensor_repeat_interleave(k_tot, 8, 1), 2, 3)), 0.125) };
-        return self.o.forward(tl_tensor_reshape_2d(tl_tensor_transpose(tl_tensor_matmul_4d(tl_tensor_softmax(sm, 3), tl_tensor_repeat_interleave(v_tot, 8, 1)), 1, 2), [sl, 2048], 2));
+        let qt = tl_tensor_transpose(qr, 1, 2);
+        let kw = tl_tensor_repeat_interleave(k_tot, 8, 1);
+        let vw = tl_tensor_repeat_interleave(v_tot, 8, 1);
+        let sm = if sl > 1 { tl_tensor_add_4d(tl_tensor_scale(tl_tensor_matmul_4d(qt, tl_tensor_transpose(kw, 2, 3)), 0.125), tl_tensor_reshape_dims(tl_tensor_new_causal_mask(sl), [1, 1, sl, sl], 4)) } else { tl_tensor_scale(tl_tensor_matmul_4d(qt, tl_tensor_transpose(kw, 2, 3)), 0.125) };
+        let ao = tl_tensor_transpose(tl_tensor_matmul_4d(tl_tensor_softmax(sm, 3), vw), 1, 2);
+        return self.o.forward(tl_tensor_reshape_2d(ao, [sl, 2048], 2));
     }
 }
 struct Block { an: RMSNorm, ffn: RMSNorm, at: Attention, mlp: MLP }
@@ -105,7 +109,7 @@ impl Block {
     }
 }
 fn main() {
-    print("TinyLlama Chatbot (Stable)");
+    println("TinyLlama Chatbot (Stable)");
     let weights = tl_gguf_load("/Users/junsuzuki/.llm/models/tinyllama-1.1b-chat-q4_0.gguf");
     let tok = tl_tokenizer_new("/Users/junsuzuki/.llm/models/tokenizer.json");
     let cos = tl_tensor_rope_new_cos(64, 2048, 10000.0);
@@ -123,7 +127,7 @@ fn main() {
         let cache = tl_kv_cache_new(22);
         let cur_tokens = tokens.clone();
         let gen_idx = 0;
-        tl_display_string("Assistant> ");
+        print("Assistant> ");
         while gen_idx < 100 {
             let total_len = tl_tensor_len(tokens);
             let batch_len = tl_tensor_len(cur_tokens);
@@ -139,13 +143,13 @@ fn main() {
             let lo = oh.forward(on.forward(x));
             let nxt = tl_tensor_argmax(tl_tensor_narrow(lo, 0, batch_len - 1, 1), 1, false);
             let tid = tl_tensor_item_i64(nxt);
-            tl_display_string(tl_tokenizer_decode(tok, nxt));
+            print(tl_tokenizer_decode(tok, nxt));
             if tid == 2 { gen_idx = 200; }
             tokens = tl_tensor_cat_i64(tokens, nxt, 0);
             cur_tokens = nxt;
             gen_idx = gen_idx + 1;
         }
         tl_kv_cache_free(cache);
-        print("");
+        println("");
     }
 }

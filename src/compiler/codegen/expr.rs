@@ -3849,42 +3849,60 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
             "print" | "println" => {
+                let is_newline = name == "println";
                 if args.len() != 1 {
-                    return Err("print requires 1 argument".into());
+                    return Err(format!("{} requires 1 argument", name).into());
                 }
                 // Check type of arg
                 let arg_expr = &args[0];
                 let (arg_val, arg_type) = self.compile_expr(arg_expr)?;
                 match arg_type {
                     Type::I64 => {
-                        let fn_val = self.module.get_function("tl_print_i64").unwrap();
+                        let fn_name = if is_newline {
+                            "tl_print_i64"
+                        } else {
+                            "tl_display_i64"
+                        };
+                        let fn_val = self.module.get_function(fn_name).unwrap();
                         self.builder
                             .build_call(fn_val, &[arg_val.into()], "print_call")
                             .map_err(|e| e.to_string())?;
                     }
                     Type::F32 => {
-                        let fn_val = self.module.get_function("tl_print_f32").unwrap();
+                        let fn_name = if is_newline {
+                            "tl_print_f32"
+                        } else {
+                            "tl_display_f32"
+                        };
+                        let fn_val = self.module.get_function(fn_name).unwrap();
                         self.builder
                             .build_call(fn_val, &[arg_val.into()], "print_call")
                             .map_err(|e| e.to_string())?;
                     }
                     Type::Tensor(_, _) => {
-                        let fn_val = self.module.get_function("tl_tensor_print").unwrap();
+                        let fn_name = if is_newline {
+                            "tl_tensor_print"
+                        } else {
+                            "tl_tensor_display"
+                        };
+                        let fn_val = self.module.get_function(fn_name).unwrap();
                         self.builder
                             .build_call(fn_val, &[arg_val.into()], "print_call")
                             .map_err(|e| e.to_string())?;
                     }
                     Type::UserDefined(s) if s == "String" => {
-                        let fn_val = self.module.get_function("tl_print_string");
+                        let fn_name = if is_newline {
+                            "tl_print_string"
+                        } else {
+                            "tl_display_string"
+                        };
+                        let fn_val = self.module.get_function(fn_name);
                         if let Some(f) = fn_val {
                             self.builder
                                 .build_call(f, &[arg_val.into()], "print_call")
                                 .map_err(|e| e.to_string())?;
                         } else {
-                            // If not declared, try to declare it (lazy) or error.
-                            // Better to return error if not found, but it should be found if declared.
-                            // For now, assume declared or error.
-                            return Err("tl_print_string not found (add to init)".into());
+                            return Err(format!("{} not found (add to init)", fn_name).into());
                         }
                     }
                     Type::ScalarArray(ref elem_type, len) => {
@@ -3893,8 +3911,22 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                         let (llvm_elem_type, print_fn_name): (inkwell::types::BasicTypeEnum, &str) =
                             match elem_type.as_ref() {
-                                Type::I64 => (i64_type.into(), "tl_print_i64"),
-                                _ => (f32_type.into(), "tl_print_f32"),
+                                Type::I64 => (
+                                    i64_type.into(),
+                                    if is_newline {
+                                        "tl_print_i64"
+                                    } else {
+                                        "tl_display_i64"
+                                    },
+                                ),
+                                _ => (
+                                    f32_type.into(),
+                                    if is_newline {
+                                        "tl_print_f32"
+                                    } else {
+                                        "tl_display_f32"
+                                    },
+                                ),
                             };
 
                         let print_fn = self

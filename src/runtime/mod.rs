@@ -597,6 +597,18 @@ pub extern "C" fn tl_tensor_print(t: *const OpaqueTensor) {
 }
 
 #[no_mangle]
+pub extern "C" fn tl_tensor_display(t: *const OpaqueTensor) {
+    use std::io::Write;
+    if t.is_null() {
+        print!("Tensor(NULL)");
+    } else {
+        let tensor = unsafe { &(*t).0 };
+        print!("{}", tensor);
+    }
+    let _ = std::io::stdout().flush();
+}
+
+#[no_mangle]
 pub extern "C" fn tl_tensor_device_id(t: *const OpaqueTensor) -> i64 {
     if t.is_null() {
         return -1;
@@ -883,6 +895,12 @@ pub extern "C" fn tl_print_i64(v: i64) {
 }
 
 #[no_mangle]
+pub extern "C" fn tl_display_i64(v: i64) {
+    print!("{}", v);
+    let _ = std::io::stdout().flush();
+}
+
+#[no_mangle]
 pub extern "C" fn tl_print_ptr(_ptr: *const std::ffi::c_void) {
     // Debug function - no output in production
 }
@@ -890,6 +908,12 @@ pub extern "C" fn tl_print_ptr(_ptr: *const std::ffi::c_void) {
 #[no_mangle]
 pub extern "C" fn tl_print_f32(v: c_float) {
     println!("{}", v);
+}
+
+#[no_mangle]
+pub extern "C" fn tl_display_f32(v: c_float) {
+    print!("{}", v);
+    let _ = std::io::stdout().flush();
 }
 
 #[no_mangle]
