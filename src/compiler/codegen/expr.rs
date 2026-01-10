@@ -342,12 +342,36 @@ impl<'ctx> CodeGenerator<'ctx> {
                         self.compile_stmt(stmt)?;
                     }
                 }
-                self.exit_scope();
 
-                Ok(last_val.unwrap_or((
+                let final_res = last_val.unwrap_or((
                     self.context.i64_type().const_int(0, false).into(),
                     Type::Void,
-                )))
+                ));
+
+                // FIX UAF: Unregister block result before scope cleanup
+                if matches!(
+                    final_res.1,
+                    Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) | Type::Tuple(_)
+                ) {
+                    if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                        let ptr = final_res.0.into_pointer_value();
+                        let cast_ptr = self
+                            .builder
+                            .build_pointer_cast(
+                                ptr,
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "cast_unreg",
+                            )
+                            .unwrap();
+                        self.builder
+                            .build_call(unreg_fn, &[cast_ptr.into()], "")
+                            .unwrap();
+                    }
+                }
+
+                self.exit_scope();
+
+                Ok(final_res)
             }
             Expr::Int(i) => {
                 let i64_type = self.context.i64_type();
@@ -1266,8 +1290,28 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::Void,
                 ));
 
-                // CRITICAL FIX: exit_scope MUST be called BEFORE terminator is added
-                // so that it doesn't think the block is terminated and skip cleanup.
+                // CRITICAL FIX: Unregister return value BEFORE exit_scope to prevent Use-After-Free
+                // The value is being returned to the outer scope (via PHI), so we must stop tracking it here.
+                if matches!(
+                    then_result.1,
+                    Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) | Type::Tuple(_)
+                ) {
+                    if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                        let ptr = then_result.0.into_pointer_value();
+                        let cast_ptr = self
+                            .builder
+                            .build_pointer_cast(
+                                ptr,
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "cast_unreg",
+                            )
+                            .unwrap();
+                        self.builder
+                            .build_call(unreg_fn, &[cast_ptr.into()], "")
+                            .unwrap();
+                    }
+                }
+
                 self.exit_scope();
 
                 // Get the block after cleanup (important for PHI incoming)
@@ -1300,7 +1344,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::Void,
                 ));
 
-                // CRITICAL FIX: Same for else branch
+                // CRITICAL FIX: Unregister else result too
+                if matches!(
+                    else_result.1,
+                    Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) | Type::Tuple(_)
+                ) {
+                    if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                        let ptr = else_result.0.into_pointer_value();
+                        let cast_ptr = self
+                            .builder
+                            .build_pointer_cast(
+                                ptr,
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "cast_unreg",
+                            )
+                            .unwrap();
+                        self.builder
+                            .build_call(unreg_fn, &[cast_ptr.into()], "")
+                            .unwrap();
+                    }
+                }
+
                 self.exit_scope();
 
                 // Get the block after cleanup
@@ -1339,7 +1403,54 @@ impl<'ctx> CodeGenerator<'ctx> {
                         (&else_result.0, else_final_bb),
                     ]);
 
-                    Ok((phi.as_basic_value(), then_result.1))
+                    // FIX: Register the PHI result as a temporary
+                    // The incoming values (then_result, else_result) were unregistered in their respective blocks
+                    // to prevent freeing. Now we have a new value (phi) representing the result.
+                    // We must register it so it is managed in the PARENT scope.
+                    let res_val = phi.as_basic_value();
+                    let res_ty = then_result.1.clone(); // Assume types match (semantics checks this)
+
+                    if matches!(
+                        res_ty,
+                        Type::Tensor(_, _)
+                            | Type::Struct(_)
+                            | Type::UserDefined(_)
+                            | Type::Tuple(_)
+                    ) {
+                        self.emit_register_tensor(res_val, &res_ty)?;
+                        // Note: emit_register_tensor handles recursion for Structs/Tuples if implemented,
+                        // but currently it checks for Type::Tensor.
+                        // For structs/tuples we might need `gen_register_params` or similar if they are managed.
+                        // However, `IfExpr` typically unregisters the *value pointer*.
+
+                        // If we unregistered the *inputs*, they are effectively "moved" to the PHI node.
+                        // But wait, `tl_mem_unregister` tells runtime "stop tracking this pointer".
+                        // The PHI node returns the *same pointer* (incoming from blocks).
+                        // So the pointer itself is valid, but runtime doesn't track it.
+                        // We need to re-register it.
+
+                        if let Type::Tensor(_, _) = res_ty {
+                            // Already called emit_register_tensor above
+                        } else if let Type::Struct(_) | Type::UserDefined(_) = &res_ty {
+                            if let Some(reg_fn) = self.module.get_function("tl_mem_register_struct")
+                            {
+                                let ptr = res_val.into_pointer_value();
+                                let cast_ptr = self
+                                    .builder
+                                    .build_pointer_cast(
+                                        ptr,
+                                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                                        "cast",
+                                    )
+                                    .unwrap();
+                                self.builder
+                                    .build_call(reg_fn, &[cast_ptr.into()], "")
+                                    .unwrap();
+                            }
+                        }
+                    }
+
+                    Ok((res_val, res_ty))
                 } else {
                     Ok((
                         self.context.i64_type().const_int(0, false).into(),

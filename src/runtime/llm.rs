@@ -471,7 +471,10 @@ pub extern "C" fn tl_kv_cache_get_k(cache_id: i64, layer_idx: i64) -> *mut Opaqu
 
     match mgr.get(cache_id) {
         Some(cache) if idx < cache.cache.len() => match &cache.cache[idx] {
-            Some((k, _)) => make_tensor(k.clone()),
+            Some((k, _)) => {
+                // println!("DEBUG: Get K Cache {} Layer {}", cache_id, layer_idx);
+                make_tensor(k.clone())
+            }
             None => std::ptr::null_mut(),
         },
         _ => std::ptr::null_mut(),
@@ -485,7 +488,10 @@ pub extern "C" fn tl_kv_cache_get_v(cache_id: i64, layer_idx: i64) -> *mut Opaqu
 
     match mgr.get(cache_id) {
         Some(cache) if idx < cache.cache.len() => match &cache.cache[idx] {
-            Some((_, v)) => make_tensor(v.clone()),
+            Some((_, v)) => {
+                // println!("DEBUG: Get V Cache {} Layer {}", cache_id, layer_idx);
+                make_tensor(v.clone())
+            }
             None => std::ptr::null_mut(),
         },
         _ => std::ptr::null_mut(),
@@ -527,6 +533,7 @@ pub extern "C" fn tl_kv_cache_update(
 
         if let Some(cache) = mgr.get_mut(cache_id) {
             if idx < cache.cache.len() {
+                // println!("DEBUG: Update Cache {} Layer {}", cache_id, layer_idx);
                 let k_t = k_tensor.clone();
                 let v_t = v_tensor.clone();
                 cache.cache[idx] = Some((k_t, v_t));

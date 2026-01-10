@@ -241,6 +241,7 @@ impl MemoryManager {
         if let Some(count) = self.tensor_refcounts.get_mut(&ptr) {
             *count -= 1;
             if *count == 0 {
+                // println!("DEBUG: Free tensor {:p}", ptr);
                 self.tensor_refcounts.remove(&ptr);
                 super::free_tensor_resources(ptr as *mut OpaqueTensor);
             }
@@ -314,6 +315,7 @@ pub fn register_tensor_global(ptr: *mut OpaqueTensor) {
     // BUT only if it is still alive (tracked in refcounts)
     if mgr.is_registered(ptr as *mut c_void) {
         if mgr.tensor_refcounts.contains_key(&(ptr as *mut c_void)) {
+            // println!("DEBUG: Register existing tensor {:p} (ignored)", ptr);
             return;
         }
         // If not in refcounts, it's a stale record (freed). Allow address reuse.
@@ -321,6 +323,7 @@ pub fn register_tensor_global(ptr: *mut OpaqueTensor) {
         mgr.unregister(ptr as *mut c_void);
     }
 
+    // println!("DEBUG: Register tensor {:p}", ptr);
     mgr.register_tensor(ptr);
 }
 
@@ -334,6 +337,7 @@ pub extern "C" fn tl_mem_register_tensor(ptr: *mut OpaqueTensor) {
 #[no_mangle]
 pub extern "C" fn tl_mem_unregister(ptr: *mut c_void) {
     if !ptr.is_null() {
+        // println!("DEBUG: Unregister {:p}", ptr);
         let mut mgr = MEMORY_MANAGER.lock().unwrap();
         mgr.unregister(ptr);
     }
