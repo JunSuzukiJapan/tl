@@ -23,8 +23,8 @@ fn main() {
     set_device("auto");
     print("Test 2: set_device done");
     
-    let model_path = "/Users/junsuzuki/.llm/models/tinyllama-1.1b-chat-q4_0.gguf";
-    let tokenizer_path = "/Users/junsuzuki/.llm/models/tokenizer.json";
+    let model_path = "~/.llm/models/tinyllama-1.1b-chat-q4_0.gguf";
+    let tokenizer_path = "~/.llm/models/tokenizer.json";
     print("Test 3: paths set");
     
     print("Loading GGUF...");

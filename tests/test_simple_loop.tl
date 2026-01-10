@@ -55,7 +55,7 @@ fn main() {
     set_device("auto");
     print("Test 2: set_device done");
     
-    let model_path = "/Users/junsuzuki/.llm/models/tinyllama-1.1b-chat-q4_0.gguf";
+    let model_path = "~/.llm/models/tinyllama-1.1b-chat-q4_0.gguf";
     print("Loading GGUF...");
     let weights = tl_gguf_load(model_path);
     print("Test 4: GGUF loaded");
