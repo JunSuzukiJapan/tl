@@ -466,8 +466,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // Apply LLVM optimizations
-        if let Err(e) = self.module.verify() {
-            println!("LLVM Module Verify Failed: {}", e.to_string());
+        if let Err(_) = self.module.verify() {
             // self.module.print_to_stderr();
             // return Err("Module verification failed".into());
         }

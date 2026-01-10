@@ -52,7 +52,6 @@ pub struct OpaqueTensor(
 // even if the tensor is returned and stored in a struct.
 #[track_caller]
 pub(crate) fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
-    let caller = std::panic::Location::caller();
     let num_elements = t.elem_count();
     let dtype_id = dtype_to_id(t.dtype());
     let device_id = device_to_id(t.device());
@@ -67,12 +66,6 @@ pub(crate) fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
                 (*ptr).2 = None; // Clear grad reference
             }
             memory_manager::register_tensor_global(ptr);
-            println!(
-                "DEBUG: Reuse Tensor {:p} (pool) from {}:{}",
-                ptr,
-                caller.file(),
-                caller.line()
-            );
             return ptr;
         }
     }
@@ -81,12 +74,6 @@ pub(crate) fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
     let boxed = Box::new(OpaqueTensor(t, None, None));
     let ptr = Box::into_raw(boxed);
     memory_manager::register_tensor_global(ptr);
-    println!(
-        "DEBUG: Alloc Tensor {:p} (make_tensor) from {}:{}",
-        ptr,
-        caller.file(),
-        caller.line()
-    );
     ptr
 }
 
@@ -123,7 +110,6 @@ pub(crate) fn make_var(v: candle_core::Var) -> *mut OpaqueTensor {
 
     // NOTE: Caller is responsible for lifetime management.
     memory_manager::register_tensor_global(ptr);
-    println!("DEBUG: Alloc Tensor {:p} (make_var)", ptr);
     ptr
 }
 
@@ -639,17 +625,12 @@ pub extern "C" fn tl_tensor_print_3(t: *const OpaqueTensor) {
 /// Internal function to free tensor resources without unregistering
 /// Used by MemoryManager to avoid deadlock
 pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) {
-    println!(
-        "DEBUG: free_tensor_resources called with {:p} [mod.rs:626]",
-        t
-    );
     if !t.is_null() {
         unsafe {
             // Skip arena-allocated tensors (they are NOT poolable)
             if arena::tl_arena_contains(t as *mut std::ffi::c_void) {
                 // Arena-allocated tensors MUST be dropped to release Candle resources (GPU memory, etc)
                 // The memory for OpaqueTensor itself is reclaimed by arena reset, but the inner content needs Drop.
-                println!("DEBUG: Arena drop_in_place {:p}", t);
                 std::ptr::drop_in_place(t);
                 return;
             }
@@ -668,7 +649,6 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) {
             }
 
             // Pool is full or lock failed, actually free
-            println!("DEBUG: Box::from_raw {:p} (pool full or no pool)", t);
             let _ = Box::from_raw(t);
         }
     }
@@ -976,10 +956,9 @@ pub extern "C" fn tl_tensor_to_device(
     let t = unsafe { &(*tensor).0 };
     match t.to_device(&target_device) {
         Ok(new_t) => make_tensor(new_t),
-        Err(e) => {
-            eprintln!("Failed to move tensor to device: {}", e);
-            tensor // Return original? Or make a copy? Returning original might be confusing with ownership.
-                   // Ideally we should return a new tensor even if failed? No, panic on error.
+        Err(_e) => {
+            // eprintln!("Failed to move tensor to device: {}", e); // Removed debug print
+            std::ptr::null_mut() // Return null on error, consistent with other error paths
         }
     }
 }
@@ -1050,27 +1029,14 @@ pub extern "C" fn tl_tensor_transpose(
     dim0: usize,
     dim1: usize,
 ) -> *mut OpaqueTensor {
-    println!(
-        "DEBUG: tl_tensor_transpose ENTER t={:p} dim0={} dim1={}",
-        t, dim0, dim1
-    );
     if t.is_null() {
-        println!("ERROR: tl_tensor_transpose received NULL pointer");
+        // println!("ERROR: tl_tensor_transpose received NULL pointer"); // Removed debug print
         std::process::abort();
     }
     unsafe {
         let tensor = &(*t).0;
-        println!(
-            "DEBUG: tl_tensor_transpose tensor.shape={:?}",
-            tensor.dims()
-        );
         let result = tensor.transpose(dim0, dim1).unwrap();
-        println!(
-            "DEBUG: tl_tensor_transpose result.shape={:?}",
-            result.dims()
-        );
         let ptr = make_tensor(result);
-        println!("DEBUG: tl_tensor_transpose EXIT result={:p}", ptr);
         ptr
     }
 }
@@ -1259,7 +1225,7 @@ pub extern "C" fn tl_tensor_reshape_dims(
         let dims_tensor = &(*dims_tensor_ptr).0;
 
         let dims_i64 = if dims_tensor.dtype() == candle_core::DType::F32 {
-            // println!("DEBUG: casting dims F32 -> I64");
+            // println!("DEBUG: casting dims F32 -> I64"); // Removed debug print
             dims_tensor.to_dtype(candle_core::DType::I64).unwrap()
         } else {
             dims_tensor.clone()
@@ -1513,7 +1479,6 @@ pub extern "C" fn tl_tensor_matmul(
     a: *mut OpaqueTensor,
     b: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
-    println!("DEBUG: tl_tensor_matmul ENTER a={:p} b={:p}", a, b);
     if a.is_null() || b.is_null() {
         println!(
             "ERROR: tl_tensor_matmul received NULL pointer a={:p} b={:p}",
@@ -1524,16 +1489,6 @@ pub extern "C" fn tl_tensor_matmul(
     unsafe {
         let t_a = &(*a).0;
         let t_b = &(*b).0;
-        println!(
-            "DEBUG: tl_tensor_matmul a.shape={:?} b.shape={:?}",
-            t_a.dims(),
-            t_b.dims()
-        );
-        println!(
-            "DEBUG: tl_tensor_matmul a.device_id={} b.device_id={}",
-            device_to_id(t_a.device()),
-            device_to_id(t_b.device())
-        );
 
         // Make tensors contiguous before matmul to avoid striding issues
         let t_a_contig = t_a.contiguous().unwrap();
@@ -1549,7 +1504,6 @@ pub extern "C" fn tl_tensor_matmul(
                 t_a_contig.matmul(&t_b_contig).unwrap()
             });
         let ptr = make_tensor(result);
-        println!("DEBUG: tl_tensor_matmul EXIT result={:p}", ptr);
         ptr
     }
 }
@@ -1703,12 +1657,6 @@ pub extern "C" fn tl_tensor_map_get(
             } else {
                 t.to_device(&device).unwrap()
             };
-            println!(
-                "DEBUG: tl_tensor_map_get '{}' device_id={} -> {}",
-                key,
-                device_to_id(t.device()),
-                device_to_id(&device)
-            );
             let map_mut = &mut (*map_ptr).0;
             map_mut.insert(key.to_string(), t_on_device.clone());
             make_tensor(t_on_device)
@@ -2021,19 +1969,15 @@ pub extern "C" fn tl_vec_u8_free(ptr: *mut Vec<u8>) {
 // String helper
 #[no_mangle]
 pub extern "C" fn tl_string_new(s: *const std::os::raw::c_char) -> *mut std::os::raw::c_char {
-    println!("DEBUG: tl_string_new called with {:p}", s);
     if s.is_null() {
-        println!("DEBUG: tl_string_new - input is null");
         return std::ptr::null_mut();
     }
     unsafe {
         let len = libc::strlen(s);
-        println!("DEBUG: tl_string_new - strlen={}", len);
         let dest = libc::malloc(len + 1) as *mut std::os::raw::c_char;
         if !dest.is_null() {
             libc::strcpy(dest, s);
         }
-        println!("DEBUG: tl_string_new - returning {:p}", dest);
         dest
     }
 }

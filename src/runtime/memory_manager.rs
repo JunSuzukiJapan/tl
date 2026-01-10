@@ -3,10 +3,6 @@ use std::ffi::c_void;
 
 use super::OpaqueTensor;
 
-/// Memory budget for tensor pool (in bytes)
-/// When KV cache uses more memory, the pool budget shrinks
-const TOTAL_MEMORY_BUDGET_BYTES: usize = 2 * 1024 * 1024 * 1024; // 2GB
-
 /// Tensor pool for memory reuse
 /// Key: (num_elements, dtype_id, device_id)
 /// This avoids frequent malloc/free by reusing freed tensors of the same size
@@ -55,10 +51,6 @@ impl TensorPool {
         let key = (num_elements, dtype_id, device_id);
         if let Some(list) = self.free_list.get_mut(&key) {
             if let Some(ptr) = list.pop() {
-                println!(
-                    "DEBUG: TensorPool acquire {:p} (elements={}, dtype={}, device={})",
-                    ptr, num_elements, dtype_id, device_id
-                );
                 return Some(ptr);
             }
         }
@@ -82,22 +74,9 @@ impl TensorPool {
 
         if list.len() < effective_max {
             list.push(ptr);
-            println!(
-                "DEBUG: TensorPool release {:p} (elements={}, dtype={}, device={}, pool_size={}, effective_max={})",
-                ptr,
-                num_elements,
-                dtype_id,
-                device_id,
-                list.len(),
-                effective_max
-            );
             true
         } else {
             // Pool is full, tensor should be freed
-            println!(
-                "DEBUG: TensorPool full for (elements={}, dtype={}, device={}), freeing {:p} (effective_max={})",
-                num_elements, dtype_id, device_id, ptr, effective_max
-            );
             false
         }
     }
@@ -108,7 +87,7 @@ impl TensorPool {
         for (_, list) in self.free_list.drain() {
             for ptr in list {
                 unsafe {
-                    println!("DEBUG: TensorPool clearing {:p}", ptr);
+                    // println!("TensorPool clearing {:p}", ptr);
                     let _ = Box::from_raw(ptr);
                 }
             }
@@ -164,7 +143,7 @@ impl MemoryManager {
     /// Enter a new scope
     pub fn enter_scope(&mut self) {
         self.scopes.push(Vec::new());
-        println!("DEBUG: Enter Scope. Depth: {}", self.scopes.len());
+        // println!("Enter Scope. Depth: {}", self.scopes.len());
         // Save current arena offset
         let offset = super::arena::tl_arena_get_offset();
         self.arena_offsets.push(offset);
@@ -173,7 +152,7 @@ impl MemoryManager {
     /// Exit current scope and free ALL allocations in that scope
     /// CRITICAL: This MUST free all unfreed memory in the scope
     pub fn exit_scope(&mut self) {
-        println!("DEBUG: Exit Scope. Start Depth: {}", self.scopes.len());
+        // println!("Exit Scope. Start Depth: {}", self.scopes.len());
         if self.scopes.len() <= 1 {
             return;
         }
@@ -229,7 +208,6 @@ impl MemoryManager {
             let is_new = *count == 0;
             if is_new {
                 *count = 1;
-                println!("DEBUG: Register Tensor {:p} (New).", ptr);
                 // CRITICAL FIX: Only add to scope for NEW allocations.
                 // Existing tensors already have scope entries.
                 scope.push(AllocationRecord {
@@ -240,25 +218,19 @@ impl MemoryManager {
                 // Tensor already registered and has refcount.
                 // Acquire increases the refcount to account for the new reference.
                 *count += 1;
-                println!(
-                    "DEBUG: Register Tensor {:p} (Existing, Acquired count: {}).",
-                    ptr, *count
-                );
             }
         } else {
-            println!("DEBUG: register_tensor called but scopes empty!");
+            // No active scope, this should ideally not happen if scopes are managed correctly
         }
     }
 
     /// Increase reference count
     pub fn acquire_tensor_ptr(&mut self, ptr: *mut c_void) {
         if ptr.is_null() {
-            println!("Warning: Attempt to acquire NULL tensor ptr");
             return;
         }
         let count = self.tensor_refcounts.entry(ptr).or_insert(0);
         *count += 1;
-        println!("Acquire Tensor {:p}, count: {}", ptr, *count);
     }
 
     /// Decrease reference count and free if 0
@@ -268,17 +240,8 @@ impl MemoryManager {
         }
         if let Some(count) = self.tensor_refcounts.get_mut(&ptr) {
             *count -= 1;
-            println!(
-                "DEBUG: Release Tensor {:p}, new count: {} [memory_manager.rs:148]",
-                ptr, *count
-            );
             if *count == 0 {
-                println!("DEBUG: Freeing Tensor {:p} [memory_manager.rs:150]", ptr);
                 self.tensor_refcounts.remove(&ptr);
-                println!(
-                    "DEBUG: Calling free_tensor_resources {:p} [memory_manager.rs:152]",
-                    ptr
-                );
                 super::free_tensor_resources(ptr as *mut OpaqueTensor);
             }
         }
@@ -297,7 +260,6 @@ impl MemoryManager {
                 // Unregister means "Remove from Scope Ownership".
                 // The RefCount (1) is transferred to the caller (Variable, Struct, etc).
                 // If we release, we drop RefCount to 0 and Free!
-                println!("DEBUG: Unregistered {:p} from scope (Move)", ptr);
                 return;
             }
         }
@@ -355,10 +317,6 @@ pub fn register_tensor_global(ptr: *mut OpaqueTensor) {
             return;
         }
         // If not in refcounts, it's a stale record (freed). Allow address reuse.
-        println!(
-            "DEBUG: Address reuse detected for {:p}, purging stale record.",
-            ptr
-        );
         // Remove the stale record to prevent confusion
         mgr.unregister(ptr as *mut c_void);
     }
@@ -376,7 +334,6 @@ pub extern "C" fn tl_mem_register_tensor(ptr: *mut OpaqueTensor) {
 #[no_mangle]
 pub extern "C" fn tl_mem_unregister(ptr: *mut c_void) {
     if !ptr.is_null() {
-        println!("DEBUG: Unregistering {:p}", ptr);
         let mut mgr = MEMORY_MANAGER.lock().unwrap();
         mgr.unregister(ptr);
     }

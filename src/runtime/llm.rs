@@ -16,7 +16,6 @@ pub extern "C" fn tl_tokenizer_new(path: *const c_char) -> i64 {
         match Tokenizer::from_file(path_str) {
             Ok(tokenizer) => {
                 let ptr = Box::into_raw(Box::new(OpaqueTokenizer(tokenizer)));
-                println!("DEBUG: Tokenizer New Ptr: {:p}", ptr);
                 ptr as i64
             }
             Err(e) => {
@@ -31,9 +30,7 @@ pub extern "C" fn tl_tokenizer_new(path: *const c_char) -> i64 {
 pub extern "C" fn tl_tokenizer_encode(tokenizer: i64, prompt: *const c_char) -> *mut OpaqueTensor {
     unsafe {
         let tokenizer_ptr = tokenizer as *mut OpaqueTokenizer;
-        println!("DEBUG: Tokenizer Encode Ptr: {:p}", tokenizer_ptr);
         let prompt_str = CStr::from_ptr(prompt).to_str().unwrap();
-        println!("DEBUG: Tokenizer encode input: '{}'", prompt_str);
         let t = &(*tokenizer_ptr).0;
         match t.encode(prompt_str, true) {
             Ok(encoding) => {
@@ -59,39 +56,28 @@ pub extern "C" fn tl_tokenizer_encode(tokenizer: i64, prompt: *const c_char) -> 
 #[no_mangle]
 pub extern "C" fn tl_tokenizer_decode(tokenizer: i64, ids: *mut OpaqueTensor) -> *mut c_char {
     unsafe {
-        eprintln!(
-            "DEBUG: tl_tokenizer_decode called with tokenizer={}, ids={:p}",
-            tokenizer, ids
-        );
-
         let t = &(*(tokenizer as *mut OpaqueTokenizer)).0;
-        eprintln!("DEBUG: Tokenizer ref obtained");
 
         if ids.is_null() {
-            eprintln!("DEBUG: ids is null!");
             return CString::new("").unwrap().into_raw();
         }
 
         let tensor_wrapper = &(*ids);
-        eprintln!("DEBUG: Tensor wrapper obtained");
 
         // Check tensor validity if possible or just access
         let tensor = &tensor_wrapper.0;
-        eprintln!("DEBUG: Tensor ref obtained: {:?}", tensor);
 
         // Flatten to 1D and get values
         // Expecting [1, 1] or [N] tensor of I64
         let tensor_i64 = match tensor.flatten_all() {
             Ok(t) => t,
             Err(e) => {
-                eprintln!("DEBUG: Flatten failed: {}", e);
+                eprintln!("Flatten failed: {}", e);
                 return CString::new("").unwrap().into_raw();
             }
         };
-        eprintln!("DEBUG: Tensor flattened");
 
         let vec_i64 = tensor_i64.to_vec1::<i64>().unwrap_or_else(|_| {
-            eprintln!("DEBUG: Fallback to float conversion");
             // Fallback if float
             tensor_i64
                 .to_dtype(DType::F32)
@@ -102,15 +88,12 @@ pub extern "C" fn tl_tokenizer_decode(tokenizer: i64, ids: *mut OpaqueTensor) ->
                 .map(|&x| x as i64)
                 .collect()
         });
-        eprintln!("DEBUG: Vec i64 obtained: {:?}", vec_i64);
 
         // Convert i64 -> u32
         let vec_u32: Vec<u32> = vec_i64.iter().map(|&x| x as u32).collect();
-        eprintln!("DEBUG: Vec u32 ready: {:?}", vec_u32);
 
         match t.decode(&vec_u32, true) {
             Ok(s) => {
-                eprintln!("DEBUG: Decode success: \'{}\'", s);
                 let c_string = CString::new(s).unwrap();
                 c_string.into_raw()
             }
@@ -137,7 +120,6 @@ pub extern "C" fn tl_gguf_load(path: *const c_char) -> i64 {
         let map_ptr = Box::into_raw(Box::new(OpaqueTensorMap(std::collections::HashMap::new())));
         {
             let map = &mut *map_ptr;
-            println!("DEBUG: GGUF Load Map Ptr: {:p}", map_ptr);
 
             // Print keys to debug
             // for tensor_name in content.tensor_infos.keys() {
@@ -249,30 +231,19 @@ pub extern "C" fn tl_tensor_cat_4d(
     b: *mut OpaqueTensor,
     dim: i64,
 ) -> *mut OpaqueTensor {
-    println!(
-        "DEBUG: tl_tensor_cat_4d ENTER a={:p} b={:p} dim={}",
-        a, b, dim
-    );
-
     if a.is_null() {
-        println!("DEBUG: tl_tensor_cat_4d - a is NULL!");
+        eprintln!("ERROR: tl_tensor_cat_4d - a is NULL!");
         return std::ptr::null_mut();
     }
     if b.is_null() {
-        println!("DEBUG: tl_tensor_cat_4d - b is NULL!");
+        eprintln!("ERROR: tl_tensor_cat_4d - b is NULL!");
         return std::ptr::null_mut();
     }
 
     unsafe {
         let a_t = &(*a).0;
         let b_t = &(*b).0;
-        println!(
-            "DEBUG: tl_tensor_cat_4d a.shape={:?} b.shape={:?}",
-            a_t.shape(),
-            b_t.shape()
-        );
         let result = Tensor::cat(&[a_t, b_t], dim as usize).unwrap();
-        println!("DEBUG: tl_tensor_cat_4d result.shape={:?}", result.shape());
         make_tensor(result)
     }
 }
@@ -435,10 +406,6 @@ impl KVCacheManager {
         let id = self.next_id;
         self.next_id += 1;
         self.caches.insert(id, cache);
-        println!(
-            "DEBUG: KVCacheManager created cache id={} with {} layers (total_bytes={})",
-            id, layers, self.total_bytes
-        );
         id
     }
 
@@ -446,15 +413,6 @@ impl KVCacheManager {
         if let Some(cache) = self.caches.remove(&id) {
             let freed_bytes = cache.memory_bytes();
             self.total_bytes = self.total_bytes.saturating_sub(freed_bytes);
-            println!(
-                "DEBUG: KVCacheManager freed cache id={}, released {} bytes (total_bytes={})",
-                id, freed_bytes, self.total_bytes
-            );
-        } else {
-            println!(
-                "DEBUG: KVCacheManager free called for non-existent id={}",
-                id
-            );
         }
     }
 
@@ -467,24 +425,13 @@ impl KVCacheManager {
     }
 
     pub fn clear_all(&mut self) {
-        let count = self.caches.len();
-        let freed = self.total_bytes;
         self.caches.clear();
         self.total_bytes = 0;
-        println!(
-            "DEBUG: KVCacheManager cleared all {} caches, released {} bytes",
-            count, freed
-        );
     }
 
     /// Get total memory usage in bytes
     pub fn memory_usage(&self) -> usize {
         self.total_bytes
-    }
-
-    /// Update memory tracking when a layer is updated
-    pub fn add_memory(&mut self, bytes: usize) {
-        self.total_bytes += bytes;
     }
 
     /// Recalculate total memory (useful for verification)
@@ -519,37 +466,11 @@ pub extern "C" fn tl_kv_cache_get_k(cache_id: i64, layer_idx: i64) -> *mut Opaqu
     let idx = layer_idx as usize;
 
     match mgr.get(cache_id) {
-        Some(cache) => {
-            if idx >= cache.cache.len() {
-                println!(
-                    "DEBUG: tl_kv_cache_get_k - layer_idx {} out of range",
-                    layer_idx
-                );
-                return std::ptr::null_mut();
-            }
-            match &cache.cache[idx] {
-                Some((k, _)) => {
-                    println!(
-                        "DEBUG: tl_kv_cache_get_k - cache_id={} layer={} shape={:?}",
-                        cache_id,
-                        layer_idx,
-                        k.shape()
-                    );
-                    make_tensor(k.clone())
-                }
-                None => {
-                    println!(
-                        "DEBUG: tl_kv_cache_get_k - cache_id={} layer={} is None",
-                        cache_id, layer_idx
-                    );
-                    std::ptr::null_mut()
-                }
-            }
-        }
-        None => {
-            println!("DEBUG: tl_kv_cache_get_k - cache_id {} not found", cache_id);
-            std::ptr::null_mut()
-        }
+        Some(cache) if idx < cache.cache.len() => match &cache.cache[idx] {
+            Some((k, _)) => make_tensor(k.clone()),
+            None => std::ptr::null_mut(),
+        },
+        _ => std::ptr::null_mut(),
     }
 }
 
@@ -559,37 +480,11 @@ pub extern "C" fn tl_kv_cache_get_v(cache_id: i64, layer_idx: i64) -> *mut Opaqu
     let idx = layer_idx as usize;
 
     match mgr.get(cache_id) {
-        Some(cache) => {
-            if idx >= cache.cache.len() {
-                println!(
-                    "DEBUG: tl_kv_cache_get_v - layer_idx {} out of range",
-                    layer_idx
-                );
-                return std::ptr::null_mut();
-            }
-            match &cache.cache[idx] {
-                Some((_, v)) => {
-                    println!(
-                        "DEBUG: tl_kv_cache_get_v - cache_id={} layer={} shape={:?}",
-                        cache_id,
-                        layer_idx,
-                        v.shape()
-                    );
-                    make_tensor(v.clone())
-                }
-                None => {
-                    println!(
-                        "DEBUG: tl_kv_cache_get_v - cache_id={} layer={} is None",
-                        cache_id, layer_idx
-                    );
-                    std::ptr::null_mut()
-                }
-            }
-        }
-        None => {
-            println!("DEBUG: tl_kv_cache_get_v - cache_id {} not found", cache_id);
-            std::ptr::null_mut()
-        }
+        Some(cache) if idx < cache.cache.len() => match &cache.cache[idx] {
+            Some((_, v)) => make_tensor(v.clone()),
+            None => std::ptr::null_mut(),
+        },
+        _ => std::ptr::null_mut(),
     }
 }
 
@@ -600,82 +495,33 @@ pub extern "C" fn tl_kv_cache_update(
     k: *mut OpaqueTensor,
     v: *mut OpaqueTensor,
 ) {
-    println!(
-        "DEBUG: tl_kv_cache_update ENTER - cache_id={} layer_idx={} k={:p} v={:p}",
-        cache_id, layer_idx, k, v
-    );
-
     if k.is_null() {
-        println!("DEBUG: tl_kv_cache_update - k is NULL!");
+        eprintln!("ERROR: tl_kv_cache_update - k is NULL!");
         return;
     }
     if v.is_null() {
-        println!("DEBUG: tl_kv_cache_update - v is NULL!");
+        eprintln!("ERROR: tl_kv_cache_update - v is NULL!");
         return;
     }
 
     unsafe {
         let k_tensor = &(*k).0;
         let v_tensor = &(*v).0;
-        let new_bytes = (k_tensor.elem_count() + v_tensor.elem_count()) * 4; // f32 = 4 bytes
-
-        println!(
-            "DEBUG: tl_kv_cache_update - k.shape={:?} v.shape={:?} new_bytes={}",
-            k_tensor.shape(),
-            v_tensor.shape(),
-            new_bytes
-        );
 
         let mut mgr = KV_CACHE_MANAGER.lock().unwrap();
         let idx = layer_idx as usize;
 
-        match mgr.get_mut(cache_id) {
-            Some(cache) => {
-                if idx >= cache.cache.len() {
-                    println!(
-                        "DEBUG: tl_kv_cache_update - layer_idx {} out of range",
-                        layer_idx
-                    );
-                    return;
-                }
-
-                // Calculate old memory usage for this layer
-                let old_bytes = if let Some((old_k, old_v)) = &cache.cache[idx] {
-                    (old_k.elem_count() + old_v.elem_count()) * 4
-                } else {
-                    0
-                };
-
+        if let Some(cache) = mgr.get_mut(cache_id) {
+            if idx < cache.cache.len() {
                 let k_t = k_tensor.clone();
                 let v_t = v_tensor.clone();
                 cache.cache[idx] = Some((k_t, v_t));
-
-                // Update total memory tracking
-                // Note: We need to access the manager's total_bytes directly
-                // but we already have mutable borrow through get_mut
-                // So we'll do this after the scope
-                println!(
-                    "DEBUG: tl_kv_cache_update - stored cache_id={} layer={} old_bytes={} new_bytes={}",
-                    cache_id, layer_idx, old_bytes, new_bytes
-                );
-            }
-            None => {
-                println!(
-                    "DEBUG: tl_kv_cache_update - cache_id {} not found",
-                    cache_id
-                );
             }
         }
 
         // Recalculate total memory after update
         mgr.recalculate_memory();
-        println!(
-            "DEBUG: tl_kv_cache_update - total_bytes now = {}",
-            mgr.memory_usage()
-        );
     }
-
-    println!("DEBUG: tl_kv_cache_update EXIT");
 }
 
 /// Get total KV Cache memory usage in bytes (FFI)
@@ -768,7 +614,7 @@ mod tests {
         reset_manager();
 
         let id1 = tl_kv_cache_new(3);
-        let id2 = tl_kv_cache_new(5);
+        let _id2 = tl_kv_cache_new(5);
         let _id3 = tl_kv_cache_new(7);
 
         // Free one manually first

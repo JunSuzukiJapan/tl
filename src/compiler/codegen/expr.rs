@@ -327,7 +327,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         expr: &Expr,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        eprintln!("Compiling Expr: {:?}", expr);
         match expr {
             Expr::Block(stmts) => {
                 self.enter_scope();
@@ -1266,13 +1265,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.context.i64_type().const_int(0, false).into(),
                     Type::Void,
                 ));
-                let then_end_bb = self.builder.get_insert_block().unwrap();
-                if then_end_bb.get_terminator().is_none() {
+
+                // CRITICAL FIX: exit_scope MUST be called BEFORE terminator is added
+                // so that it doesn't think the block is terminated and skip cleanup.
+                self.exit_scope();
+
+                // Get the block after cleanup (important for PHI incoming)
+                let then_final_bb = self.builder.get_insert_block().unwrap();
+                if then_final_bb.get_terminator().is_none() {
                     self.builder
                         .build_unconditional_branch(merge_bb)
                         .map_err(|e| e.to_string())?;
                 }
-                self.exit_scope();
 
                 // Else branch
                 self.builder.position_at_end(else_bb);
@@ -1295,13 +1299,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.context.i64_type().const_int(0, false).into(),
                     Type::Void,
                 ));
-                let else_end_bb = self.builder.get_insert_block().unwrap();
-                if else_end_bb.get_terminator().is_none() {
+
+                // CRITICAL FIX: Same for else branch
+                self.exit_scope();
+
+                // Get the block after cleanup
+                let else_final_bb = self.builder.get_insert_block().unwrap();
+                if else_final_bb.get_terminator().is_none() {
                     self.builder
                         .build_unconditional_branch(merge_bb)
                         .map_err(|e| e.to_string())?;
                 }
-                self.exit_scope();
 
                 // Merge block with PHI
                 self.builder.position_at_end(merge_bb);
@@ -1327,8 +1335,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .build_phi(llvm_ty, "if_result")
                         .map_err(|e| e.to_string())?;
                     phi.add_incoming(&[
-                        (&then_result.0, then_end_bb),
-                        (&else_result.0, else_end_bb),
+                        (&then_result.0, then_final_bb),
+                        (&else_result.0, else_final_bb),
                     ]);
 
                     Ok((phi.as_basic_value(), then_result.1))

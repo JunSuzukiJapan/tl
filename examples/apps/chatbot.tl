@@ -36,6 +36,7 @@ extern fn tl_tensor_rope_new_cos(dim: i64, len: i64, theta: f32) -> Tensor<f32, 
 extern fn tl_tensor_rope_new_sin(dim: i64, len: i64, theta: f32) -> Tensor<f32, 2>;
 extern fn tl_tensor_embedding(tokens: Tensor<i64, 1>, weights: Tensor<f32, 2>) -> Tensor<f32, 2>;
 extern fn tl_tensor_add(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
+extern fn tl_get_memory_mb() -> i64;
 extern fn tl_tensor_reshape_3d_to_2d(t: Tensor<f32, 3>, dims: Tensor<i64, 1>, n: i64) -> Tensor<f32, 2>;
 
 // KV Cache Externs
@@ -160,16 +161,13 @@ impl Attention {
         let v_4d = tl_tensor_reshape_dims(v, v_shape, 4);
         
         // 3. RoPE
-        // Need to slice cos/sin based on start_pos and seq_len
         let cos_slice = tl_tensor_narrow(cos, 0, start_pos, seq_len);
         let sin_slice = tl_tensor_narrow(sin, 0, start_pos, seq_len);
         
-        // apply rope
         let q_rope = tl_tensor_apply_rope(q_4d, cos_slice, sin_slice);
         let k_rope = tl_tensor_apply_rope(k_4d, cos_slice, sin_slice);
         
         // 4. KV Cache Update
-        // Transpose K, V to [batch, heads, seq, dim] first
         let k_trans = tl_tensor_transpose(k_rope, 1, 2);
         let v_trans = tl_tensor_transpose(v_4d, 1, 2);
         
@@ -237,7 +235,6 @@ impl TransformerBlock {
 extern fn tl_tensor_reshape_2d(t: Tensor<f32, 4>, dims: Tensor<i64, 1>, n: i64) -> Tensor<f32, 2>;
 
 fn main() {
-    print("DEBUG: main() start");
     print("TinyLlama Chatbot Verification (Metal + KV Cache)");
     print("Device initialized.");
     
@@ -267,11 +264,13 @@ fn main() {
        
        let cache = tl_kv_cache_new(22);
        let gen_idx = 0;
-       
-       // Declare next_token with initial value (cloned from tokens to avoid move)
-       let next_token = tokens.clone();
+              // Declare next_token with initial value (cloned from tokens to avoid move)
+        let next_token = tokens.clone();
 
-       while gen_idx < 100 {
+        let output_norm = RMSNorm::new(weights, "output_norm.weight");
+        let output_head = Linear::from_map(weights, "output.weight");
+
+        while gen_idx < 100 {
            let len = tl_tensor_len(tokens);
            let start_pos = if gen_idx == 0 { 0 } else { len - 1 };
            let cur_len = if gen_idx == 0 { len } else { 1 };
@@ -284,19 +283,15 @@ fn main() {
 
            let w_embedding = tl_tensor_map_get(weights, "token_embd.weight");
            let x = tl_tensor_embedding(input_tokens, w_embedding);
-           
-           let layer_idx = 0;
-           while layer_idx < 22 {
-               let blk = TransformerBlock::from_map(weights, layer_idx);
-               x = blk.forward(x, cos, sin, cur_len, cache, layer_idx, start_pos);
-               layer_idx = layer_idx + 1;
-           }
-           
-           let norm = RMSNorm::new(weights, "output_norm.weight");
-           let output = Linear::from_map(weights, "output.weight");
-           
-           let x_norm = norm.forward(x);
-           let logits = output.forward(x_norm);
+                      let layer_idx = 0;
+            while layer_idx < 22 {
+                let blk = TransformerBlock::from_map(weights, layer_idx);
+                x = blk.forward(x, cos, sin, cur_len, cache, layer_idx, start_pos);
+                layer_idx = layer_idx + 1;
+            }
+            
+            let x_norm = output_norm.forward(x);
+            let logits = output_head.forward(x_norm);
            
            let last_logits = tl_tensor_narrow(logits, 0, cur_len - 1, 1);
            

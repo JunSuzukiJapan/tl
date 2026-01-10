@@ -1923,7 +1923,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         rhs_type: Type,
         op: BinOp,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        eprintln!("Compile BinOp: {:?} {:?} {:?}", op, lhs_type, rhs_type);
         match (&lhs_type, &rhs_type) {
             (Type::I64, Type::I64) => {
                 let l = lhs.into_int_value();
