@@ -92,9 +92,43 @@ impl<'ctx> CodeGenerator<'ctx> {
                             // Recursive free handles null check
                             let _ = self.emit_recursive_free(struct_val, ty);
 
-                            // CRITICAL: Unregister from MemoryManager to prevent double-free via tl_mem_exit_scope
                             if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
                                 let _ = self.builder.build_call(unreg_fn, &[struct_val.into()], "");
+                            }
+
+                            // CRITICAL FIX: Free the struct pointer itself (container)
+                            // recursive_free only freed the fields. unregister removed it from Runtime auto-free.
+                            // We must explicitly free the malloc'd struct now.
+                            // Use 'free' from libc (or tl_free_tmp if appropriate, but standard free is safer for general malloc)
+                            if let Some(free_fn) = self.module.get_function("free") {
+                                let void_ptr = self
+                                    .builder
+                                    .build_pointer_cast(
+                                        struct_val.into_pointer_value(),
+                                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                                        "void_ptr",
+                                    )
+                                    .unwrap();
+                                let _ = self.builder.build_call(free_fn, &[void_ptr.into()], "");
+                            } else {
+                                // Try to declare free if not found (unlikely if stdlib loaded, but safe fallback)
+                                let free_type = self.context.void_type().fn_type(
+                                    &[self
+                                        .context
+                                        .ptr_type(inkwell::AddressSpace::default())
+                                        .into()],
+                                    false,
+                                );
+                                let free_fn = self.module.add_function("free", free_type, None);
+                                let void_ptr = self
+                                    .builder
+                                    .build_pointer_cast(
+                                        struct_val.into_pointer_value(),
+                                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                                        "void_ptr",
+                                    )
+                                    .unwrap();
+                                let _ = self.builder.build_call(free_fn, &[void_ptr.into()], "");
                             }
                         }
                     } else if matches!(ty, Type::Tensor(_, _)) {
