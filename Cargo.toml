@@ -40,7 +40,7 @@ byteorder = "1.5"
 
 
 [features]
-default = ["accelerate"]
+default = ["accelerate", "metal"]
 accelerate = ["candle-core/accelerate"]
 metal = ["candle-core/metal"]
 cuda = ["candle-core/cuda"]

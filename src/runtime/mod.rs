@@ -229,6 +229,10 @@ pub extern "C" fn tl_tensor_item_i64(t: *mut OpaqueTensor) -> i64 {
                                     if let Ok(v) = ten.flatten_all().unwrap().to_vec1::<u32>() {
                                         return v[0] as i64;
                                     }
+                                    // Try i64 vec
+                                    if let Ok(v) = ten.flatten_all().unwrap().to_vec1::<i64>() {
+                                        return v[0];
+                                    }
                                     // Fallback to f32
                                     let v = ten.flatten_all().unwrap().to_vec1::<f32>().unwrap();
                                     v[0] as i64

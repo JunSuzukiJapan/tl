@@ -80,7 +80,7 @@ fn main() -> Result<()> {
             let mut ast = match load_module_recursive(file.clone()) {
                 Ok(ast) => ast,
                 Err(e) => {
-                    eprintln!("Load error: {}", e);
+                    eprintln!("Load error: {:?}", e);
                     std::process::exit(1);
                 }
             };

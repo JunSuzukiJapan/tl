@@ -1496,6 +1496,126 @@ pub fn declare_runtime_functions<'ctx>(
     module.add_function("tl_pool_release", pool_release_type, None);
     fn_return_types.insert("tl_pool_release".to_string(), Type::Void);
 
+    // --- KV Cache ---
+
+    // tl_kv_cache_new(layers: i64) -> i64
+    let kv_new_type = i64_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_kv_cache_new", kv_new_type);
+    fn_return_types.insert("tl_kv_cache_new".to_string(), Type::I64);
+
+    if let Some(f) = module.get_function("tl_kv_cache_new") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_new as usize);
+    }
+
+    // tl_kv_cache_free(ptr: i64) -> void
+    let kv_free_type = void_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_kv_cache_free", kv_free_type);
+    fn_return_types.insert("tl_kv_cache_free".to_string(), Type::Void);
+
+    if let Some(f) = module.get_function("tl_kv_cache_free") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_free as usize);
+    }
+
+    // tl_kv_cache_get_k(ptr: i64, layer: i64) -> Tensor
+    let kv_get_type = ptr_type.fn_type(&[i64_type.into(), i64_type.into()], false);
+    add_fn("tl_kv_cache_get_k", kv_get_type);
+    fn_return_types.insert(
+        "tl_kv_cache_get_k".to_string(),
+        Type::Tensor(Box::new(Type::F32), 4),
+    );
+
+    if let Some(f) = module.get_function("tl_kv_cache_get_k") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_get_k as usize);
+    }
+
+    // tl_kv_cache_get_v(ptr: i64, layer: i64) -> Tensor
+    add_fn("tl_kv_cache_get_v", kv_get_type);
+    fn_return_types.insert(
+        "tl_kv_cache_get_v".to_string(),
+        Type::Tensor(Box::new(Type::F32), 4),
+    );
+
+    if let Some(f) = module.get_function("tl_kv_cache_get_v") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_get_v as usize);
+    }
+
+    // tl_kv_cache_update(ptr, layer, k, v) -> void
+    let kv_update_type = void_type.fn_type(
+        &[
+            i64_type.into(),
+            i64_type.into(),
+            ptr_type.into(),
+            ptr_type.into(),
+        ],
+        false,
+    );
+    add_fn("tl_kv_cache_update", kv_update_type);
+    fn_return_types.insert("tl_kv_cache_update".to_string(), Type::Void);
+
+    if let Some(f) = module.get_function("tl_kv_cache_update") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_update as usize);
+    }
+
+    // --- KV Cache ---
+
+    // tl_kv_cache_new(layers: i64) -> i64
+    let kv_new_type = i64_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_kv_cache_new", kv_new_type);
+    fn_return_types.insert("tl_kv_cache_new".to_string(), Type::I64);
+
+    if let Some(f) = module.get_function("tl_kv_cache_new") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_new as usize);
+    }
+
+    // tl_kv_cache_free(ptr: i64) -> void
+    let kv_free_type = void_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_kv_cache_free", kv_free_type);
+    fn_return_types.insert("tl_kv_cache_free".to_string(), Type::Void);
+
+    if let Some(f) = module.get_function("tl_kv_cache_free") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_free as usize);
+    }
+
+    // tl_kv_cache_get_k(ptr: i64, layer: i64) -> Tensor
+    let kv_get_type = ptr_type.fn_type(&[i64_type.into(), i64_type.into()], false);
+    add_fn("tl_kv_cache_get_k", kv_get_type);
+    fn_return_types.insert(
+        "tl_kv_cache_get_k".to_string(),
+        Type::Tensor(Box::new(Type::F32), 2),
+    );
+
+    if let Some(f) = module.get_function("tl_kv_cache_get_k") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_get_k as usize);
+    }
+
+    // tl_kv_cache_get_v(ptr: i64, layer: i64) -> Tensor
+    add_fn("tl_kv_cache_get_v", kv_get_type);
+    fn_return_types.insert(
+        "tl_kv_cache_get_v".to_string(),
+        Type::Tensor(Box::new(Type::F32), 2),
+    );
+
+    if let Some(f) = module.get_function("tl_kv_cache_get_v") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_get_v as usize);
+    }
+
+    // tl_kv_cache_update(ptr, layer, k, v) -> void
+    let kv_update_type = void_type.fn_type(
+        &[
+            i64_type.into(),
+            i64_type.into(),
+            ptr_type.into(),
+            ptr_type.into(),
+        ],
+        false,
+    );
+    add_fn("tl_kv_cache_update", kv_update_type);
+    fn_return_types.insert("tl_kv_cache_update".to_string(), Type::Void);
+
+    if let Some(f) = module.get_function("tl_kv_cache_update") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_update as usize);
+    }
+
     // Arena Allocator Functions
     // tl_arena_init(capacity: i64) -> void
     let arena_init_type = void_type.fn_type(&[i64_type.into()], false);

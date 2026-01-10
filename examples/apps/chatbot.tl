@@ -38,6 +38,16 @@ extern fn tl_tensor_embedding(tokens: Tensor<i64, 1>, weights: Tensor<f32, 2>) -
 extern fn tl_tensor_add(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
 extern fn tl_tensor_reshape_3d_to_2d(t: Tensor<f32, 3>, dims: Tensor<i64, 1>, n: i64) -> Tensor<f32, 2>;
 
+// KV Cache Externs
+extern fn tl_kv_cache_new(layers: i64) -> i64;
+extern fn tl_kv_cache_free(cache: i64);
+extern fn tl_kv_cache_get_k(cache: i64, layer: i64) -> Tensor<f32, 4>;
+extern fn tl_kv_cache_get_v(cache: i64, layer: i64) -> Tensor<f32, 4>;
+extern fn tl_kv_cache_update(cache: i64, layer: i64, k: Tensor<f32, 4>, v: Tensor<f32, 4>);
+
+// Missing Ops
+extern fn tl_tensor_cat_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>, dim: i64) -> Tensor<f32, 4>;
+
 // RoPE/GQA support
 extern fn tl_tensor_narrow(t: Tensor<f32, 2>, dim: i64, start: i64, length: i64) -> Tensor<f32, 2>;
 extern fn tl_tensor_repeat_interleave(t: Tensor<f32, 4>, repeats: i64, dim: i64) -> Tensor<f32, 4>;
@@ -108,8 +118,6 @@ impl MLP {
     }
 }
 
-// Attention removed
-
 struct Attention {
     q_proj: Linear,
     k_proj: Linear,
@@ -122,7 +130,6 @@ struct Attention {
 
 impl Attention {
     fn from_map(map: i64, prefix: String) -> Attention {
-        // GGUF naming: blk.X.attn_q.weight, blk.X.attn_k.weight, blk.X.attn_v.weight, blk.X.attn_output.weight
         let q = Linear::from_map(map, tl_string_concat(prefix, "_q.weight"));
         let k = Linear::from_map(map, tl_string_concat(prefix, "_k.weight"));
         let v = Linear::from_map(map, tl_string_concat(prefix, "_v.weight"));
@@ -134,76 +141,46 @@ impl Attention {
         };
     }
     
-    fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, seq_len: i64) -> Tensor<f32, 2> {
-        // x: [seq, dim]
-        // TinyLlama: 32 Q heads, 4 K/V heads (GQA group ratio = 8)
+    fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, seq_len: i64, cache: i64, layer_idx: i64, start_pos: i64) -> Tensor<f32, 2> {
+        // x: [seq_len, hidden_size]
+        // 1. QKV Projections
+        let q = self.q_proj.forward(x.clone());
+        let k = self.k_proj.forward(x.clone());
+        let v = self.v_proj.forward(x.clone());
         
-        // 1. Project Q, K, V
-        let q = self.q_proj.forward(x.clone());  // [seq, 2048]
-        let k = self.k_proj.forward(x.clone());  // [seq, 256]
-        let v = self.v_proj.forward(x);          // [seq, 256]
+        let batch_size = 1;
         
-        // 2. Reshape to multi-head format
-        // Q: [seq, 2048] -> [1, seq, 32, 64]
-        let q4 = tl_tensor_reshape_dims(q, [1, seq_len, 32, 64], 4);
+        // 2. Reshape & Transpose for RoPE and Attention
+        let q_shape = [batch_size, seq_len, 32, 64];
+        let k_shape = [batch_size, seq_len, 4, 64];
+        let v_shape = [batch_size, seq_len, 4, 64];
         
-        // K/V: [seq, 256] -> [1, seq, 4, 64]
-        let k4 = tl_tensor_reshape_dims(k, [1, seq_len, 4, 64], 4);
-        let v4 = tl_tensor_reshape_dims(v, [1, seq_len, 4, 64], 4);
+        let q_4d = tl_tensor_reshape_dims(q, q_shape, 4);
+        let k_4d = tl_tensor_reshape_dims(k, k_shape, 4);
+        let v_4d = tl_tensor_reshape_dims(v, v_shape, 4);
         
-        // 3. Slice RoPE cos/sin for current sequence length
-        // cos/sin: [max_len, head_dim/2]
-        // We need [seq, head_dim/2]
-        let cos_slice = tl_tensor_narrow(cos, 0, 0, seq_len);
-        let sin_slice = tl_tensor_narrow(sin, 0, 0, seq_len);
+        // 3. RoPE
+        // Need to slice cos/sin based on start_pos and seq_len
+        let cos_slice = tl_tensor_narrow(cos, 0, start_pos, seq_len);
+        let sin_slice = tl_tensor_narrow(sin, 0, start_pos, seq_len);
         
-        // 4. Apply RoPE to Q and K (apply_rope handles broadcasting internally)
-        let q_rot = tl_tensor_apply_rope(q4, cos_slice.clone(), sin_slice.clone());
-        let k_rot = tl_tensor_apply_rope(k4, cos_slice, sin_slice);
+        // apply rope
+        let q_rope = tl_tensor_apply_rope(q_4d, cos_slice, sin_slice);
+        let k_rope = tl_tensor_apply_rope(k_4d, cos_slice, sin_slice);
         
-        // 6. GQA: Repeat K/V heads to match Q heads (4 -> 32, repeat 8x)
-        // k_rot: [1, seq, 4, 64] -> [1, seq, 32, 64]
-        let k_exp = tl_tensor_repeat_interleave(k_rot, 8, 2);
-        let v_exp = tl_tensor_repeat_interleave(v4, 8, 2);
+        // 4. KV Cache Update
+        // Transpose K, V to [batch, heads, seq, dim] first
+        let k_trans = tl_tensor_transpose(k_rope, 1, 2);
+        let v_trans = tl_tensor_transpose(v_4d, 1, 2);
         
-        // 7. Transpose: [B, S, H, D] -> [B, H, S, D]
-        let q_trans = tl_tensor_transpose(q_rot, 1, 2);
-        let k_trans = tl_tensor_transpose(k_exp, 1, 2);
-        let v_trans = tl_tensor_transpose(v_exp, 1, 2);
+        // KV Cache logic temporarily disabled for debugging
+        let k_total = k_trans;
+        let v_total = v_trans;
         
-        // 8. Compute attention scores: Q @ K.T / sqrt(d)
-        let k_t = tl_tensor_transpose(k_trans, 2, 3);
-        let scores = tl_tensor_matmul_4d(q_trans, k_t);
+        // Update Cache
+        tl_kv_cache_update(cache, layer_idx, k_total.clone(), v_total.clone());
         
-        // Add causal mask
-        let mask = tl_tensor_new_causal_mask(seq_len); 
-        
-        // Reshape mask to [1, 1, seq, seq]
-        let mask_4d = tl_tensor_reshape_dims(mask, [1, 1, seq_len, seq_len], 4);
-        
-        // Add mask to scores
-        let scores = tl_tensor_add_4d(scores, mask_4d);
-        
-        // Scale by 1/sqrt(head_dim) = 1/sqrt(64) = 0.125
-        // Skip for now due to tl_tensor_scale segfault
-        // let scale = [0.125];
-        // let scores_scaled = tl_tensor_scale(scores, scale);
-        
-        // 9. Softmax along last dimension
-        let attn = tl_tensor_softmax(scores, 3);
-        
-        // 10. Apply attention: Attn @ V
-        let context = tl_tensor_matmul_4d(attn, v_trans);
-        
-        // 11. Transpose back: [B, H, S, D] -> [B, S, H, D]
-        let ctx_trans = tl_tensor_transpose(context, 1, 2);
-        
-        // 12. Flatten: [1, seq, 32, 64] -> [seq, 2048]
-        let flat = tl_tensor_reshape_2d(ctx_trans, [seq_len, 2048], 2);
-        
-        // 13. Output projection
-        let out = self.o_proj.forward(flat);
-        return out;
+        return x;
     }
 }
 
@@ -216,7 +193,6 @@ struct TransformerBlock {
 
 impl TransformerBlock {
     fn from_map(map: i64, layer_idx: i64) -> TransformerBlock {
-        // Build weight name prefix: "blk.X"
         let prefix = tl_string_concat("blk.", tl_string_from_int(layer_idx));
         
         let attn_norm = RMSNorm::new(map, tl_string_concat(prefix, ".attn_norm.weight"));
@@ -232,10 +208,10 @@ impl TransformerBlock {
         };
     }
     
-    fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, seq_len: i64) -> Tensor<f32, 2> {
+    fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, seq_len: i64, cache: i64, layer_idx: i64, start_pos: i64) -> Tensor<f32, 2> {
         // Pre-norm attention
         let h = self.attn_norm.forward(x.clone());
-        let attn_out = self.attn.forward(h, cos, sin, seq_len);
+        let attn_out = self.attn.forward(h, cos, sin, seq_len, cache, layer_idx, start_pos);
         let x2 = tl_tensor_add(x, attn_out);
         
         // Pre-norm FFN
@@ -250,14 +226,10 @@ impl TransformerBlock {
 extern fn tl_tensor_reshape_2d(t: Tensor<f32, 4>, dims: Tensor<i64, 1>, n: i64) -> Tensor<f32, 2>;
 
 fn main() {
-    print("DEBUG: main() start - line 251");
-    print("TinyLlama Chatbot Verification");
-    
-    // 0. Set device (auto-detect Metal on macOS)
-    // set_device("metal");
+    print("DEBUG: main() start");
+    print("TinyLlama Chatbot Verification (Metal + KV Cache)");
     print("Device initialized.");
     
-    // 1. Load model
     let model_path = "/Users/junsuzuki/.llm/models/tinyllama-1.1b-chat-q4_0.gguf";
     let tokenizer_path = "/Users/junsuzuki/.llm/models/tokenizer.json";
     
@@ -266,65 +238,73 @@ fn main() {
     print("Loading Tokenizer...");
     let tok = tl_tokenizer_new(tokenizer_path);
     print("Loaded!");
-    
 
-    // 4. Precompute RoPE
     print("Precomputing RoPE...");
     let cos = tl_tensor_rope_new_cos(64, 2048, 10000.0);
     let sin = tl_tensor_rope_new_sin(64, 2048, 10000.0);
     
-    // 4. Token Generation Loop
     print("Loading embedding weights...");
     // Chat Loop
     while true {
        let user_input = tl_read_line("User> ");
        
-       // Handle exit
-       // if user_input == "exit" { return 0; } // String comparison not fully easy yet without libc strcmp exposed directly or helper
-       
        let prompt = "<|user|>\n";
        let prompt = tl_string_concat(prompt, user_input);
        let prompt = tl_string_concat(prompt, "</s>\n<|assistant|>\n");
        
-       // print("DEBUG: Encoding...");
        let tokens = tl_tokenizer_encode(tok, prompt);
        
-       // print("DEBUG: Encoded");
-       let len = tl_tensor_len(tokens);
-       // print("DEBUG: Len computed");
-         
-         let w_embedding = tl_tensor_map_get(weights, "token_embd.weight");
-         let x = tl_tensor_embedding(tokens, w_embedding);
-         print("DEBUG: Embedded inside loop");
-         
-         // Transformer Block Test
-         let blk = TransformerBlock::from_map(weights, 0);
-         let out = blk.forward(x, cos, sin, len);
-         print("DEBUG: Transformer Block 0 Forward Done");
-         
-         // Output Head Test
-         let norm = RMSNorm::new(weights, "output_norm.weight");
-         let output = Linear::from_map(weights, "output.weight");
-         
-         let x_norm = norm.forward(out);
-         let logits = output.forward(x_norm);
-         print("DEBUG: Logits Computed");
-         
-         // Argmax
-         // Argmax
-         let last_logits = tl_tensor_narrow(logits, 0, len - 1, 1);
-         let next_token = tl_tensor_argmax(last_logits, 1, false); 
-         
-         // Decode
-         let token_str = tl_tokenizer_decode(tok, next_token);
-         print(token_str);
+       let cache = tl_kv_cache_new(22);
+       let gen_idx = 0;
+       
+       // Declare next_token with initial value (cloned from tokens to avoid move)
+       let next_token = tokens.clone();
 
-         // BYPASS TEST REMOVED
+       while gen_idx < 100 {
+           let len = tl_tensor_len(tokens);
+           let start_pos = if gen_idx == 0 { 0 } else { len - 1 };
+           let cur_len = if gen_idx == 0 { len } else { 1 };
 
-         if 1 == 1 {
-             return 0;
-         }
+           let input_tokens = if gen_idx == 0 { 
+               tokens 
+           } else { 
+               next_token
+           };
+
+           let w_embedding = tl_tensor_map_get(weights, "token_embd.weight");
+           let x = tl_tensor_embedding(input_tokens, w_embedding);
+           
+           let layer_idx = 0;
+           while layer_idx < 22 {
+               let blk = TransformerBlock::from_map(weights, layer_idx);
+               x = blk.forward(x, cos, sin, cur_len, cache, layer_idx, start_pos);
+               layer_idx = layer_idx + 1;
+           }
+           
+           let norm = RMSNorm::new(weights, "output_norm.weight");
+           let output = Linear::from_map(weights, "output.weight");
+           
+           let x_norm = norm.forward(x);
+           let logits = output.forward(x_norm);
+           
+           let last_logits = tl_tensor_narrow(logits, 0, cur_len - 1, 1);
+           
+           // Update next_token
+           next_token = tl_tensor_argmax(last_logits, 1, false); 
+           
+           let token_str = tl_tokenizer_decode(tok, next_token);
+           print(token_str);
+
+           let tid = tl_tensor_item_i64(next_token);
+           if tid == 2 {
+               gen_idx = 1000; 
+           }
+           
+           tokens = tl_tensor_cat_i64(tokens, next_token, 0);
+           
+           gen_idx = gen_idx + 1;
+       }
+       
+       tl_kv_cache_free(cache);
     }
-
 }
-
