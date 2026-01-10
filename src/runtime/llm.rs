@@ -359,9 +359,26 @@ pub struct KVCache {
     pub cache: Vec<Option<(Tensor, Tensor)>>,
 }
 
+impl KVCache {
+    /// Calculate total memory usage of this cache in bytes
+    pub fn memory_bytes(&self) -> usize {
+        let mut total = 0usize;
+        for layer in &self.cache {
+            if let Some((k, v)) = layer {
+                // Each element is f32 (4 bytes)
+                total += k.elem_count() * 4;
+                total += v.elem_count() * 4;
+            }
+        }
+        total
+    }
+}
+
 pub struct KVCacheManager {
     caches: HashMap<i64, Box<KVCache>>,
     next_id: i64,
+    /// Total memory usage across all caches (in bytes)
+    total_bytes: usize,
 }
 
 impl KVCacheManager {
@@ -369,6 +386,7 @@ impl KVCacheManager {
         KVCacheManager {
             caches: HashMap::new(),
             next_id: 1,
+            total_bytes: 0,
         }
     }
 
@@ -382,15 +400,20 @@ impl KVCacheManager {
         self.next_id += 1;
         self.caches.insert(id, cache);
         println!(
-            "DEBUG: KVCacheManager created cache id={} with {} layers",
-            id, layers
+            "DEBUG: KVCacheManager created cache id={} with {} layers (total_bytes={})",
+            id, layers, self.total_bytes
         );
         id
     }
 
     pub fn free(&mut self, id: i64) {
-        if self.caches.remove(&id).is_some() {
-            println!("DEBUG: KVCacheManager freed cache id={}", id);
+        if let Some(cache) = self.caches.remove(&id) {
+            let freed_bytes = cache.memory_bytes();
+            self.total_bytes = self.total_bytes.saturating_sub(freed_bytes);
+            println!(
+                "DEBUG: KVCacheManager freed cache id={}, released {} bytes (total_bytes={})",
+                id, freed_bytes, self.total_bytes
+            );
         } else {
             println!(
                 "DEBUG: KVCacheManager free called for non-existent id={}",
@@ -409,8 +432,28 @@ impl KVCacheManager {
 
     pub fn clear_all(&mut self) {
         let count = self.caches.len();
+        let freed = self.total_bytes;
         self.caches.clear();
-        println!("DEBUG: KVCacheManager cleared all {} caches", count);
+        self.total_bytes = 0;
+        println!(
+            "DEBUG: KVCacheManager cleared all {} caches, released {} bytes",
+            count, freed
+        );
+    }
+
+    /// Get total memory usage in bytes
+    pub fn memory_usage(&self) -> usize {
+        self.total_bytes
+    }
+
+    /// Update memory tracking when a layer is updated
+    pub fn add_memory(&mut self, bytes: usize) {
+        self.total_bytes += bytes;
+    }
+
+    /// Recalculate total memory (useful for verification)
+    pub fn recalculate_memory(&mut self) {
+        self.total_bytes = self.caches.values().map(|c| c.memory_bytes()).sum();
     }
 }
 
@@ -538,10 +581,13 @@ pub extern "C" fn tl_kv_cache_update(
     unsafe {
         let k_tensor = &(*k).0;
         let v_tensor = &(*v).0;
+        let new_bytes = (k_tensor.elem_count() + v_tensor.elem_count()) * 4; // f32 = 4 bytes
+
         println!(
-            "DEBUG: tl_kv_cache_update - k.shape={:?} v.shape={:?}",
+            "DEBUG: tl_kv_cache_update - k.shape={:?} v.shape={:?} new_bytes={}",
             k_tensor.shape(),
-            v_tensor.shape()
+            v_tensor.shape(),
+            new_bytes
         );
 
         let mut mgr = KV_CACHE_MANAGER.lock().unwrap();
@@ -556,12 +602,25 @@ pub extern "C" fn tl_kv_cache_update(
                     );
                     return;
                 }
+
+                // Calculate old memory usage for this layer
+                let old_bytes = if let Some((old_k, old_v)) = &cache.cache[idx] {
+                    (old_k.elem_count() + old_v.elem_count()) * 4
+                } else {
+                    0
+                };
+
                 let k_t = k_tensor.clone();
                 let v_t = v_tensor.clone();
                 cache.cache[idx] = Some((k_t, v_t));
+
+                // Update total memory tracking
+                // Note: We need to access the manager's total_bytes directly
+                // but we already have mutable borrow through get_mut
+                // So we'll do this after the scope
                 println!(
-                    "DEBUG: tl_kv_cache_update - stored cache_id={} layer={}",
-                    cache_id, layer_idx
+                    "DEBUG: tl_kv_cache_update - stored cache_id={} layer={} old_bytes={} new_bytes={}",
+                    cache_id, layer_idx, old_bytes, new_bytes
                 );
             }
             None => {
@@ -571,9 +630,23 @@ pub extern "C" fn tl_kv_cache_update(
                 );
             }
         }
+
+        // Recalculate total memory after update
+        mgr.recalculate_memory();
+        println!(
+            "DEBUG: tl_kv_cache_update - total_bytes now = {}",
+            mgr.memory_usage()
+        );
     }
 
     println!("DEBUG: tl_kv_cache_update EXIT");
+}
+
+/// Get total KV Cache memory usage in bytes (FFI)
+#[no_mangle]
+pub extern "C" fn tl_kv_cache_get_memory_usage() -> i64 {
+    let mgr = KV_CACHE_MANAGER.lock().unwrap();
+    mgr.memory_usage() as i64
 }
 
 // ============================================================================

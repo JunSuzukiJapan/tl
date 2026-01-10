@@ -3,13 +3,17 @@ use std::ffi::c_void;
 
 use super::OpaqueTensor;
 
+/// Memory budget for tensor pool (in bytes)
+/// When KV cache uses more memory, the pool budget shrinks
+const TOTAL_MEMORY_BUDGET_BYTES: usize = 2 * 1024 * 1024 * 1024; // 2GB
+
 /// Tensor pool for memory reuse
 /// Key: (num_elements, dtype_id, device_id)
 /// This avoids frequent malloc/free by reusing freed tensors of the same size
 pub struct TensorPool {
     // (num_elements, dtype_id, device_id) -> Vec<*mut OpaqueTensor>
     free_list: HashMap<(usize, u8, u8), Vec<*mut OpaqueTensor>>,
-    max_per_size: usize,
+    base_max_per_size: usize,
 }
 
 // SAFETY: TensorPool contains raw pointers but they are only accessed
@@ -21,8 +25,23 @@ impl TensorPool {
     pub fn new() -> Self {
         TensorPool {
             free_list: HashMap::new(),
-            max_per_size: 32, // Max tensors per size bucket
+            base_max_per_size: 32, // Base max tensors per size bucket
         }
+    }
+
+    /// Calculate effective max_per_size based on KV cache memory usage
+    /// When KV cache uses more memory, pool size is reduced
+    fn effective_max_per_size(&self) -> usize {
+        // Import the function from llm module
+        let kv_bytes = super::llm::tl_kv_cache_get_memory_usage() as usize;
+
+        // Calculate reduction based on KV cache usage
+        // For every 100MB of KV cache, reduce max_per_size by 4
+        let reduction = kv_bytes / (100 * 1024 * 1024) * 4;
+        let effective = self.base_max_per_size.saturating_sub(reduction);
+
+        // Minimum of 4 to ensure some pooling still happens
+        effective.max(4)
     }
 
     /// Try to acquire a tensor from the pool
@@ -55,25 +74,29 @@ impl TensorPool {
         dtype_id: u8,
         device_id: u8,
     ) -> bool {
+        // Calculate effective max before borrowing free_list mutably
+        let effective_max = self.effective_max_per_size();
+
         let key = (num_elements, dtype_id, device_id);
         let list = self.free_list.entry(key).or_insert_with(Vec::new);
 
-        if list.len() < self.max_per_size {
+        if list.len() < effective_max {
             list.push(ptr);
             println!(
-                "DEBUG: TensorPool release {:p} (elements={}, dtype={}, device={}, pool_size={})",
+                "DEBUG: TensorPool release {:p} (elements={}, dtype={}, device={}, pool_size={}, effective_max={})",
                 ptr,
                 num_elements,
                 dtype_id,
                 device_id,
-                list.len()
+                list.len(),
+                effective_max
             );
             true
         } else {
             // Pool is full, tensor should be freed
             println!(
-                "DEBUG: TensorPool full for (elements={}, dtype={}, device={}), freeing {:p}",
-                num_elements, dtype_id, device_id, ptr
+                "DEBUG: TensorPool full for (elements={}, dtype={}, device={}), freeing {:p} (effective_max={})",
+                num_elements, dtype_id, device_id, ptr, effective_max
             );
             false
         }
