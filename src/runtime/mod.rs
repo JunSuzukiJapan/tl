@@ -113,6 +113,20 @@ pub(crate) fn make_var(v: candle_core::Var) -> *mut OpaqueTensor {
     ptr
 }
 
+pub(crate) fn expand_tilde(path: &str) -> String {
+    if path.starts_with("~") {
+        if let Some(home) = std::env::var("HOME").ok() {
+            if path == "~" {
+                return home;
+            }
+            if path.starts_with("~/") {
+                return format!("{}{}", home, &path[1..]);
+            }
+        }
+    }
+    path.to_string()
+}
+
 // --- File I/O ---
 
 #[no_mangle]

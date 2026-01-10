@@ -65,11 +65,12 @@ pub extern "C" fn tl_string_from_int(val: i64) -> *mut c_char {
 #[no_mangle]
 pub extern "C" fn tl_file_open(path: *const c_char, mode: *const c_char) -> *mut File {
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+    let expanded_path = crate::runtime::expand_tilde(&path_str);
     let mode_str = unsafe { CStr::from_ptr(mode).to_string_lossy() };
 
     let f = match mode_str.as_ref() {
-        "r" => File::open(path_str.as_ref()),
-        "w" => File::create(path_str.as_ref()),
+        "r" => File::open(&expanded_path),
+        "w" => File::create(&expanded_path),
         _ => return std::ptr::null_mut(), // TODO: proper append support or error
     };
 
@@ -126,8 +127,9 @@ pub extern "C" fn tl_file_read_binary(path: *const c_char) -> *mut Vec<u8> {
         return std::ptr::null_mut();
     }
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+    let expanded_path = crate::runtime::expand_tilde(&path_str);
 
-    match std::fs::read(path_str.as_ref()) {
+    match std::fs::read(&expanded_path) {
         Ok(data) => Box::into_raw(Box::new(data)),
         Err(e) => {
             eprintln!("tl_file_read_binary error: {}", e);
@@ -142,9 +144,10 @@ pub extern "C" fn tl_file_write_binary(path: *const c_char, data: *mut Vec<u8>) 
         return false;
     }
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+    let expanded_path = crate::runtime::expand_tilde(&path_str);
     let data_vec = unsafe { &*data };
 
-    match std::fs::write(path_str.as_ref(), data_vec) {
+    match std::fs::write(&expanded_path, data_vec) {
         Ok(()) => true,
         Err(e) => {
             eprintln!("tl_file_write_binary error: {}", e);
@@ -161,8 +164,9 @@ pub extern "C" fn tl_image_load_grayscale(path: *const c_char) -> *mut Vec<u8> {
         return std::ptr::null_mut();
     }
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+    let expanded_path = crate::runtime::expand_tilde(&path_str);
 
-    match image::open(path_str.as_ref()) {
+    match image::open(&expanded_path) {
         Ok(img) => {
             // Convert to grayscale and get raw pixels
             let gray = img.to_luma8();
@@ -182,8 +186,9 @@ pub extern "C" fn tl_image_width(path: *const c_char) -> i64 {
         return 0;
     }
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+    let expanded_path = crate::runtime::expand_tilde(&path_str);
 
-    match image::image_dimensions(path_str.as_ref()) {
+    match image::image_dimensions(&expanded_path) {
         Ok((w, _)) => w as i64,
         Err(_) => 0,
     }
@@ -195,8 +200,9 @@ pub extern "C" fn tl_image_height(path: *const c_char) -> i64 {
         return 0;
     }
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+    let expanded_path = crate::runtime::expand_tilde(&path_str);
 
-    match image::image_dimensions(path_str.as_ref()) {
+    match image::image_dimensions(&expanded_path) {
         Ok((_, h)) => h as i64,
         Err(_) => 0,
     }
@@ -209,7 +215,8 @@ use std::path::PathBuf;
 #[no_mangle]
 pub extern "C" fn tl_path_new(path: *const c_char) -> *mut PathBuf {
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
-    Box::into_raw(Box::new(PathBuf::from(path_str.as_ref())))
+    let expanded_path = crate::runtime::expand_tilde(&path_str);
+    Box::into_raw(Box::new(std::path::PathBuf::from(expanded_path)))
 }
 
 #[no_mangle]
@@ -229,7 +236,8 @@ pub extern "C" fn tl_path_exists(path: *const c_char) -> bool {
     }
     unsafe {
         let p = CStr::from_ptr(path).to_string_lossy();
-        std::path::Path::new(p.as_ref()).exists()
+        let expanded = crate::runtime::expand_tilde(&p);
+        std::path::Path::new(&expanded).exists()
     }
 }
 
@@ -240,7 +248,8 @@ pub extern "C" fn tl_path_is_dir(path: *const c_char) -> bool {
     }
     unsafe {
         let p = CStr::from_ptr(path).to_string_lossy();
-        std::path::Path::new(p.as_ref()).is_dir()
+        let expanded = crate::runtime::expand_tilde(&p);
+        std::path::Path::new(&expanded).is_dir()
     }
 }
 
@@ -251,7 +260,8 @@ pub extern "C" fn tl_path_is_file(path: *const c_char) -> bool {
     }
     unsafe {
         let p = CStr::from_ptr(path).to_string_lossy();
-        std::path::Path::new(p.as_ref()).is_file()
+        let expanded = crate::runtime::expand_tilde(&p);
+        std::path::Path::new(&expanded).is_file()
     }
 }
 
@@ -283,6 +293,7 @@ pub extern "C" fn tl_path_free(path: *mut PathBuf) {
 pub extern "C" fn tl_http_download(url: *const c_char, dest: *const c_char) -> bool {
     let url_str = unsafe { CStr::from_ptr(url).to_string_lossy() };
     let dest_str = unsafe { CStr::from_ptr(dest).to_string_lossy() };
+    let expanded_dest = crate::runtime::expand_tilde(&dest_str);
 
     println!("Downloading {} ...", url_str);
 
@@ -297,7 +308,7 @@ pub extern "C" fn tl_http_download(url: *const c_char, dest: *const c_char) -> b
 
     let total_size = response.content_length().map(|ct| ct as f64).unwrap_or(0.0);
 
-    let mut file = match File::create(dest_str.as_ref()) {
+    let mut file = match File::create(&expanded_dest) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("Failed to create file {}: {}", dest_str, e);

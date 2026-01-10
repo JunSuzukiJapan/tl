@@ -13,7 +13,8 @@ pub struct OpaqueTokenizer(pub Tokenizer);
 pub extern "C" fn tl_tokenizer_new(path: *const c_char) -> i64 {
     unsafe {
         let path_str = CStr::from_ptr(path).to_str().unwrap();
-        match Tokenizer::from_file(path_str) {
+        let expanded_path = crate::runtime::expand_tilde(path_str);
+        match Tokenizer::from_file(&expanded_path) {
             Ok(tokenizer) => {
                 let ptr = Box::into_raw(Box::new(OpaqueTokenizer(tokenizer)));
                 ptr as i64
@@ -112,8 +113,9 @@ use crate::runtime::OpaqueTensorMap;
 pub extern "C" fn tl_gguf_load(path: *const c_char) -> i64 {
     unsafe {
         let path_str = CStr::from_ptr(path).to_str().unwrap();
+        let expanded_path = crate::runtime::expand_tilde(path_str);
 
-        let mut file = std::fs::File::open(path_str).expect("failed to open file");
+        let mut file = std::fs::File::open(&expanded_path).expect("failed to open file");
         let content = candle_core::quantized::gguf_file::Content::read(&mut file)
             .expect("failed to read gguf");
 
