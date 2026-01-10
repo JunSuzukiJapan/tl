@@ -2,7 +2,7 @@
 
 このディレクトリには、TensorLogic (TL) 言語で実装された実用に近いアプリケーションが含まれています。
 
-## 1. TinyLlama Chatbot (`chatbot.tl`)
+## 1. TinyLlama Chatbot (`tinyllama/chatbot.tl`)
 
 TinyLlama-1.1B モデルを使用した、対話型のチャットボットアプリケーションです。KV Cache や RoPE (Rotary Positional Embedding) など、現代的な LLM の推論に必要なコンポーネントが TL 言語で直接実装されています。
 
@@ -24,15 +24,29 @@ TinyLlama-1.1B モデルを使用した、対話型のチャットボットア�
 2.  **コンパイルと実行**:
     ```bash
     # 標準実行
-    cargo run --release --bin tl -- run examples/apps/chatbot.tl
+    cargo run --release --bin tl -- run examples/apps/tinyllama/chatbot.tl
 
     # Metal (Apple Silicon GPU) アクセラレーションを使用する場合
-    cargo run --release --features metal --bin tl -- run examples/apps/chatbot.tl
+    cargo run --release --features metal --bin tl -- run examples/apps/tinyllama/chatbot.tl
     ```
 
 3.  **対話**:
     - `User>` プロンプトが表示されたらテキストを入力します。
     - `exit` または `quit` と入力すると終了します。
+
+## 2. Llama 3 Chatbot (`llama3/chatbot_llama3.tl`)
+
+Llama 3.1 8B Instruct モデルを使用したチャットボットです。
+
+### 主な特徴
+- **Llama 3 プロンプト**: 標準的な Llama 3 instruct フォーマットを使用。
+- **サンプリング**: Top-P サンプリングをサポート。
+- **メモリ安全性**: KVキャッシュを明示的に管理し、リークを防止。
+
+### 実行方法
+```bash
+cargo run --release --bin tl -- run examples/apps/llama3/chatbot_llama3.tl
+```
 
 ### 注意事項
 
