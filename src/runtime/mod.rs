@@ -906,6 +906,19 @@ pub extern "C" fn tl_print_string(s: *const std::os::raw::c_char) {
 }
 
 #[no_mangle]
+pub extern "C" fn tl_display_string(s: *const std::os::raw::c_char) {
+    if s.is_null() {
+        return;
+    }
+    unsafe {
+        if let Ok(c_str) = std::ffi::CStr::from_ptr(s).to_str() {
+            print!("{}", c_str);
+            let _ = std::io::stdout().flush();
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn tl_set_device(name: *const i8) {
     if name.is_null() {
         return;
@@ -1349,6 +1362,15 @@ pub extern "C" fn tl_tensor_sin(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     let res = t.sin().unwrap();
     make_tensor(res)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_scale(t: *mut OpaqueTensor, scale: f32) -> *mut OpaqueTensor {
+    unsafe {
+        let tensor = &(*t).0;
+        let result = (tensor * (scale as f64)).unwrap();
+        make_tensor(result)
+    }
 }
 
 #[no_mangle]

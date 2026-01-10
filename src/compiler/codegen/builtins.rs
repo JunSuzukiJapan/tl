@@ -35,7 +35,8 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_print_f32", print_f32_type);
 
     let print_str_type = void_type.fn_type(&[void_ptr.into()], false);
-    add_fn("tl_print_string", print_str_type);
+    add_fn("tl_print_string", print_str_type.clone());
+    add_fn("tl_display_string", print_str_type);
 
     // tl_print_ptr for debugging tensor pointers
     let print_ptr_type = void_type.fn_type(&[void_ptr.into()], false);
@@ -498,6 +499,8 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_silu(t: *mut) -> *mut
     add_fn("tl_tensor_silu", unary_type);
 
+    let scale_type = void_ptr.fn_type(&[void_ptr.into(), f32_type.into()], false);
+    add_fn("tl_tensor_scale", scale_type);
     // tl_tensor_cat2(a: *mut, b: *mut, dim: i64) -> *mut
     let cat2_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), i64_type.into()], false);
     add_fn("tl_tensor_cat2", cat2_type);
@@ -569,6 +572,9 @@ pub fn declare_runtime_functions<'ctx>(
 
     if let Some(f) = module.get_function("tl_print_string") {
         execution_engine.add_global_mapping(&f, runtime::tl_print_string as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_display_string") {
+        execution_engine.add_global_mapping(&f, runtime::tl_display_string as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_prompt") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_prompt as *const () as usize);
@@ -972,7 +978,7 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_silu as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_scale") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_mul as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_scale as usize);
     }
 
     if let Some(f) = module.get_function("tl_tensor_rope_new_cos") {
@@ -1680,7 +1686,8 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_tensor_rope_new_cos".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_rope_new_sin".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_new_causal_mask".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_cat_i64".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_scale".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_display_string".to_string(), Type::Void);
     fn_return_types.insert("tl_tensor_narrow".to_string(), tensor_type.clone());
     fn_return_types.insert(
         "tl_tensor_repeat_interleave".to_string(),

@@ -511,6 +511,16 @@ pub extern "C" fn tl_kv_cache_update(
         let mut mgr = KV_CACHE_MANAGER.lock().unwrap();
         let idx = layer_idx as usize;
 
+        // This print statement is added based on the user's request to show GGUF keys.
+        // Note: 'container' is not available in this scope. This is a placeholder
+        // and would need to be adapted if GGUF metadata were accessible here.
+        // For now, it's a comment to indicate where such a print might go if context allowed.
+        // if let Some(meta) = container.metadata.as_ref() {
+        //     for kv in meta.kv.iter() {
+        //         println!("GGUF Key: {}", kv.key);
+        //     }
+        // }
+
         if let Some(cache) = mgr.get_mut(cache_id) {
             if idx < cache.cache.len() {
                 let k_t = k_tensor.clone();
