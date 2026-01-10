@@ -38,6 +38,7 @@ extern fn tl_tensor_argmax(t: Tensor<f32, 2>, d: i64, k: bool) -> Tensor<i64, 1>
 extern fn tl_tensor_len(t: Tensor<i64, 1>) -> i64;
 extern fn tl_tensor_item_i64(t: Tensor<i64, 1>) -> i64;
 extern fn tl_tensor_cat_i64(a: Tensor<i64, 1>, b: Tensor<i64, 1>, d: i64) -> Tensor<i64, 1>;
+extern fn tl_tensor_sample(t: Tensor<f32, 2>, temp: f32, top_p: f32) -> Tensor<i64, 1>;
 
 struct Linear { w: Tensor<f32, 2> }
 impl Linear {
@@ -146,14 +147,17 @@ fn main() {
                 l = l + 1;
             }
             let lo = oh.forward(on.forward(x));
-            let nxt = tl_tensor_argmax(tl_tensor_narrow(lo, 0, batch_len - 1, 1), 1, false);
+            let nxt = tl_tensor_sample(tl_tensor_narrow(lo, 0, batch_len - 1, 1), 0.7, 0.9);
             let tid = tl_tensor_item_i64(nxt);
             let s_nxt = tl_tokenizer_decode(tok, nxt);
             print(s_nxt);
             
             // Stop String Check
             gen_str = tl_string_concat(gen_str, s_nxt);
-            if tl_string_contains(gen_str, "User:") {
+            if tl_string_contains(gen_str, "User") {
+                gen_idx = 200; // Break loop
+            }
+            if tl_string_contains(gen_str, "Assistant") {
                 gen_idx = 200; // Break loop
             }
 

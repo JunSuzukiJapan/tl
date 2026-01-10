@@ -1029,6 +1029,7 @@ pub fn force_link() {
     std::hint::black_box(crate::runtime::stdlib::tl_string_contains as *const ());
     std::hint::black_box(crate::runtime::stdlib::tl_string_concat as *const ());
     std::hint::black_box(crate::runtime::stdlib::tl_string_from_int as *const ());
+    std::hint::black_box(crate::runtime::llm::tl_tensor_sample as *const ());
 }
 
 #[no_mangle]

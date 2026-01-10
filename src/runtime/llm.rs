@@ -2,6 +2,8 @@
 // use crate::runtime::mod::{make_tensor, OpaqueTensor}; // Fixed in previous step to `use crate::runtime::{make_tensor, OpaqueTensor};`
 use crate::runtime::{device::get_device, make_tensor, OpaqueTensor};
 use candle_core::{DType, Device, Tensor};
+use rand::distributions::{Distribution, WeightedIndex};
+use rand::thread_rng;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use tokenizers::Tokenizer;
@@ -541,6 +543,82 @@ pub extern "C" fn tl_kv_cache_update(
 pub extern "C" fn tl_kv_cache_get_memory_usage() -> i64 {
     let mgr = KV_CACHE_MANAGER.lock().unwrap();
     mgr.memory_usage() as i64
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_sample(
+    logits: *mut OpaqueTensor,
+    temp: f32,
+    top_p: f32,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let t = &(*logits).0; // [B, Vocab] or [Vocab]
+                              // Ensure we are working with the last token's logits if rank > 1
+        let logits_flat = t.flatten_all().unwrap();
+
+        // Apply temperature
+        let temp_t = if temp <= 0.0 { 1.0 } else { temp };
+        let logits_scaled = (logits_flat.to_dtype(DType::F64).unwrap() / (temp_t as f64)).unwrap();
+
+        // Softmax to get probabilities
+        let probs = candle_nn::ops::softmax(&logits_scaled, 0).unwrap();
+
+        // Convert to Vec for sampling
+        let probs_vec: Vec<f32> = probs.to_dtype(DType::F32).unwrap().to_vec1().unwrap();
+
+        // Sample
+        let mut rng = thread_rng();
+
+        // Top-P Sampling
+        let mut probs_with_indices: Vec<(usize, f32)> =
+            probs_vec.iter().enumerate().map(|(i, &p)| (i, p)).collect();
+        // Sort descending
+        probs_with_indices
+            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut cum_sum = 0.0;
+        let mut cutoff_index = probs_with_indices.len();
+
+        if top_p < 1.0 && top_p > 0.0 {
+            for (i, (_, p)) in probs_with_indices.iter().enumerate() {
+                cum_sum += p;
+                if cum_sum >= top_p {
+                    cutoff_index = i + 1;
+                    break;
+                }
+            }
+        }
+
+        // Filter and renormalize
+        // We only keep the top `cutoff_index` elements.
+        // Optimization: Construct a smaller weighted index distribution directly from the top elements.
+        let (indices, weights): (Vec<usize>, Vec<f32>) =
+            probs_with_indices.into_iter().take(cutoff_index).unzip();
+
+        let dist = match WeightedIndex::new(&weights) {
+            Ok(d) => d,
+            Err(_) => {
+                // If filtering failed (e.g. all zeros), fall back to argmax
+                let max_idx = logits_flat
+                    .argmax(0)
+                    .unwrap()
+                    .to_scalar::<u32>()
+                    .unwrap_or(0);
+                let device = get_device();
+                let res = Tensor::from_vec(vec![max_idx as i64], (1,), &device).unwrap();
+                return make_tensor(res);
+            }
+        };
+
+        // Sample index in the *filtered* list
+        let sampled_filtered_idx = dist.sample(&mut rng);
+        // Map back to original vocabulary index
+        let sample_idx = indices[sampled_filtered_idx];
+
+        let device = get_device();
+        let res = Tensor::from_vec(vec![sample_idx as i64], (1,), &device).unwrap();
+        make_tensor(res)
+    }
 }
 
 // ============================================================================
