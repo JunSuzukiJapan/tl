@@ -124,7 +124,8 @@ fn main() {
             return;
         }
         
-        let prompt = tl_string_concat("<|system|>\nYou are a helpful assistant.</s>\n<|user|>\n", tl_string_concat(input_str, "</s>\n<|assistant|>\n"));
+        // Use standard User/Assistant format since special tokens are not supported
+        let prompt = tl_string_concat("User: ", tl_string_concat(input_str, "\nAssistant:"));
         let tokens = tl_tokenizer_encode(tok, prompt);
         let cache = tl_kv_cache_new(22);
         let cur_tokens = tokens.clone();
