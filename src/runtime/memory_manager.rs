@@ -308,7 +308,7 @@ pub fn register_tensor_global(ptr: *mut OpaqueTensor) {
     // Check if we have an active scope
     if mgr.scopes.is_empty() {
         // No active scope
-        println!("WARNING: Registering tensor without active scope");
+        // println!("WARNING: Registering tensor without active scope");
         return;
     }
     // Check if already registered in ANY scope to prevent double-free

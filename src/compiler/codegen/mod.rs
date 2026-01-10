@@ -646,18 +646,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             let (arg_name, arg_type) = &func.args[i];
             let alloca = self.create_entry_block_alloca(function, arg_name, arg_type);
 
-            // Apply DeepClone (Struct Copy + Tensor Acquire) to arguments
-            // This ensures function scope owns its arguments (shared tensors)
-            let acquired_arg = if matches!(
-                arg_type,
-                Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
-            ) {
-                self.emit_deep_clone(arg.into(), arg_type).unwrap()
-            } else {
-                arg.into()
-            };
-
-            match acquired_arg {
+            // Borrowing Semantics: Just store the pointer/value.
+            // Do NOT Acquire/DeepClone. The caller owns the data.
+            match arg {
                 inkwell::values::BasicValueEnum::PointerValue(p) => {
                     self.builder.build_store(alloca, p).unwrap()
                 }
@@ -670,12 +661,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 _ => panic!("Unsupported arg type"),
             };
 
-            // Insert into current scope with should_free=true
-            // Arguments are now "owned" (shared) by the function scope and must be released on exit
+            // Insert into current scope with should_free=FALSE
+            // Arguments are BORROWED. Function must NOT free them on exit.
             self.variables
                 .last_mut()
                 .unwrap()
-                .insert(arg_name.clone(), (alloca.into(), arg_type.clone(), true));
+                .insert(arg_name.clone(), (alloca.into(), arg_type.clone(), false));
         }
 
         // Initialize Arena in main if needed
