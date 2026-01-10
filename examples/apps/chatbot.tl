@@ -173,11 +173,22 @@ impl Attention {
         let k_trans = tl_tensor_transpose(k_rope, 1, 2);
         let v_trans = tl_tensor_transpose(v_4d, 1, 2);
         
-        // KV Cache logic temporarily disabled for debugging
-        let k_total = k_trans;
-        let v_total = v_trans;
+        // KV Cache: On first pass, use directly. On subsequent passes, concat with past.
+        let k_total = if start_pos == 0 {
+            k_trans
+        } else {
+            let past_k = tl_kv_cache_get_k(cache, layer_idx);
+            tl_tensor_cat_4d(past_k, k_trans, 2)
+        };
+
+        let v_total = if start_pos == 0 {
+            v_trans
+        } else {
+            let past_v = tl_kv_cache_get_v(cache, layer_idx);
+            tl_tensor_cat_4d(past_v, v_trans, 2)
+        };
         
-        // Update Cache
+        // Update Cache with full K/V for this layer
         tl_kv_cache_update(cache, layer_idx, k_total.clone(), v_total.clone());
         
         return x;

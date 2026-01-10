@@ -241,6 +241,42 @@ pub extern "C" fn tl_tensor_cat2(
     }
 }
 
+/// Concatenate two 4D tensors along a given dimension
+/// This is an alias for tl_tensor_cat2 for type-safety in TL code
+#[no_mangle]
+pub extern "C" fn tl_tensor_cat_4d(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+    dim: i64,
+) -> *mut OpaqueTensor {
+    println!(
+        "DEBUG: tl_tensor_cat_4d ENTER a={:p} b={:p} dim={}",
+        a, b, dim
+    );
+
+    if a.is_null() {
+        println!("DEBUG: tl_tensor_cat_4d - a is NULL!");
+        return std::ptr::null_mut();
+    }
+    if b.is_null() {
+        println!("DEBUG: tl_tensor_cat_4d - b is NULL!");
+        return std::ptr::null_mut();
+    }
+
+    unsafe {
+        let a_t = &(*a).0;
+        let b_t = &(*b).0;
+        println!(
+            "DEBUG: tl_tensor_cat_4d a.shape={:?} b.shape={:?}",
+            a_t.shape(),
+            b_t.shape()
+        );
+        let result = Tensor::cat(&[a_t, b_t], dim as usize).unwrap();
+        println!("DEBUG: tl_tensor_cat_4d result.shape={:?}", result.shape());
+        make_tensor(result)
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn tl_tensor_apply_rope(
     x: *mut OpaqueTensor,

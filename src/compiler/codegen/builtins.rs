@@ -502,6 +502,9 @@ pub fn declare_runtime_functions<'ctx>(
     let cat2_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), i64_type.into()], false);
     add_fn("tl_tensor_cat2", cat2_type);
 
+    // tl_tensor_cat_4d(a: *mut, b: *mut, dim: i64) -> *mut (alias for type safety)
+    add_fn("tl_tensor_cat_4d", cat2_type);
+
     // tl_tensor_rms_norm(x: *mut, w: *mut, eps: f32) -> *mut
     let rms_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), f32_type.into()], false);
     add_fn("tl_tensor_rms_norm", rms_type);
@@ -950,6 +953,9 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_cat2") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_cat2 as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_cat_4d") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_cat_4d as usize);
     }
 
     // Alias Mappings
@@ -1668,6 +1674,7 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_tensor_transpose_2d".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_matmul_4d".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_add_4d".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_cat_4d".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_silu_4d".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_scale".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_rope_new_cos".to_string(), tensor_type.clone());
