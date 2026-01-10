@@ -276,8 +276,7 @@ impl ShapeAnalyzer {
                 Stmt::Let { value, .. }
                 | Stmt::Assign { value, .. }
                 | Stmt::Expr(value)
-                | Stmt::FieldAssign { value, .. }
-                | Stmt::Return(value) => {
+                | Stmt::FieldAssign { value, .. } => {
                     allocation_count += self.count_allocations(value);
 
                     let shape = self.analyze_expr(value);
@@ -287,6 +286,21 @@ impl ShapeAnalyzer {
                         }
                         ShapeInfo::PartiallyStatic { .. } | ShapeInfo::Unknown => {
                             has_dynamic = true;
+                        }
+                    }
+                }
+                Stmt::Return(value_opt) => {
+                    if let Some(value) = value_opt {
+                        allocation_count += self.count_allocations(value);
+
+                        let shape = self.analyze_expr(value);
+                        match shape {
+                            ShapeInfo::Static(dims) => {
+                                total_size += dims.iter().product::<usize>() * 4;
+                            }
+                            ShapeInfo::PartiallyStatic { .. } | ShapeInfo::Unknown => {
+                                has_dynamic = true;
+                            }
                         }
                     }
                 }

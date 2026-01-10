@@ -135,7 +135,13 @@ impl TypeInferencer {
                 self.add_type_eq(target_ty, value_ty.clone());
                 Ok(value_ty)
             }
-            Stmt::Return(expr) => self.infer_expr(expr),
+            Stmt::Return(expr_opt) => {
+                if let Some(expr) = expr_opt {
+                    self.infer_expr(expr)
+                } else {
+                    Ok(Type::Void)
+                }
+            }
             Stmt::Expr(expr) => self.infer_expr(expr),
             Stmt::While { cond, body, .. } => {
                 let cond_ty = self.infer_expr(cond)?;

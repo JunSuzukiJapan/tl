@@ -697,7 +697,7 @@ fn parse_while_stmt(input: &str) -> IResult<&str, Stmt> {
 
 fn parse_return_stmt(input: &str) -> IResult<&str, Stmt> {
     let (input, _) = tag("return")(input)?;
-    let (input, val) = parse_expr(input)?;
+    let (input, val) = opt(parse_expr)(input)?;
     let (input, _) = ws(char(';'))(input)?;
     Ok((input, Stmt::Return(val)))
 }

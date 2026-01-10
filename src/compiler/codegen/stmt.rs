@@ -737,109 +737,99 @@ impl<'ctx> CodeGenerator<'ctx> {
                                                                                   */
                 Ok(())
             }
-            Stmt::Return(expr) => {
-                // If returning a variable, mark it as moved (should_free = false)
-                if let Expr::Variable(name) = expr {
-                    for scope in self.variables.iter_mut().rev() {
-                        if let Some(entry) = scope.get_mut(name) {
-                            entry.2 = false;
-                            break;
-                        }
-                    }
-                }
-                let (val, ty) = self.compile_expr(expr)?;
-
-                // Check if this is a struct return (uses sret)
-                let uses_sret = false; /* SRET DISABLED */
-
-                // IMPORTANT: Do NOT unregister. Instead Acquire/Copy to preserve for caller.
-                // If we unregister, it releases (decrements refcount).
-                // If we exit scope, it releases (decrements refcount).
-                // Result: Double decrement -> Free.
-                // Fix:
-                // 1. For SRET: emit_struct_copy (above) now does Deep Copy + Acquire.
-                // 2. For Tensor Return: We must Acquire.
-                // 3. For Struct Return: We must Unregister to prevent exit_scope from freeing it.
-                if !uses_sret {
-                    match &ty {
-                        Type::Tensor(_, _) => {
-                            if let Some(acquire_fn) = self.module.get_function("tl_tensor_acquire")
-                            {
-                                let ptr = val.into_pointer_value();
-                                let void_ptr_type =
-                                    self.context.ptr_type(inkwell::AddressSpace::default());
-                                let cast_ptr = self
-                                    .builder
-                                    .build_pointer_cast(ptr, void_ptr_type, "cast_aq_ret")
-                                    .unwrap();
-                                self.builder
-                                    .build_call(acquire_fn, &[cast_ptr.into()], "")
-                                    .unwrap();
+            Stmt::Return(expr_opt) => {
+                if let Some(expr) = expr_opt {
+                    // If returning a variable, mark it as moved (should_free = false)
+                    if let Expr::Variable(name) = expr {
+                        for scope in self.variables.iter_mut().rev() {
+                            if let Some(entry) = scope.get_mut(name) {
+                                entry.2 = false;
+                                break;
                             }
                         }
-                        Type::Struct(_) | Type::UserDefined(_) => {
-                            // CRITICAL FIX: Unregister struct from scope to transfer ownership to caller.
-                            // Without this, exit_scope will free the struct before the caller can use it.
-                            if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
-                                let ptr = val.into_pointer_value();
-                                let void_ptr_type =
-                                    self.context.ptr_type(inkwell::AddressSpace::default());
-                                let cast_ptr = self
-                                    .builder
-                                    .build_pointer_cast(ptr, void_ptr_type, "cast_unreg_ret")
-                                    .unwrap();
-                                self.builder
-                                    .build_call(unreg_fn, &[cast_ptr.into()], "")
-                                    .unwrap();
-                            }
-                        }
-                        _ => {}
                     }
-                }
+                    let (val, ty) = self.compile_expr(expr)?;
 
-                if uses_sret {
-                    // CRITICAL: Copy to sret BEFORE cleanup to avoid stale pointer access
-                    // Get the sret pointer (first parameter)
-                    let current_fn = self
-                        .builder
-                        .get_insert_block()
-                        .and_then(|b| b.get_parent())
-                        .ok_or("No current function")?;
-                    let sret_ptr = current_fn
-                        .get_nth_param(0)
-                        .ok_or("Sret function missing sret parameter")?
-                        .into_pointer_value();
+                    // Check if this is a struct return (uses sret)
+                    let uses_sret = false; /* SRET DISABLED */
 
-                    // Copy struct contents to sret pointer BEFORE cleanup
-                    let src_ptr = val.into_pointer_value();
-                    self.emit_struct_copy(sret_ptr, src_ptr, &ty)?;
+                    // IMPORTANT: Do NOT unregister. Instead Acquire/Copy to preserve for caller.
+                    // If we unregister, it releases (decrements refcount).
+                    // If we exit scope, it releases (decrements refcount).
+                    // Result: Double decrement -> Free.
+                    // Fix:
+                    // 1. For SRET: emit_struct_copy (above) now does Deep Copy + Acquire.
+                    // 2. For Tensor Return: We must Acquire.
+                    // 3. For Struct Return: We must Unregister to prevent exit_scope from freeing it.
+                    if !uses_sret {
+                        match &ty {
+                            Type::Tensor(_, _) => {
+                                if let Some(acquire_fn) =
+                                    self.module.get_function("tl_tensor_acquire")
+                                {
+                                    let ptr = val.into_pointer_value();
+                                    let void_ptr_type =
+                                        self.context.ptr_type(inkwell::AddressSpace::default());
+                                    let cast_ptr = self
+                                        .builder
+                                        .build_pointer_cast(ptr, void_ptr_type, "cast_aq_ret")
+                                        .unwrap();
+                                    self.builder
+                                        .build_call(acquire_fn, &[cast_ptr.into()], "")
+                                        .unwrap();
+                                }
+                            }
+                            Type::Struct(_) | Type::UserDefined(_) => {
+                                // CRITICAL FIX: Unregister struct from scope to transfer ownership to caller.
+                                // Without this, exit_scope will free the struct before the caller can use it.
+                                if let Some(unreg_fn) =
+                                    self.module.get_function("tl_mem_unregister")
+                                {
+                                    let ptr = val.into_pointer_value();
+                                    let void_ptr_type =
+                                        self.context.ptr_type(inkwell::AddressSpace::default());
+                                    let cast_ptr = self
+                                        .builder
+                                        .build_pointer_cast(ptr, void_ptr_type, "cast_unreg_ret")
+                                        .unwrap();
+                                    self.builder
+                                        .build_call(unreg_fn, &[cast_ptr.into()], "")
+                                        .unwrap();
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
 
-                    // NOW emit cleanup for ALL active scopes (reverse order)
-                    self.emit_all_scopes_cleanup();
+                    if uses_sret {
+                        // CRITICAL: Copy to sret BEFORE cleanup to avoid stale pointer access
+                        // Get the sret pointer (first parameter)
+                        let current_fn = self
+                            .builder
+                            .get_insert_block()
+                            .and_then(|b| b.get_parent())
+                            .ok_or("No current function")?;
+                        let sret_ptr = current_fn
+                            .get_nth_param(0)
+                            .ok_or("Sret function missing sret parameter")?
+                            .into_pointer_value();
 
-                    // Return void
-                    self.builder.build_return(None).map_err(|e| e.to_string())?;
-                } else {
-                    // Normal return: cleanup then return value
-                    self.emit_all_scopes_cleanup();
-
-                    // Get current function return type
-                    let current_block = self.builder.get_insert_block().unwrap();
-                    let current_fn = current_block.get_parent().unwrap();
-                    let fn_name = current_fn.get_name().to_str().unwrap();
-                    let ret_ty = self
-                        .fn_return_types
-                        .get(fn_name)
-                        .cloned()
-                        .unwrap_or(Type::Void);
-
-                    if ret_ty == Type::Void {
+                        // Copy struct contents to sret pointer BEFORE cleanup
+                        let src_ptr = val.into_pointer_value();
+                        self.emit_struct_copy(sret_ptr, src_ptr, &ty)?;
+                        self.emit_all_scopes_cleanup();
                         self.builder.build_return(None).map_err(|e| e.to_string())?;
                     } else {
+                        // Normal return: cleanup then return value
+                        self.emit_all_scopes_cleanup();
                         self.builder
                             .build_return(Some(&val))
                             .map_err(|e| e.to_string())?;
                     }
+                } else {
+                    // return; (Void return)
+                    self.emit_all_scopes_cleanup();
+                    self.builder.build_return(None).map_err(|e| e.to_string())?;
                 }
                 Ok(())
             }

@@ -644,14 +644,19 @@ impl SemanticAnalyzer {
                 }
                 Ok(())
             }
-            Stmt::Return(expr) => {
-                let return_type = self.check_expr(expr)?;
+            Stmt::Return(expr_opt) => {
+                let found_type = if let Some(expr) = expr_opt {
+                    self.check_expr(expr)?
+                } else {
+                    Type::Void
+                };
+
                 // Check against function return type
                 if let Some(ref expected) = self.current_return_type {
-                    if !self.are_types_compatible(expected, &return_type) {
+                    if !self.are_types_compatible(expected, &found_type) {
                         return Err(SemanticError::TypeMismatch {
                             expected: expected.clone(),
-                            found: return_type,
+                            found: found_type,
                         });
                     }
                 }

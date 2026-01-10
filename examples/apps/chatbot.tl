@@ -120,7 +120,9 @@ fn main() {
     
     while true {
         let input_str = tl_read_line("User> ");
-        if input_str == "exit" { return 0; }
+        if (input_str == "exit" || input_str == "quit") {
+            return;
+        }
         
         let prompt = tl_string_concat("<|system|>\nYou are a helpful assistant.</s>\n<|user|>\n", tl_string_concat(input_str, "</s>\n<|assistant|>\n"));
         let tokens = tl_tokenizer_encode(tok, prompt);

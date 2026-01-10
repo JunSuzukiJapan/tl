@@ -103,7 +103,7 @@ pub enum Stmt {
         value: Expr,
     },
     Expr(Expr),
-    Return(Expr),
+    Return(Option<Expr>),
     If {
         cond: Expr,
         then_block: Vec<Stmt>,
