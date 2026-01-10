@@ -1015,17 +1015,20 @@ pub extern "C" fn tl_tensor_to_device(
 }
 
 pub fn force_link() {
-    let _ = tl_set_device as *const ();
-    let _ = tl_tensor_to_device as *const ();
-    let _ = tl_print_string as *const ();
-    let _ = tl_tensor_device_id as *const ();
-    let _ = tl_clear_grads as *const ();
-    let _ = tl_tensor_randn_debug as *const ();
-    let _ = tl_tensor_set_f32_md as *const ();
-    let _ = tl_tensor_free as *const ();
-    let _ = memory_manager::tl_mem_unregister as *const ();
-    let _ = tl_tensor_reshape_dims as *const ();
-    let _ = crate::runtime::stdlib::tl_prompt as *const ();
+    std::hint::black_box(tl_set_device as *const ());
+    std::hint::black_box(tl_tensor_to_device as *const ());
+    std::hint::black_box(tl_print_string as *const ());
+    std::hint::black_box(tl_tensor_device_id as *const ());
+    std::hint::black_box(tl_clear_grads as *const ());
+    std::hint::black_box(tl_tensor_randn_debug as *const ());
+    std::hint::black_box(tl_tensor_set_f32_md as *const ());
+    std::hint::black_box(tl_tensor_free as *const ());
+    std::hint::black_box(memory_manager::tl_mem_unregister as *const ());
+    std::hint::black_box(tl_tensor_reshape_dims as *const ());
+    std::hint::black_box(crate::runtime::stdlib::tl_prompt as *const ());
+    std::hint::black_box(crate::runtime::stdlib::tl_string_contains as *const ());
+    std::hint::black_box(crate::runtime::stdlib::tl_string_concat as *const ());
+    std::hint::black_box(crate::runtime::stdlib::tl_string_from_int as *const ());
 }
 
 #[no_mangle]
@@ -2029,6 +2032,7 @@ pub extern "C" fn tl_vec_u8_free(ptr: *mut Vec<u8>) {
 // String helper
 #[no_mangle]
 pub extern "C" fn tl_string_new(s: *const std::os::raw::c_char) -> *mut std::os::raw::c_char {
+    // println!("tl_string_new via mod.rs: {:p}", s);
     if s.is_null() {
         return std::ptr::null_mut();
     }
