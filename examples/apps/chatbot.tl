@@ -1,5 +1,6 @@
 extern fn tl_read_line(prompt: String) -> String;
 extern fn tl_string_concat(a: String, b: String) -> String;
+extern fn tl_string_contains(h: String, n: String) -> bool;
 extern fn tl_string_from_int(n: i64) -> String;
 extern fn tl_gguf_load(path: String) -> i64;
 extern fn tl_tokenizer_new(path: String) -> i64;
@@ -130,6 +131,7 @@ fn main() {
         let cache = tl_kv_cache_new(22);
         let cur_tokens = tokens.clone();
         let gen_idx = 0;
+        let gen_str = "";
         print("Assistant> ");
         while gen_idx < 100 {
             let total_len = tl_tensor_len(tokens);
@@ -146,7 +148,15 @@ fn main() {
             let lo = oh.forward(on.forward(x));
             let nxt = tl_tensor_argmax(tl_tensor_narrow(lo, 0, batch_len - 1, 1), 1, false);
             let tid = tl_tensor_item_i64(nxt);
-            print(tl_tokenizer_decode(tok, nxt));
+            let s_nxt = tl_tokenizer_decode(tok, nxt);
+            print(s_nxt);
+            
+            // Stop String Check
+            gen_str = tl_string_concat(gen_str, s_nxt);
+            if tl_string_contains(gen_str, "User:") {
+                gen_idx = 200; // Break loop
+            }
+
             if tid == 2 { gen_idx = 200; }
             tokens = tl_tensor_cat_i64(tokens, nxt, 0);
             cur_tokens = nxt;

@@ -60,6 +60,16 @@ pub extern "C" fn tl_string_from_int(val: i64) -> *mut c_char {
     }
 }
 
+#[no_mangle]
+pub extern "C" fn tl_string_contains(haystack: *const c_char, needle: *const c_char) -> bool {
+    if haystack.is_null() || needle.is_null() {
+        return false;
+    }
+    let h_str = unsafe { CStr::from_ptr(haystack).to_string_lossy() };
+    let n_str = unsafe { CStr::from_ptr(needle).to_string_lossy() };
+    h_str.contains(n_str.as_ref())
+}
+
 // --- File I/O ---
 
 #[no_mangle]
