@@ -81,11 +81,8 @@ impl Attention {
         let kr = tl_tensor_apply_rope(k_4d, cs, ss);
         let kt = tl_tensor_transpose(kr, 1, 2);
         let vt = tl_tensor_transpose(v_4d, 1, 2);
-        let vt = tl_tensor_transpose(v_4d, 1, 2);
-        let ck = tl_kv_cache_get_k(ch, li);
-        let cv = tl_kv_cache_get_v(ch, li);
-        let k_tot = if sp == 0 { kt } else { tl_tensor_cat_4d(ck, kt, 2) };
-        let v_tot = if sp == 0 { vt } else { tl_tensor_cat_4d(cv, vt, 2) };
+        let k_tot = if sp == 0 { kt } else { tl_tensor_cat_4d(tl_kv_cache_get_k(ch, li), kt, 2) };
+        let v_tot = if sp == 0 { vt } else { tl_tensor_cat_4d(tl_kv_cache_get_v(ch, li), vt, 2) };
         tl_kv_cache_update(ch, li, k_tot.clone(), v_tot.clone());
         let qt = tl_tensor_transpose(qr, 1, 2);
         let kw = tl_tensor_repeat_interleave(k_tot, 8, 1);

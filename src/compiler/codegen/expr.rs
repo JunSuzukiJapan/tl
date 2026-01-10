@@ -3112,9 +3112,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .build_call(func_val, &compiled_args_vals, "call_method")
                 .map_err(|e| e.to_string())?;
 
-            // MEMORY STRATEGY FIX: Removed manual emit_recursive_free for receiver and args.
-            // All temporaries are registered in scope and will be released by exit_scope.
-            // Manual release here caused double-free (scope release + manual release).
+            // FIX: Free temporary arguments and receiver
+            // Enable immediate release to prevent OOM in loops.
+            if self.is_safe_to_free(obj, &obj_ty) {
+                self.emit_recursive_free(obj_val.into(), &obj_ty)?;
+            }
+
+            for (i, (val, ty)) in compiled_args_types.iter().enumerate() {
+                let arg_expr = &args[i];
+                if self.is_safe_to_free(arg_expr, ty) {
+                    self.emit_recursive_free(*val, ty)?;
+                }
+            }
 
             if uses_sret {
                 // For sret calls, return the sret buffer pointer
@@ -5308,15 +5317,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
 
                 // FIX: Free temporary arguments
-                // CRITICAL: Do NOT free Tensor types here.
-                // Tensors are registered to scope via make_tensor and will be freed on scope exit.
-                // Calling emit_recursive_free here causes double-free.
+                // Tensors are registered to scope via make_tensor, BUT enabling immediate release
+                // prevents OOM in tight loops by clearing them from registry and freeing them.
                 for (i, (val, ty)) in compiled_args_types.iter().enumerate() {
                     let arg_expr = &args[i];
-                    // Skip Tensor types - they are scope-managed
-                    if matches!(ty, Type::Tensor(_, _)) {
-                        continue;
-                    }
                     if self.is_safe_to_free(arg_expr, ty) {
                         self.emit_recursive_free(*val, ty)?;
                     }
