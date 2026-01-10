@@ -16,7 +16,7 @@ A fully-featured chatbot utilizing the TinyLlama-1.1B model. It implements moder
 ### Setup and Usage
 
 1.  **Prepare Model Files**:
-    Ensure the following files are located in `/Users/junsuzuki/.llm/models/`:
+    Ensure the following files are located in `~/.llm/models/`:
     - `tinyllama-1.1b-chat-q4_0.gguf`
     - `tokenizer.json`
 

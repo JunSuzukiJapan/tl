@@ -16,7 +16,7 @@ TinyLlama-1.1B モデルを使用した、対話型のチャットボットア�
 ### 実行方法
 
 1.  **モデルファイルの準備**:
-    デフォルトで `/Users/junsuzuki/.llm/models/` ディレクトリに以下のファイルが必要です。
+    デフォルトで `~/.llm/models/` ディレクトリに以下のファイルが必要です。
     - `tinyllama-1.1b-chat-q4_0.gguf`
     - `tokenizer.json`
     (パスを変更する場合は、`chatbot.tl` の `main` 関数内のパスを編集してください)

@@ -110,8 +110,8 @@ impl Block {
 }
 fn main() {
     println("TinyLlama Chatbot (Stable)");
-    let weights = tl_gguf_load("/Users/junsuzuki/.llm/models/tinyllama-1.1b-chat-q4_0.gguf");
-    let tok = tl_tokenizer_new("/Users/junsuzuki/.llm/models/tokenizer.json");
+    let weights = tl_gguf_load("~/.llm/models/tinyllama-1.1b-chat-q4_0.gguf");
+    let tok = tl_tokenizer_new("~/.llm/models/tokenizer.json");
     let cos = tl_tensor_rope_new_cos(64, 2048, 10000.0);
     let sin = tl_tensor_rope_new_sin(64, 2048, 10000.0);
     let on = RMSNorm::new(weights, "output_norm.weight");
