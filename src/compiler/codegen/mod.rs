@@ -25,6 +25,7 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) struct_types: HashMap<String, StructType<'ctx>>,
     pub(crate) struct_defs: HashMap<String, StructDef>,
     pub(crate) fn_entry_scope_depth: usize,
+    pub(crate) builtin_manager: expr::BuiltinManager,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -46,6 +47,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             struct_types: HashMap::new(),
             struct_defs: HashMap::new(),
             fn_entry_scope_depth: 0,
+            builtin_manager: expr::BuiltinManager::new(),
         };
 
         // Delegate to runtime module
