@@ -122,7 +122,7 @@ fn parse_tuple_type(input: &str) -> IResult<&str, Type> {
     }
 }
 
-fn parse_type(input: &str) -> IResult<&str, Type> {
+pub fn parse_type(input: &str) -> IResult<&str, Type> {
     alt((
         parse_tensor_type,
         parse_primitive_type,
@@ -550,7 +550,7 @@ fn parse_range(input: &str) -> IResult<&str, Expr> {
 }
 
 // Top level Expr
-fn parse_expr(input: &str) -> IResult<&str, Expr> {
+pub fn parse_expr(input: &str) -> IResult<&str, Expr> {
     parse_range(input)
 }
 
@@ -802,7 +802,7 @@ fn parse_use_stmt(input: &str) -> IResult<&str, Stmt> {
     }
 }
 
-fn parse_stmt(input: &str) -> IResult<&str, Stmt> {
+pub fn parse_stmt(input: &str) -> IResult<&str, Stmt> {
     ws(alt((
         parse_let_stmt,
         parse_assign_stmt,

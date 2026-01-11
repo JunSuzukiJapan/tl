@@ -8,3 +8,4 @@ debug_logs/
 
 examples/tasks/mnist/data/
 *.ubyte
+*.log

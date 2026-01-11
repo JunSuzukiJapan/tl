@@ -1,16 +1,15 @@
-// src/main.rs
-mod compiler;
-mod runtime;
+// mod compiler;
+// mod runtime;
 
-use crate::compiler::codegen::CodeGenerator;
-use crate::compiler::inference::{forward_chain, query, GroundAtom, Value};
-use crate::compiler::semantics::SemanticAnalyzer;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use inkwell::context::Context as InkwellContext;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tl::compiler::codegen::CodeGenerator;
+use tl::compiler::inference::{forward_chain, query, GroundAtom, Value};
+use tl::compiler::semantics::SemanticAnalyzer;
 
 #[derive(Parser)]
 #[command(name = "tlc")]
@@ -74,8 +73,8 @@ fn main() -> Result<()> {
         Commands::Run { file, device } => {
             // Set device environment variable
             std::env::set_var("TL_DEVICE", device);
-            crate::runtime::force_link();
-            // crate::runtime::tl_runtime_keep_alive();
+            tl::runtime::force_link();
+            // tl::runtime::tl_runtime_keep_alive();
             println!("Running file: {:?}", file);
             let mut ast = match load_module_recursive(file.clone()) {
                 Ok(ast) => ast,
@@ -95,7 +94,7 @@ fn main() -> Result<()> {
             // 3. JIT Execution (First pass to setup tensors)
             // We always run JIT to execute top-level statements (e.g. tensor definitions)
             // This populates the global TensorContext via register callbacks.
-            use crate::runtime::registry;
+            use tl::runtime::registry;
             registry::reset_global_context();
 
             let context = InkwellContext::create();
@@ -166,11 +165,12 @@ fn main() -> Result<()> {
 }
 
 /// Execute a logic program using the inference engine.
+/// Execute a logic program using the inference engine.
 fn run_logic_program(
-    module: &compiler::ast::Module,
-    ctx: &crate::compiler::inference::TensorContext,
+    module: &tl::compiler::ast::Module,
+    ctx: &tl::compiler::inference::TensorContext,
 ) {
-    use crate::compiler::ast::{Atom, Expr};
+    use tl::compiler::ast::{Atom, Expr};
 
     println!("Executing logic program...");
 
@@ -230,8 +230,8 @@ fn run_logic_program(
 }
 
 /// Try to convert an Atom to a GroundAtom (all args must be literals).
-fn try_atom_to_ground(atom: &compiler::ast::Atom) -> Option<GroundAtom> {
-    use crate::compiler::ast::Expr;
+fn try_atom_to_ground(atom: &tl::compiler::ast::Atom) -> Option<GroundAtom> {
+    use tl::compiler::ast::Expr;
 
     let mut args = Vec::new();
     for expr in &atom.args {
@@ -249,7 +249,7 @@ fn try_atom_to_ground(atom: &compiler::ast::Atom) -> Option<GroundAtom> {
 }
 
 /// Check if the body is trivially true (empty or contains only "true").
-fn is_trivially_true(body: &[compiler::ast::Atom]) -> bool {
+fn is_trivially_true(body: &[tl::compiler::ast::Atom]) -> bool {
     if body.is_empty() {
         return true;
     }
@@ -259,11 +259,11 @@ fn is_trivially_true(body: &[compiler::ast::Atom]) -> bool {
     false
 }
 
-fn load_module_recursive(path: PathBuf) -> Result<compiler::ast::Module> {
+fn load_module_recursive(path: PathBuf) -> Result<tl::compiler::ast::Module> {
     let content =
         fs::read_to_string(&path).with_context(|| format!("Failed to read file {:?}", path))?;
 
-    let mut module = compiler::parser::parse(&content)
+    let mut module = tl::compiler::parser::parse(&content)
         .with_context(|| format!("Failed to parse file {:?}", path))?;
 
     let parent_dir = path.parent().unwrap_or(Path::new("."));
