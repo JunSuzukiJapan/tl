@@ -1551,7 +1551,20 @@ impl SemanticAnalyzer {
                         Type::ScalarArray(inner, _) => inner,
                         _ => unreachable!(),
                     };
-                    return Ok(Type::Tensor(inner_type, 0));
+
+                    // Inference Logic: Inspect args[1] AST if it's a literal
+                    let new_rank = if let Expr::TensorLiteral(elements) = &args[1] {
+                        elements.len()
+                    } else if let Expr::TensorConstLiteral(elements) = &args[1] {
+                        elements.len()
+                    } else if args.len() > 2 {
+                        // Varargs mode: reshape(t, d1, d2, ...) -> Rank = args.len() - 1
+                        args.len() - 1
+                    } else {
+                        0 // Fallback to 0 (dynamic/unknown)
+                    };
+
+                    return Ok(Type::Tensor(inner_type, new_rank));
                 } else if name == "len" {
                     if args.len() != 1 {
                         return Err(SemanticError::ArgumentCountMismatch {
@@ -2531,7 +2544,20 @@ impl SemanticAnalyzer {
                                     found: args.len(),
                                 });
                             }
-                            return Ok(obj_type.clone());
+                            match obj_type {
+                                Type::Tensor(inner, _) => {
+                                    // Inference Logic: Inspect args[0] AST if it's a literal
+                                    let new_rank = if let Expr::TensorLiteral(elements) = &args[0] {
+                                        elements.len()
+                                    } else if let Expr::TensorConstLiteral(elements) = &args[0] {
+                                        elements.len()
+                                    } else {
+                                        0 // Unknown rank
+                                    };
+                                    return Ok(Type::Tensor(inner.clone(), new_rank));
+                                }
+                                _ => return Ok(obj_type.clone()),
+                            }
                         }
                         if method_name == "relu"
                             || method_name == "gelu"

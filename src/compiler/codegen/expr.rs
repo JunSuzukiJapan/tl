@@ -359,32 +359,6 @@ fn compile_tensor_save<'ctx>(
     ))
 }
 
-fn compile_tensor_reshape<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    obj_val: BasicValueEnum<'ctx>,
-    obj_ty: Type,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 {
-        return Err("reshape method requires 1 argument (shape)".into());
-    }
-    let (s_val, _) = args[0].clone();
-    let reshape_fn = codegen
-        .module
-        .get_function("tl_tensor_reshape_new")
-        .unwrap();
-    let call = codegen
-        .builder
-        .build_call(reshape_fn, &[obj_val.into(), s_val.into()], "reshape_res")
-        .map_err(|e| e.to_string())?;
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid reshape return".into()),
-    };
-
-    Ok((res, obj_ty))
-}
-
 fn compile_tensor_sum<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     obj_val: BasicValueEnum<'ctx>,
@@ -792,7 +766,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         tensor_methods.register_eval("grad", compile_tensor_grad);
         tensor_methods.register_eval("contiguous", compile_tensor_contiguous);
         tensor_methods.register_eval("save", compile_tensor_save);
-        tensor_methods.register_eval("reshape", compile_tensor_reshape);
+        tensor_methods.register_uneval("reshape", compile_tensor_reshape_uneval);
         tensor_methods.register_eval("sum", compile_tensor_sum);
         tensor_methods.register_eval("slice", compile_tensor_slice);
         tensor_methods.register_eval("to", compile_tensor_to);
@@ -5872,4 +5846,63 @@ fn compile_embedding<'ctx>(
     }
 
     Ok((res, res_ty))
+}
+// --- Reshape Unevaluated Implementation ---
+
+fn compile_tensor_reshape_uneval<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: &Expr,
+    _method: &str,
+    args: &[Expr],
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("reshape method requires 1 argument (shape)".into());
+    }
+
+    // 1. Compile Receiver
+    let (obj_val, obj_ty) = codegen.compile_expr(obj)?;
+
+    // 2. Inspect shape argument for static rank inference
+    let shape_expr = &args[0];
+    let new_rank = if let Expr::TensorLiteral(elements) = shape_expr {
+        Some(elements.len())
+    } else if let Expr::TensorConstLiteral(elements) = shape_expr {
+        Some(elements.len())
+    } else {
+        None
+    };
+
+    // 3. Compile shape argument
+    let (s_val, _) = codegen.compile_expr(shape_expr)?;
+
+    // 4. Call runtime function
+    let reshape_fn = codegen
+        .module
+        .get_function("tl_tensor_reshape_new")
+        .ok_or("tl_tensor_reshape_new not found")?;
+    let call = codegen
+        .builder
+        .build_call(reshape_fn, &[obj_val.into(), s_val.into()], "reshape_res")
+        .map_err(|e| e.to_string())?;
+
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid reshape return".into()),
+    };
+
+    // 5. Construct return type
+    let new_ty = if let Some(rank) = new_rank {
+        // Preserving inner type from obj_ty
+        if let Type::Tensor(inner, _) = obj_ty {
+            Type::Tensor(inner, rank)
+        } else {
+            // Default generic fallback
+            Type::Tensor(Box::new(Type::F32), rank)
+        }
+    } else {
+        // Fallback: keep existing rank
+        obj_ty
+    };
+
+    Ok((res, new_ty))
 }
