@@ -57,17 +57,21 @@ pub(crate) fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
     let device_id = device_to_id(t.device());
 
     // Try to acquire from pool first
-    if let Ok(mut pool) = memory_manager::TENSOR_POOL.lock() {
-        if let Some(ptr) = pool.acquire(num_elements, dtype_id, device_id) {
-            unsafe {
-                // Reuse the OpaqueTensor, replace inner Tensor
-                (*ptr).0 = t;
-                (*ptr).1 = None; // Clear Var reference
-                (*ptr).2 = None; // Clear grad reference
-            }
-            memory_manager::register_tensor_global(ptr);
-            return ptr;
+    let pooled_ptr = if let Ok(mut pool) = memory_manager::TENSOR_POOL.lock() {
+        pool.acquire(num_elements, dtype_id, device_id)
+    } else {
+        None
+    };
+
+    if let Some(ptr) = pooled_ptr {
+        unsafe {
+            // Reuse the OpaqueTensor, replace inner Tensor
+            (*ptr).0 = t;
+            (*ptr).1 = None; // Clear Var reference
+            (*ptr).2 = None; // Clear grad reference
         }
+        memory_manager::register_tensor_global(ptr);
+        return ptr;
     }
 
     // No pooled tensor available, allocate new
