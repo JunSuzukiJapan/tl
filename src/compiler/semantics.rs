@@ -107,15 +107,15 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn enter_scope(&mut self) {
+    pub fn enter_scope(&mut self) {
         self.scopes.push(Scope::new());
     }
 
-    fn exit_scope(&mut self) {
+    pub fn exit_scope(&mut self) {
         self.scopes.pop();
     }
 
-    fn declare_variable(&mut self, name: String, ty: Type) -> Result<(), SemanticError> {
+    pub fn declare_variable(&mut self, name: String, ty: Type) -> Result<(), SemanticError> {
         let is_global = self.scopes.len() == 1; // Immutable borrow
                                                 // Shadowing is allowed
         if let Some(scope) = self.scopes.last_mut() {
@@ -413,7 +413,7 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    fn check_stmt(&mut self, stmt: &mut Stmt) -> Result<(), SemanticError> {
+    pub fn check_stmt(&mut self, stmt: &mut Stmt) -> Result<(), SemanticError> {
         match stmt {
             Stmt::FieldAssign { obj, field, value } => {
                 // Check object type and verify it's a struct
@@ -673,7 +673,10 @@ impl SemanticAnalyzer {
             } => {
                 let cond_type = self.check_expr(cond)?;
                 if cond_type != Type::Bool {
-                    // strict check
+                    return Err(SemanticError::TypeMismatch {
+                        expected: Type::Bool,
+                        found: cond_type,
+                    });
                 }
 
                 self.enter_scope();
@@ -797,7 +800,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn check_expr(&mut self, expr: &mut Expr) -> Result<Type, SemanticError> {
+    pub fn check_expr(&mut self, expr: &mut Expr) -> Result<Type, SemanticError> {
         match expr {
             Expr::Int(_) => Ok(Type::I64),   // Default integer literal type
             Expr::Float(_) => Ok(Type::F32), // Default float literal type
