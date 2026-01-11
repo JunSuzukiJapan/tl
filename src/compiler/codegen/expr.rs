@@ -775,6 +775,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         tensor_methods.register_eval("sub_assign", compile_tensor_sub_assign);
         tensor_methods.register_eval("mul_assign", compile_tensor_mul_assign);
         tensor_methods.register_eval("div_assign", compile_tensor_div_assign);
+        tensor_methods.register_eval("transpose", compile_tensor_transpose);
+        tensor_methods.register_eval("permute", compile_tensor_transpose); // permute aliases transpose logic for now
 
         self.instance_methods
             .insert("Tensor".to_string(), tensor_methods);
@@ -4548,6 +4550,19 @@ fn compile_println<'ctx>(
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     compile_print_common(codegen, args, true)
 }
+fn compile_tensor_transpose<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    // Prepends receiver to args and calls standard transpose
+    let mut new_args = Vec::with_capacity(args.len() + 1);
+    new_args.push((obj_val, obj_ty));
+    new_args.extend(args);
+    compile_transpose(codegen, new_args)
+}
+
 fn compile_transpose<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,

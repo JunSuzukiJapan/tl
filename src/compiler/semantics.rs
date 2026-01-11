@@ -1981,21 +1981,38 @@ impl SemanticAnalyzer {
                 if elements.is_empty() {
                     return Ok(Type::Tensor(Box::new(Type::F32), 1)); // Empty tensor?
                 }
-                let first_type = self.check_expr(&mut elements[0])?;
+                let mut first_type = self.check_expr(&mut elements[0])?;
+                let mut has_float = matches!(first_type, Type::F32 | Type::F64);
+
                 for e in &mut elements[1..] {
                     let t = self.check_expr(e)?;
                     if t != first_type {
-                        return Err(SemanticError::TypeMismatch {
-                            expected: first_type,
-                            found: t,
-                        });
+                        // Allow mixing I64 and F32/F64
+                        if (first_type == Type::I64 && matches!(t, Type::F32 | Type::F64))
+                            || (matches!(first_type, Type::F32 | Type::F64) && t == Type::I64)
+                        {
+                            has_float = true;
+                            // Promote to F32 if not already
+                            if first_type == Type::I64 {
+                                first_type = Type::F32;
+                            }
+                        } else {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: first_type,
+                                found: t,
+                            });
+                        }
                     }
                 }
+
                 // Construct Tensor type.
-                // If elements are primitive, Rank 1. If elements are Tensor<T, N>, Rank N+1.
-                match first_type {
-                    Type::Tensor(inner, rank) => Ok(Type::Tensor(inner, rank + 1)),
-                    primitive => Ok(Type::Tensor(Box::new(primitive), 1)),
+                if has_float {
+                    Ok(Type::Tensor(Box::new(Type::F32), 1))
+                } else {
+                    match first_type {
+                        Type::Tensor(inner, rank) => Ok(Type::Tensor(inner, rank + 1)),
+                        primitive => Ok(Type::Tensor(Box::new(primitive), 1)),
+                    }
                 }
             }
             Expr::IndexAccess(target, _indices) => {
@@ -2624,6 +2641,17 @@ impl SemanticAnalyzer {
                                     })
                                 }
                             }
+                        }
+                        if method_name == "transpose" {
+                            if args.len() != 2 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 2,
+                                    found: args.len(),
+                                });
+                            }
+                            // transpose preserves rank and type
+                            return Ok(obj_type.clone());
                         }
                         if method_name == "argmax" {
                             if args.len() != 2 {
