@@ -639,22 +639,32 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
 
                 // Variable Assignment: Deep Clone (Struct Copy + Tensor Acquire)
-                // We MUST Acquire (clone) because the source is either a temporary (Ref 1) that will be released later,
-                // or another variable (Ref 1) that we are sharing.
-                // EXCEPTION: For Structs returned from StructInit or StaticMethodCall, the SRET/malloc is already
-                // registered. We just use the pointer directly. Deep cloning would create a NEW struct and the old
-                // one would be freed on scope exit (double-free or use-after-free).
+                // Optimization: R-value Move Semantics
+                // If the value is a temporary (FnCall, BinOp, etc), we take ownership (Move).
+                // If the value is an L-value (Variable, FieldAccess), we must Copy (Acquire/Clone).
+
+                let is_rvalue = matches!(
+                    value,
+                    Expr::FnCall(_, _)
+                        | Expr::MethodCall(_, _, _)
+                        | Expr::StaticMethodCall(_, _, _)
+                        | Expr::BinOp(_, _, _)
+                        | Expr::UnOp(_, _)
+                        | Expr::TensorLiteral(_)
+                        | Expr::IfExpr(_, _, _) // Treating IfExpr as R-value (Assumes IfExpr logic ensures failure-safety)
+                        | Expr::Block(_)
+                );
+
                 let should_deep_clone = match &val_ty {
-                    Type::Tensor(_, _) => true, // Tensors always need Acquire
+                    Type::Tensor(_, _) => !is_rvalue, // Clone only if L-value
                     Type::Struct(_) | Type::UserDefined(_) => {
-                        // Check if RHS is StructInit or StaticMethodCall - if so, struct is fresh and registered
-                        !matches!(
-                            value,
-                            Expr::StructInit(_, _) | Expr::StaticMethodCall(_, _, _)
-                        )
+                        // Structs/UserDefined: Pointer copy vs Deep Clone
+                        // If R-value, we own the pointer. Move.
+                        !is_rvalue
                     }
                     _ => false,
                 };
+
                 if should_deep_clone {
                     val_ir = self.emit_deep_clone(val_ir, &val_ty)?;
                 }
@@ -1834,10 +1844,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // - We need to register the return value as a temporary so it gets freed at scope exit
 
                 match &ty {
-                    Type::Struct(_) | Type::UserDefined(_) => {
-                        // For struct return values: Register as a temporary variable
+                    Type::Struct(_) | Type::UserDefined(_) | Type::Tensor(_, _) => {
+                        // For struct/tensor return values: Register as a temporary variable
                         // This is equivalent to `let _ = expr;`
-                        // The struct and its fields will be properly freed at scope exit
+                        // The value will be properly freed at scope exit
                         static DISCARD_ID: std::sync::atomic::AtomicUsize =
                             std::sync::atomic::AtomicUsize::new(0);
                         let id = DISCARD_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1863,37 +1873,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .unwrap()
                             .insert(temp_name, (alloca.into(), ty.clone(), true));
                     }
-                    Type::Tensor(_, _) => {
-                        // For tensor return values: Free directly if safe, otherwise register as temp
-                        if self.is_safe_to_free(expr, &ty) {
-                            self.emit_recursive_free(val, &ty)?;
-                        } else {
-                            // Register as temporary to be freed at scope exit
-                            static TENSOR_DISCARD_ID: std::sync::atomic::AtomicUsize =
-                                std::sync::atomic::AtomicUsize::new(0);
-                            let id = TENSOR_DISCARD_ID
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            let temp_name = format!("_tensor_discard_{}", id);
 
-                            let current_function = self
-                                .builder
-                                .get_insert_block()
-                                .unwrap()
-                                .get_parent()
-                                .unwrap();
-
-                            let alloca =
-                                self.create_entry_block_alloca(current_function, &temp_name, &ty);
-                            self.builder
-                                .build_store(alloca, val)
-                                .map_err(|e| e.to_string())?;
-
-                            self.variables
-                                .last_mut()
-                                .unwrap()
-                                .insert(temp_name, (alloca.into(), ty.clone(), true));
-                        }
-                    }
                     _ => {
                         // Primitive types: no action needed (no memory to manage)
                     }

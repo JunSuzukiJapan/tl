@@ -2081,25 +2081,58 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::Void,
                 ));
 
-                // CRITICAL FIX: Unregister return value BEFORE exit_scope to prevent Use-After-Free
-                // The value is being returned to the outer scope (via PHI), so we must stop tracking it here.
+                // Scope Promotion Logic
+                // If result is in current scope (Temporary), remove it so it isn't freed. (Move)
+                // If result is NOT in current scope (L-value), CLONE it. (Copy)
+
+                let mut then_final_val = then_result.0;
+
                 if matches!(
                     then_result.1,
                     Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) | Type::Tuple(_)
                 ) {
-                    if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
-                        let ptr = then_result.0.into_pointer_value();
-                        let cast_ptr = self
-                            .builder
-                            .build_pointer_cast(
-                                ptr,
-                                self.context.ptr_type(inkwell::AddressSpace::default()),
-                                "cast_unreg",
-                            )
-                            .unwrap();
-                        self.builder
-                            .build_call(unreg_fn, &[cast_ptr.into()], "")
-                            .unwrap();
+                    // Logic:
+                    // 1. Check AST of last stmt.
+                    let is_lvalue = if let Some(last) = then_stmts.last() {
+                        match last {
+                            Stmt::Expr(e) => matches!(
+                                e,
+                                Expr::Variable(_)
+                                    | Expr::FieldAccess(_, _)
+                                    | Expr::IndexAccess(_, _)
+                            ),
+                            _ => false, // Stmt that isn't Expr? Void.
+                        }
+                    } else {
+                        false
+                    }; // Empty body -> Void
+
+                    if is_lvalue {
+                        // L-Value: Must Clone to return Owned.
+                        then_final_val = self.emit_deep_clone(then_final_val, &then_result.1)?;
+                        // Original remains in parent scope. Safe.
+                    } else {
+                        // R-Value (Temporary in this scope):
+                        // We MUST prevent exit_scope from freeing it.
+                        // Since we can't identify it by name to remove, we call runtime UNREGISTER.
+                        // Runtime unregister stops `tl_tensor_free` from working?
+                        // If `tl_tensor_free` checks if ptr is valid?
+                        // If so, `unregister` works.
+
+                        if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                            let ptr = then_final_val.into_pointer_value();
+                            let cast_ptr = self
+                                .builder
+                                .build_pointer_cast(
+                                    ptr,
+                                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                                    "cast",
+                                )
+                                .unwrap();
+                            self.builder
+                                .build_call(unreg_fn, &[cast_ptr.into()], "")
+                                .unwrap();
+                        }
                     }
                 }
 
@@ -2135,24 +2168,49 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::Void,
                 ));
 
-                // CRITICAL FIX: Unregister else result too
+                let mut else_final_val = else_result.0;
+
                 if matches!(
                     else_result.1,
                     Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) | Type::Tuple(_)
                 ) {
-                    if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
-                        let ptr = else_result.0.into_pointer_value();
-                        let cast_ptr = self
-                            .builder
-                            .build_pointer_cast(
-                                ptr,
-                                self.context.ptr_type(inkwell::AddressSpace::default()),
-                                "cast_unreg",
-                            )
-                            .unwrap();
-                        self.builder
-                            .build_call(unreg_fn, &[cast_ptr.into()], "")
-                            .unwrap();
+                    // Logic:
+                    // 1. Check AST of last stmt.
+                    let is_lvalue = if let Some(body) = &else_stmts {
+                        if let Some(last) = body.last() {
+                            match last {
+                                Stmt::Expr(e) => matches!(
+                                    e,
+                                    Expr::Variable(_)
+                                        | Expr::FieldAccess(_, _)
+                                        | Expr::IndexAccess(_, _)
+                                ),
+                                _ => false,
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+
+                    if is_lvalue {
+                        else_final_val = self.emit_deep_clone(else_final_val, &else_result.1)?;
+                    } else {
+                        if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                            let ptr = else_final_val.into_pointer_value();
+                            let cast_ptr = self
+                                .builder
+                                .build_pointer_cast(
+                                    ptr,
+                                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                                    "cast",
+                                )
+                                .unwrap();
+                            self.builder
+                                .build_call(unreg_fn, &[cast_ptr.into()], "")
+                                .unwrap();
+                        }
                     }
                 }
 
@@ -2190,8 +2248,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .build_phi(llvm_ty, "if_result")
                         .map_err(|e| e.to_string())?;
                     phi.add_incoming(&[
-                        (&then_result.0, then_final_bb),
-                        (&else_result.0, else_final_bb),
+                        (&then_final_val, then_final_bb),
+                        (&else_final_val, else_final_bb),
                     ]);
 
                     // FIX: Register the PHI result as a temporary
