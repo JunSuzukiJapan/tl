@@ -234,7 +234,7 @@ fn test_reshape_transpose() {
     let shape_shape = vec![2];
     let shape_t = tl_tensor_new(shape_data_t.as_ptr(), 1, shape_shape.as_ptr());
 
-    let t_flat = tl_tensor_reshape(t, shape_t);
+    let t_flat = tl_tensor_reshape_new(t, shape_t);
     assert_tensor_valid(t_flat);
     let dims = unsafe { (*t_flat).0.dims().to_vec() };
     assert_eq!(dims, vec![4, 1]);

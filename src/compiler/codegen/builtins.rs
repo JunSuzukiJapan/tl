@@ -288,7 +288,9 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_reshape_dims", reshape_dims_type);
 
     let reshape_tensor_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
-    add_fn("tl_tensor_reshape", reshape_tensor_type);
+    add_fn("tl_tensor_reshape_new", reshape_tensor_type);
+    add_fn("tl_reshape_to_4d", reshape_tensor_type);
+    add_fn("tl_reshape_to_2d", reshape_tensor_type);
 
     // Randn
     // tl_tensor_randn(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor
@@ -667,8 +669,14 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_transpose") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_transpose as usize);
     }
-    if let Some(f) = module.get_function("tl_tensor_reshape") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_reshape as usize);
+    if let Some(f) = module.get_function("tl_tensor_reshape_new") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_reshape_new as usize);
+    }
+    if let Some(f) = module.get_function("tl_reshape_to_4d") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_reshape_new as usize);
+    }
+    if let Some(f) = module.get_function("tl_reshape_to_2d") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_reshape_new as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_get") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_get as usize);

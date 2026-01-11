@@ -1249,21 +1249,40 @@ pub extern "C" fn tl_tensor_add_assign(ref_t: *mut OpaqueTensor, val_t: *mut Opa
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_reshape(
+pub extern "C" fn tl_tensor_reshape_new(
     t: *mut OpaqueTensor,
     shape_tensor: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
     unsafe {
+        // println!("DEBUG: Inside tl_tensor_reshape_new");
         let tensor = &(*t).0;
         let shape_t = &(*shape_tensor).0;
-        // Convert shape tensor to Vec<usize>
-        // Assuming shape tensor fits in memory and is 1D.
-        // We need to get data back to CPU if on GPU.
-        let shape_vec: Vec<f32> = shape_t.flatten_all().unwrap().to_vec1().unwrap();
-        let new_shape: Vec<usize> = shape_vec.iter().map(|&x| x as usize).collect();
 
-        let result = tensor.reshape(new_shape).unwrap();
-        make_tensor(result)
+        // Support both I64 and F32 shape tensors
+        let new_shape: Vec<usize> = match shape_t.dtype() {
+            candle_core::DType::I64 => {
+                let shape_vec: Vec<i64> = shape_t.flatten_all().unwrap().to_vec1().unwrap();
+                shape_vec.iter().map(|&x| x as usize).collect()
+            }
+            candle_core::DType::F32 => {
+                let shape_vec: Vec<f32> = shape_t.flatten_all().unwrap().to_vec1().unwrap();
+                shape_vec.iter().map(|&x| x as usize).collect()
+            }
+            dt => {
+                eprintln!("Error: Reshape shape tensor must be numeric, got {:?}", dt);
+                std::process::abort();
+            }
+        };
+
+        // println!("DEBUG: Calculated new shape: {:?}", new_shape);
+
+        match tensor.reshape(new_shape) {
+            Ok(result) => make_tensor(result),
+            Err(e) => {
+                println!("Error reshaping tensor (in tl_tensor_reshape_new): {}", e);
+                std::process::abort();
+            }
+        }
     }
 }
 
@@ -1274,6 +1293,7 @@ pub extern "C" fn tl_tensor_reshape_dims(
     num_dims: i64,
 ) -> *mut OpaqueTensor {
     unsafe {
+        // println!("DEBUG: Inside tl_tensor_reshape_dims");
         if t.is_null() || dims_ptr.is_null() {
             panic!(
                 "Null pointer passed to reshape_dims: t={:?}, dims={:?}",
@@ -1287,7 +1307,7 @@ pub extern "C" fn tl_tensor_reshape_dims(
         match tensor.reshape(new_shape) {
             Ok(result) => make_tensor(result),
             Err(e) => {
-                println!("Error reshaping tensor: {}", e);
+                println!("Error reshaping tensor (in tl_tensor_reshape_dims): {}", e);
                 std::process::abort();
             }
         }

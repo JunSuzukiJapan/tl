@@ -369,7 +369,10 @@ fn compile_tensor_reshape<'ctx>(
         return Err("reshape method requires 1 argument (shape)".into());
     }
     let (s_val, _) = args[0].clone();
-    let reshape_fn = codegen.module.get_function("tl_tensor_reshape").unwrap();
+    let reshape_fn = codegen
+        .module
+        .get_function("tl_tensor_reshape_new")
+        .unwrap();
     let call = codegen
         .builder
         .build_call(reshape_fn, &[obj_val.into(), s_val.into()], "reshape_res")
@@ -2808,11 +2811,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         elements: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        let f32_type = self.context.f32_type();
-        let i64_type = self.context.i64_type();
-
-        // Check if all elements are static literals (for optimized path)
-        // or if we need dynamic compilation
+        // 1. Calculate shape and total elements
         fn count_elements(exprs: &[Expr]) -> (usize, Vec<usize>) {
             if exprs.is_empty() {
                 return (0, vec![0]);
@@ -2844,22 +2843,48 @@ impl<'ctx> CodeGenerator<'ctx> {
         let (total_elements, shape) = count_elements(elements);
         let rank = shape.len();
 
-        // Allocate buffer for elements
-        // Use entry block allocation to prevent stack explosion in loops
-        // Allocate buffer for elements
-        // Use malloc directly at current block (HEAP allocation)
+        // 2. Flatten elements
+        fn flatten_exprs(exprs: &[Expr], result: &mut Vec<Expr>) {
+            for e in exprs {
+                if let Expr::TensorLiteral(children) = e {
+                    flatten_exprs(children, result);
+                } else {
+                    result.push(e.clone());
+                }
+            }
+        }
 
-        // Use tl_alloc_tmp for data (Variable Path)
+        let mut flat_exprs = Vec::new();
+        flatten_exprs(elements, &mut flat_exprs);
+
+        // 3. Compile all elements and determine target type
+        let mut compiled_vals = Vec::with_capacity(flat_exprs.len());
+        let mut has_float = false;
+
+        for expr in &flat_exprs {
+            let (val, ty) = self.compile_expr(expr)?;
+            compiled_vals.push((val, ty.clone()));
+            if matches!(ty, Type::F32 | Type::F64) {
+                has_float = true;
+            }
+        }
+
+        // Determine target type: F32 if any float present, else I64 (if all are numeric ints)
+        let i64_type = self.context.i64_type();
+        let f32_type = self.context.f32_type();
+
+        // 4. Allocate temporary buffer for data
         let alloc_tmp_fn = self
             .module
             .get_function("tl_alloc_tmp")
             .expect("tl_alloc_tmp not found");
 
+        let element_size = if has_float { 4 } else { 8 };
         let size = self
             .builder
             .build_int_mul(
                 i64_type.const_int(total_elements as u64, false),
-                i64_type.const_int(4, false), // sizeof(f32)
+                i64_type.const_int(element_size, false),
                 "alloc_size",
             )
             .map_err(|e| e.to_string())?;
@@ -2876,53 +2901,72 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => return Err("Invalid tl_alloc_tmp return".to_string()),
         };
 
-        // Helper to flatten and compile elements
-        fn flatten_exprs(exprs: &[Expr], result: &mut Vec<Expr>) {
-            for e in exprs {
-                if let Expr::TensorLiteral(children) = e {
-                    flatten_exprs(children, result);
-                } else {
-                    result.push(e.clone());
-                }
+        // 5. Store elements into buffer
+        for (i, (val, ty)) in compiled_vals.iter().enumerate() {
+            if has_float {
+                let float_val = match ty {
+                    Type::F32 => val.into_float_value(),
+                    Type::F64 => self
+                        .builder
+                        .build_float_cast(val.into_float_value(), f32_type, "f64_to_f32")
+                        .unwrap(),
+                    Type::I64 => self
+                        .builder
+                        .build_signed_int_to_float(val.into_int_value(), f32_type, "i64_to_f32")
+                        .unwrap(),
+                    Type::I32 | Type::Bool => self
+                        .builder
+                        .build_signed_int_to_float(
+                            self.builder
+                                .build_int_z_extend(val.into_int_value(), i64_type, "zext")
+                                .unwrap(),
+                            f32_type,
+                            "i_to_f32",
+                        )
+                        .unwrap(),
+                    _ => return Err(format!("Cannot cast {:?} to F32", ty)),
+                };
+
+                let ptr = unsafe {
+                    self.builder
+                        .build_in_bounds_gep(
+                            f32_type,
+                            data_alloca,
+                            &[i64_type.const_int(i as u64, false)],
+                            "elem_ptr",
+                        )
+                        .map_err(|e| e.to_string())?
+                };
+                self.builder.build_store(ptr, float_val).unwrap();
+            } else {
+                let int_val = match ty {
+                    Type::I64 => val.into_int_value(),
+                    Type::I32 => self
+                        .builder
+                        .build_int_z_extend(val.into_int_value(), i64_type, "zext")
+                        .unwrap(),
+                    Type::Bool => self
+                        .builder
+                        .build_int_z_extend(val.into_int_value(), i64_type, "zext")
+                        .unwrap(),
+                    _ => return Err(format!("Cannot cast {:?} to I64", ty)),
+                };
+
+                let ptr = unsafe {
+                    self.builder
+                        .build_in_bounds_gep(
+                            i64_type,
+                            data_alloca,
+                            &[i64_type.const_int(i as u64, false)],
+                            "elem_ptr",
+                        )
+                        .map_err(|e| e.to_string())?
+                };
+                self.builder.build_store(ptr, int_val).unwrap();
             }
         }
 
-        let mut flat_exprs = Vec::new();
-        flatten_exprs(elements, &mut flat_exprs);
-
-        // Compile each element and store to buffer
-        for (i, expr) in flat_exprs.iter().enumerate() {
-            let (val, val_ty) = self.compile_expr(expr)?;
-
-            // Convert to f32 if necessary
-            let f32_val = match val_ty {
-                Type::F32 => val.into_float_value(),
-                Type::I64 => self
-                    .builder
-                    .build_signed_int_to_float(val.into_int_value(), f32_type, "i2f")
-                    .map_err(|e| e.to_string())?,
-                _ => return Err(format!("Tensor element must be numeric, got {:?}", val_ty)),
-            };
-
-            // Get pointer to element position
-            let ptr = unsafe {
-                self.builder
-                    .build_in_bounds_gep(
-                        f32_type,
-                        data_alloca,
-                        &[i64_type.const_int(i as u64, false)],
-                        "elem_ptr",
-                    )
-                    .map_err(|e| e.to_string())?
-            };
-
-            // Store value
-            self.builder
-                .build_store(ptr, f32_val)
-                .map_err(|e| e.to_string())?;
-        }
-
-        // Allocate and fill shape buffer on HEAP (tl_alloc_tmp)
+        // 6. Allocate and fill shape buffer
         let shape_size = rank as u64 * 8; // i64 size
         let shape_alloc_call = self
             .builder
@@ -2954,11 +2998,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .map_err(|e| e.to_string())?;
         }
 
-        // Call tl_tensor_new
+        // 7. Call appropriate runtime tensor constructor
+        let (new_fn_name, result_inner_type) = if has_float {
+            ("tl_tensor_new", Type::F32)
+        } else {
+            ("tl_tensor_new_i64", Type::I64)
+        };
+
         let new_fn = self
             .module
-            .get_function("tl_tensor_new")
-            .ok_or("tl_tensor_new not found")?;
+            .get_function(new_fn_name)
+            .ok_or(format!("{} not found", new_fn_name))?;
 
         let shape_ptr_cast = self
             .builder
@@ -2969,12 +3019,21 @@ impl<'ctx> CodeGenerator<'ctx> {
             )
             .map_err(|e| e.to_string())?;
 
+        let data_ptr_cast = self
+            .builder
+            .build_pointer_cast(
+                data_alloca,
+                self.context.ptr_type(inkwell::AddressSpace::default()),
+                "data_ptr_cast",
+            )
+            .unwrap();
+
         let call = self
             .builder
             .build_call(
                 new_fn,
                 &[
-                    data_alloca.into(),
+                    data_ptr_cast.into(),
                     i64_type.const_int(rank as u64, false).into(),
                     shape_ptr_cast.into(),
                 ],
@@ -2984,29 +3043,26 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         let res = match call.try_as_basic_value() {
             ValueKind::Basic(v) => v,
-            _ => return Err("Invalid tl_tensor_new return".into()),
+            _ => return Err(format!("Invalid {} return", new_fn_name)),
         };
 
-        // CRITICAL: Free the temporary buffers after tl_tensor_new
-        // tl_tensor_new uses Tensor::from_slice which COPIES the data,
-        // so the original buffers are no longer needed and must be freed
-        // to prevent them from being reused and corrupting the tensor's internal data
+        // 8. Free temporary buffers
         let free_tmp_fn = self
             .module
             .get_function("tl_free_tmp")
             .expect("tl_free_tmp not found");
 
-        // Free data buffer
         self.builder
             .build_call(free_tmp_fn, &[data_alloca.into()], "")
-            .map_err(|e| e.to_string())?;
-
-        // Free shape buffer
+            .unwrap();
         self.builder
             .build_call(free_tmp_fn, &[shape_alloca.into()], "")
-            .map_err(|e| e.to_string())?;
+            .unwrap();
 
-        Ok((res, Type::Tensor(Box::new(Type::F32), rank)))
+        let result_ty = Type::Tensor(Box::new(result_inner_type), rank);
+        self.emit_register_tensor(res, &result_ty)?;
+
+        Ok((res, result_ty))
     }
 
     fn compile_tensor_const_literal(
@@ -4715,8 +4771,10 @@ fn compile_reshape<'ctx>(
     }
     let (t_val, t_ty) = codegen.ensure_tensor_v2(&args[0], 0)?;
 
+    eprintln!("DEBUG: Entered compile_reshape. args.len={}", args.len());
     // Arg1:
     let (arg1_val, arg1_ty) = codegen.compile_expr(&args[1])?;
+    eprintln!("DEBUG: compile_reshape arg1_ty: {:?}", arg1_ty);
 
     let res_val_ty = if (matches!(arg1_ty, Type::Tensor(_, _))
         || matches!(arg1_ty, Type::ScalarArray(_, _)))
@@ -4752,8 +4810,8 @@ fn compile_reshape<'ctx>(
 
         let reshape_fn = codegen
             .module
-            .get_function("tl_tensor_reshape")
-            .ok_or("tl_tensor_reshape not found")?;
+            .get_function("tl_tensor_reshape_new")
+            .ok_or("tl_tensor_reshape_new not found")?;
         let call = codegen
             .builder
             .build_call(reshape_fn, &[t_val.into(), s_val.into()], "reshape_res")

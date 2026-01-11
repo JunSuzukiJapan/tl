@@ -13,8 +13,8 @@ extern fn tl_tensor_mul(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
 extern fn tl_tensor_scale(a: Tensor<f32, 4>, s: f32) -> Tensor<f32, 4>;
 extern fn tl_tensor_transpose_2d(t: Tensor<f32, 2>, d1: i64, d2: i64) -> Tensor<f32, 2>;
 extern fn tl_tensor_transpose(t: Tensor<f32, 4>, d1: i64, d2: i64) -> Tensor<f32, 4>;
-extern fn tl_tensor_reshape_dims(t: Tensor<f32, 2>, dims: Tensor<i64, 1>, rank: i64) -> Tensor<f32, 4>;
-extern fn tl_tensor_reshape_2d(t: Tensor<f32, 4>, dims: Tensor<i64, 1>, rank: i64) -> Tensor<f32, 2>;
+extern fn tl_reshape_to_4d(t: Tensor<f32, 2>, dims: Tensor<i64, 1>) -> Tensor<f32, 4>;
+extern fn tl_reshape_to_2d(t: Tensor<f32, 4>, dims: Tensor<i64, 1>) -> Tensor<f32, 2>;
 extern fn tl_tensor_apply_rope(x: Tensor<f32, 4>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>) -> Tensor<f32, 4>;
 extern fn tl_tensor_repeat_interleave(t: Tensor<f32, 4>, repeats: i64, dim: i64) -> Tensor<f32, 4>;
 extern fn tl_tensor_new_causal_mask(dim: i64) -> Tensor<f32, 2>;
@@ -78,9 +78,9 @@ impl Attention {
     fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, sl: i64, ch: i64, li: i64, sp: i64) -> Tensor<f32, 2> {
         // Llama 3: 32 heads, 128 dim/head = 4096 hidden.
         // KV Heads: 8.
-        let q_4d = tl_tensor_reshape_dims(self.q.forward(x.clone()), [1, sl, 32, 128], 4);
-        let k_4d = tl_tensor_reshape_dims(self.k.forward(x.clone()), [1, sl, 8, 128], 4);
-        let v_4d = tl_tensor_reshape_dims(self.v.forward(x.clone()), [1, sl, 8, 128], 4);
+        let q_4d = tl_reshape_to_4d(self.q.forward(x.clone()), [1, sl, 32, 128]);
+        let k_4d = tl_reshape_to_4d(self.k.forward(x.clone()), [1, sl, 8, 128]);
+        let v_4d = tl_reshape_to_4d(self.v.forward(x.clone()), [1, sl, 8, 128]);
         
         let cs = tl_tensor_narrow(cos, 0, sp, sl);
         let ss = tl_tensor_narrow(sin, 0, sp, sl);
@@ -103,11 +103,11 @@ impl Attention {
         let vw = tl_tensor_repeat_interleave(v_tot, 4, 1);
         
         // Scaling: 1 / sqrt(128) approx 0.08839
-        let sm = if sl > 1 { tl_tensor_add_4d(tl_tensor_scale(tl_tensor_matmul_4d(qt, tl_tensor_transpose(kw, 2, 3)), 0.08839), tl_tensor_reshape_dims(tl_tensor_new_causal_mask(sl), [1, 1, sl, sl], 4)) } else { tl_tensor_scale(tl_tensor_matmul_4d(qt, tl_tensor_transpose(kw, 2, 3)), 0.08839) };
+        let sm = if sl > 1 { tl_tensor_add_4d(tl_tensor_scale(tl_tensor_matmul_4d(qt, tl_tensor_transpose(kw, 2, 3)), 0.08839), tl_reshape_to_4d(tl_tensor_new_causal_mask(sl), [1, 1, sl, sl])) } else { tl_tensor_scale(tl_tensor_matmul_4d(qt, tl_tensor_transpose(kw, 2, 3)), 0.08839) };
         let ao = tl_tensor_transpose(tl_tensor_matmul_4d(tl_tensor_softmax(sm, 3), vw), 1, 2);
         
         // 4096 hidden size
-        return self.o.forward(tl_tensor_reshape_2d(ao, [sl, 4096], 2));
+        return self.o.forward(tl_reshape_to_2d(ao, [sl, 4096]));
     }
 }
 struct Block { an: RMSNorm, ffn: RMSNorm, at: Attention, mlp: MLP }
