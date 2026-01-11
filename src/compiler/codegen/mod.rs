@@ -26,6 +26,8 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) struct_defs: HashMap<String, StructDef>,
     pub(crate) fn_entry_scope_depth: usize,
     pub(crate) builtin_manager: expr::BuiltinManager,
+    pub(crate) instance_methods: HashMap<String, expr::InstanceMethodManager>,
+    pub(crate) static_methods: HashMap<String, expr::StaticMethodManager>,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -48,7 +50,12 @@ impl<'ctx> CodeGenerator<'ctx> {
             struct_defs: HashMap::new(),
             fn_entry_scope_depth: 0,
             builtin_manager: expr::BuiltinManager::new(),
+            instance_methods: HashMap::new(),
+            static_methods: HashMap::new(),
         };
+
+        // Register all methods (instance and static)
+        codegen.register_all_methods();
 
         // Delegate to runtime module
         builtins::declare_runtime_functions(

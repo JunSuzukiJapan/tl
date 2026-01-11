@@ -1270,28 +1270,19 @@ pub extern "C" fn tl_tensor_reshape(
 #[no_mangle]
 pub extern "C" fn tl_tensor_reshape_dims(
     t: *mut OpaqueTensor,
-    dims_tensor_ptr: *mut OpaqueTensor,
-    _num_dims: i64,
+    dims_ptr: *const i64,
+    num_dims: i64,
 ) -> *mut OpaqueTensor {
     unsafe {
-        if t.is_null() || dims_tensor_ptr.is_null() {
+        if t.is_null() || dims_ptr.is_null() {
             panic!(
                 "Null pointer passed to reshape_dims: t={:?}, dims={:?}",
-                t, dims_tensor_ptr
+                t, dims_ptr
             );
         }
         let tensor = &(*t).0;
-        let dims_tensor = &(*dims_tensor_ptr).0;
-
-        let dims_i64 = if dims_tensor.dtype() == candle_core::DType::F32 {
-            // println!("DEBUG: casting dims F32 -> I64"); // Removed debug print
-            dims_tensor.to_dtype(candle_core::DType::I64).unwrap()
-        } else {
-            dims_tensor.clone()
-        };
-
-        let dims_vec: Vec<i64> = dims_i64.flatten_all().unwrap().to_vec1().unwrap();
-        let new_shape: Vec<usize> = dims_vec.iter().map(|&x| x as usize).collect();
+        let dims_slice = std::slice::from_raw_parts(dims_ptr, num_dims as usize);
+        let new_shape: Vec<usize> = dims_slice.iter().map(|&x| x as usize).collect();
 
         match tensor.reshape(new_shape) {
             Ok(result) => make_tensor(result),
