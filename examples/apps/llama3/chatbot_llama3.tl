@@ -156,8 +156,8 @@ fn main() {
         }
         
         // Llama 3 Prompt Format
-        // <|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n{input}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n
-        let p1 = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n";
+        // <|start_header_id|>user<|end_header_id|>\n\n{input}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n
+        let p1 = "<|start_header_id|>user<|end_header_id|>\n\n";
         let p2 = "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n";
         let prompt = tl_string_concat(p1, tl_string_concat(input_str, p2));
         
