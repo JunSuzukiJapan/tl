@@ -130,11 +130,19 @@ pub extern "C" fn tl_gguf_load(path: *const c_char) -> i64 {
             //    println!("GGUF Tensor: {}", tensor_name);
             // }
 
-            // let device = get_device(); // Device unused in loop now
+            let device = get_device(); // Device used for QTensor loading
             for (tensor_name, qtensor_info) in content.tensor_infos.iter() {
-                let qtensor = qtensor_info
-                    .read(&mut file, content.tensor_data_offset, &Device::Cpu)
-                    .expect("failed to read qtensor");
+                let qtensor = match qtensor_info
+                    .read(&mut file, content.tensor_data_offset, &device)
+                    .map_err(|e| e.to_string())
+                {
+                    Ok(q) => q,
+                    Err(e) => {
+                        eprintln!("Failed to read qtensor: {}", e);
+                        return 0; // Return 0 on error
+                    }
+                };
+
                 let qtensor_arc = std::sync::Arc::new(qtensor);
                 map.0.insert(
                     tensor_name.clone(),

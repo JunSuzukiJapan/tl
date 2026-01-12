@@ -2103,51 +2103,53 @@ pub struct OpaqueQTensor(pub Arc<candle_core::quantized::QTensor>);
 pub extern "C" fn tl_tensor_map_get_quantized(
     map: i64,
     name: *const std::os::raw::c_char,
-) -> *mut OpaqueQTensor {
+) -> usize {
     unsafe {
+        use std::ffi::CStr;
         let map_ptr = map as *mut OpaqueTensorMap;
+        if map_ptr.is_null() {
+            panic!("Map pointer is null");
+        }
         let map_ref = &(*map_ptr).0;
-        let c_str = std::ffi::CStr::from_ptr(name);
-        let key = c_str.to_string_lossy();
+        let c_str = CStr::from_ptr(name);
+        let key_str = c_str.to_str().unwrap();
 
-        if let Some(loaded) = map_ref.get(key.as_ref()) {
+        if let Some(loaded) = map_ref.get(key_str) {
             match loaded {
                 LoadedTensor::Quantized(qt) => {
-                    // qt is &Arc<QTensor>, clone generic Arc to get Arc<QTensor>
                     let arc = qt.clone();
-                    Box::into_raw(Box::new(OpaqueQTensor(arc)))
+                    Box::into_raw(Box::new(OpaqueQTensor(arc))) as usize
                 }
                 LoadedTensor::Standard(_) => {
                     panic!(
                         "Requested quantized tensor '{}', but found standard tensor.",
-                        key
+                        key_str
                     );
                 }
             }
         } else {
-            panic!("Weight '{}' not found in loaded file.", key);
+            panic!("Tensor '{}' not found in map.", key_str);
         }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_qtensor_free(ptr: *mut OpaqueQTensor) {
-    if !ptr.is_null() {
+pub extern "C" fn tl_qtensor_free(ptr: usize) {
+    if ptr != 0 {
         unsafe {
-            let _ = Box::from_raw(ptr);
+            let _ = Box::from_raw(ptr as *mut OpaqueQTensor);
         }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_qtensor_matmul(
-    input: *mut OpaqueTensor,
-    weight: *mut OpaqueQTensor,
-) -> *mut OpaqueTensor {
+pub extern "C" fn tl_qtensor_matmul(input: *mut OpaqueTensor, weight: usize) -> *mut OpaqueTensor {
     unsafe {
         let x_t = &(*input).0;
-        let w_qt = &(*weight).0;
+        let weight_ptr = weight as *mut OpaqueQTensor;
+        let w_qt = &(*weight_ptr).0;
 
+        // QMatMul::from_arc expects Arc<QTensor>
         let qmatmul = candle_core::quantized::QMatMul::from_arc(w_qt.clone()).unwrap();
         let result = qmatmul.forward(x_t).unwrap();
         make_tensor(result)

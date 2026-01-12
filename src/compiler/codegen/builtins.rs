@@ -1824,4 +1824,79 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_image_height(path) -> i64
     module.add_function("tl_image_height", image_dim_type, None);
     fn_return_types.insert("tl_image_height".to_string(), Type::I64);
+    // --- Missing Mappings for Llama 3 ---
+
+    // tl_tensor_map_get_quantized -> usize (i64)
+    let qt_get_type = i64_type.fn_type(&[i64_type.into(), i8_ptr.into()], false);
+    add_fn("tl_tensor_map_get_quantized", qt_get_type);
+    if let Some(f) = module.get_function("tl_tensor_map_get_quantized") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get_quantized as usize);
+    }
+
+    // tl_qtensor_matmul -> i64 (handle) as 2nd arg
+    let qmatmul_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_qtensor_matmul", qmatmul_type);
+    if let Some(f) = module.get_function("tl_qtensor_matmul") {
+        execution_engine.add_global_mapping(&f, runtime::tl_qtensor_matmul as usize);
+    }
+
+    // tl_qtensor_free
+    let qfree_type = void_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_qtensor_free", qfree_type);
+    if let Some(f) = module.get_function("tl_qtensor_free") {
+        execution_engine.add_global_mapping(&f, runtime::tl_qtensor_free as usize);
+    }
+
+    // tl_string_contains
+    let str_contains_type = context
+        .bool_type()
+        .fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_string_contains", str_contains_type);
+    fn_return_types.insert("tl_string_contains".to_string(), Type::Bool);
+    if let Some(f) = module.get_function("tl_string_contains") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_contains as usize);
+    }
+
+    // tl_string_from_int
+    let str_from_int_type = i8_ptr.fn_type(&[i64_type.into()], false);
+    add_fn("tl_string_from_int", str_from_int_type);
+    fn_return_types.insert(
+        "tl_string_from_int".to_string(),
+        Type::UserDefined("String".into()),
+    );
+    if let Some(f) = module.get_function("tl_string_from_int") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_int as usize);
+    }
+
+    // tl_tensor_argmax(t, dim, keepdim) -> tensor
+    let argmax_type = void_ptr.fn_type(
+        &[void_ptr.into(), i64_type.into(), context.bool_type().into()],
+        false,
+    );
+    add_fn("tl_tensor_argmax", argmax_type);
+    fn_return_types.insert("tl_tensor_argmax".to_string(), tensor_type.clone());
+    if let Some(f) = module.get_function("tl_tensor_argmax") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_argmax as usize);
+    }
+
+    // tl_tensor_item_i64
+    let item_i64_type = i64_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_tensor_item_i64", item_i64_type);
+    fn_return_types.insert("tl_tensor_item_i64".to_string(), Type::I64);
+    if let Some(f) = module.get_function("tl_tensor_item_i64") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_item_i64 as usize);
+    }
+
+    // tl_tensor_cat_i64
+    if let Some(f) = module.get_function("tl_tensor_cat_i64") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_cat_i64 as usize);
+    }
+
+    // tl_tensor_sample(t, temp, topp) -> tensor (llm.rs)
+    let sample_type = void_ptr.fn_type(&[void_ptr.into(), f32_type.into(), f32_type.into()], false);
+    add_fn("tl_tensor_sample", sample_type);
+    fn_return_types.insert("tl_tensor_sample".to_string(), tensor_type.clone());
+    if let Some(f) = module.get_function("tl_tensor_sample") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_sample as usize);
+    }
 }
