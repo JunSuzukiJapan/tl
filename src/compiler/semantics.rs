@@ -3254,6 +3254,86 @@ impl SemanticAnalyzer {
                             method_name: method_name.clone(),
                         });
                     }
+                    Type::I64 => {
+                        let unary_methods = ["abs", "signum", "is_positive", "is_negative"];
+                        let binary_methods = ["div_euclid", "rem_euclid", "pow"];
+
+                        if unary_methods.contains(&method_name.as_str()) {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
+                            return if method_name == "is_positive" || method_name == "is_negative" {
+                                Ok(Type::Bool)
+                            } else {
+                                Ok(Type::I64)
+                            };
+                        }
+                        if binary_methods.contains(&method_name.as_str()) {
+                            if args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 1,
+                                    found: args.len(),
+                                });
+                            }
+                            let arg_ty = self.check_expr(&mut args[0])?;
+                            if !matches!(arg_ty, Type::I64 | Type::I32) {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::I64,
+                                    found: arg_ty,
+                                });
+                            }
+                            return Ok(Type::I64);
+                        }
+                        return Err(SemanticError::MethodNotFound {
+                            type_name: "I64".to_string(),
+                            method_name: method_name.clone(),
+                        });
+                    }
+                    Type::I32 => {
+                        let unary_methods = ["abs", "signum", "is_positive", "is_negative"];
+                        let binary_methods = ["div_euclid", "rem_euclid", "pow"];
+
+                        if unary_methods.contains(&method_name.as_str()) {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
+                            return if method_name == "is_positive" || method_name == "is_negative" {
+                                Ok(Type::Bool)
+                            } else {
+                                Ok(Type::I32)
+                            };
+                        }
+                        if binary_methods.contains(&method_name.as_str()) {
+                            if args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 1,
+                                    found: args.len(),
+                                });
+                            }
+                            let arg_ty = self.check_expr(&mut args[0])?;
+                            if !matches!(arg_ty, Type::I32 | Type::I64) {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::I32,
+                                    found: arg_ty,
+                                });
+                            }
+                            return Ok(Type::I32);
+                        }
+                        return Err(SemanticError::MethodNotFound {
+                            type_name: "I32".to_string(),
+                            method_name: method_name.clone(),
+                        });
+                    }
                     _ => {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::UserDefined("Struct".into()),

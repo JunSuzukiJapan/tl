@@ -14,6 +14,7 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types: &mut HashMap<String, Type>,
 ) {
     let i64_type = context.i64_type(); // usize
+    let i32_type = context.i32_type();
     let f32_type = context.f32_type();
     let f32_ptr = context.ptr_type(AddressSpace::default());
     let usize_ptr = context.ptr_type(AddressSpace::default());
@@ -43,6 +44,12 @@ pub fn declare_runtime_functions<'ctx>(
     let f64_unary_type = f64_type.fn_type(&[f64_type.into()], false);
     let f64_binary_type = f64_type.fn_type(&[f64_type.into(), f64_type.into()], false);
     let f64_powi_type = f64_type.fn_type(&[f64_type.into(), i64_type.into()], false);
+    let i64_unary_type = i64_type.fn_type(&[i64_type.into()], false);
+    let i64_binary_type = i64_type.fn_type(&[i64_type.into(), i64_type.into()], false);
+    let i32_unary_type = i32_type.fn_type(&[i32_type.into()], false);
+    let i32_binary_type = i32_type.fn_type(&[i32_type.into(), i32_type.into()], false);
+    let i64_bool_unary_type = context.bool_type().fn_type(&[i64_type.into()], false);
+    let i32_bool_unary_type = context.bool_type().fn_type(&[i32_type.into()], false);
 
     let f32_unary_methods = [
         "abs",
@@ -128,6 +135,28 @@ pub fn declare_runtime_functions<'ctx>(
         add_fn(&format!("tl_f64_{}", name), f64_binary_type);
     }
     add_fn("tl_f64_powi", f64_powi_type);
+
+    let i64_unary_methods = ["abs", "signum"];
+    for name in i64_unary_methods {
+        add_fn(&format!("tl_i64_{}", name), i64_unary_type);
+    }
+    let i64_binary_methods = ["div_euclid", "rem_euclid", "pow"];
+    for name in i64_binary_methods {
+        add_fn(&format!("tl_i64_{}", name), i64_binary_type);
+    }
+    add_fn("tl_i64_is_positive", i64_bool_unary_type);
+    add_fn("tl_i64_is_negative", i64_bool_unary_type);
+
+    let i32_unary_methods = ["abs", "signum"];
+    for name in i32_unary_methods {
+        add_fn(&format!("tl_i32_{}", name), i32_unary_type);
+    }
+    let i32_binary_methods = ["div_euclid", "rem_euclid", "pow"];
+    for name in i32_binary_methods {
+        add_fn(&format!("tl_i32_{}", name), i32_binary_type);
+    }
+    add_fn("tl_i32_is_positive", i32_bool_unary_type);
+    add_fn("tl_i32_is_negative", i32_bool_unary_type);
 
     let print_str_type = void_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_print_string", print_str_type.clone());
@@ -790,6 +819,42 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_f64_powi") {
         execution_engine.add_global_mapping(&f, runtime::tl_f64_powi as *const () as usize);
     }
+    let i64_mappings: [(&str, usize); 5] = [
+        ("tl_i64_abs", runtime::tl_i64_abs as *const () as usize),
+        ("tl_i64_signum", runtime::tl_i64_signum as *const () as usize),
+        ("tl_i64_pow", runtime::tl_i64_pow as *const () as usize),
+        ("tl_i64_div_euclid", runtime::tl_i64_div_euclid as *const () as usize),
+        ("tl_i64_rem_euclid", runtime::tl_i64_rem_euclid as *const () as usize),
+    ];
+    for (name, addr) in i64_mappings {
+        if let Some(f) = module.get_function(name) {
+            execution_engine.add_global_mapping(&f, addr);
+        }
+    }
+    if let Some(f) = module.get_function("tl_i64_is_positive") {
+        execution_engine.add_global_mapping(&f, runtime::tl_i64_is_positive as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_i64_is_negative") {
+        execution_engine.add_global_mapping(&f, runtime::tl_i64_is_negative as *const () as usize);
+    }
+    let i32_mappings: [(&str, usize); 5] = [
+        ("tl_i32_abs", runtime::tl_i32_abs as *const () as usize),
+        ("tl_i32_signum", runtime::tl_i32_signum as *const () as usize),
+        ("tl_i32_pow", runtime::tl_i32_pow as *const () as usize),
+        ("tl_i32_div_euclid", runtime::tl_i32_div_euclid as *const () as usize),
+        ("tl_i32_rem_euclid", runtime::tl_i32_rem_euclid as *const () as usize),
+    ];
+    for (name, addr) in i32_mappings {
+        if let Some(f) = module.get_function(name) {
+            execution_engine.add_global_mapping(&f, addr);
+        }
+    }
+    if let Some(f) = module.get_function("tl_i32_is_positive") {
+        execution_engine.add_global_mapping(&f, runtime::tl_i32_is_positive as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_i32_is_negative") {
+        execution_engine.add_global_mapping(&f, runtime::tl_i32_is_negative as *const () as usize);
+    }
     if let Some(f) = module.get_function("tl_print_i64") {
         execution_engine.add_global_mapping(&f, runtime::tl_print_i64 as *const () as usize);
     }
@@ -1372,6 +1437,26 @@ pub fn declare_runtime_functions<'ctx>(
         fn_return_types.insert(format!("tl_f64_{}", name), Type::F64);
     }
     fn_return_types.insert("tl_f64_powi".to_string(), Type::F64);
+    let i64_unary_methods = ["abs", "signum"];
+    for name in i64_unary_methods {
+        fn_return_types.insert(format!("tl_i64_{}", name), Type::I64);
+    }
+    let i64_binary_methods = ["div_euclid", "rem_euclid", "pow"];
+    for name in i64_binary_methods {
+        fn_return_types.insert(format!("tl_i64_{}", name), Type::I64);
+    }
+    fn_return_types.insert("tl_i64_is_positive".to_string(), Type::Bool);
+    fn_return_types.insert("tl_i64_is_negative".to_string(), Type::Bool);
+    let i32_unary_methods = ["abs", "signum"];
+    for name in i32_unary_methods {
+        fn_return_types.insert(format!("tl_i32_{}", name), Type::I32);
+    }
+    let i32_binary_methods = ["div_euclid", "rem_euclid", "pow"];
+    for name in i32_binary_methods {
+        fn_return_types.insert(format!("tl_i32_{}", name), Type::I32);
+    }
+    fn_return_types.insert("tl_i32_is_positive".to_string(), Type::Bool);
+    fn_return_types.insert("tl_i32_is_negative".to_string(), Type::Bool);
     fn_return_types.insert("tl_tensor_len".to_string(), Type::I64);
     fn_return_types.insert("tl_tensor_get".to_string(), Type::F32);
     fn_return_types.insert("tl_tensor_get_i64_md".to_string(), Type::I64);

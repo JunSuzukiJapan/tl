@@ -945,6 +945,30 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.instance_methods
             .insert("F64".to_string(), f64_methods);
 
+        // --- I64 Instance Methods ---
+        let mut i64_methods = InstanceMethodManager::new();
+        i64_methods.register_eval("abs", compile_i64_abs);
+        i64_methods.register_eval("signum", compile_i64_signum);
+        i64_methods.register_eval("pow", compile_i64_pow);
+        i64_methods.register_eval("div_euclid", compile_i64_div_euclid);
+        i64_methods.register_eval("rem_euclid", compile_i64_rem_euclid);
+        i64_methods.register_eval("is_positive", compile_i64_is_positive);
+        i64_methods.register_eval("is_negative", compile_i64_is_negative);
+        self.instance_methods
+            .insert("I64".to_string(), i64_methods);
+
+        // --- I32 Instance Methods ---
+        let mut i32_methods = InstanceMethodManager::new();
+        i32_methods.register_eval("abs", compile_i32_abs);
+        i32_methods.register_eval("signum", compile_i32_signum);
+        i32_methods.register_eval("pow", compile_i32_pow);
+        i32_methods.register_eval("div_euclid", compile_i32_div_euclid);
+        i32_methods.register_eval("rem_euclid", compile_i32_rem_euclid);
+        i32_methods.register_eval("is_positive", compile_i32_is_positive);
+        i32_methods.register_eval("is_negative", compile_i32_is_negative);
+        self.instance_methods
+            .insert("I32".to_string(), i32_methods);
+
         // --- Tensor Static Methods ---
         let mut tensor_static = StaticMethodManager::new();
         // Unevaluated because of special TensorLiteral handling optimization
@@ -4235,6 +4259,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Tensor(_, _) => "Tensor".to_string(),
             Type::F32 => "F32".to_string(),
             Type::F64 => "F64".to_string(),
+            Type::I64 => "I64".to_string(),
+            Type::I32 => "I32".to_string(),
             _ => "".to_string(),
         };
 
@@ -6596,6 +6622,38 @@ fn cast_value_to_f64<'ctx>(
     }
 }
 
+fn cast_value_to_i64<'ctx>(
+    codegen: &CodeGenerator<'ctx>,
+    val: BasicValueEnum<'ctx>,
+    ty: &Type,
+) -> Result<IntValue<'ctx>, String> {
+    let i64_type = codegen.context.i64_type();
+    match ty {
+        Type::I64 => Ok(val.into_int_value()),
+        Type::I32 => codegen
+            .builder
+            .build_int_s_extend(val.into_int_value(), i64_type, "i32_to_i64")
+            .map_err(|e| e.to_string()),
+        _ => Err(format!("Cannot cast {:?} to I64", ty)),
+    }
+}
+
+fn cast_value_to_i32<'ctx>(
+    codegen: &CodeGenerator<'ctx>,
+    val: BasicValueEnum<'ctx>,
+    ty: &Type,
+) -> Result<IntValue<'ctx>, String> {
+    let i32_type = codegen.context.i32_type();
+    match ty {
+        Type::I32 => Ok(val.into_int_value()),
+        Type::I64 => codegen
+            .builder
+            .build_int_cast(val.into_int_value(), i32_type, "i64_to_i32")
+            .map_err(|e| e.to_string()),
+        _ => Err(format!("Cannot cast {:?} to I32", ty)),
+    }
+}
+
 fn compile_f32_unary_math<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     obj_val: BasicValueEnum<'ctx>,
@@ -6778,6 +6836,272 @@ fn compile_f64_powi<'ctx>(
     Ok((res, Type::F64))
 }
 
+fn compile_i64_unary_math<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    op_name: &str,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() {
+        return Err(format!("{} requires 0 arguments", op_name));
+    }
+    let obj_i64 = cast_value_to_i64(codegen, obj_val, &obj_ty)?;
+    let fn_name = format!("tl_i64_{}", op_name);
+    let fn_val = codegen
+        .module
+        .get_function(&fn_name)
+        .ok_or(format!("Function {} not found", fn_name))?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[obj_i64.into()], "i64_unary")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err(format!("Invalid {} return", op_name)),
+    };
+    Ok((res, Type::I64))
+}
+
+fn compile_i64_binary_math<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    op_name: &str,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err(format!("{} requires 1 argument", op_name));
+    }
+    let obj_i64 = cast_value_to_i64(codegen, obj_val, &obj_ty)?;
+    let (arg_val, arg_ty) = &args[0];
+    let arg_i64 = cast_value_to_i64(codegen, *arg_val, arg_ty)?;
+    let fn_name = format!("tl_i64_{}", op_name);
+    let fn_val = codegen
+        .module
+        .get_function(&fn_name)
+        .ok_or(format!("Function {} not found", fn_name))?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[obj_i64.into(), arg_i64.into()], "i64_binary")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err(format!("Invalid {} return", op_name)),
+    };
+    Ok((res, Type::I64))
+}
+
+fn compile_i64_pow<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("pow requires 1 argument".into());
+    }
+    let obj_i64 = cast_value_to_i64(codegen, obj_val, &obj_ty)?;
+    let (arg_val, arg_ty) = &args[0];
+    let exp_i64 = cast_value_to_i64(codegen, *arg_val, arg_ty)?;
+    let fn_val = codegen
+        .module
+        .get_function("tl_i64_pow")
+        .ok_or("Function tl_i64_pow not found".to_string())?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[obj_i64.into(), exp_i64.into()], "i64_pow")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid pow return".into()),
+    };
+    Ok((res, Type::I64))
+}
+
+fn compile_i64_is_positive<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() {
+        return Err("is_positive requires 0 arguments".into());
+    }
+    let obj_i64 = cast_value_to_i64(codegen, obj_val, &obj_ty)?;
+    let fn_val = codegen
+        .module
+        .get_function("tl_i64_is_positive")
+        .ok_or("Function tl_i64_is_positive not found".to_string())?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[obj_i64.into()], "i64_is_positive")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid is_positive return".into()),
+    };
+    Ok((res, Type::Bool))
+}
+
+fn compile_i64_is_negative<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() {
+        return Err("is_negative requires 0 arguments".into());
+    }
+    let obj_i64 = cast_value_to_i64(codegen, obj_val, &obj_ty)?;
+    let fn_val = codegen
+        .module
+        .get_function("tl_i64_is_negative")
+        .ok_or("Function tl_i64_is_negative not found".to_string())?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[obj_i64.into()], "i64_is_negative")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid is_negative return".into()),
+    };
+    Ok((res, Type::Bool))
+}
+
+fn compile_i32_unary_math<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    op_name: &str,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() {
+        return Err(format!("{} requires 0 arguments", op_name));
+    }
+    let obj_i32 = cast_value_to_i32(codegen, obj_val, &obj_ty)?;
+    let fn_name = format!("tl_i32_{}", op_name);
+    let fn_val = codegen
+        .module
+        .get_function(&fn_name)
+        .ok_or(format!("Function {} not found", fn_name))?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[obj_i32.into()], "i32_unary")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err(format!("Invalid {} return", op_name)),
+    };
+    Ok((res, Type::I32))
+}
+
+fn compile_i32_binary_math<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    op_name: &str,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err(format!("{} requires 1 argument", op_name));
+    }
+    let obj_i32 = cast_value_to_i32(codegen, obj_val, &obj_ty)?;
+    let (arg_val, arg_ty) = &args[0];
+    let arg_i32 = cast_value_to_i32(codegen, *arg_val, arg_ty)?;
+    let fn_name = format!("tl_i32_{}", op_name);
+    let fn_val = codegen
+        .module
+        .get_function(&fn_name)
+        .ok_or(format!("Function {} not found", fn_name))?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[obj_i32.into(), arg_i32.into()], "i32_binary")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err(format!("Invalid {} return", op_name)),
+    };
+    Ok((res, Type::I32))
+}
+
+fn compile_i32_pow<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("pow requires 1 argument".into());
+    }
+    let obj_i32 = cast_value_to_i32(codegen, obj_val, &obj_ty)?;
+    let (arg_val, arg_ty) = &args[0];
+    let exp_i32 = cast_value_to_i32(codegen, *arg_val, arg_ty)?;
+    let fn_val = codegen
+        .module
+        .get_function("tl_i32_pow")
+        .ok_or("Function tl_i32_pow not found".to_string())?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[obj_i32.into(), exp_i32.into()], "i32_pow")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid pow return".into()),
+    };
+    Ok((res, Type::I32))
+}
+
+fn compile_i32_is_positive<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() {
+        return Err("is_positive requires 0 arguments".into());
+    }
+    let obj_i32 = cast_value_to_i32(codegen, obj_val, &obj_ty)?;
+    let fn_val = codegen
+        .module
+        .get_function("tl_i32_is_positive")
+        .ok_or("Function tl_i32_is_positive not found".to_string())?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[obj_i32.into()], "i32_is_positive")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid is_positive return".into()),
+    };
+    Ok((res, Type::Bool))
+}
+
+fn compile_i32_is_negative<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() {
+        return Err("is_negative requires 0 arguments".into());
+    }
+    let obj_i32 = cast_value_to_i32(codegen, obj_val, &obj_ty)?;
+    let fn_val = codegen
+        .module
+        .get_function("tl_i32_is_negative")
+        .ok_or("Function tl_i32_is_negative not found".to_string())?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[obj_i32.into()], "i32_is_negative")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid is_negative return".into()),
+    };
+    Ok((res, Type::Bool))
+}
+
 macro_rules! f32_unary_method {
     ($name:ident, $op:expr) => {
         fn $name<'ctx>(
@@ -6826,6 +7150,58 @@ macro_rules! f64_binary_method {
             args: Vec<(BasicValueEnum<'ctx>, Type)>,
         ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
             compile_f64_binary_math(codegen, obj_val, obj_ty, args, $op)
+        }
+    };
+}
+
+macro_rules! i64_unary_method {
+    ($name:ident, $op:expr) => {
+        fn $name<'ctx>(
+            codegen: &mut CodeGenerator<'ctx>,
+            obj_val: BasicValueEnum<'ctx>,
+            obj_ty: Type,
+            args: Vec<(BasicValueEnum<'ctx>, Type)>,
+        ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+            compile_i64_unary_math(codegen, obj_val, obj_ty, args, $op)
+        }
+    };
+}
+
+macro_rules! i64_binary_method {
+    ($name:ident, $op:expr) => {
+        fn $name<'ctx>(
+            codegen: &mut CodeGenerator<'ctx>,
+            obj_val: BasicValueEnum<'ctx>,
+            obj_ty: Type,
+            args: Vec<(BasicValueEnum<'ctx>, Type)>,
+        ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+            compile_i64_binary_math(codegen, obj_val, obj_ty, args, $op)
+        }
+    };
+}
+
+macro_rules! i32_unary_method {
+    ($name:ident, $op:expr) => {
+        fn $name<'ctx>(
+            codegen: &mut CodeGenerator<'ctx>,
+            obj_val: BasicValueEnum<'ctx>,
+            obj_ty: Type,
+            args: Vec<(BasicValueEnum<'ctx>, Type)>,
+        ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+            compile_i32_unary_math(codegen, obj_val, obj_ty, args, $op)
+        }
+    };
+}
+
+macro_rules! i32_binary_method {
+    ($name:ident, $op:expr) => {
+        fn $name<'ctx>(
+            codegen: &mut CodeGenerator<'ctx>,
+            obj_val: BasicValueEnum<'ctx>,
+            obj_ty: Type,
+            args: Vec<(BasicValueEnum<'ctx>, Type)>,
+        ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+            compile_i32_binary_math(codegen, obj_val, obj_ty, args, $op)
         }
     };
 }
@@ -6905,6 +7281,16 @@ f64_binary_method!(compile_f64_copysign, "copysign");
 f64_binary_method!(compile_f64_hypot, "hypot");
 f64_binary_method!(compile_f64_log, "log");
 f64_binary_method!(compile_f64_powf, "powf");
+
+i64_unary_method!(compile_i64_abs, "abs");
+i64_unary_method!(compile_i64_signum, "signum");
+i64_binary_method!(compile_i64_div_euclid, "div_euclid");
+i64_binary_method!(compile_i64_rem_euclid, "rem_euclid");
+
+i32_unary_method!(compile_i32_abs, "abs");
+i32_unary_method!(compile_i32_signum, "signum");
+i32_binary_method!(compile_i32_div_euclid, "div_euclid");
+i32_binary_method!(compile_i32_rem_euclid, "rem_euclid");
 
 fn compile_tril<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,

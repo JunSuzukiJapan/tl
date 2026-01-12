@@ -1305,6 +1305,76 @@ pub extern "C" fn tl_f64_trunc(v: f64) -> f64 {
 }
 
 #[no_mangle]
+pub extern "C" fn tl_i64_abs(v: i64) -> i64 {
+    v.abs()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_i64_signum(v: i64) -> i64 {
+    v.signum()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_i64_pow(v: i64, exp: i64) -> i64 {
+    v.pow(exp as u32)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_i64_div_euclid(v: i64, rhs: i64) -> i64 {
+    v.div_euclid(rhs)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_i64_rem_euclid(v: i64, rhs: i64) -> i64 {
+    v.rem_euclid(rhs)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_i64_is_positive(v: i64) -> bool {
+    v.is_positive()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_i64_is_negative(v: i64) -> bool {
+    v.is_negative()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_i32_abs(v: i32) -> i32 {
+    v.abs()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_i32_signum(v: i32) -> i32 {
+    v.signum()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_i32_pow(v: i32, exp: i32) -> i32 {
+    v.pow(exp as u32)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_i32_div_euclid(v: i32, rhs: i32) -> i32 {
+    v.div_euclid(rhs)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_i32_rem_euclid(v: i32, rhs: i32) -> i32 {
+    v.rem_euclid(rhs)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_i32_is_positive(v: i32) -> bool {
+    v.is_positive()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_i32_is_negative(v: i32) -> bool {
+    v.is_negative()
+}
+
+#[no_mangle]
 pub extern "C" fn tl_print_string(s: *const std::os::raw::c_char) {
     if s.is_null() {
         return;
