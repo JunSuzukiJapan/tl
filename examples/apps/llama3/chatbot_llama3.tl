@@ -187,14 +187,10 @@ fn main() {
             print(s_nxt);
             
             gen_str = tl_string_concat(gen_str, s_nxt);
-            if tl_string_contains(gen_str, "User") {
-                gen_idx = 200;
-            }
-            if tl_string_contains(gen_str, "Assistant") {
-                gen_idx = 200;
-            }
-            // Llama 3 sometimes outputs <|eot_id|>
-            if tl_string_contains(gen_str, "<|eot_id|>") {
+            // Llama 3 EOT ID: 128009
+            // End of Text: 128001
+            let nxt_val = tl_tensor_item_i64(nxt);
+            if (nxt_val == 128009 || nxt_val == 128001) {
                 gen_idx = 200;
             }
 
