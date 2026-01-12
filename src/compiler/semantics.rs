@@ -98,7 +98,7 @@ pub struct SemanticAnalyzer {
 
 impl SemanticAnalyzer {
     pub fn new() -> Self {
-        SemanticAnalyzer {
+        let mut analyzer = SemanticAnalyzer {
             scopes: vec![Scope::new()], // Global scope
             functions: HashMap::new(),
             structs: HashMap::new(),
@@ -106,7 +106,36 @@ impl SemanticAnalyzer {
             methods: HashMap::new(),
             current_return_type: None,
             current_module: String::new(),
-        }
+        };
+        analyzer.declare_builtins();
+        analyzer
+    }
+
+    fn declare_builtins(&mut self) {
+        // Register Device Enum
+        let device_enum = EnumDef {
+            name: "Device".to_string(),
+            generics: vec![],
+            variants: vec![
+                VariantDef {
+                    name: "Auto".to_string(),
+                    fields: vec![],
+                },
+                VariantDef {
+                    name: "Cpu".to_string(),
+                    fields: vec![],
+                },
+                VariantDef {
+                    name: "Metal".to_string(),
+                    fields: vec![],
+                },
+                VariantDef {
+                    name: "Cuda".to_string(),
+                    fields: vec![],
+                },
+            ],
+        };
+        self.enums.insert("Device".to_string(), device_enum);
     }
 
     pub fn enter_scope(&mut self) {
@@ -1232,11 +1261,15 @@ impl SemanticAnalyzer {
                         });
                     }
                     let arg_ty = self.check_expr(&mut args[0])?;
-                    if !matches!(&arg_ty, Type::UserDefined(s) if s == "String") {
-                        return Err(SemanticError::TypeMismatch {
-                            expected: Type::UserDefined("String".into()),
-                            found: arg_ty,
-                        });
+                    // Expect Device enum
+                    match &arg_ty {
+                        Type::Enum(e) | Type::UserDefined(e) if e == "Device" => {}
+                        _ => {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::UserDefined("Device".into()),
+                                found: arg_ty,
+                            })
+                        }
                     }
                     return Ok(Type::Void);
                 }

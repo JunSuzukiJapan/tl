@@ -7,6 +7,7 @@ use mnist_common::load_mnist_labels;
 
 fn main() {
     print("=== MNIST Training ===");
+    set_device(Device::Auto);
     
     let train_x = load_mnist_images("examples/tasks/mnist/data/train-images-idx3-ubyte");
     let train_y = load_mnist_labels("examples/tasks/mnist/data/train-labels-idx1-ubyte");

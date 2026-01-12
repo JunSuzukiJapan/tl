@@ -1,5 +1,7 @@
 fn main() {
-    print("Testing set_device...");
-    set_device("cpu");
-    print("set_device completed successfully!");
+    print("Testing Device enum...");
+    let d: Device = Device::Cpu;
+    set_device(d);
+    set_device(Device::Auto);
+    print("set_device(Device) completed successfully!");
 }

@@ -4717,35 +4717,37 @@ fn compile_set_device<'ctx>(
     args: &[Expr],
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 {
-        return Err("set_device requires 1 argument (device name string)".into());
+        return Err("set_device expects 1 argument".into());
     }
+    let (arg_val, arg_ty) = codegen.compile_expr(&args[0])?;
 
-    // For string literals, pass the raw i8* directly instead of going through tl_string_new
-    let dev_ptr = if let Expr::StringLiteral(s) = &args[0] {
-        codegen
-            .builder
-            .build_global_string_ptr(s, "dev_str")
-            .map_err(|e| e.to_string())?
-            .as_pointer_value()
-            .into()
-    } else {
-        // For String variables, we'd need to extract the internal pointer.
-        // For now, just compile and pass (may need runtime adjustment).
-        let (dev_val, dev_ty) = codegen.compile_expr(&args[0])?;
-        if !matches!(&dev_ty, Type::UserDefined(s) if s == "String") {
-            return Err("set_device argument must be a string".into());
-        }
-        dev_val
+    // Expect Device Enum
+    let is_device_enum = match &arg_ty {
+        Type::Enum(e) | Type::UserDefined(e) if e == "Device" => true,
+        _ => false,
     };
+
+    if !is_device_enum {
+        return Err(format!(
+            "set_device argument must be a Device enum, found {:?}",
+            arg_ty
+        ));
+    }
 
     let fn_val = codegen
         .module
         .get_function("tl_set_device")
-        .ok_or("Runtime fn tl_set_device not found")?;
+        .ok_or("tl_set_device not found")?;
+
+    // Argument is pointer to Device enum (which is opaque* in LLVM)
+    let arg_ptr = match arg_val {
+        BasicValueEnum::PointerValue(p) => p,
+        _ => return Err("Expected pointer to Device enum".into()),
+    };
 
     codegen
         .builder
-        .build_call(fn_val, &[dev_ptr.into()], "")
+        .build_call(fn_val, &[arg_ptr.into()], "")
         .map_err(|e| e.to_string())?;
 
     Ok((

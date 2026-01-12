@@ -52,7 +52,7 @@ extern fn tl_tensor_rope_new_sin(dim: i64, len: i64, theta: f32) -> Tensor<f32, 
 fn main() {
     print("Test 1: start");
     
-    set_device("auto");
+    set_device(Device::Auto);
     print("Test 2: set_device done");
     
     let model_path = "~/.llm/models/tinyllama-1.1b-chat-q4_0.gguf";

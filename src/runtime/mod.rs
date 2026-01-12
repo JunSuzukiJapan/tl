@@ -961,17 +961,30 @@ pub extern "C" fn tl_display_string(s: *const std::os::raw::c_char) {
 }
 
 #[no_mangle]
-pub extern "C" fn tl_set_device(name: *const i8) {
-    if name.is_null() {
+pub extern "C" fn tl_set_device(device_ptr: *const std::ffi::c_void) {
+    if device_ptr.is_null() {
         return;
     }
-    let c_str = unsafe { std::ffi::CStr::from_ptr(name) };
-    if let Ok(r_str) = c_str.to_str() {
-        crate::runtime::device::DEVICE_MANAGER
-            .lock()
-            .unwrap()
-            .set_device(r_str);
-    }
+    // Read tag (first i32)
+    let tag = unsafe { *(device_ptr as *const i32) };
+
+    // Map tag to device string
+    // Enum Device { Auto=0, Cpu=1, Metal=2, Cuda=3 }
+    let device_str = match tag {
+        0 => "auto",
+        1 => "cpu",
+        2 => "metal",
+        3 => "cuda",
+        _ => {
+            eprintln!("Runtime Warning: Unknown Device enum tag: {}", tag);
+            return;
+        }
+    };
+
+    crate::runtime::device::DEVICE_MANAGER
+        .lock()
+        .unwrap()
+        .set_device(device_str);
 }
 
 #[no_mangle]

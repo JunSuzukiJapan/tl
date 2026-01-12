@@ -61,6 +61,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Register all methods (instance and static)
         codegen.register_all_methods();
 
+        // Register builtins (Enums, etc.)
+        codegen.register_builtins();
+
         // Delegate to runtime module
         builtins::declare_runtime_functions(
             codegen.context,
@@ -79,6 +82,34 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .map_err(|e| format!("JIT compile error: {}", e))?;
             Ok(function.call())
         }
+    }
+
+    fn register_builtins(&mut self) {
+        let device_enum = EnumDef {
+            name: "Device".to_string(),
+            generics: vec![],
+            variants: vec![
+                VariantDef {
+                    name: "Auto".to_string(),
+                    fields: vec![],
+                },
+                VariantDef {
+                    name: "Cpu".to_string(),
+                    fields: vec![],
+                },
+                VariantDef {
+                    name: "Metal".to_string(),
+                    fields: vec![],
+                },
+                VariantDef {
+                    name: "Cuda".to_string(),
+                    fields: vec![],
+                },
+            ],
+        };
+        // Compile and register the builtin enum
+        // We use unwrap() here because failure to compile a builtin is a compiler bug
+        self.compile_enum_defs(&[device_enum]).unwrap();
     }
 
     // Enter a new scope

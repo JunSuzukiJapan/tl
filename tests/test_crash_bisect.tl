@@ -255,7 +255,7 @@ extern fn tl_tensor_reshape_2d(t: Tensor<f32, 4>, dims: Tensor<i64, 1>, n: i64) 
 fn main() {
     print("Test 1: start");
     
-    set_device("auto");
+    set_device(Device::Auto);
     print("Test 2: set_device done");
     
     let model_path = "~/.llm/models/tinyllama-1.1b-chat-q4_0.gguf";
