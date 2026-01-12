@@ -2658,3 +2658,128 @@ mod tests {
         memory_manager::tl_mem_exit_scope();
     }
 }
+
+// Added for Tensor Refactor (Global -> Instance)
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_tan(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    // tan(x) = sin(x) / cos(x)
+    let sin = t.sin().unwrap();
+    let cos = t.cos().unwrap();
+    let res = sin.div(&cos).unwrap();
+    make_tensor(res)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_abs(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    let res = t.abs().unwrap();
+    make_tensor(res)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_sigmoid(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    // sigmoid = 1 / (1 + exp(-x))
+    // Candle might have sigmoid directly?
+    // t.sigmoid() exists in recent versions?
+    // If not, calculate manually.
+    // Checking docs... Candle usually has it.
+    // If compiled fails, I'll switch to manual.
+    // Trying t.sigmoid() first.
+    let res = candle_nn::ops::sigmoid(t).unwrap();
+    make_tensor(res)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_tanh(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    let res = t.tanh().unwrap();
+    make_tensor(res)
+}
+
+// Reductions
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_max(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    let res = t.flatten_all().unwrap().max(0).unwrap(); // dim 0 of flat
+    make_tensor(res)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_max_dim(
+    t: *mut OpaqueTensor,
+    dim: usize,
+    keep_dim: bool,
+) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    let res = if keep_dim {
+        t.max_keepdim(dim).unwrap()
+    } else {
+        t.max(dim).unwrap()
+    };
+    make_tensor(res)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_min(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    let res = t.flatten_all().unwrap().min(0).unwrap();
+    make_tensor(res)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_min_dim(
+    t: *mut OpaqueTensor,
+    dim: usize,
+    keep_dim: bool,
+) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    let res = if keep_dim {
+        t.min_keepdim(dim).unwrap()
+    } else {
+        t.min(dim).unwrap()
+    };
+    make_tensor(res)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_mean(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    let res = t.flatten_all().unwrap().mean(0).unwrap();
+    make_tensor(res)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_mean_dim(
+    t: *mut OpaqueTensor,
+    dim: usize,
+    keep_dim: bool,
+) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    let res = if keep_dim {
+        t.mean_keepdim(dim).unwrap()
+    } else {
+        t.mean(dim).unwrap()
+    };
+    make_tensor(res)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_argmin(
+    t: *mut OpaqueTensor,
+    dim: usize,
+    keep_dim: bool,
+) -> *mut OpaqueTensor {
+    let t = unsafe { &(*t).0 };
+    let res = if keep_dim {
+        t.argmin_keepdim(dim).unwrap()
+    } else {
+        t.argmin(dim).unwrap()
+    };
+    // Ensure result is I64
+    let res_i64 = res.to_dtype(candle_core::DType::I64).unwrap_or(res);
+    make_tensor(res_i64)
+}

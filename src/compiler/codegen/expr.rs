@@ -900,8 +900,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         f32_methods.register_eval("to_degrees", compile_f32_to_degrees);
         f32_methods.register_eval("to_radians", compile_f32_to_radians);
         f32_methods.register_eval("trunc", compile_f32_trunc);
-        self.instance_methods
-            .insert("F32".to_string(), f32_methods);
+        self.instance_methods.insert("F32".to_string(), f32_methods);
 
         // --- F64 Instance Methods ---
         let mut f64_methods = InstanceMethodManager::new();
@@ -942,8 +941,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         f64_methods.register_eval("to_degrees", compile_f64_to_degrees);
         f64_methods.register_eval("to_radians", compile_f64_to_radians);
         f64_methods.register_eval("trunc", compile_f64_trunc);
-        self.instance_methods
-            .insert("F64".to_string(), f64_methods);
+        self.instance_methods.insert("F64".to_string(), f64_methods);
 
         // --- I64 Instance Methods ---
         let mut i64_methods = InstanceMethodManager::new();
@@ -954,8 +952,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         i64_methods.register_eval("rem_euclid", compile_i64_rem_euclid);
         i64_methods.register_eval("is_positive", compile_i64_is_positive);
         i64_methods.register_eval("is_negative", compile_i64_is_negative);
-        self.instance_methods
-            .insert("I64".to_string(), i64_methods);
+        self.instance_methods.insert("I64".to_string(), i64_methods);
 
         // --- I32 Instance Methods ---
         let mut i32_methods = InstanceMethodManager::new();
@@ -966,8 +963,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         i32_methods.register_eval("rem_euclid", compile_i32_rem_euclid);
         i32_methods.register_eval("is_positive", compile_i32_is_positive);
         i32_methods.register_eval("is_negative", compile_i32_is_negative);
-        self.instance_methods
-            .insert("I32".to_string(), i32_methods);
+        self.instance_methods.insert("I32".to_string(), i32_methods);
 
         // --- Tensor Static Methods ---
         let mut tensor_static = StaticMethodManager::new();
@@ -1524,10 +1520,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 else_block,
             } => {
                 let mut arms = Vec::with_capacity(2);
-                arms.push((
-                    pattern.clone(),
-                    Expr::Block(then_block.clone()),
-                ));
+                arms.push((pattern.clone(), Expr::Block(then_block.clone())));
                 let fallback = Expr::Block(else_block.clone().unwrap_or_default());
                 arms.push((Pattern::Wildcard, fallback));
                 self.compile_match_like(expr, &arms)
@@ -2037,7 +2030,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
 
                         let (get_fn_name, res_ty) = match inner.as_ref() {
-                            Type::I64 | Type::I32 => ("tl_tensor_get_i64_md", inner.as_ref().clone()),
+                            Type::I64 | Type::I32 => {
+                                ("tl_tensor_get_i64_md", inner.as_ref().clone())
+                            }
                             _ => ("tl_tensor_get_f32_md", Type::F32),
                         };
                         let get_fn = self.module.get_function(get_fn_name).unwrap();
@@ -2069,7 +2064,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                         if let Type::I32 = res_ty {
                             let i32_val = self
                                 .builder
-                                .build_int_truncate(res.into_int_value(), self.context.i32_type(), "i32_trunc")
+                                .build_int_truncate(
+                                    res.into_int_value(),
+                                    self.context.i32_type(),
+                                    "i32_trunc",
+                                )
                                 .map_err(|e| e.to_string())?;
                             Ok((i32_val.into(), Type::I32))
                         } else {
@@ -4045,19 +4044,11 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             let f_ptr = self
                 .builder
-                .build_struct_gep(
-                    variant_struct_ty,
-                    payload_ptr,
-                    f_idx as u32,
-                    "field_ptr",
-                )
+                .build_struct_gep(variant_struct_ty, payload_ptr, f_idx as u32, "field_ptr")
                 .unwrap();
 
             let llvm_ty = self.get_llvm_type(f_ty)?;
-            let f_val = self
-                .builder
-                .build_load(llvm_ty, f_ptr, "bind_val")
-                .unwrap();
+            let f_val = self.builder.build_load(llvm_ty, f_ptr, "bind_val").unwrap();
 
             let alloca = self.create_entry_block_alloca(current_func, bind_name, f_ty);
             let stored_val = if matches!(
@@ -4086,7 +4077,10 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn is_lvalue_expr(expr: &Expr) -> bool {
         matches!(
             expr,
-            Expr::Variable(_) | Expr::FieldAccess(_, _) | Expr::IndexAccess(_, _) | Expr::TupleAccess(_, _)
+            Expr::Variable(_)
+                | Expr::FieldAccess(_, _)
+                | Expr::IndexAccess(_, _)
+                | Expr::TupleAccess(_, _)
         )
     }
 
@@ -4311,9 +4305,185 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
+        // Special Handling for Tensor methods
+        if let Type::Tensor(elem_ty, _) = &obj_ty {
+            match method {
+                "cuda" => {
+                    let fn_val = self
+                        .module
+                        .get_function("tl_tensor_to_device")
+                        .ok_or("tl_tensor_to_device not found")?;
+                    let (dev_str_val, _) = self.compile_string_literal("cuda")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into(), dev_str_val.into()], "cuda_res")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from cuda()".into()),
+                    };
+                    self.emit_register_tensor(res, &obj_ty)?;
+                    return Ok((res, obj_ty.clone()));
+                }
+                "cpu" => {
+                    let fn_val = self
+                        .module
+                        .get_function("tl_tensor_to_device")
+                        .ok_or("tl_tensor_to_device not found")?;
+                    let (dev_str_val, _) = self.compile_string_literal("cpu")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into(), dev_str_val.into()], "cpu_res")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from cpu()".into()),
+                    };
+                    self.emit_register_tensor(res, &obj_ty)?;
+                    return Ok((res, obj_ty.clone()));
+                }
+                "item" => {
+                    let is_int = matches!(
+                        elem_ty.as_ref(),
+                        Type::I64 | Type::I32 | Type::U32 | Type::U8
+                    );
+                    let fn_name = if is_int {
+                        "tl_tensor_item_i64"
+                    } else {
+                        "tl_tensor_item"
+                    };
+                    let fn_val = self
+                        .module
+                        .get_function(fn_name)
+                        .ok_or(format!("{} not found", fn_name))?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into()], "item_res")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from item()".into()),
+                    };
+                    let ret_ty = if is_int { Type::I64 } else { Type::F32 };
+                    return Ok((res, ret_ty));
+                }
+                "max" | "min" | "mean" | "argmax" | "argmin" => {
+                    if !args.is_empty() {
+                        let suffix = if method == "argmax" || method == "argmin" {
+                            ""
+                        } else {
+                            "_dim"
+                        };
+                        let fn_name = format!("tl_tensor_{}{}", method, suffix);
+                        let fn_val = self
+                            .module
+                            .get_function(&fn_name)
+                            .ok_or(format!("{} not found", fn_name))?;
+
+                        let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> =
+                            Vec::new();
+                        call_args.push(obj_val.into());
+
+                        let (dim_val, _) = self.compile_expr(&args[0])?;
+                        call_args.push(dim_val.into());
+
+                        let keep_val = if args.len() > 1 {
+                            let (k, _) = self.compile_expr(&args[1])?;
+                            k.into()
+                        } else {
+                            self.context.bool_type().const_int(0, false).into()
+                        };
+                        call_args.push(keep_val);
+
+                        let call = self
+                            .builder
+                            .build_call(fn_val, &call_args, "reduce_res")
+                            .map_err(|e| e.to_string())?;
+                        let res = match call.try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(v) => v,
+                            _ => return Err(format!("Invalid return from {}()", method).into()),
+                        };
+                        self.emit_register_tensor(res, &Type::Tensor(Box::new(Type::F32), 1))?;
+                        return Ok((res, obj_ty.clone()));
+                    } else {
+                        if method == "argmax" || method == "argmin" {
+                            return Err(format!("{} requires arguments", method));
+                        }
+                    }
+                }
+                "detach" => {
+                    let fn_val = self
+                        .module
+                        .get_function("tl_tensor_detach")
+                        .ok_or("tl_tensor_detach not found")?;
+                    let req_grad = self.context.bool_type().const_int(0, false);
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into(), req_grad.into()], "detach_res")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from detach()".into()),
+                    };
+                    self.emit_register_tensor(res, &obj_ty)?;
+                    return Ok((res, obj_ty.clone()));
+                }
+                "contiguous" => {
+                    let fn_val = self
+                        .module
+                        .get_function("tl_tensor_contiguous")
+                        .ok_or("tl_tensor_contiguous not found")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into()], "cont_res")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from contiguous()".into()),
+                    };
+                    self.emit_register_tensor(res, &obj_ty)?;
+                    return Ok((res, obj_ty.clone()));
+                }
+                "clone" => {
+                    let fn_val = self
+                        .module
+                        .get_function("tl_tensor_clone")
+                        .ok_or("tl_tensor_clone not found")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into()], "clone_res")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from clone()".into()),
+                    };
+                    self.emit_register_tensor(res, &obj_ty)?;
+                    return Ok((res, obj_ty.clone()));
+                }
+                "grad" => {
+                    let fn_val = self
+                        .module
+                        .get_function("tl_tensor_grad")
+                        .ok_or("tl_tensor_grad not found")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into()], "grad_res")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from grad()".into()),
+                    };
+                    self.emit_register_tensor(res, &obj_ty)?;
+                    return Ok((res, obj_ty.clone()));
+                }
+                _ => {}
+            }
+        }
+
         // 4. Generic Fallback (Struct Methods / Mangled Names)
         let struct_name = match &obj_ty {
             Type::Struct(name) | Type::UserDefined(name) => name.clone(),
+            Type::Tensor(_, _) => "Tensor".to_string(),
             _ => return Err(format!("Method {} not found on type {:?}", method, obj_ty)),
         };
 

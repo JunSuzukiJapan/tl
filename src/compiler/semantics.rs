@@ -2965,6 +2965,69 @@ impl SemanticAnalyzer {
                             }
                             return Ok(obj_type.clone()); // Returns Tensor
                         }
+                        if method_name == "transpose" {
+                            if args.len() != 2 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 2,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "len" {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(Type::I64);
+                        }
+                        if method_name == "item" {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
+                            match obj_type {
+                                Type::Tensor(inner, _) => return Ok(*inner),
+                                _ => return Ok(Type::F32), // Fallback
+                            }
+                        }
+                        if method_name == "cuda" || method_name == "cpu" {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "max" || method_name == "min" || method_name == "mean" {
+                            if !args.is_empty() && args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 1, // Optional dim? For now strict 0 or 1. Let's say 0 for global scalar, 1 for dim
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                        }
+                        if method_name == "argmax" || method_name == "argmin" {
+                            if args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 1, // dim
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(Type::Tensor(Box::new(Type::I64), 0));
+                        }
                         if method_name == "reshape" {
                             if args.len() != 1 {
                                 return Err(SemanticError::ArgumentCountMismatch {
@@ -2990,10 +3053,17 @@ impl SemanticAnalyzer {
                         }
                         if method_name == "relu"
                             || method_name == "gelu"
+                            || method_name == "silu"
                             || method_name == "sin"
                             || method_name == "cos"
+                            || method_name == "tan"
                             || method_name == "sigmoid"
                             || method_name == "tanh"
+                            || method_name == "sqrt"
+                            || method_name == "exp"
+                            || method_name == "log"
+                            || method_name == "abs"
+                            || method_name == "neg"
                         {
                             if !args.is_empty() {
                                 return Err(SemanticError::ArgumentCountMismatch {

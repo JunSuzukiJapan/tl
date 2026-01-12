@@ -727,7 +727,10 @@ pub fn declare_runtime_functions<'ctx>(
         ("tl_f32_cosh", runtime::tl_f32_cosh as *const () as usize),
         ("tl_f32_exp", runtime::tl_f32_exp as *const () as usize),
         ("tl_f32_exp2", runtime::tl_f32_exp2 as *const () as usize),
-        ("tl_f32_exp_m1", runtime::tl_f32_exp_m1 as *const () as usize),
+        (
+            "tl_f32_exp_m1",
+            runtime::tl_f32_exp_m1 as *const () as usize,
+        ),
         ("tl_f32_floor", runtime::tl_f32_floor as *const () as usize),
         ("tl_f32_fract", runtime::tl_f32_fract as *const () as usize),
         ("tl_f32_ln", runtime::tl_f32_ln as *const () as usize),
@@ -736,14 +739,23 @@ pub fn declare_runtime_functions<'ctx>(
         ("tl_f32_log2", runtime::tl_f32_log2 as *const () as usize),
         ("tl_f32_recip", runtime::tl_f32_recip as *const () as usize),
         ("tl_f32_round", runtime::tl_f32_round as *const () as usize),
-        ("tl_f32_signum", runtime::tl_f32_signum as *const () as usize),
+        (
+            "tl_f32_signum",
+            runtime::tl_f32_signum as *const () as usize,
+        ),
         ("tl_f32_sin", runtime::tl_f32_sin as *const () as usize),
         ("tl_f32_sinh", runtime::tl_f32_sinh as *const () as usize),
         ("tl_f32_sqrt", runtime::tl_f32_sqrt as *const () as usize),
         ("tl_f32_tan", runtime::tl_f32_tan as *const () as usize),
         ("tl_f32_tanh", runtime::tl_f32_tanh as *const () as usize),
-        ("tl_f32_to_degrees", runtime::tl_f32_to_degrees as *const () as usize),
-        ("tl_f32_to_radians", runtime::tl_f32_to_radians as *const () as usize),
+        (
+            "tl_f32_to_degrees",
+            runtime::tl_f32_to_degrees as *const () as usize,
+        ),
+        (
+            "tl_f32_to_radians",
+            runtime::tl_f32_to_radians as *const () as usize,
+        ),
         ("tl_f32_trunc", runtime::tl_f32_trunc as *const () as usize),
     ];
     for (name, addr) in f32_unary_mappings {
@@ -753,7 +765,10 @@ pub fn declare_runtime_functions<'ctx>(
     }
     let f32_binary_mappings: [(&str, usize); 5] = [
         ("tl_f32_atan2", runtime::tl_f32_atan2 as *const () as usize),
-        ("tl_f32_copysign", runtime::tl_f32_copysign as *const () as usize),
+        (
+            "tl_f32_copysign",
+            runtime::tl_f32_copysign as *const () as usize,
+        ),
         ("tl_f32_hypot", runtime::tl_f32_hypot as *const () as usize),
         ("tl_f32_log", runtime::tl_f32_log as *const () as usize),
         ("tl_f32_powf", runtime::tl_f32_powf as *const () as usize),
@@ -780,7 +795,10 @@ pub fn declare_runtime_functions<'ctx>(
         ("tl_f64_cosh", runtime::tl_f64_cosh as *const () as usize),
         ("tl_f64_exp", runtime::tl_f64_exp as *const () as usize),
         ("tl_f64_exp2", runtime::tl_f64_exp2 as *const () as usize),
-        ("tl_f64_exp_m1", runtime::tl_f64_exp_m1 as *const () as usize),
+        (
+            "tl_f64_exp_m1",
+            runtime::tl_f64_exp_m1 as *const () as usize,
+        ),
         ("tl_f64_floor", runtime::tl_f64_floor as *const () as usize),
         ("tl_f64_fract", runtime::tl_f64_fract as *const () as usize),
         ("tl_f64_ln", runtime::tl_f64_ln as *const () as usize),
@@ -789,14 +807,23 @@ pub fn declare_runtime_functions<'ctx>(
         ("tl_f64_log2", runtime::tl_f64_log2 as *const () as usize),
         ("tl_f64_recip", runtime::tl_f64_recip as *const () as usize),
         ("tl_f64_round", runtime::tl_f64_round as *const () as usize),
-        ("tl_f64_signum", runtime::tl_f64_signum as *const () as usize),
+        (
+            "tl_f64_signum",
+            runtime::tl_f64_signum as *const () as usize,
+        ),
         ("tl_f64_sin", runtime::tl_f64_sin as *const () as usize),
         ("tl_f64_sinh", runtime::tl_f64_sinh as *const () as usize),
         ("tl_f64_sqrt", runtime::tl_f64_sqrt as *const () as usize),
         ("tl_f64_tan", runtime::tl_f64_tan as *const () as usize),
         ("tl_f64_tanh", runtime::tl_f64_tanh as *const () as usize),
-        ("tl_f64_to_degrees", runtime::tl_f64_to_degrees as *const () as usize),
-        ("tl_f64_to_radians", runtime::tl_f64_to_radians as *const () as usize),
+        (
+            "tl_f64_to_degrees",
+            runtime::tl_f64_to_degrees as *const () as usize,
+        ),
+        (
+            "tl_f64_to_radians",
+            runtime::tl_f64_to_radians as *const () as usize,
+        ),
         ("tl_f64_trunc", runtime::tl_f64_trunc as *const () as usize),
     ];
     for (name, addr) in f64_unary_mappings {
@@ -806,7 +833,10 @@ pub fn declare_runtime_functions<'ctx>(
     }
     let f64_binary_mappings: [(&str, usize); 5] = [
         ("tl_f64_atan2", runtime::tl_f64_atan2 as *const () as usize),
-        ("tl_f64_copysign", runtime::tl_f64_copysign as *const () as usize),
+        (
+            "tl_f64_copysign",
+            runtime::tl_f64_copysign as *const () as usize,
+        ),
         ("tl_f64_hypot", runtime::tl_f64_hypot as *const () as usize),
         ("tl_f64_log", runtime::tl_f64_log as *const () as usize),
         ("tl_f64_powf", runtime::tl_f64_powf as *const () as usize),
@@ -821,10 +851,19 @@ pub fn declare_runtime_functions<'ctx>(
     }
     let i64_mappings: [(&str, usize); 5] = [
         ("tl_i64_abs", runtime::tl_i64_abs as *const () as usize),
-        ("tl_i64_signum", runtime::tl_i64_signum as *const () as usize),
+        (
+            "tl_i64_signum",
+            runtime::tl_i64_signum as *const () as usize,
+        ),
         ("tl_i64_pow", runtime::tl_i64_pow as *const () as usize),
-        ("tl_i64_div_euclid", runtime::tl_i64_div_euclid as *const () as usize),
-        ("tl_i64_rem_euclid", runtime::tl_i64_rem_euclid as *const () as usize),
+        (
+            "tl_i64_div_euclid",
+            runtime::tl_i64_div_euclid as *const () as usize,
+        ),
+        (
+            "tl_i64_rem_euclid",
+            runtime::tl_i64_rem_euclid as *const () as usize,
+        ),
     ];
     for (name, addr) in i64_mappings {
         if let Some(f) = module.get_function(name) {
@@ -839,10 +878,19 @@ pub fn declare_runtime_functions<'ctx>(
     }
     let i32_mappings: [(&str, usize); 5] = [
         ("tl_i32_abs", runtime::tl_i32_abs as *const () as usize),
-        ("tl_i32_signum", runtime::tl_i32_signum as *const () as usize),
+        (
+            "tl_i32_signum",
+            runtime::tl_i32_signum as *const () as usize,
+        ),
         ("tl_i32_pow", runtime::tl_i32_pow as *const () as usize),
-        ("tl_i32_div_euclid", runtime::tl_i32_div_euclid as *const () as usize),
-        ("tl_i32_rem_euclid", runtime::tl_i32_rem_euclid as *const () as usize),
+        (
+            "tl_i32_div_euclid",
+            runtime::tl_i32_div_euclid as *const () as usize,
+        ),
+        (
+            "tl_i32_rem_euclid",
+            runtime::tl_i32_rem_euclid as *const () as usize,
+        ),
     ];
     for (name, addr) in i32_mappings {
         if let Some(f) = module.get_function(name) {
@@ -1194,11 +1242,73 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_item") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_item as usize);
     }
-    if let Some(f) = module.get_function("tl_tensor_to_f32") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_to_f32 as usize);
+    fn_return_types.insert("tl_tensor_to_f32".to_string(), Type::F32);
+
+    // Added missing ones (Define type locally as declared later)
+    let tensor_type = Type::Tensor(Box::new(Type::F32), 1);
+    fn_return_types.insert("tl_tensor_exp".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_log".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_sin".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_cos".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_tan".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_abs".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_sigmoid".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_tanh".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_max".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_max_dim".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_min".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_min_dim".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_mean".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_mean_dim".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_argmin".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_argmax".to_string(), tensor_type.clone());
+
+    // Removed duplicate tl_tensor_to_i64
+
+    // Added for Tensor Refactor
+    add_fn("tl_tensor_tan", unary_type);
+    if let Some(f) = module.get_function("tl_tensor_tan") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_tan as usize);
     }
-    if let Some(f) = module.get_function("tl_tensor_to_i64") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_to_i64 as usize);
+    add_fn("tl_tensor_abs", unary_type);
+    if let Some(f) = module.get_function("tl_tensor_abs") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_abs as usize);
+    }
+    add_fn("tl_tensor_sigmoid", unary_type);
+    if let Some(f) = module.get_function("tl_tensor_sigmoid") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_sigmoid as usize);
+    }
+    add_fn("tl_tensor_tanh", unary_type);
+    if let Some(f) = module.get_function("tl_tensor_tanh") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_tanh as usize);
+    }
+    add_fn("tl_tensor_max", unary_type);
+    if let Some(f) = module.get_function("tl_tensor_max") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_max as usize);
+    }
+    add_fn("tl_tensor_max_dim", sum_dim_type);
+    if let Some(f) = module.get_function("tl_tensor_max_dim") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_max_dim as usize);
+    }
+    add_fn("tl_tensor_min", unary_type);
+    if let Some(f) = module.get_function("tl_tensor_min") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_min as usize);
+    }
+    add_fn("tl_tensor_min_dim", sum_dim_type);
+    if let Some(f) = module.get_function("tl_tensor_min_dim") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_min_dim as usize);
+    }
+    add_fn("tl_tensor_mean", unary_type);
+    if let Some(f) = module.get_function("tl_tensor_mean") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_mean as usize);
+    }
+    add_fn("tl_tensor_mean_dim", sum_dim_type);
+    if let Some(f) = module.get_function("tl_tensor_mean_dim") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_mean_dim as usize);
+    }
+    add_fn("tl_tensor_argmin", sum_dim_type);
+    if let Some(f) = module.get_function("tl_tensor_argmin") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_argmin as usize);
     }
 
     // Vec<u8> mappings
@@ -2264,6 +2374,28 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_cat_i64
     if let Some(f) = module.get_function("tl_tensor_cat_i64") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_cat_i64 as usize);
+    }
+    // Fix: register return type
+    fn_return_types.insert(
+        "tl_tensor_cat_i64".to_string(),
+        Type::Tensor(Box::new(Type::F32), 1),
+    );
+
+    // tl_tensor_reshape -> tl_tensor_reshape_new alias for generic fallback
+    // Define types locally since this is late in function
+    let void_ptr_local = context.ptr_type(AddressSpace::default());
+    let reshape_type =
+        void_ptr_local.fn_type(&[void_ptr_local.into(), void_ptr_local.into()], false);
+
+    if module.get_function("tl_tensor_reshape").is_none() {
+        module.add_function("tl_tensor_reshape", reshape_type, None);
+    }
+    // Also need return type
+    let tensor_type_local = Type::Tensor(Box::new(Type::F32), 1);
+    fn_return_types.insert("tl_tensor_reshape".to_string(), tensor_type_local);
+
+    if let Some(f) = module.get_function("tl_tensor_reshape") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_reshape_new as usize);
     }
 
     // tl_tensor_sample(t, temp, topp) -> tensor (llm.rs)
