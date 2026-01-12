@@ -125,7 +125,39 @@ impl<'ctx> CodeGenerator<'ctx> {
         if let Some(scope) = self.variables.get(scope_idx) {
             for (_name, (val_enum, ty, should_free)) in scope {
                 if *should_free {
-                    if matches!(ty, Type::Struct(_) | Type::UserDefined(_)) {
+                    if let Type::UserDefined(name) = ty {
+                        let ptr = val_enum.into_pointer_value();
+                        let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                        if let Ok(obj_val) = self.builder.build_load(load_type, ptr, "obj_to_free")
+                        {
+                            match name.as_str() {
+                                "String" => {}
+                                "File" | "Path" => {}
+                                "Env" | "Http" => {}
+                                _ => {
+                                    let _ = self.emit_recursive_free(obj_val, ty);
+                                    if let Some(unreg_fn) =
+                                        self.module.get_function("tl_mem_unregister")
+                                    {
+                                        let _ = self
+                                            .builder
+                                            .build_call(unreg_fn, &[obj_val.into()], "");
+                                    }
+                                    if let Some(free_fn) = self.module.get_function("free") {
+                                        let void_ptr = self
+                                            .builder
+                                            .build_pointer_cast(
+                                                obj_val.into_pointer_value(),
+                                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                                "void_ptr",
+                                            )
+                                            .unwrap();
+                                        let _ = self.builder.build_call(free_fn, &[void_ptr.into()], "");
+                                    }
+                                }
+                            }
+                        }
+                    } else if matches!(ty, Type::Struct(_)) {
                         // Load the struct pointer from the stack variable (Alloca)
                         let ptr = val_enum.into_pointer_value();
                         let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
@@ -392,8 +424,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
                 let mangled_name = format!("tl_{}_{}", simple_target, method.name);
 
-                // Check if this method returns a struct (requires sret)
-                let uses_sret = matches!(&method.return_type, Type::Void /* SRET DISABLED */);
+                // SRET is disabled; keep signatures simple.
+                let uses_sret = false;
 
                 let mut param_types: Vec<BasicMetadataTypeEnum> = Vec::new();
 

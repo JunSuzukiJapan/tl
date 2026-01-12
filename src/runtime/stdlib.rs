@@ -240,39 +240,30 @@ pub extern "C" fn tl_path_join(base: *mut PathBuf, part: *const c_char) -> *mut 
 }
 
 #[no_mangle]
-pub extern "C" fn tl_path_exists(path: *const c_char) -> bool {
+pub extern "C" fn tl_path_exists(path: *mut PathBuf) -> bool {
     if path.is_null() {
         return false;
     }
-    unsafe {
-        let p = CStr::from_ptr(path).to_string_lossy();
-        let expanded = crate::runtime::expand_tilde(&p);
-        std::path::Path::new(&expanded).exists()
-    }
+    let path = unsafe { &*path };
+    path.exists()
 }
 
 #[no_mangle]
-pub extern "C" fn tl_path_is_dir(path: *const c_char) -> bool {
+pub extern "C" fn tl_path_is_dir(path: *mut PathBuf) -> bool {
     if path.is_null() {
         return false;
     }
-    unsafe {
-        let p = CStr::from_ptr(path).to_string_lossy();
-        let expanded = crate::runtime::expand_tilde(&p);
-        std::path::Path::new(&expanded).is_dir()
-    }
+    let path = unsafe { &*path };
+    path.is_dir()
 }
 
 #[no_mangle]
-pub extern "C" fn tl_path_is_file(path: *const c_char) -> bool {
+pub extern "C" fn tl_path_is_file(path: *mut PathBuf) -> bool {
     if path.is_null() {
         return false;
     }
-    unsafe {
-        let p = CStr::from_ptr(path).to_string_lossy();
-        let expanded = crate::runtime::expand_tilde(&p);
-        std::path::Path::new(&expanded).is_file()
-    }
+    let path = unsafe { &*path };
+    path.is_file()
 }
 
 #[no_mangle]

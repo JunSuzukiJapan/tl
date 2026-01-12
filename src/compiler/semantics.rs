@@ -588,6 +588,7 @@ impl SemanticAnalyzer {
                 let obj_type = self.check_expr(obj)?;
                 let struct_name = match obj_type {
                     Type::UserDefined(name) => name,
+                    Type::Struct(name) => name,
                     _ => {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::UserDefined("Struct".into()),
@@ -2906,6 +2907,7 @@ impl SemanticAnalyzer {
                 let obj_type = self.check_expr(obj)?;
                 let type_name = match &obj_type {
                     Type::UserDefined(name) => name.clone(),
+                    Type::Struct(name) => name.clone(),
                     Type::Tensor(_, _) => {
                         // Built-in tensor methods
                         if method_name == "backward" {

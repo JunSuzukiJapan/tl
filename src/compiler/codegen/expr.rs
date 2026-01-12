@@ -682,46 +682,131 @@ fn compile_varbuilder_get_static<'ctx>(
     // Arg 1..: Shape
     let i64_type = codegen.context.i64_type();
 
-    // Check if Arg 1 is a Tensor (shape) or explicit ints (Varargs)
-    // We assume Varargs if len > 2 or Arg 1 is Int.
-    // For simplicity, let's assume Varargs logic as primary (since that's what we saw).
+    let (rank, shape_alloca) = if args.len() == 2 {
+        match &args[1] {
+            Expr::TensorLiteral(elements) | Expr::TensorConstLiteral(elements) => {
+                let rank = elements.len();
+                let shape_array_type = i64_type.array_type(rank as u32);
+                let shape_alloca = codegen
+                    .builder
+                    .build_alloca(shape_array_type, "shape_arr")
+                    .map_err(|e| e.to_string())?;
 
-    let rank = args.len() - 1;
-    let shape_array_type = i64_type.array_type(rank as u32);
-    let shape_alloca = codegen
-        .builder
-        .build_alloca(shape_array_type, "shape_arr")
-        .map_err(|e| e.to_string())?;
+                for (i, elem) in elements.iter().enumerate() {
+                    let (val, ty) = codegen.compile_expr(elem)?;
+                    let i_val = match ty {
+                        Type::I64 => val.into_int_value(),
+                        Type::I32 => codegen
+                            .builder
+                            .build_int_z_extend(val.into_int_value(), i64_type, "dim_zext")
+                            .map_err(|e| e.to_string())?,
+                        _ => {
+                            return Err(format!(
+                                "VarBuilder::get expects integer dimensions, got {:?}",
+                                ty
+                            ))
+                        }
+                    };
+                    let ptr = unsafe {
+                        codegen
+                            .builder
+                            .build_in_bounds_gep(
+                                shape_array_type,
+                                shape_alloca,
+                                &[
+                                    i64_type.const_int(0, false),
+                                    i64_type.const_int(i as u64, false),
+                                ],
+                                "tmp",
+                            )
+                            .map_err(|e| e.to_string())?
+                    };
+                    codegen
+                        .builder
+                        .build_store(ptr, i_val)
+                        .map_err(|e| e.to_string())?;
+                }
+                (rank, shape_alloca)
+            }
+            _ => {
+                let rank = args.len() - 1;
+                let shape_array_type = i64_type.array_type(rank as u32);
+                let shape_alloca = codegen
+                    .builder
+                    .build_alloca(shape_array_type, "shape_arr")
+                    .map_err(|e| e.to_string())?;
 
-    for (i, arg) in args[1..].iter().enumerate() {
-        let (val, ty) = codegen.compile_expr(arg)?;
-        let i_val = if ty == Type::I64 {
-            val.into_int_value()
-        } else {
-            return Err(format!(
-                "VarBuilder::get expects integer dimensions, got {:?}",
-                ty
-            ));
-        };
-        let ptr = unsafe {
+                for (i, arg) in args[1..].iter().enumerate() {
+                    let (val, ty) = codegen.compile_expr(arg)?;
+                    let i_val = if ty == Type::I64 {
+                        val.into_int_value()
+                    } else {
+                        return Err(format!(
+                            "VarBuilder::get expects integer dimensions, got {:?}",
+                            ty
+                        ));
+                    };
+                    let ptr = unsafe {
+                        codegen
+                            .builder
+                            .build_in_bounds_gep(
+                                shape_array_type,
+                                shape_alloca,
+                                &[
+                                    i64_type.const_int(0, false),
+                                    i64_type.const_int(i as u64, false),
+                                ],
+                                "tmp",
+                            )
+                            .map_err(|e| e.to_string())?
+                    };
+                    codegen
+                        .builder
+                        .build_store(ptr, i_val)
+                        .map_err(|e| e.to_string())?;
+                }
+                (rank, shape_alloca)
+            }
+        }
+    } else {
+        let rank = args.len() - 1;
+        let shape_array_type = i64_type.array_type(rank as u32);
+        let shape_alloca = codegen
+            .builder
+            .build_alloca(shape_array_type, "shape_arr")
+            .map_err(|e| e.to_string())?;
+
+        for (i, arg) in args[1..].iter().enumerate() {
+            let (val, ty) = codegen.compile_expr(arg)?;
+            let i_val = if ty == Type::I64 {
+                val.into_int_value()
+            } else {
+                return Err(format!(
+                    "VarBuilder::get expects integer dimensions, got {:?}",
+                    ty
+                ));
+            };
+            let ptr = unsafe {
+                codegen
+                    .builder
+                    .build_in_bounds_gep(
+                        shape_array_type,
+                        shape_alloca,
+                        &[
+                            i64_type.const_int(0, false),
+                            i64_type.const_int(i as u64, false),
+                        ],
+                        "tmp",
+                    )
+                    .map_err(|e| e.to_string())?
+            };
             codegen
                 .builder
-                .build_in_bounds_gep(
-                    shape_array_type,
-                    shape_alloca,
-                    &[
-                        i64_type.const_int(0, false),
-                        i64_type.const_int(i as u64, false),
-                    ],
-                    "tmp",
-                )
-                .map_err(|e| e.to_string())?
-        };
-        codegen
-            .builder
-            .build_store(ptr, i_val)
-            .map_err(|e| e.to_string())?;
-    }
+                .build_store(ptr, i_val)
+                .map_err(|e| e.to_string())?;
+        }
+        (rank, shape_alloca)
+    };
 
     let f = codegen
         .module
@@ -1776,7 +1861,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                         Ok((loaded, *elem_type))
                     }
-                    Type::Tensor(_, _) => {
+                    Type::Tensor(inner, _) => {
                         // Prepare indices array
                         let rank = indices.len();
                         let i64_type = self.context.i64_type();
@@ -1843,8 +1928,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .map_err(|e| e.to_string())?;
                         }
 
-                        // Call tl_tensor_get_f32_md
-                        let get_fn = self.module.get_function("tl_tensor_get_f32_md").unwrap();
+                        let (get_fn_name, res_ty) = match inner.as_ref() {
+                            Type::I64 | Type::I32 => ("tl_tensor_get_i64_md", inner.as_ref().clone()),
+                            _ => ("tl_tensor_get_f32_md", Type::F32),
+                        };
+                        let get_fn = self.module.get_function(get_fn_name).unwrap();
                         let tensor_ptr = val.into_pointer_value();
                         let array_ptr = self
                             .builder
@@ -1870,7 +1958,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                             _ => return Err("Invalid get return".into()),
                         };
 
-                        Ok((res, Type::F32))
+                        if let Type::I32 = res_ty {
+                            let i32_val = self
+                                .builder
+                                .build_int_truncate(res.into_int_value(), self.context.i32_type(), "i32_trunc")
+                                .map_err(|e| e.to_string())?;
+                            Ok((i32_val.into(), Type::I32))
+                        } else {
+                            Ok((res, res_ty))
+                        }
                     }
                     _ => Err("Index access only on Tensor or ScalarArray".into()),
                 }

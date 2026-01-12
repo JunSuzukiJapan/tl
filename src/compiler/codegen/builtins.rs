@@ -71,6 +71,10 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_get_f32_md(t: *mut OpaqueTensor, indices: *const i64, rank: usize) -> f32
     let get_md_type = f32_type.fn_type(&[void_ptr.into(), i64_ptr.into(), i64_type.into()], false);
     add_fn("tl_tensor_get_f32_md", get_md_type);
+    // tl_tensor_get_i64_md(t: *mut OpaqueTensor, indices: *const i64, rank: usize) -> i64
+    let get_md_i64_type =
+        i64_type.fn_type(&[void_ptr.into(), i64_ptr.into(), i64_type.into()], false);
+    add_fn("tl_tensor_get_i64_md", get_md_i64_type);
 
     // tl_tensor_set_f32_md(t: *mut OpaqueTensor, indices: *const i64, rank: usize, val: f32) -> *mut OpaqueTensor
     let set_md_type = void_ptr.fn_type(
@@ -490,8 +494,8 @@ pub fn declare_runtime_functions<'ctx>(
     let gguf_load_type = i64_type.fn_type(&[i8_ptr.into()], false);
     add_fn("tl_gguf_load", gguf_load_type);
 
-    // tl_tensor_map_get(map: i64, name: *const c_char) -> *mut Tensor
-    let map_get_type = void_ptr.fn_type(&[i64_type.into(), i8_ptr.into()], false);
+    // tl_tensor_map_get(map: *mut Map, name: *const c_char) -> *mut Tensor
+    let map_get_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
     add_fn("tl_tensor_map_get", map_get_type);
 
     // tl_tensor_cat(tensors: *mut Vec, dim: i64) -> *mut Tensor
@@ -660,6 +664,9 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_get_f32_md") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_get_f32_md as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_get_i64_md") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_get_i64_md as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_neg") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_neg as usize);
@@ -1086,6 +1093,7 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_print_f32".to_string(), Type::Void);
     fn_return_types.insert("tl_tensor_len".to_string(), Type::I64);
     fn_return_types.insert("tl_tensor_get".to_string(), Type::F32);
+    fn_return_types.insert("tl_tensor_get_i64_md".to_string(), Type::I64);
     fn_return_types.insert("tl_tensor_dim".to_string(), Type::I64);
     // Add missing types that were likely in the original file but I need to make sure are present
     fn_return_types.insert("tl_tensor_transpose".to_string(), tensor_type.clone());

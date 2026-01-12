@@ -1096,6 +1096,37 @@ pub extern "C" fn tl_tensor_get_f32_md(
 }
 
 #[no_mangle]
+pub extern "C" fn tl_tensor_get_i64_md(
+    t: *mut OpaqueTensor,
+    indices: *const i64,
+    rank: usize,
+) -> i64 {
+    unsafe {
+        let tensor = &(*t).0;
+        let idxs = slice::from_raw_parts(indices, rank);
+        let idxs_usize: Vec<usize> = idxs.iter().map(|&x| x as usize).collect();
+
+        let dims = tensor.dims();
+        let mut flat_idx = 0;
+        let mut stride = 1;
+        for i in (0..rank).rev() {
+            flat_idx += idxs_usize[i] * stride;
+            stride *= dims[i];
+        }
+
+        let scalar = tensor.flatten_all().unwrap().get(flat_idx).unwrap();
+        match scalar.dtype() {
+            candle_core::DType::I64 => scalar.to_scalar::<i64>().unwrap(),
+            candle_core::DType::U32 => scalar.to_scalar::<u32>().unwrap() as i64,
+            candle_core::DType::U8 => scalar.to_scalar::<u8>().unwrap() as i64,
+            candle_core::DType::F32 => scalar.to_scalar::<f32>().unwrap() as i64,
+            candle_core::DType::F64 => scalar.to_scalar::<f64>().unwrap() as i64,
+            dt => panic!("tl_tensor_get_i64_md: Unsupported dtype {:?}", dt),
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn tl_tensor_transpose(
     t: *mut OpaqueTensor,
     dim0: usize,
@@ -1752,12 +1783,11 @@ pub extern "C" fn tl_tensor_cat_i64(
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_map_get(
-    map: i64,
+    map: *mut OpaqueTensorMap,
     name: *const std::os::raw::c_char,
 ) -> *mut OpaqueTensor {
     unsafe {
-        let map_ptr = map as *mut OpaqueTensorMap;
-        let map_ref = &(*map_ptr).0;
+        let map_ref = &(*map).0;
         let c_str = std::ffi::CStr::from_ptr(name);
         let key = c_str.to_string_lossy();
 
@@ -1774,7 +1804,7 @@ pub extern "C" fn tl_tensor_map_get(
                     // Keeping behavior similar to before: if move happened, maybe update?
                     // But original code: map_mut.insert(key, t_on_device.clone())
                     // Let's duplicate that logic.
-                    let map_mut = &mut (*map_ptr).0;
+                    let map_mut = &mut (*map).0;
                     map_mut.insert(key.to_string(), LoadedTensor::Standard(t_on_device.clone()));
                     make_tensor(t_on_device)
                 }
