@@ -332,10 +332,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
 
-            // Enum body: { i32 tag, [i8 x max_size] payload }
+            // Enum body: { i32 tag, [i64 x N] payload }
+            // Alignment Issue: If we use [i8], alignment is 1. If we store i64, we need alignment 8.
+            // By using [i64], we enforce alignment 8 for the payload area.
             let tag_type = self.context.i32_type();
-            let payload_size = std::cmp::max(max_payload_size, 1); // Minimum 1 byte
-            let payload_type = self.context.i8_type().array_type(payload_size as u32);
+
+            // Calculate number of i64s needed
+            let payload_size = std::cmp::max(max_payload_size, 1); // Bytes needed
+            let element_count = (payload_size + 7) / 8; // CEIL(bytes / 8)
+
+            let payload_type = self.context.i64_type().array_type(element_count as u32);
 
             if let Some(st) = self.enum_types.get(&e.name) {
                 st.set_body(&[tag_type.into(), payload_type.into()], false);
@@ -580,14 +586,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // Apply LLVM optimizations
-        if let Err(_) = self.module.verify() {
+        if let Err(e) = self.module.verify() {
             // self.module.print_to_stderr();
-            // return Err("Module verification failed".into());
+            return Err(format!("Module verification failed: {}", e.to_string()));
         }
 
         self.apply_optimizations();
-
-        // self.module.print_to_file("dump.ll").unwrap();
         Ok(())
     }
 
@@ -647,7 +651,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .context
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
-                Type::UserDefined(_) | Type::Struct(_) => self
+                Type::UserDefined(_) | Type::Struct(_) | Type::Enum(_) => self
                     .context
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
@@ -671,7 +675,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),
                 ),
-                Type::Struct(_) | Type::UserDefined(_) => Some(
+                Type::Struct(_) | Type::UserDefined(_) | Type::Enum(_) => Some(
                     self.context
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),

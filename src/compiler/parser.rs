@@ -840,11 +840,23 @@ fn parse_return_stmt(input: &str) -> IResult<&str, Stmt> {
 fn parse_expr_stmt(input: &str) -> IResult<&str, Stmt> {
     // expr;
     let (input, expr) = parse_expr(input)?;
-    // If it's a block or if-expr, semicolon optional? Rust allows.
-    // For simplicity, strict semicolon for now except if/for?
-    // Let's enforce semicolon for expr stmt.
-    let (input, _) = ws(char(';'))(input)?;
-    Ok((input, Stmt::Expr(expr)))
+
+    // Check if expr is block-like (If, Match, Block)
+    // In these cases, semicolon is optional in Rust-like syntax.
+    let is_block_like = match &expr {
+        Expr::IfExpr(_, _, _) => true,
+        Expr::Match { .. } => true,
+        Expr::Block(_) => true,
+        _ => false,
+    };
+
+    if is_block_like {
+        let (input, _) = opt(ws(char(';')))(input)?;
+        Ok((input, Stmt::Expr(expr)))
+    } else {
+        let (input, _) = ws(char(';'))(input)?;
+        Ok((input, Stmt::Expr(expr)))
+    }
 }
 
 fn parse_block_stmt(input: &str) -> IResult<&str, Stmt> {

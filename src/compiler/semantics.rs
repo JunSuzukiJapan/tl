@@ -242,6 +242,22 @@ impl SemanticAnalyzer {
         None
     }
 
+    fn resolve_user_type(&self, ty: &Type) -> Type {
+        if let Type::UserDefined(name) = ty {
+            let resolved_name = self.resolve_symbol_name(name);
+            if self.structs.contains_key(&resolved_name) {
+                return Type::Struct(resolved_name);
+            }
+            if self.enums.contains_key(&resolved_name) {
+                return Type::Enum(resolved_name);
+            }
+            // Keep as UserDefined if not found (or for Self/generics)
+            Type::UserDefined(resolved_name)
+        } else {
+            ty.clone()
+        }
+    }
+
     pub fn check_module(&mut self, module: &mut Module) -> Result<(), SemanticError> {
         self.register_module_symbols(module, "")?;
         self.check_module_bodies(module, "")?;
@@ -273,21 +289,6 @@ impl SemanticAnalyzer {
             self.structs.insert(full_name, s_clone);
         }
 
-        // Register functions
-        for f in &module.functions {
-            let full_name = if prefix.is_empty() {
-                f.name.clone()
-            } else {
-                format!("{}::{}", prefix, f.name)
-            };
-            if self.functions.contains_key(&full_name) {
-                return Err(SemanticError::DuplicateDefinition(full_name));
-            }
-            let mut f_clone = f.clone();
-            f_clone.name = full_name.clone();
-            self.functions.insert(full_name, f_clone);
-        }
-
         // Register enums
         for e in &module.enums {
             let full_name = if prefix.is_empty() {
@@ -301,6 +302,28 @@ impl SemanticAnalyzer {
             let mut e_clone = e.clone();
             e_clone.name = full_name.clone();
             self.enums.insert(full_name, e_clone);
+        }
+
+        // Register functions
+        for f in &module.functions {
+            let full_name = if prefix.is_empty() {
+                f.name.clone()
+            } else {
+                format!("{}::{}", prefix, f.name)
+            };
+            if self.functions.contains_key(&full_name) {
+                return Err(SemanticError::DuplicateDefinition(full_name));
+            }
+            let mut f_clone = f.clone();
+            f_clone.name = full_name.clone();
+
+            // Resolve types in arguments and return type
+            for (_, ty) in &mut f_clone.args {
+                *ty = self.resolve_user_type(ty);
+            }
+            f_clone.return_type = self.resolve_user_type(&f_clone.return_type);
+
+            self.functions.insert(full_name, f_clone);
         }
 
         // Submodules
@@ -427,15 +450,10 @@ impl SemanticAnalyzer {
                         )
                     })?
                 } else {
-                    // Also resolve user defined types in args?
-                    // Yes, we should resolve ALL types.
-                    // But currently Type resolution logic is not implemented separately.
-                    // For now, let's assume Type names need to be resolved too.
-                    // Let's implement resolve_type helper later.
-                    ty.clone()
+                    self.resolve_user_type(ty)
                 }
             } else {
-                ty.clone()
+                self.resolve_user_type(ty)
             };
             // If we resolved types, we should update `ty`?
             // Since we are iterating `&mut func.args`.
@@ -3160,6 +3178,9 @@ impl SemanticAnalyzer {
             }
             (Type::UserDefined(n1), Type::Struct(n2)) => n1 == n2,
             (Type::Struct(n1), Type::UserDefined(n2)) => n1 == n2,
+            (Type::UserDefined(n1), Type::Enum(n2)) => n1 == n2,
+            (Type::Enum(n1), Type::UserDefined(n2)) => n1 == n2,
+            (Type::Enum(n1), Type::Enum(n2)) => n1 == n2,
             (Type::UserDefined(n1), Type::UserDefined(n2)) => {
                 if n1 == n2 {
                     return true;

@@ -87,6 +87,17 @@ When a variable is shadowed (`let x = ...; let x = ...;`), the old variable's ha
     -   **Recursive Free**: Crucially, this function iterates over all fields. If a field is a Tensor or another Struct, it calls `release` or `free` on it.
     - `free(struct_ptr)` is called last.
 
+    -   Finally, `free(struct_ptr)` is called.
+
+**Copying / Assignment**:
+- When a struct is assigned to a new variable (e.g., `let x = struct_y`), a **Deep Clone of the Container** occurs.
+    - **Allocation**: A new struct container is allocated on the heap (`malloc`).
+    - **Fields**: Each field is recursively deep-cloned.
+        - Primitives (i64, f32): Copied by value.
+        - Tensors: **Acquired** (Ref += 1).
+        - Structs/Enums: Recursively cloned (new container, shared content).
+    - **Result**: `x` and `y` are distinct containers, but they share the underlying tensors. Modifying a field in `x` (e.g., `x.tensor = new_tensor`) does not affect `y`. However, modifying the *content* of a shared tensor affects both.
+
 ### 5. Enum Memory Management Strategy
 
 Enums are **Tagged Unions**.
@@ -198,6 +209,17 @@ TensorLogicは、**参照カウント (Reference Counting)** と **スコープ�
     -   構造体がスコープを抜ける際、ランタイムは `free_struct` を呼び出します。
     -   **再帰的解放 (Recursive Free)**: 重要な点として、この関数はすべてのフィールドを走査します。フィールドがテンソルや別の構造体である場合、それらに対して `release` または `free` を呼び出します。
     -   最後に `free(struct_ptr)` が呼び出され、コンテナ自体のメモリが解放されます。
+
+    -   最後に `free(struct_ptr)` が呼び出され、コンテナ自体のメモリが解放されます。
+
+**コピー / 代入 (Copying / Assignment)**:
+- 構造体が新しい変数に代入される場合（例: `let x = struct_y`）、**コンテナのディープクローン** が発生します。
+    - **割り当て**: 新しい構造体コンテナがヒープに割り当てられます (`malloc`)。
+    - **フィールド**: 各フィールドは再帰的にディープクローンされます。
+        - プリミティブ (i64, f32): 値コピー。
+        - テンソル: **Acquire** (参照カウント + 1)。
+        - 構造体/Enum: 再帰的にクローン（新しいコンテナ、中身は共有）。
+    - **結果**: `x` と `y` は別のコンテナですが、内部のテンソルは共有します。`x` のフィールド自体を変更しても `y` には影響しませんが、共有しているテンソルの *内容* を書き換えると両方に影響します。
 
 ### 5. タプルのメモリ管理戦略
 

@@ -1191,17 +1191,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .ok_or(format!("Enum type {} not found", enum_name))?;
 
                 // 1. Allocate Enum
-                let fn_val = self
+                let alloca = self
                     .builder
-                    .get_insert_block()
-                    .unwrap()
-                    .get_parent()
-                    .unwrap();
-                let alloca = self.create_entry_block_alloca(
-                    fn_val,
-                    &format!("enum_{}", enum_name),
-                    &Type::Enum(enum_name.clone()),
-                );
+                    .build_malloc(enum_ty, &format!("enum_{}", enum_name))
+                    .map_err(|e| e.to_string())?;
                 // alloca is *EnumStruct
 
                 // 2. Store Tag

@@ -2504,7 +2504,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Return the SAME pointer
                 Ok(val)
             }
+            Type::Enum(name) => {
+                let enum_def = self
+                    .enum_defs
+                    .get(name)
+                    .ok_or(format!("Enum {} definition not found", name))?;
+                self.emit_enum_deep_clone(val, enum_def)
+            }
             Type::Struct(name) | Type::UserDefined(name) => {
+                // Check if it is an Enum
+                if let Some(enum_def) = self.enum_defs.get(name) {
+                    return self.emit_enum_deep_clone(val, enum_def);
+                }
+
                 // HACK: Built-in types (String, File) are opaque pointers
                 if name == "String" {
                     // Deep clone string -> strdup (via tl_string_concat("", s) or similar)
@@ -2693,5 +2705,140 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             _ => Ok(val), // Primitives copy by value
         }
+    }
+
+    fn emit_enum_deep_clone(
+        &self,
+        val: BasicValueEnum<'ctx>,
+        enum_def: &EnumDef,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let name = &enum_def.name;
+        let enum_ty = *self
+            .enum_types
+            .get(name)
+            .ok_or(format!("Enum type {} not found", name))?;
+
+        let src_ptr = val.into_pointer_value();
+
+        // 1. Allocate new enum instance
+        let new_ptr = self
+            .builder
+            .build_malloc(enum_ty, &format!("copy_{}", name))
+            .map_err(|e| e.to_string())?;
+
+        // 2. Load Tag
+        let tag_ptr = self
+            .builder
+            .build_struct_gep(enum_ty, src_ptr, 0, "tag_ptr")
+            .map_err(|e| e.to_string())?;
+        let tag_val = self
+            .builder
+            .build_load(self.context.i32_type(), tag_ptr, "tag")
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+
+        // 3. Store Tag to new instance
+        let dst_tag_ptr = self
+            .builder
+            .build_struct_gep(enum_ty, new_ptr, 0, "dst_tag_ptr")
+            .map_err(|e| e.to_string())?;
+        self.builder.build_store(dst_tag_ptr, tag_val);
+
+        // 4. Switch on tag to copy payload
+        let current_block = self.builder.get_insert_block().unwrap();
+        let func = current_block.get_parent().unwrap();
+        let after_switch = self.context.append_basic_block(func, "after_enum_clone");
+
+        let mut cases = vec![];
+        for (i, variant) in enum_def.variants.iter().enumerate() {
+            let case_block = self
+                .context
+                .append_basic_block(func, &format!("clone_variant_{}", variant.name));
+            cases.push((
+                self.context.i32_type().const_int(i as u64, false),
+                case_block,
+            ));
+        }
+
+        let cases_refs: Vec<(inkwell::values::IntValue, inkwell::basic_block::BasicBlock)> =
+            cases.iter().map(|(i, b)| (*i, *b)).collect();
+        self.builder
+            .build_switch(tag_val, after_switch, &cases_refs)
+            .map_err(|e| e.to_string())?;
+
+        // Populate cases
+        for (i, variant) in enum_def.variants.iter().enumerate() {
+            let case_block = cases[i].1;
+            self.builder.position_at_end(case_block);
+
+            if !variant.fields.is_empty() {
+                // Reconstruct field types for GEP/Load/Store
+                let mut field_types: Vec<inkwell::types::BasicTypeEnum> = vec![];
+                for (_, ty) in &variant.fields {
+                    let llvm_ty = match ty {
+                        Type::F32 => self.context.f32_type().into(),
+                        Type::I64 => self.context.i64_type().into(),
+                        Type::Bool => self.context.bool_type().into(),
+                        Type::Tensor(_, _) => self
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
+                        Type::Struct(_) | Type::Enum(_) | Type::UserDefined(_) => self
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
+                        _ => self.context.i64_type().into(),
+                    };
+                    field_types.push(llvm_ty);
+                }
+                let variant_struct_ty = self.context.struct_type(&field_types, false);
+                let variant_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+
+                // Src Payload
+                let src_payload_ptr_raw = self
+                    .builder
+                    .build_struct_gep(enum_ty, src_ptr, 1, "src_payload_raw")
+                    .map_err(|e| e.to_string())?;
+                let src_variant_ptr = self
+                    .builder
+                    .build_pointer_cast(src_payload_ptr_raw, variant_ptr_ty, "src_variant_casted")
+                    .unwrap();
+
+                // Dst Payload
+                let dst_payload_ptr_raw = self
+                    .builder
+                    .build_struct_gep(enum_ty, new_ptr, 1, "dst_payload_raw")
+                    .map_err(|e| e.to_string())?;
+                let dst_variant_ptr = self
+                    .builder
+                    .build_pointer_cast(dst_payload_ptr_raw, variant_ptr_ty, "dst_variant_casted")
+                    .unwrap();
+
+                // Copy Fields
+                for (idx, (_, f_ty)) in variant.fields.iter().enumerate() {
+                    let src_field_ptr = self
+                        .builder
+                        .build_struct_gep(variant_struct_ty, src_variant_ptr, idx as u32, "src_f")
+                        .map_err(|e| e.to_string())?;
+                    let val = self
+                        .builder
+                        .build_load(field_types[idx], src_field_ptr, "val")
+                        .map_err(|e| e.to_string())?;
+
+                    // Recursive Deep Clone
+                    let cloned_val = self.emit_deep_clone(val, f_ty)?;
+
+                    let dst_field_ptr = self
+                        .builder
+                        .build_struct_gep(variant_struct_ty, dst_variant_ptr, idx as u32, "dst_f")
+                        .map_err(|e| e.to_string())?;
+                    self.builder.build_store(dst_field_ptr, cloned_val);
+                }
+            }
+            self.builder.build_unconditional_branch(after_switch);
+        }
+
+        self.builder.position_at_end(after_switch);
+        Ok(new_ptr.into())
     }
 }
