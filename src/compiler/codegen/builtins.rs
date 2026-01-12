@@ -36,6 +36,53 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_print_f32", print_f32_type.clone());
     add_fn("tl_display_f32", print_f32_type);
 
+    let f32_unary_type = f32_type.fn_type(&[f32_type.into()], false);
+    let f32_binary_type = f32_type.fn_type(&[f32_type.into(), f32_type.into()], false);
+    let f32_powi_type = f32_type.fn_type(&[f32_type.into(), i64_type.into()], false);
+
+    let f32_unary_methods = [
+        "abs",
+        "acos",
+        "acosh",
+        "asin",
+        "asinh",
+        "atan",
+        "atanh",
+        "cbrt",
+        "ceil",
+        "cos",
+        "cosh",
+        "exp",
+        "exp2",
+        "exp_m1",
+        "floor",
+        "fract",
+        "ln",
+        "ln_1p",
+        "log10",
+        "log2",
+        "recip",
+        "round",
+        "signum",
+        "sin",
+        "sinh",
+        "sqrt",
+        "tan",
+        "tanh",
+        "to_degrees",
+        "to_radians",
+        "trunc",
+    ];
+    for name in f32_unary_methods {
+        add_fn(&format!("tl_f32_{}", name), f32_unary_type);
+    }
+
+    let f32_binary_methods = ["atan2", "copysign", "hypot", "log", "powf"];
+    for name in f32_binary_methods {
+        add_fn(&format!("tl_f32_{}", name), f32_binary_type);
+    }
+    add_fn("tl_f32_powi", f32_powi_type);
+
     let print_str_type = void_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_print_string", print_str_type.clone());
     add_fn("tl_display_string", print_str_type);
@@ -591,6 +638,59 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_display_f32") {
         execution_engine.add_global_mapping(&f, runtime::tl_display_f32 as *const () as usize);
     }
+    let f32_unary_mappings: [(&str, usize); 31] = [
+        ("tl_f32_abs", runtime::tl_f32_abs as *const () as usize),
+        ("tl_f32_acos", runtime::tl_f32_acos as *const () as usize),
+        ("tl_f32_acosh", runtime::tl_f32_acosh as *const () as usize),
+        ("tl_f32_asin", runtime::tl_f32_asin as *const () as usize),
+        ("tl_f32_asinh", runtime::tl_f32_asinh as *const () as usize),
+        ("tl_f32_atan", runtime::tl_f32_atan as *const () as usize),
+        ("tl_f32_atanh", runtime::tl_f32_atanh as *const () as usize),
+        ("tl_f32_cbrt", runtime::tl_f32_cbrt as *const () as usize),
+        ("tl_f32_ceil", runtime::tl_f32_ceil as *const () as usize),
+        ("tl_f32_cos", runtime::tl_f32_cos as *const () as usize),
+        ("tl_f32_cosh", runtime::tl_f32_cosh as *const () as usize),
+        ("tl_f32_exp", runtime::tl_f32_exp as *const () as usize),
+        ("tl_f32_exp2", runtime::tl_f32_exp2 as *const () as usize),
+        ("tl_f32_exp_m1", runtime::tl_f32_exp_m1 as *const () as usize),
+        ("tl_f32_floor", runtime::tl_f32_floor as *const () as usize),
+        ("tl_f32_fract", runtime::tl_f32_fract as *const () as usize),
+        ("tl_f32_ln", runtime::tl_f32_ln as *const () as usize),
+        ("tl_f32_ln_1p", runtime::tl_f32_ln_1p as *const () as usize),
+        ("tl_f32_log10", runtime::tl_f32_log10 as *const () as usize),
+        ("tl_f32_log2", runtime::tl_f32_log2 as *const () as usize),
+        ("tl_f32_recip", runtime::tl_f32_recip as *const () as usize),
+        ("tl_f32_round", runtime::tl_f32_round as *const () as usize),
+        ("tl_f32_signum", runtime::tl_f32_signum as *const () as usize),
+        ("tl_f32_sin", runtime::tl_f32_sin as *const () as usize),
+        ("tl_f32_sinh", runtime::tl_f32_sinh as *const () as usize),
+        ("tl_f32_sqrt", runtime::tl_f32_sqrt as *const () as usize),
+        ("tl_f32_tan", runtime::tl_f32_tan as *const () as usize),
+        ("tl_f32_tanh", runtime::tl_f32_tanh as *const () as usize),
+        ("tl_f32_to_degrees", runtime::tl_f32_to_degrees as *const () as usize),
+        ("tl_f32_to_radians", runtime::tl_f32_to_radians as *const () as usize),
+        ("tl_f32_trunc", runtime::tl_f32_trunc as *const () as usize),
+    ];
+    for (name, addr) in f32_unary_mappings {
+        if let Some(f) = module.get_function(name) {
+            execution_engine.add_global_mapping(&f, addr);
+        }
+    }
+    let f32_binary_mappings: [(&str, usize); 5] = [
+        ("tl_f32_atan2", runtime::tl_f32_atan2 as *const () as usize),
+        ("tl_f32_copysign", runtime::tl_f32_copysign as *const () as usize),
+        ("tl_f32_hypot", runtime::tl_f32_hypot as *const () as usize),
+        ("tl_f32_log", runtime::tl_f32_log as *const () as usize),
+        ("tl_f32_powf", runtime::tl_f32_powf as *const () as usize),
+    ];
+    for (name, addr) in f32_binary_mappings {
+        if let Some(f) = module.get_function(name) {
+            execution_engine.add_global_mapping(&f, addr);
+        }
+    }
+    if let Some(f) = module.get_function("tl_f32_powi") {
+        execution_engine.add_global_mapping(&f, runtime::tl_f32_powi as *const () as usize);
+    }
     if let Some(f) = module.get_function("tl_print_i64") {
         execution_engine.add_global_mapping(&f, runtime::tl_print_i64 as *const () as usize);
     }
@@ -1091,6 +1191,47 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_tensor_print_3".to_string(), Type::Void);
     fn_return_types.insert("tl_print_i64".to_string(), Type::Void);
     fn_return_types.insert("tl_print_f32".to_string(), Type::Void);
+    let f32_unary_methods = [
+        "abs",
+        "acos",
+        "acosh",
+        "asin",
+        "asinh",
+        "atan",
+        "atanh",
+        "cbrt",
+        "ceil",
+        "cos",
+        "cosh",
+        "exp",
+        "exp2",
+        "exp_m1",
+        "floor",
+        "fract",
+        "ln",
+        "ln_1p",
+        "log10",
+        "log2",
+        "recip",
+        "round",
+        "signum",
+        "sin",
+        "sinh",
+        "sqrt",
+        "tan",
+        "tanh",
+        "to_degrees",
+        "to_radians",
+        "trunc",
+    ];
+    for name in f32_unary_methods {
+        fn_return_types.insert(format!("tl_f32_{}", name), Type::F32);
+    }
+    let f32_binary_methods = ["atan2", "copysign", "hypot", "log", "powf"];
+    for name in f32_binary_methods {
+        fn_return_types.insert(format!("tl_f32_{}", name), Type::F32);
+    }
+    fn_return_types.insert("tl_f32_powi".to_string(), Type::F32);
     fn_return_types.insert("tl_tensor_len".to_string(), Type::I64);
     fn_return_types.insert("tl_tensor_get".to_string(), Type::F32);
     fn_return_types.insert("tl_tensor_get_i64_md".to_string(), Type::I64);

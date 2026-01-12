@@ -861,6 +861,48 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.instance_methods
             .insert("Tensor".to_string(), tensor_methods);
 
+        // --- F32 Instance Methods ---
+        let mut f32_methods = InstanceMethodManager::new();
+        f32_methods.register_eval("abs", compile_f32_abs);
+        f32_methods.register_eval("acos", compile_f32_acos);
+        f32_methods.register_eval("acosh", compile_f32_acosh);
+        f32_methods.register_eval("asin", compile_f32_asin);
+        f32_methods.register_eval("asinh", compile_f32_asinh);
+        f32_methods.register_eval("atan", compile_f32_atan);
+        f32_methods.register_eval("atan2", compile_f32_atan2);
+        f32_methods.register_eval("atanh", compile_f32_atanh);
+        f32_methods.register_eval("cbrt", compile_f32_cbrt);
+        f32_methods.register_eval("ceil", compile_f32_ceil);
+        f32_methods.register_eval("copysign", compile_f32_copysign);
+        f32_methods.register_eval("cos", compile_f32_cos);
+        f32_methods.register_eval("cosh", compile_f32_cosh);
+        f32_methods.register_eval("exp", compile_f32_exp);
+        f32_methods.register_eval("exp2", compile_f32_exp2);
+        f32_methods.register_eval("exp_m1", compile_f32_exp_m1);
+        f32_methods.register_eval("floor", compile_f32_floor);
+        f32_methods.register_eval("fract", compile_f32_fract);
+        f32_methods.register_eval("hypot", compile_f32_hypot);
+        f32_methods.register_eval("ln", compile_f32_ln);
+        f32_methods.register_eval("ln_1p", compile_f32_ln_1p);
+        f32_methods.register_eval("log", compile_f32_log);
+        f32_methods.register_eval("log10", compile_f32_log10);
+        f32_methods.register_eval("log2", compile_f32_log2);
+        f32_methods.register_eval("powf", compile_f32_powf);
+        f32_methods.register_eval("powi", compile_f32_powi);
+        f32_methods.register_eval("recip", compile_f32_recip);
+        f32_methods.register_eval("round", compile_f32_round);
+        f32_methods.register_eval("signum", compile_f32_signum);
+        f32_methods.register_eval("sin", compile_f32_sin);
+        f32_methods.register_eval("sinh", compile_f32_sinh);
+        f32_methods.register_eval("sqrt", compile_f32_sqrt);
+        f32_methods.register_eval("tan", compile_f32_tan);
+        f32_methods.register_eval("tanh", compile_f32_tanh);
+        f32_methods.register_eval("to_degrees", compile_f32_to_degrees);
+        f32_methods.register_eval("to_radians", compile_f32_to_radians);
+        f32_methods.register_eval("trunc", compile_f32_trunc);
+        self.instance_methods
+            .insert("F32".to_string(), f32_methods);
+
         // --- Tensor Static Methods ---
         let mut tensor_static = StaticMethodManager::new();
         // Unevaluated because of special TensorLiteral handling optimization
@@ -4149,6 +4191,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Struct(name) => name.clone(),
             Type::UserDefined(name) => name.clone(),
             Type::Tensor(_, _) => "Tensor".to_string(),
+            Type::F32 => "F32".to_string(),
             _ => "".to_string(),
         };
 
@@ -6439,6 +6482,196 @@ fn compile_unary_math<'ctx>(
     }
     Ok((res, res_ty))
 }
+
+fn cast_value_to_f32<'ctx>(
+    codegen: &CodeGenerator<'ctx>,
+    val: BasicValueEnum<'ctx>,
+    ty: &Type,
+) -> Result<FloatValue<'ctx>, String> {
+    let f32_type = codegen.context.f32_type();
+    match ty {
+        Type::F32 => Ok(val.into_float_value()),
+        Type::F64 => codegen
+            .builder
+            .build_float_cast(val.into_float_value(), f32_type, "f64_to_f32")
+            .map_err(|e| e.to_string()),
+        Type::I64 => codegen
+            .builder
+            .build_signed_int_to_float(val.into_int_value(), f32_type, "i64_to_f32")
+            .map_err(|e| e.to_string()),
+        Type::I32 => codegen
+            .builder
+            .build_signed_int_to_float(val.into_int_value(), f32_type, "i32_to_f32")
+            .map_err(|e| e.to_string()),
+        Type::Bool => {
+            let i64_type = codegen.context.i64_type();
+            let i64_val = codegen
+                .builder
+                .build_int_z_extend(val.into_int_value(), i64_type, "bool_to_i64")
+                .map_err(|e| e.to_string())?;
+            codegen
+                .builder
+                .build_signed_int_to_float(i64_val, f32_type, "bool_to_f32")
+                .map_err(|e| e.to_string())
+        }
+        _ => Err(format!("Cannot cast {:?} to F32", ty)),
+    }
+}
+
+fn compile_f32_unary_math<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    op_name: &str,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() {
+        return Err(format!("{} requires 0 arguments", op_name));
+    }
+    let obj_f32 = cast_value_to_f32(codegen, obj_val, &obj_ty)?;
+    let fn_name = format!("tl_f32_{}", op_name);
+    let fn_val = codegen
+        .module
+        .get_function(&fn_name)
+        .ok_or(format!("Function {} not found", fn_name))?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[obj_f32.into()], "f32_unary")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err(format!("Invalid {} return", op_name)),
+    };
+    Ok((res, Type::F32))
+}
+
+fn compile_f32_binary_math<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    op_name: &str,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err(format!("{} requires 1 argument", op_name));
+    }
+    let obj_f32 = cast_value_to_f32(codegen, obj_val, &obj_ty)?;
+    let (arg_val, arg_ty) = &args[0];
+    let arg_f32 = cast_value_to_f32(codegen, *arg_val, arg_ty)?;
+    let fn_name = format!("tl_f32_{}", op_name);
+    let fn_val = codegen
+        .module
+        .get_function(&fn_name)
+        .ok_or(format!("Function {} not found", fn_name))?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[obj_f32.into(), arg_f32.into()], "f32_binary")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err(format!("Invalid {} return", op_name)),
+    };
+    Ok((res, Type::F32))
+}
+
+fn compile_f32_powi<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("powi requires 1 argument".into());
+    }
+    let obj_f32 = cast_value_to_f32(codegen, obj_val, &obj_ty)?;
+    let (arg_val, arg_ty) = &args[0];
+    let i64_type = codegen.context.i64_type();
+    let arg_i64 = match arg_ty {
+        Type::I64 => arg_val.into_int_value(),
+        Type::I32 | Type::Bool => codegen
+            .builder
+            .build_int_z_extend(arg_val.into_int_value(), i64_type, "powi_i64")
+            .map_err(|e| e.to_string())?,
+        _ => return Err(format!("powi requires integer argument, got {:?}", arg_ty)),
+    };
+    let fn_val = codegen
+        .module
+        .get_function("tl_f32_powi")
+        .ok_or("Function tl_f32_powi not found".to_string())?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[obj_f32.into(), arg_i64.into()], "f32_powi")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid powi return".into()),
+    };
+    Ok((res, Type::F32))
+}
+
+macro_rules! f32_unary_method {
+    ($name:ident, $op:expr) => {
+        fn $name<'ctx>(
+            codegen: &mut CodeGenerator<'ctx>,
+            obj_val: BasicValueEnum<'ctx>,
+            obj_ty: Type,
+            args: Vec<(BasicValueEnum<'ctx>, Type)>,
+        ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+            compile_f32_unary_math(codegen, obj_val, obj_ty, args, $op)
+        }
+    };
+}
+
+macro_rules! f32_binary_method {
+    ($name:ident, $op:expr) => {
+        fn $name<'ctx>(
+            codegen: &mut CodeGenerator<'ctx>,
+            obj_val: BasicValueEnum<'ctx>,
+            obj_ty: Type,
+            args: Vec<(BasicValueEnum<'ctx>, Type)>,
+        ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+            compile_f32_binary_math(codegen, obj_val, obj_ty, args, $op)
+        }
+    };
+}
+
+f32_unary_method!(compile_f32_abs, "abs");
+f32_unary_method!(compile_f32_acos, "acos");
+f32_unary_method!(compile_f32_acosh, "acosh");
+f32_unary_method!(compile_f32_asin, "asin");
+f32_unary_method!(compile_f32_asinh, "asinh");
+f32_unary_method!(compile_f32_atan, "atan");
+f32_unary_method!(compile_f32_atanh, "atanh");
+f32_unary_method!(compile_f32_cbrt, "cbrt");
+f32_unary_method!(compile_f32_ceil, "ceil");
+f32_unary_method!(compile_f32_cos, "cos");
+f32_unary_method!(compile_f32_cosh, "cosh");
+f32_unary_method!(compile_f32_exp, "exp");
+f32_unary_method!(compile_f32_exp2, "exp2");
+f32_unary_method!(compile_f32_exp_m1, "exp_m1");
+f32_unary_method!(compile_f32_floor, "floor");
+f32_unary_method!(compile_f32_fract, "fract");
+f32_unary_method!(compile_f32_ln, "ln");
+f32_unary_method!(compile_f32_ln_1p, "ln_1p");
+f32_unary_method!(compile_f32_log10, "log10");
+f32_unary_method!(compile_f32_log2, "log2");
+f32_unary_method!(compile_f32_recip, "recip");
+f32_unary_method!(compile_f32_round, "round");
+f32_unary_method!(compile_f32_signum, "signum");
+f32_unary_method!(compile_f32_sin, "sin");
+f32_unary_method!(compile_f32_sinh, "sinh");
+f32_unary_method!(compile_f32_sqrt, "sqrt");
+f32_unary_method!(compile_f32_tan, "tan");
+f32_unary_method!(compile_f32_tanh, "tanh");
+f32_unary_method!(compile_f32_to_degrees, "to_degrees");
+f32_unary_method!(compile_f32_to_radians, "to_radians");
+f32_unary_method!(compile_f32_trunc, "trunc");
+
+f32_binary_method!(compile_f32_atan2, "atan2");
+f32_binary_method!(compile_f32_copysign, "copysign");
+f32_binary_method!(compile_f32_hypot, "hypot");
+f32_binary_method!(compile_f32_log, "log");
+f32_binary_method!(compile_f32_powf, "powf");
 
 fn compile_tril<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,

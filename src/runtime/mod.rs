@@ -935,6 +935,191 @@ pub extern "C" fn tl_display_f32(v: c_float) {
 }
 
 #[no_mangle]
+pub extern "C" fn tl_f32_abs(v: c_float) -> c_float {
+    v.abs()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_acos(v: c_float) -> c_float {
+    v.acos()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_acosh(v: c_float) -> c_float {
+    v.acosh()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_asin(v: c_float) -> c_float {
+    v.asin()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_asinh(v: c_float) -> c_float {
+    v.asinh()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_atan(v: c_float) -> c_float {
+    v.atan()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_atan2(v: c_float, other: c_float) -> c_float {
+    v.atan2(other)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_atanh(v: c_float) -> c_float {
+    v.atanh()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_cbrt(v: c_float) -> c_float {
+    v.cbrt()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_ceil(v: c_float) -> c_float {
+    v.ceil()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_copysign(v: c_float, sign: c_float) -> c_float {
+    v.copysign(sign)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_cos(v: c_float) -> c_float {
+    v.cos()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_cosh(v: c_float) -> c_float {
+    v.cosh()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_exp(v: c_float) -> c_float {
+    v.exp()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_exp2(v: c_float) -> c_float {
+    v.exp2()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_exp_m1(v: c_float) -> c_float {
+    v.exp_m1()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_floor(v: c_float) -> c_float {
+    v.floor()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_fract(v: c_float) -> c_float {
+    v.fract()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_hypot(v: c_float, other: c_float) -> c_float {
+    v.hypot(other)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_ln(v: c_float) -> c_float {
+    v.ln()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_ln_1p(v: c_float) -> c_float {
+    v.ln_1p()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_log(v: c_float, base: c_float) -> c_float {
+    v.log(base)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_log10(v: c_float) -> c_float {
+    v.log10()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_log2(v: c_float) -> c_float {
+    v.log2()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_powf(v: c_float, exp: c_float) -> c_float {
+    v.powf(exp)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_powi(v: c_float, exp: i64) -> c_float {
+    v.powi(exp as i32)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_recip(v: c_float) -> c_float {
+    v.recip()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_round(v: c_float) -> c_float {
+    v.round()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_signum(v: c_float) -> c_float {
+    v.signum()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_sin(v: c_float) -> c_float {
+    v.sin()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_sinh(v: c_float) -> c_float {
+    v.sinh()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_sqrt(v: c_float) -> c_float {
+    v.sqrt()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_tan(v: c_float) -> c_float {
+    v.tan()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_tanh(v: c_float) -> c_float {
+    v.tanh()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_to_degrees(v: c_float) -> c_float {
+    v.to_degrees()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_to_radians(v: c_float) -> c_float {
+    v.to_radians()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f32_trunc(v: c_float) -> c_float {
+    v.trunc()
+}
+
+#[no_mangle]
 pub extern "C" fn tl_print_string(s: *const std::os::raw::c_char) {
     if s.is_null() {
         return;
