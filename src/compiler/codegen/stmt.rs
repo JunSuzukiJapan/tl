@@ -211,6 +211,157 @@ impl<'ctx> CodeGenerator<'ctx> {
         ty: &Type,
     ) -> Result<(), String> {
         match ty {
+            Type::Enum(name) => {
+                let enum_def = self
+                    .enum_defs
+                    .get(name)
+                    .ok_or(format!("Enum def {} not found", name))?
+                    .clone();
+                let enum_ty = *self
+                    .enum_types
+                    .get(name)
+                    .ok_or(format!("Enum type {} not found", name))?;
+
+                let ptr = val.into_pointer_value();
+
+                // Runtime Null Check
+                let current_block = self.builder.get_insert_block().unwrap();
+                let func = current_block.get_parent().unwrap();
+                let free_block = self.context.append_basic_block(func, "free_enum");
+                let merge_block = self.context.append_basic_block(func, "after_free_enum");
+
+                let is_null = self
+                    .builder
+                    .build_is_null(ptr, "is_null")
+                    .map_err(|e| e.to_string())?;
+                self.builder
+                    .build_conditional_branch(is_null, merge_block, free_block)
+                    .map_err(|e| e.to_string())?;
+
+                self.builder.position_at_end(free_block);
+
+                // Load Tag (Element 0)
+                let tag_ptr = self
+                    .builder
+                    .build_struct_gep(enum_ty, ptr, 0, "tag_ptr")
+                    .map_err(|e| e.to_string())?;
+                let tag_val = self
+                    .builder
+                    .build_load(self.context.i32_type(), tag_ptr, "tag")
+                    .map_err(|e| e.to_string())?
+                    .into_int_value();
+
+                // Prepare Switch
+                let after_switch = self.context.append_basic_block(func, "after_enum_switch");
+                let mut cases = vec![];
+
+                for (i, variant) in enum_def.variants.iter().enumerate() {
+                    let case_block = self
+                        .context
+                        .append_basic_block(func, &format!("free_variant_{}", variant.name));
+                    cases.push((
+                        self.context.i32_type().const_int(i as u64, false),
+                        case_block,
+                    ));
+                }
+
+                // Build Switch
+                let cases_refs: Vec<(inkwell::values::IntValue, inkwell::basic_block::BasicBlock)> =
+                    cases.iter().map(|(i, b)| (*i, *b)).collect();
+                self.builder
+                    .build_switch(tag_val, after_switch, &cases_refs)
+                    .map_err(|e| e.to_string())?;
+
+                // Populate Cases
+                for (i, variant) in enum_def.variants.iter().enumerate() {
+                    let case_block = cases[i].1;
+                    self.builder.position_at_end(case_block);
+
+                    if !variant.fields.is_empty() {
+                        // Cast Payload (Element 1 is [i8 x N])
+                        let payload_ptr_raw = self
+                            .builder
+                            .build_struct_gep(enum_ty, ptr, 1, "payload_ptr_raw")
+                            .map_err(|e| e.to_string())?;
+
+                        // Reconstruct Variant Struct Type for GEP
+                        let mut field_types: Vec<inkwell::types::BasicTypeEnum> = vec![];
+                        for (_, ty) in &variant.fields {
+                            let llvm_ty = match ty {
+                                Type::F32 => self.context.f32_type().into(),
+                                Type::I64 => self.context.i64_type().into(),
+                                Type::Bool => self.context.bool_type().into(),
+                                Type::Tensor(_, _) => self
+                                    .context
+                                    .ptr_type(inkwell::AddressSpace::default())
+                                    .into(),
+                                Type::Struct(_) | Type::Enum(_) | Type::UserDefined(_) => self
+                                    .context
+                                    .ptr_type(inkwell::AddressSpace::default())
+                                    .into(),
+                                Type::Vec(_) => self
+                                    .context
+                                    .ptr_type(inkwell::AddressSpace::default())
+                                    .into(),
+                                _ => self.context.i64_type().into(),
+                            };
+                            field_types.push(llvm_ty);
+                        }
+                        let variant_struct_ty = self.context.struct_type(&field_types, false);
+
+                        // Cast payload ptr to variant struct ptr
+                        let payload_ptr = self
+                            .builder
+                            .build_pointer_cast(
+                                payload_ptr_raw,
+                                self.context.ptr_type(inkwell::AddressSpace::default()), // Opaque ptr
+                                "payload_cast",
+                            )
+                            .unwrap();
+
+                        for (idx, (_, f_ty)) in variant.fields.iter().enumerate() {
+                            if matches!(
+                                f_ty,
+                                Type::Tensor(_, _)
+                                    | Type::Struct(_)
+                                    | Type::UserDefined(_)
+                                    | Type::Enum(_)
+                            ) {
+                                let f_ptr = self
+                                    .builder
+                                    .build_struct_gep(
+                                        variant_struct_ty,
+                                        payload_ptr,
+                                        idx as u32,
+                                        "field_ptr",
+                                    )
+                                    .map_err(|e| e.to_string())?;
+
+                                let f_val = self
+                                    .builder
+                                    .build_load(
+                                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                                        f_ptr,
+                                        "field_val",
+                                    )
+                                    .map_err(|e| e.to_string())?;
+
+                                self.emit_recursive_free(f_val, f_ty)?;
+                            }
+                        }
+                    }
+                    self.builder
+                        .build_unconditional_branch(after_switch)
+                        .unwrap();
+                }
+
+                self.builder.position_at_end(after_switch);
+                self.builder
+                    .build_unconditional_branch(merge_block)
+                    .unwrap();
+
+                self.builder.position_at_end(merge_block);
+            }
             Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
                 if !val.is_pointer_value() {
                     panic!("Tensor value is not pointer: {:?}", val);

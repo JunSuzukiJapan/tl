@@ -93,6 +93,12 @@ fn parse_tensor_type(input: &str) -> IResult<&str, Type> {
 }
 
 fn parse_user_type(input: &str) -> IResult<&str, Type> {
+    // Check for Enum vs Struct in identifier context? No, just identifier.
+    // Type::Struct / Type::Enum / Type::UserDefined are currently ambiguous in parser until resolution.
+    // Let's use UserDefined for now for any identifier in type position.
+    // But later semantics will resolve it.
+    // However, if we want explicit Type::Enum for syntax highlighting or specialized parsing?
+    // For now, Type::UserDefined covers both.
     map(identifier, Type::UserDefined)(input)
 }
 
@@ -292,6 +298,134 @@ fn parse_struct_init(input: &str) -> IResult<&str, Expr> {
     Ok((input, Expr::StructInit(name, fields)))
 }
 
+fn parse_enum_init(input: &str) -> IResult<&str, Expr> {
+    // Enum::Variant { field: value ... }
+    // Identifier "Enum::Variant" or just "Variant"?
+    // Rust requires fully qualified or imported.
+    // Our identifier parser handles "A::B".
+    // So if we see "A::B { ... }", is it StructInit or EnumInit?
+    // StructInit currently takes identifier.
+    // If identifier has "::", we could treat it as EnumInit OR StructInit (mod::Struct).
+    // Let's assume generic StructInit handles "A::B" as name.
+    // BUT we need to produce Expr::EnumInit if it's an Enum.
+    // Since Parser doesn't know types, we must produce a "GenericInit" or rely on Semantics to re-classify?
+    // OR we can make a heuristic: if it looks like "X::Y { ... }", treat as potentially enum.
+    // Actually, `Expr::StructInit` stores a String name. Semantics can resolve "X::Y" to Enum or Struct.
+    // So maybe we don't strictly need distinct parse_enum_init IF StructInit covers the syntax.
+    // HOWEVER, we added Expr::EnumInit.
+    // Let's modify parse_struct_init to return EnumInit if it detects "::".
+    // Wait, Structs can differ by module too: `mod::Struct { ... }`.
+    // So syntax is identical.
+    // Strategy: Parse as StructInit in Parser. In Semantics, if name resolves to Enum, convert to EnumInit.
+    // But wait, user requested "Implement Parser support".
+    // I can leave it as StructInit and fix in Semantics, OR I can try to disambiguate.
+    // Ambiguity is impossible without symbol table.
+    // So: I will stick to ParseStructInit, but I'll rename it/comment it or handle conversion in Semantics.
+    // Wait, Expr::EnumInit fields: enum_name, variant_name. StructInit only has name.
+    // If I stick to StructInit, I need to split name in Semantics.
+    // OK, let's keep parse_struct_init as the shared parser.
+    Err(nom::Err::Error(nom::error::Error::new(
+        input,
+        nom::error::ErrorKind::Fail,
+    )))
+}
+
+fn parse_pattern(input: &str) -> IResult<&str, Pattern> {
+    // Wildcard
+    let (input, wc) = opt(tag("_"))(input)?;
+    if wc.is_some() {
+        return Ok((input, Pattern::Wildcard));
+    }
+
+    // Enum Pattern: Enum::Variant { x, y } (shorthand) or { f: x }
+    // Or just Variant { ... }?
+    // Let's support Identifier { ... }
+    let (input, name) = ws(identifier)(input)?;
+    let (input, block) = opt(delimited(
+        ws(char('{')),
+        separated_list0(
+            ws(char(',')),
+            pair(ws(identifier), opt(preceded(ws(char(':')), ws(identifier)))),
+        ),
+        ws(char('}')),
+    ))(input)?;
+
+    if let Some(fields) = block {
+        // Parse bindings: x: y -> field x binds to var y.
+        // x -> field x binds to var x.
+        let bindings = fields
+            .into_iter()
+            .map(|(field, var_opt)| (field.clone(), var_opt.unwrap_or(field)))
+            .collect();
+
+        // Name might be "Enum::Variant" or just "Variant".
+        // We need to split.
+        if let Some((enum_name, variant_name)) = name.split_once("::") {
+            Ok((
+                input,
+                Pattern::EnumPattern {
+                    enum_name: enum_name.to_string(),
+                    variant_name: variant_name.to_string(),
+                    bindings,
+                },
+            ))
+        } else {
+            Ok((
+                input,
+                Pattern::EnumPattern {
+                    enum_name: "".to_string(), // Inferred? Or require full path?
+                    variant_name: name,
+                    bindings,
+                },
+            ))
+        }
+    } else {
+        // Unit variant pattern: Enum::Variant
+        if let Some((enum_name, variant_name)) = name.split_once("::") {
+            Ok((
+                input,
+                Pattern::EnumPattern {
+                    enum_name: enum_name.to_string(),
+                    variant_name: variant_name.to_string(),
+                    bindings: vec![],
+                },
+            ))
+        } else {
+            Ok((
+                input,
+                Pattern::EnumPattern {
+                    enum_name: "".to_string(),
+                    variant_name: name,
+                    bindings: vec![],
+                },
+            ))
+        }
+    }
+}
+
+fn parse_match_expr(input: &str) -> IResult<&str, Expr> {
+    // match expr { pat => expr, ... }
+    let (input, _) = tag("match")(input)?;
+    let (input, expr) = parse_expr(input)?;
+    let (input, _) = ws(char('{'))(input)?;
+
+    let (input, arms) = separated_list0(
+        ws(char(',')),
+        pair(ws(parse_pattern), preceded(ws(tag("=>")), parse_expr)),
+    )(input)?;
+
+    let (input, _) = opt(ws(char(',')))(input)?;
+    let (input, _) = ws(char('}'))(input)?;
+
+    Ok((
+        input,
+        Expr::Match {
+            expr: Box::new(expr),
+            arms,
+        },
+    ))
+}
+
 // Primary: Literal | Variable | (Expr) | Block? | IfExpr | Aggregation
 fn parse_primary(input: &str) -> IResult<&str, Expr> {
     ws(alt((
@@ -304,6 +438,7 @@ fn parse_primary(input: &str) -> IResult<&str, Expr> {
         parse_tensor_literal,
         parse_aggregation, // Must come before parse_variable
         parse_struct_init, // Must come before parse_variable
+        parse_match_expr,
         parse_variable,
         parse_block_expr,
         parse_block_expr,
@@ -908,6 +1043,55 @@ fn parse_struct(input: &str) -> IResult<&str, StructDef> {
     ))
 }
 
+fn parse_variant_def(input: &str) -> IResult<&str, VariantDef> {
+    // Name { field: Type, ... } or Name
+    let (input, name) = ws(identifier)(input)?;
+
+    // Check for struct-like body
+    let (input, fields_opt) = opt(delimited(
+        ws(char('{')),
+        separated_list0(
+            ws(char(',')),
+            pair(ws(identifier), preceded(ws(char(':')), parse_type)),
+        ),
+        ws(char('}')),
+    ))(input)?;
+
+    Ok((
+        input,
+        VariantDef {
+            name,
+            fields: fields_opt.unwrap_or_default(),
+        },
+    ))
+}
+
+fn parse_enum_def(input: &str) -> IResult<&str, EnumDef> {
+    // enum Name<T> { Variant, ... }
+    let (input, _) = tag("enum")(input)?;
+    let (input, name) = ws(identifier)(input)?;
+
+    let (input, generics) = opt(delimited(
+        ws(char('<')),
+        separated_list1(ws(char(',')), identifier),
+        ws(char('>')),
+    ))(input)?;
+
+    let (input, _) = ws(char('{'))(input)?;
+    let (input, variants) = separated_list0(ws(char(',')), parse_variant_def)(input)?;
+    let (input, _) = opt(ws(char(',')))(input)?;
+    let (input, _) = ws(char('}'))(input)?;
+
+    Ok((
+        input,
+        EnumDef {
+            name,
+            variants,
+            generics: generics.unwrap_or_default(),
+        },
+    ))
+}
+
 // --- New Top Level Parsers ---
 fn parse_tensor_decl(input: &str) -> IResult<&str, Stmt> {
     // tensor name: Type = Expr;
@@ -1056,6 +1240,7 @@ fn parse_mod_decl(input: &str) -> IResult<&str, String> {
 // Re-define parse_module logic
 pub fn parse(input: &str) -> anyhow::Result<Module> {
     let mut structs = vec![];
+    let mut enums = vec![];
     let mut impls = vec![];
     let mut functions = vec![];
     let mut tensor_decls = vec![];
@@ -1069,6 +1254,9 @@ pub fn parse(input: &str) -> anyhow::Result<Module> {
         // Try struct, then impl, then fn, then others
         if let Ok((next, s)) = ws(parse_struct)(remaining) {
             structs.push(s);
+            remaining = next;
+        } else if let Ok((next, e)) = ws(parse_enum_def)(remaining) {
+            enums.push(e);
             remaining = next;
         } else if let Ok((next, i)) = ws(parse_impl)(remaining) {
             impls.push(i);
@@ -1104,6 +1292,7 @@ pub fn parse(input: &str) -> anyhow::Result<Module> {
 
     Ok(Module {
         structs,
+        enums,
         impls,
         functions,
         tensor_decls,

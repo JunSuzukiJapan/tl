@@ -43,6 +43,9 @@ pub enum Type {
     // User defined struct
     Struct(String),
 
+    // User defined enum
+    Enum(String),
+
     // Optimized small constant array (elements up to 4, stored as scalars)
     ScalarArray(Box<Type>, usize), // (element_type, length)
 
@@ -77,6 +80,23 @@ pub struct ImplBlock {
     pub target_type: String,
     pub generics: Vec<String>,
     pub methods: Vec<FunctionDef>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VariantDef {
+    pub name: String,
+    pub fields: Vec<(String, Type)>, // Named fields or empty for unit/tuple-like
+                                     // For now we only support named fields or unit. Tuple variants can be named fields "0", "1"... or just distinct syntax?
+                                     // Let's stick to named fields for simplicity (struct variants), or maybe tuple variants too later.
+                                     // Rust allows: Unit, Tuple(A,B), Struct{x:A}
+                                     // Let's start with Struct-like variants (named fields) and Unit variants (empty fields).
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<VariantDef>,
+    pub generics: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -185,6 +205,33 @@ pub enum Expr {
 
     // Struct Init: Name { field: value, ... }
     StructInit(String, Vec<(String, Expr)>),
+
+    // Enum Init: Enum::Variant { field: value, ... }
+    EnumInit {
+        enum_name: String,
+        variant_name: String,
+        fields: Vec<(String, Expr)>,
+    },
+
+    // Match expression
+    Match {
+        expr: Box<Expr>,
+        arms: Vec<(Pattern, Expr)>, // (pattern, body)
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    // Enum Pattern: Enum::Variant { x, y } (binds fields to variables)
+    // For now, simplify binding: just list variable names that bind to fields by position or name?
+    // Let's support: Variant { field: var, ... }
+    EnumPattern {
+        enum_name: String,
+        variant_name: String,
+        bindings: Vec<(String, String)>, // (field_name, var_name)
+    },
+    // Wildcard
+    Wildcard,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -240,6 +287,7 @@ pub struct Rule {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Module {
     pub structs: Vec<StructDef>,
+    pub enums: Vec<EnumDef>,
     pub impls: Vec<ImplBlock>,
     pub functions: Vec<FunctionDef>,
     pub tensor_decls: Vec<Stmt>, // Stmt::TensorDecl

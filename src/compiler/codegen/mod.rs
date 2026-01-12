@@ -24,6 +24,8 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) fn_return_types: HashMap<String, Type>,
     pub(crate) struct_types: HashMap<String, StructType<'ctx>>,
     pub(crate) struct_defs: HashMap<String, StructDef>,
+    pub(crate) enum_types: HashMap<String, StructType<'ctx>>,
+    pub(crate) enum_defs: HashMap<String, EnumDef>,
     pub(crate) fn_entry_scope_depth: usize,
     pub(crate) builtin_manager: expr::BuiltinManager,
     pub(crate) instance_methods: HashMap<String, expr::InstanceMethodManager>,
@@ -48,6 +50,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             fn_return_types: HashMap::new(),
             struct_types: HashMap::new(),
             struct_defs: HashMap::new(),
+            enum_types: HashMap::new(),
+            enum_defs: HashMap::new(),
             fn_entry_scope_depth: 0,
             builtin_manager: expr::BuiltinManager::new(),
             instance_methods: HashMap::new(),
@@ -274,6 +278,72 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(())
     }
 
+    fn compile_enum_defs(&mut self, enums: &[EnumDef]) -> Result<(), String> {
+        // Pass 1: Opaque
+        for e in enums {
+            self.enum_types
+                .insert(e.name.clone(), self.context.opaque_struct_type(&e.name));
+            self.enum_defs.insert(e.name.clone(), e.clone());
+        }
+
+        // Pass 2: Body (Tag + Union)
+        // We need data layout to calculate variant sizes
+        let target_data = self.execution_engine.get_target_data();
+
+        for e in enums {
+            let mut max_payload_size = 0;
+
+            for v in &e.variants {
+                let mut field_types: Vec<inkwell::types::BasicTypeEnum> = Vec::new();
+                for (_, ty) in &v.fields {
+                    let field_llvm_ty = match ty {
+                        Type::F32 => self.context.f32_type().into(),
+                        Type::I64 => self.context.i64_type().into(),
+                        Type::Bool => self.context.bool_type().into(),
+                        Type::Tensor(_, _) => self
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
+                        Type::Struct(_) | Type::Enum(_) | Type::UserDefined(_) => {
+                            // Objects are pointers
+                            self.context
+                                .ptr_type(inkwell::AddressSpace::default())
+                                .into()
+                        }
+                        Type::Vec(_) => self
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
+                        _ => {
+                            return Err(format!(
+                                "Unsupported type in enum variant {}: {:?}",
+                                v.name, ty
+                            ))
+                        }
+                    };
+                    field_types.push(field_llvm_ty);
+                }
+
+                // Create anonymous struct type to measure size
+                let variant_struct_ty = self.context.struct_type(&field_types, false);
+                let size = target_data.get_store_size(&variant_struct_ty);
+                if size > max_payload_size {
+                    max_payload_size = size;
+                }
+            }
+
+            // Enum body: { i32 tag, [i8 x max_size] payload }
+            let tag_type = self.context.i32_type();
+            let payload_size = std::cmp::max(max_payload_size, 1); // Minimum 1 byte
+            let payload_type = self.context.i8_type().array_type(payload_size as u32);
+
+            if let Some(st) = self.enum_types.get(&e.name) {
+                st.set_body(&[tag_type.into(), payload_type.into()], false);
+            }
+        }
+        Ok(())
+    }
+
     fn compile_impl_blocks(&mut self, impls: &[ImplBlock]) -> Result<(), String> {
         // Pass 1: Declare all methods (Prototypes) and register return types
         for imp in impls {
@@ -453,6 +523,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // 1. Declare structs (types) and methods
         // 1. Declare structs (types) and methods
         self.compile_struct_defs(&ast_module.structs)?;
+        self.compile_enum_defs(&ast_module.enums)?;
 
         // Prepare functions list, potentially adding synthetic main
         let mut synthetic_main = None;

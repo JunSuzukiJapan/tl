@@ -85,7 +85,35 @@ When a variable is shadowed (`let x = ...; let x = ...;`), the old variable's ha
 3.  **Destruction**:
     -   When a struct goes out of scope, the runtime calls `free_struct`.
     -   **Recursive Free**: Crucially, this function iterates over all fields. If a field is a Tensor or another Struct, it calls `release` or `free` on it.
-    -   `free(struct_ptr)` is called last.
+    - `free(struct_ptr)` is called last.
+
+### 5. Enum Memory Management Strategy
+
+Enums are **Tagged Unions**.
+
+**Layout**:
+- **Tag**: A `u32` discriminant indicating the active variant.
+- **Payload**: A union of structs, one for each variant.
+- **Size**: `sizeof(u32) + max(sizeof(Variant1), sizeof(Variant2), ...)`.
+
+**Allocation**:
+- Heap allocated via `malloc`.
+- Like structs, they are containers and valid as long as the pointer is valid (managed by scope or owner).
+
+**Lifecycle**:
+1.  **Creation**:
+    -   Allocate memory (`malloc(tag_size + max_payload_size)`).
+    -   Set `tag`.
+    -   Populate fields of the active variant.
+    -   If fields contain tensors, **Acquire** them (Ref += 1).
+    -   Register Enum pointer to Scope.
+
+2.  **Destruction** (`free_enum`):
+    -   Runtime reads the `tag`.
+    -   Based on the tag, it interprets the payload as the specific variant struct.
+    -   **Recursive Free**: It iterates over the fields of that variant. If a field is a Tensor/Struct/Enum, it calls **Release/Free** on it.
+    -   Finally, `free(enum_ptr)` is called.
+
 
 ---
 
@@ -180,3 +208,33 @@ TensorLogicは、**参照カウント (Reference Counting)** と **スコープ�
 - **ライフサイクル**:
     - 作成時、要素に含まれるテンソルは **Acquire** されます。
     - タプルが破棄される際、ランタイムは要素を再帰的に走査し、テンソルや他のコンテナに対して **Release** を呼び出します。
+
+### 6. Enum (列挙型) のメモリ管理戦略
+
+Enumは **タグ付き共用体 (Tagged Unions)** として実装されます。
+
+**メモリレイアウト**:
+- **タグ (Tag)**: アクティブなバリアントを示す `u32` の判別子。
+- **ペイロード (Payload)**: 各バリアントの構造体の共用体 (Union)。
+- **サイズ**: `sizeof(u32) + max(sizeof(Variant1), sizeof(Variant2), ...)`。
+  - 実際に確保されるメモリサイズは、全バリアントの中で最大サイズを持つものにタグ分を加えたサイズとなります。
+
+**割り当て**:
+- `malloc` によってヒープに割り当てられます。
+- 構造体と同様に、参照カウント管理ではなく、スコープまたは所有者によって管理されるコンテナです。
+
+**ライフサイクル**:
+1.  **作成**:
+    -   メモリを割り当てます (`malloc(tag_size + max_payload_size)`)。
+    -   `tag` を設定します。
+    -   アクティブなバリアントのフィールドを埋めます。
+    -   フィールドにテンソルが含まれる場合、それらを **Acquire** します。
+    -   Enumのポインタをスコープに登録します。
+
+2.  **破棄 (`free_enum`)**:
+    -   ランタイムは `tag` を読み取ります。
+    -   タグに基づいて、ペイロードを特定のバリアントの構造体として解釈します。
+    -   **再帰的解放**: そのバリアントの各フィールドを走査し、テンソル・構造体・Enumなどがあれば、それらに対して **Release/Free** を呼び出します。
+        - アクティブでないバリアントのフィールドは無視されます（メモリ上はゴミデータとして扱われます）。
+    -   最後に `free(enum_ptr)` を呼び出します。
+

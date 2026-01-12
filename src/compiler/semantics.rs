@@ -90,6 +90,7 @@ pub struct SemanticAnalyzer {
     scopes: Vec<Scope>,                                     // Stack of scopes
     functions: HashMap<String, FunctionDef>,                // Global function registry
     structs: HashMap<String, StructDef>,                    // Global struct registry
+    enums: HashMap<String, EnumDef>,                        // Global enum registry
     methods: HashMap<String, HashMap<String, FunctionDef>>, // Struct methods
     current_return_type: Option<Type>, // Expected return type for current function
     current_module: String,            // Current module prefix (e.g. "a::b")
@@ -101,6 +102,7 @@ impl SemanticAnalyzer {
             scopes: vec![Scope::new()], // Global scope
             functions: HashMap::new(),
             structs: HashMap::new(),
+            enums: HashMap::new(),
             methods: HashMap::new(),
             current_return_type: None,
             current_module: String::new(),
@@ -216,6 +218,30 @@ impl SemanticAnalyzer {
         name.to_string()
     }
 
+    fn resolve_enum_variant(&self, name: &str) -> Option<(EnumDef, VariantDef)> {
+        // Try splitting name to find Enum and Variant
+        // e.g. "MyEnum::Variant"
+        if let Some((enum_name_part, variant_name)) = name.rsplit_once("::") {
+            let resolved_enum_name = self.resolve_symbol_name(enum_name_part);
+            if let Some(enum_def) = self.enums.get(&resolved_enum_name) {
+                if let Some(variant) = enum_def.variants.iter().find(|v| v.name == variant_name) {
+                    return Some((enum_def.clone(), variant.clone()));
+                }
+            }
+            // Also try exact match if enum_name_part is alias?
+            // resolve_symbol_name handles aliases.
+        }
+        // What if user used `use MyEnum::Variant`? Then `Variant` is aliased to `MyEnum::Variant`.
+        // `resolve_symbol_name` should resolve "Variant" to "MyEnum::Variant".
+        let resolved = self.resolve_symbol_name(name);
+        if resolved != name {
+            // Recursive call with resolved name
+            return self.resolve_enum_variant(&resolved);
+        }
+
+        None
+    }
+
     pub fn check_module(&mut self, module: &mut Module) -> Result<(), SemanticError> {
         self.register_module_symbols(module, "")?;
         self.check_module_bodies(module, "")?;
@@ -260,6 +286,21 @@ impl SemanticAnalyzer {
             let mut f_clone = f.clone();
             f_clone.name = full_name.clone();
             self.functions.insert(full_name, f_clone);
+        }
+
+        // Register enums
+        for e in &module.enums {
+            let full_name = if prefix.is_empty() {
+                e.name.clone()
+            } else {
+                format!("{}::{}", prefix, e.name)
+            };
+            if self.enums.contains_key(&full_name) {
+                return Err(SemanticError::DuplicateDefinition(full_name));
+            }
+            let mut e_clone = e.clone();
+            e_clone.name = full_name.clone();
+            self.enums.insert(full_name, e_clone);
         }
 
         // Submodules
@@ -831,32 +872,106 @@ impl SemanticAnalyzer {
                     *name = resolved_name.clone();
                 }
 
-                let struct_def = self
-                    .structs
-                    .get(name)
-                    .ok_or_else(|| SemanticError::StructNotFound(name.clone()))?
-                    .clone();
+                if let Some(struct_def) = self.structs.get(name).cloned() {
+                    let mut initialized_fields = HashSet::new();
+                    for (field_name, field_expr) in fields {
+                        if initialized_fields.contains(field_name) {
+                            return Err(SemanticError::DuplicateDefinition(format!(
+                                "Field {} in struct init",
+                                field_name
+                            )));
+                        }
+                        initialized_fields.insert(field_name.clone());
+
+                        // Check if field exists and get type
+                        let expected_type = struct_def
+                            .fields
+                            .iter()
+                            .find(|(f, _)| f == field_name)
+                            .map(|(_, t)| t)
+                            .ok_or_else(|| {
+                                SemanticError::VariableNotFound(format!(
+                                    "Field {} in struct {}",
+                                    field_name, name
+                                ))
+                            })?;
+
+                        let found_type = self.check_expr(field_expr)?;
+                        if !self.are_types_compatible(expected_type, &found_type) {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: expected_type.clone(),
+                                found: found_type,
+                            });
+                        }
+                    }
+
+                    // Check for missing fields
+                    for (field_name, _) in &struct_def.fields {
+                        if !initialized_fields.contains(field_name) {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: format!("Struct init {}", name),
+                                expected: struct_def.fields.len(),
+                                found: initialized_fields.len(),
+                            });
+                        }
+                    }
+
+                    Ok(Type::Struct(name.clone()))
+                } else if let Some((enum_def, variant_def)) = self.resolve_enum_variant(name) {
+                    // It is an Enum Variant! Transform to EnumInit.
+                    let fields_owned = std::mem::take(fields);
+                    *expr = Expr::EnumInit {
+                        enum_name: enum_def.name.clone(),
+                        variant_name: variant_def.name.clone(),
+                        fields: fields_owned,
+                    };
+                    // Re-check as EnumInit
+                    self.check_expr(expr)
+                } else {
+                    Err(SemanticError::StructNotFound(name.clone()))
+                }
+            }
+            Expr::EnumInit {
+                enum_name,
+                variant_name,
+                fields,
+            } => {
+                let enum_def = self
+                    .enums
+                    .get(enum_name)
+                    .ok_or_else(|| SemanticError::StructNotFound(enum_name.clone()))?
+                    .clone(); // Clone to avoid borrow issues
+
+                let variant_def = enum_def
+                    .variants
+                    .iter()
+                    .find(|v| v.name == *variant_name)
+                    .ok_or_else(|| {
+                        SemanticError::VariableNotFound(format!(
+                            "Variant {} in enum {}",
+                            variant_name, enum_name
+                        ))
+                    })?;
 
                 let mut initialized_fields = HashSet::new();
                 for (field_name, field_expr) in fields {
                     if initialized_fields.contains(field_name) {
                         return Err(SemanticError::DuplicateDefinition(format!(
-                            "Field {} in struct init",
+                            "Field {} in enum variant init",
                             field_name
                         )));
                     }
                     initialized_fields.insert(field_name.clone());
 
-                    // Check if field exists and get type
-                    let expected_type = struct_def
+                    let expected_type = variant_def
                         .fields
                         .iter()
                         .find(|(f, _)| f == field_name)
                         .map(|(_, t)| t)
                         .ok_or_else(|| {
                             SemanticError::VariableNotFound(format!(
-                                "Field {} in struct {}",
-                                field_name, name
+                                "Field {} in variant {}",
+                                field_name, variant_name
                             ))
                         })?;
 
@@ -870,17 +985,113 @@ impl SemanticAnalyzer {
                 }
 
                 // Check for missing fields
-                for (field_name, _) in &struct_def.fields {
+                for (field_name, _) in &variant_def.fields {
                     if !initialized_fields.contains(field_name) {
                         return Err(SemanticError::ArgumentCountMismatch {
-                            name: format!("Struct init {}", name),
-                            expected: struct_def.fields.len(),
+                            name: format!("Variant init {}", variant_name),
+                            expected: variant_def.fields.len(),
                             found: initialized_fields.len(),
                         });
                     }
                 }
 
-                Ok(Type::Struct(name.clone()))
+                Ok(Type::Enum(enum_name.clone()))
+            }
+            Expr::Match {
+                expr: subject_expr,
+                arms,
+            } => {
+                let subject_type = self.check_expr(subject_expr)?;
+                let enum_name = match &subject_type {
+                    Type::Enum(n) | Type::UserDefined(n) => n.clone(),
+                    _ => {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::UserDefined("Enum".into()),
+                            found: subject_type,
+                        })
+                    }
+                };
+
+                let enum_def = self.enums.get(&enum_name);
+                if enum_def.is_none() {
+                    // If it's not an enum, maybe we support matching on other types later?
+                    // For now only Enums (UserDefined that maps to Enum).
+                    return Err(SemanticError::StructNotFound(format!("Enum {}", enum_name)));
+                }
+                let enum_def = enum_def.unwrap().clone();
+
+                let mut return_type = Option::<Type>::None;
+
+                for (pattern, arm_expr) in arms {
+                    self.enter_scope();
+
+                    match pattern {
+                        Pattern::Wildcard => {
+                            // Valid
+                        }
+                        Pattern::EnumPattern {
+                            enum_name: p_enum,
+                            variant_name: p_variant,
+                            bindings,
+                        } => {
+                            // Check enum name matches (if provided)
+                            if !p_enum.is_empty() {
+                                // Resolve p_enum?
+                                // Assume resolved or simple check?
+                                // If p_enum is provided, it should match subject enum name (or be alias).
+                                // For now, strict check if p_enum is not empty.
+                                // Actually, simpler: p_variant must belong to subject enum.
+                            }
+
+                            let variant_def = enum_def
+                                .variants
+                                .iter()
+                                .find(|v| v.name == *p_variant)
+                                .ok_or_else(|| {
+                                    SemanticError::VariableNotFound(format!(
+                                        "Variant {} not found in enum {}",
+                                        p_variant, enum_name
+                                    ))
+                                })?;
+
+                            // Check bindings
+                            for (field_name, var_name) in bindings {
+                                let field_type = variant_def
+                                    .fields
+                                    .iter()
+                                    .find(|(f, _)| f == field_name)
+                                    .map(|(_, t)| t)
+                                    .ok_or_else(|| {
+                                        SemanticError::VariableNotFound(format!(
+                                            "Field {} in variant {}",
+                                            field_name, p_variant
+                                        ))
+                                    })?;
+
+                                // Bind variable
+                                self.declare_variable(var_name.clone(), field_type.clone())?;
+                            }
+                        }
+                    }
+
+                    let arm_type = self.check_expr(arm_expr)?;
+                    self.exit_scope();
+
+                    if let Some(ref rt) = return_type {
+                        if !self.are_types_compatible(rt, &arm_type) {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: rt.clone(),
+                                found: arm_type,
+                            });
+                        }
+                    } else {
+                        return_type = Some(arm_type);
+                    }
+                }
+
+                // TODO: Exhaustiveness check
+
+                Ok(return_type.unwrap_or(Type::Void))
             }
             Expr::Range(start, end) => {
                 let s_ty = self.check_expr(start)?;
@@ -920,6 +1131,22 @@ impl SemanticAnalyzer {
                     if let Some(symbol) = global_scope.get(name) {
                         return Ok(symbol.ty.clone());
                     }
+                }
+
+                // 4. Try as Enum Unit Variant
+                if let Some((enum_def, variant_def)) = self.resolve_enum_variant(name) {
+                    if !variant_def.fields.is_empty() {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::UserDefined("Unit Variant".into()),
+                            found: Type::UserDefined("Struct Variant".into()),
+                        });
+                    }
+                    *expr = Expr::EnumInit {
+                        enum_name: enum_def.name.clone(),
+                        variant_name: variant_def.name.clone(),
+                        fields: vec![],
+                    };
+                    return self.check_expr(expr);
                 }
 
                 Err(SemanticError::VariableNotFound(name.clone()))
