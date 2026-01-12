@@ -97,7 +97,9 @@ pub extern "C" fn tl_tokenizer_decode(tokenizer: i64, ids: *mut OpaqueTensor) ->
 
         match t.decode(&vec_u32, true) {
             Ok(s) => {
-                let c_string = CString::new(s).unwrap();
+                // println!("Decoded: {:?}", s);
+                let s_fixed = s.replace("\\n", "\n");
+                let c_string = CString::new(s_fixed).unwrap();
                 c_string.into_raw()
             }
             Err(e) => {
