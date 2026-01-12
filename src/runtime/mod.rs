@@ -1627,8 +1627,15 @@ pub extern "C" fn tl_tensor_load(path: *const std::os::raw::c_char) -> *mut Opaq
 
 // --- Tensor Map (State Dict) Support ---
 
+use candle_nn::Module; // For forward()
+
+pub enum LoadedTensor {
+    Standard(Tensor),
+    Quantized(Arc<candle_core::quantized::QTensor>),
+}
+
 #[repr(C)]
-pub struct OpaqueTensorMap(pub std::collections::HashMap<String, Tensor>);
+pub struct OpaqueTensorMap(pub std::collections::HashMap<String, LoadedTensor>);
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_map_new() -> *mut OpaqueTensorMap {
@@ -1652,7 +1659,7 @@ pub extern "C" fn tl_tensor_map_insert(
         let key = c_str.to_string_lossy().into_owned();
 
         let t_ref = &(*tensor).0;
-        map_ref.insert(key, t_ref.clone());
+        map_ref.insert(key, LoadedTensor::Standard(t_ref.clone()));
     }
 }
 
@@ -1660,8 +1667,14 @@ pub extern "C" fn tl_tensor_map_insert(
 pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *const std::os::raw::c_char) {
     unsafe {
         let map_ref = &(*map).0;
+        let mut save_map = std::collections::HashMap::new();
+        for (k, v) in map_ref.iter() {
+            if let LoadedTensor::Standard(t) = v {
+                save_map.insert(k.clone(), t.clone());
+            }
+        }
         let p_str = std::ffi::CStr::from_ptr(path).to_str().unwrap();
-        candle_core::safetensors::save(map_ref, p_str).unwrap();
+        candle_core::safetensors::save(&save_map, p_str).unwrap();
         // println!("Saved model to {}", p_str);
     }
 }
@@ -1673,7 +1686,13 @@ pub extern "C" fn tl_tensor_map_load(path: *const std::os::raw::c_char) -> *mut 
         let device = get_device();
         let map =
             candle_core::safetensors::load(p_str, &device).expect("Failed to load model file");
-        let opaque = OpaqueTensorMap(map);
+
+        let mut loaded_map = std::collections::HashMap::new();
+        for (k, v) in map {
+            loaded_map.insert(k, LoadedTensor::Standard(v));
+        }
+
+        let opaque = OpaqueTensorMap(loaded_map);
         Box::into_raw(Box::new(opaque))
     }
 }
@@ -1729,16 +1748,30 @@ pub extern "C" fn tl_tensor_map_get(
         let c_str = std::ffi::CStr::from_ptr(name);
         let key = c_str.to_string_lossy();
 
-        if let Some(t) = map_ref.get(key.as_ref()) {
-            let device = get_device();
-            let t_on_device = if device_to_id(t.device()) == device_to_id(&device) {
-                t.clone()
-            } else {
-                t.to_device(&device).unwrap()
-            };
-            let map_mut = &mut (*map_ptr).0;
-            map_mut.insert(key.to_string(), t_on_device.clone());
-            make_tensor(t_on_device)
+        if let Some(loaded) = map_ref.get(key.as_ref()) {
+            match loaded {
+                LoadedTensor::Standard(t) => {
+                    let device = get_device();
+                    let t_on_device = if device_to_id(t.device()) == device_to_id(&device) {
+                        t.clone()
+                    } else {
+                        t.to_device(&device).unwrap()
+                    };
+                    // Update not needed for standard? Or do we need to cache device move?
+                    // Keeping behavior similar to before: if move happened, maybe update?
+                    // But original code: map_mut.insert(key, t_on_device.clone())
+                    // Let's duplicate that logic.
+                    let map_mut = &mut (*map_ptr).0;
+                    map_mut.insert(key.to_string(), LoadedTensor::Standard(t_on_device.clone()));
+                    make_tensor(t_on_device)
+                }
+                LoadedTensor::Quantized(qt) => {
+                    // Ephemeral dequantize for F32 usage (legacy/compat support)
+                    let device = get_device();
+                    let t = qt.dequantize(&device).unwrap();
+                    make_tensor(t)
+                }
+            }
         } else {
             // Panic or Return Null? Panic for now standard behavior
             panic!("Weight '{}' not found in loaded file.", key);
@@ -2059,6 +2092,65 @@ pub extern "C" fn tl_string_new(s: *const std::os::raw::c_char) -> *mut std::os:
             libc::strcpy(dest, s);
         }
         dest
+    }
+}
+
+// --- QTensor Support ---
+
+pub struct OpaqueQTensor(pub Arc<candle_core::quantized::QTensor>);
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_map_get_quantized(
+    map: i64,
+    name: *const std::os::raw::c_char,
+) -> *mut OpaqueQTensor {
+    unsafe {
+        let map_ptr = map as *mut OpaqueTensorMap;
+        let map_ref = &(*map_ptr).0;
+        let c_str = std::ffi::CStr::from_ptr(name);
+        let key = c_str.to_string_lossy();
+
+        if let Some(loaded) = map_ref.get(key.as_ref()) {
+            match loaded {
+                LoadedTensor::Quantized(qt) => {
+                    // qt is &Arc<QTensor>, clone generic Arc to get Arc<QTensor>
+                    let arc = qt.clone();
+                    Box::into_raw(Box::new(OpaqueQTensor(arc)))
+                }
+                LoadedTensor::Standard(_) => {
+                    panic!(
+                        "Requested quantized tensor '{}', but found standard tensor.",
+                        key
+                    );
+                }
+            }
+        } else {
+            panic!("Weight '{}' not found in loaded file.", key);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_qtensor_free(ptr: *mut OpaqueQTensor) {
+    if !ptr.is_null() {
+        unsafe {
+            let _ = Box::from_raw(ptr);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_qtensor_matmul(
+    input: *mut OpaqueTensor,
+    weight: *mut OpaqueQTensor,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let x_t = &(*input).0;
+        let w_qt = &(*weight).0;
+
+        let qmatmul = candle_core::quantized::QMatMul::from_arc(w_qt.clone()).unwrap();
+        let result = qmatmul.forward(x_t).unwrap();
+        make_tensor(result)
     }
 }
 

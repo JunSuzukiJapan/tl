@@ -41,10 +41,14 @@ extern fn tl_tensor_matmul_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>) -> Tensor<f3
 extern fn tl_tensor_add_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>) -> Tensor<f32, 4>;
 extern fn tl_tensor_softmax(t: Tensor<f32, 4>, d: i64) -> Tensor<f32, 4>;
 
-struct Linear { w: Tensor<f32, 2> }
+extern fn tl_tensor_map_get_quantized(map: i64, key: String) -> QTensor;
+extern fn tl_qtensor_matmul(input: Tensor<f32, 2>, weight: QTensor) -> Tensor<f32, 2>;
+
+struct QTensor {}
+struct Linear { w: QTensor }
 impl Linear {
-    fn from_map(m: i64, k: String) -> Linear { return Linear { w: tl_tensor_map_get(m, k) }; }
-    fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { return tl_tensor_matmul(x, tl_tensor_transpose_2d(self.w, 0, 1)); }
+    fn from_map(m: i64, k: String) -> Linear { return Linear { w: tl_tensor_map_get_quantized(m, k) }; }
+    fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { return tl_qtensor_matmul(x, self.w); }
 }
 struct RMSNorm { w: Tensor<f32, 1>, e: f32 }
 impl RMSNorm {

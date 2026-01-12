@@ -575,13 +575,8 @@ fn compile_tensor_zeros<'ctx>(
 
     let elements_ref = if let Expr::TensorLiteral(el) = &args[0] {
         Some(el)
-    } else if let Expr::TensorConstLiteral(_) = &args[0] {
-        // Some(el) // Reusing TensorLiteral handling if structure is compatible (Vec<Expr>)
-        // Actually TensorConstLiteral is Vec<f32/i64>.
-        // We need to handle them separately if we want to support both.
-        // For now, let's just handle TensorLiteral (Exprs).
-        // If it's ConstLiteral, we need to wrap in Expr? No.
-        None
+    } else if let Expr::TensorConstLiteral(el) = &args[0] {
+        Some(el)
     } else {
         None
     };

@@ -1794,6 +1794,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Compile condition
                 self.builder.position_at_end(cond_block);
+                self.enter_scope(); // Condition Scope
                 let (cond_val, _) = self.compile_expr(cond)?;
                 let cond_bool = self
                     .builder
@@ -1805,6 +1806,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     )
                     .map_err(|e| e.to_string())?;
 
+                self.exit_scope(); // Free condition temps
                 self.builder
                     .build_conditional_branch(cond_bool, body_block, end_block)
                     .map_err(|e| e.to_string())?;

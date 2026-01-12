@@ -130,15 +130,16 @@ pub extern "C" fn tl_gguf_load(path: *const c_char) -> i64 {
             //    println!("GGUF Tensor: {}", tensor_name);
             // }
 
-            let device = get_device();
+            // let device = get_device(); // Device unused in loop now
             for (tensor_name, qtensor_info) in content.tensor_infos.iter() {
                 let qtensor = qtensor_info
                     .read(&mut file, content.tensor_data_offset, &Device::Cpu)
                     .expect("failed to read qtensor");
-                let tensor = qtensor.dequantize(&device).unwrap();
-
-                // Insert Tensor (not OpaqueTensor)
-                map.0.insert(tensor_name.clone(), tensor);
+                let qtensor_arc = std::sync::Arc::new(qtensor);
+                map.0.insert(
+                    tensor_name.clone(),
+                    crate::runtime::LoadedTensor::Quantized(qtensor_arc),
+                );
             }
         }
 
