@@ -17,6 +17,15 @@ pub enum SemanticError {
     StructNotFound(String),
     #[error("Duplicate definition: {0}")]
     DuplicateDefinition(String),
+    #[error("Duplicate match arm for variant: {0}")]
+    DuplicateMatchArm(String),
+    #[error("Unreachable match arm after wildcard")]
+    UnreachableMatchArm,
+    #[error("Non-exhaustive match on enum {enum_name}, missing variants: {missing_variants:?}")]
+    NonExhaustiveMatch {
+        enum_name: String,
+        missing_variants: Vec<String>,
+    },
     #[error("Incorrect number of arguments for {name}: expected {expected}, found {found}")]
     ArgumentCountMismatch {
         name: String,
@@ -284,6 +293,77 @@ impl SemanticAnalyzer {
             Type::UserDefined(resolved_name)
         } else {
             ty.clone()
+        }
+    }
+
+    fn bind_enum_pattern(
+        &mut self,
+        enum_name: &str,
+        enum_def: &EnumDef,
+        pattern: &Pattern,
+    ) -> Result<Option<usize>, SemanticError> {
+        match pattern {
+            Pattern::Wildcard => Ok(None),
+            Pattern::EnumPattern {
+                enum_name: p_enum,
+                variant_name,
+                bindings,
+            } => {
+                if !p_enum.is_empty() {
+                    let resolved = self.resolve_symbol_name(p_enum);
+                    if resolved != enum_name {
+                        return Err(SemanticError::VariableNotFound(format!(
+                            "Variant {} not found in enum {}",
+                            variant_name, enum_name
+                        )));
+                    }
+                }
+
+                let variant_idx = enum_def
+                    .variants
+                    .iter()
+                    .position(|v| v.name == *variant_name)
+                    .ok_or_else(|| {
+                        SemanticError::VariableNotFound(format!(
+                            "Variant {} not found in enum {}",
+                            variant_name, enum_name
+                        ))
+                    })?;
+                let variant_def = &enum_def.variants[variant_idx];
+
+                let mut seen_fields = HashSet::new();
+                let mut seen_vars = HashSet::new();
+                for (field_name, var_name) in bindings {
+                    if !seen_fields.insert(field_name.clone()) {
+                        return Err(SemanticError::DuplicateDefinition(format!(
+                            "Field {} in enum pattern",
+                            field_name
+                        )));
+                    }
+                    if !seen_vars.insert(var_name.clone()) {
+                        return Err(SemanticError::DuplicateDefinition(format!(
+                            "Binding {} in enum pattern",
+                            var_name
+                        )));
+                    }
+
+                    let field_type = variant_def
+                        .fields
+                        .iter()
+                        .find(|(f, _)| f == field_name)
+                        .map(|(_, t)| t)
+                        .ok_or_else(|| {
+                            SemanticError::VariableNotFound(format!(
+                                "Field {} in variant {}",
+                                field_name, variant_name
+                            ))
+                        })?;
+
+                    self.declare_variable(var_name.clone(), field_type.clone())?;
+                }
+
+                Ok(Some(variant_idx))
+            }
         }
     }
 
@@ -1068,61 +1148,29 @@ impl SemanticAnalyzer {
                 let enum_def = enum_def.unwrap().clone();
 
                 let mut return_type = Option::<Type>::None;
+                let mut seen_variants = HashSet::new();
+                let mut saw_wildcard = false;
 
                 for (pattern, arm_expr) in arms {
+                    if saw_wildcard {
+                        return Err(SemanticError::UnreachableMatchArm);
+                    }
+
                     self.enter_scope();
 
-                    match pattern {
-                        Pattern::Wildcard => {
-                            // Valid
-                        }
-                        Pattern::EnumPattern {
-                            enum_name: p_enum,
-                            variant_name: p_variant,
-                            bindings,
-                        } => {
-                            // Check enum name matches (if provided)
-                            if !p_enum.is_empty() {
-                                // Resolve p_enum?
-                                // Assume resolved or simple check?
-                                // If p_enum is provided, it should match subject enum name (or be alias).
-                                // For now, strict check if p_enum is not empty.
-                                // Actually, simpler: p_variant must belong to subject enum.
-                            }
-
-                            let variant_def = enum_def
-                                .variants
-                                .iter()
-                                .find(|v| v.name == *p_variant)
-                                .ok_or_else(|| {
-                                    SemanticError::VariableNotFound(format!(
-                                        "Variant {} not found in enum {}",
-                                        p_variant, enum_name
-                                    ))
-                                })?;
-
-                            // Check bindings
-                            for (field_name, var_name) in bindings {
-                                let field_type = variant_def
-                                    .fields
-                                    .iter()
-                                    .find(|(f, _)| f == field_name)
-                                    .map(|(_, t)| t)
-                                    .ok_or_else(|| {
-                                        SemanticError::VariableNotFound(format!(
-                                            "Field {} in variant {}",
-                                            field_name, p_variant
-                                        ))
-                                    })?;
-
-                                // Bind variable
-                                self.declare_variable(var_name.clone(), field_type.clone())?;
-                            }
-                        }
-                    }
+                    let variant_idx = self.bind_enum_pattern(&enum_name, &enum_def, pattern)?;
 
                     let arm_type = self.check_expr(arm_expr)?;
                     self.exit_scope();
+
+                    if let Some(idx) = variant_idx {
+                        let variant_name = &enum_def.variants[idx].name;
+                        if !seen_variants.insert(idx) {
+                            return Err(SemanticError::DuplicateMatchArm(variant_name.clone()));
+                        }
+                    } else {
+                        saw_wildcard = true;
+                    }
 
                     if let Some(ref rt) = return_type {
                         if !self.are_types_compatible(rt, &arm_type) {
@@ -1136,9 +1184,93 @@ impl SemanticAnalyzer {
                     }
                 }
 
-                // TODO: Exhaustiveness check
+                if !saw_wildcard {
+                    let mut missing = Vec::new();
+                    for (idx, variant) in enum_def.variants.iter().enumerate() {
+                        if !seen_variants.contains(&idx) {
+                            missing.push(variant.name.clone());
+                        }
+                    }
+                    if !missing.is_empty() {
+                        return Err(SemanticError::NonExhaustiveMatch {
+                            enum_name,
+                            missing_variants: missing,
+                        });
+                    }
+                }
 
                 Ok(return_type.unwrap_or(Type::Void))
+            }
+            Expr::IfLet {
+                pattern,
+                expr,
+                then_block,
+                else_block,
+            } => {
+                let subject_type = self.check_expr(expr)?;
+                let enum_name = match &subject_type {
+                    Type::Enum(n) | Type::UserDefined(n) => n.clone(),
+                    _ => {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::UserDefined("Enum".into()),
+                            found: subject_type,
+                        })
+                    }
+                };
+
+                let enum_def = self.enums.get(&enum_name);
+                if enum_def.is_none() {
+                    return Err(SemanticError::StructNotFound(format!("Enum {}", enum_name)));
+                }
+                let enum_def = enum_def.unwrap().clone();
+
+                // Then block with bindings
+                self.enter_scope();
+                self.bind_enum_pattern(&enum_name, &enum_def, pattern)?;
+                let mut then_type = Type::Void;
+                let then_len = then_block.len();
+                for (i, stmt) in then_block.iter_mut().enumerate() {
+                    if i == then_len - 1 {
+                        if let Stmt::Expr(e) = stmt {
+                            then_type = self.check_expr(e)?;
+                        } else {
+                            self.check_stmt(stmt)?;
+                        }
+                    } else {
+                        self.check_stmt(stmt)?;
+                    }
+                }
+                self.exit_scope();
+
+                let else_type = if let Some(else_stmts) = else_block {
+                    self.enter_scope();
+                    let mut e_type = Type::Void;
+                    let else_len = else_stmts.len();
+                    for (i, stmt) in else_stmts.iter_mut().enumerate() {
+                        if i == else_len - 1 {
+                            if let Stmt::Expr(e) = stmt {
+                                e_type = self.check_expr(e)?;
+                            } else {
+                                self.check_stmt(stmt)?;
+                            }
+                        } else {
+                            self.check_stmt(stmt)?;
+                        }
+                    }
+                    self.exit_scope();
+                    e_type
+                } else {
+                    Type::Void
+                };
+
+                if then_type == else_type {
+                    Ok(then_type)
+                } else {
+                    Err(SemanticError::TypeMismatch {
+                        expected: then_type,
+                        found: else_type,
+                    })
+                }
             }
             Expr::Range(start, end) => {
                 let s_ty = self.check_expr(start)?;

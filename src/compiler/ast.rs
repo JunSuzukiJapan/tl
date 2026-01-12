@@ -192,6 +192,12 @@ pub enum Expr {
 
     // Control
     IfExpr(Box<Expr>, Vec<Stmt>, Option<Vec<Stmt>>),
+    IfLet {
+        pattern: Pattern,
+        expr: Box<Expr>,
+        then_block: Vec<Stmt>,
+        else_block: Option<Vec<Stmt>>,
+    },
     Block(Vec<Stmt>),
 
     // Aggregation: sum(expr for var in range where condition)

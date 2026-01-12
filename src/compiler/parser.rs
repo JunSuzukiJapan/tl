@@ -216,6 +216,26 @@ fn parse_if_expr(input: &str) -> IResult<&str, Expr> {
     Ok((input, Expr::IfExpr(Box::new(cond), then_block, else_block)))
 }
 
+fn parse_if_let_expr(input: &str) -> IResult<&str, Expr> {
+    let (input, _) = tag("if")(input)?;
+    let (input, _) = ws(tag("let"))(input)?;
+    let (input, pattern) = ws(parse_pattern)(input)?;
+    let (input, _) = ws(char('='))(input)?;
+    let (input, expr) = parse_expr(input)?;
+    let (input, then_block) = parse_block(input)?;
+    let (input, else_block) = opt(preceded(ws(tag("else")), parse_block))(input)?;
+
+    Ok((
+        input,
+        Expr::IfLet {
+            pattern,
+            expr: Box::new(expr),
+            then_block,
+            else_block,
+        },
+    ))
+}
+
 fn parse_tensor_literal(input: &str) -> IResult<&str, Expr> {
     let (input, elements) = delimited(
         ws(char('[')),
@@ -298,6 +318,7 @@ fn parse_struct_init(input: &str) -> IResult<&str, Expr> {
     Ok((input, Expr::StructInit(name, fields)))
 }
 
+#[allow(dead_code)]
 fn parse_enum_init(input: &str) -> IResult<&str, Expr> {
     // Enum::Variant { field: value ... }
     // Identifier "Enum::Variant" or just "Variant"?
@@ -433,6 +454,7 @@ fn parse_primary(input: &str) -> IResult<&str, Expr> {
         parse_literal_int,
         parse_literal_bool,
         parse_literal_string,
+        parse_if_let_expr,
         parse_if_expr,
         parse_tensor_comprehension, // Try parsing comprehension before literal array
         parse_tensor_literal,
@@ -845,6 +867,7 @@ fn parse_expr_stmt(input: &str) -> IResult<&str, Stmt> {
     // In these cases, semicolon is optional in Rust-like syntax.
     let is_block_like = match &expr {
         Expr::IfExpr(_, _, _) => true,
+        Expr::IfLet { .. } => true,
         Expr::Match { .. } => true,
         Expr::Block(_) => true,
         _ => false,

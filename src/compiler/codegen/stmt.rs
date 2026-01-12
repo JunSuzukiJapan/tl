@@ -2742,7 +2742,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .builder
             .build_struct_gep(enum_ty, new_ptr, 0, "dst_tag_ptr")
             .map_err(|e| e.to_string())?;
-        self.builder.build_store(dst_tag_ptr, tag_val);
+        let _ = self.builder.build_store(dst_tag_ptr, tag_val);
 
         // 4. Switch on tag to copy payload
         let current_block = self.builder.get_insert_block().unwrap();
@@ -2832,10 +2832,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .builder
                         .build_struct_gep(variant_struct_ty, dst_variant_ptr, idx as u32, "dst_f")
                         .map_err(|e| e.to_string())?;
-                    self.builder.build_store(dst_field_ptr, cloned_val);
+                    let _ = self.builder.build_store(dst_field_ptr, cloned_val);
                 }
             }
-            self.builder.build_unconditional_branch(after_switch);
+            let _ = self.builder.build_unconditional_branch(after_switch);
         }
 
         self.builder.position_at_end(after_switch);

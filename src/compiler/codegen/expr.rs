@@ -2,7 +2,7 @@ use super::CodeGenerator;
 use crate::compiler::ast::*;
 use inkwell::types::BasicType;
 use inkwell::values::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub type BuiltinFnEval = for<'a, 'ctx> fn(
     &'a mut CodeGenerator<'ctx>,
@@ -1312,7 +1312,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
 
                 // Return pointer to Enum
-                let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                 // Wait, objects are passed by pointer usually.
                 // But `alloca` IS a pointer to the struct storage.
                 // If I want to return the "Value", for Struct/Enum, the Value IS the pointer.
@@ -1324,308 +1323,21 @@ impl<'ctx> CodeGenerator<'ctx> {
             Expr::Match {
                 expr: subject_expr,
                 arms,
+            } => self.compile_match_like(subject_expr, arms),
+            Expr::IfLet {
+                pattern,
+                expr,
+                then_block,
+                else_block,
             } => {
-                let (subject_val, subject_ty) = self.compile_expr(subject_expr)?;
-                let enum_name = match subject_ty {
-                    Type::Enum(n) | Type::UserDefined(n) => n,
-                    _ => return Err("Match on non-enum".into()),
-                };
-                let enum_def = self
-                    .enum_defs
-                    .get(&enum_name)
-                    .ok_or("Enum def not found")?
-                    .clone();
-                let enum_ty = *self
-                    .enum_types
-                    .get(&enum_name)
-                    .ok_or("Enum type not found")?;
-
-                let ptr = subject_val.into_pointer_value();
-
-                // Load Tag
-                let tag_ptr = self
-                    .builder
-                    .build_struct_gep(enum_ty, ptr, 0, "tag_ptr")
-                    .map_err(|e| e.to_string())?;
-                let tag_val = self
-                    .builder
-                    .build_load(self.context.i32_type(), tag_ptr, "tag")
-                    .map_err(|e| e.to_string())?
-                    .into_int_value();
-
-                // Blocks
-                let current_func = self
-                    .builder
-                    .get_insert_block()
-                    .unwrap()
-                    .get_parent()
-                    .unwrap();
-                let merge_block = self.context.append_basic_block(current_func, "match_merge");
-
-                let mut switch_cases = vec![];
-                let mut incoming_vals = vec![];
-                let mut result_type = Type::Void; // Determined by first arm
-
-                // We need to group arms by pattern
-                // Logic: Generate a block for each arm.
-                // Switch jumps to block if tag matches.
-                // But pattern might match multiple tags (wildcard or multiple patterns?). TL Enums are explicit variants.
-                // Pattern::EnumPattern matches exact ONE variant. Pattern::Wildcard matches ALL others.
-
-                // Problem: Switch needs distinct cases.
-                // We iterate over VARIANTS and find which arm matches.
-                // Or iterate over ARMS and generate checks?
-                // Switch is O(1) jump. We should use it.
-                // We need map: VariantIdx -> ArmBlock.
-
-                // 1. Create blocks for arms
-                let mut arm_blocks = vec![];
-                for i in 0..arms.len() {
-                    arm_blocks.push(
-                        self.context
-                            .append_basic_block(current_func, &format!("arm_{}", i)),
-                    );
-                }
-
-                // 2. Build Switch map
-                let mut used_variants = std::collections::HashSet::new();
-                for (arm_idx, (pat, _)) in arms.iter().enumerate() {
-                    match pat {
-                        Pattern::EnumPattern { variant_name, .. } => {
-                            if let Some(idx) = enum_def
-                                .variants
-                                .iter()
-                                .position(|v| v.name == *variant_name)
-                            {
-                                if used_variants.contains(&idx) {
-                                    continue; // First match wins
-                                }
-                                used_variants.insert(idx);
-                                switch_cases.push((
-                                    self.context.i32_type().const_int(idx as u64, false),
-                                    arm_blocks[arm_idx],
-                                ));
-                            }
-                        }
-                        Pattern::Wildcard => {
-                            // Wildcard handles everything else.
-                            // We set it as Default block for switch?
-                            // Switch must have default.
-                            // If no wildcard, and not exhaustive, what happens? Semantics checked exhaustiveness.
-                            // We can assume exhaustive.
-                        }
-                    }
-                }
-
-                // Default block:
-                // If wildcard exists, use its block.
-                // Else, use unreachable or merge (if void).
-                // Find wildcard arm
-                let wildcard_block = arms
-                    .iter()
-                    .position(|(p, _)| matches!(p, Pattern::Wildcard))
-                    .map(|i| arm_blocks[i]);
-
-                // If semantic check verified exhaustiveness, we can use a trap or merge for unreachable cases?
-                // Or just the last arm?
-                // LLVM Switch needs default.
-                let default_block = if let Some(wb) = wildcard_block {
-                    wb
-                } else {
-                    let func = self
-                        .builder
-                        .get_insert_block()
-                        .unwrap()
-                        .get_parent()
-                        .unwrap();
-                    let unreachable_bb = self.context.append_basic_block(func, "match_unreachable");
-                    let current_block = self.builder.get_insert_block().unwrap();
-                    self.builder.position_at_end(unreachable_bb);
-                    self.builder.build_unreachable();
-                    self.builder.position_at_end(current_block);
-                    unreachable_bb
-                };
-
-                self.builder
-                    .build_switch(tag_val, default_block, &switch_cases)
-                    .unwrap();
-
-                // 3. Compile Arms
-                for (i, (pat, body)) in arms.iter().enumerate() {
-                    let block = arm_blocks[i];
-                    self.builder.position_at_end(block);
-
-                    self.enter_scope(); // Arm scope for bindings
-
-                    // Bindings
-                    if let Pattern::EnumPattern {
-                        variant_name,
-                        bindings,
-                        ..
-                    } = pat
-                    {
-                        if !bindings.is_empty() {
-                            // Get payload ptr
-                            // Reconstruct type... (Duplicated code, should have made helper)
-                            let variant_idx = enum_def
-                                .variants
-                                .iter()
-                                .position(|v| v.name == *variant_name)
-                                .unwrap();
-                            let variant_def = &enum_def.variants[variant_idx];
-
-                            let mut field_types: Vec<inkwell::types::BasicTypeEnum> = vec![];
-                            for (_, ty) in &variant_def.fields {
-                                let llvm_ty = match ty {
-                                    Type::F32 => self.context.f32_type().into(),
-                                    Type::I64 => self.context.i64_type().into(),
-                                    Type::Bool => self.context.bool_type().into(),
-                                    Type::Tensor(_, _) => self
-                                        .context
-                                        .ptr_type(inkwell::AddressSpace::default())
-                                        .into(),
-                                    Type::Struct(_)
-                                    | Type::Enum(_)
-                                    | Type::UserDefined(_)
-                                    | Type::Vec(_) => self
-                                        .context
-                                        .ptr_type(inkwell::AddressSpace::default())
-                                        .into(),
-                                    _ => self.context.i64_type().into(),
-                                };
-                                field_types.push(llvm_ty);
-                            }
-                            let variant_struct_ty = self.context.struct_type(&field_types, false);
-
-                            let payload_ptr_raw = self
-                                .builder
-                                .build_struct_gep(enum_ty, ptr, 1, "payload_ptr_raw")
-                                .unwrap();
-                            let payload_ptr = self
-                                .builder
-                                .build_pointer_cast(
-                                    payload_ptr_raw,
-                                    self.context.ptr_type(inkwell::AddressSpace::default()),
-                                    "payload_cast",
-                                )
-                                .unwrap();
-
-                            for (f_name, bind_name) in bindings {
-                                let f_idx = variant_def
-                                    .fields
-                                    .iter()
-                                    .position(|(n, _)| n == f_name)
-                                    .unwrap();
-                                let (_, f_ty) = &variant_def.fields[f_idx];
-
-                                let f_ptr = self
-                                    .builder
-                                    .build_struct_gep(
-                                        variant_struct_ty,
-                                        payload_ptr,
-                                        f_idx as u32,
-                                        "field_ptr",
-                                    )
-                                    .unwrap();
-
-                                let f_val = self
-                                    .builder
-                                    .build_load::<inkwell::types::BasicTypeEnum>(
-                                        match f_ty {
-                                            Type::F32 => self.context.f32_type().into(),
-                                            Type::I64 => self.context.i64_type().into(),
-                                            Type::Bool => self.context.bool_type().into(),
-                                            _ => self
-                                                .context
-                                                .ptr_type(inkwell::AddressSpace::default())
-                                                .into(),
-                                        },
-                                        f_ptr,
-                                        "bind_val",
-                                    )
-                                    .unwrap();
-
-                                // Bind new variable
-                                // We need to create an alloca for it in the arm scope?
-                                // Yes, standard variable handling.
-                                let alloca =
-                                    self.create_entry_block_alloca(current_func, bind_name, f_ty);
-                                self.builder.build_store(alloca, f_val).unwrap();
-
-                                // Should we CLONE?
-                                // Pattern matching borrows? Or moves?
-                                // Rust moves by default unless ref.
-                                // We don't have Refs yet. So Move/copy.
-                                // If we move from enum, we must ensure enum is not used later?
-                                // Or we just clone (copy).
-                                // For now, let's ACQUIRE/CLONE for safety.
-                                if matches!(
-                                    f_ty,
-                                    Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
-                                ) {
-                                    let cloned_val = self.emit_deep_clone(f_val, f_ty)?; // This returns value
-                                    self.builder.build_store(alloca, cloned_val).unwrap();
-                                }
-
-                                self.variables
-                                    .last_mut()
-                                    .unwrap()
-                                    .insert(bind_name.clone(), (alloca.into(), f_ty.clone(), true));
-                            }
-                        }
-                    }
-
-                    let (val, ty) = self.compile_expr(body)?;
-                    if i == 0 {
-                        result_type = ty;
-                    } // Assume consistent types for now
-
-                    self.exit_scope();
-
-                    // Unregister result before phi? No, if it's value, it flows out.
-                    // If it's a temp tensor/struct, it should be registered.
-                    // But we are leaving scope. `emit_all_scopes_cleanup` will clean up locals.
-                    // But `val` is returned.
-
-                    let current_insert_block = self.builder.get_insert_block().unwrap();
-                    if current_insert_block.get_terminator().is_none() {
-                        self.builder
-                            .build_unconditional_branch(merge_block)
-                            .unwrap();
-                        incoming_vals.push((val, current_insert_block));
-                    }
-                }
-
-                self.builder.position_at_end(merge_block);
-
-                // Phi
-                if result_type == Type::Void {
-                    Ok((
-                        self.context.i64_type().const_int(0, false).into(),
-                        Type::Void,
-                    ))
-                } else {
-                    let phi_type: inkwell::types::BasicTypeEnum = match result_type {
-                        Type::F32 => self.context.f32_type().into(),
-                        Type::I64 => self.context.i64_type().into(),
-                        Type::Bool => self.context.bool_type().into(),
-                        _ => self
-                            .context
-                            .ptr_type(inkwell::AddressSpace::default())
-                            .into(),
-                    };
-                    let phi = self.builder.build_phi(phi_type, "match_res").unwrap();
-                    let incomings: Vec<(
-                        &dyn inkwell::values::BasicValue,
-                        inkwell::basic_block::BasicBlock,
-                    )> = incoming_vals
-                        .iter()
-                        .map(|(v, b)| (v as &dyn inkwell::values::BasicValue, *b))
-                        .collect();
-                    phi.add_incoming(&incomings);
-
-                    Ok((phi.as_basic_value(), result_type))
-                }
+                let mut arms = Vec::with_capacity(2);
+                arms.push((
+                    pattern.clone(),
+                    Expr::Block(then_block.clone()),
+                ));
+                let fallback = Expr::Block(else_block.clone().unwrap_or_default());
+                arms.push((Pattern::Wildcard, fallback));
+                self.compile_match_like(expr, &arms)
             }
 
             Expr::Range(_, _) => Err("Expr::Range should only appear in For loops".to_string()),
@@ -3840,6 +3552,338 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             Ok((res, Type::Tensor(Box::new(Type::F32), rank)))
         }
+    }
+
+    fn compile_match_like(
+        &mut self,
+        subject_expr: &Expr,
+        arms: &[(Pattern, Expr)],
+    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        let (subject_val, subject_ty) = self.compile_expr(subject_expr)?;
+        let enum_name = match subject_ty {
+            Type::Enum(n) | Type::UserDefined(n) => n,
+            _ => return Err("Match on non-enum".into()),
+        };
+        let enum_def = self
+            .enum_defs
+            .get(&enum_name)
+            .ok_or("Enum def not found")?
+            .clone();
+        let enum_ty = *self
+            .enum_types
+            .get(&enum_name)
+            .ok_or("Enum type not found")?;
+
+        let ptr = subject_val.into_pointer_value();
+
+        // Load Tag
+        let tag_ptr = self
+            .builder
+            .build_struct_gep(enum_ty, ptr, 0, "tag_ptr")
+            .map_err(|e| e.to_string())?;
+        let tag_val = self
+            .builder
+            .build_load(self.context.i32_type(), tag_ptr, "tag")
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+
+        let current_func = self
+            .builder
+            .get_insert_block()
+            .unwrap()
+            .get_parent()
+            .unwrap();
+        let merge_block = self.context.append_basic_block(current_func, "match_merge");
+
+        let mut arm_blocks = Vec::with_capacity(arms.len());
+        for i in 0..arms.len() {
+            arm_blocks.push(
+                self.context
+                    .append_basic_block(current_func, &format!("arm_{}", i)),
+            );
+        }
+
+        let mut switch_cases = vec![];
+        let mut used_variants = HashSet::new();
+        for (arm_idx, (pat, _)) in arms.iter().enumerate() {
+            if let Pattern::EnumPattern { variant_name, .. } = pat {
+                let idx = enum_def
+                    .variants
+                    .iter()
+                    .position(|v| v.name == *variant_name)
+                    .ok_or("Enum variant not found")?;
+                if used_variants.insert(idx) {
+                    switch_cases.push((
+                        self.context.i32_type().const_int(idx as u64, false),
+                        arm_blocks[arm_idx],
+                    ));
+                }
+            }
+        }
+
+        let wildcard_block = arms
+            .iter()
+            .position(|(p, _)| matches!(p, Pattern::Wildcard))
+            .map(|i| arm_blocks[i]);
+
+        let default_block = if let Some(wb) = wildcard_block {
+            wb
+        } else {
+            let func = self
+                .builder
+                .get_insert_block()
+                .unwrap()
+                .get_parent()
+                .unwrap();
+            let unreachable_bb = self.context.append_basic_block(func, "match_unreachable");
+            let current_block = self.builder.get_insert_block().unwrap();
+            self.builder.position_at_end(unreachable_bb);
+            let _ = self.builder.build_unreachable();
+            self.builder.position_at_end(current_block);
+            unreachable_bb
+        };
+
+        self.builder
+            .build_switch(tag_val, default_block, &switch_cases)
+            .map_err(|e| e.to_string())?;
+
+        let mut incoming_vals = vec![];
+        let mut result_type = Type::Void;
+
+        for (i, (pat, body)) in arms.iter().enumerate() {
+            let block = arm_blocks[i];
+            self.builder.position_at_end(block);
+
+            self.enter_scope();
+
+            if let Pattern::EnumPattern {
+                variant_name,
+                bindings,
+                ..
+            } = pat
+            {
+                let variant_idx = enum_def
+                    .variants
+                    .iter()
+                    .position(|v| v.name == *variant_name)
+                    .ok_or("Enum variant not found")?;
+                self.bind_enum_pattern_fields(
+                    current_func,
+                    enum_ty,
+                    ptr,
+                    &enum_def,
+                    variant_idx,
+                    bindings,
+                )?;
+            }
+
+            let (val, ty) = self.compile_match_arm_body(body)?;
+            if i == 0 {
+                result_type = ty.clone();
+            }
+
+            self.exit_scope();
+
+            let current_insert_block = self.builder.get_insert_block().unwrap();
+            if current_insert_block.get_terminator().is_none() {
+                self.builder
+                    .build_unconditional_branch(merge_block)
+                    .map_err(|e| e.to_string())?;
+                incoming_vals.push((val, current_insert_block));
+            }
+        }
+
+        self.builder.position_at_end(merge_block);
+
+        if result_type == Type::Void {
+            Ok((
+                self.context.i64_type().const_int(0, false).into(),
+                Type::Void,
+            ))
+        } else {
+            let phi_type: inkwell::types::BasicTypeEnum = match result_type {
+                Type::F32 => self.context.f32_type().into(),
+                Type::I64 => self.context.i64_type().into(),
+                Type::Bool => self.context.bool_type().into(),
+                _ => self
+                    .context
+                    .ptr_type(inkwell::AddressSpace::default())
+                    .into(),
+            };
+            let phi = self.builder.build_phi(phi_type, "match_res").unwrap();
+            let incomings: Vec<(
+                &dyn inkwell::values::BasicValue,
+                inkwell::basic_block::BasicBlock,
+            )> = incoming_vals
+                .iter()
+                .map(|(v, b)| (v as &dyn inkwell::values::BasicValue, *b))
+                .collect();
+            phi.add_incoming(&incomings);
+
+            Ok((phi.as_basic_value(), result_type))
+        }
+    }
+
+    fn compile_match_arm_body(
+        &mut self,
+        body: &Expr,
+    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        if let Expr::Block(stmts) = body {
+            self.enter_scope();
+            let mut last_val = None;
+            let mut last_is_lvalue = false;
+            for (i, stmt) in stmts.iter().enumerate() {
+                if i == stmts.len() - 1 {
+                    if let Stmt::Expr(e) = stmt {
+                        last_is_lvalue = Self::is_lvalue_expr(e);
+                        last_val = Some(self.compile_expr(e)?);
+                    } else {
+                        self.compile_stmt(stmt)?;
+                    }
+                } else {
+                    self.compile_stmt(stmt)?;
+                }
+            }
+
+            let final_res = last_val.unwrap_or((
+                self.context.i64_type().const_int(0, false).into(),
+                Type::Void,
+            ));
+            let promoted = self.promote_match_result(final_res.0, &final_res.1, last_is_lvalue)?;
+            self.exit_scope();
+            Ok((promoted, final_res.1))
+        } else {
+            let (val, ty) = self.compile_expr(body)?;
+            let promoted = self.promote_match_result(val, &ty, Self::is_lvalue_expr(body))?;
+            Ok((promoted, ty))
+        }
+    }
+
+    fn promote_match_result(
+        &mut self,
+        val: BasicValueEnum<'ctx>,
+        ty: &Type,
+        is_lvalue: bool,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let is_ref_type = matches!(
+            ty,
+            Type::Tensor(_, _)
+                | Type::Struct(_)
+                | Type::Enum(_)
+                | Type::UserDefined(_)
+                | Type::Tuple(_)
+        );
+        if !is_ref_type {
+            return Ok(val);
+        }
+
+        if is_lvalue {
+            self.emit_deep_clone(val, ty)
+        } else {
+            if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                let ptr = val.into_pointer_value();
+                let cast_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        ptr,
+                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                        "cast",
+                    )
+                    .unwrap();
+                self.builder
+                    .build_call(unreg_fn, &[cast_ptr.into()], "")
+                    .unwrap();
+            }
+            Ok(val)
+        }
+    }
+
+    fn bind_enum_pattern_fields(
+        &mut self,
+        current_func: inkwell::values::FunctionValue<'ctx>,
+        enum_ty: inkwell::types::StructType<'ctx>,
+        enum_ptr: inkwell::values::PointerValue<'ctx>,
+        enum_def: &EnumDef,
+        variant_idx: usize,
+        bindings: &[(String, String)],
+    ) -> Result<(), String> {
+        if bindings.is_empty() {
+            return Ok(());
+        }
+
+        let variant_def = &enum_def.variants[variant_idx];
+        let mut field_types = Vec::with_capacity(variant_def.fields.len());
+        for (_, ty) in &variant_def.fields {
+            field_types.push(self.get_llvm_type(ty)?);
+        }
+        let variant_struct_ty = self.context.struct_type(&field_types, false);
+
+        let payload_ptr_raw = self
+            .builder
+            .build_struct_gep(enum_ty, enum_ptr, 1, "payload_ptr_raw")
+            .unwrap();
+        let payload_ptr = self
+            .builder
+            .build_pointer_cast(
+                payload_ptr_raw,
+                self.context.ptr_type(inkwell::AddressSpace::default()),
+                "payload_cast",
+            )
+            .unwrap();
+
+        for (field_name, bind_name) in bindings {
+            let f_idx = variant_def
+                .fields
+                .iter()
+                .position(|(n, _)| n == field_name)
+                .ok_or("Enum field not found")?;
+            let (_, f_ty) = &variant_def.fields[f_idx];
+
+            let f_ptr = self
+                .builder
+                .build_struct_gep(
+                    variant_struct_ty,
+                    payload_ptr,
+                    f_idx as u32,
+                    "field_ptr",
+                )
+                .unwrap();
+
+            let llvm_ty = self.get_llvm_type(f_ty)?;
+            let f_val = self
+                .builder
+                .build_load(llvm_ty, f_ptr, "bind_val")
+                .unwrap();
+
+            let alloca = self.create_entry_block_alloca(current_func, bind_name, f_ty);
+            let stored_val = if matches!(
+                f_ty,
+                Type::Tensor(_, _)
+                    | Type::Struct(_)
+                    | Type::Enum(_)
+                    | Type::UserDefined(_)
+                    | Type::Tuple(_)
+            ) {
+                self.emit_deep_clone(f_val, f_ty)?
+            } else {
+                f_val
+            };
+            self.builder.build_store(alloca, stored_val).unwrap();
+
+            self.variables
+                .last_mut()
+                .unwrap()
+                .insert(bind_name.clone(), (alloca.into(), f_ty.clone(), true));
+        }
+
+        Ok(())
+    }
+
+    fn is_lvalue_expr(expr: &Expr) -> bool {
+        matches!(
+            expr,
+            Expr::Variable(_) | Expr::FieldAccess(_, _) | Expr::IndexAccess(_, _) | Expr::TupleAccess(_, _)
+        )
     }
 
     // Helper to get LLVM BasicType from tl::Type
