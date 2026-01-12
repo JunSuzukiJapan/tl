@@ -39,6 +39,10 @@ pub fn declare_runtime_functions<'ctx>(
     let f32_unary_type = f32_type.fn_type(&[f32_type.into()], false);
     let f32_binary_type = f32_type.fn_type(&[f32_type.into(), f32_type.into()], false);
     let f32_powi_type = f32_type.fn_type(&[f32_type.into(), i64_type.into()], false);
+    let f64_type = context.f64_type();
+    let f64_unary_type = f64_type.fn_type(&[f64_type.into()], false);
+    let f64_binary_type = f64_type.fn_type(&[f64_type.into(), f64_type.into()], false);
+    let f64_powi_type = f64_type.fn_type(&[f64_type.into(), i64_type.into()], false);
 
     let f32_unary_methods = [
         "abs",
@@ -82,6 +86,48 @@ pub fn declare_runtime_functions<'ctx>(
         add_fn(&format!("tl_f32_{}", name), f32_binary_type);
     }
     add_fn("tl_f32_powi", f32_powi_type);
+
+    let f64_unary_methods = [
+        "abs",
+        "acos",
+        "acosh",
+        "asin",
+        "asinh",
+        "atan",
+        "atanh",
+        "cbrt",
+        "ceil",
+        "cos",
+        "cosh",
+        "exp",
+        "exp2",
+        "exp_m1",
+        "floor",
+        "fract",
+        "ln",
+        "ln_1p",
+        "log10",
+        "log2",
+        "recip",
+        "round",
+        "signum",
+        "sin",
+        "sinh",
+        "sqrt",
+        "tan",
+        "tanh",
+        "to_degrees",
+        "to_radians",
+        "trunc",
+    ];
+    for name in f64_unary_methods {
+        add_fn(&format!("tl_f64_{}", name), f64_unary_type);
+    }
+    let f64_binary_methods = ["atan2", "copysign", "hypot", "log", "powf"];
+    for name in f64_binary_methods {
+        add_fn(&format!("tl_f64_{}", name), f64_binary_type);
+    }
+    add_fn("tl_f64_powi", f64_powi_type);
 
     let print_str_type = void_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_print_string", print_str_type.clone());
@@ -691,6 +737,59 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_f32_powi") {
         execution_engine.add_global_mapping(&f, runtime::tl_f32_powi as *const () as usize);
     }
+    let f64_unary_mappings: [(&str, usize); 31] = [
+        ("tl_f64_abs", runtime::tl_f64_abs as *const () as usize),
+        ("tl_f64_acos", runtime::tl_f64_acos as *const () as usize),
+        ("tl_f64_acosh", runtime::tl_f64_acosh as *const () as usize),
+        ("tl_f64_asin", runtime::tl_f64_asin as *const () as usize),
+        ("tl_f64_asinh", runtime::tl_f64_asinh as *const () as usize),
+        ("tl_f64_atan", runtime::tl_f64_atan as *const () as usize),
+        ("tl_f64_atanh", runtime::tl_f64_atanh as *const () as usize),
+        ("tl_f64_cbrt", runtime::tl_f64_cbrt as *const () as usize),
+        ("tl_f64_ceil", runtime::tl_f64_ceil as *const () as usize),
+        ("tl_f64_cos", runtime::tl_f64_cos as *const () as usize),
+        ("tl_f64_cosh", runtime::tl_f64_cosh as *const () as usize),
+        ("tl_f64_exp", runtime::tl_f64_exp as *const () as usize),
+        ("tl_f64_exp2", runtime::tl_f64_exp2 as *const () as usize),
+        ("tl_f64_exp_m1", runtime::tl_f64_exp_m1 as *const () as usize),
+        ("tl_f64_floor", runtime::tl_f64_floor as *const () as usize),
+        ("tl_f64_fract", runtime::tl_f64_fract as *const () as usize),
+        ("tl_f64_ln", runtime::tl_f64_ln as *const () as usize),
+        ("tl_f64_ln_1p", runtime::tl_f64_ln_1p as *const () as usize),
+        ("tl_f64_log10", runtime::tl_f64_log10 as *const () as usize),
+        ("tl_f64_log2", runtime::tl_f64_log2 as *const () as usize),
+        ("tl_f64_recip", runtime::tl_f64_recip as *const () as usize),
+        ("tl_f64_round", runtime::tl_f64_round as *const () as usize),
+        ("tl_f64_signum", runtime::tl_f64_signum as *const () as usize),
+        ("tl_f64_sin", runtime::tl_f64_sin as *const () as usize),
+        ("tl_f64_sinh", runtime::tl_f64_sinh as *const () as usize),
+        ("tl_f64_sqrt", runtime::tl_f64_sqrt as *const () as usize),
+        ("tl_f64_tan", runtime::tl_f64_tan as *const () as usize),
+        ("tl_f64_tanh", runtime::tl_f64_tanh as *const () as usize),
+        ("tl_f64_to_degrees", runtime::tl_f64_to_degrees as *const () as usize),
+        ("tl_f64_to_radians", runtime::tl_f64_to_radians as *const () as usize),
+        ("tl_f64_trunc", runtime::tl_f64_trunc as *const () as usize),
+    ];
+    for (name, addr) in f64_unary_mappings {
+        if let Some(f) = module.get_function(name) {
+            execution_engine.add_global_mapping(&f, addr);
+        }
+    }
+    let f64_binary_mappings: [(&str, usize); 5] = [
+        ("tl_f64_atan2", runtime::tl_f64_atan2 as *const () as usize),
+        ("tl_f64_copysign", runtime::tl_f64_copysign as *const () as usize),
+        ("tl_f64_hypot", runtime::tl_f64_hypot as *const () as usize),
+        ("tl_f64_log", runtime::tl_f64_log as *const () as usize),
+        ("tl_f64_powf", runtime::tl_f64_powf as *const () as usize),
+    ];
+    for (name, addr) in f64_binary_mappings {
+        if let Some(f) = module.get_function(name) {
+            execution_engine.add_global_mapping(&f, addr);
+        }
+    }
+    if let Some(f) = module.get_function("tl_f64_powi") {
+        execution_engine.add_global_mapping(&f, runtime::tl_f64_powi as *const () as usize);
+    }
     if let Some(f) = module.get_function("tl_print_i64") {
         execution_engine.add_global_mapping(&f, runtime::tl_print_i64 as *const () as usize);
     }
@@ -1232,6 +1331,47 @@ pub fn declare_runtime_functions<'ctx>(
         fn_return_types.insert(format!("tl_f32_{}", name), Type::F32);
     }
     fn_return_types.insert("tl_f32_powi".to_string(), Type::F32);
+    let f64_unary_methods = [
+        "abs",
+        "acos",
+        "acosh",
+        "asin",
+        "asinh",
+        "atan",
+        "atanh",
+        "cbrt",
+        "ceil",
+        "cos",
+        "cosh",
+        "exp",
+        "exp2",
+        "exp_m1",
+        "floor",
+        "fract",
+        "ln",
+        "ln_1p",
+        "log10",
+        "log2",
+        "recip",
+        "round",
+        "signum",
+        "sin",
+        "sinh",
+        "sqrt",
+        "tan",
+        "tanh",
+        "to_degrees",
+        "to_radians",
+        "trunc",
+    ];
+    for name in f64_unary_methods {
+        fn_return_types.insert(format!("tl_f64_{}", name), Type::F64);
+    }
+    let f64_binary_methods = ["atan2", "copysign", "hypot", "log", "powf"];
+    for name in f64_binary_methods {
+        fn_return_types.insert(format!("tl_f64_{}", name), Type::F64);
+    }
+    fn_return_types.insert("tl_f64_powi".to_string(), Type::F64);
     fn_return_types.insert("tl_tensor_len".to_string(), Type::I64);
     fn_return_types.insert("tl_tensor_get".to_string(), Type::F32);
     fn_return_types.insert("tl_tensor_get_i64_md".to_string(), Type::I64);

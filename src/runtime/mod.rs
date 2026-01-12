@@ -1120,6 +1120,191 @@ pub extern "C" fn tl_f32_trunc(v: c_float) -> c_float {
 }
 
 #[no_mangle]
+pub extern "C" fn tl_f64_abs(v: f64) -> f64 {
+    v.abs()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_acos(v: f64) -> f64 {
+    v.acos()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_acosh(v: f64) -> f64 {
+    v.acosh()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_asin(v: f64) -> f64 {
+    v.asin()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_asinh(v: f64) -> f64 {
+    v.asinh()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_atan(v: f64) -> f64 {
+    v.atan()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_atan2(v: f64, other: f64) -> f64 {
+    v.atan2(other)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_atanh(v: f64) -> f64 {
+    v.atanh()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_cbrt(v: f64) -> f64 {
+    v.cbrt()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_ceil(v: f64) -> f64 {
+    v.ceil()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_copysign(v: f64, sign: f64) -> f64 {
+    v.copysign(sign)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_cos(v: f64) -> f64 {
+    v.cos()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_cosh(v: f64) -> f64 {
+    v.cosh()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_exp(v: f64) -> f64 {
+    v.exp()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_exp2(v: f64) -> f64 {
+    v.exp2()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_exp_m1(v: f64) -> f64 {
+    v.exp_m1()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_floor(v: f64) -> f64 {
+    v.floor()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_fract(v: f64) -> f64 {
+    v.fract()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_hypot(v: f64, other: f64) -> f64 {
+    v.hypot(other)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_ln(v: f64) -> f64 {
+    v.ln()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_ln_1p(v: f64) -> f64 {
+    v.ln_1p()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_log(v: f64, base: f64) -> f64 {
+    v.log(base)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_log10(v: f64) -> f64 {
+    v.log10()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_log2(v: f64) -> f64 {
+    v.log2()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_powf(v: f64, exp: f64) -> f64 {
+    v.powf(exp)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_powi(v: f64, exp: i64) -> f64 {
+    v.powi(exp as i32)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_recip(v: f64) -> f64 {
+    v.recip()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_round(v: f64) -> f64 {
+    v.round()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_signum(v: f64) -> f64 {
+    v.signum()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_sin(v: f64) -> f64 {
+    v.sin()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_sinh(v: f64) -> f64 {
+    v.sinh()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_sqrt(v: f64) -> f64 {
+    v.sqrt()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_tan(v: f64) -> f64 {
+    v.tan()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_tanh(v: f64) -> f64 {
+    v.tanh()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_to_degrees(v: f64) -> f64 {
+    v.to_degrees()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_to_radians(v: f64) -> f64 {
+    v.to_radians()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_f64_trunc(v: f64) -> f64 {
+    v.trunc()
+}
+
+#[no_mangle]
 pub extern "C" fn tl_print_string(s: *const std::os::raw::c_char) {
     if s.is_null() {
         return;

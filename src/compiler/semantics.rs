@@ -3169,6 +3169,91 @@ impl SemanticAnalyzer {
                             method_name: method_name.clone(),
                         });
                     }
+                    Type::F64 => {
+                        let unary_methods = [
+                            "abs",
+                            "acos",
+                            "acosh",
+                            "asin",
+                            "asinh",
+                            "atan",
+                            "atanh",
+                            "cbrt",
+                            "ceil",
+                            "cos",
+                            "cosh",
+                            "exp",
+                            "exp2",
+                            "exp_m1",
+                            "floor",
+                            "fract",
+                            "ln",
+                            "ln_1p",
+                            "log10",
+                            "log2",
+                            "recip",
+                            "round",
+                            "signum",
+                            "sin",
+                            "sinh",
+                            "sqrt",
+                            "tan",
+                            "tanh",
+                            "to_degrees",
+                            "to_radians",
+                            "trunc",
+                        ];
+                        let binary_methods = ["atan2", "copysign", "hypot", "log", "powf"];
+
+                        if unary_methods.contains(&method_name.as_str()) {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(Type::F64);
+                        }
+                        if binary_methods.contains(&method_name.as_str()) {
+                            if args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 1,
+                                    found: args.len(),
+                                });
+                            }
+                            let arg_ty = self.check_expr(&mut args[0])?;
+                            if !matches!(arg_ty, Type::F64 | Type::F32 | Type::I64 | Type::I32) {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::F64,
+                                    found: arg_ty,
+                                });
+                            }
+                            return Ok(Type::F64);
+                        }
+                        if method_name == "powi" {
+                            if args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 1,
+                                    found: args.len(),
+                                });
+                            }
+                            let arg_ty = self.check_expr(&mut args[0])?;
+                            if !matches!(arg_ty, Type::I64 | Type::I32) {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::I64,
+                                    found: arg_ty,
+                                });
+                            }
+                            return Ok(Type::F64);
+                        }
+                        return Err(SemanticError::MethodNotFound {
+                            type_name: "F64".to_string(),
+                            method_name: method_name.clone(),
+                        });
+                    }
                     _ => {
                         return Err(SemanticError::TypeMismatch {
                             expected: Type::UserDefined("Struct".into()),
