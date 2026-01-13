@@ -1863,7 +1863,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             Expr::Tuple(exprs) => self.compile_tuple(exprs),
             Expr::TupleAccess(expr, idx) => self.compile_tuple_access(expr, *idx),
 
-            Expr::TensorComprehension { indices, body } => {
+            Expr::TensorComprehension {
+                indices,
+                clauses,
+                body,
+            } => {
                 // Generate a unique name for the temporary result
                 static NEXT_ID: std::sync::atomic::AtomicUsize =
                     std::sync::atomic::AtomicUsize::new(0);
@@ -1871,13 +1875,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let temp_name = format!("_comp_res_{}", id);
 
                 // Compile as a tensor equation: let temp[indices] = body;
-                // Since compile_tensor_equation expects &str names for indices when passed,
-                // and accepts Expr for body.
-                // However, compile_tensor_equation logic assumes it's creating a NEW variable 'temp_name'
-                // and expects free_indices to be passed to it.
-                // The indices in comprehension become the "free indices" of the equation (the output dimensions).
-
-                self.compile_tensor_equation(&temp_name, indices, body)
+                // We pass the indices, clauses, and optional body directly.
+                self.compile_tensor_equation(&temp_name, indices, clauses, body.as_deref())
                     .map_err(|e| e.to_string())?;
 
                 // After compilation, the tensor 'temp_name' is registered in the scope.
@@ -4234,6 +4233,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.extract_index_bounds(rhs, bounds)?;
             }
             Expr::UnOp(_, inner) => self.extract_index_bounds(inner, bounds)?,
+            Expr::Block(stmts) => {
+                for stmt in stmts {
+                    if let Stmt::Expr(e) = stmt {
+                        self.extract_index_bounds(e, bounds)?;
+                    } else if let Stmt::Let { value, .. } = stmt {
+                        self.extract_index_bounds(value, bounds)?;
+                    }
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -6792,7 +6800,7 @@ fn cast_value_to_f64<'ctx>(
     }
 }
 
-fn cast_value_to_i64<'ctx>(
+pub(crate) fn cast_value_to_i64<'ctx>(
     codegen: &CodeGenerator<'ctx>,
     val: BasicValueEnum<'ctx>,
     ty: &Type,

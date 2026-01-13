@@ -157,6 +157,12 @@ pub enum AssignOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum ComprehensionClause {
+    Generator { name: String, range: Expr }, // i <- 0..5
+    Condition(Expr),                         // i != j
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     // Literals
     Float(f64),
@@ -167,7 +173,8 @@ pub enum Expr {
     Range(Box<Expr>, Box<Expr>), // start..end
     TensorComprehension {
         indices: Vec<String>,
-        body: Box<Expr>,
+        clauses: Vec<ComprehensionClause>,
+        body: Option<Box<Expr>>,
     },
     TensorLiteral(Vec<Expr>),      // Dynamic tensor with expressions
     TensorConstLiteral(Vec<Expr>), // Static tensor with only constants (optimized)

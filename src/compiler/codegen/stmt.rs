@@ -763,8 +763,95 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Found free indices -> It's a tensor equation! e.g. let C = A[i, j] * B[j, k];
                     // free_indices will be ["i", "k"] (sorted)
                     // Delegate to compile_tensor_equation
+                    // Helper to convert indices string to generator format
+                    // Delegate to compile_tensor_equation
+                    // Helper to convert indices string to generator format
+                    // Note: Implicit equations don't have explicit ranges here, effectively 0..Limit inferred later.
+                    // But our AST expects clauses now.
+                    // compile_tensor_equation expects `&[ComprehensionClause]`.
+                    // But wait, `compile_tensor_equation` generates loops FROM clauses.
+                    // Implicit equations: `let C = A[i, j]` -> We want to loop over i, j.
+                    // We need to synthesize Generator clauses without ranges?
+                    // `compile_tensor_equation` logic handles `Expr::Range` but also needs bounds lookup if range is implicit?
+                    // The old logic: if no range, looked up bounds.
+                    // The new logic: `range` in Clause is mandatory Expr.
+                    // But here we don't HAVE an expression for the range (it's implicit).
+                    // We need to construct a "Dummy" range expression or modify logic?
+                    // Or we can construct a dummy variable expression that represents the bound?
+                    // Actually, if we pass a dummy range, `compile_tensor_equation` will fail to compile it?
+                    // We need `compile_tensor_equation` to support "implicit range".
+                    // But we removed `generators: Vec<(String, Option<Expr>)>` in favor of `ComprehensionClause`.
+                    // `Generator { name, range }` -> range is `Expr`.
+                    // We can use `Expr::Variable("IMPLICIT_BOUND")`? No, hacky.
+                    // Use `Expr::Range(Int(0), Int(0))` as placeholder and handle it?
+                    // Better: `compile_tensor_equation` should separate "Indices to loop over" from "Clauses that define them".
+                    // The new AST separates `indices` (LHS) from `clauses` (RHS).
+                    // Implicit equation: `let C = A[i]`. LHS=C (no explicit indices). RHS has free `i`.
+                    // We treat this as `[ i | A[i] ]`.
+                    // So we need to synthesize `indices=["i"]` and `clauses=[Generator("i", IMPLICIT)]`?
+                    // No, existing logic for explicit comprehension has explicit ranges.
+                    // Implicit reduction/equation relies on bounds inference.
+
+                    // We should invoke `compile_tensor_equation` with:
+                    // indices = free_indices
+                    // clauses = [] (No explicit generators)
+                    // body = value
+
+                    // But `compile_tensor_equation` iterates `clauses` to generate loops!
+                    // If clauses is empty, it generates NO LOOPS.
+                    // This breaks implicit equations.
+
+                    // Fix: `compile_tensor_equation` accepts `indices` (LHS/Output) AND `clauses`.
+                    // If `clauses` is empty, it should try to infer loops from `indices` + `free vars`?
+                    // OR: We must synthesize clauses effectively.
+                    // We verify `compile_tensor_equation` logic:
+                    /*
+                    for clause in clauses {
+                        match clause { Generator ... }
+                    }
+                    */
+                    // It ONLY loops if clauses exist.
+
+                    // Strategy:
+                    // We are in `Stmt::Let`. We detected `free_indices`.
+                    // We want to generate code that loops over `free_indices`.
+                    // We need to call a lower-level function that generates loops given a list of indices+bounds,
+                    // NOT relying solely on AST clauses.
+                    // OR: We construct synthetic clauses using inferred bounds?
+                    // We don't know bounds easily here without analysis.
+                    // Actually, `compile_tensor_equation` does `self.enter_scope()` and bounds lookup.
+                    // But it expects clauses to drive the loops.
+
+                    // REVERT/ADJUSTMENT to `compile_tensor_equation`:
+                    // It should take `indices: &[String]` (Output dims) and `clauses: &[Clause]`.
+                    // It should ALSO take `implicit_indices: &[String]`?
+                    // Or we just synthesize clauses.
+                    // But we can't synthesize semantic `Expr` for bounds easily.
+
+                    // Let's modify `compile_tensor_equation` to accept an optional "Force Loops for these indices" argument?
+                    // Or better: Use `Expr::TensorComprehension` AST node effectively.
+                    // Implicit equation `C = A[i]` is semantically `C = [i | A[i]]` where `i` range is inferred.
+                    // Our new syntax supports `[i | A[i]]` (Implicit body? No, implicit generator?).
+                    // `i` is in LHS. RHS has no generator for `i`.
+                    // Logic must handle "LHS index NOT in generators".
+                    // Existing logic (old): matched `(idx, range_opt)`. If `range_opt` None, inferred.
+                    // New logic: `Clause::Generator` HAS `range: Expr`. Mandatory.
+
+                    // So we need a way to represent "Generator with Implicit Range" in `Clause`.
+                    // We can add `Expr::ImplicitRange`? Or `Option<Expr>` in `Generator` variant?
+
+                    // Let's update `ComprehensionClause` definition to allow optional range?
+                    // `Generator { name: String, range: Option<Expr> }`.
+                    // This restores compatibility with implicit generators.
+
+                    // Implicit equation `C = A[i]` is semantically `C = [i | { A[i] }]` (Empty clauses).
+                    // `compile_tensor_equation` will detect that `i` is in `indices` but not in `clauses`,
+                    // and will infer the range from `body` (value).
+
+                    let clauses: Vec<ComprehensionClause> = Vec::new();
+
                     return self
-                        .compile_tensor_equation(name, &free_indices, value)
+                        .compile_tensor_equation(name, &free_indices, &clauses, Some(value))
                         .map_err(|e| e.to_string());
                 }
 

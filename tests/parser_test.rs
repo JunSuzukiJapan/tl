@@ -200,11 +200,22 @@ fn test_constructors() {
     }
 
     // Tensor comprehension
-    if let Expr::TensorComprehension { indices, body } = p_expr("[i, j | i + j]") {
+    // Tensor comprehension
+    // Syntax: [ indices | clauses... { body } ]
+    if let Expr::TensorComprehension {
+        indices,
+        clauses,
+        body,
+    } = p_expr("[i, j | { i + j }]")
+    {
         assert_eq!(indices, vec!["i", "j"]);
-        match *body {
-            Expr::BinOp(_, _, _) => {}
-            _ => panic!("Expected BinOp in body"),
+        assert!(clauses.is_empty());
+        match body {
+            Some(b) => match *b {
+                Expr::Block(_) => {} // Body is a BlockExpr now
+                _ => panic!("Expected Block in body, got {:?}", b),
+            },
+            None => panic!("Expected Body"),
         }
     } else {
         panic!("Expected TensorComprehension");

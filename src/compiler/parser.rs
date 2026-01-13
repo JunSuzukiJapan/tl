@@ -4,9 +4,9 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_while, take_while1},
     character::complete::{alpha1, char, digit1, space0, space1},
-    combinator::{map, map_res, opt, recognize, value},
+    combinator::{map, map_res, not, opt, recognize, value, verify},
     multi::{separated_list0, separated_list1},
-    sequence::{delimited, pair, preceded, tuple},
+    sequence::{delimited, pair, preceded, separated_pair, tuple},
     IResult,
 };
 // removed unused std::str::FromStr
@@ -32,7 +32,6 @@ fn sp<'a, E: nom::error::ParseError<&'a str>>(input: &'a str) -> IResult<&'a str
 }
 
 // --- Identifiers ---
-use nom::combinator::verify;
 
 fn simple_identifier(input: &str) -> IResult<&str, String> {
     let (input, s) = recognize(pair(
@@ -188,19 +187,82 @@ fn parse_block_expr(input: &str) -> IResult<&str, Expr> {
     map(parse_block, Expr::Block)(input)
 }
 
+fn parse_comprehension_clause(input: &str) -> IResult<&str, ComprehensionClause> {
+    // Ensure we don't start with { (which indicates body) or ] (end)
+    let (input, _) = not(ws(char('{')))(input)?;
+    let (input, _) = not(ws(char(']')))(input)?;
+
+    // i <- expr
+    let generator = map(
+        separated_pair(ws(identifier), ws(tag("<-")), parse_expr),
+        |(name, range)| ComprehensionClause::Generator { name, range },
+    );
+    // expr (condition)
+    let condition = map(parse_expr, ComprehensionClause::Condition);
+
+    alt((generator, condition))(input)
+}
+
 fn parse_tensor_comprehension(input: &str) -> IResult<&str, Expr> {
-    // [ i, k | expr ]
+    // [ indices | clauses... { body } ]
     let (input, _) = ws(char('['))(input)?;
+
+    // 1. Indices (Output dimensions)
     let (input, indices) = separated_list1(ws(char(',')), ws(identifier))(input)?;
+
     let (input, _) = ws(char('|'))(input)?;
-    let (input, body) = parse_expr(input)?;
+
+    // 2. Clauses (Generators and Conditions)
+    // Parse until '{' or ']'
+    // We can't use separated_list1 directly if we want to stop at '{' without consuming it optionally?
+    // Actually, separated_list1 will return error if it can't find separator or item?
+    // We want "comma separated items until we hit { or ]"
+    // Let's use many0 with custom separator check logic or just separated_list0 but we need to ensure we don't consume the body start.
+    // parse_comprehension_clause does NOT start with '{'.
+    // If we use separated_list0(ws(char(',')), parse_comprehension_clause), it should work as long as `{` is not a start of clause.
+    // BUT parse_expr might start with `{` (Block). So Condition might consume body block?
+    // Wait, body block is `{ expr }`. Condition is `expr`. `expr` includes `Block`.
+    // So `parse_expr` WILL consume `{ ... }`. This is ambiguous if we just list exprs.
+    // However, if we see `i <- ...` that is distinct.
+    // If we see `expr`, it could be a condition or the body block.
+    // But the body block is MANDATORY `{ ... }` syntax for body.
+    // Is a block `{ ... }` calculable as a boolean condition? Yes in Rust/TL (returns last expr).
+    // So `[ i | { true } ]` -> Is `{ true }` a condition or body?
+    // We defined syntax: `... { body } ]`
+    // So the last element IS the body if it is a block?
+    // Or we say: "Clauses come first. Body comes last."
+    // If we encounter a Block `{ ... }` at the top level of the clause list, we might assume it is the body?
+    // But `if true { ... }` is also an Expr which starts with `if`.
+    // A raw Block `{ ... }` as a condition seems rare but possible.
+    // To resolve ambiguity: The Body MUST be the final element and MUST be a Block.
+    // AND we can say that clauses are correctly separated by commas.
+    // If we are at the end of clauses, we might see a `{`.
+    // We can peek. If next char is `{`, we stop parsing clauses?
+    // BUT `parse_expr` for a condition also might start with `{`.
+    // Let's rely on the rule: Body is `{ expr }`.
+    // If we simply peek for `{`, we treat it as Body start.
+    // This bans conditions starting with `{` (block expressions) at the top level, unless wrapped in `(...)`.
+    // This is a reasonable limitation for clear syntax.
+
+    // Parse clauses: comma separated list of generators or conditions
+    let (input, clauses) = separated_list0(ws(char(',')), parse_comprehension_clause)(input)?;
+
+    // Optional Body: { expr }
+    // We use peek concept: if `{`, parse block, else None.
+    let (input, body_expr) = opt(parse_block_expr)(input)?;
+
+    // Check for `]`
     let (input, _) = ws(char(']'))(input)?;
+
+    // Wrap body if present
+    let body = body_expr.map(Box::new);
 
     Ok((
         input,
         Expr::TensorComprehension {
             indices: indices.into_iter().map(|s| s.to_string()).collect(),
-            body: Box::new(body),
+            clauses,
+            body,
         },
     ))
 }
@@ -745,7 +807,8 @@ fn parse_let_stmt(input: &str) -> IResult<&str, Stmt> {
                 type_annotation,
                 value: Expr::TensorComprehension {
                     indices: idxs,
-                    body: Box::new(value),
+                    clauses: Vec::new(),
+                    body: Some(Box::new(value)),
                 },
             },
         ))
