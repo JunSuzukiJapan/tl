@@ -104,19 +104,29 @@ let Diag = [i | i <- 0..N, j <- 0..N, i == j { Matrix[i, j] }];
 
 ---
 
-## 5. Optional Body (Implicit Default)
+If the **body block** `{ ... }` is omitted, logical **"Smart Implicit Body"** behavior is applied:
 
-If the **body block** `{ ... }` is omitted, the element value defaults to the **first index variable**.
+1.  **Single Index:** Generates a tensor where elements correspond to the index value.
+    ```rust
+    // A = Tensor[[5], f32]: [0, 1, 2, 3, 4]
+    let A = [i | i <- 0..5];
+    ```
 
-```rust
-// A = [0, 1, 2, 3, 4]
-let A = [i | i <- 0..5];
-```
+2.  **Multiple Indices:** Generates a **coordinate grid** tensor. The resulting tensor has rank `LoopRank + 1`.
+    ```rust
+    // T = Tensor[[N, M, 2], f32]
+    // A vector [i, j] is placed at each grid point (i, j).
+    let grid = [i, j | i <- 0..N, j <- 0..M];
+    
+    // Example:
+    // [i, j | i <- 0..2, j <- 0..2]
+    // Result:
+    // [
+    //   [[0, 0], [0, 1]], 
+    //   [[1, 0], [1, 1]]
+    // ]
+    // (Shape(2, 2, 2) Tensor)
+    ```
 
-For higher rank tensors, it uses the first index:
-```rust
-// T[i, j] = i
-// [[0, 0], [1, 1], [2, 2]]
-let T = [i, j | i <- 0..3, j <- 0..2];
-```
+This behavior preserves the topological structure of the tensor (useful for vector fields or UV coordinates), contrasting with Haskell's list comprehensions which flatten the result to `Shape(N*M)`.
 ```
