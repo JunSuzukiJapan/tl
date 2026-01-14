@@ -10,7 +10,7 @@ fn main() {
         // relu(T1) returns T2
         // w = T2
         // T1 should be freed after relu returns?
-        let w = relu(matmul(x, x));
+        let w = x.matmul(x).relu();
         let z = x.matmul(x).relu();
     }
     let final = get_memory();

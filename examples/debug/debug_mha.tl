@@ -7,10 +7,10 @@ fn main() {
     
     // 2. Test reshape
     // Target: [9, 4, 32] (flatten batch 1)
-    let split = reshape(x, 9, 4, 32);
+    let split = x.reshape(9, 4, 32);
     
     // 3. Test transpose
-    let heads = transpose(split, 0, 1);
+    let heads = split.transpose(0, 1);
     
     // 4. Test BinOp on heads
     // This panicked in the real script
