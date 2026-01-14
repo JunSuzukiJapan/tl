@@ -31,12 +31,12 @@ fn main() {
             let data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
             let target = [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 12.0];
             
-            let X = data.reshape(1, 12);
-            let Y = target.reshape(1, 12);
+            let X = data.reshape([1, 12]);
+            let Y = target.reshape([1, 12]);
             
             let logits = model.forward(X);
-            let logits_flat = logits.reshape(12, 13);
-            let Y_flat = Y.reshape(12);
+            let logits_flat = logits.reshape([12, 13]);
+            let Y_flat = Y.reshape([12]);
             let loss = logits_flat.cross_entropy(Y_flat);
             
             loss.backward();
