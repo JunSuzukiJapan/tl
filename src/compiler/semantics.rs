@@ -2978,8 +2978,8 @@ impl SemanticAnalyzer {
                             });
                         }
                         let _ = self.check_expr(&mut args[0])?;
-                        let _ = self.check_expr(&mut args[1])?;
-                        Ok(Type::Tensor(Box::new(Type::F32), 0))
+                        let arg1_type = self.check_expr(&mut args[1])?;
+                        Ok(arg1_type)
                     }
                     ("Param", "set_device") => {
                         if args.len() != 1 {
@@ -3298,6 +3298,9 @@ impl SemanticAnalyzer {
                                     found: args.len(),
                                 });
                             }
+                            if let Type::Tensor(inner, rank) = &obj_type {
+                                return Ok(Type::Tensor(inner.clone(), rank + 1));
+                            }
                             return Ok(obj_type.clone());
                         }
                         if method_name == "item" {
@@ -3366,6 +3369,22 @@ impl SemanticAnalyzer {
                                 } // Rank unknown/flexible, reuse inner type or F32
                                 _ => return Ok(obj_type.clone()),
                             }
+                        }
+                        if method_name == "mul"
+                            || method_name == "add"
+                            || method_name == "sub"
+                            || method_name == "div"
+                        {
+                            if args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 1,
+                                    found: args.len(),
+                                });
+                            }
+                            // Simplified inference: Assume result has same type/rank as self
+                            // In reality, broadcasting might change rank, but for scalar ops it's fine.
+                            return Ok(obj_type.clone());
                         }
 
                         return Ok(Type::Void); // Fallback
