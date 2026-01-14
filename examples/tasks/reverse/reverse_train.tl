@@ -9,7 +9,7 @@ impl Linear {
         return Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return matmul(x, self.W) + self.b; 
+        return x.matmul(self.W) + self.b; 
     } 
     fn step(self, lr: f32) { 
         let gW = self.W.grad(); 
@@ -25,7 +25,7 @@ impl Embedding {
         return Embedding((Tensor::randn([v, d], true)*0.1).detach(true)); 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
-        return embedding(i, self.w); 
+        return i.embedding(self.w); 
     } 
     fn step(self, lr: f32) { 
         let g = self.w.grad(); 
@@ -70,42 +70,42 @@ impl CausalSelfAttention {
         // x shape in train_epoch is [1, 9] input -> Embedding -> [1, 9, 128].
         // So dims are: 0=Batch(1), 1=Time(9), 2=Channel(128).
         
-        let Q_split = reshape(Q, 9, 4, 48); 
-        let Q_heads = transpose(Q_split, 0, 1); // [4, 9, 32]
+        let Q_split = Q.reshape(9, 4, 48); 
+        let Q_heads = Q_split.transpose(0, 1); // [4, 9, 32]
         
-        let K_split = reshape(K, 9, 4, 48);
-        let K_heads = transpose(K_split, 0, 1); // [4, 9, 32]
+        let K_split = K.reshape(9, 4, 48);
+        let K_heads = K_split.transpose(0, 1); // [4, 9, 32]
         
-        let V_split = reshape(V, 9, 4, 48);
-        let V_heads = transpose(V_split, 0, 1); // [4, 9, 32]
+        let V_split = V.reshape(9, 4, 48);
+        let V_heads = V_split.transpose(0, 1); // [4, 9, 32]
         
         // Attention
         // Q: [4, 9, 32], K_T: [4, 32, 9]
         // scores: [4, 9, 9]
-        let K_heads_T = transpose(K_heads, 1, 2);
+        let K_heads_T = K_heads.transpose(1, 2);
         
         // Scale: 1/sqrt(48) approx 0.144
         let K_scaled = (K_heads_T * 0.144).contiguous();
         let Q_cont = Q_heads.contiguous();
         
-        let logits = matmul(Q_cont, K_scaled);
+        let logits = Q_cont.matmul(K_scaled);
         
         // Causal mask on last 2 dims (9, 9). 
         // tril works on the last 2 dimensions usually? Or global?
         // documentation says: tril(tensor, diagonal)
-        let masked = tril(logits, 0);
+        let masked = logits.tril(0);
         
         
-        let probs = softmax(masked, 2); // Softmax over T dimension (last dim of logits [4, 9, 9])
+        let probs = masked.softmax(2); // Softmax over T dimension (last dim of logits [4, 9, 9])
         
         // Output: [4, 9, 9] x [4, 9, 32] -> [4, 9, 32]
         let probs_cont = probs.contiguous();
         let V_cont = V_heads.contiguous();
-        let y_heads = matmul(probs_cont, V_cont);
+        let y_heads = probs_cont.matmul(V_cont);
         
         // Merge heads: [4, 9, 32] -> [9, 4, 32] -> [1, 9, 128]
-        let y_trans = transpose(y_heads, 0, 1); // [9, 4, 32]
-        let y_out = reshape(y_trans, 1, 9, 192);
+        let y_trans = y_heads.transpose(0, 1); // [9, 4, 32]
+        let y_out = y_trans.reshape(1, 9, 192);
         
         return self.o_proj.forward(y_out); 
     } 
@@ -123,7 +123,7 @@ impl MLP {
         return MLP(Linear::new(d, d*4), Linear::new(d*4, d)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return self.p.forward(relu(self.f.forward(x))); 
+        return self.p.forward(self.f.forward(x).relu()); 
     } 
     fn step(self, lr: f32) { 
         self.f.step(lr); 
@@ -154,7 +154,7 @@ impl PositionalEmbedding {
         return PositionalEmbedding((Tensor::randn([max_len, d], true)*0.02).detach(true));
     }
     fn forward(self, p: Tensor<f32, 2>) -> Tensor<f32, 3> {
-        return embedding(p, self.w);
+        return p.embedding(self.w);
     }
     fn step(self, lr: f32) {
         let g = self.w.grad();
@@ -220,7 +220,7 @@ fn train_epoch(model: Transformer, lr: f32, steps: i64, seed_offset: i64) -> f32
     let p0 = 0.0; let p1 = 1.0; let p2 = 2.0; let p3 = 3.0; let p4 = 4.0;
     let p5 = 5.0; let p6 = 6.0; let p7 = 7.0; let p8 = 8.0;
     let P_arr = [p0, p1, p2, p3, p4, p5, p6, p7, p8];
-    let P_t = reshape(P_arr, 1, 9);
+    let P_t = P_arr.reshape(1, 9);
 
     for s in range(0, steps) {
         // Generate random digits using randn (Normal distribution)
@@ -236,16 +236,16 @@ fn train_epoch(model: Transformer, lr: f32, steps: i64, seed_offset: i64) -> f32
         let X_arr = [d1, d2, d3, d4, SEP, d4, d3, d2, d1];
         let Y_arr = [d2, d3, d4, SEP, d4, d3, d2, d1, PAD];
         
-        let X = reshape(X_arr, 1, 9);
-        let Y = reshape(Y_arr, 1, 9);
+        let X = X_arr.reshape(1, 9);
+        let Y = Y_arr.reshape(1, 9);
         
         let logits = model.forward(X, P_t);
-        let logits_flat = reshape(logits, 9, 12); 
-        let Y_flat = reshape(Y, 9);
+        let logits_flat = logits.reshape(9, 12); 
+        let Y_flat = Y.reshape(9);
         
-        let loss = cross_entropy(logits_flat, Y_flat);
+        let loss = logits_flat.cross_entropy(Y_flat);
         
-        backward(loss);
+        loss.backward();
         model.step(lr);
         
         total_loss = loss.get(0); 
@@ -275,6 +275,6 @@ fn main() {
     print("Training Complete.");
     
     print("Saving struct weights...");
-    save_weights(model, "reverse_model.safetensors");
+    Param::save(model, "reverse_model.safetensors");
     print("Saved.");
 }

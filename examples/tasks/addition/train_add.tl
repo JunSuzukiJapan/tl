@@ -9,7 +9,7 @@
 // One-Hot Embedding (embedding()の代替)
 fn my_embedding(indices: Tensor<f32, 2>, w: Tensor<f32, 2>, V: i64) -> Tensor<f32, 3> {
     let T = 12;
-    let flat_indices = reshape(indices, T);
+    let flat_indices = indices.reshape(T);
     
     let one_hot: Tensor<f32, 2> = Tensor::randn([T, V], false) * 0.0;
     for t in range(0, T) {
@@ -18,8 +18,8 @@ fn my_embedding(indices: Tensor<f32, 2>, w: Tensor<f32, 2>, V: i64) -> Tensor<f3
     }
     let one_hot_d = one_hot.detach(true);
     
-    let out_flat = matmul(one_hot_d, w);
-    return reshape(out_flat, 1, 12, 128);
+    let out_flat = one_hot_d.matmul(w);
+    return out_flat.reshape(1, 12, 128);
 }
 
 // Causal Mask (tril()の代替)
@@ -40,11 +40,11 @@ fn my_cross_entropy(logits: Tensor<f32, 3>, targets: Tensor<f32, 2>) -> Tensor<f
     let T = 12;
     let V = 13;
     
-    let probs = softmax(logits, 2);
-    let log_probs = log(probs);
+    let probs = logits.softmax(2);
+    let log_probs = probs.log();
     
-    let log_probs_flat = reshape(log_probs, T, V);
-    let targets_flat = reshape(targets, T);
+    let log_probs_flat = log_probs.reshape(T, V);
+    let targets_flat = targets.reshape(T);
     
     let mask: Tensor<f32, 2> = Tensor::randn([T, V], false) * 0.0;
     for i in range(0, T) {
@@ -54,7 +54,7 @@ fn my_cross_entropy(logits: Tensor<f32, 3>, targets: Tensor<f32, 2>) -> Tensor<f
     let mask_d = mask.detach(true);
     
     let selected = mask_d * log_probs_flat;
-    let sum_log_probs = sum(selected);
+    let sum_log_probs = selected.sum();
     
     // -1 * mean を計算
     let neg_one: Tensor<f32, 1> = Tensor::randn([1], false) * 0.0;
@@ -81,7 +81,7 @@ impl Linear {
         return Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return matmul(x, self.W) + self.b; 
+        return x.matmul(self.W) + self.b; 
     } 
     fn step(self, lr: f32) -> Linear { 
         let s = self; 
@@ -132,15 +132,15 @@ impl CausalSelfAttention {
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
         
-        let kt = transpose(k, 1, 2);
-        let scores = matmul(q, kt) * 0.08839;
+        let kt = k.transpose(1, 2);
+        let scores = q.matmul(kt) * 0.08839;
         
         // 手動因果マスク (tril()の代替)
         let mask = get_causal_mask(12);
         let masked_scores = scores * mask;
         
-        let attn_weights = softmax(masked_scores, 2);
-        let y = matmul(attn_weights, v); 
+        let attn_weights = masked_scores.softmax(2);
+        let y = attn_weights.matmul(v); 
         return self.p_proj.forward(y); 
     } 
     fn step(self, lr: f32) -> CausalSelfAttention { 
@@ -159,7 +159,7 @@ impl MLP {
         return MLP(Linear::new(d, d*4), Linear::new(d*4, d)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return self.p.forward(relu(self.f.forward(x))); 
+        return self.p.forward(self.f.forward(x).relu()); 
     } 
     fn step(self, lr: f32) -> MLP { 
         let s = self; 
@@ -204,7 +204,7 @@ impl GPT {
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
-        let pos = reshape(pos_data, 1, 12);
+        let pos = pos_data.reshape(1, 12);
         let tok_emb = self.w.forward(i);
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
@@ -265,13 +265,13 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
         12.0, 12.0, 12.0, 12.0
     ];
 
-    let X = reshape(data, 1, 12);
-    let Y = reshape(target, 1, 12);
+    let X = data.reshape(1, 12);
+    let Y = target.reshape(1, 12);
     
     let logits = model.forward(X);
     let loss = my_cross_entropy(logits, Y);
     
-    backward(loss);
+    loss.backward();
     model = model.step(lr);
     return model;
 }
@@ -313,10 +313,10 @@ fn main() {
              let mem = get_memory();
              print("Epoch:"); print(epoch);
              print("Mem(MB):"); print(mem);
-             save_all_params(model, "model_add.safetensors");
+             Param::save_all("model_add.safetensors");
         }
     }
     
     print("Training Complete!");
-    save_all_params(model, "model_add.safetensors");
+    Param::save_all("model_add.safetensors");
 }

@@ -8,7 +8,7 @@ impl Linear {
         return Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return matmul(x, self.W) + self.b; 
+        return x.matmul(self.W) + self.b; 
     } 
     fn step(self, lr: f32) -> Linear { 
         let s = self; 
@@ -27,7 +27,7 @@ impl Embedding {
         return Embedding((Tensor::randn([v, d], true)*0.1).detach(true));
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
-        return embedding(i, self.w); 
+        return i.embedding(self.w); 
     } 
     fn step(self, lr: f32) -> Embedding { 
         let s = self; 
@@ -65,7 +65,12 @@ impl CausalSelfAttention {
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
         // scale = 1/sqrt(384) = 0.05103
-        let y = matmul(softmax(tril(matmul(q, transpose(k, 1, 2))*0.05103, 0), 2), v); 
+        // Original: matmul(softmax(tril(matmul(q, transpose(k, 1, 2))*0.05103, 0), 2), v)
+        let k_t = k.transpose(1, 2);
+        let qk = q.matmul(k_t) * 0.05103;
+        let masked = qk.tril(0);
+        let attn = masked.softmax(2);
+        let y = attn.matmul(v);
         return self.p_proj.forward(y); 
     } 
     fn step(self, lr: f32) -> CausalSelfAttention { 
@@ -87,7 +92,7 @@ impl MLP {
         return MLP(Linear::new(d, d*4), Linear::new(d*4, d)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return self.p.forward(relu(self.f.forward(x))); 
+        return self.p.forward(self.f.forward(x).relu()); 
     } 
     fn step(self, lr: f32) -> MLP { 
         let s = self; 
@@ -141,14 +146,14 @@ impl GPTHeavy {
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
-        let pos = reshape(pos_data, 1, 12);
+        let pos = pos_data.reshape(1, 12);
         let tok_emb = self.w.forward(i);
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
-        let x = checkpoint(self.b1.forward, x);
-        let x = checkpoint(self.b2.forward, x);
-        let x = checkpoint(self.b3.forward, x);
-        let x = checkpoint(self.b4.forward, x);
+        let x = Param::checkpoint(self.b1.forward, x);
+        let x = Param::checkpoint(self.b2.forward, x);
+        let x = Param::checkpoint(self.b3.forward, x);
+        let x = Param::checkpoint(self.b4.forward, x);
         return self.h.forward(self.l.forward(x)); 
     } 
     fn step(self, lr: f32) -> GPTHeavy { 
@@ -198,19 +203,19 @@ fn train_step(model: GPTHeavy, lr: f32, i: i64, j: i64) -> GPTHeavy {
 
     // input: 12 tokens
     let X_data = [i, j, sum, i_d10, j_d10, i_m10, j_m10, i_idx, j_idx, 0, 1, 2];
-    let X = reshape(X_data, 1, 12);
+    let X = X_data.reshape(1, 12);
 
     // target: 12 tokens (shifted?) Simple task: predict sum
     let Y_data = [sum, i, j, i_d10, j_d10, i_m10, j_m10, i_idx, j_idx, 0, 1, 2];
-    let Y = reshape(Y_data, 1, 12);
+    let Y = Y_data.reshape(1, 12);
 
     // Forward
     let logits = m.forward(X);
-    let logits_flat = reshape(logits, 12, 13);
-    let Y_flat = reshape(Y, 12);
-    let loss = cross_entropy(logits_flat, Y_flat);
+    let logits_flat = logits.reshape(12, 13);
+    let Y_flat = Y.reshape(12);
+    let loss = logits_flat.cross_entropy(Y_flat);
     
-    backward(loss); // gradients accumulated in model (args)
+    loss.backward(); // gradients accumulated in model (args)
     
     // Step
     m = m.step(lr);
@@ -245,7 +250,7 @@ fn train_epoch(model: GPTHeavy, lr: f32, epoch: i64) -> GPTHeavy {
 fn main() {
     print("Initializing Runtime: CPU backend selected.");
     let model = GPTHeavy::new(13, 384);
-    // load_all_params("model_heavy.safetensors", model);
+    // Param::load_all("model_heavy.safetensors");
     print("Loaded 70 parameters from model_heavy.safetensors");
     
     // 500 epochs
@@ -255,7 +260,7 @@ fn main() {
         
         // Save
         if (epoch - (epoch/5)*5) == 4 {
-             save_all_params("model_heavy.safetensors");
+             Param::save_all("model_heavy.safetensors");
              print("Saved 70 parameters to model_heavy.safetensors");
              print("Saved checkpoint.");
         }
