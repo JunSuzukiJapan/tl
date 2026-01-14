@@ -14,7 +14,7 @@ impl Linear {
     }
     
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
-        return matmul(x, self.W) + self.b;
+        return x.matmul(self.W) + self.b;
     }
     
     fn step(self, lr: f32) -> Linear {
@@ -37,7 +37,7 @@ impl Embedding {
     }
     
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> {
-        return embedding(i, self.w);
+        return i.embedding(self.w);
     }
     
     fn step(self, lr: f32) -> Embedding {
@@ -101,11 +101,11 @@ impl CausalSelfAttention {
         // q, k, v: [B, T, D]
         // att = (q @ k.T) * (1.0 / sqrt(D))
         // D = 64, sqrt(64) = 8 -> 0.125
-        let k_t = transpose(k, 1, 2);
-        let att = matmul(q, k_t) * 0.125;
+        let k_t = k.transpose(1, 2);
+        let att = q.matmul(k_t) * 0.125;
         
         // Causal Mask
-        let att = tril(att, 0); 
+        let att = att.tril(0); 
         // Note: Real masked attention needs -inf for masked positions before softmax.
         // tril sets them to 0. Softmax(0) is not 0 probability.
         // However, for this specific "Recall" task where we look at history, 
@@ -119,8 +119,8 @@ impl CausalSelfAttention {
         // Let's proceed. The model might just learn to work around it or the compiler `tril` might handle -inf?
         // Assuming `tril` just zeroes.
         
-        let att = softmax(att, 2);
-        let y = matmul(att, v);
+        let att = att.softmax(2);
+        let y = att.matmul(v);
         
         return self.c_proj.forward(y);
     }
@@ -147,7 +147,7 @@ impl MLP {
     
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
         // relu approximation or actual relu
-        return self.c_proj.forward(relu(self.c_fc.forward(x)));
+        return self.c_proj.forward(self.c_fc.forward(x).relu());
     }
     
     fn step(self, lr: f32) -> MLP {
@@ -211,7 +211,7 @@ impl GPT {
         // Assuming Batch=1 for this script
         let T = 13; // SEQ_LEN + 1 (query)
         let pos_arr = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
-        let pos = reshape(pos_arr, 1, 13);
+        let pos = pos_arr.reshape(1, 13);
         
         let tok_emb = self.wte.forward(idx);
         let pos_emb = self.wpe.forward(pos);
@@ -298,7 +298,7 @@ fn gen_data(step: i64) -> Tensor<f32, 2> {
     
     // Return combined: 0..12 inputs, 13 target
     let arr = [fk1, fv1, fk2, fv2, fk3, fv3, fk4, fv4, fk5, fv5, fk6, fv6, fqk, fqa];
-    return reshape(arr, 1, 14);
+    return arr.reshape(1, 14);
 }
 
 // Recall Task Training Script
@@ -330,7 +330,7 @@ fn main() {
              data.get(10), data.get(11),
              data.get(12)
         ];
-        let X = reshape(in_seq, 1, 13);
+        let X = in_seq.reshape(1, 13);
         
         let targets_arr = [
              data.get(1), data.get(2),
@@ -341,15 +341,15 @@ fn main() {
              data.get(11), data.get(12),
              data.get(13)
         ];
-        let Y_temp = reshape(targets_arr, 1, 13);
-        let Y = reshape(Y_temp, 13);
+        let Y_temp = targets_arr.reshape(1, 13);
+        let Y = Y_temp.reshape(13);
         
         let logits = model.forward(X);
-        let logits_flat = reshape(logits, 13, 30);
+        let logits_flat = logits.reshape(13, 30);
         
-        let loss = cross_entropy(logits_flat, Y);
+        let loss = logits_flat.cross_entropy(Y);
         
-        backward(loss);
+        loss.backward();
         model = model.step(lr);
         
         let loss_val = loss.get(0); // Scalar loss
@@ -363,6 +363,6 @@ fn main() {
     print("Training Complete.");
     
     print("Saving model weights to recall_weights.safetensors...");
-    save_weights(model, "recall_weights.safetensors");
+    Param::save(model, "recall_weights.safetensors");
     print("Model saved.");
 }
