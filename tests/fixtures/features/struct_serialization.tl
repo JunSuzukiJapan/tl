@@ -32,7 +32,7 @@ fn main() {
 
     let path = "test_deep_struct.safetensors";
     println("Saving to 'test_deep_struct.safetensors'...");
-    save_weights(root, path);
+    Param::save(root, path);
 
     // Create new identical struct with ZEROS to verify load actually happens
     let t3_new = Tensor::randn([2, 2], false); // Just random garbage
@@ -47,7 +47,7 @@ fn main() {
     print(root_new.linear);
 
     println("Loading weights...");
-    load_weights(root_new, path);
+    Param::load(root_new, path);
 
     println("After load - Should match Original:");
     println("Root Linear:");

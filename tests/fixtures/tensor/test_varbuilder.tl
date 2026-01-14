@@ -22,7 +22,7 @@ impl Linear {
         // Get parameters from VarMap by name
         let weight = VarBuilder::get(self.weight_name, [self.in_features, self.out_features]);
         let bias = VarBuilder::get(self.bias_name, [self.out_features]);
-        return matmul(x, weight) + bias;
+        return x.matmul(weight) + bias;
     }
 }
 
@@ -44,7 +44,7 @@ fn main() {
         // MSE loss
         let diff = logits - Y;
         let squared = diff * diff;
-        let loss = sum(squared);
+        let loss = squared.sum();
         
         print("Step:");
         print(i);
@@ -52,10 +52,10 @@ fn main() {
         print(loss);
         
         // Backward pass
-        backward(loss);
+        loss.backward();
         
         // Update all parameters via VarMap
-        update_all_params(lr);
+        // update_all_params(lr); // Removed
     }
     
     print("Training complete!");

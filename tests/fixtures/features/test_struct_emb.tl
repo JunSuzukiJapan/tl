@@ -10,7 +10,7 @@ impl Emb {
     }
     
     fn forward(self, idx: Tensor<f32, 2>) -> Tensor<f32, 3> {
-        return embedding(idx, self.weight);
+        return idx.embedding(self.weight);
     }
 }
 
@@ -21,12 +21,12 @@ fn main() {
     let idx = Tensor::randn([2, 4], false) * 0.0 + 1.0;
     
     let out = emb.forward(idx);
-    let loss = sum(out);
+    let loss = out.sum();
     
     print("Loss:");
     print(loss);
     
-    backward(loss);
+    loss.backward();
     
     let gw = emb.weight.grad();
     print("Emb weight gradient:");

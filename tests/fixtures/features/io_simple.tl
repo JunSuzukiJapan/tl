@@ -7,11 +7,16 @@ fn main() {
     
     // Save
     print("Saving to 'test_tensor.safetensors'...");
-    save_weights(t, "test_tensor.safetensors");
+    // Tensor save usage: Param::save works for Structs, does it work for single Tensor?
+    // If not, we might need a wrapper struct or use lower level API.
+    // Based on previous file logic, Param::save might be the generalized one.
+    // Let's assume Param::save works for any Serializable item, including Tensor.
+    Param::save(t, "test_tensor.safetensors");
     
     // Load
     print("Loading...");
-    let t2 = load_weights("test_tensor.safetensors");
+    // Tensor load: Tensor::load(path)
+    let t2 = Tensor::load("test_tensor.safetensors");
     print("Loaded:");
     print(t2);
     

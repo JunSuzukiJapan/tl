@@ -17,8 +17,8 @@ fn main() {
         t2: Tensor::randn([1], true)
     };
     
-    register_modules(m);
+    // register_modules has been removed in favor of explicit Param method usage or just passing model to save
     
     // Should save 3 parameters
-    save_all_params("test_auto_reg.safetensors");
+    Param::save(m, "test_auto_reg.safetensors");
 }

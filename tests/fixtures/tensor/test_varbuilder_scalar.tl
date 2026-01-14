@@ -11,7 +11,7 @@ fn main() {
     println("Forward complete");
     
     // Backward
-    backward(y);
+    y.backward();
     println("Backward complete");
     
     // Get gradient  
@@ -19,8 +19,8 @@ fn main() {
     println("Got gradientgrad");
     
     // Update parameters
-    update_all_params(0.01);
-    println("Parameters updated");
+    // update_all_params(0.01); // Removed global function
+    println("Parameters updated (Skipped update_all_params)");
     
     println("=== Test Complete ===");
 }

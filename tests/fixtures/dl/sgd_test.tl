@@ -34,7 +34,7 @@ impl SGD {
 }
 
 fn forward(model: Linear, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
-    let y = matmul(x, model.W);
+    let y = x.matmul(model.W);
     // return y + model.b; // Broadcasting not fully supported yet in bin_op?
     // Let's assume broadcasting works now or use manual add if needed.
     // Actually prior steps said broadcasting scalar->tensor works.
@@ -55,37 +55,37 @@ print(model.W);
 
 // Unrolled iteration 1
 let y_pred = forward(model, X);
-let loss = sum(y_pred * y_pred);
+let loss = (y_pred * y_pred).sum();
 print(loss);
-backward(loss);
+loss.backward();
 let model = sgd.step(model);
 
 // Unrolled iteration 2
 let y_pred = forward(model, X);
-let loss = sum(y_pred * y_pred);
+let loss = (y_pred * y_pred).sum();
 print(loss);
-backward(loss);
+loss.backward();
 let model = sgd.step(model);
 
 // Unrolled iteration 3
 let y_pred = forward(model, X);
-let loss = sum(y_pred * y_pred);
+let loss = (y_pred * y_pred).sum();
 print(loss);
-backward(loss);
+loss.backward();
 let model = sgd.step(model);
 
 // Unrolled iteration 4
 let y_pred = forward(model, X);
-let loss = sum(y_pred * y_pred);
+let loss = (y_pred * y_pred).sum();
 print(loss);
-backward(loss);
+loss.backward();
 let model = sgd.step(model);
 
 // Unrolled iteration 5
 let y_pred = forward(model, X);
-let loss = sum(y_pred * y_pred);
+let loss = (y_pred * y_pred).sum();
 print(loss);
-backward(loss);
+loss.backward();
 let model = sgd.step(model);
 
 print(model.W);

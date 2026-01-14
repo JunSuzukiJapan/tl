@@ -18,7 +18,7 @@ impl Linear {
     }
     
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
-        return matmul(x, self.weight) + self.bias;
+        return x.matmul(self.weight) + self.bias;
     }
     
     fn step(self, lr: f32) {
@@ -62,14 +62,14 @@ fn main() {
         // Simple MSE loss
         let diff = logits - Y;
         let squared = diff * diff;
-        let loss = sum(squared);
+        let loss = squared.sum();
         
         print("Step:");
         print(i);
         print("Loss:");
         print(loss);
         
-        backward(loss);
+        loss.backward();
         model.step(lr);
     }
     

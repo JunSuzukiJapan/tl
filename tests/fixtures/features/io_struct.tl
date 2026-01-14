@@ -20,7 +20,7 @@ fn main() {
     print(model.bias);
 
     let path = "test_struct_weights.safetensors";
-    save_weights(model, path);
+    Param::save(model, path);
     println("Saved weights.");
 
     // Random init 2 (different)
@@ -33,7 +33,7 @@ fn main() {
     print(model2.layer1.weight);
     print(model2.bias);
 
-    load_weights(model2, path);
+    Param::load(model2, path);
     println("After load (should match original):");
     print(model2.layer1.weight);
     print(model2.bias);

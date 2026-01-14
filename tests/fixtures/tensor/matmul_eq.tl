@@ -10,9 +10,9 @@ fn main() {
     print("MatMul result shape:");
     print(C);
     
-    let D = matmul(A, B);
+    let D = A.matmul(B);
     let diff = C - D;
-    let s = sum(diff);
+    let s = diff.sum();
     // Should be close to 0
     print("Difference sum (should be approx 0):");
     print(s);

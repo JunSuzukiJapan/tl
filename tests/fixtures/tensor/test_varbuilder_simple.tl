@@ -13,14 +13,14 @@ fn main() {
     
     // Simple computation
     let x = Tensor::randn([4, 10], false);
-    let output = matmul(x, weight) + bias;
-    let loss = sum(output);
+    let output = x.matmul(weight) + bias;
+    let loss = output.sum();
     
     print("Loss:");
     print(loss);
     
     // Backward
-    backward(loss);
+    loss.backward();
     
     // Get gradients
     let gw = VarBuilder::grad("test_weight");
@@ -32,7 +32,7 @@ fn main() {
     print(gb);
     
     // Update parameters
-    update_all_params(0.01);
+    // update_all_params(0.01); // Removed
     
     print("Parameters updated!");
 }

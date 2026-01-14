@@ -8,17 +8,17 @@ fn main() {
     
     // Manual index_select simulation
     let indices_u32 = indices_f32; // Will be cast in embedding
-    let selected = embedding(indices_u32, weight);
+    let selected = indices_u32.embedding(weight);
     
     print("Selected:");
     print(selected);
     
-    let loss = sum(selected);
+    let loss = selected.sum();
     
     print("Loss:");
     print(loss);
     
-    backward(loss);
+    loss.backward();
     
     let gw = weight.grad();
     print("Weight gradient:");

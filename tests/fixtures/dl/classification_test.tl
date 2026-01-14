@@ -21,7 +21,7 @@ fn Linear_new(in_dim: i64, out_dim: i64) -> Linear {
 
 fn forward(model: Linear, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
     // x: [B, In], W: [In, Out] -> [B, Out]
-    let out = matmul(x, model.W);
+    let out = x.matmul(model.W);
     // Add bias (broadcasting)
     let y = out + model.b;
     return y;
@@ -34,14 +34,14 @@ let logits = forward(model, X);
 print(logits);
 
 // Softmax (just to test it works)
-let probs = softmax(logits, 1);
+let probs = logits.softmax(1);
 print(probs);
 
 // Loss
-let loss = cross_entropy(logits, target);
+let loss = logits.cross_entropy(target);
 print(loss);
 
 // Backward
-backward(loss);
+loss.backward();
 
 print(model.W.grad());
