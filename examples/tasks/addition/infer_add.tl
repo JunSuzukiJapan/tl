@@ -22,7 +22,7 @@ fn my_argmax(t: Tensor<f32, 1>) -> i64 {
 // One-Hot Embedding (embedding()の代替)
 fn my_embedding(indices: Tensor<f32, 2>, w: Tensor<f32, 2>, V: i64) -> Tensor<f32, 3> {
     let T = 12;
-    let flat_indices = reshape(indices, T);
+    let flat_indices = indices.reshape(T);
     
     let one_hot: Tensor<f32, 2> = Tensor::randn([T, V], false) * 0.0;
     for t in range(0, T) {
@@ -31,8 +31,8 @@ fn my_embedding(indices: Tensor<f32, 2>, w: Tensor<f32, 2>, V: i64) -> Tensor<f3
     }
     let one_hot_d = one_hot.detach(true);
     
-    let out_flat = matmul(one_hot_d, w);
-    return reshape(out_flat, 1, 12, 128);
+    let out_flat = one_hot_d.matmul(w);
+    return out_flat.reshape(1, 12, 128);
 }
 
 // Causal Mask (tril()の代替)
@@ -58,7 +58,7 @@ impl Linear {
         return Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return matmul(x, self.W) + self.b; 
+        return x.matmul(self.W) + self.b; 
     } 
 }
 
@@ -92,15 +92,15 @@ impl CausalSelfAttention {
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
         
-        let kt = transpose(k, 1, 2);
-        let scores = matmul(q, kt) * 0.08839;
+        let kt = k.transpose(1, 2);
+        let scores = q.matmul(kt) * 0.08839;
         
         // 手動因果マスク
         let mask = get_causal_mask(12);
         let masked_scores = scores * mask;
         
-        let attn_weights = softmax(masked_scores, 2);
-        let y = matmul(attn_weights, v); 
+        let attn_weights = masked_scores.softmax(2);
+        let y = attn_weights.matmul(v); 
         return self.p_proj.forward(y); 
     } 
 }
@@ -111,7 +111,7 @@ impl MLP {
         return MLP(Linear::new(d, d*4), Linear::new(d*4, d)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return self.p.forward(relu(self.f.forward(x))); 
+        return self.p.forward(self.f.forward(x).relu()); 
     } 
 }
 
@@ -142,7 +142,7 @@ impl GPT {
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
-        let pos = reshape(pos_data, 1, 12);
+        let pos = pos_data.reshape(1, 12);
         let tok_emb = self.w.forward(i);
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
@@ -164,7 +164,7 @@ fn main() {
     print("Model Inference - Autoregressive (Explicit Implementation)");
     let model = GPT::new(vocab_size, d_model);
     
-    load_all_params(model, "model_add.safetensors");
+    Param::load_all("model_add.safetensors");
     print("Parameters Loaded.");
     
     // Test 12 + 34 = 46
@@ -177,9 +177,9 @@ fn main() {
     // Note: We fill the answer positions with correct values to see if the model predicts the NEXT token correctly
     // Position 5 (11.0) predicts Position 6 (should be 6)
     let data1 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, 6.0, 4.0, 0.0, 12.0, 12.0, 12.0];
-    let input1 = reshape(data1, 1, 12);
+    let input1 = data1.reshape(1, 12);
     let logits1 = model.forward(input1);
-    let logits1_flat = reshape(logits1, 12, 13);
+    let logits1_flat = logits1.reshape(12, 13);
     let p1 = my_argmax(logits1_flat.slice(5, 1));
     
     // Step 2: Predict second digit at Position 7 (should be 4)
@@ -198,9 +198,9 @@ fn main() {
     
     // Correct input: [9, 9, 10, 1, 0, 11, 0, 0, 1, 12, 12, 12]
     let q_data1 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, 0.0, 0.0, 1.0, 12.0, 12.0, 12.0];
-    let q_input1 = reshape(q_data1, 1, 12);
+    let q_input1 = q_data1.reshape(1, 12);
     let q_logits1 = model.forward(q_input1);
-    let q_logits1_flat = reshape(q_logits1, 12, 13);
+    let q_logits1_flat = q_logits1.reshape(12, 13);
     
     let q1 = my_argmax(q_logits1_flat.slice(5, 1));
     let q2 = my_argmax(q_logits1_flat.slice(6, 1));
