@@ -11,23 +11,6 @@
     値を標準出力に出力します（改行なし）。
 *   **`println(value) -> void`**
     値を標準出力に出力します（改行あり）。
-*   **`tl_system_time() -> f32`**
-    現在のシステム時間を秒単位で返します。
-*   **`tl_get_memory_mb() -> i64`**
-    現在のメモリ使用量をMB単位で返します。
-
-### パラメータ管理
-*   **`save_all_params(path: String) -> void`**
-*   **`load_all_params(path: String) -> void`**
-*   **`save_weights(target: Tensor|Struct, path: String) -> void`**
-*   **`load_weights(path: String) -> Tensor|void`**
-*   **`add_parameter(name: String, t: Tensor) -> void`**
-*   **`parameter(t: Tensor) -> Tensor`**
-    テンソルをパラメータとして登録します。
-*   **`register_modules(root: Struct) -> void`**
-*   **`checkpoint(method, input) -> Tensor`**
-*   **`set_device(device: Device) -> void`**
-    グローバルな計算デバイスを設定します (`Device::Cpu`, `Device::Cuda`, `Device::Metal`, `Device::Auto`).
 
 ---
 
@@ -37,6 +20,22 @@
 *   **`Tensor::zeros(shape, requires_grad) -> Tensor`**
 *   **`Tensor::randn(shape, requires_grad) -> Tensor`**
 *   **`Tensor::ones(shape, requires_grad) -> Tensor`**
+*   **`Tensor::load(path: String) -> Tensor`** — ファイルからテンソルを読み込み
+
+### Param（パラメータ管理）
+*   **`Param::save_all(path: String) -> void`** — 全パラメータを保存
+*   **`Param::load_all(path: String) -> void`** — 全パラメータを読み込み
+*   **`Param::save(target, path: String) -> void`** — 対象を保存
+*   **`Param::load(path: String) -> Tensor`** — ファイルから読み込み
+*   **`Param::add(name: String, t: Tensor) -> void`** — パラメータを追加
+*   **`Param::register(t: Tensor) -> Tensor`** — テンソルをパラメータとして登録
+*   **`Param::update_all(lr: f32) -> void`** — 全パラメータを更新
+*   **`Param::register_modules(root: Struct) -> void`** — モジュールを登録
+*   **`Param::checkpoint(method, input) -> Tensor`** — 活性化チェックポイント
+*   **`Param::set_device(device: Device) -> void`** — 計算デバイスを設定
+
+### VarBuilder
+*   **`VarBuilder::get(name: String, ...dims) -> Tensor`**
 
 ### File
 *   **`File::open(path: String, mode: String) -> File`**

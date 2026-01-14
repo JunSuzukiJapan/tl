@@ -2836,6 +2836,18 @@ impl SemanticAnalyzer {
                         }
                         Ok(Type::Tensor(Box::new(Type::F32), 0))
                     }
+                    ("Tensor", "load") => {
+                        // Tensor::load(path)
+                        if args.len() != 1 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::load".into(),
+                                expected: 1,
+                                found: args.len(),
+                            });
+                        }
+                        let _ = self.check_expr(&mut args[0])?;
+                        Ok(Type::Tensor(Box::new(Type::F32), 0))
+                    }
                     ("VarBuilder", "get") => {
                         if args.len() < 2 {
                             return Err(SemanticError::ArgumentCountMismatch {
@@ -2876,6 +2888,109 @@ impl SemanticAnalyzer {
                         }
                         let _ = self.check_expr(&mut args[0])?;
                         Ok(Type::Tensor(Box::new(Type::F32), 0))
+                    }
+                    // Param static methods
+                    ("Param", "save_all") | ("Param", "load_all") => {
+                        if args.len() != 1 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: format!("Param::{}", method_name),
+                                expected: 1,
+                                found: args.len(),
+                            });
+                        }
+                        let _ = self.check_expr(&mut args[0])?;
+                        Ok(Type::Void)
+                    }
+                    ("Param", "save") => {
+                        if args.len() != 2 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: "Param::save".into(),
+                                expected: 2,
+                                found: args.len(),
+                            });
+                        }
+                        let _ = self.check_expr(&mut args[0])?;
+                        let _ = self.check_expr(&mut args[1])?;
+                        Ok(Type::Void)
+                    }
+                    ("Param", "load") => {
+                        if args.len() != 1 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: "Param::load".into(),
+                                expected: 1,
+                                found: args.len(),
+                            });
+                        }
+                        let _ = self.check_expr(&mut args[0])?;
+                        Ok(Type::Tensor(Box::new(Type::F32), 0))
+                    }
+                    ("Param", "add") => {
+                        if args.len() != 2 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: "Param::add".into(),
+                                expected: 2,
+                                found: args.len(),
+                            });
+                        }
+                        let _ = self.check_expr(&mut args[0])?;
+                        let _ = self.check_expr(&mut args[1])?;
+                        Ok(Type::Void)
+                    }
+                    ("Param", "register") => {
+                        if args.len() != 1 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: "Param::register".into(),
+                                expected: 1,
+                                found: args.len(),
+                            });
+                        }
+                        let t = self.check_expr(&mut args[0])?;
+                        Ok(t)
+                    }
+                    ("Param", "update_all") => {
+                        if args.len() != 1 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: "Param::update_all".into(),
+                                expected: 1,
+                                found: args.len(),
+                            });
+                        }
+                        let _ = self.check_expr(&mut args[0])?;
+                        Ok(Type::Void)
+                    }
+                    ("Param", "register_modules") => {
+                        if args.len() != 1 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: "Param::register_modules".into(),
+                                expected: 1,
+                                found: args.len(),
+                            });
+                        }
+                        let _ = self.check_expr(&mut args[0])?;
+                        Ok(Type::Void)
+                    }
+                    ("Param", "checkpoint") => {
+                        if args.len() != 2 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: "Param::checkpoint".into(),
+                                expected: 2,
+                                found: args.len(),
+                            });
+                        }
+                        let _ = self.check_expr(&mut args[0])?;
+                        let _ = self.check_expr(&mut args[1])?;
+                        Ok(Type::Tensor(Box::new(Type::F32), 0))
+                    }
+                    ("Param", "set_device") => {
+                        if args.len() != 1 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: "Param::set_device".into(),
+                                expected: 1,
+                                found: args.len(),
+                            });
+                        }
+                        let _ = self.check_expr(&mut args[0])?;
+                        Ok(Type::Void)
                     }
                     _ => {
                         // Try as a module function: type_name::method_name might be a qualified function call

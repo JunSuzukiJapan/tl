@@ -136,30 +136,12 @@ impl BuiltinManager {
     }
 
     fn register_all(&mut self) {
-        // System functions (not tensor methods)
-        self.register_uneval("set_device", compile_set_device);
-        self.register_uneval("checkpoint", compile_checkpoint);
-
-        // Utility functions
-        self.register_eval("register_modules", compile_register_modules);
+        // IO functions
         self.register_eval("print", compile_print);
         self.register_eval("println", compile_println);
-        self.register_eval("save_weights", compile_save_weights);
-        self.register_eval("load_weights", compile_load_weights);
-        self.register_eval("update_all_params", compile_update_all_params);
-        self.register_eval("varbuilder_grad", compile_varbuilder_grad);
-        self.register_eval("add_parameter", compile_add_parameter);
-        self.register_eval("load_all_params", compile_load_all_params);
-        self.register_eval("parameter", compile_parameter);
-        self.register_eval("load_tensor", compile_load_tensor);
-        self.register_eval("save_all_params", compile_save_all_params);
 
-        // Tensor-related global functions removed - now instance/class methods:
-        // sin, cos, relu, gelu, exp, log, sqrt, pow, matmul, transpose, reshape,
-        // softmax, cross_entropy, argmax, item, sum, len, tril, embedding
-
-        // Tensor instance methods: grad, enable_grad, backward
-        // Now handled in compile_method_call
+        // Parameter management moved to Param:: static methods
+        // Tensor methods moved to instance/class methods
 
         self.register_uneval("varbuilder_get", compile_varbuilder_get);
     }
@@ -955,6 +937,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         tensor_static.register_uneval("zeros", compile_tensor_zeros);
         tensor_static.register_uneval("randn", compile_randn);
         tensor_static.register_uneval("ones", compile_ones);
+        tensor_static.register_eval("load", compile_load_tensor);
         self.static_methods
             .insert("Tensor".to_string(), tensor_static);
 
@@ -963,6 +946,21 @@ impl<'ctx> CodeGenerator<'ctx> {
         varbuilder_static.register_uneval("get", compile_varbuilder_get_static);
         self.static_methods
             .insert("VarBuilder".to_string(), varbuilder_static);
+
+        // --- Param Static Methods ---
+        let mut param_static = StaticMethodManager::new();
+        param_static.register_eval("save_all", compile_save_all_params);
+        param_static.register_eval("load_all", compile_load_all_params);
+        param_static.register_eval("save", compile_save_weights);
+        param_static.register_eval("load", compile_load_weights);
+        param_static.register_eval("add", compile_add_parameter);
+        param_static.register_eval("register", compile_parameter);
+        param_static.register_eval("update_all", compile_update_all_params);
+        param_static.register_eval("register_modules", compile_register_modules);
+        param_static.register_uneval("checkpoint", compile_checkpoint);
+        param_static.register_uneval("set_device", compile_set_device);
+        self.static_methods
+            .insert("Param".to_string(), param_static);
     }
 
     pub(crate) fn is_safe_to_free(&self, expr: &Expr, ty: &Type) -> bool {
