@@ -17,7 +17,7 @@ extern fn tl_tensor_map_get_1d(map: i64, name: String) -> Tensor<f32, 1>;
 fn main() {
     print("Test 1: print works");
     
-    set_device(Device::Auto);
+    Param::set_device(Device::Auto);
     print("Test 2: set_device works");
     
     let model_path = "~/.llm/models/tinyllama-1.1b-chat-q4_0.gguf";

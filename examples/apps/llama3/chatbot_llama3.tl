@@ -132,7 +132,7 @@ impl Block {
 }
 fn main() {
     println("Llama 3.1 8B Chatbot");
-    set_device(Device::Auto);
+    Param::set_device(Device::Auto);
     let model_path = "~/.llm/models/models--lmstudio-community--Meta-Llama-3.1-8B-Instruct-GGUF/snapshots/8601e6db71269a2b12255ebdf09ab75becf22cc8/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf";
     let tokenizer_path = "~/.llm/models/llama3_tokenizer.json";
     

@@ -620,8 +620,8 @@ pub fn declare_runtime_functions<'ctx>(
     let gguf_load_type = i64_type.fn_type(&[i8_ptr.into()], false);
     add_fn("tl_gguf_load", gguf_load_type);
 
-    // tl_tensor_map_get(map: *mut OpaqueTensorMap, name: *const c_char) -> *mut Tensor
-    let map_get_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
+    // tl_tensor_map_get(map: i64, name: *const c_char) -> *mut Tensor
+    let map_get_type = void_ptr.fn_type(&[i64_type.into(), i8_ptr.into()], false);
     add_fn("tl_tensor_map_get", map_get_type);
 
     // tl_tensor_cat(tensors: *mut Vec, dim: i64) -> *mut Tensor
@@ -658,9 +658,9 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_reshape_2d", tensor_reshape_2d_type);
     add_fn("tl_tensor_reshape_3d_to_2d", tensor_reshape_2d_type); // alias
 
-    // Map get alias
-    let map_get_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
-    add_fn("tl_tensor_map_get_1d", map_get_type);
+    // Map get alias (first arg is i64 handle from tl_gguf_load)
+    let map_get_1d_type = void_ptr.fn_type(&[i64_type.into(), i8_ptr.into()], false);
+    add_fn("tl_tensor_map_get_1d", map_get_1d_type);
 
     // Narrow (slice): tl_tensor_narrow(t, dim, start, length) -> t
     let narrow_type = void_ptr.fn_type(

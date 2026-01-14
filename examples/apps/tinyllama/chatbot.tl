@@ -112,7 +112,7 @@ impl Block {
 }
 fn main() {
     println("TinyLlama Chatbot (Stable)");
-    set_device(Device::Auto);
+    Param::ice(Device::Auto);
     let weights = tl_gguf_load("~/.llm/models/tinyllama-1.1b-chat-q4_0.gguf");
     let tok = tl_tokenizer_new("~/.llm/models/tokenizer.json");
     let cos = tl_tensor_rope_new_cos(64, 2048, 10000.0);
