@@ -688,7 +688,11 @@ impl SemanticAnalyzer {
                     self.exit_scope();
 
                     // Construct Tensor Type
-                    Type::Tensor(Box::new(rhs_type), free_indices.len())
+                    if let Expr::TensorComprehension { .. } = value {
+                        rhs_type
+                    } else {
+                        Type::Tensor(Box::new(rhs_type), free_indices.len())
+                    }
                 } else {
                     self.check_expr(value)?
                 };
