@@ -18,7 +18,7 @@ fn main() {
         let w = z * x;
         let loss = w.sum(); 
         
-        backward(loss);
+        loss.backward();
         
         if i - ((i/250)*250) == 0 {
              let cur = tl_get_memory_mb();

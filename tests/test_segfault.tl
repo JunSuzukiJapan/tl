@@ -6,7 +6,7 @@ impl Linear {
         return Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return matmul(x, self.W) + self.b; 
+        return x.matmul(self.W) + self.b; 
     } 
 }
 
@@ -34,23 +34,23 @@ fn test_with_slice() {
     print("Forward done");
     
     print("Reshaping...");
-    let y_flat = reshape(y, 10, 12);
+    let y_flat = y.reshape(10, 12);
     print("Reshaped");
     
     print("Slicing...");
-    let s1 = slice(y_flat, 0, 1);
+    let s1 = y_flat.slice(0, 1);
     print("Slice 1:");
     print(s1);
     
-    let s2 = slice(y_flat, 1, 1);
+    let s2 = y_flat.slice(1, 1);
     print("Slice 2:");
     print(s2);
     
-    let s3 = slice(y_flat, 2, 1);
+    let s3 = y_flat.slice(2, 1);
     print("Slice 3:");
     print(s3);
     
-    let s4 = slice(y_flat, 3, 1);
+    let s4 = y_flat.slice(3, 1);
     print("Slice 4:");
     print(s4);
     

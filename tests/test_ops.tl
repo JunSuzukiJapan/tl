@@ -8,6 +8,6 @@ fn main() {
     
     // Test 2: relu
     let t = Tensor::randn([1], true);
-    let r = relu(t); // Function or method?
+    let r = t.relu();
     print(r);
 }

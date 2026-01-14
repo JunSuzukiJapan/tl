@@ -1,7 +1,7 @@
 fn main() {
     println("Hello refactor!");
-    let t = Tensor::randn([2, 2]);
+    let t = Tensor::randn([2, 2], false);
     println(t);
-    let s = sum(t);
+    let s = t.sum();
     println(s);
 }

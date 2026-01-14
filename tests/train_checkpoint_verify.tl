@@ -9,7 +9,7 @@ impl Linear {
         return Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return matmul(x, self.W) + self.b; 
+        return x.matmul(self.W) + self.b; 
     } 
     fn step(self, lr: f32) -> Linear { 
         let s = self; 
@@ -28,7 +28,7 @@ impl Embedding {
         return Embedding((Tensor::randn([v, d], true)*0.1).detach(true));
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
-        return embedding(i, self.w); 
+        return i.embedding(self.w); 
     } 
     fn step(self, lr: f32) -> Embedding { 
         let s = self; 
@@ -66,7 +66,7 @@ impl CausalSelfAttention {
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
         // scale = 1/sqrt(64) = 0.125
-        let y = matmul(softmax(tril(matmul(q, transpose(k, 1, 2))*0.125, 0), 2), v); 
+        let y = q.matmul(k.transpose(1, 2)).mul(0.125).tril(0).softmax(2).matmul(v); 
         return self.p_proj.forward(y); 
     } 
     fn step(self, lr: f32) -> CausalSelfAttention { 
@@ -88,7 +88,7 @@ impl MLP {
         return MLP(Linear::new(d, d*4), Linear::new(d*4, d)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return self.p.forward(relu(self.f.forward(x))); 
+        return self.p.forward(self.f.forward(x).relu()); 
     } 
     fn step(self, lr: f32) -> MLP { 
         let s = self; 
@@ -140,13 +140,13 @@ impl GPT {
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0];
-        let pos = reshape(pos_data, 1, 4);
+        let pos = pos_data.reshape(1, 4);
         let tok_emb = self.w.forward(i);
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
         // Checkpointing blocks
-        let x = checkpoint(self.b1.forward, x);
-        let x = checkpoint(self.b2.forward, x);
+        let x = Param::checkpoint(self.b1.forward, x);
+        let x = Param::checkpoint(self.b2.forward, x);
         return self.h.forward(self.l.forward(x)); 
     } 
     fn step(self, lr: f32) -> GPT { 
@@ -175,25 +175,27 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
     
     // Mock data input [i, j, sum, 0]
     // Fixed: Using 0 instead of 0.0 to match i/j types
-    let X = reshape([i, j, sum, 0], 1, 4);
+    let input_arr = [i, j, sum, 0];
+    let X = input_arr.reshape(1, 4);
     // Target [j, sum, 0, 0] (Shifted)
-    let Y = reshape([j, sum, 0, 0], 1, 4);
+    let target_arr = [j, sum, 0, 0];
+    let Y = target_arr.reshape(1, 4);
 
     // Forward
     let logits = m.forward(X);
     
     // Need to reshape for cross_entropy
     // logits: [1, 4, 13] -> [4, 13]
-    let logits_flat = reshape(logits, 4, 13);
-    let Y_flat = reshape(Y, 4);
+    let logits_flat = logits.reshape(4, 13);
+    let Y_flat = Y.reshape(4);
     
-    let loss = cross_entropy(logits_flat, Y_flat);
+    let loss = logits_flat.cross_entropy(Y_flat);
     
     // Print loss
-    tl_tensor_print_1(reshape(loss, 1));
+    tl_tensor_print_1(loss.reshape(1));
     
     // Backprop
-    backward(loss);
+    loss.backward();
     
     // Step
     m = m.step(lr);
@@ -216,21 +218,23 @@ fn infer(model: GPT, i: i64, j: i64) {
     // So X[0]=i -> should predict j
     // X[1]=j -> should predict expected
     // X[2]=0 -> should predict 0
-    let X = reshape([i, j, 0, 0], 1, 4);
+    let input_arr = [i, j, 0, 0];
+    let X = input_arr.reshape(1, 4);
     let logits = m.forward(X);
-    let Y = reshape([j, expected, 0, 0], 1, 4);
+    let target_arr = [j, expected, 0, 0];
+    let Y = target_arr.reshape(1, 4);
     
-    let logits_flat = reshape(logits, 4, 13);
-    let Y_flat = reshape(Y, 4);
-    let loss = cross_entropy(logits_flat, Y_flat);
+    let logits_flat = logits.reshape(4, 13);
+    let Y_flat = Y.reshape(4);
+    let loss = logits_flat.cross_entropy(Y_flat);
     
     // Prediction analysis
     // We want the prediction AFTER 'j', which is at index 1.
     // argmax(logits, 2) returns indices [1, 4]
     
-    let preds = argmax(logits, 2); // [1, 4]
+    let preds = logits.argmax(2); // [1, 4]
     print("Predictions (Whole Sequence):");
-    tl_tensor_print_2(reshape(preds, 1, 4));
+    tl_tensor_print_2(preds.reshape(1, 4));
     
     // Extract single prediction at index 1
     // preds is [1, 12].
@@ -244,7 +248,7 @@ fn infer(model: GPT, i: i64, j: i64) {
     print("Inference: Input:"); print(i); print(j);
     print("Expected (at pos 1):"); print(expected);
     print("Loss:");
-    tl_tensor_print_1(reshape(loss, 1));
+    tl_tensor_print_1(loss.reshape(1));
 }
 
 fn main() {

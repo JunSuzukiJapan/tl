@@ -4,7 +4,7 @@ impl Linear {
         return Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)); 
     } 
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { 
-        return matmul(x, self.W) + self.b; 
+        return x.matmul(self.W) + self.b; 
     } 
     fn step(self, lr: f32) -> Linear { 
         let s = self; 
@@ -28,19 +28,20 @@ fn main() {
         print("Epoch:"); print(epoch);
         
         let x_data = [1.0, 2.0];
-        let x = reshape(x_data, 1, 2);
+        let x = x_data.reshape(1, 2);
         
-        let h = relu(l1.forward(x));
+        let h = l1.forward(x).relu();
         let y = l2.forward(h);
         
         let target = [1.0, 0.0, 0.0];
-        let t = reshape(target, 1, 3);
+        let t = target.reshape(1, 3);
         let diff = y - t;
-        let loss = sum(diff * diff);
+        let diff_sq = diff * diff;
+        let loss = diff_sq.sum();
         
         print("Loss:"); print(loss);
         
-        backward(loss);
+        loss.backward();
         
         // Using original syntax WITHOUT capturing return value
         // This should now work with the compiler fix
