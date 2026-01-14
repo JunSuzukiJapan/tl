@@ -292,6 +292,10 @@ pub fn declare_runtime_functions<'ctx>(
     let pow_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_tensor_pow", pow_type);
 
+    // tl_tensor_pow_scalar(t: *mut Tensor, exponent: f32) -> *mut Tensor
+    let pow_scalar_type = void_ptr.fn_type(&[void_ptr.into(), f32_type.into()], false);
+    add_fn("tl_tensor_pow_scalar", pow_scalar_type);
+
     // tl_tensor_sqrt(t: *mut Tensor) -> *mut Tensor
     let unary_type = void_ptr.fn_type(&[void_ptr.into()], false);
     add_fn("tl_tensor_sqrt", unary_type);
@@ -317,6 +321,29 @@ pub fn declare_runtime_functions<'ctx>(
     // Explicitly add tl_clear_grads
     let clear_grads_type = void_type.fn_type(&[], false);
     add_fn("tl_clear_grads", clear_grads_type);
+
+    // tl_tensor_set_f32_md(t: *mut, indices: *const i64, rank: usize, val: f32) -> *mut
+    let set_md_type = void_ptr.fn_type(
+        &[
+            void_ptr.into(),
+            void_ptr.into(), // indices ptr
+            i64_type.into(), // rank
+            f32_type.into(), // val
+        ],
+        false,
+    );
+    add_fn("tl_tensor_set_f32_md", set_md_type);
+
+    // tl_tensor_get_f32_md(t: *mut, indices: *const i64, rank: usize) -> f32
+    let get_md_type = f32_type.fn_type(
+        &[
+            void_ptr.into(),
+            void_ptr.into(), // indices ptr
+            i64_type.into(), // rank
+        ],
+        false,
+    );
+    add_fn("tl_tensor_get_f32_md", get_md_type);
 
     // Manual mapping for tl_clear_grads to avoid dlsym issues
     if let Some(f) = module.get_function("tl_clear_grads") {
@@ -548,6 +575,21 @@ pub fn declare_runtime_functions<'ctx>(
 
     let env_set_type = void_type.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
     add_fn("tl_env_set", env_set_type);
+
+    // Args (command line arguments)
+    let args_count_type = i64_type.fn_type(&[], false);
+    add_fn("tl_args_count", args_count_type);
+
+    let args_get_type = i8_ptr.fn_type(&[i64_type.into()], false);
+    add_fn("tl_args_get", args_get_type);
+
+    // String utilities
+    // tl_string_char_at(s: *const i8, index: i64) -> *const i8 (String)
+    let string_char_at_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_string_char_at", string_char_at_type);
+
+    let string_len_type = i64_type.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_string_len", string_len_type);
 
     // tl_read_line(prompt: *const i8) -> *mut i8
     let read_line_type = i8_ptr.fn_type(&[i8_ptr.into()], false);
@@ -1058,8 +1100,14 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_pow") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_pow as usize);
     }
+    if let Some(f) = module.get_function("tl_tensor_pow_scalar") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_pow_scalar as usize);
+    }
     if let Some(f) = module.get_function("tl_tensor_add_assign") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_add_assign as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_set_f32_md") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_set_f32_md as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_mul_assign") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_mul_assign as usize);
@@ -1160,6 +1208,22 @@ pub fn declare_runtime_functions<'ctx>(
 
     if let Some(f) = module.get_function("tl_get_memory_mb") {
         execution_engine.add_global_mapping(&f, runtime::tl_get_memory_mb as usize);
+    }
+
+    // Args (command line arguments)
+    if let Some(f) = module.get_function("tl_args_count") {
+        execution_engine.add_global_mapping(&f, runtime::args::tl_args_count as usize);
+    }
+    if let Some(f) = module.get_function("tl_args_get") {
+        execution_engine.add_global_mapping(&f, runtime::args::tl_args_get as usize);
+    }
+
+    // String utilities
+    if let Some(f) = module.get_function("tl_string_char_at") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_char_at as usize);
+    }
+    if let Some(f) = module.get_function("tl_string_len") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_len as usize);
     }
 
     // Memory manager mappings

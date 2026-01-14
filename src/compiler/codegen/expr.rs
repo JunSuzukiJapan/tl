@@ -140,6 +140,14 @@ impl BuiltinManager {
         self.register_eval("print", compile_print);
         self.register_eval("println", compile_println);
 
+        // Command line arguments
+        self.register_eval("args_count", compile_args_count);
+        self.register_eval("args_get", compile_args_get);
+
+        // String functions
+        self.register_eval("char_at", compile_string_char_at);
+        self.register_eval("len", compile_string_len);
+
         // Parameter management moved to Param:: static methods
         // Tensor methods moved to instance/class methods
 
@@ -157,29 +165,94 @@ fn compile_tensor_get<'ctx>(
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 {
-        return Err("get requires 1 argument".into());
+    // args: index1, index2, ...
+    if args.is_empty() {
+        return Err("get requires at least 1 argument (index...)".into());
     }
-    let (idx_val, idx_ty) = args[0].clone();
+    let rank = args.len();
 
-    // Ensure index is i64
-    let idx_i64 = match idx_ty {
-        Type::I64 => idx_val.into_int_value(),
-        Type::I32 => codegen
+    // Create array of indices on stack
+    // indices: *const i64
+    let i64_type = codegen.context.i64_type();
+    let index_array_type = i64_type.array_type(rank as u32);
+
+    // Move to entry block for alloca to avoid stack overflow in loops
+    let current_block = codegen.builder.get_insert_block().unwrap();
+    let func = current_block.get_parent().unwrap();
+    let entry_block = func.get_first_basic_block().unwrap();
+
+    if let Some(first_inst) = entry_block.get_first_instruction() {
+        codegen.builder.position_before(&first_inst);
+    } else {
+        codegen.builder.position_at_end(entry_block);
+    }
+
+    let index_array_ptr = codegen
+        .builder
+        .build_alloca(index_array_type, "index_array")
+        .unwrap();
+
+    // Move back to current block
+    codegen.builder.position_at_end(current_block);
+
+    for i in 0..rank {
+        let (idx_val, idx_ty) = args[i].clone();
+        let idx_i64 = match idx_ty {
+            crate::compiler::ast::Type::I64 => idx_val.into_int_value(),
+            crate::compiler::ast::Type::I32 => codegen
+                .builder
+                .build_int_z_extend(idx_val.into_int_value(), i64_type, "idx_ext")
+                .map_err(|e| e.to_string())?,
+            _ => return Err(format!("Index {} must be integer", i)),
+        };
+
+        let ptr = unsafe {
+            codegen
+                .builder
+                .build_gep(
+                    index_array_type,
+                    index_array_ptr,
+                    &[
+                        codegen.context.i64_type().const_int(0, false),
+                        codegen.context.i64_type().const_int(i as u64, false),
+                    ],
+                    "idx_ptr",
+                )
+                .map_err(|e| e.to_string())?
+        };
+        codegen
             .builder
-            .build_int_z_extend(
-                idx_val.into_int_value(),
-                codegen.context.i64_type(),
-                "idx_ext",
-            )
-            .map_err(|e| e.to_string())?,
-        _ => return Err("Index must be integer".into()),
-    };
+            .build_store(ptr, idx_i64)
+            .map_err(|e| e.to_string())?;
+    }
 
-    let fn_val = codegen.module.get_function("tl_tensor_get").unwrap();
+    // Cast array ptr to i64 ptr (use i8 ptr generic)
+    let indices_ptr = codegen
+        .builder
+        .build_pointer_cast(
+            index_array_ptr,
+            codegen
+                .context
+                .i64_type()
+                .ptr_type(inkwell::AddressSpace::default()),
+            "indices_ptr_cast",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let fn_val = codegen
+        .module
+        .get_function("tl_tensor_get_f32_md")
+        .ok_or("tl_tensor_get_f32_md not found")?;
+
+    let rank_val = codegen.context.i64_type().const_int(rank as u64, false);
+
     let call = codegen
         .builder
-        .build_call(fn_val, &[obj_val.into(), idx_i64.into()], "get_res")
+        .build_call(
+            fn_val,
+            &[obj_val.into(), indices_ptr.into(), rank_val.into()],
+            "get_res",
+        )
         .map_err(|e| e.to_string())?;
 
     let res = match call.try_as_basic_value() {
@@ -187,9 +260,7 @@ fn compile_tensor_get<'ctx>(
         _ => return Err("Invalid get return".into()),
     };
 
-    // Note: Temporary receiver free is handled by caller (Evaluated dispatcher)
-
-    Ok((res, Type::F32))
+    Ok((res, crate::compiler::ast::Type::F32))
 }
 
 fn compile_tensor_backward<'ctx>(
@@ -328,23 +399,76 @@ fn compile_tensor_save<'ctx>(
 fn compile_tensor_sum<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     obj_val: BasicValueEnum<'ctx>,
-    obj_ty: Type,
-    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let fn_val = codegen.module.get_function("tl_tensor_sum").unwrap();
-    let call = codegen
-        .builder
-        .build_call(fn_val, &[obj_val.into()], "sum_res")
-        .map_err(|e| e.to_string())?;
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid sum return".into()),
-    };
+    if args.is_empty() {
+        // Standard sum
+        let fn_val = codegen
+            .module
+            .get_function("tl_tensor_sum")
+            .ok_or("tl_tensor_sum not found")?;
+        let call = codegen
+            .builder
+            .build_call(fn_val, &[obj_val.into()], "sum_res")
+            .map_err(|e| e.to_string())?;
 
-    codegen.emit_register_tensor(res, &obj_ty)?;
-    Ok((res, obj_ty))
+        let res = match call.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v,
+            _ => return Err("Invalid sum return".into()),
+        };
+        Ok((
+            res,
+            crate::compiler::ast::Type::Tensor(Box::new(crate::compiler::ast::Type::F32), 0),
+        ))
+    } else {
+        // Sum with dim
+        if args.len() != 1 {
+            return Err("sum takes at most 1 argument".into());
+        }
+        let (dim_val, dim_ty) = args[0].clone();
+        let dim_i64 = match dim_ty {
+            crate::compiler::ast::Type::I64 => dim_val.into_int_value(),
+            crate::compiler::ast::Type::I32 => codegen
+                .builder
+                .build_int_z_extend(
+                    dim_val.into_int_value(),
+                    codegen.context.i64_type(),
+                    "dim_ext",
+                )
+                .map_err(|e| e.to_string())?,
+            _ => return Err("Dimension must be integer".into()),
+        };
+
+        let fn_val = codegen
+            .module
+            .get_function("tl_tensor_sum_dim")
+            .ok_or("tl_tensor_sum_dim not found")?;
+
+        let call = codegen
+            .builder
+            .build_call(
+                fn_val,
+                &[
+                    obj_val.into(),
+                    dim_i64.into(),
+                    codegen.context.bool_type().const_zero().into(),
+                ],
+                "sum_dim_res",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let res = match call.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v,
+            _ => return Err("Invalid sum_dim return".into()),
+        };
+        // Ideally we subtract 1 from rank, but 0 is safe generic guess for now if we don't track rank strictly
+        Ok((
+            res,
+            crate::compiler::ast::Type::Tensor(Box::new(crate::compiler::ast::Type::F32), 0),
+        ))
+    }
 }
-
 fn compile_tensor_slice<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     obj_val: BasicValueEnum<'ctx>,
@@ -823,6 +947,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         tensor_methods.register_eval("div_assign", compile_tensor_div_assign);
         tensor_methods.register_eval("transpose", compile_tensor_transpose);
         tensor_methods.register_eval("permute", compile_tensor_transpose); // permute aliases transpose logic for now
+        tensor_methods.register_eval("pow", compile_tensor_pow);
+        tensor_methods.register_eval("set", compile_tensor_set);
+        tensor_methods.register_eval("get", compile_tensor_get);
 
         self.instance_methods
             .insert("Tensor".to_string(), tensor_methods);
@@ -5605,6 +5732,321 @@ fn compile_println<'ctx>(
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     compile_print_common(codegen, args, true)
 }
+
+fn compile_args_count<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() {
+        return Err("args_count takes no arguments".into());
+    }
+    let fn_val = codegen
+        .module
+        .get_function("tl_args_count")
+        .ok_or("tl_args_count not found")?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[], "args_count_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid args_count return".into()),
+    };
+    Ok((res, Type::I64))
+}
+
+fn compile_args_get<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("args_get requires 1 argument (index)".into());
+    }
+    let (idx_val, _) = args[0].clone();
+    let fn_val = codegen
+        .module
+        .get_function("tl_args_get")
+        .ok_or("tl_args_get not found")?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[idx_val.into()], "args_get_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid args_get return".into()),
+    };
+    Ok((res, Type::UserDefined("String".to_string())))
+}
+
+fn compile_string_char_at<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 2 {
+        return Err("char_at requires 2 arguments (string, index)".into());
+    }
+    let (str_val, _) = args[0].clone();
+    let (idx_val, idx_ty) = args[1].clone();
+
+    // Convert index to i64 if needed
+    let idx_i64 = match idx_ty {
+        Type::I64 => idx_val.into_int_value(),
+        Type::I32 => codegen
+            .builder
+            .build_int_z_extend(
+                idx_val.into_int_value(),
+                codegen.context.i64_type(),
+                "idx_ext",
+            )
+            .map_err(|e| e.to_string())?,
+        _ => return Err("Index must be integer".into()),
+    };
+
+    let fn_val = codegen
+        .module
+        .get_function("tl_string_char_at")
+        .ok_or("tl_string_char_at not found")?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[str_val.into(), idx_i64.into()], "char_at_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid char_at return".into()),
+    };
+    Ok((res, Type::UserDefined("String".to_string())))
+}
+
+fn compile_string_len<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("len requires 1 argument (string)".into());
+    }
+    let (str_val, _) = args[0].clone();
+
+    let fn_val = codegen
+        .module
+        .get_function("tl_string_len")
+        .ok_or("tl_string_len not found")?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[str_val.into()], "len_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid len return".into()),
+    };
+    Ok((res, Type::I64))
+}
+fn compile_tensor_pow<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("pow requires 1 argument (exponent)".into());
+    }
+    let (exp_val, exp_ty) = args[0].clone();
+
+    // Check if exponent is Tensor or Scalar
+    if let Type::Tensor(_, _) = exp_ty {
+        // Tensor exponent
+        let fn_val = codegen
+            .module
+            .get_function("tl_tensor_pow")
+            .ok_or("tl_tensor_pow not found")?;
+        let call = codegen
+            .builder
+            .build_call(fn_val, &[obj_val.into(), exp_val.into()], "pow_res")
+            .map_err(|e| e.to_string())?;
+        let res = match call.try_as_basic_value() {
+            ValueKind::Basic(v) => v,
+            _ => return Err("Invalid pow return".into()),
+        };
+        codegen.emit_register_tensor(res, &obj_ty)?;
+        Ok((res, obj_ty))
+    } else {
+        // Scalar exponent (assume f32 or convert to f32)
+        let exp_f32 = match exp_ty {
+            Type::F32 => exp_val.into_float_value(),
+            Type::I64 => codegen
+                .builder
+                .build_signed_int_to_float(
+                    exp_val.into_int_value(),
+                    codegen.context.f32_type(),
+                    "exp_i64_to_f32",
+                )
+                .map_err(|e| e.to_string())?,
+            Type::I32 => codegen
+                .builder
+                .build_signed_int_to_float(
+                    exp_val.into_int_value(),
+                    codegen.context.f32_type(),
+                    "exp_i32_to_f32",
+                )
+                .map_err(|e| e.to_string())?,
+            _ => {
+                return Err(format!(
+                    "pow exponent must be Tensor or Number, got {:?}",
+                    exp_ty
+                ))
+            }
+        };
+
+        let fn_val = codegen
+            .module
+            .get_function("tl_tensor_pow_scalar")
+            .ok_or("tl_tensor_pow_scalar not found")?;
+        let call = codegen
+            .builder
+            .build_call(fn_val, &[obj_val.into(), exp_f32.into()], "pow_scalar_res")
+            .map_err(|e| e.to_string())?;
+        let res = match call.try_as_basic_value() {
+            ValueKind::Basic(v) => v,
+            _ => return Err("Invalid pow_scalar return".into()),
+        };
+        codegen.emit_register_tensor(res, &obj_ty)?;
+        Ok((res, obj_ty))
+    }
+}
+
+fn compile_tensor_set<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    // args: index1, index2, ..., value
+    if args.len() < 2 {
+        return Err("set requires at least 2 arguments (index..., value)".into());
+    }
+    let rank = args.len() - 1;
+    let (val_arg, val_ty) = args[rank].clone();
+
+    // Ensure value is float (or convert integer to float)
+    let val_f32 = match val_ty {
+        Type::F32 => val_arg.into_float_value(),
+        Type::I64 => codegen
+            .builder
+            .build_signed_int_to_float(
+                val_arg.into_int_value(),
+                codegen.context.f32_type(),
+                "val_i64_to_f32",
+            )
+            .map_err(|e| e.to_string())?,
+        Type::I32 => codegen
+            .builder
+            .build_signed_int_to_float(
+                val_arg.into_int_value(),
+                codegen.context.f32_type(),
+                "val_i32_to_f32",
+            )
+            .map_err(|e| e.to_string())?,
+        _ => return Err(format!("set value must be number, got {:?}", val_ty)),
+    };
+
+    // Create array of indices on stack
+    // indices: *const i64
+    let i64_type = codegen.context.i64_type();
+    let index_array_type = i64_type.array_type(rank as u32);
+
+    // Move to entry block for alloca to avoid stack overflow in loops
+    let current_block = codegen.builder.get_insert_block().unwrap();
+    // let fn_val = codegen.fn_value; // Assuming fn_value is available in CodeGenerator
+    // Check if fn_value is available. CodeGenerator struct definition needed.
+    // If not, use current_block.get_parent().unwrap()
+    let func = current_block.get_parent().unwrap();
+    let entry_block = func.get_first_basic_block().unwrap();
+
+    if let Some(first_inst) = entry_block.get_first_instruction() {
+        codegen.builder.position_before(&first_inst);
+    } else {
+        codegen.builder.position_at_end(entry_block);
+    }
+
+    let index_array_ptr = codegen
+        .builder
+        .build_alloca(index_array_type, "index_array")
+        .unwrap();
+
+    // Move back to current block
+    codegen.builder.position_at_end(current_block);
+
+    for i in 0..rank {
+        let (idx_val, idx_ty) = &args[i];
+        let idx_i64 = match idx_ty {
+            Type::I64 => idx_val.into_int_value(),
+            Type::I32 => codegen
+                .builder
+                .build_int_z_extend(idx_val.into_int_value(), i64_type, "idx_ext")
+                .map_err(|e| e.to_string())?,
+            _ => return Err(format!("Index {} must be integer", i)),
+        };
+
+        let ptr = unsafe {
+            codegen
+                .builder
+                .build_gep(
+                    index_array_type,
+                    index_array_ptr,
+                    &[
+                        codegen.context.i64_type().const_int(0, false),
+                        codegen.context.i64_type().const_int(i as u64, false),
+                    ],
+                    "idx_ptr",
+                )
+                .map_err(|e| e.to_string())?
+        };
+        codegen
+            .builder
+            .build_store(ptr, idx_i64)
+            .map_err(|e| e.to_string())?;
+    }
+
+    // Cast array ptr to i64 ptr
+    // Use i8 ptr as generic ptr
+    let indices_ptr = codegen
+        .builder
+        .build_pointer_cast(
+            index_array_ptr,
+            codegen
+                .context
+                .i64_type()
+                .ptr_type(inkwell::AddressSpace::default()),
+            "indices_ptr_cast",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let fn_val = codegen
+        .module
+        .get_function("tl_tensor_set_f32_md")
+        .ok_or("tl_tensor_set_f32_md not found")?;
+
+    let rank_val = codegen.context.i64_type().const_int(rank as u64, false);
+
+    codegen
+        .builder
+        .build_call(
+            fn_val,
+            &[
+                obj_val.into(),
+                indices_ptr.into(),
+                rank_val.into(),
+                val_f32.into(),
+            ],
+            "set_res",
+        )
+        .map_err(|e| e.to_string())?;
+
+    Ok((
+        codegen.context.i64_type().const_int(0, false).into(),
+        Type::Void,
+    ))
+}
+
 fn compile_tensor_transpose<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     obj_val: BasicValueEnum<'ctx>,

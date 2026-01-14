@@ -33,6 +33,9 @@ enum Commands {
         /// Device (cpu, metal, cuda, auto)
         #[arg(long, default_value = "auto")]
         device: String,
+        /// Arguments to pass to the TL program (after --)
+        #[arg(last = true)]
+        args: Vec<String>,
     },
     /// Compile to executable
     Build {
@@ -70,9 +73,11 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Run { file, device } => {
+        Commands::Run { file, device, args } => {
             // Set device environment variable
             std::env::set_var("TL_DEVICE", device);
+            // Initialize command line arguments for TL program
+            tl::runtime::args::init_args(args.clone());
             tl::runtime::force_link();
             // tl::runtime::tl_runtime_keep_alive();
             println!("Running file: {:?}", file);

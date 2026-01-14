@@ -1402,12 +1402,68 @@ impl SemanticAnalyzer {
 
                 // --- StdLib Phase 1 ---
                 // --- StdLib Static Methods ---
-                // --- StdLib Static Methods ---
                 // Transferred to Expr::StaticMethodCall handling.
                 // The parser ensures that identifiers with "::" are parsed as StaticMethodCall.
 
                 // --- StdLib FFI (Legacy/Direct) ---
-                if name == "tl_file_open" {
+                if name == "args_get" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    let arg_ty = self.check_expr(&mut args[0])?;
+                    if !matches!(arg_ty, Type::I64 | Type::I32) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::I64,
+                            found: arg_ty,
+                        });
+                    }
+                    return Ok(Type::UserDefined("String".to_string()));
+                } else if name == "char_at" {
+                    if args.len() != 2 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 2,
+                            found: args.len(),
+                        });
+                    }
+                    let string_ty = self.check_expr(&mut args[0])?;
+                    let index_ty = self.check_expr(&mut args[1])?;
+                    if string_ty != Type::UserDefined("String".to_string()) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::UserDefined("String".to_string()),
+                            found: string_ty,
+                        });
+                    }
+                    if !matches!(index_ty, Type::I64 | Type::I32) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::I64,
+                            found: index_ty,
+                        });
+                    }
+                    return Ok(Type::UserDefined("String".to_string())); // Returns a single character as a String
+                } else if name == "len" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    let arg_ty = self.check_expr(&mut args[0])?;
+                    if arg_ty != Type::UserDefined("String".to_string())
+                        && !matches!(arg_ty, Type::Tensor(_, _))
+                    {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::UserDefined("String".to_string()),
+                            found: arg_ty,
+                        });
+                    }
+                    return Ok(Type::I64);
+                } else if name == "tl_file_open" {
                     if args.len() != 2 {
                         return Err(SemanticError::ArgumentCountMismatch {
                             name: name.clone(),
@@ -1864,6 +1920,31 @@ impl SemanticAnalyzer {
                         });
                     }
                     return Ok(Type::Void);
+                } else if name == "args_count" {
+                    if !args.is_empty() {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 0,
+                            found: args.len(),
+                        });
+                    }
+                    return Ok(Type::I64);
+                } else if name == "args_get" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    let t0 = self.check_expr(&mut args[0])?;
+                    if !matches!(t0, Type::I64 | Type::I32) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::I64,
+                            found: t0,
+                        });
+                    }
+                    return Ok(Type::UserDefined("String".to_string()));
                 } else if name == "varbuilder_get" {
                     return Err(SemanticError::FunctionNotFound(
                         "varbuilder_get is removed. Use VarBuilder::get(name, shape)".into(),
@@ -2751,7 +2832,7 @@ impl SemanticAnalyzer {
                             return Ok(obj_type);
                         }
                         if method_name == "get" {
-                            if args.len() != 1 {
+                            if args.len() < 1 {
                                 return Err(SemanticError::ArgumentCountMismatch {
                                     name: method_name.clone(),
                                     expected: 1,

@@ -1,4 +1,5 @@
 pub mod arena;
+pub mod args;
 pub mod device;
 pub mod memory_manager; // Arena allocator for tensor memory optimization
 
@@ -1480,6 +1481,7 @@ pub fn force_link() {
     std::hint::black_box(tl_tensor_randn_debug as *const ());
     std::hint::black_box(tl_tensor_set_f32_md as *const ());
     std::hint::black_box(tl_tensor_free as *const ());
+    std::hint::black_box(tl_tensor_pow_scalar as *const ());
     std::hint::black_box(memory_manager::tl_mem_unregister as *const ());
     std::hint::black_box(tl_tensor_reshape_dims as *const ());
     std::hint::black_box(crate::runtime::stdlib::tl_prompt as *const ());
@@ -1487,6 +1489,10 @@ pub fn force_link() {
     std::hint::black_box(crate::runtime::stdlib::tl_string_concat as *const ());
     std::hint::black_box(crate::runtime::stdlib::tl_string_from_int as *const ());
     std::hint::black_box(crate::runtime::llm::tl_tensor_sample as *const ());
+    std::hint::black_box(crate::runtime::args::tl_args_count as *const ());
+    std::hint::black_box(crate::runtime::args::tl_args_get as *const ());
+    std::hint::black_box(crate::runtime::stdlib::tl_string_char_at as *const ());
+    std::hint::black_box(crate::runtime::stdlib::tl_string_len as *const ());
 }
 
 #[no_mangle]
@@ -1835,6 +1841,21 @@ pub extern "C" fn tl_tensor_pow(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
         let result = t_a
             .broadcast_pow(t_b)
             .unwrap_or_else(|_| t_a.pow(t_b).unwrap());
+        make_tensor(result)
+    }
+}
+
+/// Scalar exponent version of pow - more common use case
+#[no_mangle]
+pub extern "C" fn tl_tensor_pow_scalar(a: *mut OpaqueTensor, exp: c_float) -> *mut OpaqueTensor {
+    unsafe {
+        if a.is_null() {
+            println!("FATAL: tl_tensor_pow_scalar received NULL pointer");
+            return std::ptr::null_mut();
+        }
+        let t_a = &(*a).0;
+        let exp_f64 = exp as f64;
+        let result = t_a.powf(exp_f64).unwrap();
         make_tensor(result)
     }
 }
