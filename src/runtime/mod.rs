@@ -2783,3 +2783,65 @@ pub extern "C" fn tl_tensor_argmin(
     let res_i64 = res.to_dtype(candle_core::DType::I64).unwrap_or(res);
     make_tensor(res_i64)
 }
+#[no_mangle]
+pub extern "C" fn tl_tensor_conv2d(
+    input: *mut OpaqueTensor,
+    weight: *mut OpaqueTensor,
+    padding: i64,
+    stride: i64,
+) -> *mut OpaqueTensor {
+    unsafe {
+        // candle_core::Tensor has conv2d method?
+        // Or candle_nn::ops::conv2d is deprecated?
+        // Actually, let's use the tensor method if available, or candle_nn::conv2d (function).
+
+        // Checking candle docs: tensor.conv2d(weight, padding, stride, dilation, groups)
+        let res = (*input)
+            .0
+            .conv2d(
+                &(*weight).0,
+                padding as usize,
+                stride as usize,
+                1, // dilation
+                1, // groups
+            )
+            .unwrap();
+        make_tensor(res)
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_clamp(
+    t: *mut OpaqueTensor,
+    min_val: f32,
+    max_val: f32,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let tensor = &(*t).0;
+        // clamp works element-wise
+        let res = tensor.clamp(min_val, max_val).unwrap();
+        make_tensor(res)
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_ones(
+    rank: usize,
+    shape: *const usize,
+    req_grad: bool,
+) -> *mut OpaqueTensor {
+    if shape.is_null() {
+        return std::ptr::null_mut();
+    }
+    let shape_data: Vec<usize> = unsafe { std::slice::from_raw_parts(shape, rank).to_vec() };
+
+    let device = get_device();
+    let t = Tensor::ones(&shape_data[..], candle_core::DType::F32, &device).unwrap();
+
+    if req_grad {
+        let var = candle_core::Var::from_tensor(&t).unwrap();
+        make_var(var)
+    } else {
+        make_tensor(t)
+    }
+}

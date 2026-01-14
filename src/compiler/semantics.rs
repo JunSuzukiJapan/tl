@@ -2790,6 +2790,29 @@ impl SemanticAnalyzer {
                                 });
                             }
                         }
+                        // Rank inference is hard without const eval. Return dynamic rank 1 for now or 0?
+                        // Actually, Tensor types don't enforce rank strictly in checking yet (dynamic).
+                        Ok(Type::Tensor(Box::new(Type::F32), 0))
+                    }
+                    ("Tensor", "ones") => {
+                        // Tensor::ones(shape, requires_grad)
+                        if args.is_empty() || args.len() > 2 {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::ones".into(),
+                                expected: 2,
+                                found: args.len(),
+                            });
+                        }
+                        let _ = self.check_expr(&mut args[0])?;
+                        if args.len() == 2 {
+                            let t1 = self.check_expr(&mut args[1])?;
+                            if !matches!(t1, Type::Bool) {
+                                return Err(SemanticError::TypeMismatch {
+                                    expected: Type::Bool,
+                                    found: t1,
+                                });
+                            }
+                        }
                         Ok(Type::Tensor(Box::new(Type::F32), 0))
                     }
                     ("Tensor", "randn") => {
@@ -2928,6 +2951,16 @@ impl SemanticAnalyzer {
                             return Ok(obj_type);
                         }
                         if method_name == "detach" {
+                            return Ok(obj_type);
+                        }
+                        if method_name == "enable_grad" {
+                            if !args.is_empty() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 0,
+                                    found: args.len(),
+                                });
+                            }
                             return Ok(obj_type);
                         }
                         if method_name == "get" {
@@ -3083,6 +3116,66 @@ impl SemanticAnalyzer {
                             return Ok(obj_type.clone());
                         }
                         if method_name == "softmax" || method_name == "log_softmax" {
+                            if args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 1,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "conv2d" {
+                            if args.len() != 3 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 3,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "clamp" {
+                            if args.len() != 2 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 2,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "pow" {
+                            if args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 1,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "tril" {
+                            if args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 1,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "cross_entropy" {
+                            if args.len() != 1 {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: 1,
+                                    found: args.len(),
+                                });
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "embedding" {
                             if args.len() != 1 {
                                 return Err(SemanticError::ArgumentCountMismatch {
                                     name: method_name.clone(),

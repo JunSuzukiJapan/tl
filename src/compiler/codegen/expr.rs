@@ -136,27 +136,16 @@ impl BuiltinManager {
     }
 
     fn register_all(&mut self) {
-        // Unevaluated (Special args inspection or free checks)
+        // System functions (not tensor methods)
         self.register_uneval("set_device", compile_set_device);
         self.register_uneval("checkpoint", compile_checkpoint);
-        self.register_uneval("reshape", compile_reshape);
-        self.register_uneval("softmax", compile_softmax);
-        self.register_uneval("cross_entropy", compile_cross_entropy);
-        self.register_uneval("exp", compile_exp);
-        self.register_uneval("log", compile_log);
-        self.register_uneval("pow", compile_pow);
 
-        // Evaluated (Standard)
-        self.register_eval("argmax", compile_argmax);
-        self.register_eval("item", compile_item);
+        // Utility functions
         self.register_eval("register_modules", compile_register_modules);
         self.register_eval("print", compile_print);
         self.register_eval("println", compile_println);
-        self.register_eval("transpose", compile_transpose);
         self.register_eval("save_weights", compile_save_weights);
         self.register_eval("load_weights", compile_load_weights);
-        self.register_eval("len", compile_len);
-        self.register_eval("sqrt", compile_sqrt);
         self.register_eval("update_all_params", compile_update_all_params);
         self.register_eval("varbuilder_grad", compile_varbuilder_grad);
         self.register_eval("add_parameter", compile_add_parameter);
@@ -165,19 +154,14 @@ impl BuiltinManager {
         self.register_eval("load_tensor", compile_load_tensor);
         self.register_eval("save_all_params", compile_save_all_params);
 
-        self.register_uneval("randn", compile_randn);
-        self.register_uneval("Tensor::randn", compile_randn);
-        self.register_uneval("matmul", compile_matmul);
-        self.register_uneval("grad", compile_grad);
-        self.register_uneval("backward", compile_backward);
+        // Tensor-related global functions removed - now instance/class methods:
+        // sin, cos, relu, gelu, exp, log, sqrt, pow, matmul, transpose, reshape,
+        // softmax, cross_entropy, argmax, item, sum, len, tril, embedding
+
+        // Tensor instance methods: grad, enable_grad, backward
+        // Now handled in compile_method_call
+
         self.register_uneval("varbuilder_get", compile_varbuilder_get);
-        self.register_uneval("sum", compile_sum);
-        self.register_uneval("sin", compile_sin);
-        self.register_uneval("cos", compile_cos);
-        self.register_uneval("relu", compile_relu);
-        self.register_uneval("gelu", compile_gelu);
-        self.register_uneval("tril", compile_tril);
-        self.register_uneval("embedding", compile_embedding);
     }
 }
 
@@ -969,7 +953,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut tensor_static = StaticMethodManager::new();
         // Unevaluated because of special TensorLiteral handling optimization
         tensor_static.register_uneval("zeros", compile_tensor_zeros);
-        tensor_static.register_uneval("randn", compile_randn); // Reusing builtin compile_randn
+        tensor_static.register_uneval("randn", compile_randn);
+        tensor_static.register_uneval("ones", compile_ones);
         self.static_methods
             .insert("Tensor".to_string(), tensor_static);
 
@@ -4452,6 +4437,129 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.emit_register_tensor(res, &obj_ty)?;
                     return Ok((res, obj_ty.clone()));
                 }
+                "conv2d" => {
+                    let fn_val = self
+                        .module
+                        .get_function("tl_tensor_conv2d")
+                        .ok_or("tl_tensor_conv2d not found")?;
+
+                    if args.len() != 3 {
+                        return Err("conv2d requires 3 arguments: weight, padding, stride".into());
+                    }
+
+                    // Arg 0: weight (Tensor)
+                    let (weight_val, weight_ty) = self.compile_expr(&args[0])?;
+                    if !matches!(weight_ty, Type::Tensor(_, _)) {
+                        return Err("conv2d arg 0 (weight) must be Tensor".into());
+                    }
+
+                    // Arg 1: padding (Int)
+                    let (pad_val, pad_ty) = self.compile_expr(&args[1])?;
+                    let pad_i64 = match pad_ty {
+                        Type::I64 => pad_val.into_int_value(),
+                        Type::I32 => self
+                            .builder
+                            .build_int_z_extend(
+                                pad_val.into_int_value(),
+                                self.context.i64_type(),
+                                "ext",
+                            )
+                            .unwrap(),
+                        _ => return Err("conv2d arg 1 (padding) must be Integer".into()),
+                    };
+
+                    // Arg 2: stride (Int)
+                    let (stride_val, stride_ty) = self.compile_expr(&args[2])?;
+                    let stride_i64 = match stride_ty {
+                        Type::I64 => stride_val.into_int_value(),
+                        Type::I32 => self
+                            .builder
+                            .build_int_z_extend(
+                                stride_val.into_int_value(),
+                                self.context.i64_type(),
+                                "ext",
+                            )
+                            .unwrap(),
+                        _ => return Err("conv2d arg 2 (stride) must be Integer".into()),
+                    };
+
+                    let call = self
+                        .builder
+                        .build_call(
+                            fn_val,
+                            &[
+                                obj_val.into(),
+                                weight_val.into(),
+                                pad_i64.into(),
+                                stride_i64.into(),
+                            ],
+                            "conv_res",
+                        )
+                        .map_err(|e| e.to_string())?;
+
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from conv2d()".into()),
+                    };
+                    self.emit_register_tensor(res, &obj_ty)?;
+                    return Ok((res, obj_ty.clone()));
+                }
+                "clamp" => {
+                    let fn_val = self
+                        .module
+                        .get_function("tl_tensor_clamp")
+                        .ok_or("tl_tensor_clamp not found")?;
+
+                    if args.len() != 2 {
+                        return Err("clamp requires 2 arguments: min, max".into());
+                    }
+
+                    // Arg 0: min (f32)
+                    let (min_val, min_ty) = self.compile_expr(&args[0])?;
+                    let min_f32 = match min_ty {
+                        Type::F32 => min_val.into_float_value(),
+                        Type::F64 => self
+                            .builder
+                            .build_float_trunc(
+                                min_val.into_float_value(),
+                                self.context.f32_type(),
+                                "trunc",
+                            )
+                            .unwrap(),
+                        _ => return Err("clamp arg 0 (min) must be Float".into()),
+                    };
+
+                    // Arg 1: max (f32)
+                    let (max_val, max_ty) = self.compile_expr(&args[1])?;
+                    let max_f32 = match max_ty {
+                        Type::F32 => max_val.into_float_value(),
+                        Type::F64 => self
+                            .builder
+                            .build_float_trunc(
+                                max_val.into_float_value(),
+                                self.context.f32_type(),
+                                "trunc",
+                            )
+                            .unwrap(),
+                        _ => return Err("clamp arg 1 (max) must be Float".into()),
+                    };
+
+                    let call = self
+                        .builder
+                        .build_call(
+                            fn_val,
+                            &[obj_val.into(), min_f32.into(), max_f32.into()],
+                            "clamp_res",
+                        )
+                        .map_err(|e| e.to_string())?;
+
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from clamp()".into()),
+                    };
+                    self.emit_register_tensor(res, &obj_ty)?;
+                    return Ok((res, obj_ty.clone()));
+                }
                 "clone" => {
                     let fn_val = self
                         .module
@@ -6258,12 +6366,13 @@ fn compile_save_all_params<'ctx>(
 }
 
 // Unevaluated Functions
-fn compile_randn<'ctx>(
+fn compile_tensor_creation_helper<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: &[Expr],
+    runtime_func_name: &str,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.is_empty() {
-        return Err("randn requires shape".into());
+        return Err(format!("{} requires shape", runtime_func_name));
     }
     let shape_expr = &args[0];
     let (rank, shape_vals) = match shape_expr {
@@ -6288,20 +6397,11 @@ fn compile_randn<'ctx>(
             (el.len(), vals)
         }
         _ => {
-            let (shape_tensor, _) = codegen.ensure_tensor_v2(shape_expr, 1)?;
-            let len_fn = codegen
-                .module
-                .get_function("tl_tensor_len")
-                .ok_or("tl_tensor_len not found")?;
-            let call = codegen
-                .builder
-                .build_call(len_fn, &[shape_tensor.into()], "len")
-                .map_err(|e| e.to_string())?;
-            match call.try_as_basic_value() {
-                ValueKind::Basic(v) => v.into_int_value(),
-                _ => return Err("Invalid len return".into()),
-            };
-            return Err("randn currently requires array literal [dim, ...] for shape".into());
+            // For now only support literal array for simplicity unless we implement dynamic shape unpacking
+            return Err(format!(
+                "{} currently requires array literal [dim, ...] for shape",
+                runtime_func_name
+            ));
         }
     };
     let requires_grad = if args.len() > 1 {
@@ -6359,25 +6459,60 @@ fn compile_randn<'ctx>(
         .const_int(if requires_grad { 1 } else { 0 }, false);
     let f = codegen
         .module
-        .get_function("tl_tensor_randn_debug")
-        .unwrap();
+        .get_function(runtime_func_name)
+        .ok_or(format!("{} not found", runtime_func_name))?;
+
+    // Decay array [N x i64]* to i64* by getting pointer to first element
+    let zero = i64_type.const_int(0, false);
+    let first_elem_ptr = unsafe {
+        codegen.builder.build_in_bounds_gep(
+            shape_array_type,
+            shape_alloca,
+            &[zero, zero],
+            "first_elem_ptr",
+        )
+    }
+    .map_err(|e| e.to_string())?;
+
     let call = codegen
         .builder
         .build_call(
             f,
             &[
                 i64_type.const_int(rank as u64, false).into(),
-                shape_alloca.into(),
+                first_elem_ptr.into(),
                 req_grad_val.into(),
             ],
-            "randn_res",
+            "creation_res",
         )
         .map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err("Invalid call return".into()),
+        _ => return Err("Invalid return".into()),
     };
+
     Ok((res, Type::Tensor(Box::new(Type::F32), rank)))
+}
+
+fn compile_randn<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: &[Expr],
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    compile_tensor_creation_helper(codegen, args, "tl_tensor_randn_debug")
+}
+
+fn compile_zeros<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: &[Expr],
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    compile_tensor_creation_helper(codegen, args, "tl_tensor_zeros")
+}
+
+fn compile_ones<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: &[Expr],
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    compile_tensor_creation_helper(codegen, args, "tl_tensor_ones")
 }
 
 fn compile_matmul<'ctx>(

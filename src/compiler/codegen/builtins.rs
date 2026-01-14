@@ -425,7 +425,7 @@ pub fn declare_runtime_functions<'ctx>(
     let randn_type = void_ptr.fn_type(
         &[
             i64_type.into(),            // Rank
-            void_ptr.into(),            // Shape Ptr
+            usize_ptr.into(),           // Shape Ptr
             context.bool_type().into(), // Req Grad
         ],
         false,
@@ -1027,6 +1027,15 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_cross_entropy") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_cross_entropy as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_conv2d") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_conv2d as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_clamp") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_clamp as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_ones") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_ones as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_sub_assign") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_sub_assign as usize);
@@ -1712,6 +1721,33 @@ pub fn declare_runtime_functions<'ctx>(
     let reg_param_type = void_ptr.fn_type(&[void_ptr.into()], false);
     module.add_function("tl_register_parameter", reg_param_type, None);
 
+    // tl_tensor_conv2d(input: *mut, weight: *mut, padding: i64, stride: i64) -> *mut
+    let conv2d_type = void_ptr.fn_type(
+        &[
+            void_ptr.into(),
+            void_ptr.into(),
+            i64_type.into(),
+            i64_type.into(),
+        ],
+        false,
+    );
+    module.add_function("tl_tensor_conv2d", conv2d_type, None);
+
+    // tl_tensor_clamp(t: *mut, min: f32, max: f32) -> *mut
+    let clamp_type = void_ptr.fn_type(&[void_ptr.into(), f32_type.into(), f32_type.into()], false);
+    module.add_function("tl_tensor_clamp", clamp_type, None);
+
+    // tl_tensor_ones(rank: i64, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor
+    let ones_type = void_ptr.fn_type(
+        &[
+            i64_type.into(),
+            usize_ptr.into(),
+            context.bool_type().into(),
+        ],
+        false,
+    );
+    module.add_function("tl_tensor_ones", ones_type, None);
+
     // Register new return types
     fn_return_types.insert("tl_tensor_randn".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_tensor_grad".to_string(), tensor_type.clone());
@@ -1747,6 +1783,9 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_varbuilder_get".to_string(), tensor_type.clone());
     fn_return_types.insert("tl_update_all_params".to_string(), Type::Void);
     fn_return_types.insert("tl_varbuilder_grad".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_conv2d".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_clamp".to_string(), tensor_type.clone());
+    fn_return_types.insert("tl_tensor_ones".to_string(), tensor_type.clone());
 
     // --- Standard Library Phase 1 ---
 
