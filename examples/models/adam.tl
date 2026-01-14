@@ -42,7 +42,7 @@ impl Adam {
         let term2_v = g2 * one_minus_beta2;
         self.v_W += term2_v;
 
-        let v_sqrt = sqrt(self.v_W);
+        let v_sqrt = self.v_W.sqrt();
         let denom = v_sqrt + self.eps;
         let step_size = self.m_W / denom;
         let update = step_size * self.lr;
@@ -64,7 +64,7 @@ impl Adam {
         let term2_vb = gb2 * one_minus_beta2;
         self.v_b += term2_vb;
         
-        let vb_sqrt = sqrt(self.v_b);
+        let vb_sqrt = self.v_b.sqrt();
         let denomb = vb_sqrt + self.eps;
         let step_sizeb = self.m_b / denomb;
         let updateb = step_sizeb * self.lr;
@@ -91,24 +91,24 @@ let X = Tensor::randn([16, 2], false);
 print(model.W);
 
 // Iter 1
-let y_pred = matmul(X, model.W) + model.b;
-let loss = sum(y_pred * y_pred);
+let y_pred = X.matmul(model.W) + model.b;
+let loss = (y_pred * y_pred).sum();
 print(loss);
-backward(loss);
+loss.backward();
 optim.step(model);
 
 // Iter 2
-let y_pred = matmul(X, model.W) + model.b;
-let loss = sum(y_pred * y_pred);
+let y_pred = X.matmul(model.W) + model.b;
+let loss = (y_pred * y_pred).sum();
 print(loss);
-backward(loss);
+loss.backward();
 optim.step(model);
 
 // Iter 3
-let y_pred = matmul(X, model.W) + model.b;
-let loss = sum(y_pred * y_pred);
+let y_pred = X.matmul(model.W) + model.b;
+let loss = (y_pred * y_pred).sum();
 print(loss);
-backward(loss);
+loss.backward();
 optim.step(model);
 
 print(model.W);

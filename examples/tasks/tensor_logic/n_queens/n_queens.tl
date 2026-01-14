@@ -13,15 +13,15 @@ fn main() {
     
     // Optimizer loop
     for i in 0..epochs {
-         let probs = softmax(board, 1);
-         let col_sums = sum(probs, 0);
-         let col_loss = sum(pow(col_sums - 1.0, 2));
+         let probs = board.softmax(1);
+         let col_sums = probs.sum(0);
+         let col_loss = (col_sums - 1.0).pow(2).sum();
 
          let anti_diag_sums = [k | k <- 0..(2 * N - 1), r <- 0..N, c <- 0..N, r + c == k { probs[r, c] }];
          let main_diag_sums = [k | k <- 0..(2 * N - 1), r <- 0..N, c <- 0..N, r - c + N - 1 == k { probs[r, c] }];
 
-         let anti_diag_loss = sum(pow(relu(anti_diag_sums - 1.0), 2));
-         let main_diag_loss = sum(pow(relu(main_diag_sums - 1.0), 2));
+         let anti_diag_loss = (anti_diag_sums - 1.0).relu().pow(2).sum();
+         let main_diag_loss = (main_diag_sums - 1.0).relu().pow(2).sum();
          
          let total_loss = col_loss + anti_diag_loss + main_diag_loss;
 
@@ -29,28 +29,28 @@ fn main() {
              print("Epoch ");
              print(i);
              print(" Loss: ");
-             println(item(total_loss));
+             println(total_loss.item());
          }
 
          // Optimization Step
-         backward(total_loss);
+         total_loss.backward();
          
          let g = board.grad();
          let board = board - g * lr;
          let board = board.detach();
-         enable_grad(board);
+         board.enable_grad();
     }
 
     print("Final Loss: ");
-    let probs = softmax(board, 1);
-    let col_sums = sum(probs, 0); 
-    let col_loss = sum(pow(col_sums - 1.0, 2));
+    let probs = board.softmax(1);
+    let col_sums = probs.sum(0); 
+    let col_loss = (col_sums - 1.0).pow(2).sum();
     let anti_diag_sums = [k | k <- 0..(2 * N - 1), r <- 0..N, c <- 0..N, r + c == k { probs[r, c] }];
     let main_diag_sums = [k | k <- 0..(2 * N - 1), r <- 0..N, c <- 0..N, r - c + N - 1 == k { probs[r, c] }];
-    let anti_diag_loss = sum(pow(relu(anti_diag_sums - 1.0), 2));
-    let main_diag_loss = sum(pow(relu(main_diag_sums - 1.0), 2));
+    let anti_diag_loss = (anti_diag_sums - 1.0).relu().pow(2).sum();
+    let main_diag_loss = (main_diag_sums - 1.0).relu().pow(2).sum();
     let total_loss = col_loss + anti_diag_loss + main_diag_loss;
-    println(item(total_loss));
+    println(total_loss.item());
 
     print("Final Board (Probabilities > 0.5):");
     println("");

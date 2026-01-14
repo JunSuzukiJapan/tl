@@ -25,8 +25,8 @@ impl Linear {
         // x: [B, S, in_dim]
         // W: [in_dim, out_dim]
         // b: [out_dim]
-        // matmul(x, W) -> [B, S, out_dim]
-        return matmul(x, self.W) + self.b;
+        // x.matmul(W) -> [B, S, out_dim]
+        return x.matmul(self.W) + self.b;
     }
 }
 
@@ -41,7 +41,7 @@ impl Embedding {
 
     fn forward(self, idx: Tensor<f32, 2>) -> Tensor<f32, 3> {
         // idx is f32 [B, S], treated as indices by runtime
-        return embedding(idx, self.weight);
+        return idx.embedding(self.weight);
     }
 }
 
@@ -106,8 +106,8 @@ impl CausalSelfAttention {
         // Q: [B, S, D], K: [B, S, D], V: [B, S, D]
         // att = Q @ K^T / sqrt(D)
         
-        let K_T = transpose(K, 1, 2);
-        let att = matmul(Q, K_T);
+        let K_T = K.transpose(1, 2);
+        let att = Q.matmul(K_T);
  // [B, S, S]
         let att = att * 0.125; // scale
         
@@ -116,13 +116,13 @@ impl CausalSelfAttention {
         // tl_tensor_tril(t, diag) zeroes out upper.
         // We can't set to -inf easily without 'masked_fill'.
         // But we can check that `tril` works.
-        let masked_att = tril(att, 0);
+        let masked_att = att.tril(0);
         
         // Softmax
-        let prob = softmax(masked_att, 2); // dim 2
+        let prob = masked_att.softmax(2); // dim 2
         
         // y = prob @ V
-        let y = matmul(prob, V); // [B, S, D]
+        let y = prob.matmul(V); // [B, S, D]
         
         let out = self.c_proj.forward(y);
         return out;
@@ -144,7 +144,7 @@ impl MLP {
 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
         let h = self.c_fc.forward(x);
-        let h = gelu(h); // New intrinsic!
+        let h = h.gelu(); // New intrinsic!
         return self.c_proj.forward(h);
     }
 }
@@ -204,7 +204,7 @@ fn main() {
     
     // 2. Positional Encoding
     print("Running Positional Encoding (sin/cos)...");
-    let pos_enc = sin(x) + cos(x); // Just testing ops
+    let pos_enc = x.sin() + x.cos(); // Just testing ops
     let x = x + pos_enc;
     
     // 3. Block
@@ -218,11 +218,11 @@ fn main() {
     // 4. Verify specific ops
     print("Verifying tril...");
     let t = Tensor::randn([3, 3], false);
-    let t_tril = tril(t, 0);
+    let t_tril = t.tril(0);
     print(t_tril);
     
     print("Verifying sum(dim)...");
-    let s = sum(out, 1); // Sum over seq len
+    let s = out.sum(1); // Sum over seq len
     print(s);
     
     print("Transformer Test Complete.");

@@ -6,7 +6,7 @@ impl Linear {
         return Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return matmul(x, self.W) + self.b; 
+        return x.matmul(self.W) + self.b; 
     } 
     fn step(self, lr: f32) -> Linear { 
         let s = self; 
@@ -24,7 +24,7 @@ impl Embedding {
         return Embedding((Tensor::randn([v, d], true)*0.1).detach(true)); 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
-        return embedding(i, self.w); 
+        return i.embedding(self.w); 
     } 
     fn step(self, lr: f32) -> Embedding { 
         let s = self; 
@@ -60,7 +60,12 @@ impl CausalSelfAttention {
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
         // scale = 1/sqrt(d_model) = 1/sqrt(256) = 0.0625
-        let y = matmul(softmax(tril(matmul(q, transpose(k, 1, 2))*0.0625, 0), 2), v); 
+        // Original: matmul(softmax(tril(matmul(q, transpose(k, 1, 2))*0.0625, 0), 2), v)
+        let k_t = k.transpose(1, 2);
+        let qk = q.matmul(k_t) * 0.0625;
+        let masked = qk.tril(0);
+        let attn = masked.softmax(2);
+        let y = attn.matmul(v);
         return self.p_proj.forward(y); 
     } 
     fn step(self, lr: f32) -> CausalSelfAttention { 
@@ -79,7 +84,7 @@ impl MLP {
         return MLP(Linear::new(d, d*4), Linear::new(d*4, d)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return self.p.forward(relu(self.f.forward(x))); 
+        return self.p.forward(self.f.forward(x).relu()); 
     } 
     fn step(self, lr: f32) -> MLP { 
         let s = self; 
@@ -123,7 +128,7 @@ impl GPT2 {
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
-        let pos = reshape(pos_data, 1, 12);
+        let pos = pos_data.reshape(1, 12);
         let tok_emb = self.w.forward(i);
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
@@ -155,13 +160,13 @@ fn train_step(model: GPT2, lr: f32, i: i64, j: i64) -> GPT2 {
     let s_d10 = rem / 10;
     let s_d1 = rem - (s_d10 * 10);
 
-    let v_i_d1 = pow(i_d1, 1.0).get(0);
-    let v_i_d10 = pow(i_d10, 1.0).get(0);
-    let v_j_d1 = pow(j_d1, 1.0).get(0);
-    let v_j_d10 = pow(j_d10, 1.0).get(0);
-    let v_s_d1 = pow(s_d1, 1.0).get(0);
-    let v_s_d10 = pow(s_d10, 1.0).get(0);
-    let v_s_d100 = pow(s_d100, 1.0).get(0);
+    let v_i_d1 = i_d1.pow(1.0).get(0);
+    let v_i_d10 = i_d10.pow(1.0).get(0);
+    let v_j_d1 = j_d1.pow(1.0).get(0);
+    let v_j_d10 = j_d10.pow(1.0).get(0);
+    let v_s_d1 = s_d1.pow(1.0).get(0);
+    let v_s_d10 = s_d10.pow(1.0).get(0);
+    let v_s_d100 = s_d100.pow(1.0).get(0);
     
     let data = [
         v_i_d1, v_i_d10, 10.0, 
@@ -177,15 +182,15 @@ fn train_step(model: GPT2, lr: f32, i: i64, j: i64) -> GPT2 {
         12.0, 12.0, 12.0, 12.0
     ];
 
-    let X = reshape(data, 1, 12);
-    let Y = reshape(target, 1, 12);
+    let X = data.reshape(1, 12);
+    let Y = target.reshape(1, 12);
     
     let logits = model.forward(X);
-    let logits_flat = reshape(logits, 12, 13);
-    let Y_flat = reshape(Y, 12);
-    let loss = cross_entropy(logits_flat, Y_flat);
+    let logits_flat = logits.reshape(12, 13);
+    let Y_flat = Y.reshape(12);
+    let loss = logits_flat.cross_entropy(Y_flat);
     
-    backward(loss);
+    loss.backward();
     model.step(lr);
     return model;
 }
@@ -221,7 +226,7 @@ fn main() {
     let model = GPT2::new(vocab_size, d_model);
     
     // 既存モデルがあればロードして再開
-    load_all_params(model, "model_paper.safetensors");
+    Param::load_all("model_paper.safetensors");
     
     // 論文より強めの学習率 (0.001)
     let lr = 0.001;
@@ -232,10 +237,10 @@ fn main() {
     for epoch in range(0, epochs) {
         model = train_epoch(model, lr, epoch);
         if epoch - ((epoch / 5) * 5) == 4 {
-            save_all_params(model, "model_paper.safetensors");
+            Param::save_all("model_paper.safetensors");
             print("Saved checkpoint.");
         }
     }
     print("Training Complete!");
-    save_all_params(model, "model_paper.safetensors");
+    Param::save_all("model_paper.safetensors");
 }
