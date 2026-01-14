@@ -2555,14 +2555,17 @@ impl SemanticAnalyzer {
                     }
                     // Param static methods
                     ("Param", "save_all") | ("Param", "load_all") => {
-                        if args.len() != 1 {
+                        if args.is_empty() || args.len() > 2 {
                             return Err(SemanticError::ArgumentCountMismatch {
                                 name: format!("Param::{}", method_name),
-                                expected: 1,
+                                expected: 2, // 1 or 2
                                 found: args.len(),
                             });
                         }
                         let _ = self.check_expr(&mut args[0])?;
+                        if args.len() == 2 {
+                            let _ = self.check_expr(&mut args[1])?;
+                        }
                         Ok(Type::Void)
                     }
                     ("Param", "save") => {
@@ -2578,15 +2581,20 @@ impl SemanticAnalyzer {
                         Ok(Type::Void)
                     }
                     ("Param", "load") => {
-                        if args.len() != 1 {
+                        if args.is_empty() || args.len() > 2 {
                             return Err(SemanticError::ArgumentCountMismatch {
                                 name: "Param::load".into(),
-                                expected: 1,
+                                expected: 2, // 1 or 2
                                 found: args.len(),
                             });
                         }
-                        let _ = self.check_expr(&mut args[0])?;
-                        Ok(Type::Tensor(Box::new(Type::F32), 0))
+                        let _t0 = self.check_expr(&mut args[0])?;
+                        if args.len() == 2 {
+                            let _ = self.check_expr(&mut args[1])?;
+                            Ok(Type::Void) // load(struct, path) -> Void
+                        } else {
+                            Ok(Type::Tensor(Box::new(Type::F32), 0)) // load(path) -> Tensor
+                        }
                     }
                     ("Param", "add") => {
                         if args.len() != 2 {
@@ -3087,7 +3095,7 @@ impl SemanticAnalyzer {
                             "to_radians",
                             "trunc",
                         ];
-                        let binary_methods = ["atan2", "copysign", "hypot", "log", "powf"];
+                        let binary_methods = ["atan2", "copysign", "hypot", "log", "powf", "pow"];
 
                         if unary_methods.contains(&method_name.as_str()) {
                             if !args.is_empty() {
@@ -3172,7 +3180,7 @@ impl SemanticAnalyzer {
                             "to_radians",
                             "trunc",
                         ];
-                        let binary_methods = ["atan2", "copysign", "hypot", "log", "powf"];
+                        let binary_methods = ["atan2", "copysign", "hypot", "log", "powf", "pow"];
 
                         if unary_methods.contains(&method_name.as_str()) {
                             if !args.is_empty() {

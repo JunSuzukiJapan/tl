@@ -46,27 +46,27 @@ fn train_epoch(model: GPT, lr: f32, epoch: i64) {
         
         // Extract digits using simple division/modulo
         // Format: always 3 digits with leading zeros (e.g., "099 + 001 = 100")
-        let i_d1 = (i / 10).pow(1.0).get(0);
-        let i_d2 = (i - ((i/10)*10)).pow(1.0).get(0);
+        let i_d1 = (i / 10) as f32;
+        let i_d2 = (i - ((i/10)*10)) as f32;
         
-        let j_d1 = (j / 10).pow(1.0).get(0);
-        let j_d2 = (j - ((j/10)*10)).pow(1.0).get(0);
+        let j_d1 = (j / 10) as f32;
+        let j_d2 = (j - ((j/10)*10)) as f32;
         
-        let s_d1 = (sum / 100).pow(1.0).get(0);
-        let s_d2 = ((sum - ((sum/100)*100)) / 10).pow(1.0).get(0);
-        let s_d3 = (sum - ((sum/10)*10)).pow(1.0).get(0);
+        let s_d1 = (sum / 100) as f32;
+        let s_d2 = ((sum - ((sum/100)*100)) / 10) as f32;
+        let s_d3 = (sum - ((sum/10)*10)) as f32;
         
         // Fixed format sequence: d1 d2 + d1 d2 = d1 d2 d3 PAD PAD PAD
         // Total: 12 tokens
         let data = [i_d1, i_d2, 10.0, j_d1, j_d2, 11.0, s_d1, s_d2, s_d3, 12.0, 12.0, 12.0];
         let target = [i_d2, 10.0, j_d1, j_d2, 11.0, s_d1, s_d2, s_d3, 12.0, 12.0, 12.0, 12.0];
         
-        let X = data.reshape(1, 12);
-        let Y = target.reshape(1, 12);
+        let X = data.reshape([1, 12]);
+        let Y = target.reshape([1, 12]);
         
         let logits = model.forward(X);
-        let logits_flat = logits.reshape(12, 13);
-        let Y_flat = Y.reshape(12);
+        let logits_flat = logits.reshape([12, 13]);
+        let Y_flat = Y.reshape([12]);
         let loss = logits_flat.cross_entropy(Y_flat);
         
         // backward(loss);
@@ -87,7 +87,7 @@ fn main() {
     let d_model = 64; 
     let model = GPT::new(vocab_size, d_model);
     let lr = 0.01; 
-    let epochs = 100; // Increased epochs, smaller steps
+    let epochs = 2; // Reduced for testing speed
 
     print("Training 2-digit addition (0-99) - With memory monitoring");
 

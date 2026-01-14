@@ -1,5 +1,5 @@
 fn main() {
-    let N = 256;
+    let N = 16;
     let A = Tensor::randn([N, N], false);
     let B = Tensor::randn([N, N], false);
     

@@ -854,6 +854,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         f32_methods.register_eval("log10", compile_f32_log10);
         f32_methods.register_eval("log2", compile_f32_log2);
         f32_methods.register_eval("powf", compile_f32_powf);
+        f32_methods.register_eval("pow", compile_f32_pow); // Alias
         f32_methods.register_eval("powi", compile_f32_powi);
         f32_methods.register_eval("recip", compile_f32_recip);
         f32_methods.register_eval("round", compile_f32_round);
@@ -895,6 +896,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         f64_methods.register_eval("log10", compile_f64_log10);
         f64_methods.register_eval("log2", compile_f64_log2);
         f64_methods.register_eval("powf", compile_f64_powf);
+        f64_methods.register_eval("pow", compile_f64_pow); // Alias
         f64_methods.register_eval("powi", compile_f64_powi);
         f64_methods.register_eval("recip", compile_f64_recip);
         f64_methods.register_eval("round", compile_f64_round);
@@ -4419,6 +4421,87 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.emit_register_tensor(res, &obj_ty)?;
                     return Ok((res, obj_ty.clone()));
                 }
+                "tril" => {
+                    let fn_val = self
+                        .module
+                        .get_function("tl_tensor_tril")
+                        .ok_or("tl_tensor_tril not found")?;
+
+                    if args.len() != 1 {
+                        return Err("tril requires 1 argument (diagonal)".into());
+                    }
+
+                    let (diag_val, diag_ty) = self.compile_expr(&args[0])?;
+                    let diag_i32 = match diag_ty {
+                        Type::I64 => self
+                            .builder
+                            .build_int_cast(
+                                diag_val.into_int_value(),
+                                self.context.i32_type(),
+                                "tril_diag_cast",
+                            )
+                            .unwrap(),
+                        Type::I32 => diag_val.into_int_value(),
+                        _ => return Err("tril argument must be integer".into()),
+                    };
+
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into(), diag_i32.into()], "tril_res")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from tril()".into()),
+                    };
+                    self.emit_register_tensor(res, &obj_ty)?;
+                    if self.is_safe_to_free(obj, &obj_ty) {
+                        self.emit_recursive_free(obj_val, &obj_ty)?;
+                    }
+                    return Ok((res, obj_ty.clone()));
+                }
+                "mul" | "add" | "sub" | "div" => {
+                    if args.len() != 1 {
+                        return Err(format!("{} requires 1 argument", method));
+                    }
+                    // scalar handling: ensure_tensor_v2 handles scalar->tensor conversion
+                    let (rhs_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
+
+                    let fn_name = match method {
+                        "mul" => "tl_tensor_mul",
+                        "add" => "tl_tensor_add",
+                        "sub" => "tl_tensor_sub",
+                        "div" => "tl_tensor_div",
+                        _ => unreachable!(),
+                    };
+                    let fn_val = self
+                        .module
+                        .get_function(fn_name)
+                        .ok_or(format!("{} not found", fn_name))?;
+
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into(), rhs_val.into()], "binop_res")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err(format!("Invalid return from {}", method).into()),
+                    };
+
+                    self.emit_register_tensor(res, &obj_ty)?;
+                    if self.is_safe_to_free(obj, &obj_ty) {
+                        self.emit_recursive_free(obj_val, &obj_ty)?;
+                    }
+
+                    // Note: ensure_tensor_v2 result might need freeing if it was promoted
+                    // But currently arguments cleanup loop handles args[0].
+                    // ensure_tensor_v2 might create new tensor if scalar.
+                    // If so, that new tensor is not in 'args'.
+                    // However, ensure_tensor_v2 logic usually registers tensor.
+                    // If we don't return it, we should verify leaks.
+                    // For now, assuming standard cleanup logic suffices or small leak (scalar tensor).
+
+                    return Ok((res, obj_ty.clone()));
+                }
                 "contiguous" => {
                     let fn_val = self
                         .module
@@ -6853,6 +6936,15 @@ f32_binary_method!(compile_f32_hypot, "hypot");
 f32_binary_method!(compile_f32_log, "log");
 f32_binary_method!(compile_f32_powf, "powf");
 
+fn compile_f32_pow<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    compile_f32_binary_math(codegen, obj_val, obj_ty, args, "powf")
+}
+
 f64_unary_method!(compile_f64_abs, "abs");
 f64_unary_method!(compile_f64_acos, "acos");
 f64_unary_method!(compile_f64_acosh, "acosh");
@@ -6890,6 +6982,15 @@ f64_binary_method!(compile_f64_copysign, "copysign");
 f64_binary_method!(compile_f64_hypot, "hypot");
 f64_binary_method!(compile_f64_log, "log");
 f64_binary_method!(compile_f64_powf, "powf");
+
+fn compile_f64_pow<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    compile_f64_binary_math(codegen, obj_val, obj_ty, args, "powf")
+}
 
 i64_unary_method!(compile_i64_abs, "abs");
 i64_unary_method!(compile_i64_signum, "signum");
