@@ -15,7 +15,7 @@ fn main() {
     let model = Linear::new(784, 10);
     
     print("Loading weights...");
-    load_weights(model, "examples/tasks/mnist/mnist_weights.safetensors");
+    Param::load(model, "examples/tasks/mnist/mnist_weights.safetensors");
     
     print("Evaluating on test set (first 1000 samples)...");
     

@@ -14,7 +14,7 @@ impl Linear {
     }
     
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
-        return matmul(x, self.W) + self.b;
+        return x.matmul(self.W) + self.b;
     }
     
     fn step(self, lr: f32) -> Linear {

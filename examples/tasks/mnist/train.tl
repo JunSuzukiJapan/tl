@@ -7,7 +7,7 @@ use mnist_common::load_mnist_labels;
 
 fn main() {
     print("=== MNIST Training ===");
-    set_device(Device::Auto);
+    Param::set_device(Device::Auto);
     
     let train_x = load_mnist_images("examples/tasks/mnist/data/train-images-idx3-ubyte");
     let train_y = load_mnist_labels("examples/tasks/mnist/data/train-labels-idx1-ubyte");
@@ -44,7 +44,7 @@ fn main() {
             let by = train_y.slice(start, batch_size);
             
             let logits = model.forward(bx);
-            let loss = cross_entropy(logits, by);
+            let loss = logits.cross_entropy(by);
             
             loss.backward();
             
@@ -65,6 +65,6 @@ fn main() {
     }
     
     print("Saving model weights...");
-    save_weights(model, "examples/tasks/mnist/mnist_weights.safetensors");
+    Param::save(model, "examples/tasks/mnist/mnist_weights.safetensors");
     print("Model saved.");
 }
