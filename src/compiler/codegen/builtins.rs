@@ -170,6 +170,10 @@ pub fn declare_runtime_functions<'ctx>(
     let set_dev_type = void_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_set_device", set_dev_type);
 
+    // tl_tensor_enable_grad(t: *mut OpaqueTensor) -> void
+    let enable_grad_type = void_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_tensor_enable_grad", enable_grad_type);
+
     // tl_tensor_to_device(tensor: *mut Opaque, name: *const i8) -> *mut Opaque
     let to_dev_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_tensor_to_device", to_dev_type);
@@ -1014,6 +1018,9 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_detach") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_detach as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_enable_grad") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_enable_grad as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_softmax") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_softmax as usize);

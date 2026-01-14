@@ -5012,6 +5012,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let llvm_func_name = match name {
             "slice" => "tl_tensor_slice",
             "sum" => "tl_tensor_sum", // Fallback for global sum if not caught by builtin (redundant but safe)
+            "enable_grad" => "tl_tensor_enable_grad",
             _ => name,
         };
 

@@ -589,16 +589,16 @@ pub extern "C" fn tl_tensor_detach(t: *mut OpaqueTensor, req_grad: bool) -> *mut
 #[no_mangle]
 pub extern "C" fn tl_tensor_enable_grad(t: *mut OpaqueTensor) {
     unsafe {
-        let tensor = &(*t).0;
-        // detached copy
-        let detached = tensor.detach();
-        // Create var
-        let var = candle_core::Var::from_tensor(&detached).unwrap();
-        let t_var = var.as_tensor().clone();
-        std::mem::forget(var);
-
-        // Update pointer
-        (*t).0 = t_var;
+        let tensor_wrapper = &mut *t;
+        if tensor_wrapper.1.is_none() {
+            // Determine if we can create a Var.
+            // Var::from_tensor requires contiguous layout usually, which wrapper.0 likely is.
+            let v = candle_core::Var::from_tensor(&tensor_wrapper.0).unwrap();
+            let arc = Arc::new(v);
+            tensor_wrapper.1 = Some(arc.clone());
+            // Update the inner tensor to match the Var's tensor
+            tensor_wrapper.0 = arc.as_tensor().clone();
+        }
     }
 }
 

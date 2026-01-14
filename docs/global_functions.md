@@ -1,137 +1,117 @@
 # TensorLogic API リファレンス
 
-このドキュメントは、TensorLogic言語の標準API（グローバル関数および標準クラス）のリファレンスです。
+このドキュメントは、現在のコンパイラ実装に基づくTensorLogic言語の標準API（グローバル関数、標準クラス、組み込み型）のリファレンスです。
 
 ---
 
 ## 1. グローバル関数
 
-### 入出力
+### IO & システム
+*   **`print(value) -> void`**
+    値を標準出力に出力します（改行なし）。
+*   **`println(value) -> void`**
+    値を標準出力に出力します（改行あり）。
+*   **`tl_system_time() -> f32`**
+    現在のシステム時間を秒単位で返します。
+*   **`tl_get_memory_mb() -> i64`**
+    現在のメモリ使用量をMB単位で返します。
 
-- **`print(value) -> void`**
-  値を標準出力に出力します（改行なし）。
-- **`println(value) -> void`**
-  値を標準出力に出力します（改行あり）。
+### 数学 & テンソル操作
+*   **`sin(t) -> Tensor`**, **`cos(t) -> Tensor`**
+*   **`relu(t) -> Tensor`**, **`gelu(t) -> Tensor`**
+*   **`exp(t) -> Tensor`**, **`log(t) -> Tensor`**, **`sqrt(t) -> Tensor`**
+*   **`pow(base, exp) -> Tensor`**
+*   **`matmul(a, b) -> Tensor`**
+*   **`transpose(t, dim1, dim2) -> Tensor`**
+*   **`reshape(t, ...dims) -> Tensor`**
+    テンソルの形状を変更します。可変長引数で次元を指定できます。
+*   **`slice(t, start, len) -> Tensor`**
+*   **`len(t) -> i64`**
+*   **`tril(t, diagonal) -> Tensor`**
+    行列の下三角部分を返します。
+*   **`embedding(indices, weights) -> Tensor`**
+*   **`sum(t, dim?) -> Tensor`**
+    要素の合計を計算します。ロジック: `sum(t)` (全要素), `sum(t, dim)` (次元指定)
+*   **`softmax(t, dim) -> Tensor`**
+*   **`cross_entropy(logits, targets) -> Tensor`**
+*   **`argmax(t, dim) -> Tensor`**
+*   **`item(t) -> f32/i64`**
+    0次元テンソル（または単一要素テンソル）のスカラー値を返します。
 
-### テンソル生成・操作
-
-- **`randn(shape, requires_grad) -> Tensor`**
-  標準正規分布に従う乱数でテンソルを生成します。
-- **`matmul(a, b) -> Tensor`**
-  行列積を計算します。
-- **`transpose(tensor, dim0, dim1) -> Tensor`**
-  次元を入れ替えます。
-- **`reshape(tensor, ...dims) -> Tensor`**
-  テンソルの形状を変更します。
-- **`slice(tensor, start, length) -> Tensor`**
-  第1次元を切り出します。
-- **`len(tensor) -> i64`**
-  第1次元の要素数を返します。
-- **`sum(tensor, dim?) -> Tensor`**
-  総和を計算します。
-- **`tril(tensor, diagonal) -> Tensor`**
-  下三角行列を取り出します。
-- **`embedding(indices, weights) -> Tensor`**
-  埋め込み参照を行います。
-
-### 数学関数 (Element-wise)
-
-- **`pow(base, exp) -> Tensor`**
-- **`exp(tensor) -> Tensor`**
-- **`log(tensor) -> Tensor`**
-- **`sqrt(tensor) -> Tensor`**
-- **`sin(tensor) -> Tensor`**
-- **`cos(tensor) -> Tensor`**
-
-### ニューラルネットワーク
-
-- **`relu(tensor) -> Tensor`**
-- **`gelu(tensor) -> Tensor`**
-- **`softmax(tensor, dim) -> Tensor`**
-- **`cross_entropy(logits, targets) -> Tensor`**
-
-### 自動微分
-
-- **`backward(loss) -> void`**
-- **`grad(tensor) -> Tensor`**
-- **`enable_grad(tensor) -> Tensor`**
+### 自動微分 & 学習
+*   **`grad(t) -> Tensor`**
+    テンソルの勾配を返します。
+*   **`backward(loss) -> void`**
+    `loss`から開始して勾配を計算します。
+*   **`enable_grad(t) -> Tensor`**
+    テンソルの勾配追跡を有効にします。
 
 ### パラメータ管理
-
-- **`parameter(tensor) -> Tensor`**
-- **`add_parameter(name, tensor) -> void`**
-- **`update_all_params(lr) -> void`**
-- **`save_all_params(path) -> void`**
-- **`load_all_params(path) -> void`**
-- **`save_weights(target, path) -> void`**
-- **`load_weights(path) -> Tensor`**
-- **`varbuilder_get(name, ...dims) -> Tensor`**
-- **`varbuilder_grad(name) -> Tensor`**
-
-### 制御・ユーティリティ
-
-- **`range(start, end) -> Iterator`**
-- **`tl_get_memory_mb() -> i64`**
+*   **`save_all_params(path: String) -> void`**
+*   **`load_all_params(path: String) -> void`**
+*   **`save_weights(target: Tensor|Struct, path: String) -> void`**
+*   **`load_weights(path: String) -> Tensor|void`**
+*   **`add_parameter(name: String, t: Tensor) -> void`**
+*   **`parameter(t: Tensor) -> Tensor`**
+    テンソルをパラメータとして登録します。
+*   **`register_modules(root: Struct) -> void`**
+*   **`checkpoint(method, input) -> Tensor`**
+*   **`set_device(device: Device) -> void`**
+    グローバルな計算デバイスを設定します (`Device::Cpu`, `Device::Cuda`, `Device::Metal`, `Device::Auto`).
 
 ---
 
-## 2. 標準ライブラリクラス (名前空間)
+## 2. 標準型 & 静的メソッド
 
-これらは `型名::メソッド名` (静的メソッド) またはインスタンスメソッドとして呼び出します。
+### Tensor
+*   **`Tensor::zeros(shape, requires_grad) -> Tensor`**
+*   **`Tensor::randn(shape, requires_grad) -> Tensor`**
 
-### File クラス
-ファイル入出力を扱います。
+### File
+*   **`File::open(path: String, mode: String) -> File`**
 
-**静的メソッド:**
-- **`File::open(path: String, mode: String) -> File`**
-  ファイルを指定モード（"r", "w"など）で開きます。
+### Path
+*   **`Path::new(path: String) -> Path`**
 
-**インスタンスメソッド:**
-- **`file.read_string() -> String`**
-  ファイル全体を文字列として読み込みます。
-- **`file.write_string(content: String) -> void`**
-  文字列をファイルに書き込みます。
-- **`file.close() -> void`**
-  ファイルを閉じます。
+### System
+*   **`System::time() -> f32`**
+*   **`System::sleep(seconds: f32) -> void`**
 
-### Path クラス
-ファイルパス操作を行います。
+### Env
+*   **`Env::get(key: String) -> String`**
+*   **`Env::set(key: String, value: String) -> void`**
 
-**静的メソッド:**
-- **`Path::new(path: String) -> Path`**
-  新しいパスオブジェクトを作成します。
+### Http
+*   **`Http::get(url: String) -> String`**
+*   **`Http::download(url: String, dest: String) -> bool`**
 
-**インスタンスメソッド:**
-- **`path.join(part: String) -> Path`**
-  パスを結合します。
-- **`path.exists() -> bool`**
-- **`path.is_dir() -> bool`**
-- **`path.is_file() -> bool`**
-- **`path.to_string() -> String`**
+### Image
+*   **`Image::load_grayscale(path: String) -> Tensor`**
+*   **`Image::width() -> i64`**
+*   **`Image::height() -> i64`**
 
-### Http 名前空間
-HTTPリクエストを行います。
+---
 
-**静的メソッド:**
-- **`Http::get(url: String) -> String`**
-  GETリクエストを行い、レスポンスボディを返します。
-- **`Http::download(url: String, dest: String) -> bool`**
-  ファイルをダウンロードします。成功時は `true` を返します。
+## 3. インスタンスメソッド
 
-### Env 名前空間
-環境変数を扱います。
+### Tensor メソッド
+使用法: `tensor.method(...)`
 
-**静的メソッド:**
-- **`Env::get(key: String) -> String`**
-  環境変数の値を取得します。
-- **`Env::set(key: String, value: String) -> void`**
-  環境変数を設定します。
+*   **数学 (要素ごと):**
+    `abs()`, `neg()`, `relu()`, `gelu()`, `silu()`, `sigmoid()`, `tanh()`,
+    `sin()`, `cos()`, `tan()`, `sqrt()`, `exp()`, `log()`
+*   **削減 & 統計:**
+    `sum(dim?)`, `mean(dim?)`, `max(dim?)`, `min(dim?)`, `argmax(dim)`, `argmin(dim)`,
+    `softmax(dim)`, `log_softmax(dim)`
+*   **形状 & 操作:**
+    `reshape(...)`, `transpose(d1, d2)`, `slice(start, len)`, `contiguous()`,
+    `len()`, `item()`, `item_i64()`, `to_i64()`
+*   **自動微分:**
+    `backward()`, `grad()`, `detach()`, `clone()`
+*   **デバイス:**
+    `cuda()`, `cpu()`
+*   **線形代数:**
+    `matmul(other)`
 
-### System 名前空間
-システム関連の機能です。
-
-**静的メソッド:**
-- **`System::time() -> f32`**
-  システム時刻（秒）を取得します。
-- **`System::sleep(seconds: f32) -> void`**
-  指定秒数スリープします。
+### スカラーメソッド (f32, f64)
+*   **数学:** `abs`, `sin`, `cos`, `exp`, `log`, `sqrt`, `powf`, `floor`, `ceil`, `round` など
