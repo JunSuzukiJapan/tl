@@ -741,7 +741,7 @@ impl SemanticAnalyzer {
                         }
                     };
 
-                    if idxs.len() != rank {
+                    if rank != 0 && idxs.len() != rank {
                         return Err(SemanticError::ArgumentCountMismatch {
                             name: name.clone(),
                             expected: rank,

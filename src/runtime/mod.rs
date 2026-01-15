@@ -2703,13 +2703,12 @@ pub extern "C" fn tl_tensor_abs(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 pub extern "C" fn tl_tensor_sigmoid(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     // sigmoid = 1 / (1 + exp(-x))
-    // Candle might have sigmoid directly?
-    // t.sigmoid() exists in recent versions?
-    // If not, calculate manually.
-    // Checking docs... Candle usually has it.
-    // If compiled fails, I'll switch to manual.
-    // Trying t.sigmoid() first.
-    let res = candle_nn::ops::sigmoid(t).unwrap();
+    // Manual implementation for Metal compatibility
+    let neg_t = t.neg().unwrap();
+    let exp_neg = neg_t.exp().unwrap();
+    let one = Tensor::ones(t.shape(), t.dtype(), t.device()).unwrap();
+    let denom = exp_neg.add(&one).unwrap();
+    let res = one.div(&denom).unwrap();
     make_tensor(res)
 }
 
