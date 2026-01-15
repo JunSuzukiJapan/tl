@@ -139,20 +139,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     if let Some(unreg_fn) =
                                         self.module.get_function("tl_mem_unregister")
                                     {
-                                        let _ = self
-                                            .builder
-                                            .build_call(unreg_fn, &[obj_val.into()], "");
+                                        let _ = self.builder.build_call(
+                                            unreg_fn,
+                                            &[obj_val.into()],
+                                            "",
+                                        );
                                     }
                                     if let Some(free_fn) = self.module.get_function("free") {
                                         let void_ptr = self
                                             .builder
                                             .build_pointer_cast(
                                                 obj_val.into_pointer_value(),
-                                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                                self.context
+                                                    .ptr_type(inkwell::AddressSpace::default()),
                                                 "void_ptr",
                                             )
                                             .unwrap();
-                                        let _ = self.builder.build_call(free_fn, &[void_ptr.into()], "");
+                                        let _ = self.builder.build_call(
+                                            free_fn,
+                                            &[void_ptr.into()],
+                                            "",
+                                        );
                                     }
                                 }
                             }
@@ -905,6 +912,8 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         if !function.verify(true) {
             function.print_to_stderr();
+            // Try to get more specific error from LLVM
+            eprintln!("=== LLVM VERIFICATION FAILED FOR: {} ===", func.name);
             return Err(format!("Invalid generated function {}", func.name));
         }
 

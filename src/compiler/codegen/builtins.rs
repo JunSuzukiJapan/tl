@@ -666,8 +666,8 @@ pub fn declare_runtime_functions<'ctx>(
     let gguf_load_type = i64_type.fn_type(&[i8_ptr.into()], false);
     add_fn("tl_gguf_load", gguf_load_type);
 
-    // tl_tensor_map_get(map: i64, name: *const c_char) -> *mut Tensor
-    let map_get_type = void_ptr.fn_type(&[i64_type.into(), i8_ptr.into()], false);
+    // tl_tensor_map_get(map: *mut Map, name: *const c_char) -> *mut Tensor
+    let map_get_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
     add_fn("tl_tensor_map_get", map_get_type);
 
     // tl_tensor_cat(tensors: *mut Vec, dim: i64) -> *mut Tensor
