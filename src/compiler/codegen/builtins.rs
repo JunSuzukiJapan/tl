@@ -5,7 +5,7 @@ use inkwell::AddressSpace;
 use std::collections::HashMap;
 
 use crate::compiler::ast::Type;
-use crate::runtime;
+use tl_runtime as runtime;
 
 pub fn declare_runtime_functions<'ctx>(
     context: &'ctx Context,

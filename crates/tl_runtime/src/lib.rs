@@ -4,12 +4,13 @@ pub mod device;
 pub mod memory_manager; // Arena allocator for tensor memory optimization
 
 pub mod checkpoint;
+pub mod context;
 pub mod llm;
 pub mod registry;
 pub mod stdlib;
 pub mod tensor_pool;
 
-use crate::runtime::device::get_device;
+use crate::device::get_device;
 use candle_core::Tensor;
 // Import candle_nn
 use std::cell::RefCell;
@@ -1422,7 +1423,7 @@ pub extern "C" fn tl_set_device(device_ptr: *const std::ffi::c_void) {
         }
     };
 
-    crate::runtime::device::DEVICE_MANAGER
+    crate::device::DEVICE_MANAGER
         .lock()
         .unwrap()
         .set_device(device_str);
@@ -1484,15 +1485,15 @@ pub fn force_link() {
     std::hint::black_box(tl_tensor_pow_scalar as *const ());
     std::hint::black_box(memory_manager::tl_mem_unregister as *const ());
     std::hint::black_box(tl_tensor_reshape_dims as *const ());
-    std::hint::black_box(crate::runtime::stdlib::tl_prompt as *const ());
-    std::hint::black_box(crate::runtime::stdlib::tl_string_contains as *const ());
-    std::hint::black_box(crate::runtime::stdlib::tl_string_concat as *const ());
-    std::hint::black_box(crate::runtime::stdlib::tl_string_from_int as *const ());
-    std::hint::black_box(crate::runtime::llm::tl_tensor_sample as *const ());
-    std::hint::black_box(crate::runtime::args::tl_args_count as *const ());
-    std::hint::black_box(crate::runtime::args::tl_args_get as *const ());
-    std::hint::black_box(crate::runtime::stdlib::tl_string_char_at as *const ());
-    std::hint::black_box(crate::runtime::stdlib::tl_string_len as *const ());
+    std::hint::black_box(crate::stdlib::tl_prompt as *const ());
+    std::hint::black_box(crate::stdlib::tl_string_contains as *const ());
+    std::hint::black_box(crate::stdlib::tl_string_concat as *const ());
+    std::hint::black_box(crate::stdlib::tl_string_from_int as *const ());
+    std::hint::black_box(crate::llm::tl_tensor_sample as *const ());
+    std::hint::black_box(crate::args::tl_args_count as *const ());
+    std::hint::black_box(crate::args::tl_args_get as *const ());
+    std::hint::black_box(crate::stdlib::tl_string_char_at as *const ());
+    std::hint::black_box(crate::stdlib::tl_string_len as *const ());
 }
 
 #[no_mangle]
@@ -2663,7 +2664,7 @@ pub extern "C" fn tl_qtensor_matmul(input: *mut OpaqueTensor, weight: usize) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::memory_manager;
+    use crate::memory_manager;
 
     #[test]
     fn test_tensor_creation() {

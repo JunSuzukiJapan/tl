@@ -167,11 +167,44 @@ fn main() -> Result<()> {
             // However, implementing the CLI structure is the first step.
             // I will attempt to run `cc` with the objects.
 
+            // Add runtime library path and dependency
+            // Try to find target directory
+            // heuristic: check target/debug or target/release based on current build profile?
+            // Since we are running `tl`, we don't strictly know if `libtl_runtime` is debug or release.
+            // But usually we build them together.
+            let runtime_path = PathBuf::from("target/debug"); // Default to debug for dev
+
+            link_args.push(format!("-L{}", runtime_path.display()));
+            link_args.push("-ltl_runtime".to_string());
+
+            // System libraries and Frameworks (MacOS)
+            link_args.push("-lpthread".to_string());
+            link_args.push("-ldl".to_string());
+            link_args.push("-lm".to_string());
+            link_args.push("-lc++".to_string());
+
+            #[cfg(target_os = "macos")]
+            {
+                link_args.push("-framework".to_string());
+                link_args.push("Accelerate".to_string());
+                link_args.push("-framework".to_string());
+                link_args.push("Metal".to_string());
+                link_args.push("-framework".to_string());
+                link_args.push("Foundation".to_string());
+                link_args.push("-framework".to_string());
+                link_args.push("MetalPerformanceShaders".to_string());
+                link_args.push("-framework".to_string());
+                link_args.push("Security".to_string());
+                link_args.push("-framework".to_string());
+                link_args.push("CoreFoundation".to_string());
+                link_args.push("-framework".to_string());
+                link_args.push("SystemConfiguration".to_string());
+            }
+
             let status = Command::new("cc")
                 .args(&link_args)
                 .arg("-o")
                 .arg(&output_exe)
-                // .arg("-L...") // Path to libs?
                 .status()
                 .context("Failed to run linker (cc)")?;
 
@@ -184,8 +217,8 @@ fn main() -> Result<()> {
     } else {
         // Interpreter Mode
         // Initialize args
-        tl::runtime::args::init_args(cli.args.clone());
-        tl::runtime::force_link();
+        tl_runtime::args::init_args(cli.args.clone());
+        tl_runtime::force_link();
 
         let mut combined_module = tl::compiler::ast::Module {
             structs: vec![],
@@ -231,7 +264,7 @@ fn main() -> Result<()> {
         }
 
         // JIT Execution
-        use tl::runtime::registry;
+        use tl_runtime::registry;
         registry::reset_global_context();
 
         let context = InkwellContext::create();

@@ -3797,6 +3797,27 @@ dependencies = [
  "reqwest 0.13.1",
  "safetensors",
  "thiserror 1.0.69",
+ "tl_runtime",
+ "tokenizers 0.19.1",
+ "tokio",
+]
+
+[[package]]
+name = "tl_runtime"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "candle-core",
+ "candle-coreml",
+ "candle-nn",
+ "candle-transformers",
+ "image",
+ "lazy_static",
+ "libc",
+ "log",
+ "rand 0.8.5",
+ "reqwest 0.13.1",
+ "safetensors",
  "tokenizers 0.19.1",
  "tokio",
 ]

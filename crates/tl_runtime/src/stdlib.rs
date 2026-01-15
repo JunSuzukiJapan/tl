@@ -117,7 +117,7 @@ pub extern "C" fn tl_string_len(s: *const c_char) -> i64 {
 #[no_mangle]
 pub extern "C" fn tl_file_open(path: *const c_char, mode: *const c_char) -> *mut File {
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
-    let expanded_path = crate::runtime::expand_tilde(&path_str);
+    let expanded_path = crate::expand_tilde(&path_str);
     let mode_str = unsafe { CStr::from_ptr(mode).to_string_lossy() };
 
     let f = match mode_str.as_ref() {
@@ -179,7 +179,7 @@ pub extern "C" fn tl_file_read_binary(path: *const c_char) -> *mut Vec<u8> {
         return std::ptr::null_mut();
     }
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
-    let expanded_path = crate::runtime::expand_tilde(&path_str);
+    let expanded_path = crate::expand_tilde(&path_str);
 
     match std::fs::read(&expanded_path) {
         Ok(data) => Box::into_raw(Box::new(data)),
@@ -196,7 +196,7 @@ pub extern "C" fn tl_file_write_binary(path: *const c_char, data: *mut Vec<u8>) 
         return false;
     }
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
-    let expanded_path = crate::runtime::expand_tilde(&path_str);
+    let expanded_path = crate::expand_tilde(&path_str);
     let data_vec = unsafe { &*data };
 
     match std::fs::write(&expanded_path, data_vec) {
@@ -216,7 +216,7 @@ pub extern "C" fn tl_image_load_grayscale(path: *const c_char) -> *mut Vec<u8> {
         return std::ptr::null_mut();
     }
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
-    let expanded_path = crate::runtime::expand_tilde(&path_str);
+    let expanded_path = crate::expand_tilde(&path_str);
 
     match image::open(&expanded_path) {
         Ok(img) => {
@@ -238,7 +238,7 @@ pub extern "C" fn tl_image_width(path: *const c_char) -> i64 {
         return 0;
     }
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
-    let expanded_path = crate::runtime::expand_tilde(&path_str);
+    let expanded_path = crate::expand_tilde(&path_str);
 
     match image::image_dimensions(&expanded_path) {
         Ok((w, _)) => w as i64,
@@ -252,7 +252,7 @@ pub extern "C" fn tl_image_height(path: *const c_char) -> i64 {
         return 0;
     }
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
-    let expanded_path = crate::runtime::expand_tilde(&path_str);
+    let expanded_path = crate::expand_tilde(&path_str);
 
     match image::image_dimensions(&expanded_path) {
         Ok((_, h)) => h as i64,
@@ -267,7 +267,7 @@ use std::path::PathBuf;
 #[no_mangle]
 pub extern "C" fn tl_path_new(path: *const c_char) -> *mut PathBuf {
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
-    let expanded_path = crate::runtime::expand_tilde(&path_str);
+    let expanded_path = crate::expand_tilde(&path_str);
     Box::into_raw(Box::new(std::path::PathBuf::from(expanded_path)))
 }
 
@@ -336,7 +336,7 @@ pub extern "C" fn tl_path_free(path: *mut PathBuf) {
 pub extern "C" fn tl_http_download(url: *const c_char, dest: *const c_char) -> bool {
     let url_str = unsafe { CStr::from_ptr(url).to_string_lossy() };
     let dest_str = unsafe { CStr::from_ptr(dest).to_string_lossy() };
-    let expanded_dest = crate::runtime::expand_tilde(&dest_str);
+    let expanded_dest = crate::expand_tilde(&dest_str);
 
     println!("Downloading {} ...", url_str);
 

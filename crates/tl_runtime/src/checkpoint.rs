@@ -1,5 +1,5 @@
 use candle_core::{Tensor, CustomOp1, Layout, Shape, Result};
-use crate::runtime::{device::get_device, make_tensor, OpaqueTensor};
+use crate::{device::get_device, make_tensor, OpaqueTensor};
 use std::ffi::c_void;
 use std::ops::Deref;
 

@@ -1,5 +1,5 @@
-use crate::compiler::inference::{TensorContext, TensorValue};
-use crate::runtime::OpaqueTensor;
+use crate::context::{TensorContext, TensorValue};
+use crate::OpaqueTensor;
 use lazy_static::lazy_static;
 use std::ffi::CStr;
 use std::os::raw::c_char;

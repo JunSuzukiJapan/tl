@@ -1,6 +1,6 @@
-// use crate::runtime::memory_manager; // Used implicitly? No, but keep to match other files if needed. Actually it was warned used.
-// use crate::runtime::mod::{make_tensor, OpaqueTensor}; // Fixed in previous step to `use crate::runtime::{make_tensor, OpaqueTensor};`
-use crate::runtime::{device::get_device, make_tensor, OpaqueTensor};
+// use crate::memory_manager; // Used implicitly? No, but keep to match other files if needed. Actually it was warned used.
+// use crate::mod::{make_tensor, OpaqueTensor}; // Fixed in previous step to `use crate::{make_tensor, OpaqueTensor};`
+use crate::{device::get_device, make_tensor, OpaqueTensor};
 use candle_core::{DType, Device, Tensor};
 use rand::distributions::{Distribution, WeightedIndex};
 use rand::thread_rng;
@@ -15,7 +15,7 @@ pub struct OpaqueTokenizer(pub Tokenizer);
 pub extern "C" fn tl_tokenizer_new(path: *const c_char) -> i64 {
     unsafe {
         let path_str = CStr::from_ptr(path).to_str().unwrap();
-        let expanded_path = crate::runtime::expand_tilde(path_str);
+        let expanded_path = crate::expand_tilde(path_str);
         match Tokenizer::from_file(&expanded_path) {
             Ok(tokenizer) => {
                 let ptr = Box::into_raw(Box::new(OpaqueTokenizer(tokenizer)));
@@ -111,13 +111,13 @@ pub extern "C" fn tl_tokenizer_decode(tokenizer: i64, ids: *mut OpaqueTensor) ->
 }
 
 // --- GGUF Handling ---
-use crate::runtime::OpaqueTensorMap;
+use crate::OpaqueTensorMap;
 
 #[no_mangle]
 pub extern "C" fn tl_gguf_load(path: *const c_char) -> *mut OpaqueTensorMap {
     unsafe {
         let path_str = CStr::from_ptr(path).to_str().unwrap();
-        let expanded_path = crate::runtime::expand_tilde(path_str);
+        let expanded_path = crate::expand_tilde(path_str);
 
         let mut file = std::fs::File::open(&expanded_path).expect("failed to open file");
         let content = candle_core::quantized::gguf_file::Content::read(&mut file)
@@ -148,7 +148,7 @@ pub extern "C" fn tl_gguf_load(path: *const c_char) -> *mut OpaqueTensorMap {
                 let qtensor_arc = std::sync::Arc::new(qtensor);
                 map.0.insert(
                     tensor_name.clone(),
-                    crate::runtime::LoadedTensor::Quantized(qtensor_arc),
+                    crate::LoadedTensor::Quantized(qtensor_arc),
                 );
             }
         }

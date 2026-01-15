@@ -3,12 +3,18 @@ name = "tl"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = ["crates/tl_runtime"]
+
 [dependencies]
+tl_runtime = { path = "crates/tl_runtime" }
+
 # CLI & Error Handling
 clap = { version = "4.5.4", features = ["derive"] }
 anyhow = "1.0.82"
 thiserror = "1.0.59"
 ariadne = "0.4.1"
+
 
 # Parser
 nom = "7.1.3"

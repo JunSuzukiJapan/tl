@@ -1,0 +1,35 @@
+[package]
+name = "tl_runtime"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+# Tensor Runtime
+candle-core = { version = "0.9.1", features = ["metal", "accelerate"] }
+candle-nn = "0.9.1"
+safetensors = "0.4.1"
+candle-coreml = { version = "0.3.1", optional = true }
+candle-transformers = "0.9.1"
+tokenizers = "0.19.1"
+
+# Utils
+lazy_static = "1.4.0"
+reqwest = { version = "0.13.1", features = ["blocking", "json", "multipart", "native-tls", "http2"], default-features = false }
+tokio = { version = "1.48.0", features = ["full"] }
+libc = "0.2.178"
+image = "0.25"
+byteorder = "1.5"
+rand = "0.8.5"
+log = "0.4"
+
+[features]
+default = ["accelerate", "metal"]
+accelerate = ["candle-core/accelerate"]
+metal = ["candle-core/metal"]
+cuda = ["candle-core/cuda"]
+coreml = ["dep:candle-coreml"]
+
+
