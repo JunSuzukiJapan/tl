@@ -583,6 +583,10 @@ pub fn declare_runtime_functions<'ctx>(
     let args_get_type = i8_ptr.fn_type(&[i64_type.into()], false);
     add_fn("tl_args_get", args_get_type);
 
+    // tl_string_to_i64(s: *const i8) -> i64
+    let str_to_int_type = i64_type.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_string_to_i64", str_to_int_type);
+
     // String utilities
     // tl_string_char_at(s: *const i8, index: i64) -> *const i8 (String)
     let string_char_at_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
@@ -1217,6 +1221,9 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_args_get") {
         execution_engine.add_global_mapping(&f, runtime::args::tl_args_get as usize);
     }
+    if let Some(f) = module.get_function("tl_string_to_i64") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_to_i64 as usize);
+    }
 
     // String utilities
     if let Some(f) = module.get_function("tl_string_char_at") {
@@ -1323,6 +1330,14 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_item as usize);
     }
     fn_return_types.insert("tl_tensor_to_f32".to_string(), Type::F32);
+
+    // CLI Args
+    fn_return_types.insert("tl_args_count".to_string(), Type::I64);
+    fn_return_types.insert("tl_string_to_i64".to_string(), Type::I64);
+    fn_return_types.insert(
+        "tl_args_get".to_string(),
+        Type::UserDefined("String".to_string()),
+    );
 
     // Added missing ones (Define type locally as declared later)
     let tensor_type = Type::Tensor(Box::new(Type::F32), 1);

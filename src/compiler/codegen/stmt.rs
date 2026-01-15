@@ -80,6 +80,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .ok_or("tl_mem_unregister not found")?;
 
         match ty {
+            Type::UserDefined(name) if name == "String" => {} // Skip String
             Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => {
                 self.builder
                     .build_call(unreg_fn, &[val.into()], "")
@@ -90,6 +91,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         match ty {
             Type::Struct(name) | Type::UserDefined(name) => {
+                if name == "String" {
+                    return Ok(());
+                }
                 if let Some(struct_def) = self.struct_defs.get(name) {
                     let ptr = val.into_pointer_value();
                     let st_llvm_ty = *self.struct_types.get(name).unwrap();

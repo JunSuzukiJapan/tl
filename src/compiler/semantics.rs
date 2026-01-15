@@ -1519,6 +1519,47 @@ impl SemanticAnalyzer {
                     }
                     let _t0 = self.check_expr(&mut args[0])?;
                     return Ok(Type::UserDefined("String".to_string()));
+                } else if name == "tl_args_count" {
+                    if !args.is_empty() {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 0,
+                            found: args.len(),
+                        });
+                    }
+                    return Ok(Type::I64);
+                } else if name == "tl_args_get" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    let arg_ty = self.check_expr(&mut args[0])?;
+                    if !matches!(arg_ty, Type::I64 | Type::I32) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::I64,
+                            found: arg_ty,
+                        });
+                    }
+                    return Ok(Type::UserDefined("String".to_string()));
+                } else if name == "tl_string_to_i64" {
+                    if args.len() != 1 {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: args.len(),
+                        });
+                    }
+                    let arg_ty = self.check_expr(&mut args[0])?;
+                    if arg_ty != Type::UserDefined("String".to_string()) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::UserDefined("String".to_string()),
+                            found: arg_ty,
+                        });
+                    }
+                    return Ok(Type::I64);
                 } else if name == "tl_http_download" {
                     if args.len() != 2 {
                         return Err(SemanticError::ArgumentCountMismatch {

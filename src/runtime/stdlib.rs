@@ -52,6 +52,15 @@ pub extern "C" fn tl_string_concat(s1: *const c_char, s2: *const c_char) -> *mut
 }
 
 #[no_mangle]
+pub extern "C" fn tl_string_to_i64(s: *const c_char) -> i64 {
+    if s.is_null() {
+        return 0;
+    }
+    let s_str = unsafe { CStr::from_ptr(s).to_string_lossy() };
+    s_str.parse::<i64>().unwrap_or(0)
+}
+
+#[no_mangle]
 pub extern "C" fn tl_string_from_int(val: i64) -> *mut c_char {
     let s = val.to_string();
     match CString::new(s) {

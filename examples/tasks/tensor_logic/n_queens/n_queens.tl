@@ -1,15 +1,47 @@
 fn main() {
-    let N = 8;
+    let argc = tl_args_count();
+    
+    let N = if argc > 0 {
+        tl_string_to_i64(tl_args_get(0))
+    } else {
+        8
+    };
+    
+    let num_solutions = if argc > 1 {
+        tl_string_to_i64(tl_args_get(1))
+    } else {
+        10
+    };
+    
+    print("Initializing N-Queens Solver. N="); print(N);
+    print(", Solutions to find="); println(num_solutions);
+
     let lr = 0.5;
     let epochs = 2000;
 
-    print("Initializing N-Queens Solver for N=");
-    println(N);
+    print("Initializing N-Queens Solver.");
+    print(" N=");
+    print(N);
+    print(", Solutions to find=");
+    println(num_solutions);
+    
+    let solutions_found = 0;
+    
+    // Loop to find multiple solutions
+    // Since we don't have a 'while' with complex condition or 'break' easily,
+    // we iterate enough times or use a large loop.
+    // Optimization: Just loop `num_solutions` times for now, assuming 1 run = 1 attempt.
+    // Ideally we retry until valid.
+    
+    let run = 0;
+    while run < num_solutions {
+        print("Run ");
+        println(run + 1);
 
-    // Initialize board logits with random noise
-    // Using `requires_grad=true` for optimization
-    let board = Tensor::randn([N, N], true);
-    // let board = Tensor::zeros([N, N], true);
+        // Initialize board logits with random noise
+        // Using `requires_grad=true` for optimization
+        let board = Tensor::randn([N, N], true);
+        // let board = Tensor::zeros([N, N], true);
     
     // Optimizer loop
     for i in 0..epochs {
@@ -70,4 +102,6 @@ fn main() {
         println("");
         let rows = rows + 1;
     }
+    let run = run + 1;
+  }
 }
