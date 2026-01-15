@@ -42,9 +42,10 @@ extern fn tl_tokenizer_new(path: String) -> i64;
 extern fn tl_tokenizer_encode(tok: i64, prompt: String) -> Tensor<i64, 2>;
 extern fn tl_tokenizer_decode(tok: i64, ids: Tensor<i64, 2>) -> String;
 
-extern fn tl_gguf_load(path: String) -> i64;
-extern fn tl_tensor_map_get(map: i64, name: String) -> Tensor<f32, 2>;
-extern fn tl_tensor_map_get_1d(map: i64, name: String) -> Tensor<f32, 1>;
+struct Map { _d: i64 }
+extern fn tl_gguf_load(path: String) -> Map;
+extern fn tl_tensor_map_get(map: Map, name: String) -> Tensor<f32, 2>;
+extern fn tl_tensor_map_get_1d(map: Map, name: String) -> Tensor<f32, 1>;
 
 extern fn tl_tensor_rope_new_cos(dim: i64, len: i64, theta: f32) -> Tensor<f32, 2>;
 extern fn tl_tensor_rope_new_sin(dim: i64, len: i64, theta: f32) -> Tensor<f32, 2>;

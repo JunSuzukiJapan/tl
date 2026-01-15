@@ -1,5 +1,6 @@
-extern fn tl_gguf_load(path: String) -> i64;
-extern fn tl_tensor_map_keys(map: i64) -> i64;
+struct Map { _d: i64 }
+extern fn tl_gguf_load(path: String) -> Map;
+extern fn tl_tensor_map_keys(map: Map) -> i64;
 extern fn tl_vec_string_len(v: i64) -> i64;
 extern fn tl_vec_string_get(v: i64, i: i64) -> String;
 

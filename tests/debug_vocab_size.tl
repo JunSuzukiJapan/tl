@@ -1,5 +1,6 @@
-extern fn tl_gguf_load(path: String) -> i64;
-extern fn tl_tensor_map_get(map: i64, key: String) -> Tensor<f32, 2>;
+struct Map { _d: i64 }
+extern fn tl_gguf_load(path: String) -> Map;
+extern fn tl_tensor_map_get(map: Map, key: String) -> Tensor<f32, 2>;
 extern fn println(t: Tensor<f32, 2>) -> void;
 
 fn main() {

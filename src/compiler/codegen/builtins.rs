@@ -662,8 +662,8 @@ pub fn declare_runtime_functions<'ctx>(
     let tok_dec_type = i8_ptr.fn_type(&[i64_type.into(), void_ptr.into()], false);
     add_fn("tl_tokenizer_decode", tok_dec_type);
 
-    // tl_gguf_load(path: *const c_char) -> Map Handle (i64)
-    let gguf_load_type = i64_type.fn_type(&[i8_ptr.into()], false);
+    // tl_gguf_load(path: *const c_char) -> *mut OpaqueTensorMap
+    let gguf_load_type = void_ptr.fn_type(&[i8_ptr.into()], false);
     add_fn("tl_gguf_load", gguf_load_type);
 
     // tl_tensor_map_get(map: *mut Map, name: *const c_char) -> *mut Tensor
@@ -704,8 +704,8 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_reshape_2d", tensor_reshape_2d_type);
     add_fn("tl_tensor_reshape_3d_to_2d", tensor_reshape_2d_type); // alias
 
-    // Map get alias (first arg is i64 handle from tl_gguf_load)
-    let map_get_1d_type = void_ptr.fn_type(&[i64_type.into(), i8_ptr.into()], false);
+    // Map get alias (first arg is ptr handle from tl_gguf_load)
+    let map_get_1d_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
     add_fn("tl_tensor_map_get_1d", map_get_1d_type);
 
     // Narrow (slice): tl_tensor_narrow(t, dim, start, length) -> t
@@ -2436,7 +2436,7 @@ pub fn declare_runtime_functions<'ctx>(
     // --- Missing Mappings for Llama 3 ---
 
     // tl_tensor_map_get_quantized -> usize (i64)
-    let qt_get_type = i64_type.fn_type(&[i64_type.into(), i8_ptr.into()], false);
+    let qt_get_type = i64_type.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
     add_fn("tl_tensor_map_get_quantized", qt_get_type);
     if let Some(f) = module.get_function("tl_tensor_map_get_quantized") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get_quantized as usize);

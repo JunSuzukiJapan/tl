@@ -1,9 +1,10 @@
-extern fn tl_gguf_load(path: String) -> i64;
+struct Map { _d: i64 }
+extern fn tl_gguf_load(path: String) -> Map;
 extern fn tl_tokenizer_new(path: String) -> i64;
 extern fn tl_tokenizer_encode(tok: i64, prompt: String) -> Tensor<i64, 1>;
 extern fn tl_tokenizer_decode(tok: i64, ids: Tensor<i64, 1>) -> String;
-extern fn tl_tensor_map_get(map: i64, key: String) -> Tensor<f32, 2>;
-extern fn tl_tensor_map_get_1d(map: i64, key: String) -> Tensor<f32, 1>;
+extern fn tl_tensor_map_get(map: Map, key: String) -> Tensor<f32, 2>;
+extern fn tl_tensor_map_get_1d(map: Map, key: String) -> Tensor<f32, 1>;
 extern fn tl_tensor_embedding(idx: Tensor<i64, 1>, table: Tensor<f32, 2>) -> Tensor<f32, 2>;
 extern fn tl_tensor_rms_norm(x: Tensor<f32, 2>, w: Tensor<f32, 1>, e: f32) -> Tensor<f32, 2>;
 extern fn tl_tensor_matmul(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
@@ -41,24 +42,24 @@ extern fn tl_tensor_matmul_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>) -> Tensor<f3
 extern fn tl_tensor_add_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>) -> Tensor<f32, 4>;
 extern fn tl_tensor_softmax(t: Tensor<f32, 4>, d: i64) -> Tensor<f32, 4>;
 
-extern fn tl_tensor_map_get_quantized(map: i64, key: String) -> i64;
+extern fn tl_tensor_map_get_quantized(map: Map, key: String) -> i64;
 extern fn tl_qtensor_matmul(input: Tensor<f32, 2>, weight: i64) -> Tensor<f32, 2>;
 
 struct Linear { w: i64 }
 impl Linear {
-    fn from_map(m: i64, k: String) -> Linear { return Linear { w: tl_tensor_map_get_quantized(m, k) }; }
+    fn from_map(m: Map, k: String) -> Linear { return Linear { w: tl_tensor_map_get_quantized(m, k) }; }
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { 
         return tl_qtensor_matmul(x, self.w); 
     }
 }
 struct RMSNorm { w: Tensor<f32, 1>, e: f32 }
 impl RMSNorm {
-    fn new(m: i64, k: String) -> RMSNorm { return RMSNorm { w: tl_tensor_map_get_1d(m, k), e: 0.00001 }; }
+    fn new(m: Map, k: String) -> RMSNorm { return RMSNorm { w: tl_tensor_map_get_1d(m, k), e: 0.00001 }; }
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { return tl_tensor_rms_norm(x, self.w, self.e); }
 }
 struct MLP { g: Linear, u: Linear, d: Linear }
 impl MLP {
-    fn from_map(m: i64, p: String) -> MLP {
+    fn from_map(m: Map, p: String) -> MLP {
         return MLP {
             g: Linear::from_map(m, tl_string_concat(p, "_gate.weight")),
             u: Linear::from_map(m, tl_string_concat(p, "_up.weight")),
@@ -71,7 +72,7 @@ impl MLP {
 }
 struct Attention { q: Linear, k: Linear, v: Linear, o: Linear }
 impl Attention {
-    fn from_map(m: i64, p: String) -> Attention {
+    fn from_map(m: Map, p: String) -> Attention {
         return Attention {
             q: Linear::from_map(m, tl_string_concat(p, "_q.weight")),
             k: Linear::from_map(m, tl_string_concat(p, "_k.weight")),
@@ -116,7 +117,7 @@ impl Attention {
 }
 struct Block { an: RMSNorm, ffn: RMSNorm, at: Attention, mlp: MLP }
 impl Block {
-    fn from_map(m: i64, li: i64) -> Block {
+    fn from_map(m: Map, li: i64) -> Block {
         let p = tl_string_concat("blk.", tl_string_from_int(li));
         return Block {
             an: RMSNorm::new(m, tl_string_concat(p, ".attn_norm.weight")),

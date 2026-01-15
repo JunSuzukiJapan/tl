@@ -10,9 +10,10 @@ extern fn tl_tokenizer_new(path: String) -> i64;
 extern fn tl_tokenizer_encode(tok: i64, prompt: String) -> Tensor<i64, 2>;
 extern fn tl_tokenizer_decode(tok: i64, ids: Tensor<i64, 2>) -> String;
 
-extern fn tl_gguf_load(path: String) -> i64;
-extern fn tl_tensor_map_get(map: i64, name: String) -> Tensor<f32, 2>;
-extern fn tl_tensor_map_get_1d(map: i64, name: String) -> Tensor<f32, 1>;
+struct Map { _d: i64 }
+extern fn tl_gguf_load(path: String) -> Map;
+extern fn tl_tensor_map_get(map: Map, name: String) -> Tensor<f32, 2>;
+extern fn tl_tensor_map_get_1d(map: Map, name: String) -> Tensor<f32, 1>;
 
 extern fn tl_tensor_matmul(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
 extern fn tl_tensor_matmul_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>) -> Tensor<f32, 4>;
@@ -50,7 +51,7 @@ struct RMSNorm {
 }
 
 impl RMSNorm {
-    fn new(map: i64, key: String) -> RMSNorm {
+    fn new(map: Map, key: String) -> RMSNorm {
         let w = tl_tensor_map_get_1d(map, key);
         return RMSNorm { weight: w, eps: 0.00001 };
     }
@@ -65,7 +66,7 @@ struct Linear {
 }
 
 impl Linear {
-    fn from_map(map: i64, key: String) -> Linear {
+    fn from_map(map: Map, key: String) -> Linear {
         let w = tl_tensor_map_get(map, key);
         return Linear { weight: w }; 
     }
@@ -84,7 +85,7 @@ struct MLP {
 }
 
 impl MLP {
-    fn from_map(map: i64, prefix: String) -> MLP {
+    fn from_map(map: Map, prefix: String) -> MLP {
         // GGUF naming: blk.X.ffn_gate.weight, blk.X.ffn_up.weight, blk.X.ffn_down.weight
         let gate = Linear::from_map(map, tl_string_concat(prefix, "_gate.weight"));
         let up = Linear::from_map(map, tl_string_concat(prefix, "_up.weight"));
@@ -115,7 +116,7 @@ struct Attention {
 }
 
 impl Attention {
-    fn from_map(map: i64, prefix: String) -> Attention {
+    fn from_map(map: Map, prefix: String) -> Attention {
         // GGUF naming: blk.X.attn_q.weight, blk.X.attn_k.weight, blk.X.attn_v.weight, blk.X.attn_output.weight
         let q = Linear::from_map(map, tl_string_concat(prefix, "_q.weight"));
         let k = Linear::from_map(map, tl_string_concat(prefix, "_k.weight"));
@@ -213,7 +214,7 @@ struct TransformerBlock {
 }
 
 impl TransformerBlock {
-    fn from_map(map: i64, layer_idx: i64) -> TransformerBlock {
+    fn from_map(map: Map, layer_idx: i64) -> TransformerBlock {
         // Build weight name prefix: "blk.X"
         let prefix = tl_string_concat("blk.", tl_string_from_int(layer_idx));
         

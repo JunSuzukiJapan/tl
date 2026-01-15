@@ -114,7 +114,7 @@ pub extern "C" fn tl_tokenizer_decode(tokenizer: i64, ids: *mut OpaqueTensor) ->
 use crate::runtime::OpaqueTensorMap;
 
 #[no_mangle]
-pub extern "C" fn tl_gguf_load(path: *const c_char) -> i64 {
+pub extern "C" fn tl_gguf_load(path: *const c_char) -> *mut OpaqueTensorMap {
     unsafe {
         let path_str = CStr::from_ptr(path).to_str().unwrap();
         let expanded_path = crate::runtime::expand_tilde(path_str);
@@ -141,7 +141,7 @@ pub extern "C" fn tl_gguf_load(path: *const c_char) -> i64 {
                     Ok(q) => q,
                     Err(e) => {
                         eprintln!("Failed to read qtensor: {}", e);
-                        return 0; // Return 0 on error
+                        return std::ptr::null_mut(); // Return null on error
                     }
                 };
 
@@ -153,7 +153,7 @@ pub extern "C" fn tl_gguf_load(path: *const c_char) -> i64 {
             }
         }
 
-        map_ptr as i64
+        map_ptr // Return pointer directly
     }
 }
 
