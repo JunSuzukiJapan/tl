@@ -2,85 +2,81 @@
 // mod runtime;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use inkwell::context::Context as InkwellContext;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use tl::compiler::codegen::CodeGenerator;
 use tl::compiler::inference::{forward_chain, query, GroundAtom, Value};
 use tl::compiler::semantics::SemanticAnalyzer;
 
 #[derive(Parser)]
 #[command(name = "tlc")]
+#[command(version)]
 #[command(about = "Tensor Logic Compiler", long_about = None)]
 struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
+    /// Input files
+    #[arg(required = true)]
+    files: Vec<String>,
 
-#[derive(Subcommand)]
-enum Commands {
-    /// Check syntax and types
-    Check {
-        /// Input file
-        file: PathBuf,
-    },
-    /// Compile and run (JIT)
-    Run {
-        /// Input file
-        file: PathBuf,
-        /// Device (cpu, metal, cuda, auto)
-        #[arg(long, default_value = "auto")]
-        device: String,
-        /// Arguments to pass to the TL program (after --)
-        #[arg(last = true)]
-        args: Vec<String>,
-    },
     /// Compile to executable
-    Build {
-        /// Input file
-        file: PathBuf,
-        /// Output file
-        #[arg(short, long, value_name = "FILE")]
-        output: Option<PathBuf>,
-    },
+    #[arg(short, long)]
+    compile: bool,
+
+    /// Output file
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+
+    /// Emit assembly
+    #[arg(short = 'S', long)]
+    save_asm: bool,
+
+    /// Device (cpu, metal, cuda, auto)
+    #[arg(short, long, default_value = "auto")]
+    device: String,
+
+    /// Arguments to pass to the TL program (after --)
+    #[arg(last = true)]
+    args: Vec<String>,
 }
 
 fn main() -> Result<()> {
     env_logger::init();
     let cli = Cli::parse();
 
-    match &cli.command {
-        Commands::Check { file } => {
-            println!("Checking file: {:?}", file);
-            match load_module_recursive(file.clone()) {
-                Ok(mut ast) => {
-                    println!("Syntax OK");
-                    // Perform Semantic Analysis
-                    let mut analyzer = SemanticAnalyzer::new();
-                    match analyzer.check_module(&mut ast) {
-                        Ok(_) => println!("Semantics OK"),
-                        Err(e) => {
-                            eprintln!("Semantic check failed: {}", e);
-                            std::process::exit(1);
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
-                }
+    // Set device environment variable
+    std::env::set_var("TL_DEVICE", &cli.device);
+
+    let mut source_files = Vec::new();
+    let mut object_files = Vec::new();
+
+    for f in &cli.files {
+        let p = PathBuf::from(f);
+        if let Some(ext) = p.extension() {
+            if ext == "tl" {
+                source_files.push(p);
+            } else if ext == "o" || ext == "s" {
+                object_files.push(p);
+            } else {
+                // Assume source file if unknown
+                source_files.push(p);
             }
+        } else {
+            source_files.push(p);
         }
-        Commands::Run { file, device, args } => {
-            // Set device environment variable
-            std::env::set_var("TL_DEVICE", device);
-            // Initialize command line arguments for TL program
-            tl::runtime::args::init_args(args.clone());
-            tl::runtime::force_link();
-            // tl::runtime::tl_runtime_keep_alive();
-            println!("Running file: {:?}", file);
+    }
+
+    // Determine mode
+    let is_compile_mode = cli.compile || cli.output.is_some() || cli.save_asm;
+
+    if is_compile_mode {
+        // Compile Mode
+        let mut generated_objects = Vec::new();
+
+        for file in &source_files {
+            println!("Compiling file: {:?}", file);
             let mut ast = match load_module_recursive(file.clone()) {
                 Ok(ast) => ast,
                 Err(e) => {
@@ -89,87 +85,186 @@ fn main() -> Result<()> {
                 }
             };
 
-            // 2. Semantics
+            // Semantics
             let mut analyzer = SemanticAnalyzer::new();
             if let Err(e) = analyzer.check_module(&mut ast) {
-                eprintln!("Semantic error: {}", e);
+                eprintln!("Semantic error in {:?}: {}", file, e);
                 std::process::exit(1);
             }
 
-            // 3. JIT Execution (First pass to setup tensors)
-            // We always run JIT to execute top-level statements (e.g. tensor definitions)
-            // This populates the global TensorContext via register callbacks.
-            use tl::runtime::registry;
-            registry::reset_global_context();
-
+            // Codegen
             let context = InkwellContext::create();
-            let mut codegen = CodeGenerator::new(&context, "main");
-            codegen.compile_module(&ast).unwrap();
+            // Module name from filename
+            let module_name = file.file_stem().unwrap().to_str().unwrap();
+            let mut codegen = CodeGenerator::new(&context, module_name);
 
-            // codegen.dump_llvm_ir(); // Debug
-
-            println!("Executing main...");
-            match codegen.jit_execute("main") {
-                Ok(ret) => println!("Program returned: {}", ret),
-                Err(e) => println!("Execution failed: {}", e),
+            if let Err(e) = codegen.compile_module(&ast) {
+                eprintln!("Codegen error in {:?}: {}", file, e);
+                std::process::exit(1);
             }
 
-            // 4. Logic Execution (Hybrid mode)
-            // Check if this is a logic program
-            let is_logic_program =
-                !ast.relations.is_empty() || !ast.rules.is_empty() || !ast.queries.is_empty();
-
-            if is_logic_program {
-                // Get the context populated by JIT execution
-                let tensor_context = registry::get_global_context();
-                println!(
-                    "Tensor Context ({} tensors registered)",
-                    tensor_context.tensors.len()
-                );
-
-                // Execute as logic program using the context
-                run_logic_program(&ast, &tensor_context);
+            if cli.save_asm {
+                let asm_path = file.with_extension("s");
+                if let Err(e) = codegen.emit_assembly_file(&asm_path) {
+                    eprintln!("Failed to emit assembly for {:?}: {}", file, e);
+                    std::process::exit(1);
+                }
+                println!("Generated assembly: {:?}", asm_path);
+            } else {
+                let obj_path = file.with_extension("o");
+                if let Err(e) = codegen.emit_object_file(&obj_path) {
+                    eprintln!("Failed to emit object file for {:?}: {}", file, e);
+                    std::process::exit(1);
+                }
+                generated_objects.push(obj_path);
             }
         }
-        Commands::Build { file, output: _ } => {
-            println!("Building file: {:?}", file);
-            let mut ast = match load_module_recursive(file.clone()) {
-                Ok(ast) => ast,
-                Err(e) => {
-                    eprintln!("Load error: {}", e);
-                    std::process::exit(1);
+
+        // Check if output file indicates object file (skip linking)
+        let output_is_object = cli
+            .output
+            .as_ref()
+            .map(|p| p.extension().map_or(false, |e| e == "o"))
+            .unwrap_or(false);
+
+        // Link Step (only if compiling and not just saving asm, and not explicitly outputting object)
+        if (cli.compile || cli.output.is_some()) && !cli.save_asm && !output_is_object {
+            let mut link_args = Vec::new();
+            link_args.extend(
+                generated_objects
+                    .iter()
+                    .map(|p| p.to_str().unwrap().to_string()),
+            );
+            link_args.extend(object_files.iter().map(|p| p.to_str().unwrap().to_string()));
+
+            // Determine output filename
+            let output_exe = if let Some(out) = cli.output {
+                out
+            } else {
+                // Default to first source filename without extension
+                if !source_files.is_empty() {
+                    let mut p = source_files[0].clone();
+                    p.set_extension("");
+                    p
+                } else {
+                    PathBuf::from("a.out")
                 }
             };
 
-            // 2. Semantics
-            let mut analyzer = SemanticAnalyzer::new();
-            if let Err(e) = analyzer.check_module(&mut ast) {
-                eprintln!("Semantic error: {}", e);
+            println!("Linking to {:?}", output_exe);
+
+            // Invoke cc
+            // We need to link against runtime libs if needed.
+            // For now assume standard linking. If we user uses external tensor library (candle),
+            // static linking might be complex. But let's try basic link.
+            // WARNING: The JIT engine links candle symbols in memory.
+            // A standalone executable needs to link against the Rust static library or dylib containing these symbols?
+            // Wait, currently `tl` is self-contained.
+            // To produce a standalone executable, we need `libtl_runtime.a` or similar?
+            // Or we just produce object files and user has to link?
+            // The prompt asks to "create executable".
+            // Since we don't have a library distribution yet, linking might fail due to missing symbols (tl_runtime functions).
+            // However, implementing the CLI structure is the first step.
+            // I will attempt to run `cc` with the objects.
+
+            let status = Command::new("cc")
+                .args(&link_args)
+                .arg("-o")
+                .arg(&output_exe)
+                // .arg("-L...") // Path to libs?
+                .status()
+                .context("Failed to run linker (cc)")?;
+
+            if !status.success() {
+                eprintln!("Linking failed");
                 std::process::exit(1);
             }
+            println!("Build successful: {:?}", output_exe);
+        }
+    } else {
+        // Interpreter Mode
+        // Initialize args
+        tl::runtime::args::init_args(cli.args.clone());
+        tl::runtime::force_link();
 
-            // 3. Codegen
-            let context = InkwellContext::create();
-            let mut codegen = CodeGenerator::new(&context, "main");
-            if let Err(e) = codegen.compile_module(&ast) {
-                eprintln!("Codegen error: {}", e);
-                std::process::exit(1);
+        let mut combined_module = tl::compiler::ast::Module {
+            structs: vec![],
+            enums: vec![],
+            impls: vec![],
+            functions: vec![],
+            tensor_decls: vec![],
+            relations: vec![],
+            rules: vec![],
+            queries: vec![],
+            imports: vec![],
+            submodules: std::collections::HashMap::new(),
+        };
+
+        for file in &source_files {
+            // println!("Loading file: {:?}", file);
+            match load_module_recursive(file.clone()) {
+                Ok(mod_) => {
+                    // Merge
+                    combined_module.structs.extend(mod_.structs);
+                    combined_module.enums.extend(mod_.enums);
+                    combined_module.impls.extend(mod_.impls);
+                    combined_module.functions.extend(mod_.functions);
+                    combined_module.tensor_decls.extend(mod_.tensor_decls);
+                    combined_module.relations.extend(mod_.relations);
+                    combined_module.rules.extend(mod_.rules);
+                    combined_module.queries.extend(mod_.queries);
+                    combined_module.imports.extend(mod_.imports);
+                    combined_module.submodules.extend(mod_.submodules);
+                }
+                Err(e) => {
+                    eprintln!("Load error in {:?}: {}", file, e);
+                    std::process::exit(1);
+                }
             }
+        }
 
-            // Debug: print IR
-            codegen.dump_llvm_ir();
+        // Semantics
+        let mut analyzer = SemanticAnalyzer::new();
+        if let Err(e) = analyzer.check_module(&mut combined_module) {
+            eprintln!("Semantic error: {}", e);
+            std::process::exit(1);
+        }
 
-            // 4. Output (simplified for now to IR dumping or validation)
-            // Ideally we'd compile to object file and link.
-            // For now, let's just confirm it runs through codegen.
-            println!("Codegen finished. IR dumped to stderr.");
+        // JIT Execution
+        use tl::runtime::registry;
+        registry::reset_global_context();
+
+        let context = InkwellContext::create();
+        let mut codegen = CodeGenerator::new(&context, "main");
+
+        if let Err(e) = codegen.compile_module(&combined_module) {
+            eprintln!("Codegen error: {}", e);
+            std::process::exit(1);
+        }
+
+        // println!("Executing...");
+        match codegen.jit_execute("main") {
+            Ok(ret) => {
+                // println!("Program returned: {}", ret)
+                let _ = ret; // suppress unused
+            }
+            Err(e) => println!("Execution failed: {}", e),
+        }
+
+        // Logic program logic
+        let is_logic_program = !combined_module.relations.is_empty()
+            || !combined_module.rules.is_empty()
+            || !combined_module.queries.is_empty();
+
+        if is_logic_program {
+            let tensor_context = registry::get_global_context();
+            run_logic_program(&combined_module, &tensor_context);
         }
     }
 
     Ok(())
 }
 
-/// Execute a logic program using the inference engine.
 /// Execute a logic program using the inference engine.
 fn run_logic_program(
     module: &tl::compiler::ast::Module,

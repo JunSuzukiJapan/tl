@@ -231,10 +231,7 @@ fn compile_tensor_get<'ctx>(
         .builder
         .build_pointer_cast(
             index_array_ptr,
-            codegen
-                .context
-                .i64_type()
-                .ptr_type(inkwell::AddressSpace::default()),
+            codegen.context.ptr_type(inkwell::AddressSpace::default()),
             "indices_ptr_cast",
         )
         .map_err(|e| e.to_string())?;
@@ -6012,10 +6009,7 @@ fn compile_tensor_set<'ctx>(
         .builder
         .build_pointer_cast(
             index_array_ptr,
-            codegen
-                .context
-                .i64_type()
-                .ptr_type(inkwell::AddressSpace::default()),
+            codegen.context.ptr_type(inkwell::AddressSpace::default()),
             "indices_ptr_cast",
         )
         .map_err(|e| e.to_string())?;

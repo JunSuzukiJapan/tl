@@ -84,6 +84,58 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
+    pub fn emit_object_file(&self, path: &std::path::Path) -> Result<(), String> {
+        use inkwell::targets::{
+            CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
+        };
+
+        Target::initialize_native(&InitializationConfig::default()).map_err(|e| e.to_string())?;
+
+        let triple = TargetMachine::get_default_triple();
+        let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
+
+        let target_machine = target
+            .create_target_machine(
+                &triple,
+                "generic",
+                "",
+                OptimizationLevel::Default,
+                RelocMode::Default,
+                CodeModel::Default,
+            )
+            .ok_or("Failed to create target machine")?;
+
+        target_machine
+            .write_to_file(&self.module, FileType::Object, path)
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn emit_assembly_file(&self, path: &std::path::Path) -> Result<(), String> {
+        use inkwell::targets::{
+            CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
+        };
+
+        Target::initialize_native(&InitializationConfig::default()).map_err(|e| e.to_string())?;
+
+        let triple = TargetMachine::get_default_triple();
+        let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
+
+        let target_machine = target
+            .create_target_machine(
+                &triple,
+                "generic",
+                "",
+                OptimizationLevel::Default,
+                RelocMode::Default,
+                CodeModel::Default,
+            )
+            .ok_or("Failed to create target machine")?;
+
+        target_machine
+            .write_to_file(&self.module, FileType::Assembly, path)
+            .map_err(|e| e.to_string())
+    }
+
     fn register_builtins(&mut self) {
         let device_enum = EnumDef {
             name: "Device".to_string(),
