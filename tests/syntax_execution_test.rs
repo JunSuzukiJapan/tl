@@ -55,7 +55,7 @@ fn run_fixture(path: &Path) -> Result<(), String> {
 
     // Run the compiler
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_tl"));
-    cmd.arg("run").arg(path);
+    cmd.arg(path);
 
     // Timeout or kill logic if needed? For now rely on simple execution.
     // If it hangs, user can kill. Syntax tests should be fast.

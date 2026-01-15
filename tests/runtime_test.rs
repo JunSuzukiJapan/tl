@@ -1,4 +1,4 @@
-use tl::runtime::*;
+use tl_runtime::*;
 
 // Helper to check if a tensor is not null
 fn assert_tensor_valid(t: *mut OpaqueTensor) {

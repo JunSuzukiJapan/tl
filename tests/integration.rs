@@ -54,7 +54,7 @@ fn run_fixture(path: &Path) -> Result<(), String> {
     // Run the compiler
     // We use "run" subcommand for now to test JIT
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_tl"));
-    cmd.arg("run").arg(path);
+    cmd.arg(path);
 
     let output = cmd
         .output()

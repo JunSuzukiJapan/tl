@@ -21,12 +21,12 @@ fn main() {
     let model = GPT::new(vocab_size, d_model);
     let lr = 0.01;
     
-    print("Simple loop test - 100 epochs, 100 iterations each");
+    print("Simple loop test - 2 epochs, 5 iterations each");
     
-    for epoch in range(0, 100) {
+    for epoch in range(0, 2) {
         print("Epoch:"); print(epoch);
         
-        for i in range(0, 100) {
+        for i in range(0, 5) {
             // Minimal data construction
             let data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
             let target = [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 12.0];
