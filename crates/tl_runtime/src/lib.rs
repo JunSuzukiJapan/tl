@@ -663,6 +663,7 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) {
             if arena::tl_arena_contains(t as *mut std::ffi::c_void) {
                 // Arena-allocated tensors MUST be dropped to release Candle resources (GPU memory, etc)
                 // The memory for OpaqueTensor itself is reclaimed by arena reset, but the inner content needs Drop.
+                // println!("DEBUG: Drop arena tensor {:p}", t);
                 std::ptr::drop_in_place(t);
                 return;
             }
@@ -676,11 +677,16 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) {
             if let Ok(mut pool) = memory_manager::TENSOR_POOL.lock() {
                 if pool.release(t, num_elements, dtype_id, device_id) {
                     // Successfully added to pool, do NOT free
+                    // println!(
+                    //     "DEBUG: Pooled tensor {:p} (elem={}, dtype={}, dev={})",
+                    //     t, num_elements, dtype_id, device_id
+                    // );
                     return;
                 }
             }
 
             // Pool is full or lock failed, actually free
+            // println!("DEBUG: Actually free tensor {:p}", t);
             let _ = Box::from_raw(t);
         }
     }

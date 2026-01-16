@@ -9,7 +9,7 @@ fn main() {
         print("=== Attempting solution #"); println(found_count + 1);
         
         let lr = 0.5;
-        let epochs = 2000;
+        let epochs = 500;
 
         // 1. ボードの確率分布を初期化 (ランダムノイズ)
         let board = Tensor::randn([N, N], true);
@@ -44,8 +44,8 @@ fn main() {
 
              total_loss.backward();
              let g = board.grad();
-             let board = board - g * lr;
-             let board = board.detach();
+             board = board - g * lr;
+             board = board.detach();
              board.enable_grad();
         }
 

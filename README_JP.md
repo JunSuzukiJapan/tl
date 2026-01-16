@@ -92,8 +92,8 @@ fn main() {
 
              total_loss.backward();
              let g = board.grad();
-             let board = board - g * lr;
-             let board = board.detach();
+             board = board - g * lr;
+             board = board.detach();
              board.enable_grad();
         }
 

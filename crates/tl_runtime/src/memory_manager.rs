@@ -58,7 +58,7 @@ impl TensorPool {
     }
 
     /// Release a tensor to the pool
-    /// Returns true if the tensor was added to the pool, false if pool is full
+    /// Returns true if the tensor was added to the pool, false if pool is full or already present
     pub fn release(
         &mut self,
         ptr: *mut OpaqueTensor,
@@ -71,6 +71,14 @@ impl TensorPool {
 
         let key = (num_elements, dtype_id, device_id);
         let list = self.free_list.entry(key).or_insert_with(Vec::new);
+
+        // CRITICAL FIX: Check for duplicate pointer to prevent double-pool
+        // This can happen when the same tensor is released multiple times
+        // due to address reuse or reference counting bugs
+        if list.contains(&ptr) {
+            // println!("WARNING: Attempted to pool duplicate pointer {:p}, ignoring", ptr);
+            return false;
+        }
 
         if list.len() < effective_max {
             list.push(ptr);
