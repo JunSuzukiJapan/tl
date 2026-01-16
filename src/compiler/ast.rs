@@ -262,6 +262,7 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    Mod, // Modulo operator (%)
     Eq,
     Neq,
     Lt,

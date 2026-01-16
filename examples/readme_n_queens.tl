@@ -6,11 +6,14 @@ fn main() {
     print("Finding "); print(solutions_to_find); println(" solutions for N-Queens...");
 
     while found_count < solutions_to_find {
+        print("=== Attempting solution #"); println(found_count + 1);
+        
         let lr = 0.5;
         let epochs = 2000;
 
         // 1. ボードの確率分布を初期化 (ランダムノイズ)
         let board = Tensor::randn([N, N], true);
+        println("Board initialized");
 
         // 最適化ループ
         for i in 0..epochs {
@@ -29,11 +32,14 @@ fn main() {
              
              let total_loss = col_loss + anti_diag_loss + main_diag_loss;
 
+             // ログ出力 (100エポックごと)
+             if i % 100 == 0 {
+                 print("Epoch "); print(i); print(" - Loss: "); println(total_loss.item());
+             }
+
              // 早期終了判定
              if total_loss.item() < 1e-4 {
-                 // 収束した場合のみループを抜けて表示へ
-                 // (breakはコンパイラバージョンによって動作が異なる場合があるため、epochsまで回すか、フラグ管理)
-                 // ここでは簡略化のためループを継続し、後で判定
+                 print("Converged at epoch "); println(i);
              }
 
              total_loss.backward();
@@ -55,6 +61,8 @@ fn main() {
         let main_diag_loss = (main_diag_sums - 1.0).relu().pow(2).sum();
         let total_loss = col_loss + anti_diag_loss + main_diag_loss;
 
+        print("Final loss: "); println(total_loss.item());
+
         if total_loss.item() < 1e-3 {
             found_count = found_count + 1;
             print("Solution #"); println(found_count);
@@ -74,6 +82,9 @@ fn main() {
                 rows = rows + 1;
             }
             println("----------------");
+        } else {
+            println("Failed to converge, retrying...");
         }
     }
+    println("Done!");
 }

@@ -2146,6 +2146,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     BinOp::Sub => self.builder.build_int_sub(l, r, "subtmp"),
                     BinOp::Mul => self.builder.build_int_mul(l, r, "multmp"),
                     BinOp::Div => self.builder.build_int_signed_div(l, r, "divtmp"),
+                    BinOp::Mod => self.builder.build_int_signed_rem(l, r, "modtmp"),
                     BinOp::Eq => {
                         self.builder
                             .build_int_compare(inkwell::IntPredicate::EQ, l, r, "eqtmp")

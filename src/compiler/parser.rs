@@ -671,17 +671,18 @@ fn parse_unary(input: &str) -> IResult<&str, Expr> {
     ))(input)
 }
 
-// 2. Multiplicative: * /
+// 2. Multiplicative: * / %
 fn parse_factor(input: &str) -> IResult<&str, Expr> {
     let (input, init) = parse_unary(input)?;
 
     nom::multi::fold_many0(
-        pair(ws(alt((char('*'), char('/')))), parse_unary),
+        pair(ws(alt((char('*'), char('/'), char('%')))), parse_unary),
         move || init.clone(),
         |acc, (op, val)| {
             let bin_op = match op {
                 '*' => BinOp::Mul,
                 '/' => BinOp::Div,
+                '%' => BinOp::Mod,
                 _ => unreachable!(),
             };
             Expr::BinOp(Box::new(acc), bin_op, Box::new(val))
