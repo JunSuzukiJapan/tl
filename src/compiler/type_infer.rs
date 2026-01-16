@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 //! Constraint-based type inference system with shape inference for tensors.
 
-use crate::compiler::ast::{Dim, Expr, FunctionDef, Module, Stmt, Type};
+use crate::compiler::ast::{Dim, Expr, ExprKind, FunctionDef, Module, Stmt, StmtKind, Type};
 use std::collections::HashMap;
 
 /// Type constraint for unification
@@ -110,8 +110,8 @@ impl TypeInferencer {
 
     /// Infer type from a statement
     fn infer_stmt(&mut self, stmt: &Stmt) -> Result<Type, TypeError> {
-        match stmt {
-            Stmt::Let {
+        match &stmt.inner {
+            StmtKind::Let {
                 name,
                 type_annotation,
                 value,
@@ -124,7 +124,7 @@ impl TypeInferencer {
                 self.var_types.insert(name.clone(), inferred.clone());
                 Ok(inferred)
             }
-            Stmt::Assign { name, value, .. } => {
+            StmtKind::Assign { name, value, .. } => {
                 // Lookup target variable type
                 let target_ty = self
                     .var_types
@@ -135,15 +135,15 @@ impl TypeInferencer {
                 self.add_type_eq(target_ty, value_ty.clone());
                 Ok(value_ty)
             }
-            Stmt::Return(expr_opt) => {
+            StmtKind::Return(expr_opt) => {
                 if let Some(expr) = expr_opt {
                     self.infer_expr(expr)
                 } else {
                     Ok(Type::Void)
                 }
             }
-            Stmt::Expr(expr) => self.infer_expr(expr),
-            Stmt::While { cond, body, .. } => {
+            StmtKind::Expr(expr) => self.infer_expr(expr),
+            StmtKind::While { cond, body, .. } => {
                 let cond_ty = self.infer_expr(cond)?;
                 self.add_type_eq(cond_ty, Type::Bool);
                 for s in body {
@@ -157,19 +157,19 @@ impl TypeInferencer {
 
     /// Infer type from an expression
     fn infer_expr(&mut self, expr: &Expr) -> Result<Type, TypeError> {
-        match expr {
-            Expr::Int(_) => Ok(Type::I64),
-            Expr::Float(_) => Ok(Type::F32),
-            Expr::Bool(_) => Ok(Type::Bool),
-            Expr::StringLiteral(_) => Ok(Type::UserDefined("String".to_string())),
+        match &expr.inner {
+            ExprKind::Int(_) => Ok(Type::I64),
+            ExprKind::Float(_) => Ok(Type::F32),
+            ExprKind::Bool(_) => Ok(Type::Bool),
+            ExprKind::StringLiteral(_) => Ok(Type::UserDefined("String".to_string())),
 
-            Expr::Variable(name) => self
+            ExprKind::Variable(name) => self
                 .var_types
                 .get(name)
                 .cloned()
                 .ok_or_else(|| TypeError::UnboundVariable(name.clone())),
 
-            Expr::BinOp(lhs, _op, rhs) => {
+            ExprKind::BinOp(lhs, _op, rhs) => {
                 let left_ty = self.infer_expr(lhs)?;
                 let right_ty = self.infer_expr(rhs)?;
                 // Add constraint that operands have same type
@@ -177,7 +177,7 @@ impl TypeInferencer {
                 Ok(left_ty)
             }
 
-            Expr::TensorLiteral(elements) => {
+            ExprKind::TensorLiteral(elements) => {
                 // Infer from first element, constrain all elements to same type
                 if elements.is_empty() {
                     let elem_ty = self.fresh_type_var();
@@ -194,7 +194,7 @@ impl TypeInferencer {
                 }
             }
 
-            Expr::IndexAccess(base, _indices) => {
+            ExprKind::IndexAccess(base, _indices) => {
                 let base_ty = self.infer_expr(base)?;
                 // Index access on tensor returns element type
                 match base_ty {
@@ -207,7 +207,7 @@ impl TypeInferencer {
                 }
             }
 
-            Expr::FnCall(name, args) => {
+            ExprKind::FnCall(name, args) => {
                 // Infer argument types
                 for arg in args {
                     self.infer_expr(arg)?;
@@ -228,7 +228,7 @@ impl TypeInferencer {
                 })
             }
 
-            Expr::Aggregation { expr, .. } => {
+            ExprKind::Aggregation { expr, .. } => {
                 // Aggregation returns scalar of same element type
                 let inner_ty = self.infer_expr(expr)?;
                 match inner_ty {

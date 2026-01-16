@@ -1,6 +1,53 @@
 // src/compiler/ast.rs
 #![allow(dead_code)]
+use crate::compiler::error::Span;
 use std::collections::HashMap;
+
+/// Spanを持つラッパー型
+/// ASTノードに位置情報を付加するために使用
+/// Spanを持つラッパー型
+/// ASTノードに位置情報を付加するために使用
+#[derive(Debug, Clone)]
+pub struct Spanned<T> {
+    pub inner: T,
+    pub span: Span,
+}
+
+impl<T: PartialEq> PartialEq for Spanned<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl<T: Eq> Eq for Spanned<T> {}
+
+impl<T> Spanned<T> {
+    /// 新しいSpannedを作成
+    pub fn new(inner: T, span: Span) -> Self {
+        Spanned { inner, span }
+    }
+
+    /// ダミーのSpan（位置情報なし）でラップ
+    pub fn dummy(inner: T) -> Self {
+        Spanned {
+            inner,
+            span: Span::default(),
+        }
+    }
+}
+
+impl<T> std::ops::Deref for Spanned<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T: Default> Default for Spanned<T> {
+    fn default() -> Self {
+        Spanned::dummy(T::default())
+    }
+}
 
 /// Dimension: either a constant, a variable, or a symbolic name
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -99,8 +146,10 @@ pub struct EnumDef {
     pub generics: Vec<String>,
 }
 
+pub type Stmt = Spanned<StmtKind>;
+
 #[derive(Debug, Clone, PartialEq)]
-pub enum Stmt {
+pub enum StmtKind {
     TensorDecl {
         name: String,
         type_annotation: Type,
@@ -163,8 +212,10 @@ pub enum ComprehensionClause {
     Condition(Expr),                         // i != j
 }
 
+pub type Expr = Spanned<ExprKind>;
+
 #[derive(Debug, Clone, PartialEq)]
-pub enum Expr {
+pub enum ExprKind {
     // Literals
     Float(f64),
     Int(i64),
@@ -305,7 +356,7 @@ pub struct Module {
     pub enums: Vec<EnumDef>,
     pub impls: Vec<ImplBlock>,
     pub functions: Vec<FunctionDef>,
-    pub tensor_decls: Vec<Stmt>, // Stmt::TensorDecl
+    pub tensor_decls: Vec<Stmt>, // StmtKind::TensorDecl
     pub relations: Vec<RelationDecl>,
     pub rules: Vec<Rule>,
     pub queries: Vec<Expr>,

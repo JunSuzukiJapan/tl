@@ -3,13 +3,13 @@ use tl::compiler::semantics::{SemanticAnalyzer, SemanticError};
 
 // Helper to create basic expressions
 fn expr_int(n: i64) -> Expr {
-    Expr::Int(n)
+    Spanned::dummy(ExprKind::Int(n))
 }
 fn expr_bool(b: bool) -> Expr {
-    Expr::Bool(b)
+    Spanned::dummy(ExprKind::Bool(b))
 }
 fn expr_var(name: &str) -> Expr {
-    Expr::Variable(name.to_string())
+    Spanned::dummy(ExprKind::Variable(name.to_string()))
 }
 
 #[test]
@@ -62,18 +62,30 @@ fn test_binary_ops_type_check() {
     let mut analyzer = SemanticAnalyzer::new();
 
     // Int + Int => I64 (Default Int literal type is I64 in semantics currently)
-    // Actually semantics says: Expr::Int(_) => Ok(Type::I64)
-    let mut expr = Expr::BinOp(Box::new(expr_int(1)), BinOp::Add, Box::new(expr_int(2)));
+    // Actually semantics says: ExprKind::Int(_) => Ok(Type::I64)
+    let mut expr = Spanned::dummy(ExprKind::BinOp(
+        Box::new(expr_int(1)),
+        BinOp::Add,
+        Box::new(expr_int(2)),
+    ));
     let ty = analyzer.check_expr(&mut expr).unwrap();
     assert_eq!(ty, Type::I64);
 
     // Mismatch: Int + Bool
-    let mut expr = Expr::BinOp(Box::new(expr_int(1)), BinOp::Add, Box::new(expr_bool(true)));
+    let mut expr = Spanned::dummy(ExprKind::BinOp(
+        Box::new(expr_int(1)),
+        BinOp::Add,
+        Box::new(expr_bool(true)),
+    ));
     let res = analyzer.check_expr(&mut expr);
     assert!(matches!(res, Err(SemanticError::TypeMismatch { .. })));
 
     // Comparison: Int < Int => Bool
-    let mut expr = Expr::BinOp(Box::new(expr_int(1)), BinOp::Lt, Box::new(expr_int(2)));
+    let mut expr = Spanned::dummy(ExprKind::BinOp(
+        Box::new(expr_int(1)),
+        BinOp::Lt,
+        Box::new(expr_int(2)),
+    ));
     let ty = analyzer.check_expr(&mut expr).unwrap();
     assert_eq!(ty, Type::Bool);
 }
@@ -83,19 +95,19 @@ fn test_if_stmt() {
     let mut analyzer = SemanticAnalyzer::new();
 
     // Valid If
-    let mut stmt = Stmt::If {
+    let mut stmt = Spanned::dummy(StmtKind::If {
         cond: expr_bool(true),
         then_block: vec![],
         else_block: None,
-    };
+    });
     assert!(analyzer.check_stmt(&mut stmt).is_ok());
 
     // Invalid Condition (Int instead of Bool)
-    let mut stmt = Stmt::If {
+    let mut stmt = Spanned::dummy(StmtKind::If {
         cond: expr_int(1),
         then_block: vec![],
         else_block: None,
-    };
+    });
     // If check_stmt implementation for If is strict, this should fail.
     // If it currently passes (due to bug/incomplete impl), we should fix impl or update test expectation.
     // Based on standard semantic rules, this MUST fail.
@@ -130,17 +142,17 @@ fn test_if_stmt() {
 fn test_block_scope() {
     let mut analyzer = SemanticAnalyzer::new();
 
-    // Expr::Block { stmts }
+    // ExprKind::Block { stmts }
     // { let inner = 10; inner } -> should return Int
-    let mut block_expr = Expr::Block(vec![
-        Stmt::Let {
+    let mut block_expr = Spanned::dummy(ExprKind::Block(vec![
+        Spanned::dummy(StmtKind::Let {
             name: "inner".to_string(),
             type_annotation: Some(Type::I64),
             value: expr_int(10),
             mutable: false,
-        },
-        Stmt::Expr(expr_var("inner")),
-    ]);
+        }),
+        Spanned::dummy(StmtKind::Expr(expr_var("inner"))),
+    ]));
 
     // The type of the block is the type of the last expression (if implicit return)
     // OR Void if last is stmt?
@@ -162,29 +174,35 @@ fn test_for_loop_range() {
     let mut analyzer = SemanticAnalyzer::new();
 
     // for i in 0..10
-    let mut stmt = Stmt::For {
+    let mut stmt = Spanned::dummy(StmtKind::For {
         loop_var: "i".to_string(),
-        iterator: Expr::Range(Box::new(expr_int(0)), Box::new(expr_int(10))),
+        iterator: Spanned::dummy(ExprKind::Range(
+            Box::new(expr_int(0)),
+            Box::new(expr_int(10)),
+        )),
         body: vec![],
-    };
+    });
 
     assert!(analyzer.check_stmt(&mut stmt).is_ok());
 
     // Inside body, 'i' should be defined as I64
     // But check_stmt processes body in its own scope call.
     // To verify 'i' type, we need to inject a statement into body that checks 'i'.
-    // Stmt::Expr(Expr::Variable("i")) -> check validity
+    // StmtKind::Expr(ExprKind::Variable("i")) -> check validity
 
-    let mut body_check_stmt = Stmt::For {
+    let mut body_check_stmt = Spanned::dummy(StmtKind::For {
         loop_var: "i".to_string(),
-        iterator: Expr::Range(Box::new(expr_int(0)), Box::new(expr_int(10))),
-        body: vec![Stmt::Let {
+        iterator: Spanned::dummy(ExprKind::Range(
+            Box::new(expr_int(0)),
+            Box::new(expr_int(10)),
+        )),
+        body: vec![Spanned::dummy(StmtKind::Let {
             name: "check".to_string(),
             type_annotation: Some(Type::I64),
             value: expr_var("i"),
             mutable: false,
-        }],
-    };
+        })],
+    });
     assert!(analyzer.check_stmt(&mut body_check_stmt).is_ok());
 }
 
@@ -193,12 +211,12 @@ fn test_builtin_function_calls() {
     let mut analyzer = SemanticAnalyzer::new();
 
     // print(1) - Valid
-    let mut call = Expr::FnCall("print".to_string(), vec![expr_int(1)]);
+    let mut call = Spanned::dummy(ExprKind::FnCall("print".to_string(), vec![expr_int(1)]));
     let ty = analyzer.check_expr(&mut call).unwrap();
     assert_eq!(ty, Type::Void);
 
     // print() - Invalid args
-    let mut call = Expr::FnCall("print".to_string(), vec![]);
+    let mut call = Spanned::dummy(ExprKind::FnCall("print".to_string(), vec![]));
     let res = analyzer.check_expr(&mut call);
     assert!(matches!(
         res,
@@ -211,12 +229,12 @@ fn test_builtin_function_calls() {
         .declare_variable("t".to_string(), Type::Tensor(Box::new(Type::F32), 1), true)
         .unwrap();
 
-    let mut call = Expr::FnCall("len".to_string(), vec![expr_var("t")]);
+    let mut call = Spanned::dummy(ExprKind::FnCall("len".to_string(), vec![expr_var("t")]));
     let ty = analyzer.check_expr(&mut call).unwrap();
     assert_eq!(ty, Type::I64);
 
     // len(int) - Error
-    let mut call = Expr::FnCall("len".to_string(), vec![expr_int(1)]);
+    let mut call = Spanned::dummy(ExprKind::FnCall("len".to_string(), vec![expr_int(1)]));
     let res = analyzer.check_expr(&mut call);
     assert!(matches!(res, Err(SemanticError::TypeMismatch { .. })));
 }
@@ -226,11 +244,11 @@ fn test_tensor_decl_compatibility() {
     let mut analyzer = SemanticAnalyzer::new();
 
     // tensor T: Tensor<f32, 1>; (No init)
-    let mut stmt = Stmt::TensorDecl {
+    let mut stmt = Spanned::dummy(StmtKind::TensorDecl {
         name: "T".to_string(),
         type_annotation: Type::Tensor(Box::new(Type::F32), 1),
         init: None,
-    };
+    });
     assert!(analyzer.check_stmt(&mut stmt).is_ok());
 
     // Verify T exists

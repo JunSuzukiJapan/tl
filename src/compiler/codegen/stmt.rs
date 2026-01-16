@@ -25,35 +25,35 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     fn collect_indices(&self, expr: &Expr, indices: &mut std::collections::HashSet<String>) {
-        match expr {
-            Expr::IndexAccess(_, idxs) => {
+        match &expr.inner {
+            ExprKind::IndexAccess(_, idxs) => {
                 for idx in idxs {
-                    if let Expr::Variable(name) = idx {
+                    if let ExprKind::Variable(name) = &idx.inner {
                         indices.insert(name.clone());
                     }
                     // Recursive check? Indices usually simple vars.
                 }
             }
-            Expr::BinOp(lhs, _, rhs) => {
+            ExprKind::BinOp(lhs, _, rhs) => {
                 self.collect_indices(lhs, indices);
                 self.collect_indices(rhs, indices);
             }
-            Expr::UnOp(_, val) => {
+            ExprKind::UnOp(_, val) => {
                 self.collect_indices(val, indices);
             }
-            Expr::FnCall(_, args)
-            | Expr::MethodCall(_, _, args)
-            | Expr::StaticMethodCall(_, _, args) => {
+            ExprKind::FnCall(_, args)
+            | ExprKind::MethodCall(_, _, args)
+            | ExprKind::StaticMethodCall(_, _, args) => {
                 for arg in args {
                     self.collect_indices(arg, indices);
                 }
             }
-            Expr::TensorLiteral(elems) => {
+            ExprKind::TensorLiteral(elems) => {
                 for elem in elems {
                     self.collect_indices(elem, indices);
                 }
             }
-            Expr::IfExpr(cond, _, _) => {
+            ExprKind::IfExpr(cond, _, _) => {
                 self.collect_indices(cond, indices);
             }
             _ => {}
@@ -576,9 +576,9 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     pub(crate) fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
-        match stmt {
-            Stmt::Use { .. } => Ok(()),
-            Stmt::FieldAssign { obj, field, value } => {
+        match &stmt.inner {
+            StmtKind::Use { .. } => Ok(()),
+            StmtKind::FieldAssign { obj, field, value } => {
                 let (obj_val, obj_ty) = self.compile_expr(obj)?;
                 let struct_name = match obj_ty {
                     Type::Struct(name) => name,
@@ -698,7 +698,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 Ok(())
             }
-            Stmt::TensorDecl {
+            StmtKind::TensorDecl {
                 name,
                 type_annotation,
                 init,
@@ -755,7 +755,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 Ok(())
             }
-            Stmt::Let {
+            StmtKind::Let {
                 name,
                 type_annotation,
                 value,
@@ -775,23 +775,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // But our AST expects clauses now.
                     // compile_tensor_equation expects `&[ComprehensionClause]`.
                     // But wait, `compile_tensor_equation` generates loops FROM clauses.
-                    // Implicit equations: `let C = A[i, j]` -> We want to loop over i, j.
-                    // We need to synthesize Generator clauses without ranges?
-                    // `compile_tensor_equation` logic handles `Expr::Range` but also needs bounds lookup if range is implicit?
-                    // The old logic: if no range, looked up bounds.
-                    // The new logic: `range` in Clause is mandatory Expr.
-                    // But here we don't HAVE an expression for the range (it's implicit).
-                    // We need to construct a "Dummy" range expression or modify logic?
-                    // Or we can construct a dummy variable expression that represents the bound?
-                    // Actually, if we pass a dummy range, `compile_tensor_equation` will fail to compile it?
-                    // We need `compile_tensor_equation` to support "implicit range".
-                    // But we removed `generators: Vec<(String, Option<Expr>)>` in favor of `ComprehensionClause`.
-                    // `Generator { name, range }` -> range is `Expr`.
-                    // We can use `Expr::Variable("IMPLICIT_BOUND")`? No, hacky.
-                    // Use `Expr::Range(Int(0), Int(0))` as placeholder and handle it?
-                    // Better: `compile_tensor_equation` should separate "Indices to loop over" from "Clauses that define them".
-                    // The new AST separates `indices` (LHS) from `clauses` (RHS).
-                    // Implicit equation: `let C = A[i]`. LHS=C (no explicit indices). RHS has free `i`.
+                    // Implicit equations: `let C = A[i]`. LHS=C (no explicit indices). RHS has free `i`.
                     // We treat this as `[ i | A[i] ]`.
                     // So we need to synthesize `indices=["i"]` and `clauses=[Generator("i", IMPLICIT)]`?
                     // No, existing logic for explicit comprehension has explicit ranges.
@@ -809,20 +793,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Fix: `compile_tensor_equation` accepts `indices` (LHS/Output) AND `clauses`.
                     // If `clauses` is empty, it should try to infer loops from `indices` + `free vars`?
                     // OR: We must synthesize clauses effectively.
-                    // We verify `compile_tensor_equation` logic:
-                    /*
-                    for clause in clauses {
-                        match clause { Generator ... }
-                    }
-                    */
-                    // It ONLY loops if clauses exist.
-
-                    // Strategy:
-                    // We are in `Stmt::Let`. We detected `free_indices`.
-                    // We want to generate code that loops over `free_indices`.
-                    // We need to call a lower-level function that generates loops given a list of indices+bounds,
-                    // NOT relying solely on AST clauses.
-                    // OR: We construct synthetic clauses using inferred bounds?
                     // We don't know bounds easily here without analysis.
                     // Actually, `compile_tensor_equation` does `self.enter_scope()` and bounds lookup.
                     // But it expects clauses to drive the loops.
@@ -834,7 +804,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // But we can't synthesize semantic `Expr` for bounds easily.
 
                     // Let's modify `compile_tensor_equation` to accept an optional "Force Loops for these indices" argument?
-                    // Or better: Use `Expr::TensorComprehension` AST node effectively.
+                    // Or better: Use `ExprKind::TensorComprehension` AST node effectively.
                     // Implicit equation `C = A[i]` is semantically `C = [i | A[i]]` where `i` range is inferred.
                     // Our new syntax supports `[i | A[i]]` (Implicit body? No, implicit generator?).
                     // `i` is in LHS. RHS has no generator for `i`.
@@ -843,7 +813,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // New logic: `Clause::Generator` HAS `range: Expr`. Mandatory.
 
                     // So we need a way to represent "Generator with Implicit Range" in `Clause`.
-                    // We can add `Expr::ImplicitRange`? Or `Option<Expr>` in `Generator` variant?
+                    // We can add `ExprKind::ImplicitRange`? Or `Option<Expr>` in `Generator` variant?
 
                     // Let's update `ComprehensionClause` definition to allow optional range?
                     // `Generator { name: String, range: Option<Expr> }`.
@@ -887,15 +857,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // If the value is an L-value (Variable, FieldAccess), we must Copy (Acquire/Clone).
 
                 let is_rvalue = matches!(
-                    value,
-                    Expr::FnCall(_, _)
-                        | Expr::MethodCall(_, _, _)
-                        | Expr::StaticMethodCall(_, _, _)
-                        | Expr::BinOp(_, _, _)
-                        | Expr::UnOp(_, _)
-                        | Expr::TensorLiteral(_)
-                        | Expr::IfExpr(_, _, _) // Treating IfExpr as R-value (Assumes IfExpr logic ensures failure-safety)
-                        | Expr::Block(_)
+                    &value.inner,
+                    ExprKind::FnCall(_, _)
+                        | ExprKind::MethodCall(_, _, _)
+                        | ExprKind::StaticMethodCall(_, _, _)
+                        | ExprKind::BinOp(_, _, _)
+                        | ExprKind::UnOp(_, _)
+                        | ExprKind::TensorLiteral(_)
+                        | ExprKind::IfExpr(_, _, _) // Treating IfExpr as R-value (Assumes IfExpr logic ensures failure-safety)
+                        | ExprKind::Block(_)
                 );
 
                 let should_deep_clone = match &val_ty {
@@ -990,10 +960,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                                                                                   */
                 Ok(())
             }
-            Stmt::Return(expr_opt) => {
+            StmtKind::Return(expr_opt) => {
                 if let Some(expr) = expr_opt {
                     // If returning a variable, mark it as moved (should_free = false)
-                    if let Expr::Variable(name) = expr {
+                    if let ExprKind::Variable(name) = &expr.inner {
                         for scope in self.variables.iter_mut().rev() {
                             if let Some(entry) = scope.get_mut(name) {
                                 entry.2 = false;
@@ -1086,7 +1056,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 Ok(())
             }
-            Stmt::Assign {
+            StmtKind::Assign {
                 name,
                 indices,
                 op,
@@ -1321,7 +1291,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (val_base, val_type) = self.compile_expr(value)?;
 
                 // Clone if alias (initializing from variable or field) to prevent sharing pointers
-                let val = if matches!(value, Expr::Variable(_) | Expr::FieldAccess(_, _)) {
+                let val = if matches!(
+                    &value.inner,
+                    ExprKind::Variable(_) | ExprKind::FieldAccess(_, _)
+                ) {
                     if let Type::Tensor(_, _) = val_type {
                         let clone_fn = self
                             .module
@@ -1608,7 +1581,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
                 Ok(())
             }
-            Stmt::If {
+            StmtKind::If {
                 cond,
                 then_block,
                 else_block,
@@ -1676,7 +1649,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder.position_at_end(merge_bb);
                 Ok(())
             }
-            Stmt::For {
+            StmtKind::For {
                 loop_var,
                 iterator,
                 body,
@@ -1692,13 +1665,13 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Check if iterator is a range (BinOp with ".." conceptually - we detect 0..n pattern)
                 // Or if it's a tensor/variable
-                let (start_val, end_val, is_tensor_iter) = match iterator {
-                    Expr::Range(start, end) => {
+                let (start_val, end_val, is_tensor_iter) = match &iterator.inner {
+                    ExprKind::Range(start, end) => {
                         let (s, _) = self.compile_expr(start)?;
                         let (e, _) = self.compile_expr(end)?;
                         (s.into_int_value(), e.into_int_value(), false)
                     }
-                    Expr::FnCall(name, args) if name == "range" => {
+                    ExprKind::FnCall(name, args) if name == "range" => {
                         // range(start, end)
                         if args.len() != 2 {
                             return Err("range() requires 2 arguments".into());
@@ -1707,7 +1680,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let (e, _) = self.compile_expr(&args[1])?;
                         (s.into_int_value(), e.into_int_value(), false)
                     }
-                    Expr::Variable(_) | Expr::FieldAccess(_, _) => {
+                    ExprKind::Variable(_) | ExprKind::FieldAccess(_, _) => {
                         // Assume it's a tensor or array iteration
                         let (tensor_val, tensor_ty) = self.compile_expr(iterator)?;
                         let len = match &tensor_ty {
@@ -2018,7 +1991,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 Ok(())
             }
-            Stmt::While { cond, body } => {
+            StmtKind::While { cond, body } => {
                 let parent = self
                     .builder
                     .get_insert_block()
@@ -2079,7 +2052,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder.position_at_end(end_block);
                 Ok(())
             }
-            Stmt::Expr(expr) => {
+            StmtKind::Expr(expr) => {
                 let (val, ty) = self.compile_expr(expr)?;
 
                 // FIX: Handle discarded return values properly to prevent use-after-free bugs.

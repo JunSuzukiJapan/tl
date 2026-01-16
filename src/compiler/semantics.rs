@@ -662,13 +662,13 @@ impl SemanticAnalyzer {
         let stmts_len = stmts.len();
         for (i, stmt) in stmts.iter_mut().enumerate() {
             if i == stmts_len - 1 {
-                if let Stmt::Expr(e) = stmt {
+                if let StmtKind::Expr(e) = &mut stmt.inner {
                     ret_type = self.check_expr(e)?;
-                } else if let Stmt::If {
+                } else if let StmtKind::If {
                     cond,
                     then_block,
                     else_block,
-                } = stmt
+                } = &mut stmt.inner
                 {
                     // Check Cond
                     let cond_type = self.check_expr(cond)?;
@@ -721,8 +721,8 @@ impl SemanticAnalyzer {
     }
 
     pub fn check_stmt(&mut self, stmt: &mut Stmt) -> Result<(), SemanticError> {
-        match stmt {
-            Stmt::FieldAssign { obj, field, value } => {
+        match &mut stmt.inner {
+            StmtKind::FieldAssign { obj, field, value } => {
                 // Check object type and verify it's a struct
                 let obj_type = self.check_expr(obj)?;
                 let struct_name = match obj_type {
@@ -741,9 +741,9 @@ impl SemanticAnalyzer {
                 // Type::UserDefined("Name") -> Name should be fully qualified if check_expr(obj) did its job.
                 // But check_expr returns Type. If Type comes from AST, it might simple name.
                 // The Type returned by check_expr comes from:
-                // - Expr::StructInit -> looked up strict name (resolved).
-                // - Expr::Variable -> lookup_variable -> returns Type from scope.
-                // - Expr::FnCall -> returns return_type of function.
+                // - ExprKind::StructInit -> looked up strict name (resolved).
+                // - ExprKind::Variable -> lookup_variable -> returns Type from scope.
+                // - ExprKind::FnCall -> returns return_type of function.
                 // So if "Struct" type is stored in scope/function def with FQN, then obj_type has FQN.
                 let struct_def = self
                     .structs
@@ -768,7 +768,7 @@ impl SemanticAnalyzer {
 
                 Ok(())
             }
-            Stmt::TensorDecl {
+            StmtKind::TensorDecl {
                 name,
                 type_annotation,
                 init,
@@ -802,7 +802,7 @@ impl SemanticAnalyzer {
                 Ok(())
             }
 
-            Stmt::Let {
+            StmtKind::Let {
                 name,
                 type_annotation,
                 value,
@@ -828,7 +828,7 @@ impl SemanticAnalyzer {
                     self.exit_scope();
 
                     // Construct Tensor Type
-                    if let Expr::TensorComprehension { .. } = value {
+                    if let ExprKind::TensorComprehension { .. } = &value.inner {
                         rhs_type
                     } else {
                         Type::Tensor(Box::new(rhs_type), free_indices.len())
@@ -852,7 +852,7 @@ impl SemanticAnalyzer {
                 self.declare_variable(name.clone(), final_type.clone(), *mutable)?;
 
                 // Move semantics: If RHS is a variable of moveable type, mark it as moved
-                if let Expr::Variable(source_var) = value {
+                if let ExprKind::Variable(source_var) = &value.inner {
                     if self.is_moveable_type(&final_type) {
                         self.mark_moved(source_var);
                     }
@@ -860,7 +860,7 @@ impl SemanticAnalyzer {
 
                 Ok(())
             }
-            Stmt::Assign {
+            StmtKind::Assign {
                 name,
                 indices,
                 op,
@@ -963,7 +963,7 @@ impl SemanticAnalyzer {
                 }
                 Ok(())
             }
-            Stmt::Return(expr_opt) => {
+            StmtKind::Return(expr_opt) => {
                 let found_type = if let Some(expr) = expr_opt {
                     self.check_expr(expr)?
                 } else {
@@ -981,11 +981,11 @@ impl SemanticAnalyzer {
                 }
                 Ok(())
             }
-            Stmt::Expr(expr) => {
+            StmtKind::Expr(expr) => {
                 self.check_expr(expr)?;
                 Ok(())
             }
-            Stmt::If {
+            StmtKind::If {
                 cond,
                 then_block,
                 else_block,
@@ -1013,17 +1013,17 @@ impl SemanticAnalyzer {
                 }
                 Ok(())
             }
-            Stmt::For {
+            StmtKind::For {
                 loop_var,
                 iterator,
                 body,
             } => {
                 // Check if iterator is range(start, end)
                 // This is a special case for the compiler intrinsic 'range'
-                let elem_type = match iterator {
-                    Expr::Range(start, end) => {
-                        let start_ty = self.check_expr(start)?;
-                        let end_ty = self.check_expr(end)?;
+                let elem_type = match &mut iterator.inner {
+                    ExprKind::Range(start, end) => {
+                        let start_ty = self.check_expr(start.as_mut())?;
+                        let end_ty = self.check_expr(end.as_mut())?;
                         if !matches!(start_ty, Type::I64 | Type::I32)
                             || !matches!(end_ty, Type::I64 | Type::I32)
                         {
@@ -1034,7 +1034,7 @@ impl SemanticAnalyzer {
                         }
                         Type::I64
                     }
-                    Expr::FnCall(name, args) if name == "range" && args.len() == 2 => {
+                    ExprKind::FnCall(name, args) if name == "range" && args.len() == 2 => {
                         // Deprecated range() function check
                         let start_type = self.check_expr(&mut args[0])?;
                         let end_type = self.check_expr(&mut args[1])?;
@@ -1071,7 +1071,7 @@ impl SemanticAnalyzer {
                 self.exit_scope();
                 Ok(())
             }
-            Stmt::While { cond, body } => {
+            StmtKind::While { cond, body } => {
                 let cond_type = self.check_expr(cond)?;
                 if cond_type != Type::Bool {
                     return Err(SemanticError::TypeMismatch {
@@ -1086,7 +1086,7 @@ impl SemanticAnalyzer {
                 self.exit_scope();
                 Ok(())
             }
-            Stmt::Use { path, alias, items } => {
+            StmtKind::Use { path, alias, items } => {
                 let full_prefix = path.join("::");
 
                 if !items.is_empty() {
@@ -1120,19 +1120,19 @@ impl SemanticAnalyzer {
     }
 
     pub fn check_expr(&mut self, expr: &mut Expr) -> Result<Type, SemanticError> {
-        match expr {
-            Expr::Int(_) => Ok(Type::I64),   // Default integer literal type
-            Expr::Float(_) => Ok(Type::F32), // Default float literal type
-            Expr::Bool(_) => Ok(Type::Bool),
-            Expr::StringLiteral(_) => Ok(Type::UserDefined("String".to_string())), // Placeholder
-            Expr::Tuple(exprs) => {
+        match &mut expr.inner {
+            ExprKind::Int(_) => Ok(Type::I64), // Default integer literal type
+            ExprKind::Float(_) => Ok(Type::F32), // Default float literal type
+            ExprKind::Bool(_) => Ok(Type::Bool),
+            ExprKind::StringLiteral(_) => Ok(Type::UserDefined("String".to_string())), // Placeholder
+            ExprKind::Tuple(exprs) => {
                 let mut types = Vec::new();
                 for e in exprs {
                     types.push(self.check_expr(e)?);
                 }
                 Ok(Type::Tuple(types))
             }
-            Expr::TupleAccess(expr, idx) => {
+            ExprKind::TupleAccess(expr, idx) => {
                 let ty = self.check_expr(expr)?;
                 if let Type::Tuple(types) = ty {
                     if *idx < types.len() {
@@ -1144,7 +1144,7 @@ impl SemanticAnalyzer {
                     Err(SemanticError::NotATuple(ty))
                 }
             }
-            Expr::StructInit(name, fields) => {
+            ExprKind::StructInit(name, fields) => {
                 let resolved_name = self.resolve_symbol_name(name);
                 if *name != resolved_name {
                     *name = resolved_name.clone();
@@ -1198,7 +1198,7 @@ impl SemanticAnalyzer {
                 } else if let Some((enum_def, variant_def)) = self.resolve_enum_variant(name) {
                     // It is an Enum Variant! Transform to EnumInit.
                     let fields_owned = std::mem::take(fields);
-                    *expr = Expr::EnumInit {
+                    expr.inner = ExprKind::EnumInit {
                         enum_name: enum_def.name.clone(),
                         variant_name: variant_def.name.clone(),
                         fields: fields_owned,
@@ -1209,7 +1209,7 @@ impl SemanticAnalyzer {
                     Err(SemanticError::StructNotFound(name.clone()))
                 }
             }
-            Expr::EnumInit {
+            ExprKind::EnumInit {
                 enum_name,
                 variant_name,
                 fields,
@@ -1275,7 +1275,7 @@ impl SemanticAnalyzer {
 
                 Ok(Type::Enum(enum_name.clone()))
             }
-            Expr::Match {
+            ExprKind::Match {
                 expr: subject_expr,
                 arms,
             } => {
@@ -1352,7 +1352,7 @@ impl SemanticAnalyzer {
 
                 Ok(return_type.unwrap_or(Type::Void))
             }
-            Expr::IfLet {
+            ExprKind::IfLet {
                 pattern,
                 expr,
                 then_block,
@@ -1382,7 +1382,7 @@ impl SemanticAnalyzer {
                 let then_len = then_block.len();
                 for (i, stmt) in then_block.iter_mut().enumerate() {
                     if i == then_len - 1 {
-                        if let Stmt::Expr(e) = stmt {
+                        if let StmtKind::Expr(e) = &mut stmt.inner {
                             then_type = self.check_expr(e)?;
                         } else {
                             self.check_stmt(stmt)?;
@@ -1399,7 +1399,7 @@ impl SemanticAnalyzer {
                     let else_len = else_stmts.len();
                     for (i, stmt) in else_stmts.iter_mut().enumerate() {
                         if i == else_len - 1 {
-                            if let Stmt::Expr(e) = stmt {
+                            if let StmtKind::Expr(e) = &mut stmt.inner {
                                 e_type = self.check_expr(e)?;
                             } else {
                                 self.check_stmt(stmt)?;
@@ -1423,7 +1423,7 @@ impl SemanticAnalyzer {
                     })
                 }
             }
-            Expr::Range(start, end) => {
+            ExprKind::Range(start, end) => {
                 let s_ty = self.check_expr(start)?;
                 let e_ty = self.check_expr(end)?;
                 if !matches!(s_ty, Type::I64 | Type::I32) || !matches!(e_ty, Type::I64 | Type::I32)
@@ -1437,7 +1437,7 @@ impl SemanticAnalyzer {
                 // but we return Void or a placeholder.
                 Ok(Type::Void)
             }
-            Expr::Variable(name) => {
+            ExprKind::Variable(name) => {
                 // 1. Try local scopes first (reverse order)
                 for scope in self.scopes.iter().rev() {
                     if let Some(symbol) = scope.get(name) {
@@ -1471,7 +1471,7 @@ impl SemanticAnalyzer {
                             found: Type::UserDefined("Struct Variant".into()),
                         });
                     }
-                    *expr = Expr::EnumInit {
+                    expr.inner = ExprKind::EnumInit {
                         enum_name: enum_def.name.clone(),
                         variant_name: variant_def.name.clone(),
                         fields: vec![],
@@ -1481,9 +1481,9 @@ impl SemanticAnalyzer {
 
                 Err(SemanticError::VariableNotFound(name.clone()))
             }
-            Expr::BinOp(lhs, op, rhs) => {
-                let left = self.check_expr(lhs)?;
-                let right = self.check_expr(rhs)?;
+            ExprKind::BinOp(lhs, op, rhs) => {
+                let left = self.check_expr(lhs.as_mut())?;
+                let right = self.check_expr(rhs.as_mut())?;
                 // match op {
                 //     _ => {}
                 // }
@@ -1527,7 +1527,7 @@ impl SemanticAnalyzer {
                     }
                 }
             }
-            Expr::FnCall(name, args) => {
+            ExprKind::FnCall(name, args) => {
                 // Resolve name first
                 let resolved_name = self.resolve_symbol_name(name);
                 if *name != resolved_name {
@@ -1557,7 +1557,7 @@ impl SemanticAnalyzer {
                     // We can do it here or leave it to codegen/runtime panic.
                     // Doing it here is better for dev experience.
                     if args.len() > 1 {
-                        if let Expr::StringLiteral(s) = &args[0] {
+                        if let ExprKind::StringLiteral(s) = &args[0].inner {
                             if s.contains("{}") {
                                 let parts: Vec<&str> = s.split("{}").collect();
                                 let placeholder_count = parts.len() - 1;
@@ -1579,7 +1579,7 @@ impl SemanticAnalyzer {
                         // Current codegen implementation ONLY supports format string for >1 args.
                         // "Normal print" block: if args.len() != 1 -> Error.
                         // So semantics SHOULD enforce this.
-                        if !matches!(args[0], Expr::StringLiteral(_)) {
+                        if !matches!(&args[0].inner, ExprKind::StringLiteral(_)) {
                             return Err(SemanticError::TypeMismatch {
                                 expected: Type::UserDefined("StringLiteral".into()),
                                 found: Type::Void, // Hacky message?
@@ -1587,13 +1587,13 @@ impl SemanticAnalyzer {
                         }
                         // Actually, let's just let check_expr handle types,
                         // but we need to ensure arg[0] is StringLiteral if len > 1.
-                        if !matches!(args[0], Expr::StringLiteral(_)) {
+                        if !matches!(&args[0].inner, ExprKind::StringLiteral(_)) {
                             // We can't easily get the Type of arg[0] here without checking again,
                             // but we just checked all args.
                             // However, we rely on Expr structure.
                             // If arg[0] is Variable("s") which is a string, it's NOT a literal.
                             // Codegen requires Literal for compile-time formatting.
-                            // So yes, strictly Expr::StringLiteral.
+                            // So yes, strictly ExprKind::StringLiteral.
                         }
                     }
 
@@ -1602,7 +1602,7 @@ impl SemanticAnalyzer {
 
                 // --- StdLib Phase 1 ---
                 // --- StdLib Static Methods ---
-                // Transferred to Expr::StaticMethodCall handling.
+                // Transferred to ExprKind::StaticMethodCall handling.
                 // The parser ensures that identifiers with "::" are parsed as StaticMethodCall.
 
                 // --- StdLib FFI (Legacy/Direct) ---
@@ -1925,9 +1925,9 @@ impl SemanticAnalyzer {
                     };
 
                     // Inference Logic: Inspect args[1] AST if it's a literal
-                    let new_rank = if let Expr::TensorLiteral(elements) = &args[1] {
+                    let new_rank = if let ExprKind::TensorLiteral(elements) = &args[1].inner {
                         elements.len()
-                    } else if let Expr::TensorConstLiteral(elements) = &args[1] {
+                    } else if let ExprKind::TensorConstLiteral(elements) = &args[1].inner {
                         elements.len()
                     } else if args.len() > 2 {
                         // Varargs mode: reshape(t, d1, d2, ...) -> Rank = args.len() - 1
@@ -2373,7 +2373,7 @@ impl SemanticAnalyzer {
 
                 Err(SemanticError::FunctionNotFound(name.clone()))
             }
-            Expr::TensorLiteral(elements) | Expr::TensorConstLiteral(elements) => {
+            ExprKind::TensorLiteral(elements) | ExprKind::TensorConstLiteral(elements) => {
                 // Check all elements are same type
                 if elements.is_empty() {
                     return Ok(Type::Tensor(Box::new(Type::F32), 1)); // Empty tensor?
@@ -2412,7 +2412,7 @@ impl SemanticAnalyzer {
                     }
                 }
             }
-            Expr::IndexAccess(target, _indices) => {
+            ExprKind::IndexAccess(target, _indices) => {
                 let target_type = self.check_expr(target)?;
                 match target_type {
                     Type::Tensor(inner, _rank) => Ok(*inner), // Accessing reduces rank to scalar (in this simple logic)
@@ -2426,7 +2426,7 @@ impl SemanticAnalyzer {
                     }),
                 }
             }
-            Expr::UnOp(op, inner) => {
+            ExprKind::UnOp(op, inner) => {
                 let t = self.check_expr(inner)?;
                 match op {
                     UnOp::Neg => {
@@ -2465,7 +2465,7 @@ impl SemanticAnalyzer {
                     }
                 }
             }
-            Expr::TensorComprehension {
+            ExprKind::TensorComprehension {
                 indices,
                 clauses,
                 body,
@@ -2507,13 +2507,13 @@ impl SemanticAnalyzer {
                 Ok(Type::Tensor(Box::new(body_type), indices.len()))
             }
 
-            Expr::Block(stmts) => {
+            ExprKind::Block(stmts) => {
                 self.enter_scope();
                 let ret = self.check_block_stmts(stmts)?;
                 self.exit_scope();
                 Ok(ret)
             }
-            Expr::IfExpr(cond, then_block, else_block) => {
+            ExprKind::IfExpr(cond, then_block, else_block) => {
                 let cond_type = self.check_expr(cond)?;
                 if cond_type != Type::Bool {
                     return Err(SemanticError::TypeMismatch {
@@ -2528,7 +2528,7 @@ impl SemanticAnalyzer {
                 let then_len = then_block.len();
                 for (i, stmt) in then_block.iter_mut().enumerate() {
                     if i == then_len - 1 {
-                        if let Stmt::Expr(e) = stmt {
+                        if let StmtKind::Expr(e) = &mut stmt.inner {
                             then_type = self.check_expr(e)?;
                         } else {
                             self.check_stmt(stmt)?;
@@ -2546,7 +2546,7 @@ impl SemanticAnalyzer {
                     let else_len = else_stmts.len();
                     for (i, stmt) in else_stmts.iter_mut().enumerate() {
                         if i == else_len - 1 {
-                            if let Stmt::Expr(e) = stmt {
+                            if let StmtKind::Expr(e) = &mut stmt.inner {
                                 e_type = self.check_expr(e)?;
                             } else {
                                 self.check_stmt(stmt)?;
@@ -2568,15 +2568,15 @@ impl SemanticAnalyzer {
                     // Simple compatibility check (e.g. F32 vs I64 casting?)
                     // For strict semantics, error.
                     // But if one is Void (e.g. if-without-else used as expr?), error.
-                    // If Expr::IfExpr is used, it expects a value. If else is missing, it returns Void?
+                    // If ExprKind::IfExpr is used, it expects a value. If else is missing, it returns Void?
                     Err(SemanticError::TypeMismatch {
                         expected: then_type,
                         found: else_type,
                     })
                 }
-                // End of Expr::IfExpr
+                // End of ExprKind::IfExpr
             }
-            Expr::Aggregation {
+            ExprKind::Aggregation {
                 op: _,
                 expr,
                 var,
@@ -2612,7 +2612,7 @@ impl SemanticAnalyzer {
                 // or I64 for count
                 Ok(expr_ty)
             }
-            Expr::As(expr, target_type) => {
+            ExprKind::As(expr, target_type) => {
                 let source_type = self.check_expr(expr)?;
 
                 // Allow trivial cast
@@ -2646,7 +2646,7 @@ impl SemanticAnalyzer {
                     }),
                 }
             }
-            Expr::StaticMethodCall(type_name, method_name, args) => {
+            ExprKind::StaticMethodCall(type_name, method_name, args) => {
                 let resolved_type = self.resolve_symbol_name(type_name);
                 if *type_name != resolved_type {
                     *type_name = resolved_type.clone();
@@ -3003,7 +3003,7 @@ impl SemanticAnalyzer {
                     }
                 }
             }
-            Expr::FieldAccess(obj, field_name) => {
+            ExprKind::FieldAccess(obj, field_name) => {
                 let obj_type = self.check_expr(obj)?;
                 let name = match obj_type {
                     Type::UserDefined(n) => n,
@@ -3029,7 +3029,7 @@ impl SemanticAnalyzer {
                 }
                 Err(SemanticError::StructNotFound(name))
             }
-            Expr::MethodCall(obj, method_name, args) => {
+            ExprKind::MethodCall(obj, method_name, args) => {
                 let obj_type = self.check_expr(obj)?;
                 let type_name = match &obj_type {
                     Type::UserDefined(name) => name.clone(),
@@ -3175,13 +3175,16 @@ impl SemanticAnalyzer {
                             match obj_type {
                                 Type::Tensor(inner, _) => {
                                     // Inference Logic: Inspect args[0] AST if it's a literal
-                                    let new_rank = if let Expr::TensorLiteral(elements) = &args[0] {
-                                        elements.len()
-                                    } else if let Expr::TensorConstLiteral(elements) = &args[0] {
-                                        elements.len()
-                                    } else {
-                                        0 // Unknown rank
-                                    };
+                                    let new_rank =
+                                        if let ExprKind::TensorLiteral(elements) = &args[0].inner {
+                                            elements.len()
+                                        } else if let ExprKind::TensorConstLiteral(elements) =
+                                            &args[0].inner
+                                        {
+                                            elements.len()
+                                        } else {
+                                            0 // Unknown rank
+                                        };
                                     return Ok(Type::Tensor(inner.clone(), new_rank));
                                 }
                                 _ => return Ok(obj_type.clone()),
@@ -3904,13 +3907,13 @@ impl SemanticAnalyzer {
     }
 
     fn collect_indices(&self, expr: &Expr, indices: &mut HashSet<String>) {
-        match expr {
-            Expr::IndexAccess(target, idxs) => {
+        match &expr.inner {
+            ExprKind::IndexAccess(target, idxs) => {
                 self.collect_indices(target, indices);
                 for idx in idxs {
-                    if let Expr::Variable(name) = idx {
+                    if let ExprKind::Variable(name) = &idx.inner {
                         indices.insert(name.clone());
-                    } else if let Expr::IndexAccess(_, _) = idx {
+                    } else if let ExprKind::IndexAccess(_, _) = &idx.inner {
                         // Recurse if index itself has structure? Unlikely for now.
                         self.collect_indices(idx, indices);
                     } else {
@@ -3918,32 +3921,32 @@ impl SemanticAnalyzer {
                     }
                 }
             }
-            Expr::BinOp(left, _, right) => {
+            ExprKind::BinOp(left, _, right) => {
                 self.collect_indices(left, indices);
                 self.collect_indices(right, indices);
             }
-            Expr::UnOp(_, inner) => {
+            ExprKind::UnOp(_, inner) => {
                 self.collect_indices(inner, indices);
             }
-            Expr::FnCall(_, args) => {
+            ExprKind::FnCall(_, args) => {
                 for arg in args {
                     self.collect_indices(arg, indices);
                 }
             }
-            Expr::MethodCall(obj, _, args) => {
+            ExprKind::MethodCall(obj, _, args) => {
                 self.collect_indices(obj, indices);
                 for arg in args {
                     self.collect_indices(arg, indices);
                 }
             }
-            Expr::As(expr, _) => {
+            ExprKind::As(expr, _) => {
                 self.collect_indices(expr, indices);
             }
-            Expr::IfExpr(cond, _then_block, _else_block) => {
+            ExprKind::IfExpr(cond, _then_block, _else_block) => {
                 self.collect_indices(cond, indices);
             }
-            Expr::Block(_) => {}
-            Expr::TensorComprehension {
+            ExprKind::Block(_) => {}
+            ExprKind::TensorComprehension {
                 indices: _,
                 clauses,
                 body,
@@ -3994,7 +3997,7 @@ impl SemanticAnalyzer {
             _ => {}
         }
     }
-    // Helper to infer free indices (used in Stmt::Let for Tensor Equation)
+    // Helper to infer free indices (used in StmtKind::Let for Tensor Equation)
     fn infer_free_indices(&self, expr: &Expr) -> Vec<String> {
         let mut indices = HashSet::new();
         self.collect_indices(expr, &mut indices);

@@ -283,6 +283,103 @@ pub fn offset_to_line_col(input: &str, offset: usize) -> (usize, usize) {
     (line, col)
 }
 
+/// 指定した行のソースコードを取得
+pub fn get_source_line(source: &str, line_num: usize) -> Option<String> {
+    source
+        .lines()
+        .nth(line_num.saturating_sub(1))
+        .map(|s| s.to_string())
+}
+
+/// ソースコードスニペット付きでエラーをフォーマット（Rustスタイル）
+pub fn format_error_with_source(error: &TlError, source: &str, file_name: Option<&str>) -> String {
+    let mut output = String::new();
+
+    // エラーの種類
+    let error_type = match error {
+        TlError::Parse { .. } => "parse",
+        TlError::Semantic { .. } => "semantic",
+        TlError::Codegen { .. } => "codegen",
+        TlError::Io(_) => "io",
+    };
+
+    // エラーメッセージ
+    let message = match error {
+        TlError::Parse { kind, .. } => kind.to_string(),
+        TlError::Semantic { kind, .. } => kind.to_string(),
+        TlError::Codegen { kind, .. } => kind.to_string(),
+        TlError::Io(e) => e.to_string(),
+    };
+
+    // ヘッダー: error[E0001]: <message>
+    output.push_str(&format!("\x1b[1;31merror[E0001]\x1b[0m: {}\n", message));
+
+    if let Some(span) = error.span() {
+        if span.line > 0 {
+            // ファイル位置情報
+            let file = span.file.as_deref().or(file_name).unwrap_or("<unknown>");
+            output.push_str(&format!(
+                " \x1b[1;34m-->\x1b[0m {}:{}:{}\n",
+                file, span.line, span.column
+            ));
+
+            // ソースコード行を取得
+            if let Some(source_line) = get_source_line(source, span.line) {
+                let line_num_width = span.line.to_string().len();
+                let padding = " ".repeat(line_num_width);
+
+                // 空行
+                output.push_str(&format!("  \x1b[1;34m{} |\x1b[0m\n", padding));
+
+                // ソースコード行
+                output.push_str(&format!(
+                    "\x1b[1;34m{} |\x1b[0m {}\n",
+                    span.line, source_line
+                ));
+
+                // キャレット行（^）
+                let caret_padding = " ".repeat(span.column.saturating_sub(1));
+                // エラーの長さを推測（変数名等）
+                let caret_len = detect_error_token_len(&message);
+                let carets = "^".repeat(caret_len.max(1));
+                output.push_str(&format!(
+                    "  \x1b[1;34m{} |\x1b[0m {}\x1b[1;31m{}\x1b[0m\n",
+                    padding, caret_padding, carets
+                ));
+            }
+        } else if let Some(ref file) = span.file {
+            output.push_str(&format!(" \x1b[1;34m-->\x1b[0m {}\n", file));
+        }
+    } else if let Some(file) = file_name {
+        output.push_str(&format!(" \x1b[1;34m-->\x1b[0m {}\n", file));
+    }
+
+    // 注記
+    output.push_str(&format!(
+        "  \x1b[1;34m=\x1b[0m \x1b[1mnote\x1b[0m: {} error\n",
+        error_type
+    ));
+
+    output
+}
+
+/// エラーメッセージからトークン長を推測
+fn detect_error_token_len(message: &str) -> usize {
+    // "variable not found: foo" -> "foo"の長さ
+    // "function not found: bar" -> "bar"の長さ
+    if let Some(pos) = message.rfind(": ") {
+        let token = &message[pos + 2..];
+        // 最初の単語を取得
+        token
+            .split_whitespace()
+            .next()
+            .map(|s| s.len())
+            .unwrap_or(1)
+    } else {
+        1
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

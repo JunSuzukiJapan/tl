@@ -23,15 +23,15 @@ impl<'ctx> CodeGenerator<'ctx> {
             b
         } else {
             if indices.len() == 1 {
-                synthesized_body_expr = Expr::Variable(indices[0].clone());
+                synthesized_body_expr = Spanned::dummy(ExprKind::Variable(indices[0].clone()));
             } else {
                 // Vector body: [i, j]
-                synthesized_body_expr = Expr::TensorLiteral(
+                synthesized_body_expr = Spanned::dummy(ExprKind::TensorLiteral(
                     indices
                         .iter()
-                        .map(|idx| Expr::Variable(idx.clone()))
+                        .map(|idx| Spanned::dummy(ExprKind::Variable(idx.clone())))
                         .collect(),
-                );
+                ));
             }
             &synthesized_body_expr
         };
@@ -39,8 +39,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         // 1. Analyze Body Shape (Simple Pre-analysis)
         // We only support inferring shape from TensorLiteral (Rank 1) or assuming Scalar (Rank 0) for now.
         // Nested TensorLiterals (Rank > 1) could be supported recursively but sticking to simple vector for now.
-        let (body_dims, body_elem_count) = match final_body {
-            Expr::TensorLiteral(elems) => (vec![elems.len()], elems.len()),
+        let (body_dims, body_elem_count) = match &final_body.inner {
+            ExprKind::TensorLiteral(elems) => (vec![elems.len()], elems.len()),
             _ => (vec![], 1), // Default to scalar
         };
         let body_rank = body_dims.len();
@@ -60,8 +60,8 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         for clause in clauses {
             if let ComprehensionClause::Generator { name, range } = clause {
-                match range {
-                    Expr::Range(start, end) => {
+                match &range.inner {
+                    ExprKind::Range(start, end) => {
                         let (start_val, _) = self.compile_expr(start)?;
                         let (end_val, _) = self.compile_expr(end)?;
                         let start_i64 = cast_value_to_i64(self, start_val, &Type::I64)?;
@@ -221,12 +221,14 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Body Computation
         self.builder.position_at_end(current_bb);
 
-        let (rhs_val, rhs_ty) = if let Expr::Block(_) = final_body {
+        let (rhs_val, rhs_ty) = if let ExprKind::Block(_) = &final_body.inner {
             self.compile_expr(final_body)?
         } else {
             // If body is not a block, wrap it in a block to ensure scope is created
             // and intermediate tensors are freed.
-            let block_wrapper = Expr::Block(vec![Stmt::Expr(final_body.clone())]);
+            let block_wrapper = Spanned::dummy(ExprKind::Block(vec![Spanned::dummy(
+                StmtKind::Expr(final_body.clone()),
+            )]));
             self.compile_expr(&block_wrapper)?
         };
 

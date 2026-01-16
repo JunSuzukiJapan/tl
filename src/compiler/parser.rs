@@ -1,29 +1,45 @@
 // src/compiler/parser.rs
 use crate::compiler::ast::*;
-use crate::compiler::error::{offset_to_line_col, ParseErrorKind, Span, TlError};
+use crate::compiler::error::{ParseErrorKind, TlError};
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_while, take_while1},
     character::complete::{alpha1, char, digit1, space0, space1},
-    combinator::{map, map_res, not, opt, recognize, value, verify},
+    combinator::{map, not, opt, recognize, value, verify},
     multi::{separated_list0, separated_list1},
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
     IResult,
 };
-// removed unused std::str::FromStr
+use nom_locate::{position, LocatedSpan};
+
+pub type Span<'a> = LocatedSpan<&'a str>;
+
+pub fn spanned<'a, F, O>(mut parser: F) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, Spanned<O>>
+where
+    F: FnMut(Span<'a>) -> IResult<Span<'a>, O>,
+{
+    move |input: Span<'a>| {
+        let (input, start) = position(input)?;
+        let (input, value) = parser(input)?;
+        let span = crate::compiler::error::Span::new(
+            start.location_line() as usize,
+            start.get_utf8_column(),
+        );
+        Ok((input, Spanned::new(value, span)))
+    }
+}
 
 // --- Whitespace & Comments ---
 // --- Whitespace & Comments ---
-fn ws<'a, F: 'a, O, E: nom::error::ParseError<&'a str>>(
-    inner: F,
-) -> impl FnMut(&'a str) -> IResult<&'a str, O, E>
+fn ws<'a, F, O, E>(inner: F) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, O, E>
 where
-    F: FnMut(&'a str) -> IResult<&'a str, O, E>,
+    F: FnMut(Span<'a>) -> IResult<Span<'a>, O, E>,
+    E: nom::error::ParseError<Span<'a>>,
 {
     delimited(sp, inner, sp)
 }
 
-fn sp<'a, E: nom::error::ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
+fn sp<'a, E: nom::error::ParseError<Span<'a>>>(input: Span<'a>) -> IResult<Span<'a>, Span<'a>, E> {
     let chars = " \t\r\n";
     // Consumes whitespace or comments recursively
     recognize(nom::multi::many0(alt((
@@ -34,20 +50,20 @@ fn sp<'a, E: nom::error::ParseError<&'a str>>(input: &'a str) -> IResult<&'a str
 
 // --- Identifiers ---
 
-fn simple_identifier(input: &str) -> IResult<&str, String> {
+fn simple_identifier(input: Span) -> IResult<Span, String> {
     let (input, s) = recognize(pair(
         alt((alpha1, tag("_"))),
         take_while(|c: char| c.is_alphanumeric() || c == '_'),
     ))(input)?;
-    Ok((input, s.to_string()))
+    Ok((input, s.fragment().to_string()))
 }
 
-fn identifier(input: &str) -> IResult<&str, String> {
+fn identifier(input: Span) -> IResult<Span, String> {
     // Allow usage of :: for namespaces (e.g. File::open)
     verify(
         map(
             recognize(separated_list1(tag("::"), simple_identifier)),
-            |s: &str| s.to_string(),
+            |s: Span| s.fragment().to_string(),
         ),
         |s: &String| {
             let keywords = vec![
@@ -61,7 +77,7 @@ fn identifier(input: &str) -> IResult<&str, String> {
 }
 
 // --- Types ---
-fn parse_primitive_type(input: &str) -> IResult<&str, Type> {
+fn parse_primitive_type(input: Span) -> IResult<Span, Type> {
     alt((
         value(Type::F32, tag("f32")),
         value(Type::F64, tag("f64")),
@@ -74,7 +90,7 @@ fn parse_primitive_type(input: &str) -> IResult<&str, Type> {
     ))(input)
 }
 
-fn parse_tensor_type(input: &str) -> IResult<&str, Type> {
+fn parse_tensor_type(input: Span) -> IResult<Span, Type> {
     // Tensor<f32, 2>
     map(
         tuple((
@@ -86,13 +102,13 @@ fn parse_tensor_type(input: &str) -> IResult<&str, Type> {
             ws(char('>')),
         )),
         |(_, _, inner, _, rank_str, _)| {
-            let rank = rank_str.parse::<usize>().unwrap_or(0);
+            let rank = rank_str.fragment().parse::<usize>().unwrap_or(0);
             Type::Tensor(Box::new(inner), rank)
         },
     )(input)
 }
 
-fn parse_user_type(input: &str) -> IResult<&str, Type> {
+fn parse_user_type(input: Span) -> IResult<Span, Type> {
     // Check for Enum vs Struct in identifier context? No, just identifier.
     // Type::Struct / Type::Enum / Type::UserDefined are currently ambiguous in parser until resolution.
     // Let's use UserDefined for now for any identifier in type position.
@@ -102,7 +118,7 @@ fn parse_user_type(input: &str) -> IResult<&str, Type> {
     map(identifier, Type::UserDefined)(input)
 }
 
-fn parse_tuple_type(input: &str) -> IResult<&str, Type> {
+fn parse_tuple_type(input: Span) -> IResult<Span, Type> {
     // (Type, Type, ...)
     let (input, types) = delimited(
         ws(char('(')),
@@ -128,7 +144,7 @@ fn parse_tuple_type(input: &str) -> IResult<&str, Type> {
     }
 }
 
-pub fn parse_type(input: &str) -> IResult<&str, Type> {
+pub fn parse_type(input: Span) -> IResult<Span, Type> {
     alt((
         parse_tensor_type,
         parse_primitive_type,
@@ -139,49 +155,58 @@ pub fn parse_type(input: &str) -> IResult<&str, Type> {
 
 // --- Expressions ---
 
-fn parse_literal_int(input: &str) -> IResult<&str, Expr> {
-    map_res(digit1, |s: &str| s.parse::<i64>().map(Expr::Int))(input)
+fn parse_int(input: Span) -> IResult<Span, Expr> {
+    spanned(map(digit1, |s: Span| {
+        let s_str = s.fragment();
+        ExprKind::Int(s_str.parse::<i64>().unwrap())
+    }))(input)
 }
 
 // Helper for exponent: e/E followed by optional sign and digits
-fn parse_exponent(input: &str) -> IResult<&str, &str> {
-    recognize(tuple((
-        alt((char('e'), char('E'))),
-        opt(alt((char('+'), char('-')))),
-        digit1,
-    )))(input)
-}
 
-fn parse_literal_float(input: &str) -> IResult<&str, Expr> {
-    // Two patterns:
-    // 1. Digits . Digits [Exponent]
-    // 2. Digits Exponent
-    let pattern1 = recognize(tuple((digit1, char('.'), digit1, opt(parse_exponent))));
-    let pattern2 = recognize(tuple((digit1, parse_exponent)));
-
-    map_res(alt((pattern1, pattern2)), |s: &str| {
-        s.parse::<f64>().map(Expr::Float)
+fn parse_literal_float(input: Span) -> IResult<Span, Expr> {
+    spanned(|input| {
+        let (rest, val_span) = nom::number::complete::recognize_float(input)?;
+        let s = val_span.fragment();
+        // Enforce dot or exponent to distinguish from integers
+        if !s.contains('.') && !s.contains('e') && !s.contains('E') {
+            return Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Float,
+            )));
+        }
+        // Avoid eating range operator: if float ends with '.' and next char is '.', reject
+        if s.ends_with('.') && rest.fragment().starts_with('.') {
+            return Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Float,
+            )));
+        }
+        let val = s.parse::<f64>().unwrap();
+        Ok((rest, ExprKind::Float(val)))
     })(input)
 }
 
-fn parse_literal_bool(input: &str) -> IResult<&str, Expr> {
-    alt((
-        value(Expr::Bool(true), tag("true")),
-        value(Expr::Bool(false), tag("false")),
+fn parse_bool(input: Span) -> IResult<Span, Expr> {
+    spanned(alt((
+        map(tag("true"), |_| ExprKind::Bool(true)),
+        map(tag("false"), |_| ExprKind::Bool(false)),
+    )))(input)
+}
+
+fn parse_literal_string(input: Span) -> IResult<Span, Expr> {
+    spanned(map(
+        delimited(char('"'), take_while(|c: char| c != '"'), char('"')),
+        |s: Span| ExprKind::StringLiteral(s.fragment().to_string()),
     ))(input)
 }
 
-fn parse_literal_string(input: &str) -> IResult<&str, Expr> {
-    let (input, s) = delimited(char('"'), take_while(|c| c != '"'), char('"'))(input)?;
-    Ok((input, Expr::StringLiteral(s.to_string())))
-}
-
-fn parse_variable(input: &str) -> IResult<&str, Expr> {
-    map(identifier, Expr::Variable)(input)
+fn parse_variable(input: Span) -> IResult<Span, Expr> {
+    spanned(map(identifier, ExprKind::Variable))(input)
 }
 
 // --- Blocks ---
-fn parse_block(input: &str) -> IResult<&str, Vec<Stmt>> {
+fn parse_block(input: Span) -> IResult<Span, Vec<Stmt>> {
     let (input, _) = ws(char('{'))(input)?;
     let (input, mut stmts) = nom::multi::many0(parse_stmt)(input)?;
 
@@ -193,17 +218,17 @@ fn parse_block(input: &str) -> IResult<&str, Vec<Stmt>> {
     let (input, _) = ws(char('}'))(input)?;
 
     if let Some(expr) = trailing {
-        stmts.push(Stmt::Expr(expr));
+        stmts.push(Spanned::dummy(StmtKind::Expr(expr)));
     }
 
     Ok((input, stmts))
 }
 
-fn parse_block_expr(input: &str) -> IResult<&str, Expr> {
-    map(parse_block, Expr::Block)(input)
+fn parse_block_expr(input: Span) -> IResult<Span, Expr> {
+    spanned(map(parse_block, ExprKind::Block))(input)
 }
 
-fn parse_comprehension_clause(input: &str) -> IResult<&str, ComprehensionClause> {
+fn parse_comprehension_clause(input: Span) -> IResult<Span, ComprehensionClause> {
     // Ensure we don't start with { (which indicates body) or ] (end)
     let (input, _) = not(ws(char('{')))(input)?;
     let (input, _) = not(ws(char(']')))(input)?;
@@ -219,185 +244,147 @@ fn parse_comprehension_clause(input: &str) -> IResult<&str, ComprehensionClause>
     alt((generator, condition))(input)
 }
 
-fn parse_tensor_comprehension(input: &str) -> IResult<&str, Expr> {
-    // [ indices | clauses... { body } ]
-    let (input, _) = ws(char('['))(input)?;
-
-    // 1. Indices (Output dimensions)
-    let (input, indices) = separated_list1(ws(char(',')), ws(identifier))(input)?;
-
-    let (input, _) = ws(char('|'))(input)?;
-
-    // 2. Clauses (Generators and Conditions)
-    // Parse until '{' or ']'
-    // We can't use separated_list1 directly if we want to stop at '{' without consuming it optionally?
-    // Actually, separated_list1 will return error if it can't find separator or item?
-    // We want "comma separated items until we hit { or ]"
-    // Let's use many0 with custom separator check logic or just separated_list0 but we need to ensure we don't consume the body start.
-    // parse_comprehension_clause does NOT start with '{'.
-    // If we use separated_list0(ws(char(',')), parse_comprehension_clause), it should work as long as `{` is not a start of clause.
-    // BUT parse_expr might start with `{` (Block). So Condition might consume body block?
-    // Wait, body block is `{ expr }`. Condition is `expr`. `expr` includes `Block`.
-    // So `parse_expr` WILL consume `{ ... }`. This is ambiguous if we just list exprs.
-    // However, if we see `i <- ...` that is distinct.
-    // If we see `expr`, it could be a condition or the body block.
-    // But the body block is MANDATORY `{ ... }` syntax for body.
-    // Is a block `{ ... }` calculable as a boolean condition? Yes in Rust/TL (returns last expr).
-    // So `[ i | { true } ]` -> Is `{ true }` a condition or body?
-    // We defined syntax: `... { body } ]`
-    // So the last element IS the body if it is a block?
-    // Or we say: "Clauses come first. Body comes last."
-    // If we encounter a Block `{ ... }` at the top level of the clause list, we might assume it is the body?
-    // But `if true { ... }` is also an Expr which starts with `if`.
-    // A raw Block `{ ... }` as a condition seems rare but possible.
-    // To resolve ambiguity: The Body MUST be the final element and MUST be a Block.
-    // AND we can say that clauses are correctly separated by commas.
-    // If we are at the end of clauses, we might see a `{`.
-    // We can peek. If next char is `{`, we stop parsing clauses?
-    // BUT `parse_expr` for a condition also might start with `{`.
-    // Let's rely on the rule: Body is `{ expr }`.
-    // If we simply peek for `{`, we treat it as Body start.
-    // This bans conditions starting with `{` (block expressions) at the top level, unless wrapped in `(...)`.
-    // This is a reasonable limitation for clear syntax.
-
-    // Parse clauses: comma separated list of generators or conditions
-    let (input, clauses) = separated_list0(ws(char(',')), parse_comprehension_clause)(input)?;
-
-    // Optional Body: { expr }
-    // We use peek concept: if `{`, parse block, else None.
-    let (input, body_expr) = opt(parse_block_expr)(input)?;
-
-    // Check for `]`
-    let (input, _) = ws(char(']'))(input)?;
-
-    // Wrap body if present
-    let body = body_expr.map(Box::new);
-
-    Ok((
-        input,
-        Expr::TensorComprehension {
+fn parse_tensor_comprehension(input: Span) -> IResult<Span, Expr> {
+    spanned(map(
+        tuple((
+            preceded(
+                ws(char('[')),
+                separated_list1(ws(char(',')), ws(identifier)),
+            ),
+            preceded(
+                ws(char('|')),
+                separated_list0(ws(char(',')), parse_comprehension_clause),
+            ),
+            opt(parse_block_expr),
+            ws(char(']')),
+        )),
+        |(indices, clauses, body_expr, _)| ExprKind::TensorComprehension {
             indices: indices.into_iter().map(|s| s.to_string()).collect(),
             clauses,
-            body,
+            body: body_expr.map(Box::new),
         },
-    ))
+    ))(input)
 }
 
 // --- Control Flow ---
-fn parse_if_expr(input: &str) -> IResult<&str, Expr> {
-    let (input, _) = tag("if")(input)?;
-    let (input, cond) = parse_expr(input)?;
-    let (input, then_block) = parse_block(input)?;
-
-    let (input, else_block) = opt(preceded(ws(tag("else")), parse_block))(input)?;
-
-    Ok((input, Expr::IfExpr(Box::new(cond), then_block, else_block)))
+fn parse_if_expr(input: Span) -> IResult<Span, Expr> {
+    spanned(map(
+        tuple((
+            preceded(tag("if"), parse_expr),
+            parse_block,
+            opt(preceded(ws(tag("else")), parse_block)),
+        )),
+        |(cond, then_block, else_block)| ExprKind::IfExpr(Box::new(cond), then_block, else_block),
+    ))(input)
 }
 
-fn parse_if_let_expr(input: &str) -> IResult<&str, Expr> {
-    let (input, _) = tag("if")(input)?;
-    let (input, _) = ws(tag("let"))(input)?;
-    let (input, pattern) = ws(parse_pattern)(input)?;
-    let (input, _) = ws(char('='))(input)?;
-    let (input, expr) = parse_expr(input)?;
-    let (input, then_block) = parse_block(input)?;
-    let (input, else_block) = opt(preceded(ws(tag("else")), parse_block))(input)?;
-
-    Ok((
-        input,
-        Expr::IfLet {
+fn parse_if_let_expr(input: Span) -> IResult<Span, Expr> {
+    spanned(map(
+        tuple((
+            preceded(pair(tag("if"), ws(tag("let"))), ws(parse_pattern)),
+            preceded(ws(char('=')), parse_expr),
+            parse_block,
+            opt(preceded(ws(tag("else")), parse_block)),
+        )),
+        |(pattern, expr, then_block, else_block)| ExprKind::IfLet {
             pattern,
             expr: Box::new(expr),
             then_block,
             else_block,
         },
-    ))
+    ))(input)
 }
 
-fn parse_tensor_literal(input: &str) -> IResult<&str, Expr> {
-    let (input, elements) = delimited(
-        ws(char('[')),
-        separated_list0(ws(char(',')), parse_expr),
-        ws(char(']')),
-    )(input)?;
-
-    // Check if all elements are constants (recursively)
-    fn is_const(expr: &Expr) -> bool {
-        match expr {
-            Expr::Float(_) | Expr::Int(_) | Expr::Bool(_) => true,
-            Expr::TensorLiteral(elems) | Expr::TensorConstLiteral(elems) => {
-                elems.iter().all(is_const)
+fn parse_tensor_literal(input: Span) -> IResult<Span, Expr> {
+    spanned(map(
+        delimited(
+            ws(char('[')),
+            separated_list0(ws(char(',')), parse_expr),
+            ws(char(']')),
+        ),
+        |elements| {
+            // Check if all elements are constants (recursively)
+            fn is_const(expr: &Expr) -> bool {
+                match &expr.inner {
+                    ExprKind::Float(_) | ExprKind::Int(_) | ExprKind::Bool(_) => true,
+                    ExprKind::TensorLiteral(ref elems)
+                    | ExprKind::TensorConstLiteral(ref elems) => elems.iter().all(is_const),
+                    _ => false,
+                }
             }
-            _ => false,
-        }
-    }
 
-    let all_const = elements.iter().all(is_const);
+            let all_const = elements.iter().all(is_const);
 
-    if all_const {
-        Ok((input, Expr::TensorConstLiteral(elements)))
-    } else {
-        Ok((input, Expr::TensorLiteral(elements)))
-    }
+            if all_const {
+                ExprKind::TensorConstLiteral(elements)
+            } else {
+                ExprKind::TensorLiteral(elements)
+            }
+        },
+    ))(input)
 }
 
 // Aggregation: sum(expr for var in range) or sum(expr for var in range where cond)
-fn parse_aggregation(input: &str) -> IResult<&str, Expr> {
-    // Parse: sum|max|min|avg|count ( expr for var in range [where cond] )
-    let (input, op_str) = ws(alt((
-        tag("sum"),
-        tag("max"),
-        tag("min"),
-        tag("avg"),
-        tag("count"),
-    )))(input)?;
-
-    let op = match op_str {
-        "sum" => AggregateOp::Sum,
-        "max" => AggregateOp::Max,
-        "min" => AggregateOp::Min,
-        "avg" => AggregateOp::Avg,
-        "count" => AggregateOp::Count,
-        _ => unreachable!(),
-    };
-
-    let (input, _) = ws(char('('))(input)?;
-    let (input, expr) = parse_expr(input)?;
-    let (input, _) = ws(tag("for"))(input)?;
-    let (input, var) = ws(identifier)(input)?;
-    let (input, _) = ws(tag("in"))(input)?;
-    let (input, range) = parse_expr(input)?;
-    let (input, condition) = opt(preceded(ws(tag("where")), parse_expr))(input)?;
-    let (input, _) = ws(char(')'))(input)?;
-
-    Ok((
-        input,
-        Expr::Aggregation {
-            op,
-            expr: Box::new(expr),
-            var,
-            range: Box::new(range),
-            condition: condition.map(Box::new),
+fn parse_aggregation(input: Span) -> IResult<Span, Expr> {
+    spanned(map(
+        tuple((
+            ws(alt((
+                tag("sum"),
+                tag("max"),
+                tag("min"),
+                tag("avg"),
+                tag("count"),
+            ))),
+            delimited(
+                ws(char('(')),
+                tuple((
+                    parse_expr,
+                    preceded(ws(tag("for")), ws(identifier)),
+                    preceded(ws(tag("in")), parse_expr),
+                    opt(preceded(ws(tag("where")), parse_expr)),
+                )),
+                ws(char(')')),
+            ),
+        )),
+        |(op_str, (expr, var, range, condition))| {
+            let op = match *op_str {
+                "sum" => AggregateOp::Sum,
+                "max" => AggregateOp::Max,
+                "min" => AggregateOp::Min,
+                "avg" => AggregateOp::Avg,
+                "count" => AggregateOp::Count,
+                _ => unreachable!(),
+            };
+            ExprKind::Aggregation {
+                op,
+                expr: Box::new(expr),
+                var,
+                range: Box::new(range),
+                condition: condition.map(Box::new),
+            }
         },
-    ))
+    ))(input)
 }
 
-fn parse_struct_init(input: &str) -> IResult<&str, Expr> {
-    // Identifier { field: expr, ... }
-    let (input, name) = ws(identifier)(input)?;
-    let (input, _) = ws(char('{'))(input)?;
-    let (input, fields) = separated_list0(
-        ws(char(',')),
-        pair(ws(identifier), preceded(ws(char(':')), parse_expr)),
-    )(input)?;
-    let (input, _) = opt(ws(char(',')))(input)?;
-    let (input, _) = ws(char('}'))(input)?;
-
-    Ok((input, Expr::StructInit(name, fields)))
+fn parse_struct_init(input: Span) -> IResult<Span, Expr> {
+    spanned(map(
+        tuple((
+            ws(identifier),
+            delimited(
+                ws(char('{')),
+                separated_list0(
+                    ws(char(',')),
+                    pair(ws(identifier), preceded(ws(char(':')), parse_expr)),
+                ),
+                terminated(ws(char('}')), opt(ws(char(',')))),
+            ),
+        )),
+        |(name, fields)| ExprKind::StructInit(name, fields),
+    ))(input)
 }
 
 #[allow(dead_code)]
-fn parse_enum_init(input: &str) -> IResult<&str, Expr> {
+fn parse_enum_init(input: Span) -> IResult<Span, Expr> {
     // Enum::Variant { field: value ... }
     // Identifier "Enum::Variant" or just "Variant"?
     // Rust requires fully qualified or imported.
@@ -406,12 +393,12 @@ fn parse_enum_init(input: &str) -> IResult<&str, Expr> {
     // StructInit currently takes identifier.
     // If identifier has "::", we could treat it as EnumInit OR StructInit (mod::Struct).
     // Let's assume generic StructInit handles "A::B" as name.
-    // BUT we need to produce Expr::EnumInit if it's an Enum.
+    // BUT we need to produce ExprKind::EnumInit if it's an Enum.
     // Since Parser doesn't know types, we must produce a "GenericInit" or rely on Semantics to re-classify?
     // OR we can make a heuristic: if it looks like "X::Y { ... }", treat as potentially enum.
-    // Actually, `Expr::StructInit` stores a String name. Semantics can resolve "X::Y" to Enum or Struct.
+    // Actually, `ExprKind::StructInit` stores a String name. Semantics can resolve "X::Y" to Enum or Struct.
     // So maybe we don't strictly need distinct parse_enum_init IF StructInit covers the syntax.
-    // HOWEVER, we added Expr::EnumInit.
+    // HOWEVER, we added ExprKind::EnumInit.
     // Let's modify parse_struct_init to return EnumInit if it detects "::".
     // Wait, Structs can differ by module too: `mod::Struct { ... }`.
     // So syntax is identical.
@@ -420,7 +407,7 @@ fn parse_enum_init(input: &str) -> IResult<&str, Expr> {
     // I can leave it as StructInit and fix in Semantics, OR I can try to disambiguate.
     // Ambiguity is impossible without symbol table.
     // So: I will stick to ParseStructInit, but I'll rename it/comment it or handle conversion in Semantics.
-    // Wait, Expr::EnumInit fields: enum_name, variant_name. StructInit only has name.
+    // Wait, ExprKind::EnumInit fields: enum_name, variant_name. StructInit only has name.
     // If I stick to StructInit, I need to split name in Semantics.
     // OK, let's keep parse_struct_init as the shared parser.
     Err(nom::Err::Error(nom::error::Error::new(
@@ -429,7 +416,7 @@ fn parse_enum_init(input: &str) -> IResult<&str, Expr> {
     )))
 }
 
-fn parse_pattern(input: &str) -> IResult<&str, Pattern> {
+fn parse_pattern(input: Span) -> IResult<Span, Pattern> {
     // Wildcard
     let (input, wc) = opt(tag("_"))(input)?;
     if wc.is_some() {
@@ -502,75 +489,77 @@ fn parse_pattern(input: &str) -> IResult<&str, Pattern> {
     }
 }
 
-fn parse_match_expr(input: &str) -> IResult<&str, Expr> {
-    // match expr { pat => expr, ... }
-    let (input, _) = tag("match")(input)?;
-    let (input, expr) = parse_expr(input)?;
-    let (input, _) = ws(char('{'))(input)?;
-
-    let (input, arms) = separated_list0(
-        ws(char(',')),
-        pair(ws(parse_pattern), preceded(ws(tag("=>")), parse_expr)),
-    )(input)?;
-
-    let (input, _) = opt(ws(char(',')))(input)?;
-    let (input, _) = ws(char('}'))(input)?;
-
-    Ok((
-        input,
-        Expr::Match {
+fn parse_match_expr(input: Span) -> IResult<Span, Expr> {
+    spanned(map(
+        tuple((
+            preceded(tag("match"), parse_expr),
+            delimited(
+                ws(char('{')),
+                separated_list0(
+                    ws(char(',')),
+                    pair(ws(parse_pattern), preceded(ws(tag("=>")), parse_expr)),
+                ),
+                terminated(ws(char('}')), opt(ws(char(',')))),
+            ),
+        )),
+        |(expr, arms)| ExprKind::Match {
             expr: Box::new(expr),
             arms,
         },
-    ))
+    ))(input)
 }
 
 // Primary: Literal | Variable | (Expr) | Block? | IfExpr | Aggregation
-fn parse_primary(input: &str) -> IResult<&str, Expr> {
+fn parse_atom(input: Span) -> IResult<Span, Expr> {
     ws(alt((
         parse_literal_float,
-        parse_literal_int,
-        parse_literal_bool,
+        parse_int,
+        parse_bool,
         parse_literal_string,
         parse_if_let_expr,
         parse_if_expr,
         parse_tensor_comprehension, // Try parsing comprehension before literal array
         parse_tensor_literal,
-        parse_aggregation, // Must come before parse_variable
-        parse_struct_init, // Must come before parse_variable
+        parse_aggregation,
+        parse_struct_init,
         parse_match_expr,
-        parse_variable,
-        parse_block_expr,
         parse_block_expr,
         parse_tuple_or_grouping,
+        parse_variable, // Variable must be last to avoid shadowing keywords/other structures?
     )))(input)
 }
 
-fn parse_tuple_or_grouping(input: &str) -> IResult<&str, Expr> {
-    let (input, _) = ws(char('('))(input)?;
-    let (input, mut exprs) = separated_list0(ws(char(',')), parse_expr)(input)?;
-    // check for trailing comma to distinguish (expr,) from (expr)
-    let (input, trailing_comma) = opt(ws(char(',')))(input)?;
-    let (input, _) = ws(char(')'))(input)?;
+fn parse_tuple_or_grouping(input: Span) -> IResult<Span, Expr> {
+    spanned(|input| {
+        let (input, _) = ws(char('('))(input)?;
+        let (input, mut exprs) = separated_list0(ws(char(',')), parse_expr)(input)?;
+        // check for trailing comma to distinguish (expr,) from (expr)
+        let (input, trailing_comma) = opt(ws(char(',')))(input)?;
+        let (input, _) = ws(char(')'))(input)?;
 
-    if exprs.is_empty() {
-        // () -> Unit tuple (represented as empty tuple)
-        // Or should we have a Unit literal?
-        // Let's use empty tuple for now.
-        Ok((input, Expr::Tuple(vec![])))
-    } else if exprs.len() == 1 && trailing_comma.is_none() {
-        // (expr) -> grouping
-        Ok((input, exprs.remove(0)))
-    } else {
-        // (expr, ...) or (expr,) -> tuple
-        Ok((input, Expr::Tuple(exprs)))
-    }
+        if exprs.is_empty() {
+            // () -> Unit tuple (represented as empty tuple)
+            // Or should we have a Unit literal?
+            // Let's use empty tuple for now.
+            Ok((input, ExprKind::Tuple(vec![])))
+        } else if exprs.len() == 1 && trailing_comma.is_none() {
+            // (expr) -> grouping
+            // Since we construct a new Spanned, we need to extract the inner ExprKind if we want to re-wrap it,
+            // or just return the inner expression. But spanned() will re-wrap whatever we return.
+            // If we return the inner expression's Kind, spanned() will wrap it with the outer parens' span.
+            // This is correct for grouping: (expr) has the span including parens.
+            Ok((input, exprs.remove(0).inner))
+        } else {
+            // (expr, ...) or (expr,) -> tuple
+            Ok((input, ExprKind::Tuple(exprs)))
+        }
+    })(input)
 }
 
 // Postfix: Call, Index, Field, Method
 // We parse a primary, then fold many suffixes
-fn parse_postfix(input: &str) -> IResult<&str, Expr> {
-    let (input, init) = parse_primary(input)?;
+fn parse_postfix(input: Span) -> IResult<Span, Expr> {
+    let (input, init) = parse_atom(input)?;
 
     nom::multi::fold_many0(
         ws(alt((
@@ -600,117 +589,124 @@ fn parse_postfix(input: &str) -> IResult<&str, Expr> {
             // Tuple Access: .0, .1, etc.
             map(
                 preceded(char('.'), digit1),
-                |idx_str: &str| (3, vec![], None, Some(idx_str.to_string())), // Tag 3 for Tuple Access
+                |idx_str: Span| (3, vec![], None, Some(idx_str.fragment().to_string())), // Tag 3 for Tuple Access
             ),
         ))),
         move || init.clone(),
         |acc, (tag, args, idxs, name)| {
-            match tag {
+            let span = acc.span.clone(); // Propagate span from left (start)
+            let kind = match tag {
                 0 => {
                     // Call.
-                    match acc {
-                        Expr::FieldAccess(obj, method_name) => {
-                            Expr::MethodCall(obj, method_name, args)
+                    match acc.inner {
+                        ExprKind::FieldAccess(obj, method_name) => {
+                            ExprKind::MethodCall(obj, method_name, args)
                         }
-                        Expr::Variable(fname) => {
+                        ExprKind::Variable(fname) => {
                             // Check if we have Type::method in variable name (from identifier parser)
                             // The identifier parser allows "::".
                             // So "File::open" is returned as identifier string.
                             if fname.contains("::") {
                                 let parts: Vec<&str> = fname.split("::").collect();
                                 if parts.len() == 2 {
-                                    Expr::StaticMethodCall(
+                                    ExprKind::StaticMethodCall(
                                         parts[0].to_string(),
                                         parts[1].to_string(),
                                         args,
                                     )
                                 } else {
                                     // Fallback or Error?
-                                    Expr::FnCall(fname, args)
+                                    ExprKind::FnCall(fname, args)
                                 }
                             } else {
-                                Expr::FnCall(fname, args)
+                                ExprKind::FnCall(fname, args)
                             }
                         }
-                        _ => Expr::FnCall("UNKNOWN_INDIRECT_CALL".to_string(), args),
+                        _ => ExprKind::FnCall("UNKNOWN_INDIRECT_CALL".to_string(), args),
                     }
                 }
-                1 => Expr::IndexAccess(Box::new(acc), idxs.unwrap()),
-                2 => Expr::FieldAccess(Box::new(acc), name.unwrap()),
+                1 => ExprKind::IndexAccess(Box::new(acc), idxs.unwrap()),
+                2 => ExprKind::FieldAccess(Box::new(acc), name.unwrap()),
                 3 => {
                     let idx = name.unwrap().parse::<usize>().unwrap_or(0);
-                    Expr::TupleAccess(Box::new(acc), idx)
+                    ExprKind::TupleAccess(Box::new(acc), idx)
                 }
                 _ => unreachable!(),
-            }
+            };
+            Spanned::new(kind, span)
         },
     )(input)
 }
 
 // Cast: expr as Type
-fn parse_cast(input: &str) -> IResult<&str, Expr> {
+fn parse_cast(input: Span) -> IResult<Span, Expr> {
     let (input, lhs) = parse_postfix(input)?;
 
     // Handle optional "as Type" chain
     nom::multi::fold_many0(
         pair(ws(tag("as")), parse_type),
         move || lhs.clone(),
-        |acc, (_, ty)| Expr::As(Box::new(acc), ty),
+        |acc, (_, ty)| Spanned::new(ExprKind::As(Box::new(acc.clone()), ty), acc.span.clone()),
     )(input)
 }
 
 // 1. Unary: - !
-fn parse_unary(input: &str) -> IResult<&str, Expr> {
+fn parse_unary(input: Span) -> IResult<Span, Expr> {
     alt((
-        map(pair(ws(char('-')), parse_cast), |(_, expr)| {
-            Expr::UnOp(UnOp::Neg, Box::new(expr))
-        }),
-        map(pair(ws(char('!')), parse_cast), |(_, expr)| {
-            Expr::UnOp(UnOp::Not, Box::new(expr))
-        }),
+        spanned(map(pair(ws(char('-')), parse_cast), |(_, expr)| {
+            ExprKind::UnOp(UnOp::Neg, Box::new(expr))
+        })),
+        spanned(map(pair(ws(char('!')), parse_cast), |(_, expr)| {
+            ExprKind::UnOp(UnOp::Not, Box::new(expr))
+        })),
         parse_cast,
     ))(input)
 }
 
 // 2. Multiplicative: * / %
-fn parse_factor(input: &str) -> IResult<&str, Expr> {
+// 2. Multiplicative: * / %
+fn parse_factor(input: Span) -> IResult<Span, Expr> {
     let (input, init) = parse_unary(input)?;
 
     nom::multi::fold_many0(
         pair(ws(alt((char('*'), char('/'), char('%')))), parse_unary),
         move || init.clone(),
         |acc, (op, val)| {
+            let span = acc.span.clone();
             let bin_op = match op {
                 '*' => BinOp::Mul,
                 '/' => BinOp::Div,
                 '%' => BinOp::Mod,
                 _ => unreachable!(),
             };
-            Expr::BinOp(Box::new(acc), bin_op, Box::new(val))
+            Spanned::new(ExprKind::BinOp(Box::new(acc), bin_op, Box::new(val)), span)
         },
     )(input)
 }
 
 // 3. Additive: + -
-fn parse_term(input: &str) -> IResult<&str, Expr> {
+// 3. Additive: + -
+fn parse_term(input: Span) -> IResult<Span, Expr> {
     let (input, init) = parse_factor(input)?;
 
     nom::multi::fold_many0(
         pair(ws(alt((char('+'), char('-')))), parse_factor),
         move || init.clone(),
         |acc, (op, val)| {
+            let span = acc.span.clone();
             let bin_op = match op {
                 '+' => BinOp::Add,
                 '-' => BinOp::Sub,
                 _ => unreachable!(),
             };
-            Expr::BinOp(Box::new(acc), bin_op, Box::new(val))
+            Spanned::new(ExprKind::BinOp(Box::new(acc), bin_op, Box::new(val)), span)
         },
     )(input)
 }
 
 // 4. Relational: < > <= >=
-fn parse_relational(input: &str) -> IResult<&str, Expr> {
+// 4. Relational: < > <= >=
+fn parse_relational(input: Span) -> IResult<Span, Expr> {
     let (input, init) = parse_term(input)?;
 
     nom::multi::fold_many0(
@@ -720,346 +716,400 @@ fn parse_relational(input: &str) -> IResult<&str, Expr> {
         ),
         move || init.clone(),
         |acc, (op, val)| {
-            let bin_op = match op {
+            let span = acc.span.clone();
+            let bin_op = match *op {
                 "<" => BinOp::Lt,
                 ">" => BinOp::Gt,
                 "<=" => BinOp::Le,
                 ">=" => BinOp::Ge,
                 _ => unreachable!(),
             };
-            Expr::BinOp(Box::new(acc), bin_op, Box::new(val))
+            Spanned::new(ExprKind::BinOp(Box::new(acc), bin_op, Box::new(val)), span)
         },
     )(input)
 }
 
 // 5. Equality: == !=
-fn parse_equality(input: &str) -> IResult<&str, Expr> {
+// 5. Equality: == !=
+fn parse_equality(input: Span) -> IResult<Span, Expr> {
     let (input, init) = parse_relational(input)?;
 
     nom::multi::fold_many0(
         pair(ws(alt((tag("=="), tag("!=")))), parse_relational),
         move || init.clone(),
         |acc, (op, val)| {
-            let bin_op = match op {
+            let span = acc.span.clone();
+            let bin_op = match *op {
                 "==" => BinOp::Eq,
                 "!=" => BinOp::Neq,
                 _ => unreachable!(),
             };
-            Expr::BinOp(Box::new(acc), bin_op, Box::new(val))
+            Spanned::new(ExprKind::BinOp(Box::new(acc), bin_op, Box::new(val)), span)
         },
     )(input)
 }
 
 // 6. Logical AND: &&
-fn parse_logical_and(input: &str) -> IResult<&str, Expr> {
+// 6. Logical AND: &&
+fn parse_logical_and(input: Span) -> IResult<Span, Expr> {
     let (input, init) = parse_equality(input)?;
 
     nom::multi::fold_many0(
         pair(ws(tag("&&")), parse_equality),
         move || init.clone(),
-        |acc, (_, val)| Expr::BinOp(Box::new(acc), BinOp::And, Box::new(val)),
+        |acc, (_, val)| {
+            let span = acc.span.clone();
+            Spanned::new(
+                ExprKind::BinOp(Box::new(acc), BinOp::And, Box::new(val)),
+                span,
+            )
+        },
     )(input)
 }
 
 // 7. Logical OR: ||
-fn parse_logical_or(input: &str) -> IResult<&str, Expr> {
+// 7. Logical OR: ||
+fn parse_logical_or(input: Span) -> IResult<Span, Expr> {
     let (input, init) = parse_logical_and(input)?;
 
     nom::multi::fold_many0(
         pair(ws(tag("||")), parse_logical_and),
         move || init.clone(),
-        |acc, (_, val)| Expr::BinOp(Box::new(acc), BinOp::Or, Box::new(val)),
+        |acc, (_, val)| {
+            let span = acc.span.clone();
+            Spanned::new(
+                ExprKind::BinOp(Box::new(acc), BinOp::Or, Box::new(val)),
+                span,
+            )
+        },
     )(input)
 }
 
 // 8. Range: ..
-fn parse_range(input: &str) -> IResult<&str, Expr> {
+// 8. Range: ..
+fn parse_range(input: Span) -> IResult<Span, Expr> {
     let (input, start) = parse_logical_or(input)?;
 
     let (input, end) = opt(preceded(ws(tag("..")), parse_logical_or))(input)?;
 
     if let Some(end_expr) = end {
-        Ok((input, Expr::Range(Box::new(start), Box::new(end_expr))))
+        Ok((
+            input,
+            Spanned::new(
+                ExprKind::Range(Box::new(start.clone()), Box::new(end_expr)),
+                start.span,
+            ),
+        ))
     } else {
         Ok((input, start))
     }
 }
 
 // Top level Expr
-pub fn parse_expr(input: &str) -> IResult<&str, Expr> {
+pub fn parse_expr(input: Span) -> IResult<Span, Expr> {
     parse_range(input)
 }
 
 // --- Statements ---
 
 // let x[i, j] = ... or let mut x = ...
-fn parse_let_stmt(input: &str) -> IResult<&str, Stmt> {
-    let (input, _) = tag("let")(input)?;
-    let (input, _) = space1(input)?;
+// let x[i, j] = ... or let mut x = ...
+fn parse_let_stmt(input: Span) -> IResult<Span, Stmt> {
+    spanned(|input| {
+        let (input, _) = tag("let")(input)?;
+        let (input, _) = space1(input)?;
 
-    // Check for "mut" keyword
-    let (input, is_mut) = opt(terminated(tag("mut"), space1))(input)?;
-    let (input, name) = identifier(input)?;
+        // Check for "mut" keyword
+        let (input, is_mut) = opt(terminated(tag("mut"), space1))(input)?;
+        let (input, name) = identifier(input)?;
 
-    // Optional indices for tensor comprehension: [i, j]
-    let (input, indices) = opt(delimited(
-        tuple((char('['), space0)),
-        separated_list0(tuple((char(','), space0)), identifier),
-        tuple((space0, char(']'))),
-    ))(input)?;
+        // Optional indices for tensor comprehension: [i, j]
+        let (input, indices) = opt(delimited(
+            tuple((char('['), space0)),
+            separated_list0(tuple((char(','), space0)), identifier),
+            tuple((space0, char(']'))),
+        ))(input)?;
 
-    let (input, _) = space0(input)?;
-    let (input, type_annotation) = opt(preceded(tuple((char(':'), space0)), parse_type))(input)?;
-    let (input, _) = space0(input)?;
-    let (input, _) = char('=')(input)?;
-    let (input, _) = space0(input)?;
-    let (input, value) = parse_expr(input)?;
-    let (input, _) = space0(input)?;
-    let (input, _) = char(';')(input)?;
+        let (input, _) = space0(input)?;
+        let (input, type_annotation) =
+            opt(preceded(tuple((char(':'), space0)), parse_type))(input)?;
+        let (input, _) = space0(input)?;
+        let (input, _) = char('=')(input)?;
+        let (input, _) = space0(input)?;
+        let (input, value) = parse_expr(input)?;
+        let (input, _) = space0(input)?;
+        let (input, _) = char(';')(input)?;
 
-    let mutable = is_mut.is_some();
+        let mutable = is_mut.is_some();
 
-    if let Some(idxs) = indices {
-        // Transform into TensorComprehension expression if indices are present
-        // let C[i,j] = expr  --> let C = TensorComprehension { indices: [i,j], body: expr }
-        Ok((
-            input,
-            Stmt::Let {
-                name,
-                type_annotation,
-                value: Expr::TensorComprehension {
-                    indices: idxs,
-                    clauses: Vec::new(),
-                    body: Some(Box::new(value)),
+        if let Some(idxs) = indices {
+            // Transform into TensorComprehension expression if indices are present
+            Ok((
+                input,
+                StmtKind::Let {
+                    name,
+                    type_annotation,
+                    value: Spanned::dummy(ExprKind::TensorComprehension {
+                        indices: idxs,
+                        clauses: Vec::new(),
+                        body: Some(Box::new(value)),
+                    }),
+                    mutable,
                 },
-                mutable,
-            },
-        ))
-    } else {
-        Ok((
-            input,
-            Stmt::Let {
-                name,
-                type_annotation,
-                value,
-                mutable,
-            },
-        ))
-    }
+            ))
+        } else {
+            Ok((
+                input,
+                StmtKind::Let {
+                    name,
+                    type_annotation,
+                    value,
+                    mutable,
+                },
+            ))
+        }
+    })(input)
 }
 
 // x[i] += ... or x = ...
-fn parse_assign_stmt(input: &str) -> IResult<&str, Stmt> {
-    let (input, name) = ws(identifier)(input)?;
+fn parse_assign_stmt(input: Span) -> IResult<Span, Stmt> {
+    spanned(|input| {
+        let (input, name) = ws(identifier)(input)?;
 
-    let (input, indices) = opt(delimited(
-        ws(char('[')),
-        separated_list0(ws(char(',')), parse_expr),
-        ws(char(']')),
-    ))(input)?;
+        let (input, indices) = opt(delimited(
+            ws(char('[')),
+            separated_list0(ws(char(',')), parse_expr),
+            ws(char(']')),
+        ))(input)?;
 
-    let (input, op_str) = ws(alt((
-        tag("="),
-        tag("+="),
-        tag("-="),
-        tag("*="),
-        tag("/="),
-        tag("max="),
-        tag("avg="),
-    )))(input)?;
+        let (input, op_str) = ws(alt((
+            tag("="),
+            tag("+="),
+            tag("-="),
+            tag("*="),
+            tag("/="),
+            tag("max="),
+            tag("avg="),
+        )))(input)?;
 
-    let op = match op_str {
-        "=" => AssignOp::Assign,
-        "+=" => AssignOp::AddAssign,
-        "-=" => AssignOp::SubAssign,
-        "*=" => AssignOp::MulAssign,
-        "/=" => AssignOp::DivAssign,
-        "max=" => AssignOp::MaxAssign,
-        "avg=" => AssignOp::AvgAssign,
-        _ => unreachable!(),
-    };
+        let op = match *op_str {
+            "=" => AssignOp::Assign,
+            "+=" => AssignOp::AddAssign,
+            "-=" => AssignOp::SubAssign,
+            "*=" => AssignOp::MulAssign,
+            "/=" => AssignOp::DivAssign,
+            "max=" => AssignOp::MaxAssign,
+            "avg=" => AssignOp::AvgAssign,
+            _ => unreachable!(),
+        };
 
-    let (input, value) = parse_expr(input)?;
-    let (input, _) = ws(char(';'))(input)?;
+        let (input, value) = parse_expr(input)?;
+        let (input, _) = ws(char(';'))(input)?;
 
-    Ok((
-        input,
-        Stmt::Assign {
-            name,
-            indices,
-            op,
-            value,
-        },
-    ))
+        Ok((
+            input,
+            StmtKind::Assign {
+                name,
+                indices,
+                op,
+                value,
+            },
+        ))
+    })(input)
 }
 
 // if (stmt version usually wraps expression if return ignored, or purely statement)
-// For now, treat top-level if as Stmt::If.
-fn parse_if_stmt(input: &str) -> IResult<&str, Stmt> {
-    let (input, _) = tag("if")(input)?;
-    let (input, cond) = parse_expr(input)?;
-    let (input, then_block) = parse_block(input)?;
+// For now, treat top-level if as StmtKind::If.
+fn parse_if_stmt(input: Span) -> IResult<Span, Stmt> {
+    spanned(|input| {
+        let (input, _) = tag("if")(input)?;
+        let (input, cond) = parse_expr(input)?;
+        let (input, then_block) = parse_block(input)?;
 
-    let (input, else_block) = opt(preceded(ws(tag("else")), parse_block))(input)?;
+        let (input, else_block) = opt(preceded(ws(tag("else")), parse_block))(input)?;
 
-    Ok((
-        input,
-        Stmt::If {
-            cond,
-            then_block,
-            else_block,
-        },
-    ))
+        Ok((
+            input,
+            StmtKind::If {
+                cond,
+                then_block,
+                else_block,
+            },
+        ))
+    })(input)
 }
 
-fn parse_for_stmt(input: &str) -> IResult<&str, Stmt> {
-    // for var in expr { ... }
-    let (input, _) = tag("for")(input)?;
-    let (input, loop_var) = ws(identifier)(input)?;
-    let (input, _) = ws(tag("in"))(input)?;
-    let (input, iterator) = parse_expr(input)?; // currently generic expr, could be range
-    let (input, body) = parse_block(input)?;
+fn parse_for_stmt(input: Span) -> IResult<Span, Stmt> {
+    spanned(|input| {
+        // for var in expr { ... }
+        let (input, _) = tag("for")(input)?;
+        let (input, loop_var) = ws(identifier)(input)?;
+        let (input, _) = ws(tag("in"))(input)?;
+        let (input, iterator) = parse_expr(input)?; // currently generic expr, could be range
+        let (input, body) = parse_block(input)?;
 
-    Ok((
-        input,
-        Stmt::For {
-            loop_var,
-            iterator,
-            body,
-        },
-    ))
+        Ok((
+            input,
+            StmtKind::For {
+                loop_var,
+                iterator,
+                body,
+            },
+        ))
+    })(input)
 }
 
-fn parse_while_stmt(input: &str) -> IResult<&str, Stmt> {
-    // while expr { ... }
-    let (input, _) = tag("while")(input)?;
-    let (input, cond) = parse_expr(input)?;
-    let (input, body) = parse_block(input)?;
+fn parse_while_stmt(input: Span) -> IResult<Span, Stmt> {
+    spanned(|input| {
+        // while expr { ... }
+        let (input, _) = tag("while")(input)?;
+        let (input, cond) = parse_expr(input)?;
+        let (input, body) = parse_block(input)?;
 
-    Ok((input, Stmt::While { cond, body }))
+        Ok((input, StmtKind::While { cond, body }))
+    })(input)
 }
 
-fn parse_return_stmt(input: &str) -> IResult<&str, Stmt> {
-    let (input, _) = tag("return")(input)?;
-    let (input, val) = opt(parse_expr)(input)?;
-    let (input, _) = ws(char(';'))(input)?;
-    Ok((input, Stmt::Return(val)))
-}
-
-fn parse_expr_stmt(input: &str) -> IResult<&str, Stmt> {
-    // expr;
-    let (input, expr) = parse_expr(input)?;
-
-    // Check if expr is block-like (If, Match, Block)
-    // In these cases, semicolon is optional in Rust-like syntax.
-    let is_block_like = match &expr {
-        Expr::IfExpr(_, _, _) => true,
-        Expr::IfLet { .. } => true,
-        Expr::Match { .. } => true,
-        Expr::Block(_) => true,
-        _ => false,
-    };
-
-    if is_block_like {
-        let (input, _) = opt(ws(char(';')))(input)?;
-        Ok((input, Stmt::Expr(expr)))
-    } else {
+fn parse_return_stmt(input: Span) -> IResult<Span, Stmt> {
+    spanned(|input| {
+        let (input, _) = tag("return")(input)?;
+        let (input, val) = opt(parse_expr)(input)?;
         let (input, _) = ws(char(';'))(input)?;
-        Ok((input, Stmt::Expr(expr)))
-    }
+        Ok((input, StmtKind::Return(val)))
+    })(input)
 }
 
-fn parse_block_stmt(input: &str) -> IResult<&str, Stmt> {
-    // block expression used as statement (optional semicolon)
-    let (input, block) = parse_block_expr(input)?;
-    let (input, _) = opt(ws(char(';')))(input)?;
-    Ok((input, Stmt::Expr(block)))
+fn parse_expr_stmt(input: Span) -> IResult<Span, Stmt> {
+    spanned(|input| {
+        // expr;
+        let (input, expr) = parse_expr(input)?;
+
+        // Check if expr is block-like (If, Match, Block)
+        // In these cases, semicolon is optional in Rust-like syntax.
+        let is_block_like = match &expr.inner {
+            // Check inner
+            ExprKind::IfExpr(_, _, _) => true,
+            ExprKind::IfLet { .. } => true,
+            ExprKind::Match { .. } => true,
+            ExprKind::Block(_) => true,
+            _ => false,
+        };
+
+        if is_block_like {
+            let (input, _) = opt(ws(char(';')))(input)?;
+            Ok((input, StmtKind::Expr(expr)))
+        } else {
+            let (input, _) = ws(char(';'))(input)?;
+            Ok((input, StmtKind::Expr(expr)))
+        }
+    })(input)
 }
 
-fn parse_field_assign(input: &str) -> IResult<&str, Stmt> {
-    let (input, lhs) = parse_expr(input)?;
-    match lhs {
-        Expr::FieldAccess(obj, field) => {
-            let (input, op_str) =
-                ws(alt((tag("="), tag("+="), tag("-="), tag("*="), tag("/="))))(input)?;
+fn parse_block_stmt(input: Span) -> IResult<Span, Stmt> {
+    spanned(|input| {
+        // block expression used as statement (optional semicolon)
+        let (input, block) = parse_block_expr(input)?;
+        let (input, _) = opt(ws(char(';')))(input)?;
+        Ok((input, StmtKind::Expr(block)))
+    })(input)
+}
 
-            let (input, value) = parse_expr(input)?;
+fn parse_field_assign(input: Span) -> IResult<Span, Stmt> {
+    spanned(|input| {
+        let (input, lhs) = parse_expr(input)?;
+        match lhs.inner {
+            ExprKind::FieldAccess(obj, field) => {
+                let (input, op_str) =
+                    ws(alt((tag("="), tag("+="), tag("-="), tag("*="), tag("/="))))(input)?;
+
+                let (input, value) = parse_expr(input)?;
+                let (input, _) = ws(char(';'))(input)?;
+
+                if *op_str == "=" {
+                    Ok((
+                        input,
+                        StmtKind::FieldAssign {
+                            obj: *obj,
+                            field,
+                            value,
+                        },
+                    ))
+                } else {
+                    // Desugar x.y += z to x.y.add_assign(z)
+                    let method = match *op_str {
+                        "+=" => "add_assign",
+                        "-=" => "sub_assign",
+                        "*=" => "mul_assign",
+                        "/=" => "div_assign",
+                        _ => unreachable!(),
+                    };
+                    // Need a span for the synthetic method call. Use lhs's span.
+                    let span = lhs.span.clone();
+                    let method_call = Spanned::new(
+                        ExprKind::MethodCall(
+                            Box::new(Spanned::new(
+                                ExprKind::FieldAccess(obj, field),
+                                span.clone(),
+                            )),
+                            method.to_string(),
+                            vec![value],
+                        ),
+                        span,
+                    );
+                    Ok((input, StmtKind::Expr(method_call)))
+                }
+            }
+            _ => Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Tag,
+            ))),
+        }
+    })(input)
+}
+
+fn parse_use_stmt(input: Span) -> IResult<Span, Stmt> {
+    spanned(|input| {
+        let (input, _) = tag("use")(input)?;
+        let (input, path_segments) = separated_list1(ws(tag("::")), ws(simple_identifier))(input)?;
+
+        // Check for ":: {" to handle multi-import
+        let (input, multi_items) = opt(preceded(
+            ws(tag("::")),
+            delimited(
+                ws(char('{')),
+                separated_list1(ws(char(',')), ws(simple_identifier)),
+                ws(char('}')),
+            ),
+        ))(input)?;
+
+        if let Some(items) = multi_items {
+            let (input, _) = ws(char(';'))(input)?;
+            Ok((
+                input,
+                StmtKind::Use {
+                    path: path_segments,
+                    alias: None,
+                    items,
+                },
+            ))
+        } else {
+            // Single import, check for "as Alias"
+            let (input, alias) = opt(preceded(ws(tag("as")), ws(simple_identifier)))(input)?;
             let (input, _) = ws(char(';'))(input)?;
 
-            if op_str == "=" {
-                Ok((
-                    input,
-                    Stmt::FieldAssign {
-                        obj: *obj,
-                        field,
-                        value,
-                    },
-                ))
-            } else {
-                // Desugar x.y += z to x.y.add_assign(z)
-                let method = match op_str {
-                    "+=" => "add_assign",
-                    "-=" => "sub_assign",
-                    "*=" => "mul_assign",
-                    "/=" => "div_assign",
-                    _ => unreachable!(),
-                };
-                let method_call = Expr::MethodCall(
-                    Box::new(Expr::FieldAccess(obj, field)),
-                    method.to_string(),
-                    vec![value],
-                );
-                Ok((input, Stmt::Expr(method_call)))
-            }
+            Ok((
+                input,
+                StmtKind::Use {
+                    path: path_segments,
+                    alias,
+                    items: vec![],
+                },
+            ))
         }
-        _ => Err(nom::Err::Error(nom::error::Error::new(
-            input,
-            nom::error::ErrorKind::Tag,
-        ))),
-    }
+    })(input)
 }
 
-fn parse_use_stmt(input: &str) -> IResult<&str, Stmt> {
-    let (input, _) = tag("use")(input)?;
-    let (input, path_segments) = separated_list1(ws(tag("::")), ws(simple_identifier))(input)?;
-
-    // Check for ":: {" to handle multi-import
-    let (input, multi_items) = opt(preceded(
-        ws(tag("::")),
-        delimited(
-            ws(char('{')),
-            separated_list1(ws(char(',')), ws(simple_identifier)),
-            ws(char('}')),
-        ),
-    ))(input)?;
-
-    if let Some(items) = multi_items {
-        let (input, _) = ws(char(';'))(input)?;
-        Ok((
-            input,
-            Stmt::Use {
-                path: path_segments,
-                alias: None,
-                items,
-            },
-        ))
-    } else {
-        // Single import, check for "as Alias"
-        let (input, alias) = opt(preceded(ws(tag("as")), ws(simple_identifier)))(input)?;
-        let (input, _) = ws(char(';'))(input)?;
-
-        Ok((
-            input,
-            Stmt::Use {
-                path: path_segments,
-                alias,
-                items: vec![],
-            },
-        ))
-    }
-}
-
-pub fn parse_stmt(input: &str) -> IResult<&str, Stmt> {
+pub fn parse_stmt(input: Span) -> IResult<Span, Stmt> {
     ws(alt((
         parse_let_stmt,
         parse_assign_stmt,
@@ -1075,7 +1125,7 @@ pub fn parse_stmt(input: &str) -> IResult<&str, Stmt> {
 }
 
 // --- Top Level ---
-fn parse_fn(input: &str) -> IResult<&str, FunctionDef> {
+fn parse_fn(input: Span) -> IResult<Span, FunctionDef> {
     // [extern] fn name(arg: Type, ...) -> Type { ... }
     let (input, is_extern) = opt(ws(tag("extern")))(input)?;
     let (input, _) = tag("fn")(input)?;
@@ -1111,7 +1161,7 @@ fn parse_fn(input: &str) -> IResult<&str, FunctionDef> {
     ))
 }
 
-fn parse_fn_arg(input: &str) -> IResult<&str, (String, Type)> {
+fn parse_fn_arg(input: Span) -> IResult<Span, (String, Type)> {
     let (input, name) = ws(identifier)(input)?;
     let (input, ty) = opt(preceded(ws(char(':')), parse_type))(input)?;
 
@@ -1132,7 +1182,7 @@ fn parse_fn_arg(input: &str) -> IResult<&str, (String, Type)> {
 }
 
 // --- Structs ---
-fn parse_struct(input: &str) -> IResult<&str, StructDef> {
+fn parse_struct(input: Span) -> IResult<Span, StructDef> {
     // struct Name<T> { field: Type, ... }
     let (input, _) = tag("struct")(input)?;
     let (input, name) = ws(identifier)(input)?;
@@ -1165,7 +1215,7 @@ fn parse_struct(input: &str) -> IResult<&str, StructDef> {
     ))
 }
 
-fn parse_variant_def(input: &str) -> IResult<&str, VariantDef> {
+fn parse_variant_def(input: Span) -> IResult<Span, VariantDef> {
     // Name { field: Type, ... } or Name
     let (input, name) = ws(identifier)(input)?;
 
@@ -1188,7 +1238,7 @@ fn parse_variant_def(input: &str) -> IResult<&str, VariantDef> {
     ))
 }
 
-fn parse_enum_def(input: &str) -> IResult<&str, EnumDef> {
+fn parse_enum_def(input: Span) -> IResult<Span, EnumDef> {
     // enum Name<T> { Variant, ... }
     let (input, _) = tag("enum")(input)?;
     let (input, name) = ws(identifier)(input)?;
@@ -1215,27 +1265,29 @@ fn parse_enum_def(input: &str) -> IResult<&str, EnumDef> {
 }
 
 // --- New Top Level Parsers ---
-fn parse_tensor_decl(input: &str) -> IResult<&str, Stmt> {
-    // tensor name: Type = Expr;
-    let (input, _) = tag("tensor")(input)?;
-    let (input, name) = ws(identifier)(input)?;
-    let (input, _) = ws(char(':'))(input)?;
-    let (input, type_annotation) = ws(parse_type)(input)?;
+fn parse_tensor_decl(input: Span) -> IResult<Span, Stmt> {
+    spanned(|input| {
+        // tensor name: Type = Expr;
+        let (input, _) = tag("tensor")(input)?;
+        let (input, name) = ws(identifier)(input)?;
+        let (input, _) = ws(char(':'))(input)?;
+        let (input, type_annotation) = ws(parse_type)(input)?;
 
-    let (input, init) = opt(preceded(ws(char('=')), parse_expr))(input)?;
-    let (input, _) = opt(ws(char(';')))(input)?; // Optional semicolon
+        let (input, init) = opt(preceded(ws(char('=')), parse_expr))(input)?;
+        let (input, _) = opt(ws(char(';')))(input)?; // Optional semicolon
 
-    Ok((
-        input,
-        Stmt::TensorDecl {
-            name,
-            type_annotation,
-            init,
-        },
-    ))
+        Ok((
+            input,
+            StmtKind::TensorDecl {
+                name,
+                type_annotation,
+                init,
+            },
+        ))
+    })(input)
 }
 
-fn parse_relation_decl(input: &str) -> IResult<&str, RelationDecl> {
+fn parse_relation_decl(input: Span) -> IResult<Span, RelationDecl> {
     // relation Name(arg: Type, ...)
     let (input, _) = tag("relation")(input)?;
     let (input, name) = ws(identifier)(input)?;
@@ -1252,7 +1304,7 @@ fn parse_relation_decl(input: &str) -> IResult<&str, RelationDecl> {
     Ok((input, RelationDecl { name, args }))
 }
 
-fn parse_atom(input: &str) -> IResult<&str, Atom> {
+fn parse_datalog_atom(input: Span) -> IResult<Span, Atom> {
     // Name(arg, ...) - parentheses required but can be empty for nilary
     let (input, predicate) = ws(identifier)(input)?;
     let (input, args) = delimited(
@@ -1263,9 +1315,9 @@ fn parse_atom(input: &str) -> IResult<&str, Atom> {
     Ok((input, Atom { predicate, args }))
 }
 
-fn parse_fact(input: &str) -> IResult<&str, Rule> {
+fn parse_fact(input: Span) -> IResult<Span, Rule> {
     // Fact: Head(args). - no body, just period terminated
-    let (input, head) = parse_atom(input)?;
+    let (input, head) = parse_datalog_atom(input)?;
     let (input, _) = ws(char('.'))(input)?;
 
     Ok((
@@ -1278,28 +1330,25 @@ fn parse_fact(input: &str) -> IResult<&str, Rule> {
     ))
 }
 
-fn parse_rule(input: &str) -> IResult<&str, Rule> {
+fn parse_rule(input: Span) -> IResult<Span, Rule> {
     // Head(args) :- Body(args), ...
-    // Note: Ambiguity with function call if we don't look ahead for `:-`
-    // Using peek could be messy. For now strict order in top level loop or use verify.
-    // Parser combinator `tuple` will fail if `:-` is missing.
-    let (input, head) = parse_atom(input)?;
+    // Link: Head(args) :- Relation1(args), Relation2(args).
+    let (input, head) = parse_datalog_atom(input)?;
     let (input, _) = ws(tag(":-"))(input)?;
-    let (input, body) = separated_list1(ws(char(',')), parse_atom)(input)?;
-
-    let (input, _) = alt((ws(char('.')), ws(char(';'))))(input)?;
+    let (input, body) = separated_list1(ws(char(',')), parse_datalog_atom)(input)?;
+    let (input, _) = ws(alt((char('.'), char(';'))))(input)?;
 
     Ok((
         input,
         Rule {
             head,
             body,
-            weight: None,
+            weight: None, // No syntax for weight yet in normal rules
         },
     ))
 }
 
-fn parse_query(input: &str) -> IResult<&str, Expr> {
+fn parse_query(input: Span) -> IResult<Span, Expr> {
     // ?- Expr
     let (input, _) = tag("?-")(input)?;
     let (input, expr) = parse_expr(input)?;
@@ -1308,7 +1357,7 @@ fn parse_query(input: &str) -> IResult<&str, Expr> {
 }
 
 // --- Impls ---
-fn parse_impl(input: &str) -> IResult<&str, ImplBlock> {
+fn parse_impl(input: Span) -> IResult<Span, ImplBlock> {
     // impl<T> Name<T> { fn ... }
     let (input, _) = tag("impl")(input)?;
 
@@ -1351,16 +1400,27 @@ fn parse_impl(input: &str) -> IResult<&str, ImplBlock> {
 // --- Imports ---
 use std::collections::HashMap;
 
-fn parse_mod_decl(input: &str) -> IResult<&str, String> {
+fn parse_mod_decl(input: Span) -> IResult<Span, String> {
     let (input, _) = tag("mod")(input)?;
     let (input, name) = ws(identifier)(input)?;
     let (input, _) = ws(char(';'))(input)?;
     Ok((input, name))
 }
 
+fn parse_use_decl(input: Span) -> IResult<Span, String> {
+    let (input, _) = tag("use")(input)?;
+    let (input, _) = space1(input)?;
+    // Parse path: ident::ident::...
+    // simpler: separated_list1
+    let (input, parts) = separated_list1(ws(tag("::")), identifier)(input)?;
+    let (input, _) = ws(char(';'))(input)?;
+    Ok((input, parts.join("::")))
+}
+
 // --- Top Level ---
 // Re-define parse_module logic
 pub fn parse(input: &str) -> Result<Module, TlError> {
+    let input = Span::new(input);
     let mut structs = vec![];
     let mut enums = vec![];
     let mut impls = vec![];
@@ -1372,9 +1432,17 @@ pub fn parse(input: &str) -> Result<Module, TlError> {
     let mut imports = vec![];
 
     // Strip BOM if present
-    let mut remaining = input.strip_prefix("\u{feff}").unwrap_or(input);
+    // LocatedSpan doesn't have strip_prefix on itself directly unless deref works,
+    // but we can parse it out or just check fragment
+    let mut remaining = if input.fragment().starts_with('\u{feff}') {
+        let (rem, _) =
+            take_while::<_, _, nom::error::Error<Span>>(|c| c == '\u{feff}')(input).unwrap();
+        rem
+    } else {
+        input
+    };
 
-    while !remaining.trim().is_empty() {
+    while !remaining.fragment().trim().is_empty() {
         // println!("Parsing at: {:.20}...", remaining); // Debug print
 
         // Try struct, then impl, then fn, then others
@@ -1393,11 +1461,20 @@ pub fn parse(input: &str) -> Result<Module, TlError> {
         } else if let Ok((next, m)) = ws(parse_mod_decl)(remaining) {
             imports.push(m);
             remaining = next;
+        } else if let Ok((next, u)) = ws(parse_use_decl)(remaining) {
+            // "use" is similar to import in this simpleAST?
+            // Existing AST only has `imports: Vec<String>`.
+            // Let's store use decls in imports for now?
+            // Or maybe separate field? Module struct definition (1493) calls it `imports`.
+            // parse_mod_decl pushes to imports.
+            // Let's push use decls to imports too.
+            imports.push(u);
+            remaining = next;
         } else if let Ok((next, t)) = ws(parse_tensor_decl)(remaining) {
             tensor_decls.push(t);
             remaining = next;
         } else if let Ok((next, s)) = ws(parse_stmt)(remaining) {
-            tensor_decls.push(s);
+            tensor_decls.push(s); // Note: Tensor declarations can be statements too? Logic from original code preserved.
             remaining = next;
         } else if let Ok((next, r)) = ws(parse_relation_decl)(remaining) {
             relations.push(r);
@@ -1415,15 +1492,14 @@ pub fn parse(input: &str) -> Result<Module, TlError> {
             // Explicitly try to consume comments independently if parsers failed?
             // ws() wraps each parser, so it should handle comments.
             // If all failed, it means remaining is NOT matched by ANY.
-            // Maybe leading whitespace is not fully consumed by ws() if wrapped?
-            // Actually, remaining is passed to ws(parser). ws() does delimited(sp, inner, sp).
-            // It consumes leading sp.
-            // Calculate position from where we failed
-            let offset = input.len() - remaining.len();
-            let (line, column) = offset_to_line_col(input, offset);
-            let span = Span::new(line, column);
 
-            let snippet = &remaining[..remaining.len().min(30)];
+            // Calculate position from where we failed
+            let line = remaining.location_line() as usize;
+            let column = remaining.get_utf8_column();
+            let span = crate::compiler::error::Span::new(line, column);
+
+            let fragment = remaining.fragment();
+            let snippet = &fragment[..fragment.len().min(30)];
             return Err(TlError::Parse {
                 kind: ParseErrorKind::InvalidSyntax(format!("at: {:?}...", snippet)),
                 span: Some(span),
@@ -1464,31 +1540,31 @@ mod tests {
     #[test]
     fn test_parse_float_scientific() {
         // Standard floats
-        let res = parse_literal_float("1.0");
+        let res = parse_literal_float(Span::new("1.0"));
         assert!(res.is_ok(), "Failed directly on 1.0: {:?}", res);
 
         // Scientific with dot
-        let res = parse_literal_float("1.0e-4");
+        let res = parse_literal_float(Span::new("1.0e-4"));
         assert!(res.is_ok(), "Failed directly on 1.0e-4: {:?}", res);
 
         let (_, expr) = res.unwrap();
-        if let Expr::Float(val) = expr {
+        if let ExprKind::Float(val) = expr.inner {
             assert!((val - 0.0001).abs() < 1e-10);
         }
 
         // Scientific without dot
-        let res = parse_literal_float("1e-4");
+        let res = parse_literal_float(Span::new("1e-4"));
         assert!(res.is_ok(), "Failed directly on 1e-4: {:?}", res);
 
         let (_, expr) = res.unwrap();
-        if let Expr::Float(val) = expr {
+        if let ExprKind::Float(val) = expr.inner {
             assert!((val - 0.0001).abs() < 1e-10);
         }
 
         // Capital E
-        let res = parse_literal_float("1E5");
+        let res = parse_literal_float(Span::new("1E5"));
         assert!(res.is_ok());
-        if let Expr::Float(val) = res.unwrap().1 {
+        if let ExprKind::Float(val) = res.unwrap().1.inner {
             assert_eq!(val, 100000.0);
         }
     }

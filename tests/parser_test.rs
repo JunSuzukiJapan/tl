@@ -1,24 +1,24 @@
 use tl::compiler::ast::*;
 use tl::compiler::parser::*;
 
-fn p_expr(input: &str) -> Expr {
-    let (rest, expr) = parse_expr(input).expect("Parse error");
-    assert!(rest.trim().is_empty(), "Trailing text: {}", rest);
-    expr
+fn p_expr(input: &str) -> ExprKind {
+    let (rest, expr) = parse_expr(Span::new(input)).expect("Parse error");
+    assert!(rest.fragment().trim().is_empty(), "Trailing text: {}", rest);
+    expr.inner
 }
 
-fn p_stmt(input: &str) -> Stmt {
-    let (rest, stmt) = parse_stmt(input).expect("Parse error");
-    assert!(rest.trim().is_empty(), "Trailing text: {}", rest);
-    stmt
+fn p_stmt(input: &str) -> StmtKind {
+    let (rest, stmt) = parse_stmt(Span::new(input)).expect("Parse error");
+    assert!(rest.fragment().trim().is_empty(), "Trailing text: {}", rest);
+    stmt.inner
 }
 
 #[test]
 fn test_types() {
-    let (_, t) = parse_type("f32").unwrap();
+    let (_, t) = parse_type(Span::new("f32")).unwrap();
     assert_eq!(t, Type::F32);
 
-    let (_, t) = parse_type("Tensor<f32, 2>").unwrap();
+    let (_, t) = parse_type(Span::new("Tensor<f32, 2>")).unwrap();
     if let Type::Tensor(inner, rank) = t {
         assert_eq!(*inner, Type::F32);
         assert_eq!(rank, 2);
@@ -26,7 +26,7 @@ fn test_types() {
         panic!("Expected Tensor type");
     }
 
-    let (_, t) = parse_type("(f32, i32)").unwrap();
+    let (_, t) = parse_type(Span::new("(f32, i32)")).unwrap();
     if let Type::Tuple(ts) = t {
         assert_eq!(ts.len(), 2);
     } else {
@@ -36,40 +36,46 @@ fn test_types() {
 
 #[test]
 fn test_literals() {
-    assert_eq!(p_expr("123"), Expr::Int(123));
-    assert_eq!(p_expr("123.456"), Expr::Float(123.456));
-    assert_eq!(p_expr("true"), Expr::Bool(true));
-    assert_eq!(p_expr("false"), Expr::Bool(false));
+    assert_eq!(p_expr("123"), ExprKind::Int(123));
+    assert_eq!(p_expr("123.456"), ExprKind::Float(123.456));
+    assert_eq!(p_expr("true"), ExprKind::Bool(true));
+    assert_eq!(p_expr("false"), ExprKind::Bool(false));
     // String literal includes quotes in parser logic but ast stores content
     // parse_literal_string: "abc" -> StringLiteral("abc")
-    assert_eq!(p_expr("\"abc\""), Expr::StringLiteral("abc".to_string()));
+    assert_eq!(
+        p_expr("\"abc\""),
+        ExprKind::StringLiteral("abc".to_string())
+    );
 }
 
 #[test]
 fn test_variables() {
-    assert_eq!(p_expr("x"), Expr::Variable("x".to_string()));
-    assert_eq!(p_expr("my_var_1"), Expr::Variable("my_var_1".to_string()));
+    assert_eq!(p_expr("x"), ExprKind::Variable("x".to_string()));
+    assert_eq!(
+        p_expr("my_var_1"),
+        ExprKind::Variable("my_var_1".to_string())
+    );
 }
 
 #[test]
 fn test_binary_ops() {
     // Simple
-    if let Expr::BinOp(l, op, r) = p_expr("1 + 2") {
-        assert_eq!(*l, Expr::Int(1));
+    if let ExprKind::BinOp(l, op, r) = p_expr("1 + 2") {
+        assert_eq!(l.inner, ExprKind::Int(1));
         assert_eq!(op, BinOp::Add);
-        assert_eq!(*r, Expr::Int(2));
+        assert_eq!(r.inner, ExprKind::Int(2));
     } else {
         panic!("Not a BinOp");
     }
 
     // Precedence: 1 + 2 * 3 => 1 + (2 * 3)
-    if let Expr::BinOp(l, op, r) = p_expr("1 + 2 * 3") {
-        assert_eq!(*l, Expr::Int(1));
+    if let ExprKind::BinOp(l, op, r) = p_expr("1 + 2 * 3") {
+        assert_eq!(l.inner, ExprKind::Int(1));
         assert_eq!(op, BinOp::Add);
-        if let Expr::BinOp(l2, op2, r2) = *r {
-            assert_eq!(*l2, Expr::Int(2));
-            assert_eq!(op2, BinOp::Mul);
-            assert_eq!(*r2, Expr::Int(3));
+        if let ExprKind::BinOp(l2, op2, r2) = &r.inner {
+            assert_eq!(l2.inner, ExprKind::Int(2));
+            assert_eq!(op2, &BinOp::Mul);
+            assert_eq!(r2.inner, ExprKind::Int(3));
         } else {
             panic!("RHS not mul");
         }
@@ -79,15 +85,15 @@ fn test_binary_ops() {
 
     // Comparison
     match p_expr("x <= y") {
-        Expr::BinOp(_, BinOp::Le, _) => {}
+        ExprKind::BinOp(_, BinOp::Le, _) => {}
         _ => panic!("Expected Le"),
     }
 
     // Logical
     match p_expr("a && b || c") {
         // (a && b) || c
-        Expr::BinOp(l, BinOp::Or, _) => match *l {
-            Expr::BinOp(_, BinOp::And, _) => {}
+        ExprKind::BinOp(l, BinOp::Or, _) => match &l.inner {
+            ExprKind::BinOp(_, BinOp::And, _) => {}
             _ => panic!("LHS expected And"),
         },
         _ => panic!("Expected Or"),
@@ -96,14 +102,14 @@ fn test_binary_ops() {
 
 #[test]
 fn test_unary_ops() {
-    if let Expr::UnOp(op, e) = p_expr("-x") {
+    if let ExprKind::UnOp(op, e) = p_expr("-x") {
         assert_eq!(op, UnOp::Neg);
-        assert_eq!(*e, Expr::Variable("x".to_string()));
+        assert_eq!(e.inner, ExprKind::Variable("x".to_string()));
     } else {
         panic!("Expected Neg");
     }
 
-    if let Expr::UnOp(op, _) = p_expr("!true") {
+    if let ExprKind::UnOp(op, _) = p_expr("!true") {
         assert_eq!(op, UnOp::Not);
     } else {
         panic!("Expected Not");
@@ -113,7 +119,7 @@ fn test_unary_ops() {
 #[test]
 fn test_postfix() {
     // Call
-    if let Expr::FnCall(name, args) = p_expr("foo(1, 2)") {
+    if let ExprKind::FnCall(name, args) = p_expr("foo(1, 2)") {
         assert_eq!(name, "foo");
         assert_eq!(args.len(), 2);
     } else {
@@ -121,8 +127,8 @@ fn test_postfix() {
     }
 
     // Method
-    if let Expr::MethodCall(obj, name, args) = p_expr("x.bar(3)") {
-        assert_eq!(*obj, Expr::Variable("x".to_string()));
+    if let ExprKind::MethodCall(obj, name, args) = p_expr("x.bar(3)") {
+        assert_eq!(obj.inner, ExprKind::Variable("x".to_string()));
         assert_eq!(name, "bar");
         assert_eq!(args.len(), 1);
     } else {
@@ -130,31 +136,31 @@ fn test_postfix() {
     }
 
     // Index
-    if let Expr::IndexAccess(obj, indices) = p_expr("A[i, j]") {
-        assert_eq!(*obj, Expr::Variable("A".to_string()));
+    if let ExprKind::IndexAccess(obj, indices) = p_expr("A[i, j]") {
+        assert_eq!(obj.inner, ExprKind::Variable("A".to_string()));
         assert_eq!(indices.len(), 2);
     } else {
         panic!("Expected IndexAccess");
     }
 
     // Field
-    if let Expr::FieldAccess(obj, field) = p_expr("s.field") {
-        assert_eq!(*obj, Expr::Variable("s".to_string()));
+    if let ExprKind::FieldAccess(obj, field) = p_expr("s.field") {
+        assert_eq!(obj.inner, ExprKind::Variable("s".to_string()));
         assert_eq!(field, "field");
     } else {
         panic!("Expected FieldAccess");
     }
 
     // Tuple Access
-    if let Expr::TupleAccess(obj, idx) = p_expr("t.0") {
-        assert_eq!(*obj, Expr::Variable("t".to_string()));
+    if let ExprKind::TupleAccess(obj, idx) = p_expr("t.0") {
+        assert_eq!(obj.inner, ExprKind::Variable("t".to_string()));
         assert_eq!(idx, 0);
     } else {
         panic!("Expected TupleAccess");
     }
 
     // Static Method
-    if let Expr::StaticMethodCall(type_name, method, _) = p_expr("MyType::new()") {
+    if let ExprKind::StaticMethodCall(type_name, method, _) = p_expr("MyType::new()") {
         assert_eq!(type_name, "MyType");
         assert_eq!(method, "new");
     } else {
@@ -164,8 +170,8 @@ fn test_postfix() {
 
 #[test]
 fn test_cast() {
-    if let Expr::As(expr, ty) = p_expr("x as f32") {
-        assert_eq!(*expr, Expr::Variable("x".to_string()));
+    if let ExprKind::As(expr, ty) = p_expr("x as f32") {
+        assert_eq!(expr.inner, ExprKind::Variable("x".to_string()));
         assert_eq!(ty, Type::F32);
     } else {
         panic!("Expected Cast");
@@ -174,9 +180,9 @@ fn test_cast() {
 
 #[test]
 fn test_range() {
-    if let Expr::Range(start, end) = p_expr("0..10") {
-        assert_eq!(*start, Expr::Int(0));
-        assert_eq!(*end, Expr::Int(10));
+    if let ExprKind::Range(start, end) = p_expr("0..10") {
+        assert_eq!(start.inner, ExprKind::Int(0));
+        assert_eq!(end.inner, ExprKind::Int(10));
     } else {
         panic!("Expected Range");
     }
@@ -185,7 +191,7 @@ fn test_range() {
 #[test]
 fn test_constructors() {
     // Struct init
-    if let Expr::StructInit(name, fields) = p_expr("Point { x: 1, y: 2 }") {
+    if let ExprKind::StructInit(name, fields) = p_expr("Point { x: 1, y: 2 }") {
         assert_eq!(name, "Point");
         assert_eq!(fields.len(), 2);
     } else {
@@ -193,7 +199,7 @@ fn test_constructors() {
     }
 
     // Tensor literal
-    if let Expr::TensorConstLiteral(elems) = p_expr("[1, 2, 3]") {
+    if let ExprKind::TensorConstLiteral(elems) = p_expr("[1, 2, 3]") {
         assert_eq!(elems.len(), 3);
     } else {
         panic!("Expected TensorConstLiteral");
@@ -202,7 +208,7 @@ fn test_constructors() {
     // Tensor comprehension
     // Tensor comprehension
     // Syntax: [ indices | clauses... { body } ]
-    if let Expr::TensorComprehension {
+    if let ExprKind::TensorComprehension {
         indices,
         clauses,
         body,
@@ -211,8 +217,8 @@ fn test_constructors() {
         assert_eq!(indices, vec!["i", "j"]);
         assert!(clauses.is_empty());
         match body {
-            Some(b) => match *b {
-                Expr::Block(_) => {} // Body is a BlockExpr now
+            Some(b) => match &b.inner {
+                ExprKind::Block(_) => {} // Body is a BlockExpr now
                 _ => panic!("Expected Block in body, got {:?}", b),
             },
             None => panic!("Expected Body"),
@@ -222,7 +228,7 @@ fn test_constructors() {
     }
 
     // Aggregation
-    if let Expr::Aggregation { op, .. } = p_expr("sum(x for i in 0..10)") {
+    if let ExprKind::Aggregation { op, .. } = p_expr("sum(x for i in 0..10)") {
         assert_eq!(op, AggregateOp::Sum);
     } else {
         panic!("Expected Aggregation");
@@ -232,15 +238,15 @@ fn test_constructors() {
 #[test]
 fn test_statements() {
     match p_stmt("let x = 1;") {
-        Stmt::Let { name, value, .. } => {
+        StmtKind::Let { name, value, .. } => {
             assert_eq!(name, "x");
-            assert_eq!(value, Expr::Int(1));
+            assert_eq!(value.inner, ExprKind::Int(1));
         }
         _ => panic!("Expected Let"),
     }
 
     match p_stmt("x += 5;") {
-        Stmt::Assign { name, op, .. } => {
+        StmtKind::Assign { name, op, .. } => {
             assert_eq!(name, "x");
             assert_eq!(op, AssignOp::AddAssign);
         }
@@ -248,22 +254,24 @@ fn test_statements() {
     }
 
     match p_stmt("return 42;") {
-        Stmt::Return(Some(Expr::Int(42))) => {}
+        StmtKind::Return(Some(val)) => {
+            assert_eq!(val.inner, ExprKind::Int(42));
+        }
         _ => panic!("Expected Return"),
     }
 
     match p_stmt("if true { } else { }") {
-        Stmt::If { .. } => {}
+        StmtKind::If { .. } => {}
         _ => panic!("Expected If"),
     }
 
     match p_stmt("for i in 0..10 { }") {
-        Stmt::For { .. } => {}
+        StmtKind::For { .. } => {}
         _ => panic!("Expected For"),
     }
 
     match p_stmt("while x < 10 { }") {
-        Stmt::While { .. } => {}
+        StmtKind::While { .. } => {}
         _ => panic!("Expected While"),
     }
 }

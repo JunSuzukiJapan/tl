@@ -660,9 +660,9 @@ fn compile_tensor_zeros<'ctx>(
         return Err("Tensor::zeros requires shape argument".into());
     }
 
-    let elements_ref = if let Expr::TensorLiteral(el) = &args[0] {
+    let elements_ref = if let ExprKind::TensorLiteral(el) = &args[0].inner {
         Some(el)
-    } else if let Expr::TensorConstLiteral(el) = &args[0] {
+    } else if let ExprKind::TensorConstLiteral(el) = &args[0].inner {
         Some(el)
     } else {
         None
@@ -770,8 +770,8 @@ fn compile_varbuilder_get_static<'ctx>(
     let i64_type = codegen.context.i64_type();
 
     let (rank, shape_alloca) = if args.len() == 2 {
-        match &args[1] {
-            Expr::TensorLiteral(elements) | Expr::TensorConstLiteral(elements) => {
+        match &args[1].inner {
+            ExprKind::TensorLiteral(elements) | ExprKind::TensorConstLiteral(elements) => {
                 let rank = elements.len();
                 let shape_array_type = i64_type.array_type(rank as u32);
                 let shape_alloca = codegen
@@ -1093,22 +1093,22 @@ impl<'ctx> CodeGenerator<'ctx> {
         match ty {
             Type::Tensor(_, _) => {
                 // Tensors originating from expressions (not variables) are always new allocations (R-values)
-                match expr {
-                    Expr::Variable(_) | Expr::FieldAccess(_, _) => false,
+                match &expr.inner {
+                    ExprKind::Variable(_) | ExprKind::FieldAccess(_, _) => false,
                     _ => true,
                 }
             }
             Type::Struct(_) | Type::UserDefined(_) => {
-                match expr {
+                match &expr.inner {
                     // Fresh allocations are safe to free
-                    Expr::StaticMethodCall(_, _, _) | Expr::StructInit(_, _) => true,
+                    ExprKind::StaticMethodCall(_, _, _) | ExprKind::StructInit(_, _) => true,
                     // Variables and Fields are L-values, not safe to free
-                    Expr::Variable(_) | Expr::FieldAccess(_, _) => false,
+                    ExprKind::Variable(_) | ExprKind::FieldAccess(_, _) => false,
                     // Method calls: Check recursively if the receiver was safe to free.
                     // If obj is temporary, obj.method() result is treated as temporary (part of obj).
                     // If obj is strictly safe (fresh), propagation says result is safe.
                     // BUT: We will apply runtime check too.
-                    Expr::MethodCall(obj, _, _) => self.is_safe_to_free(obj, ty),
+                    ExprKind::MethodCall(obj, _, _) => self.is_safe_to_free(obj, ty),
                     // Other expressions?
                     _ => false,
                 }
@@ -1411,26 +1411,27 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         expr: &Expr,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        match expr {
-            Expr::Block(stmts) => {
+        match &expr.inner {
+            ExprKind::Block(stmts) => {
                 self.enter_scope();
                 let mut last_val = None;
                 for (i, stmt) in stmts.iter().enumerate() {
                     if i == stmts.len() - 1 {
-                        if let Stmt::Expr(e) = stmt {
+                        if let StmtKind::Expr(e) = &stmt.inner {
                             last_val = Some(self.compile_expr(e)?);
-                        } else if let Stmt::If {
+                        } else if let StmtKind::If {
                             cond,
                             then_block,
                             else_block,
-                        } = stmt
+                        } = &stmt.inner
                         {
-                            // Promote Stmt::If to Expr::IfExpr if it's the last statement
-                            let expr = Expr::IfExpr(
+                            // Promote StmtKind::If to ExprKind::IfExpr if it's the last statement
+                            let kind = ExprKind::IfExpr(
                                 Box::new(cond.clone()),
                                 then_block.clone(),
                                 else_block.clone(),
                             );
+                            let expr = Spanned::new(kind, stmt.span.clone());
                             last_val = Some(self.compile_expr(&expr)?);
                         } else {
                             self.compile_stmt(stmt)?;
@@ -1470,23 +1471,23 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 Ok(final_res)
             }
-            Expr::Int(i) => {
+            ExprKind::Int(i) => {
                 let i64_type = self.context.i64_type();
                 Ok((i64_type.const_int(*i as u64, true).into(), Type::I64))
             }
-            Expr::Float(f) => {
+            ExprKind::Float(f) => {
                 let f32_type = self.context.f32_type();
                 Ok((f32_type.const_float(*f).into(), Type::F32))
             }
-            Expr::Bool(b) => {
+            ExprKind::Bool(b) => {
                 let bool_type = self.context.bool_type();
                 Ok((
                     bool_type.const_int(if *b { 1 } else { 0 }, false).into(),
                     Type::Bool,
                 ))
             }
-            Expr::StringLiteral(s) => self.compile_string_literal(s),
-            Expr::EnumInit {
+            ExprKind::StringLiteral(s) => self.compile_string_literal(s),
+            ExprKind::EnumInit {
                 enum_name,
                 variant_name,
                 fields,
@@ -1579,14 +1580,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // Deep clone if needed?
                         // Similar to StructInit/Let: r-value move, l-value clone.
                         let is_rvalue = matches!(
-                            expr,
-                            Expr::FnCall(_, _)
-                                | Expr::MethodCall(_, _, _)
-                                | Expr::StaticMethodCall(_, _, _)
-                                | Expr::BinOp(_, _, _)
-                                | Expr::UnOp(_, _)
-                                | Expr::TensorLiteral(_)
-                                | Expr::Block(_)
+                            &expr.inner,
+                            ExprKind::FnCall(_, _)
+                                | ExprKind::MethodCall(_, _, _)
+                                | ExprKind::StaticMethodCall(_, _, _)
+                                | ExprKind::BinOp(_, _, _)
+                                | ExprKind::UnOp(_, _)
+                                | ExprKind::TensorLiteral(_)
+                                | ExprKind::Block(_)
                         );
                         let mut stored_val = val;
                         let should_deep_clone = match f_ty {
@@ -1631,25 +1632,31 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // compile_struct_init returns `alloca.into()`.
                 Ok((alloca.into(), Type::Enum(enum_name.clone())))
             }
-            Expr::Match {
+            ExprKind::Match {
                 expr: subject_expr,
                 arms,
             } => self.compile_match_like(subject_expr, arms),
-            Expr::IfLet {
+            ExprKind::IfLet {
                 pattern,
                 expr,
                 then_block,
                 else_block,
             } => {
-                let mut arms = Vec::with_capacity(2);
-                arms.push((pattern.clone(), Expr::Block(then_block.clone())));
-                let fallback = Expr::Block(else_block.clone().unwrap_or_default());
+                let mut arms: Vec<(Pattern, Expr)> = Vec::with_capacity(2);
+                arms.push((
+                    pattern.clone(),
+                    Spanned::dummy(ExprKind::Block(then_block.clone())),
+                ));
+                let fallback =
+                    Spanned::dummy(ExprKind::Block(else_block.clone().unwrap_or_default()));
                 arms.push((Pattern::Wildcard, fallback));
                 self.compile_match_like(expr, &arms)
             }
 
-            Expr::Range(_, _) => Err("Expr::Range should only appear in For loops".to_string()),
-            Expr::As(expr, target_type) => {
+            ExprKind::Range(_, _) => {
+                Err("ExprKind::Range should only appear in For loops".to_string())
+            }
+            ExprKind::As(expr, target_type) => {
                 let (val, source_type) = self.compile_expr(expr)?;
                 if source_type == *target_type {
                     return Ok((val, source_type));
@@ -1835,7 +1842,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     )),
                 }
             }
-            Expr::FieldAccess(obj, field) => {
+            ExprKind::FieldAccess(obj, field) => {
                 let (obj_val, obj_ty) = self.compile_expr(obj)?;
                 let struct_name = match obj_ty {
                     Type::Struct(name) => name,
@@ -1910,7 +1917,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
 
-            Expr::Variable(name) => {
+            ExprKind::Variable(name) => {
                 for scope in self.variables.iter().rev() {
                     if let Some((val, ty, _)) = scope.get(name) {
                         if val.is_pointer_value() {
@@ -1957,11 +1964,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 Err(format!("Variable {} not found in scopes", name))
             }
-            Expr::StructInit(name, fields) => self.compile_struct_init(name, fields),
-            Expr::StaticMethodCall(type_name, method_name, args) => {
+            ExprKind::StructInit(name, fields) => self.compile_struct_init(name, fields),
+            ExprKind::StaticMethodCall(type_name, method_name, args) => {
                 self.compile_static_method_call(type_name, method_name, args)
             }
-            Expr::BinOp(lhs, op, rhs) => {
+            ExprKind::BinOp(lhs, op, rhs) => {
                 let left = self.compile_expr(lhs)?;
                 let right = self.compile_expr(rhs)?;
                 let res = self.compile_bin_op(
@@ -1982,10 +1989,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(res)
             }
 
-            Expr::Tuple(exprs) => self.compile_tuple(exprs),
-            Expr::TupleAccess(expr, idx) => self.compile_tuple_access(expr, *idx),
+            ExprKind::Tuple(exprs) => self.compile_tuple(exprs),
+            ExprKind::TupleAccess(expr, idx) => self.compile_tuple_access(expr, *idx),
 
-            Expr::TensorComprehension {
+            ExprKind::TensorComprehension {
                 indices,
                 clauses,
                 body,
@@ -2030,11 +2037,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Err("Comprehension result must be a tensor".into())
                 }
             }
-            Expr::TensorLiteral(elements) => self.compile_tensor_literal(elements),
-            Expr::TensorConstLiteral(elements) => self.compile_tensor_const_literal(elements),
-            Expr::MethodCall(obj, method, args) => self.compile_method_call(obj, method, args),
-            Expr::FnCall(name, args) => self.compile_fn_call(name, args),
-            Expr::IndexAccess(target, indices) => {
+            ExprKind::TensorLiteral(elements) => self.compile_tensor_literal(elements),
+            ExprKind::TensorConstLiteral(elements) => self.compile_tensor_const_literal(elements),
+            ExprKind::MethodCall(obj, method, args) => self.compile_method_call(obj, method, args),
+            ExprKind::FnCall(name, args) => self.compile_fn_call(name, args),
+            ExprKind::IndexAccess(target, indices) => {
                 let (val, val_type) = self.compile_expr(target)?;
                 match val_type {
                     // OPTIMIZATION: ScalarArray direct access (no runtime call)
@@ -2199,7 +2206,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     _ => Err("Index access only on Tensor or ScalarArray".into()),
                 }
             }
-            Expr::UnOp(op, expr) => {
+            ExprKind::UnOp(op, expr) => {
                 let (val, ty) = self.compile_expr(expr)?;
                 match op {
                     UnOp::Neg => match &ty {
@@ -2256,7 +2263,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
 
-            Expr::Aggregation {
+            ExprKind::Aggregation {
                 op,
                 expr,
                 var,
@@ -2520,7 +2527,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok((result_f32.into(), Type::F32))
             }
 
-            Expr::IfExpr(cond, then_stmts, else_stmts) => {
+            ExprKind::IfExpr(cond, then_stmts, else_stmts) => {
                 let parent = self
                     .builder
                     .get_insert_block()
@@ -2552,7 +2559,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let mut then_val: Option<(BasicValueEnum<'ctx>, Type)> = None;
                 for (i, stmt) in then_stmts.iter().enumerate() {
                     if i == then_stmts.len() - 1 {
-                        if let Stmt::Expr(e) = stmt {
+                        if let StmtKind::Expr(e) = &stmt.inner {
                             then_val = Some(self.compile_expr(e)?);
                         } else {
                             self.compile_stmt(stmt)?;
@@ -2580,12 +2587,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Logic:
                     // 1. Check AST of last stmt.
                     let is_lvalue = if let Some(last) = then_stmts.last() {
-                        match last {
-                            Stmt::Expr(e) => matches!(
-                                e,
-                                Expr::Variable(_)
-                                    | Expr::FieldAccess(_, _)
-                                    | Expr::IndexAccess(_, _)
+                        match &last.inner {
+                            StmtKind::Expr(e) => matches!(
+                                &e.inner,
+                                ExprKind::Variable(_)
+                                    | ExprKind::FieldAccess(_, _)
+                                    | ExprKind::IndexAccess(_, _)
                             ),
                             _ => false, // Stmt that isn't Expr? Void.
                         }
@@ -2639,7 +2646,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if let Some(else_body) = else_stmts {
                     for (i, stmt) in else_body.iter().enumerate() {
                         if i == else_body.len() - 1 {
-                            if let Stmt::Expr(e) = stmt {
+                            if let StmtKind::Expr(e) = &stmt.inner {
                                 else_val = Some(self.compile_expr(e)?);
                             } else {
                                 self.compile_stmt(stmt)?;
@@ -2664,12 +2671,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // 1. Check AST of last stmt.
                     let is_lvalue = if let Some(body) = &else_stmts {
                         if let Some(last) = body.last() {
-                            match last {
-                                Stmt::Expr(e) => matches!(
-                                    e,
-                                    Expr::Variable(_)
-                                        | Expr::FieldAccess(_, _)
-                                        | Expr::IndexAccess(_, _)
+                            match &last.inner {
+                                StmtKind::Expr(e) => matches!(
+                                    &e.inner,
+                                    ExprKind::Variable(_)
+                                        | ExprKind::FieldAccess(_, _)
+                                        | ExprKind::IndexAccess(_, _)
                                 ),
                                 _ => false,
                             }
@@ -3012,7 +3019,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // if arg is Variable: remove from scope (Move semantics?) -> Logic says "should_remove = true".
                 // Yes, StructInit implements Move semantics for variables passed to it.
                 // So let's replicate that for Tuple.
-                if let Expr::Variable(var_name) = &elements[i] {
+                if let ExprKind::Variable(var_name) = &elements[i].inner {
                     // Search and remove variable from scope to prevent automatic free at end of scope
                     // Effectively "Moving" ownership to the tuple.
                     for scope in self.variables.iter_mut().rev() {
@@ -3187,7 +3194,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // Return the pointer directly (no load)
-        // Struct remains registered in scope; caller (Stmt::Let) will deep_clone it
+        // Struct remains registered in scope; caller (StmtKind::Let) will deep_clone it
         Ok((struct_ptr.into(), Type::Struct(name.to_string())))
     }
 
@@ -3337,12 +3344,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 return (0, vec![0]);
             }
 
-            let is_nested = matches!(exprs[0], Expr::TensorLiteral(_));
+            let is_nested = matches!(exprs[0].inner, ExprKind::TensorLiteral(_));
             if is_nested {
                 let mut total = 0;
                 let mut first_shape = None;
                 for e in exprs {
-                    if let Expr::TensorLiteral(children) = e {
+                    if let ExprKind::TensorLiteral(children) = &e.inner {
                         let (count, shape) = count_elements(children);
                         total += count;
                         if first_shape.is_none() {
@@ -3366,7 +3373,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // 2. Flatten elements
         fn flatten_exprs(exprs: &[Expr], result: &mut Vec<Expr>) {
             for e in exprs {
-                if let Expr::TensorLiteral(children) = e {
+                if let ExprKind::TensorLiteral(children) = &e.inner {
                     flatten_exprs(children, result);
                 } else {
                     result.push(e.clone());
@@ -3596,8 +3603,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
 
             let is_nested = matches!(
-                exprs[0],
-                Expr::TensorConstLiteral(_) | Expr::TensorLiteral(_)
+                &exprs[0].inner,
+                ExprKind::TensorConstLiteral(_) | ExprKind::TensorLiteral(_)
             );
             if is_nested {
                 let mut flat_data = Vec::new();
@@ -3605,8 +3612,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let mut all_ints = true;
 
                 for e in exprs {
-                    let (children, shape, ints) = match e {
-                        Expr::TensorConstLiteral(c) | Expr::TensorLiteral(c) => flatten_const(c)?,
+                    let (children, shape, ints) = match &e.inner {
+                        ExprKind::TensorConstLiteral(c) | ExprKind::TensorLiteral(c) => {
+                            flatten_const(c)?
+                        }
                         _ => return Err("Mixed types in const tensor".into()),
                     };
                     if let Some(ref s) = first_shape {
@@ -3629,12 +3638,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let mut data = Vec::new();
                 let mut all_ints = true;
                 for e in exprs {
-                    match e {
-                        Expr::Float(f) => {
+                    match &e.inner {
+                        ExprKind::Float(f) => {
                             data.push(*f);
                             all_ints = false;
                         }
-                        Expr::Int(i) => data.push(*i as f64),
+                        ExprKind::Int(i) => data.push(*i as f64),
                         _ => return Err("Const tensor must contain only literals".into()),
                     }
                 }
@@ -4052,13 +4061,13 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         body: &Expr,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        if let Expr::Block(stmts) = body {
+        if let ExprKind::Block(stmts) = &body.inner {
             self.enter_scope();
             let mut last_val = None;
             let mut last_is_lvalue = false;
             for (i, stmt) in stmts.iter().enumerate() {
                 if i == stmts.len() - 1 {
-                    if let Stmt::Expr(e) = stmt {
+                    if let StmtKind::Expr(e) = &stmt.inner {
                         last_is_lvalue = Self::is_lvalue_expr(e);
                         last_val = Some(self.compile_expr(e)?);
                     } else {
@@ -4197,11 +4206,11 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     fn is_lvalue_expr(expr: &Expr) -> bool {
         matches!(
-            expr,
-            Expr::Variable(_)
-                | Expr::FieldAccess(_, _)
-                | Expr::IndexAccess(_, _)
-                | Expr::TupleAccess(_, _)
+            &expr.inner,
+            ExprKind::Variable(_)
+                | ExprKind::FieldAccess(_, _)
+                | ExprKind::IndexAccess(_, _)
+                | ExprKind::TupleAccess(_, _)
         )
     }
 
@@ -4277,12 +4286,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         expr: &Expr,
         bounds: &mut HashMap<String, inkwell::values::IntValue<'ctx>>,
     ) -> Result<(), String> {
-        match expr {
-            Expr::IndexAccess(target, indices) => {
-                // Target should be Expr::Ident for variable access
+        match &expr.inner {
+            ExprKind::IndexAccess(target, indices) => {
+                // Target should be ExprKind::Ident for variable access
                 // Instead of compiling, look up the variable directly
-                let (tensor_ptr, is_scalar_array, array_len) = match target.as_ref() {
-                    Expr::Variable(name) => {
+                let (tensor_ptr, is_scalar_array, array_len) = match &target.inner {
+                    ExprKind::Variable(name) => {
                         let (val, ty) = self
                             .lookup_variable(name)
                             .ok_or(format!("Variable {} not found", name))?;
@@ -4317,9 +4326,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let dim_fn = self.module.get_function("tl_tensor_dim").unwrap();
                 for (i, idx_expr) in indices.iter().enumerate() {
-                    match idx_expr {
-                        Expr::Int(_) | Expr::Float(_) => continue,
-                        Expr::Variable(name) => {
+                    match &idx_expr.inner {
+                        ExprKind::Int(_) | ExprKind::Float(_) => continue,
+                        ExprKind::Variable(name) => {
                             if !bounds.contains_key(name) {
                                 let dim_size = if is_scalar_array {
                                     if i == 0 {
@@ -4350,16 +4359,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 }
             }
-            Expr::BinOp(lhs, _, rhs) => {
+            ExprKind::BinOp(lhs, _, rhs) => {
                 self.extract_index_bounds(lhs, bounds)?;
                 self.extract_index_bounds(rhs, bounds)?;
             }
-            Expr::UnOp(_, inner) => self.extract_index_bounds(inner, bounds)?,
-            Expr::Block(stmts) => {
+            ExprKind::UnOp(_, inner) => self.extract_index_bounds(inner, bounds)?,
+            ExprKind::Block(stmts) => {
                 for stmt in stmts {
-                    if let Stmt::Expr(e) = stmt {
+                    if let StmtKind::Expr(e) = &stmt.inner {
                         self.extract_index_bounds(e, bounds)?;
-                    } else if let Stmt::Let { value, .. } = stmt {
+                    } else if let StmtKind::Let { value, .. } = &stmt.inner {
                         self.extract_index_bounds(value, bounds)?;
                     }
                 }
@@ -4929,10 +4938,10 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                   let is_temp = matches!(
                       obj,
-                      Expr::FnCall(_, _)
-                          | Expr::StructInit(_, _)
-                          | Expr::Tuple(_)
-                          | Expr::TensorLiteral(_)
+                      ExprKind::FnCall(_, _)
+                          | ExprKind::StructInit(_, _)
+                          | ExprKind::Tuple(_)
+                          | ExprKind::TensorLiteral(_)
                   );
                   if is_temp {
                       self.emit_recursive_free(obj_val, &obj_ty)?;
@@ -5521,7 +5530,7 @@ fn compile_checkpoint<'ctx>(
         return Err("checkpoint requires 2 arguments: (method_ref, input)".into());
     }
     // Parse args[0] as obj.method
-    let (obj_ptr, fn_ptr) = if let Expr::FieldAccess(obj_expr, method_name) = &args[0] {
+    let (obj_ptr, fn_ptr) = if let ExprKind::FieldAccess(obj_expr, method_name) = &args[0].inner {
         let (obj_val, obj_ty) = codegen.compile_expr(obj_expr)?;
 
         // Get struct type
@@ -5794,7 +5803,7 @@ fn compile_print_formatted<'ctx>(
     }
 
     // Check for format string
-    let fmt_str_opt = if let Expr::StringLiteral(s) = &args[0] {
+    let fmt_str_opt = if let ExprKind::StringLiteral(s) = &args[0].inner {
         if s.contains("{}") {
             Some(s.clone())
         } else {
@@ -6590,8 +6599,8 @@ fn compile_tensor_creation_helper<'ctx>(
         return Err(format!("{} requires shape", runtime_func_name));
     }
     let shape_expr = &args[0];
-    let (rank, shape_vals) = match shape_expr {
-        Expr::TensorLiteral(el) | Expr::TensorConstLiteral(el) => {
+    let (rank, shape_vals) = match &shape_expr.inner {
+        ExprKind::TensorLiteral(el) | ExprKind::TensorConstLiteral(el) => {
             let mut vals = Vec::new();
             for e in el {
                 let (v, t) = codegen.compile_expr(e)?;
@@ -6619,8 +6628,8 @@ fn compile_tensor_creation_helper<'ctx>(
         }
     };
     let requires_grad = if args.len() > 1 {
-        match &args[1] {
-            Expr::Bool(b) => *b,
+        match &args[1].inner {
+            ExprKind::Bool(b) => *b,
             _ => false,
         }
     } else {
@@ -6758,8 +6767,8 @@ fn compile_varbuilder_get<'ctx>(
                     _ => return Err("Invalid len return".into()),
                 };
 
-                match &args[1] {
-                    Expr::TensorLiteral(elements) | Expr::TensorConstLiteral(elements) => (
+                match &args[1].inner {
+                    ExprKind::TensorLiteral(elements) | ExprKind::TensorConstLiteral(elements) => (
                         elements.len(),
                         elements
                             .iter()
@@ -6772,8 +6781,8 @@ fn compile_varbuilder_get<'ctx>(
                     _ => return Err("varbuilder_get shape must be a literal array".into()),
                 }
             }
-            Type::ScalarArray(_, l) => match &args[1] {
-                Expr::TensorLiteral(elements) | Expr::TensorConstLiteral(elements) => (
+            Type::ScalarArray(_, l) => match &args[1].inner {
+                ExprKind::TensorLiteral(elements) | ExprKind::TensorConstLiteral(elements) => (
                     *l,
                     elements
                         .iter()
@@ -7642,9 +7651,9 @@ fn compile_tensor_reshape_uneval<'ctx>(
 
     // 2. Inspect shape argument for static rank inference
     let shape_expr = &args[0];
-    let new_rank = if let Expr::TensorLiteral(elements) = shape_expr {
+    let new_rank = if let ExprKind::TensorLiteral(elements) = &shape_expr.inner {
         Some(elements.len())
-    } else if let Expr::TensorConstLiteral(elements) = shape_expr {
+    } else if let ExprKind::TensorConstLiteral(elements) = &shape_expr.inner {
         Some(elements.len())
     } else {
         None

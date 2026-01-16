@@ -319,7 +319,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn exit_scope(&mut self) {
         // Only emit cleanup if the current block is NOT terminated.
         // Note: This causes enter/exit imbalance at runtime for return statements.
-        // The proper fix is in Stmt::Return to emit cleanup BEFORE the return.
+        // The proper fix is in StmtKind::Return to emit cleanup BEFORE the return.
         let is_terminated = self
             .builder
             .get_insert_block()
@@ -930,10 +930,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         for (i, stmt) in func.body.iter().enumerate() {
             if i == body_len - 1 && func.return_type != Type::Void {
                 // Check if it's an expression that should be returned
-                if let Stmt::Expr(expr) = stmt {
+                if let StmtKind::Expr(expr) = &stmt.inner {
                     let (val, ty) = self.compile_expr(expr)?;
 
-                    // IMPORTANT: Unregister return value (same as Stmt::Return)
+                    // IMPORTANT: Unregister return value (same as StmtKind::Return)
                     self.emit_recursive_unregister(val, &ty)?;
 
                     self.emit_all_scopes_cleanup();

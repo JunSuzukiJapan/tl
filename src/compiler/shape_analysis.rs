@@ -111,9 +111,9 @@ impl ShapeAnalyzer {
 
     /// Analyze expression and infer its shape
     pub fn analyze_expr(&mut self, expr: &Expr) -> ShapeInfo {
-        match expr {
+        match &expr.inner {
             // Tensor literals: fully static from length
-            Expr::TensorLiteral(elements) | Expr::TensorConstLiteral(elements) => {
+            ExprKind::TensorLiteral(elements) | ExprKind::TensorConstLiteral(elements) => {
                 if elements.is_empty() {
                     return ShapeInfo::Static(vec![0]);
                 }
@@ -130,13 +130,15 @@ impl ShapeAnalyzer {
             }
 
             // Variable reference
-            Expr::Variable(name) => self.shapes.get(name).cloned().unwrap_or(ShapeInfo::Unknown),
+            ExprKind::Variable(name) => {
+                self.shapes.get(name).cloned().unwrap_or(ShapeInfo::Unknown)
+            }
 
             // Function calls
-            Expr::FnCall(fname, args) => self.infer_fn_call_shape(fname, args),
+            ExprKind::FnCall(fname, args) => self.infer_fn_call_shape(fname, args),
 
             // Static method calls (e.g., Tensor::new)
-            Expr::StaticMethodCall(type_name, method, args) => {
+            ExprKind::StaticMethodCall(type_name, method, args) => {
                 if type_name == "Tensor" && method == "new" {
                     self.infer_tensor_new_shape(args)
                 } else {
@@ -145,7 +147,7 @@ impl ShapeAnalyzer {
             }
 
             // Binary operations: if both are static and same, result is same
-            Expr::BinOp(left, _, right) => {
+            ExprKind::BinOp(left, _, right) => {
                 let s1 = self.analyze_expr(left);
                 let s2 = self.analyze_expr(right);
                 match (s1, s2) {
@@ -175,17 +177,17 @@ impl ShapeAnalyzer {
         }
 
         // Tensor::new takes a TensorLiteral of dimension values
-        match &args[0] {
-            Expr::TensorLiteral(dims) | Expr::TensorConstLiteral(dims) => {
+        match &args[0].inner {
+            ExprKind::TensorLiteral(dims) | ExprKind::TensorConstLiteral(dims) => {
                 let mut shape = vec![];
                 let mut all_static = true;
 
                 for dim_expr in dims {
-                    match dim_expr {
-                        Expr::Int(n) => {
+                    match &dim_expr.inner {
+                        ExprKind::Int(n) => {
                             shape.push(Some(*n as usize));
                         }
-                        Expr::Variable(_) => {
+                        ExprKind::Variable(_) => {
                             // Dynamic parameter - will be determined at runtime
                             shape.push(None);
                             all_static = false;
@@ -209,30 +211,30 @@ impl ShapeAnalyzer {
 
     /// Count number of tensor allocations in an expression
     pub fn count_allocations(&self, expr: &Expr) -> usize {
-        match expr {
-            Expr::TensorLiteral(_) | Expr::TensorConstLiteral(_) => 1,
-            Expr::BinOp(l, _, r) => 1 + self.count_allocations(l) + self.count_allocations(r),
-            Expr::UnOp(_, e) => 1 + self.count_allocations(e),
-            Expr::FnCall(_, args) => {
+        match &expr.inner {
+            ExprKind::TensorLiteral(_) | ExprKind::TensorConstLiteral(_) => 1,
+            ExprKind::BinOp(l, _, r) => 1 + self.count_allocations(l) + self.count_allocations(r),
+            ExprKind::UnOp(_, e) => 1 + self.count_allocations(e),
+            ExprKind::FnCall(_, args) => {
                 100 + args
                     .iter()
                     .map(|a| self.count_allocations(a))
                     .sum::<usize>()
             }
-            Expr::MethodCall(obj, _, args) => {
+            ExprKind::MethodCall(obj, _, args) => {
                 100 + self.count_allocations(obj)
                     + args
                         .iter()
                         .map(|a| self.count_allocations(a))
                         .sum::<usize>()
             }
-            Expr::StaticMethodCall(_, _, args) => {
+            ExprKind::StaticMethodCall(_, _, args) => {
                 100 + args
                     .iter()
                     .map(|a| self.count_allocations(a))
                     .sum::<usize>()
             }
-            Expr::IndexAccess(obj, indices) => {
+            ExprKind::IndexAccess(obj, indices) => {
                 0 + self.count_allocations(obj)
                     + indices
                         .iter()
@@ -245,12 +247,12 @@ impl ShapeAnalyzer {
 
     /// Analyze a statement and update shape information
     pub fn analyze_stmt(&mut self, stmt: &Stmt) {
-        match stmt {
-            Stmt::Let { name, value, .. } => {
+        match &stmt.inner {
+            StmtKind::Let { name, value, .. } => {
                 let shape = self.analyze_expr(value);
                 self.shapes.insert(name.clone(), shape);
             }
-            Stmt::Assign {
+            StmtKind::Assign {
                 name, value, op, ..
             } => {
                 if *op == AssignOp::Assign {
@@ -272,11 +274,11 @@ impl ShapeAnalyzer {
         for stmt in block {
             self.analyze_stmt(stmt);
 
-            match stmt {
-                Stmt::Let { value, .. }
-                | Stmt::Assign { value, .. }
-                | Stmt::Expr(value)
-                | Stmt::FieldAssign { value, .. } => {
+            match &stmt.inner {
+                StmtKind::Let { value, .. }
+                | StmtKind::Assign { value, .. }
+                | StmtKind::Expr(value)
+                | StmtKind::FieldAssign { value, .. } => {
                     allocation_count += self.count_allocations(value);
 
                     let shape = self.analyze_expr(value);
@@ -289,7 +291,7 @@ impl ShapeAnalyzer {
                         }
                     }
                 }
-                Stmt::Return(value_opt) => {
+                StmtKind::Return(value_opt) => {
                     if let Some(value) = value_opt {
                         allocation_count += self.count_allocations(value);
 
@@ -304,7 +306,7 @@ impl ShapeAnalyzer {
                         }
                     }
                 }
-                Stmt::If {
+                StmtKind::If {
                     then_block,
                     else_block,
                     ..
@@ -347,7 +349,11 @@ mod tests {
         let mut analyzer = ShapeAnalyzer::new();
 
         // let x = [1.0, 2.0, 3.0];
-        let expr = Expr::TensorLiteral(vec![Expr::Float(1.0), Expr::Float(2.0), Expr::Float(3.0)]);
+        let expr = Spanned::dummy(ExprKind::TensorLiteral(vec![
+            Spanned::dummy(ExprKind::Float(1.0)),
+            Spanned::dummy(ExprKind::Float(2.0)),
+            Spanned::dummy(ExprKind::Float(3.0)),
+        ]));
 
         let shape = analyzer.analyze_expr(&expr);
         assert_eq!(shape, ShapeInfo::Static(vec![3]));

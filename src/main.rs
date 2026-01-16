@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tl::compiler::codegen::CodeGenerator;
-use tl::compiler::error::TlError;
+use tl::compiler::error::{format_error_with_source, TlError};
 use tl::compiler::inference::{forward_chain, query, GroundAtom, Value};
 use tl::compiler::semantics::SemanticAnalyzer;
 
@@ -78,10 +78,15 @@ fn main() -> Result<()> {
 
         for file in &source_files {
             println!("Compiling file: {:?}", file);
-            let mut ast = match load_module_recursive(file.clone()) {
-                Ok(ast) => ast,
+            let (mut ast, source) = match load_module_with_source(file.clone()) {
+                Ok((ast, source)) => (ast, source),
                 Err(e) => {
-                    print_tl_error(&e, Some(file.to_str().unwrap_or("unknown")));
+                    let source = fs::read_to_string(file).unwrap_or_default();
+                    print_tl_error_with_source(
+                        &e,
+                        &source,
+                        Some(file.to_str().unwrap_or("unknown")),
+                    );
                     std::process::exit(1);
                 }
             };
@@ -92,7 +97,11 @@ fn main() -> Result<()> {
                 let tl_err = e
                     .to_tl_error(None)
                     .with_file(file.to_str().unwrap_or("unknown"));
-                print_tl_error(&tl_err, Some(file.to_str().unwrap_or("unknown")));
+                print_tl_error_with_source(
+                    &tl_err,
+                    &source,
+                    Some(file.to_str().unwrap_or("unknown")),
+                );
                 std::process::exit(1);
             }
 
@@ -103,7 +112,16 @@ fn main() -> Result<()> {
             let mut codegen = CodeGenerator::new(&context, module_name);
 
             if let Err(e) = codegen.compile_module(&ast) {
-                eprintln!("Codegen error in {:?}: {}", file, e);
+                let tl_err = TlError::Codegen {
+                    kind: tl::compiler::error::CodegenErrorKind::Generic(e),
+                    span: None,
+                }
+                .with_file(file.to_str().unwrap_or("unknown"));
+                print_tl_error_with_source(
+                    &tl_err,
+                    &source,
+                    Some(file.to_str().unwrap_or("unknown")),
+                );
                 std::process::exit(1);
             }
 
@@ -241,10 +259,13 @@ fn main() -> Result<()> {
             submodules: std::collections::HashMap::new(),
         };
 
+        // ソースコードを保持（スニペット表示用）
+        let mut combined_source = String::new();
+
         for file in &source_files {
             // println!("Loading file: {:?}", file);
-            match load_module_recursive(file.clone()) {
-                Ok(mod_) => {
+            match load_module_with_source(file.clone()) {
+                Ok((mod_, source)) => {
                     // Merge
                     combined_module.structs.extend(mod_.structs);
                     combined_module.enums.extend(mod_.enums);
@@ -256,9 +277,19 @@ fn main() -> Result<()> {
                     combined_module.queries.extend(mod_.queries);
                     combined_module.imports.extend(mod_.imports);
                     combined_module.submodules.extend(mod_.submodules);
+                    // 主要なファイルのソースを保持
+                    if combined_source.is_empty() {
+                        combined_source = source;
+                    }
                 }
                 Err(e) => {
-                    print_tl_error(&e, Some(file.to_str().unwrap_or("unknown")));
+                    // パースエラーはソースが必要なので、ファイルを再読み込み
+                    let source = fs::read_to_string(file).unwrap_or_default();
+                    print_tl_error_with_source(
+                        &e,
+                        &source,
+                        Some(file.to_str().unwrap_or("unknown")),
+                    );
                     std::process::exit(1);
                 }
             }
@@ -268,7 +299,7 @@ fn main() -> Result<()> {
         let mut analyzer = SemanticAnalyzer::new();
         if let Err(e) = analyzer.check_module(&mut combined_module) {
             let tl_err: TlError = e.into();
-            print_tl_error(&tl_err, None);
+            print_tl_error_with_source(&tl_err, &combined_source, None);
             std::process::exit(1);
         }
 
@@ -280,7 +311,12 @@ fn main() -> Result<()> {
         let mut codegen = CodeGenerator::new(&context, "main");
 
         if let Err(e) = codegen.compile_module(&combined_module) {
-            eprintln!("Codegen error: {}", e);
+            // StringエラーをTlErrorに変換
+            let tl_err = TlError::Codegen {
+                kind: tl::compiler::error::CodegenErrorKind::Generic(e),
+                span: None,
+            };
+            print_tl_error_with_source(&tl_err, &combined_source, None);
             std::process::exit(1);
         }
 
@@ -316,7 +352,7 @@ fn run_logic_program(
     module: &tl::compiler::ast::Module,
     ctx: &tl::compiler::inference::TensorContext,
 ) {
-    use tl::compiler::ast::{Atom, Expr};
+    use tl::compiler::ast::{Atom, ExprKind};
 
     println!("Executing logic program...");
 
@@ -351,7 +387,7 @@ fn run_logic_program(
     // 4. Execute queries
     for query_expr in &module.queries {
         // Query expr should be a function call like path(1, 2)
-        if let Expr::FnCall(pred, args) = query_expr {
+        if let ExprKind::FnCall(pred, args) = &query_expr.inner {
             let query_atom = Atom {
                 predicate: pred.clone(),
                 args: args.clone(),
@@ -377,14 +413,14 @@ fn run_logic_program(
 
 /// Try to convert an Atom to a GroundAtom (all args must be literals).
 fn try_atom_to_ground(atom: &tl::compiler::ast::Atom) -> Option<GroundAtom> {
-    use tl::compiler::ast::Expr;
+    use tl::compiler::ast::ExprKind;
 
     let mut args = Vec::new();
     for expr in &atom.args {
-        match expr {
-            Expr::Int(n) => args.push(Value::Int(*n)),
-            Expr::Float(f) => args.push(Value::Float(*f)),
-            Expr::StringLiteral(s) => args.push(Value::Str(s.clone())),
+        match &expr.inner {
+            ExprKind::Int(n) => args.push(Value::Int(*n)),
+            ExprKind::Float(f) => args.push(Value::Float(*f)),
+            ExprKind::StringLiteral(s) => args.push(Value::Str(s.clone())),
             _ => return None, // Contains variable or complex expression
         }
     }
@@ -405,18 +441,18 @@ fn is_trivially_true(body: &[tl::compiler::ast::Atom]) -> bool {
     false
 }
 
-fn load_module_recursive(path: PathBuf) -> Result<tl::compiler::ast::Module, TlError> {
+/// モジュールをロードし、ソースコードも返す
+fn load_module_with_source(path: PathBuf) -> Result<(tl::compiler::ast::Module, String), TlError> {
     let path_str = path.to_str().unwrap_or("unknown").to_string();
 
     let content = fs::read_to_string(&path).map_err(|e| TlError::Io(e))?;
+    let source = content.clone();
 
     let mut module = tl::compiler::parser::parse(&content).map_err(|e| e.with_file(&path_str))?;
 
     let parent_dir = path.parent().unwrap_or(Path::new("."));
 
     for import_name in &module.imports {
-        // Resolve import path
-        // If `mod foo;` in `src/main.tl`, look for `src/foo.tl`
         let import_path = parent_dir.join(format!("{}.tl", import_name));
 
         if !import_path.exists() {
@@ -429,73 +465,15 @@ fn load_module_recursive(path: PathBuf) -> Result<tl::compiler::ast::Module, TlE
             });
         }
 
-        let submodule = load_module_recursive(import_path)?;
+        let (submodule, _) = load_module_with_source(import_path)?;
         module.submodules.insert(import_name.clone(), submodule);
     }
 
-    Ok(module)
+    Ok((module, source))
 }
 
-/// Rustスタイルでエラーを表示
-fn print_tl_error(error: &TlError, file_hint: Option<&str>) {
-    let error_type = match error {
-        TlError::Parse { .. } => "parse",
-        TlError::Semantic { .. } => "semantic",
-        TlError::Codegen { .. } => "codegen",
-        TlError::Io(_) => "io",
-    };
-
-    let message = match error {
-        TlError::Parse { kind, .. } => kind.to_string(),
-        TlError::Semantic { kind, .. } => kind.to_string(),
-        TlError::Codegen { kind, .. } => kind.to_string(),
-        TlError::Io(e) => e.to_string(),
-    };
-
-    // Rustスタイルのエラー表示
-    if let Some(span) = error.span() {
-        if span.line > 0 {
-            // 完全な位置情報がある場合
-            if let Some(ref file) = span.file {
-                eprintln!(
-                    "\x1b[1;31merror[E0001]\x1b[0m: {}\n  \x1b[1;34m-->\x1b[0m {}:{}:{}",
-                    message, file, span.line, span.column
-                );
-            } else if let Some(file) = file_hint {
-                eprintln!(
-                    "\x1b[1;31merror[E0001]\x1b[0m: {}\n  \x1b[1;34m-->\x1b[0m {}:{}:{}",
-                    message, file, span.line, span.column
-                );
-            } else {
-                eprintln!(
-                    "\x1b[1;31merror[E0001]\x1b[0m: {}\n  \x1b[1;34m-->\x1b[0m {}:{}",
-                    message, span.line, span.column
-                );
-            }
-        } else if let Some(ref file) = span.file {
-            eprintln!(
-                "\x1b[1;31merror[E0001]\x1b[0m: {}\n  \x1b[1;34m-->\x1b[0m {}",
-                message, file
-            );
-        } else if let Some(file) = file_hint {
-            eprintln!(
-                "\x1b[1;31merror[E0001]\x1b[0m: {}\n  \x1b[1;34m-->\x1b[0m {}",
-                message, file
-            );
-        } else {
-            eprintln!("\x1b[1;31merror[E0001]\x1b[0m: {}", message);
-        }
-    } else if let Some(file) = file_hint {
-        eprintln!(
-            "\x1b[1;31merror[E0001]\x1b[0m: {}\n  \x1b[1;34m-->\x1b[0m {}",
-            message, file
-        );
-    } else {
-        eprintln!("\x1b[1;31merror[E0001]\x1b[0m: {}", message);
-    }
-
-    eprintln!(
-        "  \x1b[1;34m=\x1b[0m \x1b[1mnote\x1b[0m: {} error",
-        error_type
-    );
+/// ソースコードスニペット付きでエラーを表示
+fn print_tl_error_with_source(error: &TlError, source: &str, file_hint: Option<&str>) {
+    let output = format_error_with_source(error, source, file_hint);
+    eprint!("{}", output);
 }

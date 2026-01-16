@@ -6,7 +6,7 @@
 //! - Unification of atoms
 //! - Forward chaining (semi-naive evaluation)
 
-use crate::compiler::ast::{Atom, Expr, Rule};
+use crate::compiler::ast::{Atom, Expr, ExprKind, Rule, Spanned};
 use std::collections::{HashMap, HashSet};
 pub use tl_runtime::context::{TensorContext, TensorValue};
 
@@ -60,8 +60,8 @@ impl Term {
         ctx: Option<&TensorContext>,
         subst: &Substitution,
     ) -> Self {
-        match expr {
-            Expr::Variable(name) => {
+        match &expr.inner {
+            ExprKind::Variable(name) => {
                 // Check if variable is already bound
                 if let Some(val) = subst.get(name) {
                     Term::Val(val.clone())
@@ -69,18 +69,18 @@ impl Term {
                     Term::Var(name.clone())
                 }
             }
-            Expr::Int(n) => Term::Val(Value::Int(*n)),
-            Expr::Float(f) => Term::Val(Value::Float(*f)),
-            Expr::StringLiteral(s) => Term::Val(Value::Str(s.clone())),
-            Expr::IndexAccess(base, indices) => {
+            ExprKind::Int(n) => Term::Val(Value::Int(*n)),
+            ExprKind::Float(f) => Term::Val(Value::Float(*f)),
+            ExprKind::StringLiteral(s) => Term::Val(Value::Str(s.clone())),
+            ExprKind::IndexAccess(base, indices) => {
                 // Extract tensor name from base
-                if let Expr::Variable(tensor_name) = base.as_ref() {
+                if let ExprKind::Variable(tensor_name) = &base.inner {
                     // Convert indices to terms
                     let idx_terms: Vec<Term> = indices
                         .iter()
-                        .map(|idx_expr| match idx_expr {
-                            Expr::Int(n) => Term::Val(Value::Int(*n)),
-                            Expr::Variable(name) => {
+                        .map(|idx_expr| match &idx_expr.inner {
+                            ExprKind::Int(n) => Term::Val(Value::Int(*n)),
+                            ExprKind::Variable(name) => {
                                 if let Some(val) = subst.get(name) {
                                     Term::Val(val.clone())
                                 } else {
@@ -488,7 +488,10 @@ mod tests {
     fn test_unify_simple() {
         let pattern = Atom {
             predicate: "edge".to_string(),
-            args: vec![Expr::Variable("X".to_string()), Expr::Int(2)],
+            args: vec![
+                Spanned::dummy(ExprKind::Variable("X".to_string())),
+                Spanned::dummy(ExprKind::Int(2)),
+            ],
         };
         let ground = make_atom("edge", vec![1, 2]);
 
@@ -515,15 +518,15 @@ mod tests {
                 head: Atom {
                     predicate: "path".to_string(),
                     args: vec![
-                        Expr::Variable("X".to_string()),
-                        Expr::Variable("Y".to_string()),
+                        Spanned::dummy(ExprKind::Variable("X".to_string())),
+                        Spanned::dummy(ExprKind::Variable("Y".to_string())),
                     ],
                 },
                 body: vec![Atom {
                     predicate: "edge".to_string(),
                     args: vec![
-                        Expr::Variable("X".to_string()),
-                        Expr::Variable("Y".to_string()),
+                        Spanned::dummy(ExprKind::Variable("X".to_string())),
+                        Spanned::dummy(ExprKind::Variable("Y".to_string())),
                     ],
                 }],
                 weight: None,
@@ -532,23 +535,23 @@ mod tests {
                 head: Atom {
                     predicate: "path".to_string(),
                     args: vec![
-                        Expr::Variable("X".to_string()),
-                        Expr::Variable("Z".to_string()),
+                        Spanned::dummy(ExprKind::Variable("X".to_string())),
+                        Spanned::dummy(ExprKind::Variable("Z".to_string())),
                     ],
                 },
                 body: vec![
                     Atom {
                         predicate: "edge".to_string(),
                         args: vec![
-                            Expr::Variable("X".to_string()),
-                            Expr::Variable("Y".to_string()),
+                            Spanned::dummy(ExprKind::Variable("X".to_string())),
+                            Spanned::dummy(ExprKind::Variable("Y".to_string())),
                         ],
                     },
                     Atom {
                         predicate: "path".to_string(),
                         args: vec![
-                            Expr::Variable("Y".to_string()),
-                            Expr::Variable("Z".to_string()),
+                            Spanned::dummy(ExprKind::Variable("Y".to_string())),
+                            Spanned::dummy(ExprKind::Variable("Z".to_string())),
                         ],
                     },
                 ],
@@ -588,19 +591,22 @@ mod tests {
         let rules = vec![Rule {
             head: Atom {
                 predicate: "large".to_string(),
-                args: vec![Expr::Variable("x".to_string())],
+                args: vec![Spanned::dummy(ExprKind::Variable("x".to_string()))],
             },
             body: vec![
                 Atom {
                     predicate: "value".to_string(),
                     args: vec![
-                        Expr::Variable("x".to_string()),
-                        Expr::Variable("v".to_string()),
+                        Spanned::dummy(ExprKind::Variable("x".to_string())),
+                        Spanned::dummy(ExprKind::Variable("v".to_string())),
                     ],
                 },
                 Atom {
                     predicate: "gt".to_string(),
-                    args: vec![Expr::Variable("v".to_string()), Expr::Int(8)],
+                    args: vec![
+                        Spanned::dummy(ExprKind::Variable("v".to_string())),
+                        Spanned::dummy(ExprKind::Int(8)),
+                    ],
                 },
             ],
             weight: None,
