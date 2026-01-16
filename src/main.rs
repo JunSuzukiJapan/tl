@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tl::compiler::codegen::CodeGenerator;
+use tl::compiler::error::TlError;
 use tl::compiler::inference::{forward_chain, query, GroundAtom, Value};
 use tl::compiler::semantics::SemanticAnalyzer;
 
@@ -80,7 +81,7 @@ fn main() -> Result<()> {
             let mut ast = match load_module_recursive(file.clone()) {
                 Ok(ast) => ast,
                 Err(e) => {
-                    eprintln!("Load error: {:?}", e);
+                    print_tl_error(&e, Some(file.to_str().unwrap_or("unknown")));
                     std::process::exit(1);
                 }
             };
@@ -88,7 +89,10 @@ fn main() -> Result<()> {
             // Semantics
             let mut analyzer = SemanticAnalyzer::new();
             if let Err(e) = analyzer.check_module(&mut ast) {
-                eprintln!("Semantic error in {:?}: {}", file, e);
+                let tl_err = e
+                    .to_tl_error(None)
+                    .with_file(file.to_str().unwrap_or("unknown"));
+                print_tl_error(&tl_err, Some(file.to_str().unwrap_or("unknown")));
                 std::process::exit(1);
             }
 
@@ -254,7 +258,7 @@ fn main() -> Result<()> {
                     combined_module.submodules.extend(mod_.submodules);
                 }
                 Err(e) => {
-                    eprintln!("Load error in {:?}: {:?}", file, e);
+                    print_tl_error(&e, Some(file.to_str().unwrap_or("unknown")));
                     std::process::exit(1);
                 }
             }
@@ -263,7 +267,8 @@ fn main() -> Result<()> {
         // Semantics
         let mut analyzer = SemanticAnalyzer::new();
         if let Err(e) = analyzer.check_module(&mut combined_module) {
-            eprintln!("Semantic error: {}", e);
+            let tl_err: TlError = e.into();
+            print_tl_error(&tl_err, None);
             std::process::exit(1);
         }
 
@@ -400,12 +405,12 @@ fn is_trivially_true(body: &[tl::compiler::ast::Atom]) -> bool {
     false
 }
 
-fn load_module_recursive(path: PathBuf) -> Result<tl::compiler::ast::Module> {
-    let content =
-        fs::read_to_string(&path).with_context(|| format!("Failed to read file {:?}", path))?;
+fn load_module_recursive(path: PathBuf) -> Result<tl::compiler::ast::Module, TlError> {
+    let path_str = path.to_str().unwrap_or("unknown").to_string();
 
-    let mut module = tl::compiler::parser::parse(&content)
-        .with_context(|| format!("Failed to parse file {:?}", path))?;
+    let content = fs::read_to_string(&path).map_err(|e| TlError::Io(e))?;
+
+    let mut module = tl::compiler::parser::parse(&content).map_err(|e| e.with_file(&path_str))?;
 
     let parent_dir = path.parent().unwrap_or(Path::new("."));
 
@@ -415,11 +420,13 @@ fn load_module_recursive(path: PathBuf) -> Result<tl::compiler::ast::Module> {
         let import_path = parent_dir.join(format!("{}.tl", import_name));
 
         if !import_path.exists() {
-            return Err(anyhow::anyhow!(
-                "Module {} not found at {:?}",
-                import_name,
-                import_path
-            ));
+            return Err(TlError::Parse {
+                kind: tl::compiler::error::ParseErrorKind::Generic(format!(
+                    "Module {} not found at {:?}",
+                    import_name, import_path
+                )),
+                span: None,
+            });
         }
 
         let submodule = load_module_recursive(import_path)?;
@@ -427,4 +434,68 @@ fn load_module_recursive(path: PathBuf) -> Result<tl::compiler::ast::Module> {
     }
 
     Ok(module)
+}
+
+/// Rustスタイルでエラーを表示
+fn print_tl_error(error: &TlError, file_hint: Option<&str>) {
+    let error_type = match error {
+        TlError::Parse { .. } => "parse",
+        TlError::Semantic { .. } => "semantic",
+        TlError::Codegen { .. } => "codegen",
+        TlError::Io(_) => "io",
+    };
+
+    let message = match error {
+        TlError::Parse { kind, .. } => kind.to_string(),
+        TlError::Semantic { kind, .. } => kind.to_string(),
+        TlError::Codegen { kind, .. } => kind.to_string(),
+        TlError::Io(e) => e.to_string(),
+    };
+
+    // Rustスタイルのエラー表示
+    if let Some(span) = error.span() {
+        if span.line > 0 {
+            // 完全な位置情報がある場合
+            if let Some(ref file) = span.file {
+                eprintln!(
+                    "\x1b[1;31merror[E0001]\x1b[0m: {}\n  \x1b[1;34m-->\x1b[0m {}:{}:{}",
+                    message, file, span.line, span.column
+                );
+            } else if let Some(file) = file_hint {
+                eprintln!(
+                    "\x1b[1;31merror[E0001]\x1b[0m: {}\n  \x1b[1;34m-->\x1b[0m {}:{}:{}",
+                    message, file, span.line, span.column
+                );
+            } else {
+                eprintln!(
+                    "\x1b[1;31merror[E0001]\x1b[0m: {}\n  \x1b[1;34m-->\x1b[0m {}:{}",
+                    message, span.line, span.column
+                );
+            }
+        } else if let Some(ref file) = span.file {
+            eprintln!(
+                "\x1b[1;31merror[E0001]\x1b[0m: {}\n  \x1b[1;34m-->\x1b[0m {}",
+                message, file
+            );
+        } else if let Some(file) = file_hint {
+            eprintln!(
+                "\x1b[1;31merror[E0001]\x1b[0m: {}\n  \x1b[1;34m-->\x1b[0m {}",
+                message, file
+            );
+        } else {
+            eprintln!("\x1b[1;31merror[E0001]\x1b[0m: {}", message);
+        }
+    } else if let Some(file) = file_hint {
+        eprintln!(
+            "\x1b[1;31merror[E0001]\x1b[0m: {}\n  \x1b[1;34m-->\x1b[0m {}",
+            message, file
+        );
+    } else {
+        eprintln!("\x1b[1;31merror[E0001]\x1b[0m: {}", message);
+    }
+
+    eprintln!(
+        "  \x1b[1;34m=\x1b[0m \x1b[1mnote\x1b[0m: {} error",
+        error_type
+    );
 }

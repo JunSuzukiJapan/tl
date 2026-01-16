@@ -1,5 +1,5 @@
 // EXIT: 1
-// STDERR: Non-exhaustive match
+// STDERR: non-exhaustive match
 
 enum MaybeInt {
     Some { value: i64 },

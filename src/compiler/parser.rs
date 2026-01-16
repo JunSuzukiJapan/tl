@@ -1,5 +1,6 @@
 // src/compiler/parser.rs
 use crate::compiler::ast::*;
+use crate::compiler::error::{offset_to_line_col, ParseErrorKind, Span, TlError};
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_while, take_while1},
@@ -1359,7 +1360,7 @@ fn parse_mod_decl(input: &str) -> IResult<&str, String> {
 
 // --- Top Level ---
 // Re-define parse_module logic
-pub fn parse(input: &str) -> anyhow::Result<Module> {
+pub fn parse(input: &str) -> Result<Module, TlError> {
     let mut structs = vec![];
     let mut enums = vec![];
     let mut impls = vec![];
@@ -1417,11 +1418,16 @@ pub fn parse(input: &str) -> anyhow::Result<Module> {
             // Maybe leading whitespace is not fully consumed by ws() if wrapped?
             // Actually, remaining is passed to ws(parser). ws() does delimited(sp, inner, sp).
             // It consumes leading sp.
-            // Use {:?} to show invisible chars like BOM or weird spaces
-            return Err(anyhow::anyhow!(
-                "Parse error at: {:?}...",
-                &remaining[..remaining.len().min(30)]
-            ));
+            // Calculate position from where we failed
+            let offset = input.len() - remaining.len();
+            let (line, column) = offset_to_line_col(input, offset);
+            let span = Span::new(line, column);
+
+            let snippet = &remaining[..remaining.len().min(30)];
+            return Err(TlError::Parse {
+                kind: ParseErrorKind::InvalidSyntax(format!("at: {:?}...", snippet)),
+                span: Some(span),
+            });
         }
     }
 

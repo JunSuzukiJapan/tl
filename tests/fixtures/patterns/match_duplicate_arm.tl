@@ -1,5 +1,5 @@
 // EXIT: 1
-// STDERR: Duplicate match arm
+// STDERR: duplicate match arm
 
 enum MaybeInt {
     Some { value: i64 },

@@ -1,5 +1,5 @@
 // EXIT: 1
-// STDERR: Type mismatch
+// STDERR: type mismatch
 
 enum MaybeInt {
     Some { value: i64 },

@@ -1,5 +1,6 @@
 // src/compiler/semantics.rs
 use crate::compiler::ast::*;
+use crate::compiler::error::{SemanticErrorKind, Span, TlError};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
@@ -45,6 +46,63 @@ pub enum SemanticError {
     NotATuple(Type),
     #[error("Cannot assign to immutable variable: {0}")]
     AssignToImmutable(String),
+}
+
+impl SemanticError {
+    /// SemanticErrorをTlErrorに変換（Span情報付き）
+    pub fn to_tl_error(self, span: Option<Span>) -> TlError {
+        let kind = match self {
+            SemanticError::VariableNotFound(name) => SemanticErrorKind::VariableNotFound(name),
+            SemanticError::VariableMoved(name) => SemanticErrorKind::VariableMoved(name),
+            SemanticError::TypeMismatch { expected, found } => SemanticErrorKind::TypeMismatch {
+                expected: format!("{:?}", expected),
+                found: format!("{:?}", found),
+            },
+            SemanticError::FunctionNotFound(name) => SemanticErrorKind::FunctionNotFound(name),
+            SemanticError::StructNotFound(name) => SemanticErrorKind::StructNotFound(name),
+            SemanticError::DuplicateDefinition(name) => {
+                SemanticErrorKind::DuplicateDefinition(name)
+            }
+            SemanticError::DuplicateMatchArm(name) => SemanticErrorKind::DuplicateMatchArm(name),
+            SemanticError::UnreachableMatchArm => SemanticErrorKind::UnreachableMatchArm,
+            SemanticError::NonExhaustiveMatch {
+                enum_name,
+                missing_variants,
+            } => SemanticErrorKind::NonExhaustiveMatch {
+                enum_name,
+                missing_variants,
+            },
+            SemanticError::ArgumentCountMismatch {
+                name,
+                expected,
+                found,
+            } => SemanticErrorKind::ArgumentCountMismatch {
+                name,
+                expected,
+                found,
+            },
+            SemanticError::MethodNotFound {
+                type_name,
+                method_name,
+            } => SemanticErrorKind::MethodNotFound {
+                type_name,
+                method_name,
+            },
+            SemanticError::UnknownFunction(name) => SemanticErrorKind::UnknownFunction(name),
+            SemanticError::TupleIndexOutOfBounds(idx, size) => {
+                SemanticErrorKind::TupleIndexOutOfBounds(idx, size)
+            }
+            SemanticError::NotATuple(ty) => SemanticErrorKind::NotATuple(format!("{:?}", ty)),
+            SemanticError::AssignToImmutable(name) => SemanticErrorKind::AssignToImmutable(name),
+        };
+        TlError::Semantic { kind, span }
+    }
+}
+
+impl From<SemanticError> for TlError {
+    fn from(err: SemanticError) -> Self {
+        err.to_tl_error(None)
+    }
 }
 
 #[derive(Clone, Debug)]

@@ -1,5 +1,5 @@
 // EXIT: 1
-// STDERR: Unreachable match arm
+// STDERR: unreachable match arm
 
 enum MaybeInt {
     Some { value: i64 },
