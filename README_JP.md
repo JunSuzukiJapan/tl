@@ -131,4 +131,14 @@ fn main() {
         }
     }
 }
-```
+
+
+# LICENSE
+
+[MIT](LICENSE)
+
+#Reference
+
+- [AIの未来を変えるテンソル論理とは？ニューラルと記号推論を統一する新言語（2510.12269）【論文解説シリーズ】](https://www.youtube.com/watch?v=rkBLPYqPkP4)
+
+- [Tensor Logic: The Language of AI](https://arxiv.org/abs/2510.12269)
