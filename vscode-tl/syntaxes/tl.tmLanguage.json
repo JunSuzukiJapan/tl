@@ -48,19 +48,35 @@
             "patterns": [
                 {
                     "name": "keyword.control.tl",
-                    "match": "\\b(tensor|relation|fn|impl|let|if|else|sum|for|where|in)\\b"
+                    "match": "\\b(if|else|for|while|in|return|break|continue|match)\\b"
                 },
                 {
                     "name": "keyword.other.tl",
-                    "match": "(\\:-|\\?\\-)"
+                    "match": "\\b(fn|let|struct|enum|impl|mod|use|as|where|tensor|relation)\\b"
+                },
+                {
+                    "name": "constant.language.tl",
+                    "match": "\\b(true|false)\\b"
+                },
+                {
+                    "name": "keyword.operator.arrow.tl",
+                    "match": "(<-|=>)"
+                },
+                {
+                    "name": "support.function.aggregate.tl",
+                    "match": "\\b(sum|max|min|avg|count)\\b(?=\\s*\\()"
                 }
             ]
         },
         "types": {
             "patterns": [
                 {
-                    "name": "storage.type.tl",
-                    "match": "\\b(f32|i64)\\b"
+                    "name": "storage.type.primitive.tl",
+                    "match": "\\b(f32|f64|i32|i64|bool|usize|void|entity)\\b"
+                },
+                {
+                    "name": "storage.type.container.tl",
+                    "match": "\\b(Tensor)\\b"
                 }
             ]
         },
@@ -70,11 +86,11 @@
         },
         "operators": {
             "name": "keyword.operator.tl",
-            "match": "(\\=|\\+|\\-|\\*|\\/|\\<|\\>|!|\\.|\\,|\\;|\\:)"
+            "match": "(\\=|\\+|\\-|\\*|\\/|\\<|\\>|!|\\.|\\,|\\;|\\:|\\.\\.|\\:\\:)"
         },
         "functions": {
             "name": "entity.name.function.tl",
-            "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b(?=\\()"
+            "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b(?=\\s*\\()"
         }
     },
     "scopeName": "source.tl"

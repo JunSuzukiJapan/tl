@@ -1,13 +1,13 @@
 # TensorLogic (TL)
 
-A probabilistic logic programming language with first-class tensor support, JIT-compiled to LLVM.
+A tensor logic programming language with first-class tensor support, JIT-compiled to LLVM.
 
 ## Features
 - **Tensor Operations**: `tensor<f32>[128, 128]`, `matmul`, `topk`, etc. via Candle.
 - **Logic Programming**: Datalog-style rules with tensor integration.
 - **Hybrid Execution**: Logic terms can access tensor data (`data[i]`).
 - **JIT Compilation**: High-performance execution using LLVM (Inkwell).
-- **GPU Support**: Metal (macOS) and CUDA backends.
+- **GPU Support**: Metal (macOS) backend supported. CUDA support is planned for the future.
 - **Optimization**: Aggressive JIT optimization and fast logic inference.
 
 ## Prerequisites (macOS)

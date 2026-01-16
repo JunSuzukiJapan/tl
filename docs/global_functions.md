@@ -1,38 +1,38 @@
-# TensorLogic API リファレンス
+# TensorLogic API Reference
 
-このドキュメントは、現在のコンパイラ実装に基づくTensorLogic言語の標準API（グローバル関数、標準クラス、組み込み型）のリファレンスです。
+This document is a reference for the standard API of the TensorLogic language (global functions, standard classes, built-in types) based on the current compiler implementation.
 
 ---
 
-## 1. グローバル関数
+## 1. Global Functions
 
-### IO & システム
+### IO & System
 *   **`print(value) -> void`**
-    値を標準出力に出力します（改行なし）。
+    Prints the value to standard output (without newline).
 *   **`println(value) -> void`**
-    値を標準出力に出力します（改行あり）。
+    Prints the value to standard output (with newline).
 
 ---
 
-## 2. 標準型 & 静的メソッド（クラスメソッド）
+## 2. Standard Types & Static Methods (Class Methods)
 
 ### Tensor
 *   **`Tensor::zeros(shape, requires_grad) -> Tensor`**
 *   **`Tensor::randn(shape, requires_grad) -> Tensor`**
 *   **`Tensor::ones(shape, requires_grad) -> Tensor`**
-*   **`Tensor::load(path: String) -> Tensor`** — ファイルからテンソルを読み込み
+*   **`Tensor::load(path: String) -> Tensor`** — Load tensor from file
 
-### Param（パラメータ管理）
-*   **`Param::save_all(path: String) -> void`** — 全パラメータを保存
-*   **`Param::load_all(path: String) -> void`** — 全パラメータを読み込み
-*   **`Param::save(target, path: String) -> void`** — 対象を保存
-*   **`Param::load(path: String) -> Tensor`** — ファイルから読み込み
-*   **`Param::add(name: String, t: Tensor) -> void`** — パラメータを追加
-*   **`Param::register(t: Tensor) -> Tensor`** — テンソルをパラメータとして登録
-*   **`Param::update_all(lr: f32) -> void`** — 全パラメータを更新
-*   **`Param::register_modules(root: Struct) -> void`** — モジュールを登録
-*   **`Param::checkpoint(method, input) -> Tensor`** — 活性化チェックポイント
-*   **`Param::set_device(device: Device) -> void`** — 計算デバイスを設定
+### Param (Parameter Management)
+*   **`Param::save_all(path: String) -> void`** — Save all parameters
+*   **`Param::load_all(path: String) -> void`** — Load all parameters
+*   **`Param::save(target, path: String) -> void`** — Save target
+*   **`Param::load(path: String) -> Tensor`** — Load from file
+*   **`Param::add(name: String, t: Tensor) -> void`** — Add parameter
+*   **`Param::register(t: Tensor) -> Tensor`** — Register tensor as parameter
+*   **`Param::update_all(lr: f32) -> void`** — Update all parameters
+*   **`Param::register_modules(root: Struct) -> void`** — Register module parameters
+*   **`Param::checkpoint(method, input) -> Tensor`** — Activation checkpointing
+*   **`Param::set_device(device: Device) -> void`** — Set computation device
 
 ### VarBuilder
 *   **`VarBuilder::get(name: String, ...dims) -> Tensor`**
@@ -62,49 +62,49 @@
 
 ---
 
-## 3. インスタンスメソッド
+## 3. Instance Methods
 
-### Tensor メソッド
-使用法: `tensor.method(...)`
+### Tensor Methods
+Usage: `tensor.method(...)`
 
-#### 数学 (要素ごと)
+#### Math (Element-wise)
 `abs()`, `neg()`, `relu()`, `gelu()`, `silu()`, `sigmoid()`, `tanh()`,
 `sin()`, `cos()`, `tan()`, `sqrt()`, `exp()`, `log()`, `pow(exp)`
 
-#### 削減 & 統計
+#### Reduction & Statistics
 `sum(dim?)`, `mean(dim?)`, `max(dim?)`, `min(dim?)`, `argmax(dim)`, `argmin(dim)`,
 `softmax(dim)`, `log_softmax(dim)`
 
-#### 形状 & 操作
-*   **`reshape(...dims) -> Tensor`** — 形状を変更
-*   **`transpose(dim1, dim2) -> Tensor`** — 次元を転置
-*   **`slice(start, len) -> Tensor`** — スライス
-*   **`contiguous() -> Tensor`** — メモリ連続化
-*   **`len() -> i64`** — 最初の次元のサイズ
-*   **`item() -> f32`** — スカラー値を取得
-*   **`item_i64() -> i64`** — 整数スカラー値を取得
-*   **`to_i64() -> Tensor`** — i64型に変換
+#### Shape & Manipulation
+*   **`reshape(...dims) -> Tensor`** — Change shape
+*   **`transpose(dim1, dim2) -> Tensor`** — Transpose dimensions
+*   **`slice(start, len) -> Tensor`** — Slicing
+*   **`contiguous() -> Tensor`** — Make memory contiguous
+*   **`len() -> i64`** — Size of the first dimension
+*   **`item() -> f32`** — Get scalar value
+*   **`item_i64() -> i64`** — Get integer scalar value
+*   **`to_i64() -> Tensor`** — Convert to i64 type
 
-#### 自動微分
-*   **`backward() -> void`** — 逆伝播（損失テンソルから呼び出し）
-*   **`grad() -> Tensor`** — 勾配を取得
-*   **`enable_grad() -> Tensor`** — 勾配追跡を有効化
-*   **`detach() -> Tensor`** — 計算グラフから切り離す
-*   **`clone() -> Tensor`** — テンソルを複製
+#### Automatic Differentiation
+*   **`backward() -> void`** — Backpropagation (call from loss tensor)
+*   **`grad() -> Tensor`** — Get gradient
+*   **`enable_grad() -> Tensor`** — Enable gradient tracking
+*   **`detach() -> Tensor`** — Detach from computation graph
+*   **`clone() -> Tensor`** — Clone tensor
 
-#### デバイス
-*   **`cuda() -> Tensor`** — CUDAに移動
-*   **`cpu() -> Tensor`** — CPUに移動
+#### Device
+*   **`cuda() -> Tensor`** — Move to CUDA
+*   **`cpu() -> Tensor`** — Move to CPU
 
-#### 線形代数
-*   **`matmul(other) -> Tensor`** — 行列積
-*   **`tril(diagonal) -> Tensor`** — 下三角行列
-*   **`embedding(weights) -> Tensor`** — 埋め込みルックアップ
-*   **`cross_entropy(targets) -> Tensor`** — 交差エントロピー損失
+#### Linear Algebra
+*   **`matmul(other) -> Tensor`** — Matrix multiplication
+*   **`tril(diagonal) -> Tensor`** — Lower triangular matrix
+*   **`embedding(weights) -> Tensor`** — Embedding lookup
+*   **`cross_entropy(targets) -> Tensor`** — Cross entropy loss
 
-#### 畳み込み
-*   **`conv2d(weight, padding, stride) -> Tensor`** — 2D畳み込み
-*   **`clamp(min, max) -> Tensor`** — 値をクランプ
+#### Convolution
+*   **`conv2d(weight, padding, stride) -> Tensor`** — 2D convolution
+*   **`clamp(min, max) -> Tensor`** — Clamp values
 
-### スカラーメソッド (f32, f64)
-*   **数学:** `abs`, `sin`, `cos`, `exp`, `log`, `sqrt`, `powf`, `floor`, `ceil`, `round` など
+### Scalar Methods (f32, f64)
+*   **Math:** `abs`, `sin`, `cos`, `exp`, `log`, `sqrt`, `powf`, `floor`, `ceil`, `round`, etc.
