@@ -250,7 +250,7 @@ fn main() -> Result<()> {
                     combined_module.submodules.extend(mod_.submodules);
                 }
                 Err(e) => {
-                    eprintln!("Load error in {:?}: {}", file, e);
+                    eprintln!("Load error in {:?}: {:?}", file, e);
                     std::process::exit(1);
                 }
             }

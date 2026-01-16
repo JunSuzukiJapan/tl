@@ -1,7 +1,7 @@
 fn main() {
     let N = 8; // ボードサイズ (8x8)
     let solutions_to_find = 5; // 見つける解の数
-    let mut found_count = 0;
+    let found_count = 0;
 
     print("Finding "); print(solutions_to_find); println(" solutions for N-Queens...");
 
@@ -56,7 +56,7 @@ fn main() {
         let total_loss = col_loss + anti_diag_loss + main_diag_loss;
 
         if total_loss.item() < 1e-3 {
-            let found_count = found_count + 1;
+            found_count = found_count + 1;
             print("Solution #"); println(found_count);
             
             let rows = 0;
@@ -68,10 +68,10 @@ fn main() {
                    } else {
                        print(" . ");
                    }
-                   let cols = cols + 1;
+                   cols = cols + 1;
                 }
                 println("");
-                let rows = rows + 1;
+                rows = rows + 1;
             }
             println("----------------");
         }

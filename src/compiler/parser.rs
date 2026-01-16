@@ -1361,9 +1361,13 @@ pub fn parse(input: &str) -> anyhow::Result<Module> {
     let mut rules = vec![];
     let mut queries = vec![];
     let mut imports = vec![];
-    let mut remaining = input;
+
+    // Strip BOM if present
+    let mut remaining = input.strip_prefix("\u{feff}").unwrap_or(input);
 
     while !remaining.trim().is_empty() {
+        // println!("Parsing at: {:.20}...", remaining); // Debug print
+
         // Try struct, then impl, then fn, then others
         if let Ok((next, s)) = ws(parse_struct)(remaining) {
             structs.push(s);
@@ -1399,7 +1403,17 @@ pub fn parse(input: &str) -> anyhow::Result<Module> {
             queries.push(q);
             remaining = next;
         } else {
-            return Err(anyhow::anyhow!("Parse error at: {:.30}...", remaining));
+            // Explicitly try to consume comments independently if parsers failed?
+            // ws() wraps each parser, so it should handle comments.
+            // If all failed, it means remaining is NOT matched by ANY.
+            // Maybe leading whitespace is not fully consumed by ws() if wrapped?
+            // Actually, remaining is passed to ws(parser). ws() does delimited(sp, inner, sp).
+            // It consumes leading sp.
+            // Use {:?} to show invisible chars like BOM or weird spaces
+            return Err(anyhow::anyhow!(
+                "Parse error at: {:?}...",
+                &remaining[..remaining.len().min(30)]
+            ));
         }
     }
 
@@ -1415,4 +1429,53 @@ pub fn parse(input: &str) -> anyhow::Result<Module> {
         imports,
         submodules: HashMap::new(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_full_module() {
+        let code = r#"
+            fn main() {
+                let N = 8;
+                let x = 1e-4;
+            }
+        "#;
+        let res = parse(code);
+        assert!(res.is_ok(), "Failed to parse module: {:?}", res.err());
+    }
+
+    #[test]
+    fn test_parse_float_scientific() {
+        // Standard floats
+        let res = parse_literal_float("1.0");
+        assert!(res.is_ok(), "Failed directly on 1.0: {:?}", res);
+
+        // Scientific with dot
+        let res = parse_literal_float("1.0e-4");
+        assert!(res.is_ok(), "Failed directly on 1.0e-4: {:?}", res);
+
+        let (_, expr) = res.unwrap();
+        if let Expr::Float(val) = expr {
+            assert!((val - 0.0001).abs() < 1e-10);
+        }
+
+        // Scientific without dot
+        let res = parse_literal_float("1e-4");
+        assert!(res.is_ok(), "Failed directly on 1e-4: {:?}", res);
+
+        let (_, expr) = res.unwrap();
+        if let Expr::Float(val) = expr {
+            assert!((val - 0.0001).abs() < 1e-10);
+        }
+
+        // Capital E
+        let res = parse_literal_float("1E5");
+        assert!(res.is_ok());
+        if let Expr::Float(val) = res.unwrap().1 {
+            assert_eq!(val, 100000.0);
+        }
+    }
 }
