@@ -136,7 +136,7 @@ fn main() {
 
 [MIT](LICENSE)
 
-# Reference
+# References
 
 - [Tensor Logic: The Language of AI](https://arxiv.org/abs/2510.12269)
 - [Video: What is Tensor Logic? (Japanese)](https://www.youtube.com/watch?v=rkBLPYqPkP4)
