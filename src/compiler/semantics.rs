@@ -1452,14 +1452,67 @@ impl SemanticAnalyzer {
                 }
 
                 if name == "print" || name == "println" {
-                    if args.len() != 1 {
-                        return Err(SemanticError::ArgumentCountMismatch {
-                            name: name.clone(),
-                            expected: 1,
-                            found: args.len(),
-                        });
+                    if args.len() == 0 {
+                        // println() with no args is valid (just newline)
+                        if name == "println" {
+                            return Ok(Type::Void);
+                        }
+                        // print() with no args? probably valid but useless.
+                        // But if we want to enforce at least 1 for print?
+                        // "print" logic in codegen handles empty args for println by printing newline.
+                        // For "print", empty args does nothing.
+                        return Ok(Type::Void);
                     }
-                    self.check_expr(&mut args[0])?;
+
+                    // Verify all arguments are valid expressions
+                    for arg in args.iter_mut() {
+                        self.check_expr(arg)?;
+                    }
+
+                    // Optional: Check if format string placeholders match arg count?
+                    // We can do it here or leave it to codegen/runtime panic.
+                    // Doing it here is better for dev experience.
+                    if args.len() > 1 {
+                        if let Expr::StringLiteral(s) = &args[0] {
+                            if s.contains("{}") {
+                                let parts: Vec<&str> = s.split("{}").collect();
+                                let placeholder_count = parts.len() - 1;
+                                let arg_count = args.len() - 1;
+                                if arg_count != placeholder_count {
+                                    return Err(SemanticError::ArgumentCountMismatch {
+                                        name: format!("{} (format placeholders)", name),
+                                        expected: placeholder_count,
+                                        found: arg_count,
+                                    });
+                                }
+                            }
+                        }
+                        // If not a format string, we could error?
+                        // "print(a, b)" without format string is currently not supported by codegen logic
+                        // (codegen expects fmt string if mult args).
+                        // So we should enforce: if len > 1, arg[0] MUST be string?
+                        // Except maybe we want print(a, b) to just print a then b?
+                        // Current codegen implementation ONLY supports format string for >1 args.
+                        // "Normal print" block: if args.len() != 1 -> Error.
+                        // So semantics SHOULD enforce this.
+                        if !matches!(args[0], Expr::StringLiteral(_)) {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: Type::UserDefined("StringLiteral".into()),
+                                found: Type::Void, // Hacky message?
+                            });
+                        }
+                        // Actually, let's just let check_expr handle types,
+                        // but we need to ensure arg[0] is StringLiteral if len > 1.
+                        if !matches!(args[0], Expr::StringLiteral(_)) {
+                            // We can't easily get the Type of arg[0] here without checking again,
+                            // but we just checked all args.
+                            // However, we rely on Expr structure.
+                            // If arg[0] is Variable("s") which is a string, it's NOT a literal.
+                            // Codegen requires Literal for compile-time formatting.
+                            // So yes, strictly Expr::StringLiteral.
+                        }
+                    }
+
                     return Ok(Type::Void);
                 }
 

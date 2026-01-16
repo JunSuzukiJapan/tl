@@ -137,8 +137,8 @@ impl BuiltinManager {
 
     fn register_all(&mut self) {
         // IO functions
-        self.register_eval("print", compile_print);
-        self.register_eval("println", compile_println);
+        self.register_uneval("print", compile_print_uneval);
+        self.register_uneval("println", compile_println_uneval);
 
         // Command line arguments
         self.register_eval("args_count", compile_args_count);
@@ -5729,18 +5729,192 @@ fn compile_print_common<'ctx>(
     ))
 }
 
-fn compile_print<'ctx>(
+fn compile_print_uneval<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    args: &[Expr],
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    compile_print_common(codegen, args, false)
+    compile_print_formatted(codegen, args, false)
 }
 
-fn compile_println<'ctx>(
+fn compile_println_uneval<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    args: &[Expr],
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    compile_print_common(codegen, args, true)
+    compile_print_formatted(codegen, args, true)
+}
+
+fn compile_print_formatted<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: &[Expr],
+    is_newline: bool,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.is_empty() {
+        if is_newline {
+            // Print newline only
+            let fn_val = codegen
+                .module
+                .get_function("tl_print_string")
+                .ok_or("tl_print_string not found")?;
+
+            // Create empty string "" and print it (tl_print_string adds newline)
+            let s_val = codegen.context.const_string(b"", true);
+            let global = codegen.module.add_global(
+                s_val.get_type(),
+                Some(inkwell::AddressSpace::default()),
+                "empty_str",
+            );
+            global.set_initializer(&s_val);
+            global.set_linkage(inkwell::module::Linkage::Internal);
+            global.set_constant(true);
+
+            let ptr = unsafe {
+                codegen
+                    .builder
+                    .build_in_bounds_gep(
+                        s_val.get_type(),
+                        global.as_pointer_value(),
+                        &[
+                            codegen.context.i64_type().const_int(0, false),
+                            codegen.context.i64_type().const_int(0, false),
+                        ],
+                        "str_ptr",
+                    )
+                    .map_err(|e| e.to_string())?
+            };
+
+            codegen
+                .builder
+                .build_call(fn_val, &[ptr.into()], "print_newline")
+                .map_err(|e| e.to_string())?;
+        }
+        return Ok((
+            codegen.context.i64_type().const_int(0, false).into(),
+            Type::Void,
+        ));
+    }
+
+    // Check for format string
+    let fmt_str_opt = if let Expr::StringLiteral(s) = &args[0] {
+        if s.contains("{}") {
+            Some(s.clone())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if let Some(fmt_str) = fmt_str_opt {
+        // Formatted print
+        let parts: Vec<&str> = fmt_str.split("{}").collect();
+        let arg_count = args.len() - 1;
+        let placeholder_count = parts.len() - 1;
+
+        if arg_count != placeholder_count {
+            return Err(format!(
+                "Format string has {} placeholders but {} arguments were provided",
+                placeholder_count, arg_count
+            ));
+        }
+
+        let display_fn = codegen
+            .module
+            .get_function("tl_display_string")
+            .ok_or("tl_display_string not found")?;
+
+        for (i, part) in parts.iter().enumerate() {
+            // 1. Print literal part
+            if !part.is_empty() {
+                let s_val = codegen.context.const_string(part.as_bytes(), true);
+                let global = codegen.module.add_global(
+                    s_val.get_type(),
+                    Some(inkwell::AddressSpace::default()),
+                    "fmt_part",
+                );
+                global.set_initializer(&s_val);
+                global.set_linkage(inkwell::module::Linkage::Internal);
+                global.set_constant(true);
+
+                let ptr = unsafe {
+                    codegen
+                        .builder
+                        .build_in_bounds_gep(
+                            s_val.get_type(),
+                            global.as_pointer_value(),
+                            &[
+                                codegen.context.i64_type().const_int(0, false),
+                                codegen.context.i64_type().const_int(0, false),
+                            ],
+                            "str_ptr",
+                        )
+                        .map_err(|e| e.to_string())?
+                };
+
+                codegen
+                    .builder
+                    .build_call(display_fn, &[ptr.into()], "print_part")
+                    .map_err(|e| e.to_string())?;
+            }
+
+            // 2. Print argument
+            if i < arg_count {
+                let expr = &args[i + 1];
+                let (val, ty) = codegen.compile_expr(expr)?;
+                // Use existing common logic, force is_newline=false
+                compile_print_common(codegen, vec![(val, ty)], false)?;
+            }
+        }
+
+        if is_newline {
+            // Print final newline using tl_print_string("")
+            let print_fn = codegen
+                .module
+                .get_function("tl_print_string")
+                .ok_or("tl_print_string not found")?;
+
+            let s_val = codegen.context.const_string(b"", true);
+            let global = codegen.module.add_global(
+                s_val.get_type(),
+                Some(inkwell::AddressSpace::default()),
+                "empty_str",
+            );
+            global.set_initializer(&s_val);
+            global.set_linkage(inkwell::module::Linkage::Internal);
+            global.set_constant(true);
+
+            let ptr = unsafe {
+                codegen
+                    .builder
+                    .build_in_bounds_gep(
+                        s_val.get_type(),
+                        global.as_pointer_value(),
+                        &[
+                            codegen.context.i64_type().const_int(0, false),
+                            codegen.context.i64_type().const_int(0, false),
+                        ],
+                        "str_ptr",
+                    )
+                    .map_err(|e| e.to_string())?
+            };
+
+            codegen
+                .builder
+                .build_call(print_fn, &[ptr.into()], "print_newline")
+                .map_err(|e| e.to_string())?;
+        }
+    } else {
+        // Normal print
+        if args.len() != 1 {
+            return Err("print/println requires 1 argument (or format string)".into());
+        }
+        let (val, ty) = codegen.compile_expr(&args[0])?;
+        compile_print_common(codegen, vec![(val, ty)], is_newline)?;
+    }
+
+    Ok((
+        codegen.context.i64_type().const_int(0, false).into(),
+        Type::Void,
+    ))
 }
 
 fn compile_args_count<'ctx>(

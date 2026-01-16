@@ -7,10 +7,12 @@ This document is a reference for the standard API of the TensorLogic language (g
 ## 1. Global Functions
 
 ### IO & System
-*   **`print(value) -> void`**
+*   **`print(value, ...) -> void`**
     Prints the value to standard output (without newline).
-*   **`println(value) -> void`**
+    Supports format strings: `print("Value: {}", x)`
+*   **`println(value, ...) -> void`**
     Prints the value to standard output (with newline).
+    Supports format strings: `println("Value: {}", x)`
 
 ---
 
