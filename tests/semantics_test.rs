@@ -18,7 +18,7 @@ fn test_variable_scope() {
 
     // Global scope
     analyzer
-        .declare_variable("g".to_string(), Type::I32)
+        .declare_variable("g".to_string(), Type::I32, true)
         .unwrap();
 
     // Check global access
@@ -28,7 +28,7 @@ fn test_variable_scope() {
     // Enter local scope
     analyzer.enter_scope();
     analyzer
-        .declare_variable("l".to_string(), Type::F32)
+        .declare_variable("l".to_string(), Type::F32, true)
         .unwrap();
 
     // Check local access
@@ -41,7 +41,7 @@ fn test_variable_scope() {
 
     // Shadowing
     analyzer
-        .declare_variable("g".to_string(), Type::Bool)
+        .declare_variable("g".to_string(), Type::Bool, true)
         .unwrap();
     let ty = analyzer.check_expr(&mut expr_var("g")).unwrap();
     assert_eq!(ty, Type::Bool); // Local g shadows global g
@@ -137,6 +137,7 @@ fn test_block_scope() {
             name: "inner".to_string(),
             type_annotation: Some(Type::I64),
             value: expr_int(10),
+            mutable: false,
         },
         Stmt::Expr(expr_var("inner")),
     ]);
@@ -181,6 +182,7 @@ fn test_for_loop_range() {
             name: "check".to_string(),
             type_annotation: Some(Type::I64),
             value: expr_var("i"),
+            mutable: false,
         }],
     };
     assert!(analyzer.check_stmt(&mut body_check_stmt).is_ok());
@@ -206,7 +208,7 @@ fn test_builtin_function_calls() {
     // len(tensor)
     // First need a tensor variable
     analyzer
-        .declare_variable("t".to_string(), Type::Tensor(Box::new(Type::F32), 1))
+        .declare_variable("t".to_string(), Type::Tensor(Box::new(Type::F32), 1), true)
         .unwrap();
 
     let mut call = Expr::FnCall("len".to_string(), vec![expr_var("t")]);

@@ -41,8 +41,8 @@ fn main() {
     // --- Predicates (Unknowns) ---
     // Smokes(x) and Cancer(x)
     // Initialize logits with random values
-    let smokes_logits = Tensor::randn([N], true);
-    let cancer_logits = Tensor::randn([N], true);
+    let mut smokes_logits = Tensor::randn([N], true);
+    let mut cancer_logits = Tensor::randn([N], true);
 
     // --- Inference (Training) Loop ---
     print("Starting inference...");

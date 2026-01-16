@@ -110,6 +110,7 @@ pub enum Stmt {
         name: String,
         type_annotation: Option<Type>,
         value: Expr,
+        mutable: bool,
     },
     Assign {
         name: String,

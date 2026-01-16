@@ -1,5 +1,5 @@
 fn main() {
-    let A: Tensor<f32, 2> = [[1.0, 2.0], [3.0, 4.0]];
+    let mut A: Tensor<f32, 2> = [[1.0, 2.0], [3.0, 4.0]];
     let B: Tensor<f32, 2> = [[1.0, 1.0], [1.0, 1.0]];
 
     // In-place update (Variable reassignment logic)

@@ -163,19 +163,19 @@ fn main() {
         let p2 = "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n";
         let prompt = tl_string_concat(p1, tl_string_concat(input_str, p2));
         
-        let tokens = tl_tokenizer_encode(tok, prompt);
+        let mut tokens = tl_tokenizer_encode(tok, prompt);
         let cache = tl_kv_cache_new(32); // 32 Layers
-        let cur_tokens = tokens.clone();
-        let gen_idx = 0;
-        let gen_str = "";
+        let mut cur_tokens = tokens.clone();
+        let mut gen_idx = 0;
+        let mut gen_str = "";
         print("Assistant> ");
         while gen_idx < 100 {
             let total_len = tl_tensor_len(tokens);
             let batch_len = tl_tensor_len(cur_tokens);
             let start_pos = total_len - batch_len;
             let xi = tl_tensor_embedding(cur_tokens, emb);
-            let x = xi;
-            let l = 0;
+            let mut x = xi;
+            let mut l = 0;
             // 32 Layers
             while l < 32 {
                 let blk = Block::from_map(weights, l);

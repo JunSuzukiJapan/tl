@@ -1,4 +1,4 @@
-# TensorLogic (TL)
+# TL Tensor Logic Programming Language
 
 A tensor logic programming language with first-class tensor support, JIT-compiled to LLVM.
 

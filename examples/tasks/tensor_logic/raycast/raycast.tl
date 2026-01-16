@@ -18,7 +18,7 @@ fn main() {
     let PI = 3.14159265;
     let ray_dirs_x = Tensor::zeros([NUM_RAYS]);
     let ray_dirs_y = Tensor::zeros([NUM_RAYS]);
-    let r = 0;
+    let mut r = 0;
     while r < NUM_RAYS {
         let angle = 2.0 * PI * (r as f32) / (NUM_RAYS as f32);
         let angle_t = Tensor::zeros([1]) + angle;
@@ -43,9 +43,9 @@ fn main() {
     // Precompute grid indices for broadcasting
     let grid_i = Tensor::zeros([N, N]);
     let grid_j = Tensor::zeros([N, N]);
-    let i = 0;
+    let mut i = 0;
     while i < N {
-        let j = 0;
+        let mut j = 0;
         while j < N {
             grid_i[i, j] = i as f32;
             grid_j[i, j] = j as f32;
@@ -58,7 +58,7 @@ fn main() {
     let gt_image = Tensor::zeros([NUM_RAYS]);
     r = 0;
     while r < NUM_RAYS {
-        let ray_acc = 0.0;
+        let mut ray_acc = 0.0;
         let s = 0;
         while s < NUM_STEPS {
             let dist = (s as f32) * step_size;
@@ -81,16 +81,16 @@ fn main() {
     print("Ground Truth Image Rendered (sum="); println(gt_image.sum().item());
 
     // 4. Optimization
-    let learnable_scene = Tensor::randn([N, N], true) * 0.1;
+    let mut learnable_scene = Tensor::randn([N, N], true) * 0.1;
     
-    let iter = 0;
+    let mut iter = 0;
     while iter < 200 {
         // Render from learnable scene
         let pred_image = Tensor::zeros([NUM_RAYS]);
         r = 0;
         while r < NUM_RAYS {
-            let ray_acc_t = Tensor::zeros([1]);
-            let s = 0;
+            let mut ray_acc_t = Tensor::zeros([1]);
+            let mut s = 0;
             while s < NUM_STEPS {
                 let dist = (s as f32) * step_size;
                 let px = (cx as f32) + ray_dirs_x[r] * dist;

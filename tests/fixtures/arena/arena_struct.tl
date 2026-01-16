@@ -5,7 +5,7 @@ struct Point {
 
 fn main() {
     print("Starting struct arena test...");
-    let i = 0;
+    let mut i = 0;
     while i < 10 {
         let p = Point { x: 1.0, y: 2.0 };
         let sum = p.x + p.y;

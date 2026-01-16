@@ -300,7 +300,7 @@ fn get_memory() -> i64 {
 fn main() {
     let vocab_size = 13;
     let d_model = 128; 
-    let model = GPT::new(vocab_size, d_model);
+    let mut model = GPT::new(vocab_size, d_model);
     
     let lr = 0.0005;
     let epochs = 100;

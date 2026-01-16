@@ -223,7 +223,7 @@ fn main() {
     let vocab_size = 13;
     let d_model = 256;  
     
-    let model = GPT2::new(vocab_size, d_model);
+    let mut model = GPT2::new(vocab_size, d_model);
     
     // 既存モデルがあればロードして再開
     Param::load_all("model_paper.safetensors");

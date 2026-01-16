@@ -65,7 +65,7 @@ fn main() {
     let hint_mask = hint_mask_2d.reshape([N, N, 1]); // Broadcast ready [9, 9, 1]
     
     // Initialize board logits
-    let board = Tensor::randn([N, N, N], true);
+    let mut board = Tensor::randn([N, N, N], true);
     
     // Optimization loop
     let epochs = 600;
@@ -132,8 +132,8 @@ fn main() {
             }
             
             // Argmax
-            let best_digit = 0;
-            let best_prob = -1.0;
+            let mut best_digit = 0;
+            let mut best_prob = -1.0;
             for d in 0..N {
                 let p = probs.get(row, col, d);
                 if p > best_prob {

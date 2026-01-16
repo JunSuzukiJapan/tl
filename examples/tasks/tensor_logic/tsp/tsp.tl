@@ -32,14 +32,14 @@ fn main() {
     
     // Construct Shift Matrix S (constant)
     let S = Tensor::zeros([N, N]);
-    let k = 0;
+    let mut k = 0;
     while k < N {
         let next_k = if k + 1 == N { 0 } else { k + 1 };
         S[k, next_k] = 1.0;
         k = k + 1;
     }
     
-    let i = 0;
+    let mut i = 0;
     while i < 2000 {
         let probs = logits.softmax(1);
         

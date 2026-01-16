@@ -15,7 +15,7 @@ fn main() {
     print(f1 / f2); // STDOUT: 4.0
 
     // Assignments
-    let c = 5;
+    let mut c = 5;
     c = c + 5; 
     print(c); // STDOUT: 10
     

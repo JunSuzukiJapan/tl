@@ -13,3 +13,4 @@ examples/tasks/mnist/data/
 # Test artifacts
 test_dl.txt
 test_output.txt
+*.txt

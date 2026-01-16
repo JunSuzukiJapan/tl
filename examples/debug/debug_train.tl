@@ -61,7 +61,7 @@ fn get_memory() -> i64 {
 }
 
 fn train_epoch(model: GPT, lr: f32, epoch: i64) {
-    let total_loss = 0.0.pow(1.0);
+    let mut total_loss = 0.0.pow(1.0);
     // Training on random subset
     let total_steps = 20;
     let stride = 137;

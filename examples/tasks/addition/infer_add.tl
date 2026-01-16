@@ -7,7 +7,7 @@
 
 // 手動argmax (元のコードから維持)
 fn my_argmax(t: Tensor<f32, 1>) -> i64 {
-    let max_val = -1000000.0;
+    let mut max_val = -1000000.0;
     let idx = 0;
     for k in range(0, 13) {
         let v = t.get(k);
@@ -26,7 +26,7 @@ fn my_embedding(indices: Tensor<f32, 2>, w: Tensor<f32, 2>, V: i64) -> Tensor<f3
     
     let one_hot: Tensor<f32, 2> = Tensor::randn([T, V], false) * 0.0;
     for t in range(0, T) {
-        let idx = flat_indices.get(t) as i64;
+        let mut idx = flat_indices.get(t) as i64;
         one_hot[t, idx] = 1.0;
     }
     let one_hot_d = one_hot.detach(true);

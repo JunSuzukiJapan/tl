@@ -12,14 +12,14 @@ fn main() {
     let train_x = load_mnist_images("examples/tasks/mnist/data/train-images-idx3-ubyte");
     let train_y = load_mnist_labels("examples/tasks/mnist/data/train-labels-idx1-ubyte");
     
-    let model = Linear::new(784, 10);
+    let mut model = Linear::new(784, 10);
     // let lr = 0.1;
     let lr = 0.05; // Slightly reduced for stability with more updates
     let batch_size = 64;
     
     // 60000 / 64 = 937.5 -> 937 batches
     let num_batches = 937; 
-    let epoch = 5;
+    let mut epoch = 5;
     
     print("Starting training loop...");
     
@@ -28,8 +28,8 @@ fn main() {
     print(model.W.slice(400, 1));
     
     while epoch < 10 {  // 10 epochs
-        let b = 0;
-        let running_loss = 0.0;
+        let mut b = 0;
+        let mut running_loss = 0.0;
         
         while b < num_batches {
             let start = b * batch_size;

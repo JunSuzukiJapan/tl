@@ -1,6 +1,6 @@
 fn main() {
     print("Starting loop test...");
-    let i = 0;
+    let mut i = 0;
     while i < 10 {
         let x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
         let y = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];

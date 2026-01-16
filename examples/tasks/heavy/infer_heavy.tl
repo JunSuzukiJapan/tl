@@ -1,6 +1,6 @@
 fn argmax(t: Tensor<f32, 1>) -> i64 {
-    let max_val = -1000000.0;
-    let idx = 0;
+    let mut max_val = -1000000.0;
+    let mut idx = 0;
     for k in range(0, 13) {
         let v = t.get(k);
         if v > max_val {

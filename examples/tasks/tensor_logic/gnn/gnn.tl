@@ -32,7 +32,7 @@ fn main() {
     // --- 3. Model Definition ---
     // Node Embeddings / State: Val[N, 1] (The distance estimate)
     // Init with random
-    let val = Tensor::randn([N, 1], true);
+    let mut val = Tensor::randn([N, 1], true);
     
     // --- 4. Training Loop ---
     print("Starting training...");
@@ -103,7 +103,7 @@ fn main() {
     // Output inferred distances
     print("Inferred Distances (first 5):");
     println("");
-    let r = 0;
+    let mut r = 0;
     while r < 5 {
         print("Node ");
         print(r);

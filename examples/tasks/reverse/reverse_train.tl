@@ -211,7 +211,7 @@ fn get_random_digit() -> f32 {
 }
 
 fn train_epoch(model: Transformer, lr: f32, steps: i64, seed_offset: i64) -> f32 {
-    let total_loss = 0.0;
+    let mut total_loss = 0.0;
     
     let SEP = 10.0;
     let PAD = 11.0;

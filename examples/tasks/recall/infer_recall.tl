@@ -273,7 +273,7 @@ fn main() {
     print("Running Inference on Validation Set...");
     print("Format: Pred / Target -> Result");
     
-    let correct_count = 0;
+    let mut correct_count = 0;
     let total_count = 20;
     let start_idx = 10000;
     

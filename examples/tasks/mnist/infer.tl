@@ -19,9 +19,9 @@ fn main() {
     
     print("Evaluating on test set (first 1000 samples)...");
     
-    let correct = 0;
+    let mut correct = 0;
     let total = 1000;
-    let i = 0;
+    let mut i = 0;
     
     while i < total {
         let x = test_x.slice(i, 1);

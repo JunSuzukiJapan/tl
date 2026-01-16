@@ -1,4 +1,4 @@
-# TensorLogic (TL)
+# TL Tensor Logic Programming Language
 
 LLVMにJITコンパイルされる、ファーストクラスのテンソルサポートを備えたテンソル論理プログラミング言語。
 

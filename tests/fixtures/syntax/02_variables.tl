@@ -4,7 +4,7 @@ fn main() {
     print(x); // STDOUT: 10
     
     // Mutable
-    let y = 20;
+    let mut y = 20;
     print(y); // STDOUT: 20
     y = 30;
     print(y); // STDOUT: 30

@@ -1,7 +1,7 @@
 fn main() {
     let N = 8;
     let solutions_to_find = 5;
-    let found_count = 0;
+    let mut found_count = 0;
 
     print("Finding "); print(solutions_to_find); println(" solutions for N-Queens (Masking Approach)...");
 
@@ -20,7 +20,7 @@ fn main() {
         
         let lr = 0.5;
         let epochs = 2000;
-        let board = Tensor::randn([N, N], true);
+        let mut board = Tensor::randn([N, N], true);
 
         for i in 0..epochs {
              let probs = board.softmax(1);
@@ -80,9 +80,9 @@ fn main() {
             found_count = found_count + 1;
             print("Solution #"); println(found_count);
             
-            let rows = 0;
+            let mut rows = 0;
             while rows < N {
-                let cols = 0;
+                let mut cols = 0;
                 while cols < N {
                    if probs[rows, cols] > 0.5 {
                        print(" Q ");

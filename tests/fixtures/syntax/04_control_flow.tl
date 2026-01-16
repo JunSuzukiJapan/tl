@@ -12,7 +12,7 @@ fn main() {
     }
 
     // WHILE
-    let i = 0;
+    let mut i = 0;
     while i < 3 {
         print(i); // STDOUT: 0
                   // STDOUT: 1

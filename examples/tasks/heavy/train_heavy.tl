@@ -224,7 +224,7 @@ fn train_step(model: GPTHeavy, lr: f32, i: i64, j: i64) -> GPTHeavy {
 }
 
 fn train_epoch(model: GPTHeavy, lr: f32, epoch: i64) -> GPTHeavy {
-    let m = model.clone();
+    let mut m = model.clone();
     // Total 200 steps per epoch * 500 epochs = 100k steps
     let total_steps = 10;
     let stride = 149; // Prime number stride
@@ -249,7 +249,7 @@ fn train_epoch(model: GPTHeavy, lr: f32, epoch: i64) -> GPTHeavy {
 
 fn main() {
     print("Initializing Runtime: CPU backend selected.");
-    let model = GPTHeavy::new(13, 384);
+    let mut model = GPTHeavy::new(13, 384);
     // Param::load_all("model_heavy.safetensors");
     print("Loaded 70 parameters from model_heavy.safetensors");
     

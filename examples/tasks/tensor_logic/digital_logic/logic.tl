@@ -36,13 +36,13 @@ fn main() {
     targets[3, 0] = 0.0; // 1 XOR 1
     
     // Weights (Learnable)
-    let W1 = Tensor::randn([2, 2], true); // input -> hidden
-    let b1 = Tensor::randn([2], true);
-    let W2 = Tensor::randn([2, 1], true); // hidden -> output
-    let b2 = Tensor::randn([1], true);
+    let mut W1 = Tensor::randn([2, 2], true); // input -> hidden
+    let mut b1 = Tensor::randn([2], true);
+    let mut W2 = Tensor::randn([2, 1], true); // hidden -> output
+    let mut b2 = Tensor::randn([1], true);
     
     let lr = 1.0;
-    let iter = 0;
+    let mut iter = 0;
     
     while iter < 1000 {
         // Forward Pass
@@ -94,7 +94,7 @@ fn main() {
     let z2 = hidden.matmul(W2) + b2;
     let output = z2.sigmoid();
     
-    let i = 0;
+    let mut i = 0;
     while i < 4 {
         let a = inputs[i, 0];
         let b = inputs[i, 1];

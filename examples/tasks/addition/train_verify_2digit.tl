@@ -206,7 +206,7 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
 }
 
 fn infer(model: GPT, i: i64, j: i64) {
-    let m = model.clone();
+    let mut m = model.clone();
     let expected = i + j;
     
     // Calculate loss to check correctness
@@ -237,7 +237,7 @@ fn infer(model: GPT, i: i64, j: i64) {
 fn main() {
     print("Verifying 2-Digit Addition (Vocab=200)...");
     // Vocab=200 (covers 99+99=198), d_model=64
-    let model = GPT::new(200, 64);
+    let mut model = GPT::new(200, 64);
     
     print("Training...");
     // 200 Iterations of fixed dataset

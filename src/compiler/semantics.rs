@@ -43,6 +43,8 @@ pub enum SemanticError {
     TupleIndexOutOfBounds(usize, usize),
     #[error("Cannot index into non-tuple type: {0:?}")]
     NotATuple(Type),
+    #[error("Cannot assign to immutable variable: {0}")]
+    AssignToImmutable(String),
 }
 
 #[derive(Clone, Debug)]
@@ -50,8 +52,8 @@ struct Symbol {
     #[allow(dead_code)]
     name: String,
     ty: Type,
-    is_moved: bool, // Track if variable has been moved
-                    // potentially more info like mutability, shape info (if constant)
+    is_moved: bool,   // Track if variable has been moved
+    is_mutable: bool, // Track if variable is mutable (let mut)
 }
 
 struct Scope {
@@ -67,13 +69,14 @@ impl Scope {
         }
     }
 
-    fn insert(&mut self, name: String, ty: Type) {
+    fn insert(&mut self, name: String, ty: Type, is_mutable: bool) {
         self.symbols.insert(
             name.clone(),
             Symbol {
                 name,
                 ty,
                 is_moved: false,
+                is_mutable,
             },
         );
     }
@@ -155,7 +158,12 @@ impl SemanticAnalyzer {
         self.scopes.pop();
     }
 
-    pub fn declare_variable(&mut self, name: String, ty: Type) -> Result<(), SemanticError> {
+    pub fn declare_variable(
+        &mut self,
+        name: String,
+        ty: Type,
+        is_mutable: bool,
+    ) -> Result<(), SemanticError> {
         let is_global = self.scopes.len() == 1; // Immutable borrow
                                                 // Shadowing is allowed
         if let Some(scope) = self.scopes.last_mut() {
@@ -165,7 +173,7 @@ impl SemanticAnalyzer {
             } else {
                 name
             };
-            scope.insert(final_name, ty);
+            scope.insert(final_name, ty, is_mutable);
             Ok(())
         } else {
             unreachable!("No scope available")
@@ -207,6 +215,16 @@ impl SemanticAnalyzer {
                 return;
             }
         }
+    }
+
+    /// Check if a variable is mutable
+    fn is_variable_mutable(&self, name: &str) -> Result<bool, SemanticError> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(symbol) = scope.get(name) {
+                return Ok(symbol.is_mutable);
+            }
+        }
+        Err(SemanticError::VariableNotFound(name.to_string()))
     }
 
     /// Check if a type requires move semantics (ownership transfer)
@@ -359,7 +377,7 @@ impl SemanticAnalyzer {
                             ))
                         })?;
 
-                    self.declare_variable(var_name.clone(), field_type.clone())?;
+                    self.declare_variable(var_name.clone(), field_type.clone(), true)?;
                 }
 
                 Ok(Some(variant_idx))
@@ -567,7 +585,7 @@ impl SemanticAnalyzer {
             // If we resolved types, we should update `ty`?
             // Since we are iterating `&mut func.args`.
             *ty = actual_ty.clone(); // Update arg type in AST
-            self.declare_variable(name.clone(), actual_ty)?;
+            self.declare_variable(name.clone(), actual_ty, true)?;
         }
 
         for stmt in &mut func.body {
@@ -722,7 +740,7 @@ impl SemanticAnalyzer {
                         });
                     }
                 }
-                self.declare_variable(name.clone(), final_ty)?;
+                self.declare_variable(name.clone(), final_ty, true)?;
                 Ok(())
             }
 
@@ -730,6 +748,7 @@ impl SemanticAnalyzer {
                 name,
                 type_annotation,
                 value,
+                mutable,
             } => {
                 // 1. Infer free indices (Tensor Equation Mode)
                 // self.infer_free_indices takes &Expr.
@@ -740,9 +759,9 @@ impl SemanticAnalyzer {
                     // Tensor Equation Logic
                     self.enter_scope();
 
-                    // Declare implicitly inferred indices
+                    // Declare implicitly inferred indices (always mutable for loop vars)
                     for idx in &free_indices {
-                        self.declare_variable(idx.clone(), Type::I64)?;
+                        self.declare_variable(idx.clone(), Type::I64, true)?;
                     }
 
                     // Now check RHS with these indices valid
@@ -772,7 +791,7 @@ impl SemanticAnalyzer {
                     inferred_type
                 };
 
-                self.declare_variable(name.clone(), final_type.clone())?;
+                self.declare_variable(name.clone(), final_type.clone(), *mutable)?;
 
                 // Move semantics: If RHS is a variable of moveable type, mark it as moved
                 if let Expr::Variable(source_var) = value {
@@ -789,6 +808,12 @@ impl SemanticAnalyzer {
                 op,
                 value,
             } => {
+                // Check if variable is mutable
+                let is_mutable = self.is_variable_mutable(name)?;
+                if !is_mutable {
+                    return Err(SemanticError::AssignToImmutable(name.clone()));
+                }
+
                 let var_type = self.lookup_variable(name)?;
 
                 if let Some(idxs) = indices {
@@ -981,7 +1006,7 @@ impl SemanticAnalyzer {
                 };
 
                 self.enter_scope();
-                self.declare_variable(loop_var.clone(), elem_type)?;
+                self.declare_variable(loop_var.clone(), elem_type, true)?;
                 for s in body {
                     self.check_stmt(s)?;
                 }
@@ -1457,11 +1482,12 @@ impl SemanticAnalyzer {
                         if name == "println" {
                             return Ok(Type::Void);
                         }
-                        // print() with no args? probably valid but useless.
-                        // But if we want to enforce at least 1 for print?
-                        // "print" logic in codegen handles empty args for println by printing newline.
-                        // For "print", empty args does nothing.
-                        return Ok(Type::Void);
+                        // print() with no args is an error
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            name: name.clone(),
+                            expected: 1,
+                            found: 0,
+                        });
                     }
 
                     // Verify all arguments are valid expressions
@@ -2394,7 +2420,7 @@ impl SemanticAnalyzer {
                     match clause {
                         ComprehensionClause::Generator { name, range } => {
                             self.check_expr(range)?;
-                            self.declare_variable(name.clone(), Type::I64)?;
+                            self.declare_variable(name.clone(), Type::I64, true)?;
                         }
                         ComprehensionClause::Condition(cond) => {
                             let cond_ty = self.check_expr(cond)?;
@@ -2504,7 +2530,7 @@ impl SemanticAnalyzer {
 
                 // Declare the loop variable in a new scope
                 self.enter_scope();
-                self.declare_variable(var.clone(), Type::I64)?; // Assume integer index
+                self.declare_variable(var.clone(), Type::I64, true)?; // Assume integer index
 
                 // Check the aggregated expression
                 let expr_ty = self.check_expr(expr)?;

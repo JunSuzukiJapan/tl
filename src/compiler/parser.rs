@@ -6,7 +6,7 @@ use nom::{
     character::complete::{alpha1, char, digit1, space0, space1},
     combinator::{map, map_res, not, opt, recognize, value, verify},
     multi::{separated_list0, separated_list1},
-    sequence::{delimited, pair, preceded, separated_pair, tuple},
+    sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
     IResult,
 };
 // removed unused std::str::FromStr
@@ -791,10 +791,13 @@ pub fn parse_expr(input: &str) -> IResult<&str, Expr> {
 
 // --- Statements ---
 
-// let x[i, j] = ...
+// let x[i, j] = ... or let mut x = ...
 fn parse_let_stmt(input: &str) -> IResult<&str, Stmt> {
     let (input, _) = tag("let")(input)?;
     let (input, _) = space1(input)?;
+
+    // Check for "mut" keyword
+    let (input, is_mut) = opt(terminated(tag("mut"), space1))(input)?;
     let (input, name) = identifier(input)?;
 
     // Optional indices for tensor comprehension: [i, j]
@@ -813,9 +816,11 @@ fn parse_let_stmt(input: &str) -> IResult<&str, Stmt> {
     let (input, _) = space0(input)?;
     let (input, _) = char(';')(input)?;
 
+    let mutable = is_mut.is_some();
+
     if let Some(idxs) = indices {
         // Transform into TensorComprehension expression if indices are present
-        // let C[i,j] = expr  -->  let C = TensorComprehension { indices: [i,j], body: expr }
+        // let C[i,j] = expr  --> let C = TensorComprehension { indices: [i,j], body: expr }
         Ok((
             input,
             Stmt::Let {
@@ -826,6 +831,7 @@ fn parse_let_stmt(input: &str) -> IResult<&str, Stmt> {
                     clauses: Vec::new(),
                     body: Some(Box::new(value)),
                 },
+                mutable,
             },
         ))
     } else {
@@ -835,6 +841,7 @@ fn parse_let_stmt(input: &str) -> IResult<&str, Stmt> {
                 name,
                 type_annotation,
                 value,
+                mutable,
             },
         ))
     }

@@ -310,7 +310,7 @@ fn main() {
     let d_model = 64;
     let max_len = 32;
     
-    let model = GPT::new(vocab_size, d_model, max_len);
+    let mut model = GPT::new(vocab_size, d_model, max_len);
     let lr = 0.01;
     
     print("Starting Associative Recall Training...");

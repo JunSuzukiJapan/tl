@@ -130,19 +130,19 @@ fn main() {
         
         // Use standard User/Assistant format since special tokens are not supported
         let prompt = tl_string_concat("User: ", tl_string_concat(input_str, "\nAssistant:"));
-        let tokens = tl_tokenizer_encode(tok, prompt);
+        let mut tokens = tl_tokenizer_encode(tok, prompt);
         let cache = tl_kv_cache_new(22);
-        let cur_tokens = tokens.clone();
-        let gen_idx = 0;
-        let gen_str = "";
+        let mut cur_tokens = tokens.clone();
+        let mut gen_idx = 0;
+        let mut gen_str = "";
         print("Assistant> ");
         while gen_idx < 100 {
             let total_len = tl_tensor_len(tokens);
             let batch_len = tl_tensor_len(cur_tokens);
             let start_pos = total_len - batch_len;
             let xi = tl_tensor_embedding(cur_tokens, emb);
-            let x = xi;
-            let l = 0;
+            let mut x = xi;
+            let mut l = 0;
             while l < 22 {
                 let blk = Block::from_map(weights, l);
                 x = blk.forward(x, cos, sin, batch_len, cache, l, start_pos);

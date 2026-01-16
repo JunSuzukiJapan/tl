@@ -29,7 +29,7 @@ fn main() {
     // However, implementing exact GoL with 'if' per cell is slow/hard in vector logic.
     // We can use the same "Soft" logic but with very sharp sigmoid (high beta) to emulate exact rules.
     
-    let current = gt_state.clone();
+    let mut current = gt_state.clone();
     let t = 0;
     while t < STEPS {
         // Neighbors: Padding=1 to keep shape [N, N]
@@ -61,16 +61,16 @@ fn main() {
 
     // 4. Optimization Loop (Inverse Problem)
     // Init Learnable State
-    let learnable_logits = Tensor::randn([1, 1, N, N], true);
+    let mut learnable_logits = Tensor::randn([1, 1, N, N], true);
     let opt_lr = 0.5;
     
-    let iter = 0;
+    let mut iter = 0;
     while iter < 500 {
         // Forward Pass
         let state = learnable_logits.sigmoid(); // [0,1] continuous
         
         let t = 0;
-        let current_est = state;
+        let mut current_est = state;
         
         while t < STEPS {
             let neighbors = current_est.conv2d(kernel, 1, 1) - current_est;
@@ -112,7 +112,7 @@ fn main() {
     
     // Recalc final loss
     let state = learnable_logits.sigmoid();
-    let t = 0;
+    let mut t = 0;
     while t < STEPS {
         let neighbors = state.conv2d(kernel, 1, 1) - state;
         let is_3 = ((neighbors - 3.0).pow(2) * -1.0).exp();

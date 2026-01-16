@@ -759,6 +759,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 name,
                 type_annotation,
                 value,
+                mutable: _,
             } => {
                 // 1. Analyze value for Free Indices (Implicit Tensor Equation)
                 let free_indices = self.infer_free_indices(value);
