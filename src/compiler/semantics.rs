@@ -581,6 +581,69 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
+    fn check_block_stmts(&mut self, stmts: &mut Vec<Stmt>) -> Result<Type, SemanticError> {
+        let mut ret_type = Type::Void;
+        let stmts_len = stmts.len();
+        for (i, stmt) in stmts.iter_mut().enumerate() {
+            if i == stmts_len - 1 {
+                if let Stmt::Expr(e) = stmt {
+                    ret_type = self.check_expr(e)?;
+                } else if let Stmt::If {
+                    cond,
+                    then_block,
+                    else_block,
+                } = stmt
+                {
+                    // Check Cond
+                    let cond_type = self.check_expr(cond)?;
+                    if cond_type != Type::Bool {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: Type::Bool,
+                            found: cond_type,
+                        });
+                    }
+
+                    self.enter_scope();
+                    let then_type = self.check_block_stmts(then_block)?;
+                    self.exit_scope();
+
+                    let else_type = if let Some(block) = else_block {
+                        self.enter_scope();
+                        let t = self.check_block_stmts(block)?;
+                        self.exit_scope();
+                        t
+                    } else {
+                        Type::Void
+                    };
+
+                    // If types differ, usually logic is Void unless they match?
+                    // Codegen IfExpr matches types.
+                    // If one is Void and other is not, result is Void (in original IfExpr logic).
+                    // But if we want to return value, they MUST match.
+                    // Or if else is missing -> Void.
+                    // If else is Void -> Void.
+                    // So if then_type != else_type, return Error?
+                    // Unless one is implicit void?
+                    if then_type == else_type {
+                        ret_type = then_type;
+                    } else {
+                        // If mismatch, should error?
+                        return Err(SemanticError::TypeMismatch {
+                            expected: then_type,
+                            found: else_type,
+                        });
+                    }
+                } else {
+                    self.check_stmt(stmt)?;
+                    ret_type = Type::Void;
+                }
+            } else {
+                self.check_stmt(stmt)?;
+            }
+        }
+        Ok(ret_type)
+    }
+
     pub fn check_stmt(&mut self, stmt: &mut Stmt) -> Result<(), SemanticError> {
         match stmt {
             Stmt::FieldAssign { obj, field, value } => {
@@ -2309,23 +2372,9 @@ impl SemanticAnalyzer {
 
             Expr::Block(stmts) => {
                 self.enter_scope();
-                let mut ret_type = Type::Void;
-                let stmts_len = stmts.len();
-                for (i, stmt) in stmts.iter_mut().enumerate() {
-                    if i == stmts_len - 1 {
-                        // If last statement is an expression without semicolon (Expr::Expr), it's the return value
-                        if let Stmt::Expr(e) = stmt {
-                            ret_type = self.check_expr(e)?;
-                        } else {
-                            self.check_stmt(stmt)?;
-                            ret_type = Type::Void;
-                        }
-                    } else {
-                        self.check_stmt(stmt)?;
-                    }
-                }
+                let ret = self.check_block_stmts(stmts)?;
                 self.exit_scope();
-                Ok(ret_type)
+                Ok(ret)
             }
             Expr::IfExpr(cond, then_block, else_block) => {
                 let cond_type = self.check_expr(cond)?;

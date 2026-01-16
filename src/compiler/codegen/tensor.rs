@@ -221,7 +221,14 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Body Computation
         self.builder.position_at_end(current_bb);
 
-        let (rhs_val, rhs_ty) = self.compile_expr(final_body)?;
+        let (rhs_val, rhs_ty) = if let Expr::Block(_) = final_body {
+            self.compile_expr(final_body)?
+        } else {
+            // If body is not a block, wrap it in a block to ensure scope is created
+            // and intermediate tensors are freed.
+            let block_wrapper = Expr::Block(vec![Stmt::Expr(final_body.clone())]);
+            self.compile_expr(&block_wrapper)?
+        };
 
         // Compute element(s) to store
         // We might need to store multiple elements if body is a vector/tensor

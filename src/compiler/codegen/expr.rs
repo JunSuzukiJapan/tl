@@ -1419,6 +1419,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if i == stmts.len() - 1 {
                         if let Stmt::Expr(e) = stmt {
                             last_val = Some(self.compile_expr(e)?);
+                        } else if let Stmt::If {
+                            cond,
+                            then_block,
+                            else_block,
+                        } = stmt
+                        {
+                            // Promote Stmt::If to Expr::IfExpr if it's the last statement
+                            let expr = Expr::IfExpr(
+                                Box::new(cond.clone()),
+                                then_block.clone(),
+                                else_block.clone(),
+                            );
+                            last_val = Some(self.compile_expr(&expr)?);
                         } else {
                             self.compile_stmt(stmt)?;
                         }

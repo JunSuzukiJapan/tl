@@ -74,6 +74,10 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         codegen
     }
+    pub fn dump_ir(&self) {
+        self.module.print_to_stderr();
+    }
+
     pub fn jit_execute(&self, function_name: &str) -> Result<u64, String> {
         unsafe {
             let function = self

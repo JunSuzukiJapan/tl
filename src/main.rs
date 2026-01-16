@@ -103,6 +103,10 @@ fn main() -> Result<()> {
                 std::process::exit(1);
             }
 
+            if std::env::var("TL_DUMP_IR").is_ok() {
+                codegen.dump_ir();
+            }
+
             if cli.save_asm {
                 let asm_path = file.with_extension("s");
                 if let Err(e) = codegen.emit_assembly_file(&asm_path) {
@@ -273,6 +277,10 @@ fn main() -> Result<()> {
         if let Err(e) = codegen.compile_module(&combined_module) {
             eprintln!("Codegen error: {}", e);
             std::process::exit(1);
+        }
+
+        if std::env::var("TL_DUMP_IR").is_ok() {
+            codegen.dump_ir();
         }
 
         // println!("Executing...");

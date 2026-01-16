@@ -6,14 +6,14 @@ fn main() {
 
     let N = 8;
     let attempt = 0;
-    let max_attempts = 5;
+    let max_attempts = 1;
 
     while attempt < max_attempts {
         print("=== Attempt "); println(attempt);
         
         let board = Tensor::randn([N, N], true);
 
-        for i in 0..200 {
+        for i in 0..2 {
             if i % 50 == 0 {
                 print("  Epoch "); println(i);
             }
