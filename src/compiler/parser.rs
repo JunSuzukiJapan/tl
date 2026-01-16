@@ -142,8 +142,23 @@ fn parse_literal_int(input: &str) -> IResult<&str, Expr> {
     map_res(digit1, |s: &str| s.parse::<i64>().map(Expr::Int))(input)
 }
 
+// Helper for exponent: e/E followed by optional sign and digits
+fn parse_exponent(input: &str) -> IResult<&str, &str> {
+    recognize(tuple((
+        alt((char('e'), char('E'))),
+        opt(alt((char('+'), char('-')))),
+        digit1,
+    )))(input)
+}
+
 fn parse_literal_float(input: &str) -> IResult<&str, Expr> {
-    map_res(recognize(tuple((digit1, char('.'), digit1))), |s: &str| {
+    // Two patterns:
+    // 1. Digits . Digits [Exponent]
+    // 2. Digits Exponent
+    let pattern1 = recognize(tuple((digit1, char('.'), digit1, opt(parse_exponent))));
+    let pattern2 = recognize(tuple((digit1, parse_exponent)));
+
+    map_res(alt((pattern1, pattern2)), |s: &str| {
         s.parse::<f64>().map(Expr::Float)
     })(input)
 }

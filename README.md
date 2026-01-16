@@ -28,10 +28,10 @@ Before building, ensure you have the required dependencies installed via Homebre
 ## Build & Run
 ```bash
 # Run a specific example
-cargo run -- run examples/hybrid_test.tl
+cargo run -- examples/hybrid_test.tl
 
 # Use GPU (Metal on macOS)
-cargo run --features metal -- run examples/gpu_test.tl --device metal
+cargo run --features metal -- examples/gpu_test.tl --device metal
 ```
 
 ## VSCode Extension
