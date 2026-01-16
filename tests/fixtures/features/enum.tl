@@ -1,4 +1,3 @@
-
 enum Shape {
     Circle { radius: f32 },
     Rectangle { width: f32, height: f32 },
@@ -31,14 +30,17 @@ fn main() {
     print("Circle Area: ");
     print(c_area); // Exp: 314.159
     print("\n");
+    // STDOUT: Circle Area: 314.159
 
     print("Rectangle Area: ");
     print(r_area); // Exp: 10.0
     print("\n");
+    // STDOUT: Rectangle Area: 10
     
     print("Point Area: ");
     print(p_area); // Exp: 0.0
     print("\n");
+    // STDOUT: Point Area: 0
 
     // Nested structures test (memory management)
     let c2 = Shape::Circle { radius: 5.0 };
@@ -50,4 +52,5 @@ fn main() {
         },
         _ => {}
     }
+    // STDOUT: Nested Match Radius: 5
 }

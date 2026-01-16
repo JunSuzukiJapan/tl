@@ -901,7 +901,10 @@ pub extern "C" fn tl_tensor_set_f32_md(
         }
 
         let new_tensor = Tensor::from_vec(data, tensor.shape(), tensor.device()).unwrap();
-        make_tensor(new_tensor)
+        // Mutate the existing OpaqueTensor in-place
+        (*t).0 = new_tensor;
+        // Return original pointer
+        t
     }
 }
 

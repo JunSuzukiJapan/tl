@@ -1,4 +1,7 @@
-// STDOUT: 0.0001\n0.0001\n100000\n-200.5
+// STDOUT: 0.0001
+// STDOUT: 0.0001
+// STDOUT: 100000
+// STDOUT: -200.5
 // STDERR:
 
 fn main() {

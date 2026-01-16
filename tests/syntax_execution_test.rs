@@ -7,8 +7,8 @@ use std::process::Command;
 fn run_syntax_fixtures() {
     let mut failures = Vec::new();
 
-    // Find all .tl files in syntax fixtures directory
-    let entries = glob("tests/fixtures/syntax/**/*.tl").expect("Failed to read glob pattern");
+    // Find all .tl files in fixtures directory
+    let entries = glob("tests/fixtures/**/*.tl").expect("Failed to read glob pattern");
 
     for entry in entries {
         match entry {

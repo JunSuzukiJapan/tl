@@ -12,4 +12,5 @@ fn main() {
 
     let b = a.reshape([100, 1]);
     println("Reshape successful");
+    // STDOUT: Reshape successful
 }

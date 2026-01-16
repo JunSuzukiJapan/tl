@@ -9,3 +9,7 @@ debug_logs/
 examples/tasks/mnist/data/
 *.ubyte
 *.log
+
+# Test artifacts
+test_dl.txt
+test_output.txt
