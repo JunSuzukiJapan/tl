@@ -10,6 +10,16 @@ A tensor logic programming language with first-class tensor support, JIT-compile
 - **GPU Support**: Metal (macOS) backend supported. CUDA support is planned for the future.
 - **Optimization**: Aggressive JIT optimization and fast logic inference.
 
+## Installation
+
+Install from crates.io:
+
+```bash
+cargo install tl-lang
+```
+
+This installs the `tl` command.
+
 ## Prerequisites (macOS)
 Before building, ensure you have the required dependencies installed via Homebrew.
 
