@@ -1,5 +1,4 @@
 use tl::compiler::ast::*;
-use tl::compiler::ast::*;
 use tl::compiler::error::{SemanticErrorKind, TlError};
 use tl::compiler::semantics::SemanticAnalyzer;
 
