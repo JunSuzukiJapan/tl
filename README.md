@@ -118,6 +118,8 @@ fn main() {
 }
 ```
 
+For more details, see [Tensor Comprehension](docs/tensor_comprehension.md)
+
 ## VSCode Extension
 A syntax highlighting extension is provided in `vscode-tl`.
 
@@ -215,6 +217,12 @@ fn main() {
     }
 }
 ```
+
+## Documentation
+
+- [Advantages of TensorLogic](docs/tensor_logic_advantages.md)
+- [Language Specification](docs/reference/language_spec.md)
+- [Standard Library](docs/reference/standard_library.md)
 
 # LICENSE
 

@@ -117,6 +117,8 @@ fn main() {
 }
 ```
 
+テンソル内包表記に関しては詳しくは[ドキュメント](docs/jp/tensor_comprehension_jp.md)をご覧ください。
+
 ## VSCode拡張機能
 `vscode-tl` でシンタックスハイライト拡張機能が提供されています。
 
@@ -215,6 +217,12 @@ fn main() {
     }
 }
 ```
+
+## ドキュメント
+
+- [TensorLogicの利点](docs/jp/tensor_logic_advantages_jp.md)
+- [言語仕様](docs/jp/reference/language_spec.md)
+- [標準ライブラリ](docs/jp/reference/standard_library.md)
 
 # LICENSE
 
