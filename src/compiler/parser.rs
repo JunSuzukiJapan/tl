@@ -372,11 +372,14 @@ fn parse_struct_init(input: Span) -> IResult<Span, Expr> {
             ws(identifier),
             delimited(
                 ws(char('{')),
-                separated_list0(
-                    ws(char(',')),
-                    pair(ws(identifier), preceded(ws(char(':')), parse_expr)),
+                terminated(
+                    separated_list0(
+                        ws(char(',')),
+                        pair(ws(identifier), preceded(ws(char(':')), parse_expr)),
+                    ),
+                    opt(ws(char(','))),
                 ),
-                terminated(ws(char('}')), opt(ws(char(',')))),
+                ws(char('}')),
             ),
         )),
         |(name, fields)| ExprKind::StructInit(name, fields),

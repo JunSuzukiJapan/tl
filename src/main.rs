@@ -92,11 +92,9 @@ fn main() -> Result<()> {
             };
 
             // Semantics
-            let mut analyzer = SemanticAnalyzer::new();
+            let mut analyzer = SemanticAnalyzer::new(source.clone());
             if let Err(e) = analyzer.check_module(&mut ast) {
-                let tl_err = e
-                    .to_tl_error(None)
-                    .with_file(file.to_str().unwrap_or("unknown"));
+                let tl_err = e.with_file(file.to_str().unwrap_or("unknown"));
                 print_tl_error_with_source(
                     &tl_err,
                     &source,
@@ -295,10 +293,10 @@ fn main() -> Result<()> {
             }
         }
 
-        // Semantics
-        let mut analyzer = SemanticAnalyzer::new();
+        // Semantics (Check only)
+        let mut analyzer = SemanticAnalyzer::new(String::new()); // TODO: Pass source if possible
         if let Err(e) = analyzer.check_module(&mut combined_module) {
-            let tl_err: TlError = e.into();
+            let tl_err = e;
             print_tl_error_with_source(&tl_err, &combined_source, None);
             std::process::exit(1);
         }

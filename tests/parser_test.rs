@@ -298,8 +298,9 @@ fn test_top_level() {
     "#;
 
     let module = parse(input).expect("Failed to parse module");
-    assert_eq!(module.imports.len(), 1);
-    assert_eq!(module.imports[0], "foo");
+    assert_eq!(module.imports.len(), 2);
+    assert!(module.imports.contains(&"foo".to_string()));
+    assert!(module.imports.contains(&"std::math".to_string()));
 
     assert_eq!(module.structs.len(), 1);
     assert_eq!(module.structs[0].name, "Point");
@@ -311,5 +312,5 @@ fn test_top_level() {
     assert_eq!(module.functions[0].name, "main");
 
     // use stmt + tensor decl
-    assert_eq!(module.tensor_decls.len(), 2);
+    assert_eq!(module.tensor_decls.len(), 1);
 }

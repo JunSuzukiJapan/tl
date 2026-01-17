@@ -6,7 +6,7 @@
 //! - Unification of atoms
 //! - Forward chaining (semi-naive evaluation)
 
-use crate::compiler::ast::{Atom, Expr, ExprKind, Rule, Spanned};
+use crate::compiler::ast::{Atom, Expr, ExprKind, Rule};
 use std::collections::{HashMap, HashSet};
 pub use tl_runtime::context::{TensorContext, TensorValue};
 
@@ -476,6 +476,7 @@ pub fn query(goal: &Atom, facts: &HashSet<GroundAtom>, ctx: &TensorContext) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compiler::ast::Spanned;
 
     fn make_atom(pred: &str, args: Vec<i64>) -> GroundAtom {
         GroundAtom {
