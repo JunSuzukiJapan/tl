@@ -1,4 +1,4 @@
-# TL Tensor Logic Programming Language
+# TL Programming Language
 
 A tensor logic programming language with first-class tensor support, JIT-compiled to LLVM.
 
@@ -31,7 +31,91 @@ Before building, ensure you have the required dependencies installed via Homebre
 cargo run -- examples/hybrid_test.tl
 
 # Use GPU (Metal on macOS)
-cargo run --features metal -- examples/gpu_test.tl --device metal
+cargo run --features metal -- examples/gpu_test.tl
+```
+
+
+## Syntax
+
+TL's syntax is very similar to Rust, but without lifetimes.
+
+### Basic Syntax
+
+```rust
+fn main() {
+    let x = 5;
+    println("{}", x);
+}
+```
+
+### Tensor Operations
+
+```rust
+fn main() {
+    let x = [1.0, 2.0, 3.0];
+    let y = [4.0, 5.0, 6.0];
+    let z = x + y;
+    println("{}", z);
+}
+```
+
+### if Statement
+
+```rust
+fn main() {
+    let x = 5;
+    if x > 0 {
+        println("{}", x);
+    }
+}
+```
+
+### while Statement
+
+```rust
+fn main() {
+    let mut x = 5;
+    while x > 0 {
+        println("{}", x);
+        x = x - 1;
+    }
+}
+```
+
+### for Statement
+
+```rust
+fn main() {
+    let mut x = 5;
+    for i in 0..x {
+        println("{}", i);
+    }
+}
+```
+
+### Function Definition
+
+```rust
+fn main() {
+    let x = 5;
+    let y = add(x, 1);
+    println("{}", y);
+}
+
+fn add(x: i64, y: i64) -> i64 {
+    x + y
+}
+```
+
+### Tensor Comprehension
+
+```rust
+fn main() {
+    let t = [1.0, 2.0, 3.0, 4.0];
+    // Keep elements > 2.0 and double them, others become 0.0 (masking)
+    let res = [i | i <- 0..4, t[i] > 2.0 { t[i] * 2.0 }];
+    println("{}", res);
+}
 ```
 
 ## VSCode Extension
@@ -55,7 +139,7 @@ Below is an example program that solves the N-Queens problem using gradient desc
 fn main() {
     let N = 8; // Board size (8x8)
     let solutions_to_find = 5; // Number of solutions to find
-    let found_count = 0;
+    let mut found_count = 0;
 
     print("Finding "); print(solutions_to_find); println(" solutions for N-Queens...");
 
@@ -64,7 +148,7 @@ fn main() {
         let epochs = 2000;
 
         // 1. Initialize board probability distribution (random noise)
-        let board = Tensor::randn([N, N], true);
+        let mut board = Tensor::randn([N, N], true);
 
         // Optimization loop
         for i in 0..epochs {
@@ -112,9 +196,9 @@ fn main() {
             found_count = found_count + 1;
             print("Solution #"); println(found_count);
             
-            let rows = 0;
+            let mut rows = 0;
             while rows < N {
-                let cols = 0;
+                let mut cols = 0;
                 while cols < N {
                    if probs[rows, cols] > 0.5 {
                        print(" Q ");

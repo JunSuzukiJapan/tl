@@ -1,4 +1,4 @@
-# TL Tensor Logic Programming Language
+# TL Programming Language
 
 LLVMにJITコンパイルされる、ファーストクラスのテンソルサポートを備えたテンソル論理プログラミング言語。
 
@@ -31,7 +31,90 @@ LLVMにJITコンパイルされる、ファーストクラスのテンソルサ�
 cargo run -- examples/hybrid_test.tl
 
 # GPUを使用 (macOSのMetal)
-cargo run --features metal -- examples/gpu_test.tl --device metal
+cargo run --features metal -- examples/gpu_test.tl
+```
+
+## 文法
+
+TLの文法は、Rustに非常によく似ています。ただし、ライフタイムはありません。
+
+### 基本構文
+
+```rust
+fn main() {
+    let x = 5;
+    println("{}", x);
+}
+```
+
+### テンソル演算
+
+```rust
+fn main() {
+    let x = [1.0, 2.0, 3.0];
+    let y = [4.0, 5.0, 6.0];
+    let z = x + y;
+    println("{}", z);
+}
+```
+
+### if文
+
+```rust
+fn main() {
+    let x = 5;
+    if x > 0 {
+        println("{}", x);
+    }
+}
+```
+
+### while文
+
+```rust
+fn main() {
+    let mut x = 5;
+    while x > 0 {
+        println("{}", x);
+        x = x - 1;
+    }
+}
+```
+
+### for文
+
+```rust
+fn main() {
+    let mut x = 5;
+    for i in 0..x {
+        println("{}", i);
+    }
+}
+```
+
+### 関数定義
+
+```rust
+fn main() {
+    let x = 5;
+    let y = add(x, 1);
+    println("{}", y);
+}
+
+fn add(x: i64, y: i64) -> i64 {
+    x + y
+}
+```
+
+### テンソル内包表記
+
+```rust
+fn main() {
+    let t = [1.0, 2.0, 3.0, 4.0];
+    // 2.0より大きい要素は2倍にし、それ以外は0.0にする（マスク処理）
+    let res = [i | i <- 0..4, t[i] > 2.0 { t[i] * 2.0 }];
+    println("{}", res);
+}
 ```
 
 ## VSCode拡張機能
@@ -55,7 +138,7 @@ TensorLogicは、論理的な制約をテンソル演算による連続最適化
 fn main() {
     let N = 8; // ボードサイズ (8x8)
     let solutions_to_find = 5; // 見つける解の数
-    let found_count = 0;
+    let mut found_count = 0;
 
     print("Finding "); print(solutions_to_find); println(" solutions for N-Queens...");
 
@@ -64,7 +147,7 @@ fn main() {
         let epochs = 2000;
 
         // 1. ボードの確率分布を初期化 (ランダムノイズ)
-        let board = Tensor::randn([N, N], true);
+        let mut board = Tensor::randn([N, N], true);
 
         // 最適化ループ
         for i in 0..epochs {
@@ -113,9 +196,9 @@ fn main() {
             found_count = found_count + 1;
             print("Solution #"); println(found_count);
             
-            let rows = 0;
+            let mut rows = 0;
             while rows < N {
-                let cols = 0;
+                let mut cols = 0;
                 while cols < N {
                    if probs[rows, cols] > 0.5 {
                        print(" Q ");
