@@ -294,7 +294,7 @@ fn main() -> Result<()> {
         }
 
         // Semantics (Check only)
-        let mut analyzer = SemanticAnalyzer::new(String::new()); // TODO: Pass source if possible
+        let mut analyzer = SemanticAnalyzer::new(String::new());
         if let Err(e) = analyzer.check_module(&mut combined_module) {
             let file_hint = if !source_files.is_empty() {
                 source_files[0].to_str()
