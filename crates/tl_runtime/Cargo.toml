@@ -2,6 +2,12 @@
 name = "tl_runtime"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+description = "Runtime library for TL differentiable programming language"
+repository = "https://github.com/JunSuzukiJapan/tl"
+authors = ["Jun Suzuki"]
+keywords = ["machine-learning", "deep-learning", "tensor", "runtime"]
+categories = ["science", "mathematics"]
 
 [lib]
 crate-type = ["staticlib", "rlib"]

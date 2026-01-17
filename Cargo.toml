@@ -2,6 +2,12 @@
 name = "tl"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+description = "A differentiable programming language with tensor support for machine learning"
+repository = "https://github.com/JunSuzukiJapan/tl"
+authors = ["Jun Suzuki"]
+keywords = ["machine-learning", "deep-learning", "tensor", "differentiable", "language"]
+categories = ["science", "compilers", "mathematics"]
 
 [workspace]
 members = ["crates/tl_runtime"]
