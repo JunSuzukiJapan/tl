@@ -1,5 +1,5 @@
 [package]
-name = "tl"
+name = "tl-lang"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
@@ -13,7 +13,7 @@ categories = ["science", "compilers", "mathematics"]
 members = ["crates/tl_runtime"]
 
 [dependencies]
-tl_runtime = { path = "crates/tl_runtime" }
+tl_runtime = "0.1.0"
 
 # CLI & Error Handling
 clap = { version = "4.5.4", features = ["derive"] }
