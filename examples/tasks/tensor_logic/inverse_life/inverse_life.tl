@@ -30,7 +30,7 @@ fn main() {
     // We can use the same "Soft" logic but with very sharp sigmoid (high beta) to emulate exact rules.
     
     let mut current = gt_state.clone();
-    let t = 0;
+    let mut t = 0;
     while t < STEPS {
         // Neighbors: Padding=1 to keep shape [N, N]
         let neighbors = current.conv2d(kernel, 1, 1) - current;
@@ -69,7 +69,7 @@ fn main() {
         // Forward Pass
         let state = learnable_logits.sigmoid(); // [0,1] continuous
         
-        let t = 0;
+        let mut t = 0;
         let mut current_est = state;
         
         while t < STEPS {
@@ -111,13 +111,13 @@ fn main() {
     print("Final Loss: ");
     
     // Recalc final loss
-    let state = learnable_logits.sigmoid();
+    let mut state = learnable_logits.sigmoid();
     let mut t = 0;
     while t < STEPS {
         let neighbors = state.conv2d(kernel, 1, 1) - state;
         let is_3 = ((neighbors - 3.0).pow(2) * -1.0).exp();
         let is_2 = ((neighbors - 2.0).pow(2) * -1.0).exp();
-        let state = is_3 + state * is_2;
+        state = is_3 + state * is_2;
         t = t + 1;
     }
     let diff = state - target_final;

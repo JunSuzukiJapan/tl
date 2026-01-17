@@ -28,7 +28,7 @@ impl GPT {
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
         print("GPT: Alloc Pos");
-        let pos = pos_data.reshape(1, 12);
+        let pos = pos_data.reshape([1, 12]);
         print("GPT: Calc Tok Emb");
         let tok_emb = self.w.forward(i);
         print("GPT: Calc Pos Emb");
@@ -85,13 +85,13 @@ fn train_epoch(model: GPT, lr: f32, epoch: i64) {
         let s_d10 = rem / 10;
         let s_d1 = rem - (s_d10 * 10);
 
-        let v_i_d1 = i_d1.pow(1.0).get(0);
-        let v_i_d10 = i_d10.pow(1.0).get(0);
-        let v_j_d1 = j_d1.pow(1.0).get(0);
-        let v_j_d10 = j_d10.pow(1.0).get(0);
-        let v_s_d1 = s_d1.pow(1.0).get(0);
-        let v_s_d10 = s_d10.pow(1.0).get(0);
-        let v_s_d100 = s_d100.pow(1.0).get(0);
+        let v_i_d1 = i_d1 as f32;
+        let v_i_d10 = i_d10 as f32;
+        let v_j_d1 = j_d1 as f32;
+        let v_j_d10 = j_d10 as f32;
+        let v_s_d1 = s_d1 as f32;
+        let v_s_d10 = s_d10 as f32;
+        let v_s_d100 = s_d100 as f32;
         
         let data = [
             v_i_d1, v_i_d10, 10.0, 
@@ -111,15 +111,15 @@ fn train_epoch(model: GPT, lr: f32, epoch: i64) {
         print(s);
 
         print("P-ReshapeX");
-        let X = data.reshape(1, 12);
+        let X = data.reshape([1, 12]);
         print("P-ReshapeY");
-        let Y = target.reshape(1, 12);
+        let Y = target.reshape([1, 12]);
         
         print("P-Forward");
         let logits = model.forward(X);
         print("Forward done");
-        let logits_flat = logits.reshape(12, 13);
-        let Y_flat = Y.reshape(12);
+        let logits_flat = logits.reshape([12, 13]);
+        let Y_flat = Y.reshape([12]);
         let loss = logits_flat.cross_entropy(Y_flat);
         print("Loss calculated");
         let loss_detached = loss.detach(true);

@@ -46,13 +46,13 @@ impl CausalSelfAttention {
 
         // Split heads: [1, T, 128] -> [T, 4, 32] -> [4, T, 32]
         
-        let Q_split = Q.reshape(10, 4, 48);  // NOTE: infer uses len 10
+        let Q_split = Q.reshape([10, 4, 48]);  // NOTE: infer uses len 10
         let Q_heads = Q_split.transpose(0, 1); // [4, 10, 32]
         
-        let K_split = K.reshape(10, 4, 48);
+        let K_split = K.reshape([10, 4, 48]);
         let K_heads = K_split.transpose(0, 1); // [4, 10, 32]
         
-        let V_split = V.reshape(10, 4, 48);
+        let V_split = V.reshape([10, 4, 48]);
         let V_heads = V_split.transpose(0, 1); // [4, 10, 32]
         
         // Attention
@@ -71,7 +71,7 @@ impl CausalSelfAttention {
         
         // Merge heads
         let y_trans = y_heads.transpose(0, 1); // [10, 4, 32]
-        let y_out = y_trans.reshape(1, 10, 192);
+        let y_out = y_trans.reshape([1, 10, 192]);
         
         return self.o_proj.forward(y_out); 
     } 
@@ -150,11 +150,11 @@ fn inference(model: SeqModel) {
     let p5 = 5.0; let p6 = 6.0; let p7 = 7.0; let p8 = 8.0; let p9 = 9.0;
     
     let P_arr = [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9];
-    let P_t = P_arr.reshape(1, 10);
+    let P_t = P_arr.reshape([1, 10]);
 
-    let X = input.reshape(1, 10);
+    let X = input.reshape([1, 10]);
     let logits = model.forward(X, P_t); // [1, 10, Vocab]
-    let logits_flat = logits.reshape(10, 12);
+    let logits_flat = logits.reshape([10, 12]);
     
     print("Checking predictions...");
     

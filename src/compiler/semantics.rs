@@ -3076,11 +3076,50 @@ impl SemanticAnalyzer {
                     *type_name = resolved_type.clone();
                 }
 
-                // Check if type exists (built-in or user-defined struct)
-                // For now, only struct or built-in classes like File, Path, etc. use this.
-                // 1. Check if it is a built-in static method (e.g. File::open, Path::new)
-                //    This logic needs to be consistent with CodeGen.
-                // 2. Check if it is a user-defined struct method (e.g. Linear::new)
+                // Special handling for Param::checkpoint to allow method references
+                if type_name == "Param" && method_name == "checkpoint" {
+                    if args.len() != 2 {
+                        return self.err(
+                            SemanticError::ArgumentCountMismatch {
+                                name: "Param::checkpoint".into(),
+                                expected: 2,
+                                found: args.len(),
+                            },
+                            Some(expr.span.clone()),
+                        );
+                    }
+
+                    // Check arg 0 (method ref)
+                    let mut is_valid_method_ref = false;
+                    if let ExprKind::FieldAccess(obj, method_name) = &mut args[0].inner {
+                        // Check obj type
+                        if let Ok(obj_type) = self.check_expr(obj) {
+                            let t_name_opt = match obj_type {
+                                Type::UserDefined(n) => Some(n),
+                                Type::Struct(n) => Some(n),
+                                Type::Tensor(_, _) => Some("Tensor".to_string()),
+                                _ => None,
+                            };
+
+                            if let Some(t_name) = t_name_opt {
+                                if let Some(methods) = self.methods.get(&t_name) {
+                                    if methods.contains_key(method_name) {
+                                        is_valid_method_ref = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if !is_valid_method_ref {
+                        // Fallback
+                        let _ = self.check_expr(&mut args[0])?;
+                    }
+
+                    // Check arg 1
+                    let arg1_type = self.check_expr(&mut args[1])?;
+                    return Ok(arg1_type);
+                }
 
                 // Check arguments first
                 for arg in args.iter_mut() {
@@ -3455,7 +3494,36 @@ impl SemanticAnalyzer {
                                 Some(expr.span.clone()),
                             );
                         }
-                        let _ = self.check_expr(&mut args[0])?;
+
+                        // Check if first arg is a valid method reference (obj.method)
+                        let mut is_valid_method_ref = false;
+                        if let ExprKind::FieldAccess(obj, method_name) = &mut args[0].inner {
+                            // We need to check obj type, but checking obj expr might fail if it contains errors?
+                            // Try check_expr on obj
+                            if let Ok(obj_type) = self.check_expr(obj) {
+                                let type_name = match obj_type {
+                                    Type::UserDefined(n) => Some(n),
+                                    Type::Struct(n) => Some(n),
+                                    Type::Tensor(_, _) => Some("Tensor".to_string()),
+                                    _ => None,
+                                };
+
+                                if let Some(t_name) = type_name {
+                                    if let Some(methods) = self.methods.get(&t_name) {
+                                        if methods.contains_key(method_name) {
+                                            is_valid_method_ref = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if !is_valid_method_ref {
+                            // Fallback to normal check (e.g. for function pointers or fields)
+                            // This will fail if it was a FieldAccess to a non-existent field (which is what usually happens for methods)
+                            let _ = self.check_expr(&mut args[0])?;
+                        }
+
                         let arg1_type = self.check_expr(&mut args[1])?;
                         Ok(arg1_type)
                     }

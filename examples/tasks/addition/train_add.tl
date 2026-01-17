@@ -9,9 +9,9 @@
 // One-Hot Embedding (embedding()の代替)
 fn my_embedding(indices: Tensor<f32, 2>, w: Tensor<f32, 2>, V: i64) -> Tensor<f32, 3> {
     let T = 12;
-    let flat_indices = indices.reshape(T);
+    let flat_indices = indices.reshape([T]);
     
-    let one_hot: Tensor<f32, 2> = Tensor::randn([T, V], false) * 0.0;
+    let mut one_hot: Tensor<f32, 2> = Tensor::randn([T, V], false) * 0.0;
     for t in range(0, T) {
         let idx = flat_indices.get(t) as i64;
         one_hot[t, idx] = 1.0;
@@ -19,12 +19,12 @@ fn my_embedding(indices: Tensor<f32, 2>, w: Tensor<f32, 2>, V: i64) -> Tensor<f3
     let one_hot_d = one_hot.detach(true);
     
     let out_flat = one_hot_d.matmul(w);
-    return out_flat.reshape(1, 12, 128);
+    return out_flat.reshape([1, 12, 128]);
 }
 
 // Causal Mask (tril()の代替)
 fn get_causal_mask(size: i64) -> Tensor<f32, 2> {
-    let mask: Tensor<f32, 2> = Tensor::randn([size, size], false) * 0.0;
+    let mut mask: Tensor<f32, 2> = Tensor::randn([size, size], false) * 0.0;
     for i in range(0, size) {
         for j in range(0, size) {
             if j <= i {
@@ -43,10 +43,10 @@ fn my_cross_entropy(logits: Tensor<f32, 3>, targets: Tensor<f32, 2>) -> Tensor<f
     let probs = logits.softmax(2);
     let log_probs = probs.log();
     
-    let log_probs_flat = log_probs.reshape(T, V);
-    let targets_flat = targets.reshape(T);
+    let log_probs_flat = log_probs.reshape([T, V]);
+    let targets_flat = targets.reshape([T]);
     
-    let mask: Tensor<f32, 2> = Tensor::randn([T, V], false) * 0.0;
+    let mut mask: Tensor<f32, 2> = Tensor::randn([T, V], false) * 0.0;
     for i in range(0, T) {
         let t = targets_flat.get(i) as i64;
         mask[i, t] = 1.0;
@@ -57,11 +57,11 @@ fn my_cross_entropy(logits: Tensor<f32, 3>, targets: Tensor<f32, 2>) -> Tensor<f
     let sum_log_probs = selected.sum();
     
     // -1 * mean を計算
-    let neg_one: Tensor<f32, 1> = Tensor::randn([1], false) * 0.0;
+    let mut neg_one: Tensor<f32, 1> = Tensor::randn([1], false) * 0.0;
     neg_one[0] = -1.0;
     let neg_one_d = neg_one.detach(true);
     
-    let n_float: Tensor<f32, 1> = Tensor::randn([1], false) * 0.0;
+    let mut n_float: Tensor<f32, 1> = Tensor::randn([1], false) * 0.0;
     n_float[0] = 12.0;
     let n_float_d = n_float.detach(true);
     
@@ -84,7 +84,7 @@ impl Linear {
         return x.matmul(self.W) + self.b; 
     } 
     fn step(self, lr: f32) -> Linear { 
-        let s = self; 
+        let mut s = self; 
         s.W = (s.W - s.W.grad() * lr).detach(true); 
         s.b = (s.b - s.b.grad() * lr).detach(true); 
         return s; 
@@ -100,7 +100,7 @@ impl Embedding {
         return my_embedding(i, self.w, self.vocab_size); 
     } 
     fn step(self, lr: f32) -> Embedding { 
-        let s = self; 
+        let mut s = self; 
         s.w = (s.w - s.w.grad() * lr).detach(true); 
         return s; 
     } 
@@ -115,7 +115,7 @@ impl LayerNorm {
         return x * self.w + self.b; 
     } 
     fn step(self, lr: f32) -> LayerNorm { 
-        let s = self; 
+        let mut s = self; 
         s.w = (s.w - s.w.grad() * lr).detach(true);
         s.b = (s.b - s.b.grad() * lr).detach(true); 
         return s; 
@@ -144,7 +144,7 @@ impl CausalSelfAttention {
         return self.p_proj.forward(y); 
     } 
     fn step(self, lr: f32) -> CausalSelfAttention { 
-        let s = self; 
+        let mut s = self; 
         s.q_proj = s.q_proj.step(lr); 
         s.k_proj = s.k_proj.step(lr); 
         s.v_proj = s.v_proj.step(lr); 
@@ -162,7 +162,7 @@ impl MLP {
         return self.p.forward(self.f.forward(x).relu()); 
     } 
     fn step(self, lr: f32) -> MLP { 
-        let s = self; 
+        let mut s = self; 
         s.f = s.f.step(lr); 
         s.p = s.p.step(lr); 
         return s; 
@@ -179,7 +179,7 @@ impl Block {
         return x + self.m.forward(self.l2.forward(x)); 
     } 
     fn step(self, lr: f32) -> Block { 
-        let s = self; 
+        let mut s = self; 
         s.l1 = s.l1.step(lr); 
         s.a = s.a.step(lr); 
         s.l2 = s.l2.step(lr); 
@@ -204,7 +204,7 @@ impl GPT {
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
-        let pos = pos_data.reshape(1, 12);
+        let pos = pos_data.reshape([1, 12]);
         let tok_emb = self.w.forward(i);
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
@@ -265,8 +265,8 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
         12.0, 12.0, 12.0, 12.0
     ];
 
-    let X = data.reshape(1, 12);
-    let Y = target.reshape(1, 12);
+    let X = data.reshape([1, 12]);
+    let Y = target.reshape([1, 12]);
     
     let logits = model.forward(X);
     let loss = my_cross_entropy(logits, Y);

@@ -37,7 +37,7 @@ impl GPTHeavy {
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
-        let pos = pos_data.reshape(1, 12);
+        let pos = pos_data.reshape([1, 12]);
         let tok_emb = self.w.forward(i);
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
@@ -66,24 +66,24 @@ fn main() {
     print("Expected (Reverse): 6, 4, 0");
     
     let data1 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0];
-    let input1 = data1.reshape(1, 12);
+    let input1 = data1.reshape([1, 12]);
     let logits1 = model.forward(input1);
-    let logits1_flat = logits1.reshape(12, 13);
-    let p1 = argmax(logits1_flat.slice(5, 1));
+    let logits1_flat = logits1.reshape([12, 13]);
+    let p1 = argmax(logits1_flat.slice(5, 1).reshape([13]));
     
-    let v1 = p1.pow(1.0).get(0);
+    let v1 = p1 as f32;
     let data2 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, v1, 12.0, 12.0, 12.0, 12.0, 12.0];
-    let input2 = data2.reshape(1, 12);
+    let input2 = data2.reshape([1, 12]);
     let logits2 = model.forward(input2);
-    let logits2_flat = logits2.reshape(12, 13);
-    let p2 = argmax(logits2_flat.slice(6, 1));
+    let logits2_flat = logits2.reshape([12, 13]);
+    let p2 = argmax(logits2_flat.slice(6, 1).reshape([13]));
     
-    let v2 = p2.pow(1.0).get(0);
+    let v2 = p2 as f32;
     let data3 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, v1, v2, 12.0, 12.0, 12.0, 12.0];
-    let input3 = data3.reshape(1, 12);
+    let input3 = data3.reshape([1, 12]);
     let logits3 = model.forward(input3);
-    let logits3_flat = logits3.reshape(12, 13);
-    let p3 = argmax(logits3_flat.slice(7, 1));
+    let logits3_flat = logits3.reshape([12, 13]);
+    let p3 = argmax(logits3_flat.slice(7, 1).reshape([13]));
     
     print("Predicted:"); print(p1); print(p2); print(p3);
     
@@ -92,24 +92,24 @@ fn main() {
     print("Expected (Reverse): 0, 0, 1");
     // 9, 9, 10, 1, 0, 11 (Reverse)
     let q_data1 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0];
-    let q_input1 = q_data1.reshape(1, 12);
+    let q_input1 = q_data1.reshape([1, 12]);
     let q_logits1 = model.forward(q_input1);
-    let q_logits1_flat = q_logits1.reshape(12, 13);
-    let q1 = argmax(q_logits1_flat.slice(5, 1));
+    let q_logits1_flat = q_logits1.reshape([12, 13]);
+    let q1 = argmax(q_logits1_flat.slice(5, 1).reshape([13]));
     
-    let qv1 = q1.pow(1.0).get(0);
+    let qv1 = q1 as f32;
     let q_data2 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, qv1, 12.0, 12.0, 12.0, 12.0, 12.0];
-    let q_input2 = q_data2.reshape(1, 12);
+    let q_input2 = q_data2.reshape([1, 12]);
     let q_logits2 = model.forward(q_input2);
-    let q_logits2_flat = q_logits2.reshape(12, 13);
-    let q2 = argmax(q_logits2_flat.slice(6, 1));
+    let q_logits2_flat = q_logits2.reshape([12, 13]);
+    let q2 = argmax(q_logits2_flat.slice(6, 1).reshape([13]));
     
-    let qv2 = q2.pow(1.0).get(0);
+    let qv2 = q2 as f32;
     let q_data3 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, qv1, qv2, 12.0, 12.0, 12.0, 12.0];
-    let q_input3 = q_data3.reshape(1, 12);
+    let q_input3 = q_data3.reshape([1, 12]);
     let q_logits3 = model.forward(q_input3);
-    let q_logits3_flat = q_logits3.reshape(12, 13);
-    let q3 = argmax(q_logits3_flat.slice(7, 1));
+    let q_logits3_flat = q_logits3.reshape([12, 13]);
+    let q3 = argmax(q_logits3_flat.slice(7, 1).reshape([13]));
     
     print("Predicted:"); print(q1); print(q2); print(q3);
     

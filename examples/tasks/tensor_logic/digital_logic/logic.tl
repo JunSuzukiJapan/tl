@@ -23,13 +23,13 @@ fn main() {
     // out = sigmoid(w5*h1 + w6*h2 + b3)
     
     // Training Data
-    let inputs = Tensor::zeros([4, 2]);
+    let mut inputs = Tensor::zeros([4, 2]);
     inputs[0, 0] = 0.0; inputs[0, 1] = 0.0;
     inputs[1, 0] = 0.0; inputs[1, 1] = 1.0;
     inputs[2, 0] = 1.0; inputs[2, 1] = 0.0;
     inputs[3, 0] = 1.0; inputs[3, 1] = 1.0;
     
-    let targets = Tensor::zeros([4, 1]);
+    let mut targets = Tensor::zeros([4, 1]);
     targets[0, 0] = 0.0; // 0 XOR 0
     targets[1, 0] = 1.0; // 0 XOR 1
     targets[2, 0] = 1.0; // 1 XOR 0

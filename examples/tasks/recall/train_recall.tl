@@ -211,7 +211,7 @@ impl GPT {
         // Assuming Batch=1 for this script
         let T = 13; // SEQ_LEN + 1 (query)
         let pos_arr = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
-        let pos = pos_arr.reshape(1, 13);
+        let pos = pos_arr.reshape([1, 13]);
         
         let tok_emb = self.wte.forward(idx);
         let pos_emb = self.wpe.forward(pos);
@@ -271,8 +271,8 @@ fn gen_data(step: i64) -> Tensor<f32, 2> {
     // Pick query from one of the keys.
     // Use modulo 6 on seed to pick index
     let pick = seed - ((seed / 6) * 6);
-    let q_k = 0;
-    let q_ans = 0;
+    let mut q_k = 0;
+    let mut q_ans = 0;
     if pick == 0 { q_k = k1; q_ans = v1; }
     if pick == 1 { q_k = k2; q_ans = v2; }
     if pick == 2 { q_k = k3; q_ans = v3; }
@@ -298,7 +298,7 @@ fn gen_data(step: i64) -> Tensor<f32, 2> {
     
     // Return combined: 0..12 inputs, 13 target
     let arr = [fk1, fv1, fk2, fv2, fk3, fv3, fk4, fv4, fk5, fv5, fk6, fv6, fqk, fqa];
-    return arr.reshape(1, 14);
+    return arr.reshape([1, 14]);
 }
 
 // Recall Task Training Script
@@ -330,7 +330,7 @@ fn main() {
              data.get(10), data.get(11),
              data.get(12)
         ];
-        let X = in_seq.reshape(1, 13);
+        let X = in_seq.reshape([1, 13]);
         
         let targets_arr = [
              data.get(1), data.get(2),
@@ -341,18 +341,18 @@ fn main() {
              data.get(11), data.get(12),
              data.get(13)
         ];
-        let Y_temp = targets_arr.reshape(1, 13);
-        let Y = Y_temp.reshape(13);
+        let Y_temp = targets_arr.reshape([1, 13]);
+        let Y = Y_temp.reshape([13]);
         
         let logits = model.forward(X);
-        let logits_flat = logits.reshape(13, 30);
+        let logits_flat = logits.reshape([13, 30]);
         
         let loss = logits_flat.cross_entropy(Y);
         
         loss.backward();
         model = model.step(lr);
         
-        let loss_val = loss.get(0); // Scalar loss
+        let loss_val = loss.item(); // Scalar loss
         
         if i - ((i / 100) * 100) == 0 {
              print("Step:"); print(i);

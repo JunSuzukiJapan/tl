@@ -185,7 +185,7 @@ impl GPT {
     fn forward(self, idx: Tensor<f32, 2>) -> Tensor<f32, 3> {
         let T = 13;
         let pos_arr = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
-        let pos = pos_arr.reshape(1, 13);
+        let pos = pos_arr.reshape([1, 13]);
         
         let tok_emb = self.wte.forward(idx);
         let pos_emb = self.wpe.forward(pos);
@@ -231,8 +231,8 @@ fn gen_data(step: i64) -> Tensor<f32, 2> {
     let v6 = ((seed + 12) * 3) - ((((seed + 12) * 3) / 10) * 10);
     
     let pick = seed - ((seed / 6) * 6);
-    let q_k = 0;
-    let q_ans = 0;
+    let mut q_k = 0;
+    let mut q_ans = 0;
     if pick == 0 { q_k = k1; q_ans = v1; }
     if pick == 1 { q_k = k2; q_ans = v2; }
     if pick == 2 { q_k = k3; q_ans = v3; }
@@ -256,7 +256,7 @@ fn gen_data(step: i64) -> Tensor<f32, 2> {
     let fqa = q_ans as f32;
     
     let arr = [fk1, fv1, fk2, fv2, fk3, fv3, fk4, fv4, fk5, fv5, fk6, fv6, fqk, fqa];
-    return arr.reshape(1, 14);
+    return arr.reshape([1, 14]);
 }
 
 fn main() {
@@ -288,18 +288,18 @@ fn main() {
             val_data.get(10), val_data.get(11),
             val_data.get(12)
         ];
-        let val_X = val_in.reshape(1, 13);
+        let val_X = val_in.reshape([1, 13]);
         let val_logits = model.forward(val_X);
         
-        let val_logits_flat = val_logits.reshape(13, 30);
-        let val_logits_1d = val_logits_flat.reshape(390);
+        let val_logits_flat = val_logits.reshape([13, 30]);
+        let val_logits_1d = val_logits_flat.reshape([390]);
         let last_row = val_logits_1d.slice(360, 30); // 12 * 30 = 360
         
         // Double cast workaround for argmax U32 -> F32 issue
         let pred_t = last_row.argmax(0);
         let pred_t_i64 = pred_t as Tensor<i64, 1>;
         let pred_t_f32 = pred_t_i64 as Tensor<f32, 1>;
-        let pred = pred_t_f32.get(0) as i64;
+        let pred = pred_t_f32.item() as i64;
         
         let target = val_data.get(13) as i64;
         

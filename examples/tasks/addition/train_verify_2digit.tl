@@ -140,13 +140,15 @@ impl GPT {
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0];
-        let pos = pos_data.reshape(1, 4);
+        let pos = pos_data.reshape([1, 4]);
         let tok_emb = self.w.forward(i);
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
         // Checkpointing blocks
-        let x = Param::checkpoint(self.b1.forward, x);
-        let x = Param::checkpoint(self.b2.forward, x);
+        // let x = Param::checkpoint(self.b1.forward, x);
+        let x = self.b1.forward(x);
+        // let x = Param::checkpoint(self.b2.forward, x);
+        let x = self.b2.forward(x);
         return self.h.forward(self.l.forward(x)); 
     } 
     fn step(self, lr: f32) -> GPT { 
@@ -169,29 +171,29 @@ impl GPT {
 }
 
 fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
-    let m = model.clone();
+    let mut m = model.clone();
     let sum = i + j;
     // Vocabulary size needs to cover sum
     
     // Mock data input [i, j, sum, 0]
     let input_arr = [i, j, sum, 0];
-    let X = input_arr.reshape(1, 4);
+    let X = input_arr.reshape([1, 4]);
     // Target [j, sum, 0, 0] (Shifted)
     let target_arr = [j, sum, 0, 0];
-    let Y = target_arr.reshape(1, 4);
+    let Y = target_arr.reshape([1, 4]);
 
     // Forward
     let logits = m.forward(X);
     
     // Need to reshape for cross_entropy
     // logits: [1, 4, 200] -> [4, 200]
-    let logits_flat = logits.reshape(4, 200);
-    let Y_flat = Y.reshape(4);
+    let logits_flat = logits.reshape([4, 200]);
+    let Y_flat = Y.reshape([4]);
     
     let loss = logits_flat.cross_entropy(Y_flat);
     
     // Print loss
-    tl_tensor_print_1(loss.reshape(1));
+    tl_tensor_print_1(loss.reshape([1]));
     
     // Backprop
     loss.backward();
@@ -211,13 +213,13 @@ fn infer(model: GPT, i: i64, j: i64) {
     
     // Calculate loss to check correctness
     let input_arr = [i, j, 0, 0];
-    let X = input_arr.reshape(1, 4);
+    let X = input_arr.reshape([1, 4]);
     let logits = m.forward(X);
     let target_arr = [j, expected, 0, 0];
-    let Y = target_arr.reshape(1, 4);
+    let Y = target_arr.reshape([1, 4]);
     
-    let logits_flat = logits.reshape(4, 200);
-    let Y_flat = Y.reshape(4);
+    let logits_flat = logits.reshape([4, 200]);
+    let Y_flat = Y.reshape([4]);
     let loss = logits_flat.cross_entropy(Y_flat);
     
     // Prediction analysis
@@ -226,12 +228,12 @@ fn infer(model: GPT, i: i64, j: i64) {
     
     let preds = logits.argmax(2); // [1, 4]
     print("Predictions (Whole Sequence):");
-    tl_tensor_print_2(preds.reshape(1, 4));
+    tl_tensor_print_2(preds.reshape([1, 4]));
     
     print("Inference: Input:"); print(i); print(j);
     print("Expected (at pos 1):"); print(expected);
     print("Loss:");
-    tl_tensor_print_1(loss.reshape(1));
+    tl_tensor_print_1(loss.reshape([1]));
 }
 
 fn main() {

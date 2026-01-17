@@ -8,7 +8,7 @@
 // 手動argmax (元のコードから維持)
 fn my_argmax(t: Tensor<f32, 1>) -> i64 {
     let mut max_val = -1000000.0;
-    let idx = 0;
+    let mut idx = 0;
     for k in range(0, 13) {
         let v = t.get(k);
         if v > max_val {
@@ -22,9 +22,9 @@ fn my_argmax(t: Tensor<f32, 1>) -> i64 {
 // One-Hot Embedding (embedding()の代替)
 fn my_embedding(indices: Tensor<f32, 2>, w: Tensor<f32, 2>, V: i64) -> Tensor<f32, 3> {
     let T = 12;
-    let flat_indices = indices.reshape(T);
+    let flat_indices = indices.reshape([T]);
     
-    let one_hot: Tensor<f32, 2> = Tensor::randn([T, V], false) * 0.0;
+    let mut one_hot: Tensor<f32, 2> = Tensor::randn([T, V], false) * 0.0;
     for t in range(0, T) {
         let mut idx = flat_indices.get(t) as i64;
         one_hot[t, idx] = 1.0;
@@ -32,12 +32,12 @@ fn my_embedding(indices: Tensor<f32, 2>, w: Tensor<f32, 2>, V: i64) -> Tensor<f3
     let one_hot_d = one_hot.detach(true);
     
     let out_flat = one_hot_d.matmul(w);
-    return out_flat.reshape(1, 12, 128);
+    return out_flat.reshape([1, 12, 128]);
 }
 
 // Causal Mask (tril()の代替)
 fn get_causal_mask(size: i64) -> Tensor<f32, 2> {
-    let mask: Tensor<f32, 2> = Tensor::randn([size, size], false) * 0.0;
+    let mut mask: Tensor<f32, 2> = Tensor::randn([size, size], false) * 0.0;
     for i in range(0, size) {
         for j in range(0, size) {
             if j <= i {
@@ -142,7 +142,7 @@ impl GPT {
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
-        let pos = pos_data.reshape(1, 12);
+        let pos = pos_data.reshape([1, 12]);
         let tok_emb = self.w.forward(i);
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
@@ -177,18 +177,18 @@ fn main() {
     // Note: We fill the answer positions with correct values to see if the model predicts the NEXT token correctly
     // Position 5 (11.0) predicts Position 6 (should be 6)
     let data1 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, 6.0, 4.0, 0.0, 12.0, 12.0, 12.0];
-    let input1 = data1.reshape(1, 12);
+    let input1 = data1.reshape([1, 12]);
     let logits1 = model.forward(input1);
-    let logits1_flat = logits1.reshape(12, 13);
-    let p1 = my_argmax(logits1_flat.slice(5, 1));
+    let logits1_flat = logits1.reshape([12, 13]);
+    let p1 = my_argmax(logits1_flat.slice(5, 1).reshape([13]));
     
     // Step 2: Predict second digit at Position 7 (should be 4)
     // Position 6 (6.0) predicts Position 7
-    let p2 = my_argmax(logits1_flat.slice(6, 1));
+    let p2 = my_argmax(logits1_flat.slice(6, 1).reshape([13]));
     
     // Step 3: Predict third digit at Position 8 (should be 0)
     // Position 7 (4.0) predicts Position 8
-    let p3 = my_argmax(logits1_flat.slice(7, 1));
+    let p3 = my_argmax(logits1_flat.slice(7, 1).reshape([13]));
     
     print("Predicted:"); print(p1); print(p2); print(p3);
     
@@ -198,13 +198,13 @@ fn main() {
     
     // Correct input: [9, 9, 10, 1, 0, 11, 0, 0, 1, 12, 12, 12]
     let q_data1 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, 0.0, 0.0, 1.0, 12.0, 12.0, 12.0];
-    let q_input1 = q_data1.reshape(1, 12);
+    let q_input1 = q_data1.reshape([1, 12]);
     let q_logits1 = model.forward(q_input1);
-    let q_logits1_flat = q_logits1.reshape(12, 13);
+    let q_logits1_flat = q_logits1.reshape([12, 13]);
     
-    let q1 = my_argmax(q_logits1_flat.slice(5, 1));
-    let q2 = my_argmax(q_logits1_flat.slice(6, 1));
-    let q3 = my_argmax(q_logits1_flat.slice(7, 1));
+    let q1 = my_argmax(q_logits1_flat.slice(5, 1).reshape([13]));
+    let q2 = my_argmax(q_logits1_flat.slice(6, 1).reshape([13]));
+    let q3 = my_argmax(q_logits1_flat.slice(7, 1).reshape([13]));
     
     print("Predicted:"); print(q1); print(q2); print(q3);
     

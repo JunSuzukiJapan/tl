@@ -2,6 +2,7 @@ target/
 Papers/
 
 dump.ll
+*.ll
 *.safetensors
 
 debug_logs/

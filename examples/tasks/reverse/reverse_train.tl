@@ -70,13 +70,13 @@ impl CausalSelfAttention {
         // x shape in train_epoch is [1, 9] input -> Embedding -> [1, 9, 128].
         // So dims are: 0=Batch(1), 1=Time(9), 2=Channel(128).
         
-        let Q_split = Q.reshape(9, 4, 48); 
+        let Q_split = Q.reshape([9, 4, 48]); 
         let Q_heads = Q_split.transpose(0, 1); // [4, 9, 32]
         
-        let K_split = K.reshape(9, 4, 48);
+        let K_split = K.reshape([9, 4, 48]);
         let K_heads = K_split.transpose(0, 1); // [4, 9, 32]
         
-        let V_split = V.reshape(9, 4, 48);
+        let V_split = V.reshape([9, 4, 48]);
         let V_heads = V_split.transpose(0, 1); // [4, 9, 32]
         
         // Attention
@@ -105,7 +105,7 @@ impl CausalSelfAttention {
         
         // Merge heads: [4, 9, 32] -> [9, 4, 32] -> [1, 9, 128]
         let y_trans = y_heads.transpose(0, 1); // [9, 4, 32]
-        let y_out = y_trans.reshape(1, 9, 192);
+        let y_out = y_trans.reshape([1, 9, 192]);
         
         return self.o_proj.forward(y_out); 
     } 
@@ -220,7 +220,7 @@ fn train_epoch(model: Transformer, lr: f32, steps: i64, seed_offset: i64) -> f32
     let p0 = 0.0; let p1 = 1.0; let p2 = 2.0; let p3 = 3.0; let p4 = 4.0;
     let p5 = 5.0; let p6 = 6.0; let p7 = 7.0; let p8 = 8.0;
     let P_arr = [p0, p1, p2, p3, p4, p5, p6, p7, p8];
-    let P_t = P_arr.reshape(1, 9);
+    let P_t = P_arr.reshape([1, 9]);
 
     for s in range(0, steps) {
         // Generate random digits using randn (Normal distribution)
@@ -236,19 +236,19 @@ fn train_epoch(model: Transformer, lr: f32, steps: i64, seed_offset: i64) -> f32
         let X_arr = [d1, d2, d3, d4, SEP, d4, d3, d2, d1];
         let Y_arr = [d2, d3, d4, SEP, d4, d3, d2, d1, PAD];
         
-        let X = X_arr.reshape(1, 9);
-        let Y = Y_arr.reshape(1, 9);
+        let X = X_arr.reshape([1, 9]);
+        let Y = Y_arr.reshape([1, 9]);
         
         let logits = model.forward(X, P_t);
-        let logits_flat = logits.reshape(9, 12); 
-        let Y_flat = Y.reshape(9);
+        let logits_flat = logits.reshape([9, 12]); 
+        let Y_flat = Y.reshape([9]);
         
         let loss = logits_flat.cross_entropy(Y_flat);
         
         loss.backward();
         model.step(lr);
         
-        total_loss = loss.get(0); 
+        total_loss = loss.item(); 
     }
     return total_loss; 
 }

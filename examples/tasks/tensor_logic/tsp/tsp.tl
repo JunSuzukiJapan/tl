@@ -28,10 +28,10 @@ fn main() {
     // dist_matrix.print();
 
     // 2. Optimization Loop
-    let logits = Tensor::randn([N, N], true);
+    let mut logits = Tensor::randn([N, N], true);
     
     // Construct Shift Matrix S (constant)
-    let S = Tensor::zeros([N, N]);
+    let mut S = Tensor::zeros([N, N]);
     let mut k = 0;
     while k < N {
         let next_k = if k + 1 == N { 0 } else { k + 1 };
@@ -70,8 +70,9 @@ fn main() {
         total_loss.backward();
         
         let g = logits.grad();
-        let logits = logits - g * 0.1; 
-        let logits = logits.detach();
+        logits = logits - g * 0.1; 
+        let logits_detached = logits.detach();
+        logits = logits_detached;
         logits.enable_grad();
         
         i = i + 1;

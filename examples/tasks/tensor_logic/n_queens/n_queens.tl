@@ -33,14 +33,14 @@ fn main() {
     // Optimization: Just loop `num_solutions` times for now, assuming 1 run = 1 attempt.
     // Ideally we retry until valid.
     
-    let run = 0;
+    let mut run = 0;
     while run < num_solutions {
         print("Run ");
         println(run + 1);
 
         // Initialize board logits with random noise
         // Using `requires_grad=true` for optimization
-        let board = Tensor::randn([N, N], true);
+        let mut board = Tensor::randn([N, N], true);
         // let board = Tensor::zeros([N, N], true);
     
     // Optimizer loop
@@ -68,8 +68,9 @@ fn main() {
          total_loss.backward();
          
          let g = board.grad();
-         let board = board - g * lr;
-         let board = board.detach();
+         board = board - g * lr;
+         let board_detached = board.detach();
+         board = board_detached;
          board.enable_grad();
     }
 
@@ -87,9 +88,9 @@ fn main() {
     print("Final Board (Probabilities > 0.5):");
     println("");
     
-    let rows = 0;
+    let mut rows = 0;
     while rows < N {
-        let cols = 0;
+        let mut cols = 0;
         while cols < N {
            let val = probs[rows, cols];
            if val > 0.5 {
@@ -97,11 +98,11 @@ fn main() {
            } else {
                print(" . ");
            }
-           let cols = cols + 1;
+           cols = cols + 1;
         }
         println("");
-        let rows = rows + 1;
+        rows = rows + 1;
     }
-    let run = run + 1;
+    run = run + 1;
   }
 }
