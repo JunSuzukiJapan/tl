@@ -8,10 +8,10 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tl::compiler::codegen::CodeGenerator;
-use tl::compiler::error::{format_error_with_source, TlError};
-use tl::compiler::inference::{forward_chain, query, GroundAtom, Value};
-use tl::compiler::semantics::SemanticAnalyzer;
+use tl_lang::compiler::codegen::CodeGenerator;
+use tl_lang::compiler::error::{format_error_with_source, TlError};
+use tl_lang::compiler::inference::{forward_chain, query, GroundAtom, Value};
+use tl_lang::compiler::semantics::SemanticAnalyzer;
 
 #[derive(Parser)]
 #[command(name = "tlc")]
@@ -111,7 +111,7 @@ fn main() -> Result<()> {
 
             if let Err(e) = codegen.compile_module(&ast) {
                 let tl_err = TlError::Codegen {
-                    kind: tl::compiler::error::CodegenErrorKind::Generic(e),
+                    kind: tl_lang::compiler::error::CodegenErrorKind::Generic(e),
                     span: None,
                 }
                 .with_file(file.to_str().unwrap_or("unknown"));
@@ -244,7 +244,7 @@ fn main() -> Result<()> {
         tl_runtime::args::init_args(cli.args.clone());
         tl_runtime::force_link();
 
-        let mut combined_module = tl::compiler::ast::Module {
+        let mut combined_module = tl_lang::compiler::ast::Module {
             structs: vec![],
             enums: vec![],
             impls: vec![],
@@ -322,7 +322,7 @@ fn main() -> Result<()> {
         if let Err(e) = codegen.compile_module(&combined_module) {
             // StringエラーをTlErrorに変換
             let tl_err = TlError::Codegen {
-                kind: tl::compiler::error::CodegenErrorKind::Generic(e),
+                kind: tl_lang::compiler::error::CodegenErrorKind::Generic(e),
                 span: None,
             };
             print_tl_error_with_source(&tl_err, &combined_source, None);
@@ -358,10 +358,10 @@ fn main() -> Result<()> {
 
 /// Execute a logic program using the inference engine.
 fn run_logic_program(
-    module: &tl::compiler::ast::Module,
-    ctx: &tl::compiler::inference::TensorContext,
+    module: &tl_lang::compiler::ast::Module,
+    ctx: &tl_lang::compiler::inference::TensorContext,
 ) {
-    use tl::compiler::ast::{Atom, ExprKind};
+    use tl_lang::compiler::ast::{Atom, ExprKind};
 
     println!("Executing logic program...");
 
@@ -421,8 +421,8 @@ fn run_logic_program(
 }
 
 /// Try to convert an Atom to a GroundAtom (all args must be literals).
-fn try_atom_to_ground(atom: &tl::compiler::ast::Atom) -> Option<GroundAtom> {
-    use tl::compiler::ast::ExprKind;
+fn try_atom_to_ground(atom: &tl_lang::compiler::ast::Atom) -> Option<GroundAtom> {
+    use tl_lang::compiler::ast::ExprKind;
 
     let mut args = Vec::new();
     for expr in &atom.args {
@@ -440,7 +440,7 @@ fn try_atom_to_ground(atom: &tl::compiler::ast::Atom) -> Option<GroundAtom> {
 }
 
 /// Check if the body is trivially true (empty or contains only "true").
-fn is_trivially_true(body: &[tl::compiler::ast::Atom]) -> bool {
+fn is_trivially_true(body: &[tl_lang::compiler::ast::Atom]) -> bool {
     if body.is_empty() {
         return true;
     }
@@ -451,13 +451,16 @@ fn is_trivially_true(body: &[tl::compiler::ast::Atom]) -> bool {
 }
 
 /// モジュールをロードし、ソースコードも返す
-fn load_module_with_source(path: PathBuf) -> Result<(tl::compiler::ast::Module, String), TlError> {
+fn load_module_with_source(
+    path: PathBuf,
+) -> Result<(tl_lang::compiler::ast::Module, String), TlError> {
     let path_str = path.to_str().unwrap_or("unknown").to_string();
 
     let content = fs::read_to_string(&path).map_err(|e| TlError::Io(e))?;
     let source = content.clone();
 
-    let mut module = tl::compiler::parser::parse(&content).map_err(|e| e.with_file(&path_str))?;
+    let mut module =
+        tl_lang::compiler::parser::parse(&content).map_err(|e| e.with_file(&path_str))?;
 
     let parent_dir = path.parent().unwrap_or(Path::new("."));
 
@@ -466,7 +469,7 @@ fn load_module_with_source(path: PathBuf) -> Result<(tl::compiler::ast::Module, 
 
         if !import_path.exists() {
             return Err(TlError::Parse {
-                kind: tl::compiler::error::ParseErrorKind::Generic(format!(
+                kind: tl_lang::compiler::error::ParseErrorKind::Generic(format!(
                     "Module {} not found at {:?}",
                     import_name, import_path
                 )),

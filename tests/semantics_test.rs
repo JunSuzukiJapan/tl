@@ -1,6 +1,6 @@
-use tl::compiler::ast::*;
-use tl::compiler::error::{SemanticErrorKind, TlError};
-use tl::compiler::semantics::SemanticAnalyzer;
+use tl_lang::compiler::ast::*;
+use tl_lang::compiler::error::{SemanticErrorKind, TlError};
+use tl_lang::compiler::semantics::SemanticAnalyzer;
 
 // Helper to create basic expressions
 fn expr_int(n: i64) -> Expr {

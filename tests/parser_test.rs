@@ -1,5 +1,5 @@
-use tl::compiler::ast::*;
-use tl::compiler::parser::*;
+use tl_lang::compiler::ast::*;
+use tl_lang::compiler::parser::*;
 
 fn p_expr(input: &str) -> ExprKind {
     let (rest, expr) = parse_expr(Span::new(input)).expect("Parse error");
