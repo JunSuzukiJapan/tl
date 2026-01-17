@@ -1,3 +1,4 @@
+use serial_test::serial;
 use tl_runtime::*;
 
 // Helper to check if a tensor is not null
@@ -13,6 +14,7 @@ fn safe_free(t: *mut OpaqueTensor) {
 }
 
 #[test]
+#[serial]
 fn test_tensor_creation_and_free() {
     let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
     let shape: Vec<usize> = vec![2, 2];
@@ -28,6 +30,7 @@ fn test_tensor_creation_and_free() {
 }
 
 #[test]
+#[serial]
 fn test_tensor_arithmetic() {
     let data_a: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0]; // [1, 2, 3, 4]
     let data_b: Vec<f32> = vec![10.0, 20.0, 30.0, 40.0]; // [10, 20, 30, 40]
@@ -66,6 +69,7 @@ fn test_tensor_arithmetic() {
 }
 
 #[test]
+#[serial]
 fn test_tensor_zeros() {
     let shape: Vec<usize> = vec![2, 5];
     let t = tl_tensor_zeros(2, shape.as_ptr(), false);
@@ -93,6 +97,7 @@ fn assert_approx_eq(a: f32, b: f32) {
 }
 
 #[test]
+#[serial]
 fn test_matmul() {
     // A: 2x3, B: 3x2 -> C: 2x2
     let data_a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
@@ -127,6 +132,7 @@ fn test_matmul() {
 }
 
 #[test]
+#[serial]
 fn test_sum() {
     let data = vec![1.0, 2.0, 3.0, 4.0];
     let shape = vec![4];
@@ -143,6 +149,7 @@ fn test_sum() {
 }
 
 #[test]
+#[serial]
 fn test_math_ops() {
     let data = vec![1.0, 4.0, 9.0];
     let shape = vec![3];
@@ -168,6 +175,7 @@ fn test_math_ops() {
 }
 
 #[test]
+#[serial]
 fn test_basic_ops() {
     let data_a = vec![10.0, 20.0, 30.0];
     let data_b = vec![2.0, 5.0, 3.0];
@@ -217,6 +225,7 @@ fn test_basic_ops() {
 }
 
 #[test]
+#[serial]
 fn test_reshape_transpose() {
     let data = vec![1.0, 2.0, 3.0, 4.0];
     let shape = vec![2, 2]; // [[1, 2], [3, 4]]

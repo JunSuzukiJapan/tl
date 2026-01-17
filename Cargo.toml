@@ -63,6 +63,7 @@ panic = "abort"
 glob = "0.3"
 assert_cmd = "2.0"
 predicates = "3.0"
+serial_test = "3.3.1"
 
 [patch.crates-io]
 candle-core = { path = "vendor/candle-core-0.9.1" }
