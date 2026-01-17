@@ -9,6 +9,10 @@ authors = ["Jun Suzuki"]
 keywords = ["machine-learning", "deep-learning", "tensor", "differentiable", "language"]
 categories = ["science", "compilers", "mathematics"]
 
+[[bin]]
+name = "tl"
+path = "src/main.rs"
+
 [workspace]
 members = ["crates/tl_runtime"]
 
