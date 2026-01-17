@@ -150,14 +150,10 @@ impl GPTHeavy {
         let tok_emb = self.w.forward(i);
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
-        // let x = Param::checkpoint(self.b1.forward, x);
-        let x = self.b1.forward(x);
-        // let x = Param::checkpoint(self.b2.forward, x);
-        let x = self.b2.forward(x);
-        // let x = Param::checkpoint(self.b3.forward, x);
-        let x = self.b3.forward(x);
-        // let x = Param::checkpoint(self.b4.forward, x);
-        let x = self.b4.forward(x);
+        let x = Param::checkpoint(self.b1.forward, x);
+        let x = Param::checkpoint(self.b2.forward, x);
+        let x = Param::checkpoint(self.b3.forward, x);
+        let x = Param::checkpoint(self.b4.forward, x);
         return self.h.forward(self.l.forward(x)); 
     } 
     fn step(self, lr: f32) -> GPTHeavy { 
