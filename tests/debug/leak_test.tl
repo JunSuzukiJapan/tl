@@ -14,9 +14,8 @@ impl Inner {
 struct Outer { i: Inner }
 
 fn main() {
-    print("Initial Memory:");
     let start_mem = get_memory();
-    print(start_mem);
+    println("Initial Memory: {}", start_mem);
 
     let idx = 0;
     while idx < 50 {
@@ -26,15 +25,13 @@ fn main() {
          o.i = Inner::new(); 
          
          if idx - (idx / 10) * 10 == 0 {
-             print("Iter:"); print(idx);
-             print("Mem:"); print(get_memory());
+             println("Iter: {} Mem: {}", idx, get_memory());
          }
          idx = idx + 1;
     }
 
-    print("Final Memory:");
     let end_mem = get_memory();
-    print(end_mem);
+    println("Final Memory: {}", end_mem);
     
     if end_mem > start_mem + 50 {
         print("FAIL: Memory Leaked significantly");

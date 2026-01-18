@@ -17,14 +17,14 @@ fn main() {
         let diff = x - target;
         let loss = (diff * diff).sum();
         
-        print("Epoch "); print(epoch); print(" - Loss: "); println(loss.item());
+        println("Epoch {} - Loss: {}", epoch, loss.item());
         
         // Backward
         loss.backward();
         
         // Get gradient
         let g = x.grad();
-        print("  Grad sum: "); println(g.sum().item());
+        println("  Grad sum: {}", g.sum().item());
         
         // Update (use assignment, not let)
         x = x - g * lr;

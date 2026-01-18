@@ -204,7 +204,7 @@ fn infer(model: GPT, i: i64, j: i64) {
     let logits = model.forward(input);
     let pred = logits.argmax(2); // [1, 4]
     
-    print("Input:"); print(i); print(j);
+    println("Input: {} {}", i, j);
     print("Pred:"); tl_tensor_print_2(pred);
 }
 
@@ -229,7 +229,7 @@ fn main() {
         model = train_step(model, 0.05, 0, 0); // 0
         
         if (epoch - (epoch/20)*20) == 0 {
-            print("epoch:"); print(epoch);
+            println("epoch: {}", epoch);
         }
     }
     

@@ -25,7 +25,7 @@ fn main() {
     let lr = 0.01;
     
     for epoch in range(0, 5) {
-        print("Epoch:"); print(epoch);
+        println("Epoch: {}", epoch);
         
         let x_data = [1.0, 2.0];
         let x = x_data.reshape(1, 2);
@@ -39,7 +39,7 @@ fn main() {
         let diff_sq = diff * diff;
         let loss = diff_sq.sum();
         
-        print("Loss:"); print(loss);
+        println("Loss: {}", loss);
         
         loss.backward();
         
