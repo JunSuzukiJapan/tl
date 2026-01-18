@@ -69,6 +69,14 @@ impl Term {
                     Term::Var(name.clone())
                 }
             }
+            ExprKind::LogicVar(name) => {
+                if let Some(val) = subst.get(name) {
+                    Term::Val(val.clone())
+                } else {
+                    Term::Var(name.clone())
+                }
+            }
+            ExprKind::Symbol(s) => Term::Val(Value::Str(s.clone())),
             ExprKind::Int(n) => Term::Val(Value::Int(*n)),
             ExprKind::Float(f) => Term::Val(Value::Float(*f)),
             ExprKind::StringLiteral(s) => Term::Val(Value::Str(s.clone())),

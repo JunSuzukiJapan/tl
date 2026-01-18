@@ -232,6 +232,8 @@ pub enum ExprKind {
     },
     TensorLiteral(Vec<Expr>),      // Dynamic tensor with expressions
     TensorConstLiteral(Vec<Expr>), // Static tensor with only constants (optimized)
+    Symbol(String),                // Logic Symbol (unquoted identifier)
+    LogicVar(String),              // Logic Variable ($name)
 
     // Variables & Access
     Variable(String),

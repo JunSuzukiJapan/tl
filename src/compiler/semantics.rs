@@ -168,6 +168,7 @@ pub struct SemanticAnalyzer {
     structs: HashMap<String, StructDef>,                    // Global struct registry
     enums: HashMap<String, EnumDef>,                        // Global enum registry
     methods: HashMap<String, HashMap<String, FunctionDef>>, // Struct methods
+    relations: HashMap<String, RelationDecl>,               // Logic relations
     current_return_type: Option<Type>, // Expected return type for current function
     current_module: String,            // Current module prefix (e.g. "a::b")
     loop_depth: usize,                 // Track nesting level of loops for break/continue
@@ -181,6 +182,7 @@ impl SemanticAnalyzer {
             structs: HashMap::new(),
             enums: HashMap::new(),
             methods: HashMap::new(),
+            relations: HashMap::new(),
             current_return_type: None,
             current_module: String::new(),
             loop_depth: 0,
@@ -500,6 +502,23 @@ impl SemanticAnalyzer {
             let mut e_clone = e.clone();
             e_clone.name = full_name.clone();
             self.enums.insert(full_name, e_clone);
+        }
+
+        // Register relations
+        // println!("DEBUG: Module relations count: {}", module.relations.len());
+        for r in &module.relations {
+            // println!("DEBUG: Registering relation: {}", r.name);
+            let full_name = if prefix.is_empty() {
+                r.name.clone()
+            } else {
+                format!("{}::{}", prefix, r.name)
+            };
+            if self.relations.contains_key(&full_name) {
+                return self.err(SemanticError::DuplicateDefinition(full_name), None);
+            }
+            let mut r_clone = r.clone();
+            r_clone.name = full_name.clone();
+            self.relations.insert(full_name, r_clone);
         }
 
         // Register functions
@@ -1211,6 +1230,8 @@ impl SemanticAnalyzer {
             ExprKind::Float(_) => Ok(Type::F32), // Default float literal type
             ExprKind::Bool(_) => Ok(Type::Bool),
             ExprKind::StringLiteral(_) => Ok(Type::UserDefined("String".to_string())), // Placeholder
+            ExprKind::Symbol(_) => Ok(Type::Entity),
+            ExprKind::LogicVar(_) => Ok(Type::Entity),
             ExprKind::Tuple(exprs) => {
                 let mut types = Vec::new();
                 for e in exprs {
@@ -1691,6 +1712,7 @@ impl SemanticAnalyzer {
                 }
             }
             ExprKind::FnCall(name, args) => {
+                // println!("DEBUG: check_expr FnCall name='{}'", name);
                 // Resolve name first
                 let resolved_name = self.resolve_symbol_name(name);
                 if *name != resolved_name {
@@ -2781,6 +2803,50 @@ impl SemanticAnalyzer {
                         }
                     }
                     return Ok(Type::UserDefined(name.clone()));
+                } else if let Some(relation) = self.relations.get(name).cloned() {
+                    // Logic Query / Relation Call
+                    // relation.args gives us expected arity (excluding mask).
+                    if args.len() != relation.args.len() {
+                        return self.err(
+                            SemanticError::ArgumentCountMismatch {
+                                name: name.clone(),
+                                expected: relation.args.len(),
+                                found: args.len(),
+                            },
+                            Some(expr.span.clone()),
+                        );
+                    }
+
+                    // Check arguments (Entity/Symbol/LogicVar)
+                    // Compute mask: 1 << i if arg is LogicVar
+                    let mut mask: i64 = 0;
+                    for (i, arg) in args.iter_mut().enumerate() {
+                        let arg_ty = self.check_expr(arg)?;
+                        // Allow Entity, or maybe I64/String if converted?
+                        // Symbols are Entity. LogicVars are Entity.
+                        if !matches!(arg_ty, Type::Entity | Type::I64) {
+                            // Potentially error, or allow implicit casting?
+                            // For now, assume Entity.
+                        }
+
+                        // Check if LogicVar for mask
+                        if let ExprKind::LogicVar(_) = arg.inner {
+                            mask |= 1 << i;
+                        }
+                    }
+
+                    // Inject mask argument
+                    args.insert(
+                        0,
+                        Expr {
+                            inner: ExprKind::Int(mask),
+                            span: expr.span.clone(),
+                        },
+                    );
+
+                    // Return Tensor result (e.g. 1D tensor for now, or boolean tensor)
+                    // tl_query returns *mut Tensor. Semantic type is Tensor.
+                    return Ok(Type::Tensor(Box::new(Type::F32), 1));
                 }
 
                 self.err(

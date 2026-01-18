@@ -5,7 +5,7 @@ use inkwell::context::Context;
 use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Module as InkwellModule;
 use inkwell::types::{BasicMetadataTypeEnum, StructType};
-// use inkwell::values::Either; // Not used directly
+use inkwell::values::ValueKind; // Used in relation wrappers
 use inkwell::values::{BasicValueEnum, FunctionValue};
 use inkwell::OptimizationLevel;
 use std::collections::HashMap;
@@ -375,7 +375,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             for (_field_name, field_type) in &s.fields {
                 let llvm_type = match field_type {
                     Type::F32 => self.context.f32_type().into(),
-                    Type::I64 => self.context.i64_type().into(),
+                    Type::I64 | Type::Entity => self.context.i64_type().into(),
                     Type::Bool => self.context.bool_type().into(),
                     Type::Tensor(_, _) => self
                         .context
@@ -430,7 +430,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 for (_, ty) in &v.fields {
                     let field_llvm_ty = match ty {
                         Type::F32 => self.context.f32_type().into(),
-                        Type::I64 => self.context.i64_type().into(),
+                        Type::I64 | Type::Entity => self.context.i64_type().into(),
                         Type::Bool => self.context.bool_type().into(),
                         Type::Tensor(_, _) => self
                             .context
@@ -521,7 +521,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                     let ty: BasicMetadataTypeEnum = match &resolved_ty {
                         Type::F32 => self.context.f32_type().into(),
-                        Type::I64 => self.context.i64_type().into(),
+                        Type::I64 | Type::Entity => self.context.i64_type().into(),
                         Type::Bool => self.context.bool_type().into(),
                         Type::Tensor(_, _) => self
                             .context
@@ -545,7 +545,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 } else {
                     match &method.return_type {
                         Type::F32 => self.context.f32_type().fn_type(&param_types, false),
-                        Type::I64 => self.context.i64_type().fn_type(&param_types, false),
+                        Type::I64 | Type::Entity => {
+                            self.context.i64_type().fn_type(&param_types, false)
+                        }
                         Type::Bool => self.context.bool_type().fn_type(&param_types, false),
                         Type::Void => self.context.void_type().fn_type(&param_types, false),
                         Type::Tensor(_, _) => self
@@ -659,9 +661,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // 1. Declare structs (types) and methods
-        // 1. Declare structs (types) and methods
         self.compile_struct_defs(&ast_module.structs)?;
         self.compile_enum_defs(&ast_module.enums)?;
+        self.compile_relation_wrappers(&ast_module.relations)?;
 
         // Prepare functions list, potentially adding synthetic main
         let mut synthetic_main = None;
@@ -776,7 +778,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Add regular arguments
         for (_, val) in &func.args {
             let arg_ty: inkwell::types::BasicMetadataTypeEnum = match val {
-                Type::I64 => self.context.i64_type().into(),
+                Type::I64 | Type::Entity => self.context.i64_type().into(),
                 Type::F32 => self.context.f32_type().into(),
                 Type::Bool => self.context.bool_type().into(),
                 Type::Tensor(_, _) => self
@@ -985,5 +987,167 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn apply_optimizations(&self) {
         // OptimizationLevel::Aggressive is already set in execution_engine initialization.
         // Manual pass management requires exact matching of inkwell/LLVM versioned methods.
+    }
+
+    fn compile_relation_wrappers(&mut self, relations: &[RelationDecl]) -> Result<(), String> {
+        if relations.is_empty() {
+            return Ok(());
+        }
+
+        // Register return types FIRST so recursive/future calls find it
+        for relation in relations {
+            self.fn_return_types
+                .insert(relation.name.clone(), Type::Tensor(Box::new(Type::F32), 1));
+        }
+
+        let i64_type = self.context.i64_type();
+        let tensor_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+
+        // Runtime function tl_query
+        let tl_query_fn = self
+            .module
+            .get_function("tl_query")
+            .ok_or("tl_query must be declared")?;
+        // Runtime function tl_tensor_from_i64_array
+        let tl_tensor_from_arr_fn = self
+            .module
+            .get_function("tl_tensor_from_i64_array")
+            .ok_or("tl_tensor_from_i64_array must be declared")?;
+        // Runtime function tl_tensor_free
+        let tl_tensor_free_fn = self
+            .module
+            .get_function("tl_tensor_free")
+            .ok_or("tl_tensor_free must be declared")?;
+
+        for rel in relations {
+            let func_name = &rel.name;
+            // Args: mask (i64), arg1 (i64), arg2 (i64)...
+            let mut arg_types = vec![i64_type.into()]; // mask
+            for _ in 0..rel.args.len() {
+                arg_types.push(i64_type.into());
+            }
+
+            let fn_type = tensor_ptr_type.fn_type(&arg_types, false);
+            let function = self.module.add_function(func_name, fn_type, None);
+
+            let basic_block = self.context.append_basic_block(function, "entry");
+            self.builder.position_at_end(basic_block);
+
+            // Build name string
+            let name_global = self
+                .builder
+                .build_global_string_ptr(func_name, "rel_name")
+                .unwrap();
+            let name_ptr = name_global.as_pointer_value();
+
+            // Get mask
+            let mask_arg = function.get_nth_param(0).unwrap().into_int_value();
+
+            // Pack other args into array
+            let num_args = rel.args.len();
+            if num_args > 0 {
+                let arr_type = i64_type.array_type(num_args as u32);
+                let arr_alloca = self.builder.build_alloca(arr_type, "args_arr").unwrap();
+
+                for i in 0..num_args {
+                    let arg_val = function
+                        .get_nth_param((i + 1) as u32)
+                        .unwrap()
+                        .into_int_value();
+                    // Store in array
+                    // GEP to element i
+                    let ptr = unsafe {
+                        self.builder
+                            .build_gep(
+                                arr_type,
+                                arr_alloca,
+                                &[
+                                    i64_type.const_int(0, false),
+                                    i64_type.const_int(i as u64, false),
+                                ],
+                                "",
+                            )
+                            .unwrap()
+                    };
+                    self.builder.build_store(ptr, arg_val).unwrap();
+                }
+
+                // Create tensor from array
+                // tl_tensor_from_i64_array expects pointer to i64 (decayed array) and size
+                let decayed_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            arr_type,
+                            arr_alloca,
+                            &[i64_type.const_int(0, false), i64_type.const_int(0, false)],
+                            "decayed",
+                        )
+                        .unwrap()
+                };
+
+                let args_tensor = match self
+                    .builder
+                    .build_call(
+                        tl_tensor_from_arr_fn,
+                        &[
+                            decayed_ptr.into(),
+                            i64_type.const_int(num_args as u64, false).into(),
+                        ],
+                        "args_tensor",
+                    )
+                    .unwrap()
+                    .try_as_basic_value()
+                {
+                    ValueKind::Basic(v) => v,
+                    _ => return Err("Expected value from tl_tensor_from_i64_array".to_string()),
+                };
+
+                // Call tl_query
+                let result_tensor = match self
+                    .builder
+                    .build_call(
+                        tl_query_fn,
+                        &[name_ptr.into(), mask_arg.into(), args_tensor.into()],
+                        "res",
+                    )
+                    .unwrap()
+                    .try_as_basic_value()
+                {
+                    ValueKind::Basic(v) => v,
+                    _ => return Err("Expected value from tl_query".to_string()),
+                };
+
+                // Free args_tensor (it was created for this call)
+                self.builder
+                    .build_call(tl_tensor_free_fn, &[args_tensor.into()], "")
+                    .unwrap();
+
+                self.builder.build_return(Some(&result_tensor)).unwrap();
+            } else {
+                // No args case
+                // Create empty tensor
+                // Or pass null? tl_query check for null args
+                let null_ptr = tensor_ptr_type.const_null();
+                let result_tensor = match self
+                    .builder
+                    .build_call(
+                        tl_query_fn,
+                        &[name_ptr.into(), mask_arg.into(), null_ptr.into()],
+                        "res",
+                    )
+                    .unwrap()
+                    .try_as_basic_value()
+                {
+                    ValueKind::Basic(v) => v,
+                    _ => return Err("Expected value from tl_query".to_string()),
+                };
+                self.builder.build_return(Some(&result_tensor)).unwrap();
+            }
+
+            if !function.verify(true) {
+                return Err(format!("Invalid generated relation wrapper {}", func_name));
+            }
+        }
+        Ok(())
     }
 }

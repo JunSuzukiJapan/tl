@@ -2033,6 +2033,10 @@ pub fn declare_runtime_functions<'ctx>(
             .add_global_mapping(&f, runtime::memory_manager::tl_mem_unregister as usize);
     }
 
+    if let Some(f) = module.get_function("tl_query") {
+        execution_engine.add_global_mapping(&f, runtime::logic::tl_query as usize);
+    }
+
     // Return types
     fn_return_types.insert(
         "tl_string_concat".to_string(),
@@ -2290,6 +2294,11 @@ pub fn declare_runtime_functions<'ctx>(
     let free_tmp_type = void_type.fn_type(&[ptr_type.into()], false);
     module.add_function("tl_free_tmp", free_tmp_type, None);
     fn_return_types.insert("tl_free_tmp".to_string(), Type::Void);
+
+    // tl_query(name: *i8, mask: i64, args: *Tensor) -> *Tensor
+    let query_type = void_ptr.fn_type(&[i8_ptr.into(), i64_type.into(), void_ptr.into()], false);
+    module.add_function("tl_query", query_type, None);
+    fn_return_types.insert("tl_query".to_string(), tensor_type.clone());
 
     fn_return_types.insert("tl_env_set".to_string(), Type::Void);
     fn_return_types.insert("tl_tensor_cat2".to_string(), tensor_type.clone());

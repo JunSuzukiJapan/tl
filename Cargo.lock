@@ -3857,7 +3857,7 @@ dependencies = [
  "safetensors",
  "serial_test",
  "thiserror 1.0.69",
- "tl_runtime 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tl_runtime",
  "tokenizers 0.19.1",
  "tokio",
 ]
@@ -3869,27 +3869,6 @@ dependencies = [
  "byteorder",
  "candle-core",
  "candle-coreml",
- "candle-nn",
- "candle-transformers",
- "image",
- "lazy_static",
- "libc",
- "log",
- "rand 0.8.5",
- "reqwest 0.13.1",
- "safetensors",
- "tokenizers 0.19.1",
- "tokio",
-]
-
-[[package]]
-name = "tl_runtime"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3d8bacc666057315c0677a604f39795483cc6d147c4e9bfdda27ec527a46bf0"
-dependencies = [
- "byteorder",
- "candle-core",
  "candle-nn",
  "candle-transformers",
  "image",

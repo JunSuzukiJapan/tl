@@ -352,7 +352,6 @@ fn parse_aggregation(input: Span) -> IResult<Span, Expr> {
                 "max" => AggregateOp::Max,
                 "min" => AggregateOp::Min,
                 "avg" => AggregateOp::Avg,
-                "count" => AggregateOp::Count,
                 _ => unreachable!(),
             };
             ExprKind::Aggregation {
@@ -512,6 +511,16 @@ fn parse_match_expr(input: Span) -> IResult<Span, Expr> {
     ))(input)
 }
 
+// Parses @pred(args)? as an expression (Query)
+fn parse_logic_query_expr(input: Span) -> IResult<Span, Expr> {
+    spanned(|input| {
+        let (input, _) = ws(char('@'))(input)?;
+        let (input, atom) = parse_datalog_atom(input)?;
+        let (input, _) = ws(char('?'))(input)?;
+        Ok((input, ExprKind::FnCall(atom.predicate, atom.args)))
+    })(input)
+}
+
 // Primary: Literal | Variable | (Expr) | Block? | IfExpr | Aggregation
 fn parse_atom(input: Span) -> IResult<Span, Expr> {
     ws(alt((
@@ -521,6 +530,7 @@ fn parse_atom(input: Span) -> IResult<Span, Expr> {
         parse_literal_string,
         parse_if_let_expr,
         parse_if_expr,
+        parse_logic_query_expr,     // @... queries
         parse_tensor_comprehension, // Try parsing comprehension before literal array
         parse_tensor_literal,
         parse_aggregation,
@@ -1325,19 +1335,49 @@ fn parse_relation_decl(input: Span) -> IResult<Span, RelationDecl> {
     Ok((input, RelationDecl { name, args }))
 }
 
+// --- Logic Parsing ---
+
+fn parse_logic_var(input: Span) -> IResult<Span, Expr> {
+    // $name
+    spanned(|input| {
+        let (input, _) = char('$')(input)?;
+        let (input, name) = identifier(input)?;
+        Ok((input, ExprKind::LogicVar(name)))
+    })(input)
+}
+
+fn parse_symbol(input: Span) -> IResult<Span, Expr> {
+    // Unquoted identifier as symbol
+    spanned(|input| {
+        let (input, name) = identifier(input)?;
+        Ok((input, ExprKind::Symbol(name)))
+    })(input)
+}
+
+fn parse_logic_arg(input: Span) -> IResult<Span, Expr> {
+    alt((
+        parse_logic_var,
+        parse_literal_string,
+        parse_literal_float,
+        parse_int,
+        parse_bool,
+        parse_symbol, // Fallback for identifiers
+    ))(input)
+}
+
 fn parse_datalog_atom(input: Span) -> IResult<Span, Atom> {
     // Name(arg, ...) - parentheses required but can be empty for nilary
     let (input, predicate) = ws(identifier)(input)?;
     let (input, args) = delimited(
         ws(char('(')),
-        separated_list0(ws(char(',')), parse_expr),
+        separated_list0(ws(char(',')), parse_logic_arg),
         ws(char(')')),
     )(input)?;
     Ok((input, Atom { predicate, args }))
 }
 
 fn parse_fact(input: Span) -> IResult<Span, Rule> {
-    // Fact: Head(args). - no body, just period terminated
+    // Fact: Head(args).
     let (input, head) = parse_datalog_atom(input)?;
     let (input, _) = ws(char('.'))(input)?;
 
@@ -1353,7 +1393,6 @@ fn parse_fact(input: Span) -> IResult<Span, Rule> {
 
 fn parse_rule(input: Span) -> IResult<Span, Rule> {
     // Head(args) :- Body(args), ...
-    // Link: Head(args) :- Relation1(args), Relation2(args).
     let (input, head) = parse_datalog_atom(input)?;
     let (input, _) = ws(tag(":-"))(input)?;
     let (input, body) = separated_list1(ws(char(',')), parse_datalog_atom)(input)?;
@@ -1364,17 +1403,55 @@ fn parse_rule(input: Span) -> IResult<Span, Rule> {
         Rule {
             head,
             body,
-            weight: None, // No syntax for weight yet in normal rules
+            weight: None,
         },
     ))
 }
 
+// Parses constructs starting with @
+// Can be a Fact: @pred(...).
+// Can be a Rule: @pred(...) :- ... .
+fn parse_auto_logic_stmt(input: Span) -> IResult<Span, Rule> {
+    let (input, _) = ws(char('@'))(input)?;
+    // Check if it's a rule ':-' or fact '.' after the head
+    let (input, head) = parse_datalog_atom(input)?;
+
+    let (input, is_rule) = opt(ws(tag(":-")))(input)?;
+
+    if is_rule.is_some() {
+        // It's a rule
+        let (input, body) = separated_list1(ws(char(',')), parse_datalog_atom)(input)?;
+        let (input, _) = ws(alt((char('.'), char(';'))))(input)?;
+        Ok((
+            input,
+            Rule {
+                head,
+                body,
+                weight: None,
+            },
+        ))
+    } else {
+        // It's likely a fact
+        let (input, _) = ws(char('.'))(input)?;
+        Ok((
+            input,
+            Rule {
+                head,
+                body: vec![],
+                weight: None,
+            },
+        ))
+    }
+}
+
 fn parse_query(input: Span) -> IResult<Span, Expr> {
-    // ?- Expr
+    // ?- Atom
     let (input, _) = tag("?-")(input)?;
-    let (input, expr) = parse_expr(input)?;
+    let (input, atom) = parse_datalog_atom(input)?;
     let (input, _) = opt(ws(char(';')))(input)?;
-    Ok((input, expr))
+
+    let expr_kind = ExprKind::FnCall(atom.predicate, atom.args);
+    Ok((input, Spanned::dummy(expr_kind)))
 }
 
 // --- Impls ---
@@ -1453,8 +1530,6 @@ pub fn parse(input: &str) -> Result<Module, TlError> {
     let mut imports = vec![];
 
     // Strip BOM if present
-    // LocatedSpan doesn't have strip_prefix on itself directly unless deref works,
-    // but we can parse it out or just check fragment
     let mut remaining = if input.fragment().starts_with('\u{feff}') {
         let (rem, _) =
             take_while::<_, _, nom::error::Error<Span>>(|c| c == '\u{feff}')(input).unwrap();
@@ -1464,8 +1539,6 @@ pub fn parse(input: &str) -> Result<Module, TlError> {
     };
 
     while !remaining.fragment().trim().is_empty() {
-        // println!("Parsing at: {:.20}...", remaining); // Debug print
-
         // Try struct, then impl, then fn, then others
         if let Ok((next, s)) = ws(parse_struct)(remaining) {
             structs.push(s);
@@ -1483,22 +1556,20 @@ pub fn parse(input: &str) -> Result<Module, TlError> {
             imports.push(m);
             remaining = next;
         } else if let Ok((next, u)) = ws(parse_use_decl)(remaining) {
-            // "use" is similar to import in this simpleAST?
-            // Existing AST only has `imports: Vec<String>`.
-            // Let's store use decls in imports for now?
-            // Or maybe separate field? Module struct definition (1493) calls it `imports`.
-            // parse_mod_decl pushes to imports.
-            // Let's push use decls to imports too.
             imports.push(u);
             remaining = next;
         } else if let Ok((next, t)) = ws(parse_tensor_decl)(remaining) {
             tensor_decls.push(t);
             remaining = next;
         } else if let Ok((next, s)) = ws(parse_stmt)(remaining) {
-            tensor_decls.push(s); // Note: Tensor declarations can be statements too? Logic from original code preserved.
+            tensor_decls.push(s);
             remaining = next;
         } else if let Ok((next, r)) = ws(parse_relation_decl)(remaining) {
             relations.push(r);
+            remaining = next;
+        } else if let Ok((next, r)) = ws(parse_auto_logic_stmt)(remaining) {
+            // Found @fact or @rule
+            rules.push(r);
             remaining = next;
         } else if let Ok((next, r)) = ws(parse_fact)(remaining) {
             rules.push(r);
@@ -1525,6 +1596,26 @@ pub fn parse(input: &str) -> Result<Module, TlError> {
                 kind: ParseErrorKind::InvalidSyntax(format!("at: {:?}...", snippet)),
                 span: Some(span),
             });
+        }
+    }
+
+    // Implicitly declare relations found in facts/rules if not explicitly declared
+    let mut declared_names: std::collections::HashSet<String> =
+        relations.iter().map(|r| r.name.clone()).collect();
+
+    for rule in &rules {
+        if !declared_names.contains(&rule.head.predicate) {
+            let name = rule.head.predicate.clone();
+            let mut args = vec![];
+            for i in 0..rule.head.args.len() {
+                // Default to Entity type for logic args
+                args.push((format!("arg{}", i), Type::Entity));
+            }
+            relations.push(RelationDecl {
+                name: name.clone(),
+                args,
+            });
+            declared_names.insert(name.clone());
         }
     }
 

@@ -1487,6 +1487,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                 ))
             }
             ExprKind::StringLiteral(s) => self.compile_string_literal(s),
+            ExprKind::Symbol(name) => {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                std::hash::Hash::hash(name, &mut hasher);
+                let seed = std::hash::Hasher::finish(&hasher);
+                let i64_type = self.context.i64_type();
+                Ok((i64_type.const_int(seed, false).into(), Type::Entity))
+            }
+            ExprKind::LogicVar(name) => {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                std::hash::Hash::hash(name, &mut hasher);
+                let seed = std::hash::Hasher::finish(&hasher);
+                let i64_type = self.context.i64_type();
+                Ok((i64_type.const_int(seed, false).into(), Type::Entity))
+            }
             ExprKind::EnumInit {
                 enum_name,
                 variant_name,
