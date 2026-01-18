@@ -179,10 +179,9 @@ fn main() {
              
              let total_loss = col_loss + anti_diag_loss + main_diag_loss;
 
-             // Early stopping condition
+             // Early exit with break
              if total_loss.item() < 1e-4 {
-                 // Break only if converged
-                 // (Simulating break by checking condition later as break might vary)
+                 break;
              }
 
              total_loss.backward();

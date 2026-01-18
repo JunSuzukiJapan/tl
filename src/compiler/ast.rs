@@ -193,6 +193,8 @@ pub enum StmtKind {
         alias: Option<String>,
         items: Vec<String>,
     },
+    Break,
+    Continue,
 }
 
 #[derive(Debug, Clone, PartialEq)]

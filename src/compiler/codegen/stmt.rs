@@ -1781,6 +1781,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Create basic blocks
                 let loop_header = self.context.append_basic_block(parent, "for_header");
                 let loop_body = self.context.append_basic_block(parent, "for_body");
+                let loop_latch = self.context.append_basic_block(parent, "for_latch");
                 let loop_end = self.context.append_basic_block(parent, "for_end");
 
                 // Branch to loop header
@@ -1831,6 +1832,10 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Loop body
                 self.builder.position_at_end(loop_body);
+
+                // Push loop context for break/continue
+                // continue -> latch (to increment index), break -> loop_end
+                self.loop_stack.push((loop_latch, loop_end));
 
                 self.enter_scope();
 
@@ -1954,29 +1959,32 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 self.exit_scope();
 
-                // Increment index and Branch back to header
-                // ONLY if the body didn't terminate (e.g. return/break)
+                // Branch to latch if body didn't terminate (e.g. return/break)
                 let body_end_block = self.builder.get_insert_block().unwrap();
 
                 if body_end_block.get_terminator().is_none() {
-                    let next_idx = self
-                        .builder
-                        .build_int_add(
-                            phi.as_basic_value().into_int_value(),
-                            i64_type.const_int(1, false),
-                            "next_idx",
-                        )
-                        .map_err(|e| e.to_string())?;
-
                     self.builder
-                        .build_unconditional_branch(loop_header)
+                        .build_unconditional_branch(loop_latch)
                         .map_err(|e| e.to_string())?;
-
-                    // Add PHI incoming edge from loop back
-                    phi.add_incoming(&[(&next_idx, body_end_block)]);
                 }
 
-                // Add PHI incoming edge from start (always)
+                // Latch block: increment index and branch back to header
+                self.builder.position_at_end(loop_latch);
+                let next_idx = self
+                    .builder
+                    .build_int_add(
+                        phi.as_basic_value().into_int_value(),
+                        i64_type.const_int(1, false),
+                        "next_idx",
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                self.builder
+                    .build_unconditional_branch(loop_header)
+                    .map_err(|e| e.to_string())?;
+
+                // Add PHI incoming edges
+                phi.add_incoming(&[(&next_idx, loop_latch)]);
                 phi.add_incoming(&[(&start_val, preheader_block)]);
 
                 // Continue at loop end
@@ -1988,6 +1996,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                         scope.remove("__for_tensor__");
                     }
                 }
+
+                // Pop loop context
+                self.loop_stack.pop();
 
                 Ok(())
             }
@@ -2029,11 +2040,18 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Compile body
                 self.builder.position_at_end(body_block);
+
+                // Push loop context for break/continue
+                self.loop_stack.push((cond_block, end_block));
+
                 self.enter_scope();
                 for stmt in body {
                     self.compile_stmt(stmt)?;
                 }
                 self.exit_scope();
+
+                // Pop loop context
+                self.loop_stack.pop();
 
                 // Loop back to condition
                 if self
@@ -2097,6 +2115,28 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 }
 
+                Ok(())
+            }
+            StmtKind::Break => {
+                // Cleanup current scope before jumping
+                self.emit_top_scope_cleanup();
+
+                if let Some((_, break_block)) = self.loop_stack.last() {
+                    self.builder
+                        .build_unconditional_branch(*break_block)
+                        .map_err(|e| e.to_string())?;
+                }
+                Ok(())
+            }
+            StmtKind::Continue => {
+                // Cleanup current scope before jumping
+                self.emit_top_scope_cleanup();
+
+                if let Some((continue_block, _)) = self.loop_stack.last() {
+                    self.builder
+                        .build_unconditional_branch(*continue_block)
+                        .map_err(|e| e.to_string())?;
+                }
                 Ok(())
             }
         }

@@ -30,6 +30,11 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) builtin_manager: expr::BuiltinManager,
     pub(crate) instance_methods: HashMap<String, expr::InstanceMethodManager>,
     pub(crate) static_methods: HashMap<String, expr::StaticMethodManager>,
+    /// Loop stack for break/continue: (continue_block, break_block)
+    pub(crate) loop_stack: Vec<(
+        inkwell::basic_block::BasicBlock<'ctx>,
+        inkwell::basic_block::BasicBlock<'ctx>,
+    )>,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -56,6 +61,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             builtin_manager: expr::BuiltinManager::new(),
             instance_methods: HashMap::new(),
             static_methods: HashMap::new(),
+            loop_stack: Vec::new(),
         };
 
         // Register all methods (instance and static)

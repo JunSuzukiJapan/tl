@@ -178,11 +178,9 @@ fn main() {
              
              let total_loss = col_loss + anti_diag_loss + main_diag_loss;
 
-             // 早期終了判定
+             // breakで早期終了
              if total_loss.item() < 1e-4 {
-                 // 収束した場合のみループを抜けて表示へ
-                 // (breakはコンパイラバージョンによって動作が異なる場合があるため、epochsまで回すか、フラグ管理)
-                 // ここでは簡略化のためループを継続し、後で判定
+                 break;
              }
 
              total_loss.backward();

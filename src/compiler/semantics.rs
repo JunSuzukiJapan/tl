@@ -46,6 +46,10 @@ pub enum SemanticError {
     NotATuple(Type),
     #[error("Cannot assign to immutable variable: {0}")]
     AssignToImmutable(String),
+    #[error("break outside of loop")]
+    BreakOutsideLoop,
+    #[error("continue outside of loop")]
+    ContinueOutsideLoop,
 }
 
 impl SemanticError {
@@ -94,6 +98,8 @@ impl SemanticError {
             }
             SemanticError::NotATuple(ty) => SemanticErrorKind::NotATuple(format!("{:?}", ty)),
             SemanticError::AssignToImmutable(name) => SemanticErrorKind::AssignToImmutable(name),
+            SemanticError::BreakOutsideLoop => SemanticErrorKind::BreakOutsideLoop,
+            SemanticError::ContinueOutsideLoop => SemanticErrorKind::ContinueOutsideLoop,
         };
         TlError::Semantic { kind, span }
     }
@@ -164,6 +170,7 @@ pub struct SemanticAnalyzer {
     methods: HashMap<String, HashMap<String, FunctionDef>>, // Struct methods
     current_return_type: Option<Type>, // Expected return type for current function
     current_module: String,            // Current module prefix (e.g. "a::b")
+    loop_depth: usize,                 // Track nesting level of loops for break/continue
 }
 
 impl SemanticAnalyzer {
@@ -176,6 +183,7 @@ impl SemanticAnalyzer {
             methods: HashMap::new(),
             current_return_type: None,
             current_module: String::new(),
+            loop_depth: 0,
         };
         analyzer.declare_builtins();
         analyzer
@@ -1121,12 +1129,14 @@ impl SemanticAnalyzer {
                     }
                 };
 
+                self.loop_depth += 1;
                 self.enter_scope();
                 self.declare_variable(loop_var.clone(), elem_type, true)?;
                 for s in body {
                     self.check_stmt(s)?;
                 }
                 self.exit_scope();
+                self.loop_depth -= 1;
                 Ok(())
             }
             StmtKind::While { cond, body } => {
@@ -1140,11 +1150,13 @@ impl SemanticAnalyzer {
                         Some(stmt.span.clone()),
                     );
                 }
+                self.loop_depth += 1;
                 self.enter_scope();
                 for stmt in body {
                     self.check_stmt(stmt)?;
                 }
                 self.exit_scope();
+                self.loop_depth -= 1;
                 Ok(())
             }
             StmtKind::Use { path, alias, items } => {
@@ -1175,6 +1187,18 @@ impl SemanticAnalyzer {
                         .last_mut()
                         .unwrap()
                         .add_alias(alias_name, full_prefix);
+                }
+                Ok(())
+            }
+            StmtKind::Break => {
+                if self.loop_depth == 0 {
+                    return self.err(SemanticError::BreakOutsideLoop, Some(stmt.span.clone()));
+                }
+                Ok(())
+            }
+            StmtKind::Continue => {
+                if self.loop_depth == 0 {
+                    return self.err(SemanticError::ContinueOutsideLoop, Some(stmt.span.clone()));
                 }
                 Ok(())
             }

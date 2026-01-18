@@ -982,6 +982,22 @@ fn parse_return_stmt(input: Span) -> IResult<Span, Stmt> {
     })(input)
 }
 
+fn parse_break_stmt(input: Span) -> IResult<Span, Stmt> {
+    spanned(|input| {
+        let (input, _) = tag("break")(input)?;
+        let (input, _) = ws(char(';'))(input)?;
+        Ok((input, StmtKind::Break))
+    })(input)
+}
+
+fn parse_continue_stmt(input: Span) -> IResult<Span, Stmt> {
+    spanned(|input| {
+        let (input, _) = tag("continue")(input)?;
+        let (input, _) = ws(char(';'))(input)?;
+        Ok((input, StmtKind::Continue))
+    })(input)
+}
+
 fn parse_expr_stmt(input: Span) -> IResult<Span, Stmt> {
     spanned(|input| {
         // expr;
@@ -1118,6 +1134,8 @@ pub fn parse_stmt(input: Span) -> IResult<Span, Stmt> {
         parse_assign_stmt,
         parse_field_assign,
         parse_return_stmt,
+        parse_break_stmt,
+        parse_continue_stmt,
         parse_if_stmt,
         parse_for_stmt,
         parse_while_stmt,

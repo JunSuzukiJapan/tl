@@ -241,6 +241,12 @@ pub enum SemanticErrorKind {
 
     #[error("cannot assign to immutable variable: {0}")]
     AssignToImmutable(String),
+
+    #[error("break outside of loop")]
+    BreakOutsideLoop,
+
+    #[error("continue outside of loop")]
+    ContinueOutsideLoop,
 }
 
 /// コード生成エラーの種類
