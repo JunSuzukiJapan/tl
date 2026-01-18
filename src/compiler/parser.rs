@@ -1423,7 +1423,7 @@ fn parse_rule(input: Span) -> IResult<Span, Rule> {
 // Can be a Fact: @pred(...).
 // Can be a Rule: @pred(...) :- ... .
 fn parse_auto_logic_stmt(input: Span) -> IResult<Span, Rule> {
-    let (input, _) = ws(char('@'))(input)?;
+    let (input, _) = opt(ws(char('@')))(input)?;
     // Check if it's a rule ':-' or fact '.' after the head
     let (input, head) = parse_datalog_atom(input)?;
 
@@ -1569,15 +1569,6 @@ pub fn parse(input: &str) -> Result<Module, TlError> {
         } else if let Ok((next, u)) = ws(parse_use_decl)(remaining) {
             imports.push(u);
             remaining = next;
-        } else if let Ok((next, t)) = ws(parse_tensor_decl)(remaining) {
-            tensor_decls.push(t);
-            remaining = next;
-        } else if let Ok((next, s)) = ws(parse_stmt)(remaining) {
-            tensor_decls.push(s);
-            remaining = next;
-        } else if let Ok((next, r)) = ws(parse_relation_decl)(remaining) {
-            relations.push(r);
-            remaining = next;
         } else if let Ok((next, r)) = ws(parse_auto_logic_stmt)(remaining) {
             // Found @fact or @rule
             rules.push(r);
@@ -1587,6 +1578,15 @@ pub fn parse(input: &str) -> Result<Module, TlError> {
             remaining = next;
         } else if let Ok((next, r)) = ws(parse_rule)(remaining) {
             rules.push(r);
+            remaining = next;
+        } else if let Ok((next, t)) = ws(parse_tensor_decl)(remaining) {
+            tensor_decls.push(t);
+            remaining = next;
+        } else if let Ok((next, s)) = ws(parse_stmt)(remaining) {
+            tensor_decls.push(s);
+            remaining = next;
+        } else if let Ok((next, r)) = ws(parse_relation_decl)(remaining) {
+            relations.push(r);
             remaining = next;
         } else if let Ok((next, q)) = ws(parse_query)(remaining) {
             queries.push(q);

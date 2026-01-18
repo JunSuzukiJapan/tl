@@ -429,6 +429,48 @@ pub fn declare_runtime_functions<'ctx>(
     let load_type = void_ptr.fn_type(&[i8_ptr.into()], false);
     add_fn("tl_tensor_load", load_type);
 
+    // --- Logic / Knowledge Base Builtins ---
+
+    // tl_kb_add_entity(name: *const i8) -> i64
+    let add_entity_type = context.i64_type().fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_kb_add_entity", add_entity_type);
+
+    // tl_kb_add_fact(relation: *const i8, args: *const i64, arity: i64) -> void
+    let args_ptr_type = context.ptr_type(AddressSpace::default());
+    let add_fact_type = void_type.fn_type(
+        &[
+            i8_ptr.into(),
+            args_ptr_type.into(),
+            context.i64_type().into(), // arity
+        ],
+        false,
+    );
+    add_fn("tl_kb_add_fact", add_fact_type);
+
+    // tl_kb_infer() -> void
+    let infer_type = void_type.fn_type(&[], false);
+    add_fn("tl_kb_infer", infer_type);
+
+    // Rule Builder API
+    // tl_kb_rule_start(head_rel: *const i8)
+    let rule_start_type = void_type.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_kb_rule_start", rule_start_type);
+
+    // tl_kb_rule_add_head_arg_var(index: i64)
+    let arg_i64_type = void_type.fn_type(&[context.i64_type().into()], false);
+    add_fn("tl_kb_rule_add_head_arg_var", arg_i64_type);
+    add_fn("tl_kb_rule_add_head_arg_const", arg_i64_type);
+
+    // tl_kb_rule_add_body_atom(rel: *const i8)
+    add_fn("tl_kb_rule_add_body_atom", rule_start_type);
+
+    // tl_kb_rule_add_body_arg_var/const(i64)
+    add_fn("tl_kb_rule_add_body_arg_var", arg_i64_type);
+    add_fn("tl_kb_rule_add_body_arg_const", arg_i64_type);
+
+    // tl_kb_rule_finish()
+    add_fn("tl_kb_rule_finish", infer_type);
+
     // --- Map Support ---
     // tl_tensor_map_new() -> *mut Map
     let map_new_type = void_ptr.fn_type(&[], false);
@@ -1137,6 +1179,52 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_div_assign_scalar_f32") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_div_assign_scalar_f32 as usize);
+    }
+    if let Some(f) = module.get_function("tl_kb_add_entity") {
+        execution_engine.add_global_mapping(&f, runtime::knowledge_base::tl_kb_add_entity as usize);
+    }
+    if let Some(f) = module.get_function("tl_kb_add_fact") {
+        execution_engine.add_global_mapping(&f, runtime::knowledge_base::tl_kb_add_fact as usize);
+    }
+    if let Some(f) = module.get_function("tl_kb_infer") {
+        execution_engine.add_global_mapping(&f, runtime::knowledge_base::tl_kb_infer as usize);
+    }
+    if let Some(f) = module.get_function("tl_kb_rule_start") {
+        execution_engine.add_global_mapping(&f, runtime::knowledge_base::tl_kb_rule_start as usize);
+    }
+    if let Some(f) = module.get_function("tl_kb_rule_add_head_arg_var") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::knowledge_base::tl_kb_rule_add_head_arg_var as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_kb_rule_add_head_arg_const") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::knowledge_base::tl_kb_rule_add_head_arg_const as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_kb_rule_add_body_atom") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::knowledge_base::tl_kb_rule_add_body_atom as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_kb_rule_add_body_arg_var") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::knowledge_base::tl_kb_rule_add_body_arg_var as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_kb_rule_add_body_arg_const") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::knowledge_base::tl_kb_rule_add_body_arg_const as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_kb_rule_finish") {
+        execution_engine
+            .add_global_mapping(&f, runtime::knowledge_base::tl_kb_rule_finish as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_add_assign_scalar_f32") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_add_assign_scalar_f32 as usize);

@@ -5442,11 +5442,145 @@ impl<'ctx> CodeGenerator<'ctx> {
           }
       */
 
+    fn compile_relation_call(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        let function = self
+            .module
+            .get_function(name)
+            .ok_or(format!("Relation wrapper {} not found", name))?;
+
+        let mut mask: i64 = 0;
+        let mut compiled_args = Vec::new();
+
+        // Check for implicit arity injection (e.g. Arg 0 is Int(arity))
+        let start_index = if !args.is_empty() {
+            if let ExprKind::Int(val) = &args[0].inner {
+                if *val == (args.len() - 1) as i64 {
+                    1
+                } else if *val == 0 && args.len() > 1 {
+                    eprintln!(
+                        "WARNING: Skipping likely injected metadata Int(0) in relation call '{}'",
+                        name
+                    );
+                    1
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        for (i, arg) in args.iter().skip(start_index).enumerate() {
+            match &arg.inner {
+                ExprKind::LogicVar(_) => {
+                    // Variable argument -> Set mask bit
+                    mask |= 1 << i;
+                    // Pass 0 placeholder
+                    compiled_args.push(self.context.i64_type().const_int(0, false).into());
+                }
+                ExprKind::Symbol(sym_name) => {
+                    // Check if variable exists in scope
+                    let mut found = false;
+                    for scope in self.variables.iter().rev() {
+                        if scope.contains_key(sym_name) {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if found {
+                        let (val, _ty) = self.compile_expr(arg)?;
+                        compiled_args.push(val);
+                    } else {
+                        // Assume constant Entity Name
+                        let add_entity_fn = self.module.get_function("tl_kb_add_entity").unwrap();
+                        let name_ptr = self
+                            .builder
+                            .build_global_string_ptr(sym_name, "ent_name")
+                            .map_err(|e| e.to_string())?;
+                        let call = self
+                            .builder
+                            .build_call(
+                                add_entity_fn,
+                                &[name_ptr.as_pointer_value().into()],
+                                "ent_id",
+                            )
+                            .map_err(|e| e.to_string())?;
+
+                        let val = match call.try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid return from add_entity".into()),
+                        };
+                        compiled_args.push(val);
+                    }
+                }
+                ExprKind::StringLiteral(s) => {
+                    let add_entity_fn = self.module.get_function("tl_kb_add_entity").unwrap();
+                    let name_ptr = self
+                        .builder
+                        .build_global_string_ptr(s, "ent_name")
+                        .map_err(|e| e.to_string())?;
+                    let call = self
+                        .builder
+                        .build_call(
+                            add_entity_fn,
+                            &[name_ptr.as_pointer_value().into()],
+                            "ent_id",
+                        )
+                        .map_err(|e| e.to_string())?;
+                    let val = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from add_entity".into()),
+                    };
+                    compiled_args.push(val);
+                }
+                _ => {
+                    let (val, _ty) = self.compile_expr(arg)?;
+                    compiled_args.push(val);
+                }
+            }
+        }
+
+        // Insert Mask at beginning
+        let mask_val = self.context.i64_type().const_int(mask as u64, false);
+        compiled_args.insert(0, mask_val.into());
+
+        let final_args: Vec<inkwell::values::BasicMetadataValueEnum> =
+            compiled_args.iter().map(|&val| val.into()).collect();
+
+        let call = self
+            .builder
+            .build_call(function, &final_args, "query_res")
+            .map_err(|e| e.to_string())?;
+
+        let res = match call.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v,
+            _ => return Err("Relation wrapper returned void".into()),
+        };
+
+        Ok((res, Type::Tensor(Box::new(Type::F32), 1)))
+    }
+
     fn compile_fn_call(
         &mut self,
         name: &str,
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        // 0. Check if it's a relation query (handle module path resolution)
+        let simple_name = name.split("::").last().unwrap_or(name);
+
+        if self.relations.contains(name) {
+            return self.compile_relation_call(name, args);
+        } else if self.relations.contains(simple_name) {
+            return self.compile_relation_call(simple_name, args);
+        }
+
         // 1. Builtins
         let builtin_opt = self.builtin_manager.get(name).copied();
         if let Some(builtin) = builtin_opt {

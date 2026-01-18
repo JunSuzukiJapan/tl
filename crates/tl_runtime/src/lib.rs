@@ -5,6 +5,7 @@ pub mod memory_manager; // Arena allocator for tensor memory optimization
 
 pub mod checkpoint;
 pub mod context;
+pub mod knowledge_base;
 pub mod llm;
 pub mod logic;
 pub mod registry;
@@ -323,10 +324,10 @@ pub extern "C" fn tl_tensor_from_i64_array(data: *const i64, len: usize) -> *mut
     let data_slice = unsafe { slice::from_raw_parts(data, len) };
     let device = get_device();
 
-    // Convert i64 to f32 for Tensor (Candle tensors are typically f32)
-    let data_f32: Vec<f32> = data_slice.iter().map(|&x| x as f32).collect();
+    // Use I64 directly (supported by reshape and logic engine)
+    let data_vec: Vec<i64> = data_slice.to_vec();
 
-    let tensor = Tensor::from_slice(&data_f32, &[len], &device).unwrap();
+    let tensor = Tensor::from_slice(&data_vec, &[len], &device).unwrap();
     make_tensor(tensor)
 }
 
@@ -613,6 +614,39 @@ pub extern "C" fn tl_tensor_print(t: *const OpaqueTensor) {
     }
     unsafe {
         let tensor = &(*t).0;
+        // Logic Integration: Check if tensor is i64 and contains entities
+        if tensor.dtype() == candle_core::DType::I64 {
+            // Import helper from knowledge_base (assumed linked)
+            extern "C" {
+                fn tl_kb_get_entity_name(id: i64) -> *const std::os::raw::c_char;
+            }
+
+            // Custom formatting
+            let dims = tensor.dims();
+            if dims.len() == 2 && dims[1] == 1 {
+                // Vector-like
+                print!("[");
+                let vec: Vec<i64> = tensor.flatten_all().unwrap().to_vec1().unwrap();
+                for (i, &val) in vec.iter().enumerate() {
+                    if i > 0 {
+                        print!(",\n ");
+                    } else {
+                        print!("[");
+                    }
+
+                    let name_ptr = tl_kb_get_entity_name(val);
+                    if !name_ptr.is_null() {
+                        let c_str = std::ffi::CStr::from_ptr(name_ptr);
+                        print!("{}", c_str.to_string_lossy());
+                    } else {
+                        print!("{}", val);
+                    }
+                    print!("]");
+                }
+                println!("]");
+                return;
+            }
+        }
         println!("{}", tensor);
     }
 }

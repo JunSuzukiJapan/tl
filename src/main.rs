@@ -109,7 +109,7 @@ fn main() -> Result<()> {
             let module_name = file.file_stem().unwrap().to_str().unwrap();
             let mut codegen = CodeGenerator::new(&context, module_name);
 
-            if let Err(e) = codegen.compile_module(&ast) {
+            if let Err(e) = codegen.compile_module(&ast, "main") {
                 let tl_err = TlError::Codegen {
                     kind: tl_lang::compiler::error::CodegenErrorKind::Generic(e),
                     span: None,
@@ -319,7 +319,7 @@ fn main() -> Result<()> {
         let context = InkwellContext::create();
         let mut codegen = CodeGenerator::new(&context, "main");
 
-        if let Err(e) = codegen.compile_module(&combined_module) {
+        if let Err(e) = codegen.compile_module(&combined_module, "main") {
             // StringエラーをTlErrorに変換
             let tl_err = TlError::Codegen {
                 kind: tl_lang::compiler::error::CodegenErrorKind::Generic(e),

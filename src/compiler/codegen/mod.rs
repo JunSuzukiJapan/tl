@@ -12,6 +12,7 @@ use std::collections::HashMap;
 
 pub mod builtins;
 pub mod expr;
+pub mod kb;
 pub mod stmt;
 pub mod tensor;
 
@@ -35,6 +36,7 @@ pub struct CodeGenerator<'ctx> {
         inkwell::basic_block::BasicBlock<'ctx>,
         inkwell::basic_block::BasicBlock<'ctx>,
     )>,
+    pub(crate) relations: std::collections::HashSet<String>,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -62,6 +64,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             instance_methods: HashMap::new(),
             static_methods: HashMap::new(),
             loop_stack: Vec::new(),
+            relations: std::collections::HashSet::new(),
         };
 
         // Register all methods (instance and static)
@@ -646,7 +649,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(())
     }
 
-    pub fn compile_module(&mut self, ast_module: &Module) -> Result<(), String> {
+    pub fn compile_module(&mut self, ast_module: &Module, module_name: &str) -> Result<(), String> {
         // 0. Declare runtime functions
         builtins::declare_runtime_functions(
             self.context,
@@ -655,15 +658,24 @@ impl<'ctx> CodeGenerator<'ctx> {
             &mut self.fn_return_types,
         );
 
+        // Generate Logic KB initialization function
+        self.compile_kb_init_function(ast_module, module_name)?;
+
         // Compile submodules recursively
-        for (_name, submodule) in &ast_module.submodules {
-            self.compile_module(submodule)?;
+        for (sub_name, submodule) in &ast_module.submodules {
+            self.compile_module(submodule, sub_name)?;
         }
 
         // 1. Declare structs (types) and methods
         self.compile_struct_defs(&ast_module.structs)?;
         self.compile_enum_defs(&ast_module.enums)?;
+        self.compile_struct_defs(&ast_module.structs)?;
+        self.compile_enum_defs(&ast_module.enums)?;
         self.compile_relation_wrappers(&ast_module.relations)?;
+
+        for r in &ast_module.relations {
+            self.relations.insert(r.name.clone());
+        }
 
         // Prepare functions list, potentially adding synthetic main
         let mut synthetic_main = None;
@@ -889,6 +901,11 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Initialize Arena in main if needed
         if func.name == "main" {
+            // Logic Engine Init
+            if let Some(init_kb) = self.module.get_function("_tl_init_kb") {
+                self.builder.build_call(init_kb, &[], "").unwrap();
+            }
+
             let mut analyzer = ShapeAnalyzer::new();
             let profile = analyzer.analyze_block(&func.body);
             // Heuristic: If we have static tensors or significant allocations, init arena
