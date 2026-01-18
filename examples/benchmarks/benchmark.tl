@@ -21,3 +21,8 @@ edge(20, 21).
 
 path(X, Y) :- edge(X, Y).
 path(X, Z) :- edge(X, Y), path(Y, Z).
+
+fn main() {
+    println("Logic Benchmark Running...");
+    // Logic inference runs automatically after main
+}
