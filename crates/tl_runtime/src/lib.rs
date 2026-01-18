@@ -629,9 +629,7 @@ pub extern "C" fn tl_tensor_print(t: *const OpaqueTensor) {
                 let vec: Vec<i64> = tensor.flatten_all().unwrap().to_vec1().unwrap();
                 for (i, &val) in vec.iter().enumerate() {
                     if i > 0 {
-                        print!(",\n ");
-                    } else {
-                        print!("[");
+                        print!(", ");
                     }
 
                     let name_ptr = tl_kb_get_entity_name(val);
@@ -641,7 +639,6 @@ pub extern "C" fn tl_tensor_print(t: *const OpaqueTensor) {
                     } else {
                         print!("{}", val);
                     }
-                    print!("]");
                 }
                 println!("]");
                 return;
