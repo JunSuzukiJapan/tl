@@ -28,7 +28,7 @@ impl Linear {
 }
 
 fn load_mnist_images(path: String) -> Tensor<f32, 2> {
-    print("Loading images from:"); print(path);
+    println("Loading images from: {}", path);
     let vec = tl_file_read_binary(path);
     let len = tl_vec_u8_len(vec);
     if len == 0 {
@@ -43,8 +43,7 @@ fn load_mnist_images(path: String) -> Tensor<f32, 2> {
     let rows = tl_vec_u8_read_i32_be(vec, 8);
     let cols = tl_vec_u8_read_i32_be(vec, 12);
     
-    print("  Count:"); print(count);
-    print("  Shape:"); print(rows); print(cols);
+    println("  Count: {} Shape: {} x {}", count, rows, cols);
     
     let dim = rows * cols;
     
@@ -65,7 +64,7 @@ fn load_mnist_images(path: String) -> Tensor<f32, 2> {
 }
 
 fn load_mnist_labels(path: String) -> Tensor<i64, 1> {
-    print("Loading labels from:"); print(path);
+    println("Loading labels from: {}", path);
     let vec = tl_file_read_binary(path);
     let len = tl_vec_u8_len(vec);
     if len == 0 {
@@ -76,7 +75,7 @@ fn load_mnist_labels(path: String) -> Tensor<i64, 1> {
     
     let magic = tl_vec_u8_read_i32_be(vec, 0);
     let count = tl_vec_u8_read_i32_be(vec, 4);
-    print("  Count:"); print(count);
+    println("  Count: {}", count);
     
     let t = tl_tensor_from_u8_labels(vec, 8, count);
     

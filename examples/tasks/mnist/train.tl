@@ -55,8 +55,7 @@ fn main() {
             b = b + 1;
         }
         
-        print("Epoch complete:"); print(epoch);
-        print("Avg Loss:"); print(running_loss / (num_batches as f32));
+        println("Epoch complete: {} Avg Loss: {}", epoch, running_loss / (num_batches as f32));
         
         print("W check (row 400):");
         print(model.W.slice(400, 1));

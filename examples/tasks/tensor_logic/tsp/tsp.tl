@@ -25,7 +25,6 @@ fn main() {
     let dist_matrix = dist_sq.relu().pow(0.5);
     
     print("Distance Matrix:\n");
-    // dist_matrix.print();
 
     // 2. Optimization Loop
     let mut logits = Tensor::randn([N, N], true);
@@ -48,13 +47,8 @@ fn main() {
         
         let diff = path - path_next;
         let diff_sq = diff.pow(2); 
-        // sum() -> scalar (rank 0)
         let tour_loss = diff_sq.sum(); 
 
-        // Constraint: Each city visited exactly once (Column sum = 1)
-        // Row sum = 1 is guaranteed by Softmax(1).
-        // Check Col sums.
-        // sum(0) -> [N].
         let col_sums = probs.sum(0); 
         let diff_col = col_sums - 1.0;
         let constraint_loss = diff_col.pow(2).sum();
@@ -62,9 +56,7 @@ fn main() {
         let total_loss = tour_loss + constraint_loss * 5.0;
         
         if (i / 100) * 100 == i {
-            print("Epoch "); print(i);
-            print(" Tour Length: "); print(tour_loss.item());
-            print(" Constraint: "); println(constraint_loss.item());
+            println("Epoch {} Tour Length: {} Constraint: {}", i, tour_loss.item(), constraint_loss.item());
         }
         
         total_loss.backward();
@@ -80,14 +72,11 @@ fn main() {
     
     print("Final:\n");
     let probs = logits.softmax(1);
-    // probs.round().print();
-    print("Tour Length: ");
     
     // Recalc final tour length
     let path = probs.matmul(cities);
     let path_next = S.matmul(path);
     let diff = path - path_next;
     let final_loss = diff.pow(2).sum();
-    println(final_loss.item());
-
+    println("Tour Length: {}", final_loss.item());
 }

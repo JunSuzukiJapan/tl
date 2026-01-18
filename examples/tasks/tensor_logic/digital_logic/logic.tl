@@ -60,8 +60,7 @@ fn main() {
         let loss = diff.pow(2).sum();
         
         if (iter / 100) * 100 == iter {
-            print("Iter "); print(iter);
-            print(" Loss: "); println(loss.item());
+            println("Iter {} Loss: {}", iter, loss.item());
         }
         
         loss.backward();
@@ -100,9 +99,7 @@ fn main() {
         let b = inputs[i, 1];
         let pred = output[i, 0];
         let tgt = targets[i, 0];
-        print("Input: ("); print(a); print(", "); print(b); 
-        print(") -> Pred: "); print(pred);
-        print(" Target: "); println(tgt);
+        println("Input: ({}, {}) -> Pred: {} Target: {}", a, b, pred, tgt);
         i = i + 1;
     }
 }

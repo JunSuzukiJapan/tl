@@ -93,8 +93,7 @@ fn main() {
         let loss = diff.pow(2).sum();
         
         if (iter / 50) * 50 == iter {
-             print("Iter "); print(iter);
-             print(" Loss: "); println(loss.item());
+             println("Iter {} Loss: {}", iter, loss.item());
         }
         
         loss.backward();
@@ -130,5 +129,5 @@ fn main() {
     
     let diff_init = recovered - gt_state;
     let match_errors = diff_init.abs().sum();
-    print("Mismatched Cells in Initial State: "); println(match_errors.item());
+    println("Mismatched Cells in Initial State: {}", match_errors.item());
 }

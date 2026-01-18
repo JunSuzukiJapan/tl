@@ -78,7 +78,7 @@ fn main() {
         gt_image[r] = ray_acc;
         r = r + 1;
     }
-    print("Ground Truth Image Rendered (sum="); println(gt_image.sum().item());
+    println("Ground Truth Image Rendered (sum={})", gt_image.sum().item());
 
     // 4. Optimization
     let mut learnable_scene = Tensor::randn([N, N], true) * 0.1;
@@ -114,8 +114,7 @@ fn main() {
         let loss = diff.pow(2).sum();
         
         if (iter / 50) * 50 == iter {
-            print("Iter "); print(iter);
-            print(" Loss: "); println(loss.item());
+            println("Iter {} Loss: {}", iter, loss.item());
         }
         
         loss.backward();
