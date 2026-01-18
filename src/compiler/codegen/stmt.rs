@@ -1771,6 +1771,67 @@ impl<'ctx> CodeGenerator<'ctx> {
                             return Err("DivAssign /= only supported for Tensors currently via in-place optimization".into());
                         }
                     }
+                    AssignOp::ModAssign => {
+                        // ModAssign logic (In-Place for Tensor)
+                        if let Type::Tensor(_, _) = var_type {
+                            let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                            let current_val = self
+                                .builder
+                                .build_load(
+                                    load_type,
+                                    var_ptr.into_pointer_value(),
+                                    &format!("{}_current", name),
+                                )
+                                .map_err(|e| e.to_string())?;
+
+                            let mod_assign_fn = if matches!(val_type, Type::Tensor(_, _)) {
+                                self.module.get_function("tl_tensor_mod_assign").unwrap()
+                            } else {
+                                self.module
+                                    .get_function("tl_tensor_mod_assign_scalar_f32")
+                                    .unwrap()
+                            };
+
+                            let val_arg = if matches!(val_type, Type::Tensor(_, _)) {
+                                val.into()
+                            } else {
+                                let scalar_f32: inkwell::values::FloatValue = match val_type {
+                                    Type::F32 => val.into_float_value(),
+                                    Type::F64 => self
+                                        .builder
+                                        .build_float_cast(
+                                            val.into_float_value(),
+                                            self.context.f32_type(),
+                                            "f64_to_f32",
+                                        )
+                                        .map_err(|e| e.to_string())?,
+                                    Type::I64 | Type::I32 => self
+                                        .builder
+                                        .build_signed_int_to_float(
+                                            val.into_int_value(),
+                                            self.context.f32_type(),
+                                            "int_to_f32",
+                                        )
+                                        .map_err(|e| e.to_string())?,
+                                    _ => {
+                                        return Err(format!(
+                                            "ModAssign: unsupported RHS type {:?}",
+                                            val_type
+                                        ))
+                                    }
+                                };
+                                scalar_f32.into()
+                            };
+
+                            self.builder
+                                .build_call(mod_assign_fn, &[current_val.into(), val_arg], "")
+                                .map_err(|e| e.to_string())?;
+
+                            return Ok(());
+                        } else {
+                            return Err("ModAssign %= only supported for Tensors currently via in-place optimization".into());
+                        }
+                    }
                     _ => return Err(format!("Unsupported assignment op: {:?}", op)),
                 };
 

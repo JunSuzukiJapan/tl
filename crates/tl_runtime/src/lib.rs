@@ -1787,6 +1787,33 @@ pub extern "C" fn tl_tensor_sub_assign_scalar_f32(ref_t: *mut OpaqueTensor, scal
 }
 
 #[no_mangle]
+pub extern "C" fn tl_tensor_mod_assign(ref_t: *mut OpaqueTensor, val_t: *mut OpaqueTensor) {
+    unsafe {
+        let t_dst = &(*ref_t).0;
+        let t_src = &(*val_t).0;
+        // Compute modulo: a % b = a - b * floor(a/b)
+        let div_result = t_dst.broadcast_div(t_src).unwrap();
+        let floor_result = div_result.floor().unwrap();
+        let mul_back = floor_result.broadcast_mul(t_src).unwrap();
+        let result = t_dst.broadcast_sub(&mul_back).unwrap();
+        (*ref_t).0 = result;
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_mod_assign_scalar_f32(ref_t: *mut OpaqueTensor, scalar: f32) {
+    unsafe {
+        let t_dst = &(*ref_t).0;
+        // Compute modulo: a % b = a - b * floor(a/b)
+        let div_result = (t_dst / scalar as f64).unwrap();
+        let floor_result = div_result.floor().unwrap();
+        let mul_back = (floor_result * scalar as f64).unwrap();
+        let result = (t_dst - &mul_back).unwrap();
+        (*ref_t).0 = result;
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn tl_tensor_reshape_new(
     t: *mut OpaqueTensor,
     shape_tensor: *mut OpaqueTensor,

@@ -901,6 +901,7 @@ fn parse_assign_stmt(input: Span) -> IResult<Span, Stmt> {
             tag("-="),
             tag("*="),
             tag("/="),
+            tag("%="),
             tag("max="),
             tag("avg="),
         )))(input)?;
@@ -911,6 +912,7 @@ fn parse_assign_stmt(input: Span) -> IResult<Span, Stmt> {
             "-=" => AssignOp::SubAssign,
             "*=" => AssignOp::MulAssign,
             "/=" => AssignOp::DivAssign,
+            "%=" => AssignOp::ModAssign,
             "max=" => AssignOp::MaxAssign,
             "avg=" => AssignOp::AvgAssign,
             _ => unreachable!(),

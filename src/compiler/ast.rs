@@ -204,6 +204,7 @@ pub enum AssignOp {
     SubAssign,
     MulAssign,
     DivAssign,
+    ModAssign,
     MaxAssign,
     AvgAssign,
 }

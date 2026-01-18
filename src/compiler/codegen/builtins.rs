@@ -406,6 +406,10 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_sub_assign_scalar_f32", scalar_assign_type);
     add_fn("tl_tensor_mul_assign_scalar_f32", scalar_assign_type);
     add_fn("tl_tensor_div_assign_scalar_f32", scalar_assign_type);
+    add_fn("tl_tensor_mod_assign_scalar_f32", scalar_assign_type);
+
+    // Mod assign (tensor, tensor) -> void
+    add_fn("tl_tensor_mod_assign", assign_type);
 
     let i8_ptr = context.ptr_type(AddressSpace::default());
     let register_type = void_type.fn_type(&[i8_ptr.into(), void_ptr.into()], false);
@@ -1139,6 +1143,12 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_sub_assign_scalar_f32") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_sub_assign_scalar_f32 as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_mod_assign") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_mod_assign as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_mod_assign_scalar_f32") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_mod_assign_scalar_f32 as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_exp") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_exp as usize);

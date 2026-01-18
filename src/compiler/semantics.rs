@@ -991,6 +991,7 @@ impl SemanticAnalyzer {
                                 AssignOp::SubAssign => "sub_assign",
                                 AssignOp::MulAssign => "mul_assign",
                                 AssignOp::DivAssign => "div_assign",
+                                AssignOp::ModAssign => "mod_assign",
                                 _ => {
                                     return self.err(
                                         SemanticError::UnknownFunction(format!(
