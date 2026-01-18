@@ -157,7 +157,7 @@ fn main() {
 
     while found_count < solutions_to_find {
         let lr = 0.5;
-        let epochs = 2000;
+        let epochs = 3000;
 
         // 1. Initialize board probability distribution (random noise)
         let mut board = Tensor::randn([N, N], true);

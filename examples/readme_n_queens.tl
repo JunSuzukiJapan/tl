@@ -18,7 +18,7 @@ fn main() {
         print("=== Attempting solution #"); println(found_count + 1);
         
         let lr = 0.5;
-        let epochs = 2000;
+        let epochs = 3000;
         let mut board = Tensor::randn([N, N], true);
 
         for i in 0..epochs {
