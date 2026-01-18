@@ -1256,7 +1256,41 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     _ => return Err("tl_tensor_set_f32_md returned void".into()),
                                 };
 
-                                // Free Old Tensor
+                                // Fix: Check if new_tensor_ptr == current_tensor (In-Place Update)
+                                // Only free current_tensor if it is DIFFERENT from new_tensor_ptr.
+                                let are_diff = self
+                                    .builder
+                                    .build_int_compare(
+                                        inkwell::IntPredicate::NE,
+                                        current_tensor.into_pointer_value(),
+                                        new_tensor_ptr.into_pointer_value(),
+                                        "are_tensors_diff",
+                                    )
+                                    .map_err(|e| e.to_string())?;
+
+                                let free_block = self.context.append_basic_block(
+                                    self.builder
+                                        .get_insert_block()
+                                        .unwrap()
+                                        .get_parent()
+                                        .unwrap(),
+                                    "free_old_tensor",
+                                );
+                                let continue_block = self.context.append_basic_block(
+                                    self.builder
+                                        .get_insert_block()
+                                        .unwrap()
+                                        .get_parent()
+                                        .unwrap(),
+                                    "continue_assign",
+                                );
+
+                                self.builder
+                                    .build_conditional_branch(are_diff, free_block, continue_block)
+                                    .map_err(|e| e.to_string())?;
+
+                                // Free Block
+                                self.builder.position_at_end(free_block);
                                 let free_fn = self
                                     .module
                                     .get_function("tl_tensor_free")
@@ -1264,6 +1298,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 self.builder
                                     .build_call(free_fn, &[current_tensor.into()], "")
                                     .map_err(|e| e.to_string())?;
+                                self.builder
+                                    .build_unconditional_branch(continue_block)
+                                    .map_err(|e| e.to_string())?;
+
+                                // Continue Block
+                                self.builder.position_at_end(continue_block);
 
                                 // Store New Tensor
                                 self.builder
