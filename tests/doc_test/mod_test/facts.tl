@@ -1,0 +1,2 @@
+
+father(alice, bob).
