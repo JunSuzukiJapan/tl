@@ -1104,11 +1104,20 @@ fn parse_use_stmt(input: Span) -> IResult<Span, Stmt> {
         // Check for ":: {" to handle multi-import
         let (input, multi_items) = opt(preceded(
             ws(tag("::")),
-            delimited(
-                ws(char('{')),
-                separated_list1(ws(char(',')), ws(simple_identifier)),
-                ws(char('}')),
-            ),
+            alt((
+                delimited(
+                    ws(char('{')),
+                    separated_list1(
+                        ws(char(',')),
+                        ws(alt((
+                            simple_identifier,
+                            map(tag("*"), |s: Span| s.fragment().to_string()),
+                        ))),
+                    ),
+                    ws(char('}')),
+                ),
+                map(ws(tag("*")), |_| vec!["*".to_string()]),
+            )),
         ))(input)?;
 
         if let Some(items) = multi_items {

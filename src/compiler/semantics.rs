@@ -1184,13 +1184,36 @@ impl SemanticAnalyzer {
                 if !items.is_empty() {
                     // use path::{items...}
                     for item in items {
-                        // import path::item as item
-                        let full_name = format!("{}::{}", full_prefix, item);
-                        let alias_name = item.clone();
-                        self.scopes
-                            .last_mut()
-                            .unwrap()
-                            .add_alias(alias_name, full_name);
+                        if item == "*" {
+                            // Glob import: import all relations starting with full_prefix::
+                            // Collect keys first to avoid borrow issues
+                            let matching_relations: Vec<String> = self
+                                .relations
+                                .keys()
+                                .filter(|k| k.starts_with(&format!("{}::", full_prefix)))
+                                .cloned()
+                                .collect();
+
+                            for rel_full_name in matching_relations {
+                                // Extract simple name: e.g. facts::father -> father
+                                if let Some(simple_name) =
+                                    rel_full_name.strip_prefix(&format!("{}::", full_prefix))
+                                {
+                                    self.scopes
+                                        .last_mut()
+                                        .unwrap()
+                                        .add_alias(simple_name.to_string(), rel_full_name);
+                                }
+                            }
+                        } else {
+                            // import path::item as item
+                            let full_name = format!("{}::{}", full_prefix, item);
+                            let alias_name = item.clone();
+                            self.scopes
+                                .last_mut()
+                                .unwrap()
+                                .add_alias(alias_name, full_name);
+                        }
                     }
                 } else {
                     // use path [as alias]
