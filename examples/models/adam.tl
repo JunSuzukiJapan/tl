@@ -23,7 +23,7 @@ struct Adam {
 }
 
 impl Adam {
-    fn step(model: Linear) {
+    fn step(self, model: Linear) {
         // self.t += 1; // Not supported on i64 yet? Manual:
         // self.t = self.t + 1; // Assign integers supported? 
         // If not, just ignore t for now (only needed for bias correction).
@@ -31,16 +31,16 @@ impl Adam {
         // W update
         let g = model.W.grad();
         
-        self.m_W *= self.beta1;
+        self.m_W = self.m_W * self.beta1;
         let one_minus_beta1 = 1.0 - self.beta1;
         let term2_m = g * one_minus_beta1;
-        self.m_W += term2_m;
+        self.m_W = self.m_W + term2_m;
 
-        self.v_W *= self.beta2;
+        self.v_W = self.v_W * self.beta2;
         let g2 = g * g;
         let one_minus_beta2 = 1.0 - self.beta2;
         let term2_v = g2 * one_minus_beta2;
-        self.v_W += term2_v;
+        self.v_W = self.v_W + term2_v;
 
         let v_sqrt = self.v_W.sqrt();
         let denom = v_sqrt + self.eps;
@@ -55,14 +55,14 @@ impl Adam {
         // b update
         let gb = model.b.grad();
         
-        self.m_b *= self.beta1;
+        self.m_b = self.m_b * self.beta1;
         let term2_mb = gb * one_minus_beta1;
-        self.m_b += term2_mb;
+        self.m_b = self.m_b + term2_mb;
 
-        self.v_b *= self.beta2;
+        self.v_b = self.v_b * self.beta2;
         let gb2 = gb * gb;
         let term2_vb = gb2 * one_minus_beta2;
-        self.v_b += term2_vb;
+        self.v_b = self.v_b + term2_vb;
         
         let vb_sqrt = self.v_b.sqrt();
         let denomb = vb_sqrt + self.eps;
