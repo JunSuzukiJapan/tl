@@ -232,6 +232,7 @@ fn main() {
 - [Advantages of TensorLogic](docs/tensor_logic_advantages.md)
 - [Language Specification](docs/reference/language_spec.md)
 - [Standard Library](docs/reference/standard_library.md)
+- [Logic Programming](docs/logic_programming.md)
 
 # LICENSE
 

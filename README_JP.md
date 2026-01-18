@@ -231,6 +231,7 @@ fn main() {
 - [TensorLogicの利点](docs/jp/tensor_logic_advantages_jp.md)
 - [言語仕様](docs/jp/reference/language_spec.md)
 - [標準ライブラリ](docs/jp/reference/standard_library.md)
+- [論理プログラミング](docs/jp/logic_programming.md)
 
 # LICENSE
 
