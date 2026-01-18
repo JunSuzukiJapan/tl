@@ -85,6 +85,17 @@ for i in 0..10 {
 }
 ```
 
+### ループ制御 (Loop Control)
+ループ内で `break` と `continue` が使用可能です。
+
+```rust
+for i in 0..10 {
+    if i == 5 { continue; } // 次の反復へスキップ
+    if i == 8 { break; }    // ループから脱出
+    print(i);
+}
+```
+
 ## 6. テンソル内包表記 (Tensor Comprehension)
 
 テンソルを作成するための強力な構文です。

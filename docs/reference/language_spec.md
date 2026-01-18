@@ -85,6 +85,17 @@ for i in 0..10 {
 }
 ```
 
+### Loop Control
+`break` and `continue` keywords are supported in loops.
+
+```rust
+for i in 0..10 {
+    if i == 5 { continue; } // Skip iteration
+    if i == 8 { break; }    // Exit loop
+    print(i);
+}
+```
+
 ## 6. Tensor Comprehension
 
 A powerful syntax for creating tensors.
