@@ -152,7 +152,7 @@ fn main() {
     let solutions_to_find = 5; // 見つける解の数
     let mut found_count = 0;
 
-    print("Finding "); print(solutions_to_find); println(" solutions for N-Queens...");
+    println("Finding {} solutions for N-Queens...", solutions_to_find);
 
     while found_count < solutions_to_find {
         let lr = 0.5;
@@ -204,7 +204,7 @@ fn main() {
 
         if total_loss.item() < 1e-3 {
             found_count = found_count + 1;
-            print("Solution #"); println(found_count);
+            println("Solution #{}", found_count);
             
             let mut rows = 0;
             while rows < N {

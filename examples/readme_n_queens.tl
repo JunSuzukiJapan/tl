@@ -3,7 +3,7 @@ fn main() {
     let solutions_to_find = 5;
     let mut found_count = 0;
 
-    print("Finding "); print(solutions_to_find); println(" solutions for N-Queens...");
+    println("Finding {} solutions for N-Queens...", solutions_to_find);
 
     let K = 2 * N - 1;
     // Pre-compute masks for diagonals
@@ -15,7 +15,7 @@ fn main() {
     } ];
 
     while found_count < solutions_to_find {
-        print("=== Attempting solution #"); println(found_count + 1);
+        println("=== Attempting solution #{}", found_count + 1);
         
         let lr = 0.5;
         let epochs = 3000;
@@ -42,12 +42,12 @@ fn main() {
              let total_loss = constraint_loss + reg_loss;
 
              if i % 100 == 0 {
-                 print("Epoch "); print(i); print(" - Loss: "); println(total_loss.item());
+                 println("Epoch {} - Loss: {}", i, total_loss.item());
              }
 
              // Early exit: constraints satisfied AND values are discrete
              if constraint_loss.item() < 1e-3 && reg_loss.item() < 0.1 {
-                 print("Converged at epoch "); println(i);
+                 println("Converged at epoch {}", i);
                  break;
              }
 
@@ -83,7 +83,7 @@ fn main() {
 
         if valid && total_queens == N {
             found_count = found_count + 1;
-            print("Solution #"); println(found_count);
+            println("Solution #{}", found_count);
             
             let mut rows2 = 0;
             while rows2 < N {
@@ -101,7 +101,7 @@ fn main() {
             }
             println("----------------");
         } else {
-            print("Invalid (queens="); print(total_queens); println("), retrying...");
+            println("Invalid (queens={}), retrying...", total_queens);
         }
     }
     println("Done!");
