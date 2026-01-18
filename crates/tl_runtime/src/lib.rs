@@ -1749,6 +1749,43 @@ pub extern "C" fn tl_tensor_add_assign(ref_t: *mut OpaqueTensor, val_t: *mut Opa
     }
 }
 
+// Scalar variants for compound assignment operators
+#[no_mangle]
+pub extern "C" fn tl_tensor_mul_assign_scalar_f32(ref_t: *mut OpaqueTensor, scalar: f32) {
+    unsafe {
+        let t_dst = &(*ref_t).0;
+        let result = (t_dst * scalar as f64).unwrap();
+        (*ref_t).0 = result;
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_div_assign_scalar_f32(ref_t: *mut OpaqueTensor, scalar: f32) {
+    unsafe {
+        let t_dst = &(*ref_t).0;
+        let result = (t_dst / scalar as f64).unwrap();
+        (*ref_t).0 = result;
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_add_assign_scalar_f32(ref_t: *mut OpaqueTensor, scalar: f32) {
+    unsafe {
+        let t_dst = &(*ref_t).0;
+        let result = (t_dst + scalar as f64).unwrap();
+        (*ref_t).0 = result;
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_tensor_sub_assign_scalar_f32(ref_t: *mut OpaqueTensor, scalar: f32) {
+    unsafe {
+        let t_dst = &(*ref_t).0;
+        let result = (t_dst - scalar as f64).unwrap();
+        (*ref_t).0 = result;
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn tl_tensor_reshape_new(
     t: *mut OpaqueTensor,

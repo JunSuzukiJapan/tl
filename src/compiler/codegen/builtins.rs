@@ -399,6 +399,14 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_mul_assign", assign_type);
     add_fn("tl_tensor_div_assign", assign_type);
 
+    // Scalar assign ops: *_scalar_f32(tensor, f32) -> void
+    let scalar_assign_type =
+        void_type.fn_type(&[void_ptr.into(), context.f32_type().into()], false);
+    add_fn("tl_tensor_add_assign_scalar_f32", scalar_assign_type);
+    add_fn("tl_tensor_sub_assign_scalar_f32", scalar_assign_type);
+    add_fn("tl_tensor_mul_assign_scalar_f32", scalar_assign_type);
+    add_fn("tl_tensor_div_assign_scalar_f32", scalar_assign_type);
+
     let i8_ptr = context.ptr_type(AddressSpace::default());
     let register_type = void_type.fn_type(&[i8_ptr.into(), void_ptr.into()], false);
     add_fn("tl_register_tensor", register_type);
@@ -1118,6 +1126,19 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tensor_div_assign") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_div_assign as usize);
+    }
+    // Scalar assign variants
+    if let Some(f) = module.get_function("tl_tensor_mul_assign_scalar_f32") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_mul_assign_scalar_f32 as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_div_assign_scalar_f32") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_div_assign_scalar_f32 as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_add_assign_scalar_f32") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_add_assign_scalar_f32 as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_sub_assign_scalar_f32") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_sub_assign_scalar_f32 as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_exp") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_exp as usize);

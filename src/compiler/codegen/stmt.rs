@@ -1589,7 +1589,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     AssignOp::SubAssign => {
                         // SubAssign logic (In-Place for Tensor)
                         if let Type::Tensor(_, _) = var_type {
-                            // Load current val
                             let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                             let current_val = self
                                 .builder
@@ -1600,17 +1599,176 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 )
                                 .map_err(|e| e.to_string())?;
 
-                            // Call sub_assign
-                            let sub_assign_fn =
-                                self.module.get_function("tl_tensor_sub_assign").unwrap();
+                            let sub_assign_fn = if matches!(val_type, Type::Tensor(_, _)) {
+                                self.module.get_function("tl_tensor_sub_assign").unwrap()
+                            } else {
+                                self.module
+                                    .get_function("tl_tensor_sub_assign_scalar_f32")
+                                    .unwrap()
+                            };
+
+                            let val_arg = if matches!(val_type, Type::Tensor(_, _)) {
+                                val.into()
+                            } else {
+                                let scalar_f32: inkwell::values::FloatValue = match val_type {
+                                    Type::F32 => val.into_float_value(),
+                                    Type::F64 => self
+                                        .builder
+                                        .build_float_cast(
+                                            val.into_float_value(),
+                                            self.context.f32_type(),
+                                            "f64_to_f32",
+                                        )
+                                        .map_err(|e| e.to_string())?,
+                                    Type::I64 | Type::I32 => self
+                                        .builder
+                                        .build_signed_int_to_float(
+                                            val.into_int_value(),
+                                            self.context.f32_type(),
+                                            "int_to_f32",
+                                        )
+                                        .map_err(|e| e.to_string())?,
+                                    _ => {
+                                        return Err(format!(
+                                            "SubAssign: unsupported RHS type {:?}",
+                                            val_type
+                                        ))
+                                    }
+                                };
+                                scalar_f32.into()
+                            };
+
                             self.builder
-                                .build_call(sub_assign_fn, &[current_val.into(), val.into()], "")
+                                .build_call(sub_assign_fn, &[current_val.into(), val_arg], "")
                                 .map_err(|e| e.to_string())?;
 
-                            // Return early to avoid store (in-place)
                             return Ok(());
                         } else {
                             return Err("SubAssign -= only supported for Tensors currently via in-place optimization".into());
+                        }
+                    }
+                    AssignOp::MulAssign => {
+                        // MulAssign logic (In-Place for Tensor)
+                        if let Type::Tensor(_, _) = var_type {
+                            let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                            let current_val = self
+                                .builder
+                                .build_load(
+                                    load_type,
+                                    var_ptr.into_pointer_value(),
+                                    &format!("{}_current", name),
+                                )
+                                .map_err(|e| e.to_string())?;
+
+                            // Check if val is a scalar or Tensor and call appropriate function
+                            let mul_assign_fn = if matches!(val_type, Type::Tensor(_, _)) {
+                                self.module.get_function("tl_tensor_mul_assign").unwrap()
+                            } else {
+                                self.module
+                                    .get_function("tl_tensor_mul_assign_scalar_f32")
+                                    .unwrap()
+                            };
+
+                            let val_arg = if matches!(val_type, Type::Tensor(_, _)) {
+                                val.into()
+                            } else {
+                                // Convert to f32 if necessary
+                                let scalar_f32: inkwell::values::FloatValue = match val_type {
+                                    Type::F32 => val.into_float_value(),
+                                    Type::F64 => self
+                                        .builder
+                                        .build_float_cast(
+                                            val.into_float_value(),
+                                            self.context.f32_type(),
+                                            "f64_to_f32",
+                                        )
+                                        .map_err(|e| e.to_string())?,
+                                    Type::I64 | Type::I32 => self
+                                        .builder
+                                        .build_signed_int_to_float(
+                                            val.into_int_value(),
+                                            self.context.f32_type(),
+                                            "int_to_f32",
+                                        )
+                                        .map_err(|e| e.to_string())?,
+                                    _ => {
+                                        return Err(format!(
+                                            "MulAssign: unsupported RHS type {:?}",
+                                            val_type
+                                        ))
+                                    }
+                                };
+                                scalar_f32.into()
+                            };
+
+                            self.builder
+                                .build_call(mul_assign_fn, &[current_val.into(), val_arg], "")
+                                .map_err(|e| e.to_string())?;
+
+                            return Ok(());
+                        } else {
+                            return Err("MulAssign *= only supported for Tensors currently via in-place optimization".into());
+                        }
+                    }
+                    AssignOp::DivAssign => {
+                        // DivAssign logic (In-Place for Tensor)
+                        if let Type::Tensor(_, _) = var_type {
+                            let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                            let current_val = self
+                                .builder
+                                .build_load(
+                                    load_type,
+                                    var_ptr.into_pointer_value(),
+                                    &format!("{}_current", name),
+                                )
+                                .map_err(|e| e.to_string())?;
+
+                            let div_assign_fn = if matches!(val_type, Type::Tensor(_, _)) {
+                                self.module.get_function("tl_tensor_div_assign").unwrap()
+                            } else {
+                                self.module
+                                    .get_function("tl_tensor_div_assign_scalar_f32")
+                                    .unwrap()
+                            };
+
+                            let val_arg = if matches!(val_type, Type::Tensor(_, _)) {
+                                val.into()
+                            } else {
+                                let scalar_f32: inkwell::values::FloatValue = match val_type {
+                                    Type::F32 => val.into_float_value(),
+                                    Type::F64 => self
+                                        .builder
+                                        .build_float_cast(
+                                            val.into_float_value(),
+                                            self.context.f32_type(),
+                                            "f64_to_f32",
+                                        )
+                                        .map_err(|e| e.to_string())?,
+                                    Type::I64 | Type::I32 => self
+                                        .builder
+                                        .build_signed_int_to_float(
+                                            val.into_int_value(),
+                                            self.context.f32_type(),
+                                            "int_to_f32",
+                                        )
+                                        .map_err(|e| e.to_string())?,
+                                    _ => {
+                                        return Err(format!(
+                                            "DivAssign: unsupported RHS type {:?}",
+                                            val_type
+                                        ))
+                                    }
+                                };
+                                scalar_f32.into()
+                            };
+
+                            self.builder
+                                .build_call(div_assign_fn, &[current_val.into(), val_arg], "")
+                                .map_err(|e| e.to_string())?;
+
+                            return Ok(());
+                        } else {
+                            return Err("DivAssign /= only supported for Tensors currently via in-place optimization".into());
                         }
                     }
                     _ => return Err(format!("Unsupported assignment op: {:?}", op)),
