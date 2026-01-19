@@ -5460,26 +5460,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut mask: i64 = 0;
         let mut compiled_args = Vec::new();
 
-        // Check for implicit arity injection (e.g. Arg 0 is Int(arity))
-        let start_index = if !args.is_empty() {
-            if let ExprKind::Int(val) = &args[0].inner {
-                if *val == (args.len() - 1) as i64 {
-                    1
-                } else if *val == 0 && args.len() > 1 {
-                    eprintln!(
-                        "WARNING: Skipping likely injected metadata Int(0) in relation call '{}'",
-                        name
-                    );
-                    1
-                } else {
-                    0
-                }
-            } else {
-                0
-            }
-        } else {
-            0
-        };
+        // Semantics phase no longer injects metadata. Start index is always 0.
+        let start_index = 0;
 
         for (i, arg) in args.iter().skip(start_index).enumerate() {
             match &arg.inner {
@@ -5500,7 +5482,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
 
                     if found {
-                        let (val, _ty) = self.compile_expr(arg)?;
+                        // Treat as Variable lookup
+                        // We construct a temporary Expr to leverage compile_expr(Variable) logic (loading ptrs etc)
+                        let var_expr = Expr {
+                            inner: ExprKind::Variable(sym_name.clone()),
+                            span: arg.span.clone(),
+                        };
+                        let (val, _ty) = self.compile_expr(&var_expr)?;
                         compiled_args.push(val);
                     } else {
                         // Assume constant Entity Name

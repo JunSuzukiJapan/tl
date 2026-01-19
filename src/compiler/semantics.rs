@@ -2842,31 +2842,12 @@ impl SemanticAnalyzer {
                     }
 
                     // Check arguments (Entity/Symbol/LogicVar)
-                    // Compute mask: 1 << i if arg is LogicVar
-                    let mut mask: i64 = 0;
-                    for (i, arg) in args.iter_mut().enumerate() {
+                    for arg in args.iter_mut() {
                         let arg_ty = self.check_expr(arg)?;
-                        // Allow Entity, or maybe I64/String if converted?
-                        // Symbols are Entity. LogicVars are Entity.
                         if !matches!(arg_ty, Type::Entity | Type::I64) {
                             // Potentially error, or allow implicit casting?
-                            // For now, assume Entity.
-                        }
-
-                        // Check if LogicVar for mask
-                        if let ExprKind::LogicVar(_) = arg.inner {
-                            mask |= 1 << i;
                         }
                     }
-
-                    // Inject mask argument
-                    args.insert(
-                        0,
-                        Expr {
-                            inner: ExprKind::Int(mask),
-                            span: expr.span.clone(),
-                        },
-                    );
 
                     // Return Tensor result (e.g. 1D tensor for now, or boolean tensor)
                     // tl_query returns *mut Tensor. Semantic type is Tensor.
