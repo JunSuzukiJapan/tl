@@ -1,1 +1,3 @@
-import import_cycle_b;
+// EXIT: 1
+// STDERR: Cyclic dependency detected
+mod import_cycle_b;

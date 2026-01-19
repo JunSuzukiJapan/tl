@@ -451,16 +451,53 @@ fn is_trivially_true(body: &[tl_lang::compiler::ast::Atom]) -> bool {
 }
 
 /// モジュールをロードし、ソースコードも返す
+/// モジュールをロードし、ソースコードも返す
 fn load_module_with_source(
     path: PathBuf,
 ) -> Result<(tl_lang::compiler::ast::Module, String), TlError> {
+    let mut visited = HashSet::new();
+    load_module_recursive(path, &mut visited)
+}
+
+fn load_module_recursive(
+    path: PathBuf,
+    visited: &mut HashSet<PathBuf>,
+) -> Result<(tl_lang::compiler::ast::Module, String), TlError> {
+    // Canonicalize path to handle relative paths and symlinks consistently
+    let canonical_path = match fs::canonicalize(&path) {
+        Ok(p) => p,
+        Err(_) => path.clone(), // Fallback if file doesn't exist yet (handled by read_to_string later)
+    };
+
+    if visited.contains(&canonical_path) {
+        return Err(TlError::Parse {
+            kind: tl_lang::compiler::error::ParseErrorKind::Generic(format!(
+                "Cyclic dependency detected: {:?}",
+                path
+            )),
+            span: None,
+        });
+    }
+    visited.insert(canonical_path.clone());
+
     let path_str = path.to_str().unwrap_or("unknown").to_string();
 
-    let content = fs::read_to_string(&path).map_err(|e| TlError::Io(e))?;
+    let content = match fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            // visited.remove(&canonical_path); // Cleanup not strictly necessary on error return
+            return Err(TlError::Io(e));
+        }
+    };
     let source = content.clone();
 
-    let mut module =
-        tl_lang::compiler::parser::parse(&content).map_err(|e| e.with_file(&path_str))?;
+    let mut module = match tl_lang::compiler::parser::parse(&content) {
+        Ok(m) => m,
+        Err(e) => {
+            // visited.remove(&canonical_path);
+            return Err(e.with_file(&path_str));
+        }
+    };
 
     let parent_dir = path.parent().unwrap_or(Path::new("."));
 
@@ -477,10 +514,15 @@ fn load_module_with_source(
             });
         }
 
-        let (submodule, _) = load_module_with_source(import_path)?;
-        module.submodules.insert(import_name.clone(), submodule);
+        match load_module_recursive(import_path, visited) {
+            Ok((submodule, _)) => {
+                module.submodules.insert(import_name.clone(), submodule);
+            }
+            Err(e) => return Err(e),
+        }
     }
 
+    visited.remove(&canonical_path);
     Ok((module, source))
 }
 
