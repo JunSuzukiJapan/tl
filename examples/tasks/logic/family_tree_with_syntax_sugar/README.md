@@ -24,8 +24,8 @@ ancestor(a, d) :- father(a, x), ancestor(x, d).
 
 ### Queries
 ```rust
-let res = @father(alice, bob)?;       // Boolean query
-let res = @ancestor(alice, $x)?;      // Variable query ($x is unbound)
+let res = ?father(alice, bob);        // Boolean query
+let res = ?ancestor(alice, $x);       // Variable query ($x is unbound)
 ```
 
 ### Module System

@@ -40,13 +40,13 @@ You can query the Knowledge Base (KB) using the `?` suffix. Queries return Tenso
 ```rust
 // 1. Boolean Query (True/False)
 // Returns a 0-dimensional tensor: [1.] (True) or [0.] (False)
-let is_father = @father(alice, bob)?; 
+let is_father = ?father(alice, bob); 
 println("Is alice father of bob? {}", is_father);
 
 // 2. Variable Query (Search)
 // Use $variable to ask "who?". Returns a list of matches.
 // Result: Tensor of shape [N, 1] containing entity IDs (or names when printed).
-let children = @father(alice, $child)?;
+let children = ?father(alice, $child);
 println("Children of alice: {}", children);
 ```
 
@@ -58,7 +58,7 @@ TL automatically maps entity names (symbols) to unique integer IDs internally. W
 father(alice, bob).
 
 fn main() {
-    println("{}", @father(alice, $x)?);
+    println("{}", ?father(alice, $x));
     // Output:
     // [[bob]]
 }
@@ -77,7 +77,7 @@ father(alice, bob).
 grandparent(x, z) :- father(x, y), father(y, z).
 
 fn main() {
-    let res = @grandparent(alice, $x)?;
+    let res = ?grandparent(alice, $x);
     println("{}", res);
 }
 ```
@@ -108,7 +108,7 @@ use logic::*;
 
 fn main() {
     // Facts from 'facts.tl' and rules from 'logic.tl' are automatically loaded.
-    let res = @grandparent(alice, $x)?;
+    let res = ?grandparent(alice, $x);
     println("{}", res);
 }
 ```
@@ -123,7 +123,7 @@ Since query results are standard TL Tensors, you can use them in mathematical op
 Example: Neuro-Symbolic Integration
 ```rust
 // Logic: Find all ancestors
-let ancestors = @ancestor(alice, $x)?;
+let ancestors = ?ancestor(alice, $x);
 
 // Neural: Get embeddings for these ancestors
 let embeds = embedding(ancestors, weights);

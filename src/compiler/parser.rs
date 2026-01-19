@@ -511,12 +511,11 @@ fn parse_match_expr(input: Span) -> IResult<Span, Expr> {
     ))(input)
 }
 
-// Parses @pred(args)? as an expression (Query)
+// Parses ?pred(args) as an expression (Query)
 fn parse_logic_query_expr(input: Span) -> IResult<Span, Expr> {
     spanned(|input| {
-        let (input, _) = ws(char('@'))(input)?;
-        let (input, atom) = parse_datalog_atom(input)?;
         let (input, _) = ws(char('?'))(input)?;
+        let (input, atom) = parse_datalog_atom(input)?;
         Ok((input, ExprKind::FnCall(atom.predicate, atom.args)))
     })(input)
 }
@@ -530,7 +529,7 @@ fn parse_atom(input: Span) -> IResult<Span, Expr> {
         parse_literal_string,
         parse_if_let_expr,
         parse_if_expr,
-        parse_logic_query_expr,     // @... queries
+        parse_logic_query_expr,     // ?... queries
         parse_tensor_comprehension, // Try parsing comprehension before literal array
         parse_tensor_literal,
         parse_aggregation,

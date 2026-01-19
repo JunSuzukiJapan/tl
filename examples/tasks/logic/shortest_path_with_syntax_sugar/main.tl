@@ -24,7 +24,7 @@ fn main() {
     
     // Query: Is there an edge from A to B?
     println("Query: edge(a, b)?");
-    let res = @edge(a, b)?;
+    let res = ?edge(a, b);
     print("Result: ");
     println(res);
     

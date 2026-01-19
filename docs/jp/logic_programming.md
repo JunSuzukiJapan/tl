@@ -40,13 +40,13 @@ ancestor(x, y) :- father(x, z), ancestor(z, y).
 ```rust
 // 1. 真偽値クエリ (True/False)
 // 0次元テンソルを返します: [1.] (真) または [0.] (偽)
-let is_father = @father(alice, bob)?; 
+let is_father = ?father(alice, bob); 
 println("Is alice father of bob? {}", is_father);
 
 // 2. 変数クエリ (検索)
 // $変数名 を使用して「誰が？」または「何を？」を問います。マッチしたリストを返します。
 // 結果: 形状 [N, 1] のテンソル。エンティティID（表示時は名前）を含みます。
-let children = @father(alice, $child)?;
+let children = ?father(alice, $child);
 println("Children of alice: {}", children);
 ```
 
@@ -58,7 +58,7 @@ TLは、エンティティ名（シンボル）を内部的に一意の整数ID�
 father(alice, bob).
 
 fn main() {
-    println("{}", @father(alice, $x)?);
+    println("{}", ?father(alice, $x));
     // 出力:
     // [[bob]]
 }
@@ -77,7 +77,7 @@ father(alice, bob).
 grandparent(x, z) :- father(x, y), father(y, z).
 
 fn main() {
-    let res = @grandparent(alice, $x)?;
+    let res = ?grandparent(alice, $x);
     println("{}", res);
 }
 ```
@@ -108,7 +108,7 @@ use logic::*;
 
 fn main() {
     // 'facts.tl' の事実と 'logic.tl' のルールは自動的に読み込まれます
-    let res = @grandparent(alice, $x)?;
+    let res = ?grandparent(alice, $x);
     println("{}", res);
 }
 ```
@@ -123,7 +123,7 @@ fn main() {
 例: ニューロ・シンボリック統合
 ```rust
 // 論理: すべての先祖を検索
-let ancestors = @ancestor(alice, $x)?;
+let ancestors = ?ancestor(alice, $x);
 
 // ニューラル: これらの先祖の埋め込みベクトルを取得
 let embeds = embedding(ancestors, weights);

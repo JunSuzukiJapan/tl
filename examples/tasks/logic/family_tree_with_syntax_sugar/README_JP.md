@@ -24,8 +24,8 @@ ancestor(a, d) :- father(a, x), ancestor(x, d).
 
 ### クエリ（Queries）
 ```rust
-let res = @father(alice, bob)?;       // ブール型クエリ
-let res = @ancestor(alice, $x)?;      // 変数クエリ（$xは未束縛）
+let res = ?father(alice, bob);        // ブール型クエリ
+let res = ?ancestor(alice, $x);       // 変数クエリ（$xは未束縛）
 ```
 
 ### モジュールシステム
