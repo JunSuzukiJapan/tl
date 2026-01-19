@@ -1448,7 +1448,6 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_item") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_item as usize);
     }
-    fn_return_types.insert("tl_tensor_to_f32".to_string(), Type::F32);
 
     // CLI Args
     fn_return_types.insert("tl_args_count".to_string(), Type::I64);
@@ -1658,6 +1657,12 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_image_height") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_image_height as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_to_f32") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_to_f32 as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_to_i64") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_to_i64 as usize);
     }
 
     // End of function

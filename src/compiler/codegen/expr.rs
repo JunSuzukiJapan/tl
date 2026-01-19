@@ -1885,7 +1885,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         };
 
                         if *elem_ty == *target_elem {
-                            self.emit_register_tensor(tensor_val, target_type)?;
+                            // self.emit_register_tensor(tensor_val, target_type)?;
+
                             Ok((tensor_val, target_type.clone()))
                         } else {
                             // Cast the newly created tensor
@@ -1903,7 +1904,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                         ValueKind::Basic(v) => v,
                                         _ => return Err("Invalid return".into()),
                                     };
-                                    self.emit_register_tensor(res, target_type)?;
+                                    // self.emit_register_tensor(res, target_type)?;
+
                                     Ok((res, target_type.clone()))
                                 }
                                 Type::I64 => {
@@ -1919,7 +1921,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                         ValueKind::Basic(v) => v,
                                         _ => return Err("Invalid return".into()),
                                     };
-                                    self.emit_register_tensor(res, target_type)?;
+                                    // self.emit_register_tensor(res, target_type)?;
+
                                     Ok((res, target_type.clone()))
                                 }
                                 _ => Err(format!(
@@ -1943,7 +1946,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 ValueKind::Basic(v) => v,
                                 _ => return Err("Invalid return".into()),
                             };
-                            self.emit_register_tensor(res, target_type)?;
+                            // self.emit_register_tensor(res, target_type)?;
+
                             Ok((res, target_type.clone()))
                         }
                         Type::I64 => {
@@ -1959,7 +1963,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 ValueKind::Basic(v) => v,
                                 _ => return Err("Invalid return".into()),
                             };
-                            self.emit_register_tensor(res, target_type)?;
+                            // self.emit_register_tensor(res, target_type)?;
+
                             Ok((res, target_type.clone()))
                         }
                         _ => Err(format!("Unsupported tensor cast target: {:?}", inner_dst)),

@@ -1,13 +1,13 @@
-@father(tarou, ichirou).
-@father(tarou, jirou).
+father(tarou, ichirou).
+father(tarou, jirou).
 
-@grandparent(x, y) :- father(x, z), father(z, y).
+grandparent(x, y) :- father(x, z), father(z, y).
 
 fn main() {
     print("Running Logic Sugar Test");
 
     // Test query expression
-    let res = @father(tarou, $x)?;
+    let res = ?father(tarou, $x);
     print("Father query result:");
     print(res);
     
