@@ -195,10 +195,39 @@ fn parse_bool(input: Span) -> IResult<Span, Expr> {
 }
 
 fn parse_literal_string(input: Span) -> IResult<Span, Expr> {
-    spanned(map(
-        delimited(char('"'), take_while(|c: char| c != '"'), char('"')),
-        |s: Span| ExprKind::StringLiteral(s.fragment().to_string()),
-    ))(input)
+    use nom::bytes::complete::is_not;
+    use nom::character::complete::anychar;
+    use nom::combinator::value;
+    use nom::multi::fold_many0;
+
+    let build_string = fold_many0(
+        alt((
+            // Unescaped characters: everything except " and \
+            map(is_not("\"\\"), |s: Span| s.fragment().to_string()),
+            // Escape sequences
+            preceded(
+                char('\\'),
+                alt((
+                    value(String::from("\\"), char('\\')),
+                    value(String::from("\""), char('\"')),
+                    value(String::from("\n"), char('n')),
+                    value(String::from("\r"), char('r')),
+                    value(String::from("\t"), char('t')),
+                    // Fallback: use any character following the backslash
+                    map(anychar, |c| c.to_string()),
+                )),
+            ),
+        )),
+        String::new,
+        |mut acc, fragment| {
+            acc.push_str(&fragment);
+            acc
+        },
+    );
+
+    spanned(map(delimited(char('"'), build_string, char('"')), |s| {
+        ExprKind::StringLiteral(s)
+    }))(input)
 }
 
 fn parse_variable(input: Span) -> IResult<Span, Expr> {
