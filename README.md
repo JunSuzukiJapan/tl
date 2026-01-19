@@ -245,6 +245,74 @@ fn main() {
 }
 ```
 
+## Code Example: Neuro-Symbolic AI (Spatial Reasoning)
+
+The following example demonstrates how to fuse **Vision** (Tensor) and **Reasoning** (Logic).
+It detects spatial relationships from raw coordinates and infers hidden facts using logic rules (Transitivity).
+
+```rust
+// 1. Symbolic Knowledge Base (The "Mind")
+// Define concepts (objects)
+object(1, cup).
+object(2, box).
+object(3, table).
+
+// Recursive Logic Rule: Transitivity
+// If X is on Y, then X is stacked on Y.
+// If X is on Z, and Z is stacked on Y, then X is stacked on Y.
+stacked_on(top, bot) :- on_top_of(top, bot).
+stacked_on(top, bot) :- on_top_of(top, mid), stacked_on(mid, bot).
+
+
+fn main() {
+    println("--- Neuro-Symbolic AI Demo: Spatial Reasoning ---");
+
+    // 2. Perception (Tensor Data)
+    // Simulated bounding boxes detected by a vision model [x, y, w, h]
+    let cup_bbox   = [10.0, 20.0, 4.0, 4.0];  // Cup is high (y=20)
+    let box_bbox   = [10.0, 10.0, 10.0, 10.0]; // Box is middle (y=10)
+    let table_bbox = [10.0, 0.0, 50.0, 10.0];  // Table is low (y=0)
+
+    println("\n[Visual Scene]");
+    println("   [Cup]   (y=20)");
+    println("     |     ");
+    println("   [Box]   (y=10)");
+    println("     |     ");
+    println("[=========] (Table y=0)");
+    println("");
+
+    // 3. Neuro-Symbolic Fusion
+    // Detect spatial relationships from coordinates and inject them as facts.
+
+    // Detect: Cup on Box?
+    if cup_bbox[1] > box_bbox[1] {
+        on_top_of(1, 2). 
+        println("Detected: Cup is on_top_of Box");
+    }
+
+    // Detect: Box on Table?
+    if box_bbox[1] > table_bbox[1] {
+        on_top_of(2, 3).
+        println("Detected: Box is on_top_of Table");
+    }
+
+    // 4. Logical Inference
+    println("\n[Logical Inference]");
+    println("Querying: Is Cup stacked on Table? (?stacked_on(1, 3))");
+
+    // Execute Logic Query
+    // We never explicitly saw "Cup on Table", but logic infers it via "Box".
+    let res = ?stacked_on(1, 3);
+
+    if res.item() > 0.5 {
+        println("Result: YES (Confidence: {:.4})", res.item());
+        println("Reasoning: Cup -> Box -> Table (Transitivity)");
+    } else {
+        println("Result: NO");
+    }
+}
+```
+
 ## Documentation
 
 - [Advantages of TensorLogic](docs/tensor_logic_advantages.md)

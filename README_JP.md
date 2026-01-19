@@ -244,6 +244,74 @@ fn main() {
 }
 ```
 
+## サンプルコード: ニューロシンボリックAI (空間推論)
+
+以下の例は、**視覚**（テンソル）と**推論**（論理）を融合させる方法を示しています。
+生の座標データから空間的な関係を検出し、論理ルール（推移律）を使用して隠れた事実を推論します。
+
+```rust
+// 1. 記号的知識ベース（「思考」）
+// 概念（オブジェクト）の定義
+object(1, cup).
+object(2, box).
+object(3, table).
+
+// 再帰的な論理ルール：推移律
+// XがYの上にあるなら、XはYに「積まれている」。
+// XがZの上にあり、ZがYに積まれているなら、XはYに「積まれている」。
+stacked_on(top, bot) :- on_top_of(top, bot).
+stacked_on(top, bot) :- on_top_of(top, mid), stacked_on(mid, bot).
+
+
+fn main() {
+    println("--- Neuro-Symbolic AI Demo: Spatial Reasoning ---");
+
+    // 2. 知覚（テンソルデータ）
+    // ビジョンモデルによって検出されたバウンディングボックス（シミュレーション） [x, y, w, h]
+    let cup_bbox   = [10.0, 20.0, 4.0, 4.0];  // Cup is high (y=20)
+    let box_bbox   = [10.0, 10.0, 10.0, 10.0]; // Box is middle (y=10)
+    let table_bbox = [10.0, 0.0, 50.0, 10.0];  // Table is low (y=0)
+
+    println("\n[Visual Scene]");
+    println("   [Cup]   (y=20)");
+    println("     |     ");
+    println("   [Box]   (y=10)");
+    println("     |     ");
+    println("[=========] (Table y=0)");
+    println("");
+
+    // 3. ニューロシンボリック融合
+    // 座標から空間的な関係を検出し、事実（Fact）として注入する
+
+    // 検出: Cup on Box?
+    if cup_bbox[1] > box_bbox[1] {
+        on_top_of(1, 2). 
+        println("Detected: Cup is on_top_of Box");
+    }
+
+    // 検出: Box on Table?
+    if box_bbox[1] > table_bbox[1] {
+        on_top_of(2, 3).
+        println("Detected: Box is on_top_of Table");
+    }
+
+    // 4. 論理推論
+    println("\n[Logical Inference]");
+    println("Querying: Is Cup stacked on Table? (?stacked_on(1, 3))");
+
+    // 論理クエリの実行
+    // 「カップがテーブルの上にある」とは明示されていませんが、論理が「箱」を介してそれを推論します。
+    let res = ?stacked_on(1, 3);
+
+    if res.item() > 0.5 {
+        println("Result: YES (Confidence: {:.4})", res.item());
+        println("Reasoning: Cup -> Box -> Table (Transitivity)");
+    } else {
+        println("Result: NO");
+    }
+}
+```
+
 ## ドキュメント
 
 - [TensorLogicの利点](docs/jp/tensor_logic_advantages_jp.md)
