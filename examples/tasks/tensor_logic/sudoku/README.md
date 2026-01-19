@@ -22,7 +22,7 @@ Given a 9×9 Sudoku puzzle with some cells pre-filled, find a solution where:
 The puzzle is passed as a command line argument (81-character string, 0 = empty cell):
 
 ```bash
-cargo run --release --bin tl -- run examples/tasks/tensor_logic/sudoku/sudoku.tl -- "530070000600195000098000060800060003400803001700020006060000280000419005000080079"
+cargo run --release -- examples/tasks/tensor_logic/sudoku/sudoku.tl -- "530070000600195000098000060800060003400803001700020006060000280000419005000080079"
 ```
 
 If no argument is provided, a default puzzle is used.

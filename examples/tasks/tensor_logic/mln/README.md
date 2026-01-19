@@ -22,7 +22,7 @@ We treat the truth values of predicates (`Smokes`, `Cancer`) as continuous proba
 ## How to Run
 
 ```bash
-cargo run --release -- run examples/tasks/tensor_logic/mln/mln.tl
+cargo run --release -- examples/tasks/tensor_logic/mln/mln.tl
 ```
 
 ## Expected Output

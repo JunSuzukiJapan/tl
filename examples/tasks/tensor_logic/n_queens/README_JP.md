@@ -28,8 +28,8 @@ $N \times N$ の盤面に $N$ 個のクイーンを、互いに攻撃し合わ�
 
 ```bash
 # デフォルト (N=8, 解10個)
-cargo run --release -- run examples/tasks/tensor_logic/n_queens/n_queens.tl
+cargo run --release -- examples/tasks/tensor_logic/n_queens/n_queens.tl
 
 # カスタム設定 (例: N=4, 解2個)
-cargo run --release -- run examples/tasks/tensor_logic/n_queens/n_queens.tl -- 4 2
+cargo run --release -- examples/tasks/tensor_logic/n_queens/n_queens.tl -- 4 2
 ```

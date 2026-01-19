@@ -25,7 +25,7 @@ The implementation features custom-coded versions of:
 
 To train the model:
 ```bash
-cargo run --release --bin tl -- run examples/tasks/addition/train_add.tl
+cargo run --release --bin tl -- examples/tasks/addition/train_add.tl
 ```
 
 The model weights will be saved as `model_add.safetensors`.

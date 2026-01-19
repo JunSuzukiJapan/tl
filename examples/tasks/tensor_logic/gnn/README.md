@@ -23,7 +23,7 @@ The program performs the following:
 Run the example using the `tl` compiler:
 
 ```bash
-cargo run --release -- run examples/tasks/tensor_logic/gnn/gnn.tl
+cargo run --release -- examples/tasks/tensor_logic/gnn/gnn.tl
 ```
 
 ## Key Learnings

@@ -22,5 +22,5 @@ Each directory contains:
 
 To run a task (e.g., MNIST training):
 ```bash
-cargo run --release --bin tl -- run examples/tasks/mnist/train.tl
+cargo run --release --bin tl -- examples/tasks/mnist/train.tl
 ```

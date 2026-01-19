@@ -19,10 +19,10 @@ A fully-featured chatbot utilizing the TinyLlama-1.1B model. It implements moder
 2.  **Run the Chatbot**:
     ```bash
     # Standard CPU execution
-    cargo run --release --bin tl -- run examples/apps/tinyllama/chatbot.tl
+    cargo run --release --bin tl -- examples/apps/tinyllama/chatbot.tl
 
     # With Metal (Apple Silicon GPU) acceleration
-    cargo run --release --features metal --bin tl -- run examples/apps/tinyllama/chatbot.tl
+    cargo run --release --features metal --bin tl -- examples/apps/tinyllama/chatbot.tl
     ```
 
 3.  **Interaction**:

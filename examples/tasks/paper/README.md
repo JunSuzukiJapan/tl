@@ -18,7 +18,7 @@ The "Paper" model configuration is a classic 2-layer GPT-style Transformer with 
 
 To train the baseline model:
 ```bash
-cargo run --release --bin tl -- run examples/tasks/paper/train_paper.tl
+cargo run --release --bin tl -- examples/tasks/paper/train_paper.tl
 ```
 
 The model weights will be saved to `model_paper.safetensors`. This model is often used as a starting point for more complex experiments.

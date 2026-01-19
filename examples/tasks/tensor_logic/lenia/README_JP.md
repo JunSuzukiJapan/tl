@@ -11,7 +11,7 @@
 ## 実行方法
 
 ```bash
-cargo run --release -- run examples/tasks/tensor_logic/lenia/lenia.tl
+cargo run --release -- examples/tasks/tensor_logic/lenia/lenia.tl
 ```
 
 スクリプトは 100 ステップ実行され、活動状況を示すために一定間隔でグリッドの総質量 (total mass) を出力します。

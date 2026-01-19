@@ -19,7 +19,7 @@ A chatbot application utilizing the Llama 3.1 8B Instruct model.
 
 2.  **Run the Chatbot**:
     ```bash
-    cargo run --release --bin tl -- run examples/apps/llama3/chatbot_llama3.tl
+    cargo run --release --bin tl -- examples/apps/llama3/chatbot_llama3.tl
     ```
 
 3.  **Interaction**:

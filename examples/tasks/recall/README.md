@@ -23,7 +23,7 @@ To succeed, the model must:
 
 To train the model:
 ```bash
-cargo run --release --bin tl -- run examples/tasks/recall/train_recall.tl
+cargo run --release --bin tl -- examples/tasks/recall/train_recall.tl
 ```
 
 The weights will be saved to `recall_weights.safetensors`. You can verify retrieval accuracy using the corresponding inference script.

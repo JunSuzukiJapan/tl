@@ -24,5 +24,5 @@ Queens attack horizontally, vertically, and diagonally.
 ## Usage
 Run the solver:
 ```bash
-cargo run --release --bin tl -- run examples/tasks/n_queens/n_queens.tl
+cargo run --release --bin tl -- examples/tasks/n_queens/n_queens.tl
 ```

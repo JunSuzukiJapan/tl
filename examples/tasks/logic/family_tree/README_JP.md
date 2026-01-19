@@ -20,5 +20,5 @@ Prologのような記号的なユニフィケーションやバックトラッ�
 ## 使い方
 
 ```bash
-cargo run --release --bin tl -- run examples/tasks/logic/family_tree/family_tree.tl
+cargo run --release --bin tl -- examples/tasks/logic/family_tree/family_tree.tl
 ```

@@ -29,10 +29,10 @@ Detailed data loading logic is implemented in `mnist_common.tl`.
 
 To train the model:
 ```bash
-cargo run --release --bin tl -- run examples/tasks/mnist/train.tl
+cargo run --release --bin tl -- examples/tasks/mnist/train.tl
 ```
 
 To run a single inference (predicting from a sample PNG):
 ```bash
-cargo run --release --bin tl -- run examples/tasks/mnist/infer.tl
+cargo run --release --bin tl -- examples/tasks/mnist/infer.tl
 ```

@@ -20,7 +20,7 @@ This task specifically tests the model's understanding of **Position Embeddings*
 
 To train the reversal model:
 ```bash
-cargo run --release --bin tl -- run examples/tasks/reverse/reverse_train.tl
+cargo run --release --bin tl -- examples/tasks/reverse/reverse_train.tl
 ```
 
 Weights are saved to `reverse_model.safetensors`.

@@ -20,7 +20,7 @@ The "Heavy" model is a 4-layer GPT with an embedding dimension of 384. Training 
 
 To train the heavy model:
 ```bash
-cargo run --release --bin tl -- run examples/tasks/heavy/train_heavy.tl
+cargo run --release --bin tl -- examples/tasks/heavy/train_heavy.tl
 ```
 
 The model weights will be saved to `model_heavy.safetensors` every 5 epochs.

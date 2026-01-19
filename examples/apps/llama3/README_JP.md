@@ -19,7 +19,7 @@ Llama 3.1 8B Instruct モデルを使用したチャットボットアプリケ�
 
 2.  **コンパイルと実行**:
     ```bash
-    cargo run --release --bin tl -- run examples/apps/llama3/chatbot_llama3.tl
+    cargo run --release --bin tl -- examples/apps/llama3/chatbot_llama3.tl
     ```
 
 3.  **対話**:

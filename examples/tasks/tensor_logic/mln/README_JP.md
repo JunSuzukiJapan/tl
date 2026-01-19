@@ -22,7 +22,7 @@ Markov Logic Network は、一階述語論理と確率的グラフィカルモ�
 ## 実行方法
 
 ```bash
-cargo run --release -- run examples/tasks/tensor_logic/mln/mln.tl
+cargo run --release -- examples/tasks/tensor_logic/mln/mln.tl
 ```
 
 ## 期待される出力

@@ -20,10 +20,10 @@ TinyLlama-1.1B モデルを使用した、対話型のチャットボットア�
 2.  **コンパイルと実行**:
     ```bash
     # 標準実行
-    cargo run --release --bin tl -- run examples/apps/tinyllama/chatbot.tl
+    cargo run --release --bin tl -- examples/apps/tinyllama/chatbot.tl
 
     # Metal (Apple Silicon GPU) アクセラレーションを使用する場合
-    cargo run --release --features metal --bin tl -- run examples/apps/tinyllama/chatbot.tl
+    cargo run --release --features metal --bin tl -- examples/apps/tinyllama/chatbot.tl
     ```
 
 3.  **対話**:

@@ -11,7 +11,7 @@ It uses:
 ## How to Run
 
 ```bash
-cargo run --release -- run examples/tasks/tensor_logic/lenia/lenia.tl
+cargo run --release -- examples/tasks/tensor_logic/lenia/lenia.tl
 ```
 
 The script will run for 100 steps and print the total mass of the grid at intervals to show activity.

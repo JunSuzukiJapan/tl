@@ -27,5 +27,5 @@ let C = [i, j, k | ... { A[i, k] + B[k, j] }].min(2);
 ## Usage
 
 ```bash
-cargo run --release --bin tl -- run examples/tasks/logic/shortest_path/shortest_path.tl
+cargo run --release --bin tl -- examples/tasks/logic/shortest_path/shortest_path.tl
 ```

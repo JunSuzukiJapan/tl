@@ -22,7 +22,7 @@
 以下のコマンドで実行できます：
 
 ```bash
-cargo run --release -- run examples/tasks/tensor_logic/gnn/gnn.tl
+cargo run --release -- examples/tasks/tensor_logic/gnn/gnn.tl
 ```
 
 ## 学び
