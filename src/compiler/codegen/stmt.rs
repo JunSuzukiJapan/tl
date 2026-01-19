@@ -1005,20 +1005,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                             Type::Struct(_) | Type::UserDefined(_) => {
                                 // CRITICAL FIX: Unregister struct from scope to transfer ownership to caller.
                                 // Without this, exit_scope will free the struct before the caller can use it.
-                                if let Some(unreg_fn) =
-                                    self.module.get_function("tl_mem_unregister")
-                                {
-                                    let ptr = val.into_pointer_value();
-                                    let void_ptr_type =
-                                        self.context.ptr_type(inkwell::AddressSpace::default());
-                                    let cast_ptr = self
-                                        .builder
-                                        .build_pointer_cast(ptr, void_ptr_type, "cast_unreg_ret")
-                                        .unwrap();
-                                    self.builder
-                                        .build_call(unreg_fn, &[cast_ptr.into()], "")
-                                        .unwrap();
-                                }
+                                // CRITICAL FIX: recursively unregister struct fields (like Tensors)
+                                // so they are not freed by exit_scope.
+                                self.emit_recursive_unregister(val, &ty)?;
                             }
                             _ => {}
                         }
