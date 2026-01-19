@@ -3871,6 +3871,7 @@ dependencies = [
  "candle-coreml",
  "candle-nn",
  "candle-transformers",
+ "cc",
  "image",
  "lazy_static",
  "libc",

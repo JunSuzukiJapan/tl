@@ -39,4 +39,7 @@ metal = ["candle-core/metal"]
 cuda = ["candle-core/cuda"]
 coreml = ["dep:candle-coreml"]
 
+[build-dependencies]
+cc = "1.0"
+
 

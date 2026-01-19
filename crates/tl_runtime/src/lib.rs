@@ -5,6 +5,7 @@ pub mod memory_manager; // Arena allocator for tensor memory optimization
 
 pub mod checkpoint;
 pub mod context;
+pub mod cuda_ext;
 pub mod knowledge_base;
 pub mod llm;
 pub mod logic;
