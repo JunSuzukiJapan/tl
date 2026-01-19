@@ -242,3 +242,7 @@ fn main() {
 
 - [Tensor Logic: The Language of AI](https://arxiv.org/abs/2510.12269)
 - [Video: What is Tensor Logic? (Japanese)](https://www.youtube.com/watch?v=rkBLPYqPkP4)
+
+## Development
+
+- [Testing Guide](docs/dev/testing.md) - How to run tests and verification scripts.
