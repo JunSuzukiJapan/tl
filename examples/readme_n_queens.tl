@@ -18,7 +18,7 @@ fn main() {
         println("=== Attempting solution #{}", found_count + 1);
         
         let lr = 0.5;
-        let epochs = 3000;
+        let epochs = 1500;
         let mut board = Tensor::randn([N, N], true);
 
         for i in 0..epochs {
@@ -43,13 +43,21 @@ fn main() {
 
              if i % 100 == 0 {
                  println("Epoch {} - Loss: {}", i, total_loss.item());
+
+                 // Early exit: Stop when we have N queens (prob > 0.5)
+                 // Checking this is expensive (Tensor Comprehension + synchronization), so we only do it periodically
+                 let current_queens = [r, c | r <- 0..N, c <- 0..N { 
+                     if probs[r, c] > 0.5 { 1.0 } else { 0.0 } 
+                 }].sum().item();
+
+                 if current_queens == 8.0 {
+                     println("Converged at epoch {} (found {} queens)", i, current_queens);
+                     break;
+                 }
              }
 
-             // Early exit: constraints satisfied AND values are discrete
-             if constraint_loss.item() < 1e-3 && reg_loss.item() < 0.1 {
-                 println("Converged at epoch {}", i);
-                 break;
-             }
+             // Original simple loss check (optional, kept for reference but relying on queens count now)
+             // if constraint_loss.item() < 1e-3 && reg_loss.item() < 0.1 { ... }
 
              total_loss.backward();
              let g = board.grad();

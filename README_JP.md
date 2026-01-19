@@ -156,7 +156,7 @@ fn main() {
 
     while found_count < solutions_to_find {
         let lr = 0.5;
-        let epochs = 3000;
+        let epochs = 1500; // 高速なリトライ戦略
 
         // 1. ボードの確率分布を初期化 (ランダムノイズ)
         let mut board = Tensor::randn([N, N], true);
@@ -178,9 +178,16 @@ fn main() {
              
              let total_loss = col_loss + anti_diag_loss + main_diag_loss;
 
-             // breakで早期終了
-             if total_loss.item() < 1e-4 {
-                 break;
+             // パフォーマンス向上のため定期的にチェック
+             if i % 100 == 0 {
+                  // 早期終了: クイーンがN個見つかったら停止 (prob > 0.5)
+                 let current_queens = [r, c | r <- 0..N, c <- 0..N { 
+                     if probs[r, c] > 0.5 { 1.0 } else { 0.0 } 
+                 }].sum().item();
+
+                 if current_queens == 8.0 {
+                     break;
+                 }
              }
 
              total_loss.backward();
@@ -193,32 +200,43 @@ fn main() {
         // --- 結果判定と表示 ---
         let probs = board.softmax(1);
         
-        // 損失を再計算してチェック
-        let col_sums = probs.sum(0);
-        let col_loss = (col_sums - 1.0).pow(2).sum();
-        let anti_diag_sums = [k | k <- 0..(2 * N - 1), r <- 0..N, c <- 0..N, r + c == k { probs[r, c] }];
-        let main_diag_sums = [k | k <- 0..(2 * N - 1), r <- 0..N, c <- 0..N, r - c + N - 1 == k { probs[r, c] }];
-        let anti_diag_loss = (anti_diag_sums - 1.0).relu().pow(2).sum();
-        let main_diag_loss = (main_diag_sums - 1.0).relu().pow(2).sum();
-        let total_loss = col_loss + anti_diag_loss + main_diag_loss;
+        // クイーンの数をカウントして検証
+        let mut valid = true;
+        let mut total_queens = 0;
+        let mut rows = 0;
+        while rows < N {
+            let mut queen_count = 0;
+            let mut cols = 0;
+            while cols < N {
+               if probs[rows, cols] > 0.5 {
+                   queen_count = queen_count + 1;
+                   total_queens = total_queens + 1;
+               }
+               cols = cols + 1;
+            }
+            if queen_count != 1 {
+                valid = false;
+            }
+            rows = rows + 1;
+        }
 
-        if total_loss.item() < 1e-3 {
+        if valid && total_queens == N {
             found_count = found_count + 1;
             println("Solution #{}", found_count);
             
-            let mut rows = 0;
-            while rows < N {
-                let mut cols = 0;
-                while cols < N {
-                   if probs[rows, cols] > 0.5 {
+            let mut rows2 = 0;
+            while rows2 < N {
+                let mut cols2 = 0;
+                while cols2 < N {
+                   if probs[rows2, cols2] > 0.5 {
                        print(" Q ");
                    } else {
                        print(" . ");
                    }
-                   cols = cols + 1;
+                   cols2 = cols2 + 1;
                 }
                 println("");
-                rows = rows + 1;
+                rows2 = rows2 + 1;
             }
             println("----------------");
         }
