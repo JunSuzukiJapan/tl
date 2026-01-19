@@ -69,12 +69,27 @@ LONG_RUNNING = {
     "inverse_life.tl",
 }
 
+# 失敗することが期待されるファイル（エラーテスト用）
+# 終了コードが 0 以外であれば PASS とみなします
+EXPECTED_FAILURES = {
+    "match_non_exhaustive.tl",
+    "import_cycle_a.tl",
+    "if_let_unknown_field.tl",
+    "match_duplicate_arm.tl",
+    "match_unreachable_after_wildcard.tl",
+    "if_let_missing_else_value.tl",
+    "if_let_type_mismatch.tl",
+}
+
 def should_skip(filepath: Path) -> Tuple[bool, str]:
     """ファイルをスキップすべきか判定"""
     name = filepath.name
     if name in SKIP_FILES:
         return True, f"スキップ対象: {name}"
     if not has_main_function(filepath):
+        # EXPECTED_FAILURES に含まれている場合は、main関数がなくても実行を試みる（コンパイルエラー等を確認するため）
+        if name in EXPECTED_FAILURES:
+            return False, ""
         return True, "main 関数なし"
     return False, ""
 
@@ -96,6 +111,8 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int) -> TestResult:
     # 長時間実行ファイルはタイムアウトを延長
     if filepath.name in LONG_RUNNING:
         timeout = max(timeout, 120)
+
+    is_expected_to_fail = filepath.name in EXPECTED_FAILURES
     
     try:
         result = subprocess.run(
@@ -120,8 +137,18 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int) -> TestResult:
         
         # 終了コードをチェック
         if result.returncode != 0:
+            if is_expected_to_fail:
+                # 失敗が期待されていたので PASS とする
+                return TestResult(
+                    file=str(filepath),
+                    status=Status.PASS,
+                    output=result.stdout,
+                    error=result.stderr, 
+                    duration=duration,
+                    reason="(Expected Failure)"
+                )
+            
             # エラーメッセージを解析
-            error_msg = result.stderr or result.stdout
             return TestResult(
                 file=str(filepath),
                 status=Status.FAIL,
@@ -130,7 +157,18 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int) -> TestResult:
                 duration=duration,
                 reason=f"Exit code: {result.returncode}"
             )
-        
+        else:
+            if is_expected_to_fail:
+                # 失敗すべきなのに成功してしまった場合
+                return TestResult(
+                    file=str(filepath),
+                    status=Status.FAIL,
+                    output=result.stdout,
+                    error=result.stderr,
+                    duration=duration,
+                    reason="Unexpected Success: Expected failure but exited with 0"
+                )
+
         return TestResult(
             file=str(filepath),
             status=Status.PASS,

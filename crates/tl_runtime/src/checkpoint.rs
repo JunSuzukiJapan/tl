@@ -1,4 +1,4 @@
-use crate::{device::get_device, make_tensor, OpaqueTensor};
+use crate::{device::get_device, make_tensor, memory_manager::tl_tensor_release, OpaqueTensor};
 use candle_core::{CustomOp1, Layout, Result, Shape, Tensor};
 use std::ffi::c_void;
 use std::ops::Deref;
@@ -31,8 +31,8 @@ impl CustomOp1 for TlCheckpointOp {
         s1: &candle_core::CpuStorage,
         l: &Layout,
     ) -> Result<(candle_core::CpuStorage, Shape)> {
-        // Recover Tensor from Storage (copying data for now as specific API is unknown)
-        // Assuming F32 for now
+        eprintln!("DEBUG: cpu_fwd start");
+        // Recover Tensor from Storage
         let data = s1.as_slice::<f32>()?;
         let shape = l.shape();
         // Create tensor on current device
@@ -45,7 +45,16 @@ impl CustomOp1 for TlCheckpointOp {
         };
 
         let t_ptr = make_tensor(t);
+        eprintln!("DEBUG: cpu_fwd calling func with input {:p}", t_ptr);
         let out_ptr = (self.func.0)(self.ctx.0, t_ptr);
+        eprintln!("DEBUG: cpu_fwd func returned {:p}", out_ptr);
+
+        if out_ptr.is_null() {
+            tl_tensor_release(t_ptr);
+            return Err(candle_core::Error::Msg(
+                "Checkpoint function returned null in cpu_fwd".into(),
+            ));
+        }
 
         let out_opaque = unsafe { &*out_ptr };
         let out_tensor = &out_opaque.0;
@@ -59,11 +68,9 @@ impl CustomOp1 for TlCheckpointOp {
                 let res_storage = cpu_storage.clone();
                 let res_shape = out_layout.shape().clone();
 
-                // Cleanup
-                unsafe {
-                    let _ = Box::from_raw(t_ptr);
-                    let _ = Box::from_raw(out_ptr);
-                }
+                // Cleanup with proper release
+                tl_tensor_release(t_ptr);
+                tl_tensor_release(out_ptr);
 
                 Ok((res_storage, res_shape))
             }
@@ -79,38 +86,59 @@ impl CustomOp1 for TlCheckpointOp {
         storage: &candle_core::MetalStorage,
         layout: &Layout,
     ) -> Result<(candle_core::MetalStorage, Shape)> {
-        use candle_core::backend::BackendStorage;
+        // use candle_core::backend::BackendStorage; // Unused
+        eprintln!("DEBUG: metal_fwd start");
 
         // Create tensor from MetalStorage
         let shape = layout.shape();
         let device = get_device();
 
-        // For checkpoint, we call the user's function directly
-        // First, create a Tensor from the metal storage
-        // We need to be careful here - MetalStorage doesn't have a direct way to create a Tensor
-        // The workaround is to copy to CPU, create tensor, then move back to Metal
+        #[cfg(feature = "metal")]
         let cpu_tensor = {
-            let _metal_device = storage.device();
-            // Create a temporary tensor view
-            let dtype = storage.dtype();
-            let elem_count = shape.elem_count();
+            // Manual copy from Private Metal Buffer to CPU using metal crate directly
+            use metal::MTLResourceOptions; // MTLStorageMode unused
 
-            // Read data from Metal buffer to CPU
-            let cpu_data: Vec<f32> = if dtype == candle_core::DType::F32 {
-                let buffer = storage.buffer();
-                let mut data = vec![0f32; elem_count];
-                let ptr = buffer.contents() as *const f32;
-                unsafe {
-                    std::ptr::copy_nonoverlapping(ptr, data.as_mut_ptr(), elem_count);
-                }
-                data
-            } else {
+            let elem_count = shape.elem_count();
+            let size = (elem_count * std::mem::size_of::<f32>()) as u64;
+
+            // storage.buffer() returns &metal::Buffer directly
+            let buffer = storage.buffer(); // &metal::Buffer
+            let mtl_device = buffer.device(); // &metal::Device (raw from metal crate)
+
+            // Create a Shared buffer for reading
+            let options = MTLResourceOptions::StorageModeShared;
+            let read_buffer = mtl_device.new_buffer(size, options);
+
+            // Create Command Queue & Buffer
+            let command_queue = mtl_device.new_command_queue();
+            let command_buffer = command_queue.new_command_buffer();
+            let blit_encoder = command_buffer.new_blit_command_encoder();
+
+            // Encode Copy
+            blit_encoder.copy_from_buffer(buffer, 0, &read_buffer, 0, size);
+            blit_encoder.end_encoding();
+
+            // Commit and Wait
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+
+            // Read data
+            let ptr = read_buffer.contents() as *const f32;
+            if ptr.is_null() {
                 return Err(candle_core::Error::Msg(
-                    "Checkpoint only supports F32 for now".into(),
+                    "Failed to read from shared buffer (null ptr)".into(),
                 ));
-            };
+            }
+            let cpu_data = unsafe { std::slice::from_raw_parts(ptr, elem_count) }.to_vec();
 
             Tensor::from_vec(cpu_data, shape, &candle_core::Device::Cpu)?
+        };
+
+        #[cfg(not(feature = "metal"))]
+        let cpu_tensor = {
+            return Err(candle_core::Error::Msg(
+                "metal feature not enabled in tl_runtime".into(),
+            ));
         };
 
         // Move to Metal device
@@ -118,11 +146,14 @@ impl CustomOp1 for TlCheckpointOp {
 
         // Call the user's function
         let t_ptr = make_tensor(metal_tensor);
+        eprintln!("DEBUG: metal_fwd calling func");
         let out_ptr = (self.func.0)(self.ctx.0, t_ptr);
+        eprintln!("DEBUG: metal_fwd func returned {:p}", out_ptr);
 
         if out_ptr.is_null() {
+            tl_tensor_release(t_ptr);
             return Err(candle_core::Error::Msg(
-                "Checkpoint function returned null".into(),
+                "Checkpoint function returned null in metal_fwd".into(),
             ));
         }
 
@@ -137,11 +168,9 @@ impl CustomOp1 for TlCheckpointOp {
                 let res_storage = metal_storage.clone();
                 let res_shape = out_layout.shape().clone();
 
-                // Cleanup
-                unsafe {
-                    let _ = Box::from_raw(t_ptr);
-                    let _ = Box::from_raw(out_ptr);
-                }
+                // Cleanup with proper release
+                tl_tensor_release(t_ptr);
+                tl_tensor_release(out_ptr);
 
                 Ok((res_storage, res_shape))
             }
@@ -157,10 +186,8 @@ impl CustomOp1 for TlCheckpointOp {
                 match metal_storage.deref() {
                     candle_core::Storage::Metal(ms) => {
                         // Cleanup
-                        unsafe {
-                            let _ = Box::from_raw(t_ptr);
-                            let _ = Box::from_raw(out_ptr);
-                        }
+                        tl_tensor_release(t_ptr);
+                        tl_tensor_release(out_ptr);
                         Ok((ms.clone(), metal_layout.shape().clone()))
                     }
                     _ => Err(candle_core::Error::Msg(
@@ -175,13 +202,23 @@ impl CustomOp1 for TlCheckpointOp {
     }
 
     fn bwd(&self, arg: &Tensor, _res: &Tensor, out_grad: &Tensor) -> Result<Option<Tensor>> {
+        eprintln!("DEBUG: bwd start");
         // Checkpointing logic:
         // Rebuild graph: Block(arg) -> out_tensor
         // Important: arg needs to be a Var to track gradients during recomputation
         let arg_var = candle_core::Var::from_tensor(arg)?;
         let t_ptr = make_tensor(arg_var.as_tensor().clone());
 
+        eprintln!("DEBUG: bwd calling func");
         let out_ptr = (self.func.0)(self.ctx.0, t_ptr);
+        eprintln!("DEBUG: bwd func returned {:p}", out_ptr);
+
+        if out_ptr.is_null() {
+            tl_tensor_release(t_ptr);
+            return Err(candle_core::Error::Msg(
+                "Checkpoint function returned null in bwd".into(),
+            ));
+        }
 
         let out_opaque = unsafe { &*out_ptr };
         let out_tensor = &out_opaque.0;
@@ -197,11 +234,9 @@ impl CustomOp1 for TlCheckpointOp {
 
         let arg_grad = new_grads.remove(&arg_var);
 
-        unsafe {
-            // make_tensor boxed the OpaqueTensor, need to free it.
-            let _ = Box::from_raw(t_ptr);
-            let _ = Box::from_raw(out_ptr);
-        }
+        // Cleanup with proper release
+        tl_tensor_release(t_ptr);
+        tl_tensor_release(out_ptr);
 
         Ok(arg_grad)
     }
@@ -214,6 +249,7 @@ pub extern "C" fn tl_checkpoint(
     func: extern "C" fn(*mut c_void, *mut OpaqueTensor) -> *mut OpaqueTensor,
     input: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
+    eprintln!("DEBUG: tl_checkpoint called");
     unsafe {
         let input_tensor = &(*input).0;
         let op = TlCheckpointOp {

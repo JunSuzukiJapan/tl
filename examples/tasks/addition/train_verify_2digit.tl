@@ -145,9 +145,14 @@ impl GPT {
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
         // Checkpointing blocks
+        print("Debug: checkpoint 1");
         let x = Param::checkpoint(self.b1.forward, x);
+        // let x = self.b1.forward(x);
+        print("Debug: checkpoint 2");
         let x = Param::checkpoint(self.b2.forward, x);
-        return self.h.forward(self.l.forward(x)); 
+        // let x = self.b2.forward(x);
+        print("Debug: checkpoint done");
+        return self.h.forward(self.l.forward(x));  
     } 
     fn step(self, lr: f32) -> GPT { 
         let s = self; 
@@ -169,6 +174,7 @@ impl GPT {
 }
 
 fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
+    print("Debug: train_step start");
     let mut m = model.clone();
     let sum = i + j;
     // Vocabulary size needs to cover sum
@@ -181,7 +187,9 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
     let Y = target_arr.reshape([1, 4]);
 
     // Forward
+    print("Debug: Before forward");
     let logits = m.forward(X);
+    print("Debug: After forward");
     
     // Need to reshape for cross_entropy
     // logits: [1, 4, 200] -> [4, 200]
@@ -191,9 +199,10 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
     let loss = logits_flat.cross_entropy(Y_flat);
     
     // Print loss
-    tl_tensor_print_1(loss.reshape([1]));
+    // tl_tensor_print_1(loss.reshape([1]));
     
     // Backprop
+    print("Debug: Before backward");
     loss.backward();
     
     // Step
