@@ -6,10 +6,12 @@ fn get_memory() -> i64 {
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 
 impl Linear {
+    fn new(in_dim: i64, out_dim: i64) -> Linear {
         return Linear {
             W: Tensor::randn([in_dim, out_dim], false) * 0.01,
             b: Tensor::zeros([out_dim]),
         };
+    }
 
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
         return x.matmul(self.W) + self.b;

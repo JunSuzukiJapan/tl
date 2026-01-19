@@ -267,7 +267,7 @@ fn main() {
     let model = GPT::new(vocab_size, d_model, max_len);
     
     print("Loading trained model weights from recall_weights.safetensors...");
-    Param::load("recall_weights.safetensors");
+    Param::load(model, "recall_weights.safetensors");
     print("Model loaded successfully.");
     
     print("Running Inference on Validation Set...");
