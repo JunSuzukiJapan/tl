@@ -17,7 +17,7 @@ fn safe_free(t: *mut OpaqueTensor) {
 fn unwrap_tensor(ptr: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if ptr.is_null() {
         // Retrieve error from LAST_ERROR
-        let res = unsafe { tl_get_last_error() };
+        let res = tl_get_last_error();
         if !res.error_msg.is_null() {
             let err_msg = unsafe { std::ffi::CStr::from_ptr(res.error_msg).to_string_lossy() };
             let file = if !res.file.is_null() {
@@ -55,7 +55,7 @@ fn test_error_reporting() {
     let res = tl_tensor_matmul(ptr_a, ptr_b);
     assert!(res.is_null(), "Expected null pointer for invalid matmul");
 
-    let err = unsafe { tl_get_last_error() };
+    let err = tl_get_last_error();
     assert!(!err.error_msg.is_null());
 
     let err_msg = unsafe { std::ffi::CStr::from_ptr(err.error_msg).to_string_lossy() };

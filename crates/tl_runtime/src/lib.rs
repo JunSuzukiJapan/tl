@@ -55,7 +55,7 @@ pub struct OpaqueTensor(
 // Helper to report runtime errors from JIT code
 // Replaced by tl_handle_runtime_error, kept for compatibility if needed.
 #[no_mangle]
-pub extern "C" fn tl_report_runtime_error(msg: *const std::os::raw::c_char) {
+pub extern "C" fn tl_report_runtime_error(_msg: *const std::os::raw::c_char) {
     // Deprecated
 }
 
@@ -634,7 +634,7 @@ pub extern "C" fn tl_varbuilder_get(
     rank: usize,
     shape: *const usize,
 ) -> *mut OpaqueTensor {
-    use crate::error::RuntimeError;
+    // use crate::error::RuntimeError;
     use std::ffi::CStr;
 
     let res = std::panic::catch_unwind(|| {
@@ -1015,7 +1015,7 @@ pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
-    use crate::error::RuntimeError;
+    // use crate::error::RuntimeError;
     unsafe {
         if t.is_null() {
             handle_runtime_error_internal(
@@ -2512,7 +2512,7 @@ pub extern "C" fn tl_tensor_matmul(
     a: *mut OpaqueTensor,
     b: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
-    use crate::error::{self, RuntimeError};
+    use crate::error::RuntimeError;
     unsafe {
         if a.is_null() || b.is_null() {
             handle_runtime_error_internal(
