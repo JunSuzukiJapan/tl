@@ -68,8 +68,7 @@ fn identifier(input: Span) -> IResult<Span, String> {
         |s: &String| {
             let keywords = vec![
                 "fn", "struct", "impl", "let", "if", "else", "return", "for", "in", "while",
-                "true", "false", "f32", "f64", "i32", "i64", "bool", "usize", "void", "Tensor",
-                "mod", "use",
+                "true", "false", "f32", "f64", "i32", "i64", "bool", "usize", "void", "mod", "use",
             ];
             !keywords.contains(&s.as_str())
         },
@@ -1530,18 +1529,19 @@ fn parse_impl(input: Span) -> IResult<Span, ImplBlock> {
 
     let (input, _) = ws(char('{'))(input)?;
 
-    let (input, methods) = nom::multi::many0(ws(parse_fn))(input)?;
+    cut(move |input| {
+        let (input, methods) = nom::multi::many0(ws(parse_fn))(input)?;
+        let (input, _) = ws(char('}'))(input)?;
 
-    let (input, _) = ws(char('}'))(input)?;
-
-    Ok((
-        input,
-        ImplBlock {
-            target_type,
-            generics: generics.unwrap_or_default(),
-            methods,
-        },
-    ))
+        Ok((
+            input,
+            ImplBlock {
+                target_type: target_type.clone(),
+                generics: generics.clone().unwrap_or_default(),
+                methods,
+            },
+        ))
+    })(input)
 }
 
 // --- Imports ---
@@ -1613,10 +1613,14 @@ pub fn parse(input: &str) -> Result<Module, TlError> {
         }
 
         // impl
-        if let Ok((next, i)) = ws(parse_impl)(remaining) {
-            impls.push(i);
-            remaining = next;
-            continue;
+        match ws(parse_impl)(remaining) {
+            Ok((next, i)) => {
+                impls.push(i);
+                remaining = next;
+                continue;
+            }
+            Err(nom::Err::Failure(e)) => return Err(convert_nom_error(e)),
+            _ => {}
         }
 
         // fn (uses cut)

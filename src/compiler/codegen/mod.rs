@@ -601,7 +601,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 } else {
                     &imp.target_type
                 };
-                let mangled_name = format!("tl_{}_{}", simple_target, method.name);
+                let mangled_name = if method.is_extern {
+                    method.name.clone()
+                } else {
+                    format!("tl_{}_{}", simple_target, method.name)
+                };
 
                 // SRET is disabled; keep signatures simple.
                 let uses_sret = false;
@@ -686,7 +690,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                 } else {
                     &imp.target_type
                 };
-                let mangled_name = format!("tl_{}_{}", simple_target, method.name);
+                let mangled_name = if method.is_extern {
+                    method.name.clone()
+                } else {
+                    format!("tl_{}_{}", simple_target, method.name)
+                };
+
+                if method.is_extern {
+                    continue;
+                }
                 let function = self
                     .module
                     .get_function(&mangled_name)

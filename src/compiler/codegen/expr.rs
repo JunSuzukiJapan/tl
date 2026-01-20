@@ -3376,10 +3376,12 @@ impl<'ctx> CodeGenerator<'ctx> {
             (f, mangled_name)
         } else if let Some(f) = self.module.get_function(&stdlib_name) {
             (f, stdlib_name)
+        } else if let Some(f) = self.module.get_function(method_name) {
+            (f, method_name.to_string())
         } else {
             return Err(format!(
-                "Static method {}::{} not found (checked {} and {})",
-                type_name, method_name, mangled_name, stdlib_name
+                "Static method {}::{} not found (checked {}, {}, and {})",
+                type_name, method_name, mangled_name, stdlib_name, method_name
             ));
         };
 
