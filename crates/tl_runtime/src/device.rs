@@ -1,3 +1,4 @@
+use crate::error::RuntimeError;
 use candle_core::Device;
 use lazy_static::lazy_static;
 use log::info;
@@ -21,7 +22,16 @@ pub struct DeviceManager {
 impl DeviceManager {
     pub fn new() -> Self {
         let requested_device = std::env::var("TL_DEVICE").unwrap_or_else(|_| "auto".to_string());
-        let (device, device_type) = Self::init_device(&requested_device);
+        let (device, device_type) = match Self::init_device(&requested_device) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Failed to initialize device: {}", e);
+                // Fallback to CPU or exit?
+                // Since this is static initialization, we must panic or exit.
+                // We will panic with the error message.
+                panic!("Device initialization failed: {}", e);
+            }
+        };
 
         DeviceManager {
             current_device: device,
@@ -30,20 +40,25 @@ impl DeviceManager {
         }
     }
 
-    fn init_device(requested_device: &str) -> (Device, DeviceType) {
+    fn init_device(requested_device: &str) -> Result<(Device, DeviceType), RuntimeError> {
         // Explicit requests should never silently fall back.
         if requested_device == "cuda" {
             #[cfg(feature = "cuda")]
             {
                 info!("Initializing Runtime: CUDA backend selected.");
-                match Device::new_cuda(0) {
-                    Ok(device) => return (device, DeviceType::Cuda),
-                    Err(e) => panic!("CUDA requested but initialization failed: {}", e),
-                }
+                return match Device::new_cuda(0) {
+                    Ok(device) => Ok((device, DeviceType::Cuda)),
+                    Err(e) => Err(RuntimeError::DeviceError(format!(
+                        "CUDA requested but initialization failed: {}",
+                        e
+                    ))),
+                };
             }
             #[cfg(not(feature = "cuda"))]
             {
-                panic!("CUDA requested but 'cuda' feature not enabled.");
+                return Err(RuntimeError::DeviceError(
+                    "CUDA requested but 'cuda' feature not enabled.".to_string(),
+                ));
             }
         }
 
@@ -51,19 +66,27 @@ impl DeviceManager {
             #[cfg(feature = "metal")]
             {
                 info!("Initializing Runtime: Metal backend selected.");
-                match Device::new_metal(0) {
+                return match Device::new_metal(0) {
                     Ok(device) => {
                         if check_metal_health(&device) {
-                            return (device, DeviceType::Metal);
+                            Ok((device, DeviceType::Metal))
+                        } else {
+                            Err(RuntimeError::DeviceError(
+                                "Metal backend failed self-test.".to_string(),
+                            ))
                         }
-                        panic!("Metal backend failed self-test.");
                     }
-                    Err(e) => panic!("Metal requested but initialization failed: {}", e),
-                }
+                    Err(e) => Err(RuntimeError::DeviceError(format!(
+                        "Metal requested but initialization failed: {}",
+                        e
+                    ))),
+                };
             }
             #[cfg(not(feature = "metal"))]
             {
-                panic!("Metal requested but 'metal' feature not enabled.");
+                return Err(RuntimeError::DeviceError(
+                    "Metal requested but 'metal' feature not enabled.".to_string(),
+                ));
             }
         }
 
@@ -73,7 +96,7 @@ impl DeviceManager {
             {
                 info!("Initializing Runtime: CUDA backend selected.");
                 if let Ok(device) = Device::new_cuda(0) {
-                    return (device, DeviceType::Cuda);
+                    return Ok((device, DeviceType::Cuda));
                 }
             }
         }
@@ -84,23 +107,24 @@ impl DeviceManager {
                 info!("Initializing Runtime: Metal backend selected.");
                 if let Ok(device) = Device::new_metal(0) {
                     if check_metal_health(&device) {
-                        return (device, DeviceType::Metal);
+                        return Ok((device, DeviceType::Metal));
                     }
                 }
             }
         }
 
         info!("Initializing Runtime: CPU backend selected.");
-        (Device::Cpu, DeviceType::Cpu)
+        Ok((Device::Cpu, DeviceType::Cpu))
     }
 
-    pub fn set_device(&mut self, name: &str) {
-        let (device, device_type) = Self::init_device(name);
+    pub fn set_device(&mut self, name: &str) -> Result<(), RuntimeError> {
+        let (device, device_type) = Self::init_device(name)?;
         self.current_device = device;
         self.device_type = device_type;
         self.generation += 1;
         GLOBAL_DEVICE_GENERATION.store(self.generation, std::sync::atomic::Ordering::Relaxed);
         info!("Device switched to: {:?}", self.device_type);
+        Ok(())
     }
 
     pub fn device(&self) -> &Device {

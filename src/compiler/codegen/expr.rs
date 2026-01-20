@@ -290,10 +290,7 @@ fn compile_tensor_clone<'ctx>(
         .build_call(fn_val, &[obj_val.into()], "clone_res")
         .map_err(|e| e.to_string())?;
 
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid clone return".into()),
-    };
+    let res = codegen.check_tensor_result(call, "clone_error")?;
 
     codegen.emit_register_tensor(res, &obj_ty)?;
     Ok((res, obj_ty))
@@ -319,10 +316,7 @@ fn compile_tensor_detach<'ctx>(
         .build_call(fn_val, &[obj_val.into(), req_grad.into()], "detach_res")
         .map_err(|e| e.to_string())?;
 
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid detach return".into()),
-    };
+    let res = codegen.check_tensor_result(call, "detach_error")?;
 
     codegen.emit_register_tensor(res, &obj_ty)?;
     Ok((res, obj_ty))
@@ -340,10 +334,7 @@ fn compile_tensor_grad<'ctx>(
         .build_call(fn_val, &[obj_val.into()], "grad_res")
         .map_err(|e| e.to_string())?;
 
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid grad return".into()),
-    };
+    let res = codegen.check_tensor_result(call, "grad_error")?;
 
     codegen.emit_register_tensor(res, &obj_ty)?;
     Ok((res, obj_ty))
@@ -407,13 +398,9 @@ fn compile_tensor_sum<'ctx>(
             .ok_or("tl_tensor_sum not found")?;
         let call = codegen
             .builder
-            .build_call(fn_val, &[obj_val.into()], "sum_res")
-            .map_err(|e| e.to_string())?;
+            .build_call(fn_val, &[obj_val.into()], "sum_res");
 
-        let res = match call.try_as_basic_value() {
-            inkwell::values::ValueKind::Basic(v) => v,
-            _ => return Err("Invalid sum return".into()),
-        };
+        let res = codegen.check_tensor_result(call.map_err(|e| e.to_string())?, "sum_error")?;
         Ok((
             res,
             crate::compiler::ast::Type::Tensor(Box::new(crate::compiler::ast::Type::F32), 0),
@@ -442,23 +429,17 @@ fn compile_tensor_sum<'ctx>(
             .get_function("tl_tensor_sum_dim")
             .ok_or("tl_tensor_sum_dim not found")?;
 
-        let call = codegen
-            .builder
-            .build_call(
-                fn_val,
-                &[
-                    obj_val.into(),
-                    dim_i64.into(),
-                    codegen.context.bool_type().const_zero().into(),
-                ],
-                "sum_dim_res",
-            )
-            .map_err(|e| e.to_string())?;
+        let call = codegen.builder.build_call(
+            fn_val,
+            &[
+                obj_val.into(),
+                dim_i64.into(),
+                codegen.context.bool_type().const_zero().into(),
+            ],
+            "sum_dim_res",
+        );
 
-        let res = match call.try_as_basic_value() {
-            inkwell::values::ValueKind::Basic(v) => v,
-            _ => return Err("Invalid sum_dim return".into()),
-        };
+        let res = codegen.check_tensor_result(call.map_err(|e| e.to_string())?, "sum_dim_error")?;
         // Ideally we subtract 1 from rank, but 0 is safe generic guess for now if we don't track rank strictly
         Ok((
             res,
@@ -850,14 +831,10 @@ fn compile_tensor_zeros<'ctx>(
             )
             .map_err(|e| e.to_string())?;
 
-        match call.try_as_basic_value() {
-            inkwell::values::ValueKind::Basic(v) => {
-                let result_ty = Type::Tensor(Box::new(Type::F32), rank);
-                codegen.emit_register_tensor(v, &result_ty)?;
-                return Ok((v, result_ty));
-            }
-            _ => return Err("Invalid call return".into()),
-        }
+        let v = codegen.check_tensor_result(call, "zeros_error")?;
+        let result_ty = Type::Tensor(Box::new(Type::F32), rank);
+        codegen.emit_register_tensor(v, &result_ty)?;
+        return Ok((v, result_ty));
     }
 
     // Generic path: Compile shape expr -> Tensor/Array
@@ -1026,14 +1003,10 @@ fn compile_varbuilder_get_static<'ctx>(
         )
         .map_err(|e| e.to_string())?;
 
-    match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => {
-            let result_ty = Type::Tensor(Box::new(Type::F32), rank);
-            codegen.emit_register_tensor(v, &result_ty)?;
-            Ok((v, result_ty))
-        }
-        _ => Err("Invalid return from VarBuilder::get".into()),
-    }
+    let v = codegen.check_tensor_result(call, "vb_get_error")?;
+    let result_ty = Type::Tensor(Box::new(Type::F32), rank);
+    codegen.emit_register_tensor(v, &result_ty)?;
+    Ok((v, result_ty))
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -3453,7 +3426,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         match call.try_as_basic_value() {
-            inkwell::values::ValueKind::Basic(v) => {
+            inkwell::values::ValueKind::Basic(_) => {
+                let v = self.check_tensor_result(call, "static_call_error")?;
                 // Register intermediate tensor result
                 if matches!(ret_ty, Type::Tensor(_, _)) {
                     self.emit_register_tensor(v, &ret_ty)?;
@@ -3701,10 +3675,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             )
             .map_err(|e| e.to_string())?;
 
-        let res = match call.try_as_basic_value() {
-            ValueKind::Basic(v) => v,
-            _ => return Err(format!("Invalid {} return", new_fn_name)),
-        };
+        let res = self.check_tensor_result(call, "new_tensor_error")?;
 
         // 8. Free temporary buffers
         let free_tmp_fn = self
@@ -3904,10 +3875,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 )
                 .map_err(|e| e.to_string())?;
 
-            let res = match call.try_as_basic_value() {
-                ValueKind::Basic(v) => v,
-                _ => return Err("Invalid tl_tensor_new_i64 return".into()),
-            };
+            let res = self.check_tensor_result(call, "new_const_tensor_i64_error")?;
 
             // FREE temps
             self.builder
@@ -4003,10 +3971,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 )
                 .map_err(|e| e.to_string())?;
 
-            let res = match call.try_as_basic_value() {
-                ValueKind::Basic(v) => v,
-                _ => return Err("Invalid tl_tensor_new return".into()),
-            };
+            let res = self.check_tensor_result(call, "new_const_tensor_error")?;
 
             // FREE temps
             self.builder
@@ -4761,10 +4726,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .builder
                         .build_call(fn_val, &[obj_val.into(), rhs_val.into()], "binop_res")
                         .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err(format!("Invalid return from {}", method).into()),
-                    };
+                    let res = self.check_tensor_result(call, "binop_error")?;
 
                     self.emit_register_tensor(res, &obj_ty)?;
                     if self.is_safe_to_free(obj, &obj_ty) {
@@ -5021,7 +4983,8 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Return handling
         match call.try_as_basic_value() {
-            inkwell::values::ValueKind::Basic(v) => {
+            inkwell::values::ValueKind::Basic(_) => {
+                let v = self.check_tensor_result(call, "method_call_error")?;
                 // Register intermediate tensor result
                 if matches!(ret_ty, Type::Tensor(_, _)) {
                     self.emit_register_tensor(v, &ret_ty)?;
@@ -5241,12 +5204,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                   let fn_val = self.module.get_function("tl_tensor_sum").unwrap();
                   let call = self
                       .builder
-                      .build_call(fn_val, &[obj_val.into()], "sum_res")
-                      .map_err(|e| e.to_string())?;
-                  let res = match call.try_as_basic_value() {
-                      ValueKind::Basic(v) => v,
-                      _ => return Err("Invalid sum return".into()),
-                  };
+                      .build_call(fn_val, &[obj_val.into()], "sum_res");
+
+                  let res = self.check_tensor_result(call.map_err(|e| e.to_string())?, "sum_error")?;
 
                   if self.is_safe_to_free(obj, &obj_ty) {
                       self.emit_recursive_free(obj_val, &obj_ty)?;
@@ -5372,7 +5332,48 @@ impl<'ctx> CodeGenerator<'ctx> {
                       Type::Void,
                   ))
               }
-              _ => {
+                "matmul" => {
+                    if args.len() != 1 {
+                        return Err("matmul requires 1 argument".into());
+                    }
+                    let (rhs_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
+                    let fn_val = self
+                        .module
+                        .get_function("tl_tensor_matmul")
+                        .ok_or("tl_tensor_matmul not found")?;
+
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into(), rhs_val.into()], "matmul_res");
+
+                    let res = self.check_tensor_result(call.map_err(|e| e.to_string())?, "matmul_error")?;
+
+                    if self.is_safe_to_free(obj, &obj_ty) {
+                        self.emit_recursive_free(obj_val, &obj_ty)?;
+                    }
+                    self.emit_register_tensor(res, &obj_ty)?;
+                    Ok((res, obj_ty))
+                }
+                "exp" | "log" => {
+                    let fn_name = format!("tl_tensor_{}", method);
+                    let fn_val = self
+                        .module
+                        .get_function(&fn_name)
+                        .ok_or(format!("{} not found", fn_name))?;
+
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into()], "unary_res");
+
+                    let res = self.check_tensor_result(call.map_err(|e| e.to_string())?, &format!("{}_error", method))?;
+
+                    if self.is_safe_to_free(obj, &obj_ty) {
+                        self.emit_recursive_free(obj_val, &obj_ty)?;
+                    }
+                    self.emit_register_tensor(res, &obj_ty)?;
+                    Ok((res, obj_ty))
+                }
+                _ => {
                   // Generic method dispatch for UserDefined types and Tensor
                   let type_name = match &obj_ty {
                       Type::UserDefined(name) => name.clone(),
@@ -5409,6 +5410,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                           .builder
                           .build_call(fn_val, &compiled_args_vals, "method_res")
                           .map_err(|e| e.to_string())?;
+
+                      let call = self.check_tensor_result(call, "method_error")?;
 
                       // FIX: Free temporary receiver
                       if self.is_safe_to_free(obj, &obj_ty) {
@@ -5715,7 +5718,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         let res = match call.try_as_basic_value() {
-            ValueKind::Basic(v) => v,
+            ValueKind::Basic(_) => self.check_tensor_result(call, "call_error")?,
             _ => {
                 if ret_type == Type::Void {
                     self.context.i64_type().const_int(0, false).into()
@@ -6308,12 +6311,9 @@ fn compile_tensor_pow<'ctx>(
             .ok_or("tl_tensor_pow not found")?;
         let call = codegen
             .builder
-            .build_call(fn_val, &[obj_val.into(), exp_val.into()], "pow_res")
-            .map_err(|e| e.to_string())?;
-        let res = match call.try_as_basic_value() {
-            ValueKind::Basic(v) => v,
-            _ => return Err("Invalid pow return".into()),
-        };
+            .build_call(fn_val, &[obj_val.into(), exp_val.into()], "pow_res");
+
+        let res = codegen.check_tensor_result(call.map_err(|e| e.to_string())?, "pow_error")?;
         codegen.emit_register_tensor(res, &obj_ty)?;
         Ok((res, obj_ty))
     } else {
@@ -6348,14 +6348,13 @@ fn compile_tensor_pow<'ctx>(
             .module
             .get_function("tl_tensor_pow_scalar")
             .ok_or("tl_tensor_pow_scalar not found")?;
-        let call = codegen
-            .builder
-            .build_call(fn_val, &[obj_val.into(), exp_f32.into()], "pow_scalar_res")
-            .map_err(|e| e.to_string())?;
-        let res = match call.try_as_basic_value() {
-            ValueKind::Basic(v) => v,
-            _ => return Err("Invalid pow_scalar return".into()),
-        };
+        let call =
+            codegen
+                .builder
+                .build_call(fn_val, &[obj_val.into(), exp_f32.into()], "pow_scalar_res");
+
+        let res =
+            codegen.check_tensor_result(call.map_err(|e| e.to_string())?, "pow_scalar_error")?;
         codegen.emit_register_tensor(res, &obj_ty)?;
         Ok((res, obj_ty))
     }
@@ -6963,10 +6962,7 @@ fn compile_tensor_creation_helper<'ctx>(
             "creation_res",
         )
         .map_err(|e| e.to_string())?;
-    let res = match call.try_as_basic_value() {
-        ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return".into()),
-    };
+    let res = codegen.check_tensor_result(call, "creation_error")?;
 
     Ok((res, Type::Tensor(Box::new(Type::F32), rank)))
 }
@@ -7122,10 +7118,7 @@ fn compile_varbuilder_get<'ctx>(
             "varbuilder_get_result",
         )
         .unwrap();
-    let res = match call.try_as_basic_value() {
-        ValueKind::Basic(v) => v,
-        _ => return Err("Invalid varbuilder_get return".into()),
-    };
+    let res = codegen.check_tensor_result(call, "varbuilder_get_error")?;
     let res_ty = Type::Tensor(Box::new(Type::F32), 0);
     codegen.emit_register_tensor(res, &res_ty)?;
     Ok((res, res_ty))

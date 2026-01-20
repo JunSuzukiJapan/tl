@@ -1333,10 +1333,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .builder
                             .build_call(clone_fn, &[val_base.into()], "cloned")
                             .map_err(|e| e.to_string())?;
-                        match call.try_as_basic_value() {
-                            inkwell::values::ValueKind::Basic(v) => v,
-                            _ => return Err("Clone returned void".into()),
-                        }
+
+                        self.check_tensor_result(call, "cloned_error")?
                     } else {
                         val_base
                     }
@@ -2589,13 +2587,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .ok_or(format!("Runtime function {} not found", fn_name))?;
                 let call = self
                     .builder
-                    .build_call(fn_val, &[l.into(), r.into()], "binop_res")
-                    .map_err(|e| e.to_string())?;
+                    .build_call(fn_val, &[l.into(), r.into()], "binop_res");
 
-                let res_ptr = match call.try_as_basic_value() {
-                    ValueKind::Basic(v) => v.into_pointer_value(),
-                    _ => return Err("Invalid return from runtime binop".into()),
-                };
+                let res_val =
+                    self.check_tensor_result(call.map_err(|e| e.to_string())?, "binop_error")?;
+                let res_ptr = res_val.into_pointer_value();
                 Ok((res_ptr.into(), lhs_type.clone()))
             }
             // Handling mixed types (F32 vs I64) for convenience
@@ -2654,10 +2650,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                         "scalar_tensor_rhs",
                     )
                     .map_err(|e| e.to_string())?;
-                let scalar_tensor = match call.try_as_basic_value() {
-                    ValueKind::Basic(v) => v.into_pointer_value(),
-                    _ => return Err("Invalid tensor new return".into()),
-                };
+                let scalar_tensor = self
+                    .check_tensor_result(call, "scalar_tensor_rhs_error")?
+                    .into_pointer_value();
 
                 // 4. Call Op
                 let fn_name = match op {
@@ -2672,19 +2667,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .get_function(fn_name)
                     .ok_or("Runtime fn not found")?;
 
-                let call = self
-                    .builder
-                    .build_call(
-                        fn_val,
-                        &[lhs.into_pointer_value().into(), scalar_tensor.into()],
-                        "binop_res",
-                    )
-                    .map_err(|e| e.to_string())?;
+                let call = self.builder.build_call(
+                    fn_val,
+                    &[lhs.into_pointer_value().into(), scalar_tensor.into()],
+                    "binop_res",
+                );
 
-                let res_ptr = match call.try_as_basic_value() {
-                    ValueKind::Basic(v) => v.into_pointer_value(),
-                    _ => return Err("Invalid return from runtime binop".into()),
-                };
+                let res_val = self.check_tensor_result(
+                    call.map_err(|e| e.to_string())?,
+                    "binop_scalar_rhs_error",
+                )?;
+                let res_ptr = res_val.into_pointer_value();
                 Ok((res_ptr.into(), lhs_type.clone()))
             }
             (Type::F32, Type::Tensor(inner, _)) if **inner == Type::F32 => {
@@ -2717,10 +2710,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                         "scalar_tensor_lhs",
                     )
                     .map_err(|e| e.to_string())?;
-                let scalar_tensor = match call.try_as_basic_value() {
-                    ValueKind::Basic(v) => v.into_pointer_value(),
-                    _ => return Err("Invalid tensor new return".into()),
-                };
+                let scalar_tensor = self
+                    .check_tensor_result(call, "scalar_tensor_lhs_error")?
+                    .into_pointer_value();
 
                 let fn_name = match op {
                     BinOp::Add => "tl_tensor_add",
@@ -2734,19 +2726,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .get_function(fn_name)
                     .ok_or("Runtime fn not found")?;
 
-                let call = self
-                    .builder
-                    .build_call(
-                        fn_val,
-                        &[scalar_tensor.into(), rhs.into_pointer_value().into()],
-                        "binop_res",
-                    )
-                    .map_err(|e| e.to_string())?;
+                let call = self.builder.build_call(
+                    fn_val,
+                    &[scalar_tensor.into(), rhs.into_pointer_value().into()],
+                    "binop_res",
+                );
 
-                let res_ptr = match call.try_as_basic_value() {
-                    ValueKind::Basic(v) => v.into_pointer_value(),
-                    _ => return Err("Invalid return from runtime binop".into()),
-                };
+                let res_val = self.check_tensor_result(
+                    call.map_err(|e| e.to_string())?,
+                    "binop_scalar_lhs_error",
+                )?;
+                let res_ptr = res_val.into_pointer_value();
                 Ok((res_ptr.into(), rhs_type.clone()))
             }
             // ScalarArray operations: convert to Tensor and use tensor ops
@@ -2786,10 +2776,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                             )
                             .map_err(|e| e.to_string())?;
 
-                        match call.try_as_basic_value() {
-                            ValueKind::Basic(v) => Ok(v.into_pointer_value()),
-                            _ => Err("Invalid tensor new return".into()),
-                        }
+                        self.check_tensor_result(call, "tensor_from_scalar_arr_error")
+                            .map(|v| v.into_pointer_value())
                     };
 
                 let l_tensor =
@@ -2810,15 +2798,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .module
                     .get_function(fn_name)
                     .ok_or(format!("Runtime function {} not found", fn_name))?;
-                let call = self
-                    .builder
-                    .build_call(fn_val, &[l_tensor.into(), r_tensor.into()], "binop_res")
-                    .map_err(|e| e.to_string())?;
+                let call = self.builder.build_call(
+                    fn_val,
+                    &[l_tensor.into(), r_tensor.into()],
+                    "binop_res",
+                );
 
-                let res_ptr = match call.try_as_basic_value() {
-                    ValueKind::Basic(v) => v.into_pointer_value(),
-                    _ => return Err("Invalid return from runtime binop".into()),
-                };
+                let res_val =
+                    self.check_tensor_result(call.map_err(|e| e.to_string())?, "binop_arr_error")?;
+                let res_ptr = res_val.into_pointer_value();
 
                 // Return as Tensor (since we converted)
                 Ok((res_ptr.into(), Type::Tensor(Box::new(Type::F32), 1)))

@@ -1,4 +1,5 @@
 use serial_test::serial;
+use tl_runtime::error::CTensorResult;
 use tl_runtime::*;
 
 // Helper to check if a tensor is not null
@@ -13,13 +14,25 @@ fn safe_free(t: *mut OpaqueTensor) {
     }
 }
 
+fn unwrap_tensor(res: CTensorResult) -> *mut OpaqueTensor {
+    if !res.error.is_null() {
+        let err_msg = unsafe { std::ffi::CStr::from_ptr(res.error).to_string_lossy() };
+        panic!("Runtime error: {}", err_msg);
+    }
+    assert!(
+        !res.tensor.is_null(),
+        "Returned tensor is null but no error reported"
+    );
+    res.tensor
+}
+
 #[test]
 #[serial]
 fn test_tensor_creation_and_free() {
     let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
     let shape: Vec<usize> = vec![2, 2];
 
-    let t = tl_tensor_new(data.as_ptr(), 2, shape.as_ptr());
+    let t = unwrap_tensor(tl_tensor_new(data.as_ptr(), 2, shape.as_ptr()));
     assert_tensor_valid(t);
 
     // Check length (dim 0)
@@ -36,11 +49,11 @@ fn test_tensor_arithmetic() {
     let data_b: Vec<f32> = vec![10.0, 20.0, 30.0, 40.0]; // [10, 20, 30, 40]
     let shape: Vec<usize> = vec![4]; // 1D
 
-    let t_a = tl_tensor_new(data_a.as_ptr(), 1, shape.as_ptr());
-    let t_b = tl_tensor_new(data_b.as_ptr(), 1, shape.as_ptr());
+    let t_a = unwrap_tensor(tl_tensor_new(data_a.as_ptr(), 1, shape.as_ptr()));
+    let t_b = unwrap_tensor(tl_tensor_new(data_b.as_ptr(), 1, shape.as_ptr()));
 
     // Add
-    let t_add = tl_tensor_add(t_a, t_b);
+    let t_add = unwrap_tensor(tl_tensor_add(t_a, t_b));
     assert_tensor_valid(t_add);
 
     // To verify values, we can use slice or item if implemented.
@@ -72,7 +85,7 @@ fn test_tensor_arithmetic() {
 #[serial]
 fn test_tensor_zeros() {
     let shape: Vec<usize> = vec![2, 5];
-    let t = tl_tensor_zeros(2, shape.as_ptr(), false);
+    let t = unwrap_tensor(tl_tensor_zeros(2, shape.as_ptr(), false));
     assert_tensor_valid(t);
     safe_free(t);
 }
@@ -112,10 +125,10 @@ fn test_matmul() {
     let shape_a: Vec<usize> = vec![2, 3];
     let shape_b: Vec<usize> = vec![3, 2];
 
-    let t_a = tl_tensor_new(data_a.as_ptr(), 2, shape_a.as_ptr());
-    let t_b = tl_tensor_new(data_b.as_ptr(), 2, shape_b.as_ptr());
+    let t_a = unwrap_tensor(tl_tensor_new(data_a.as_ptr(), 2, shape_a.as_ptr()));
+    let t_b = unwrap_tensor(tl_tensor_new(data_b.as_ptr(), 2, shape_b.as_ptr()));
 
-    let t_c = tl_tensor_matmul(t_a, t_b);
+    let t_c = unwrap_tensor(tl_tensor_matmul(t_a, t_b));
     assert_tensor_valid(t_c);
 
     let shape_c = unsafe { (*t_c).0.dims().to_vec() };
@@ -136,9 +149,9 @@ fn test_matmul() {
 fn test_sum() {
     let data = vec![1.0, 2.0, 3.0, 4.0];
     let shape = vec![4];
-    let t = tl_tensor_new(data.as_ptr(), 1, shape.as_ptr());
+    let t = unwrap_tensor(tl_tensor_new(data.as_ptr(), 1, shape.as_ptr()));
 
-    let t_sum = tl_tensor_sum(t);
+    let t_sum = unwrap_tensor(tl_tensor_sum(t));
     assert_tensor_valid(t_sum);
 
     let val = get_scalar_f32(t_sum);
@@ -153,7 +166,7 @@ fn test_sum() {
 fn test_math_ops() {
     let data = vec![1.0, 4.0, 9.0];
     let shape = vec![3];
-    let t = tl_tensor_new(data.as_ptr(), 1, shape.as_ptr());
+    let t = unwrap_tensor(tl_tensor_new(data.as_ptr(), 1, shape.as_ptr()));
 
     // Sqrt
     let t_sqrt = tl_tensor_sqrt(t);
@@ -164,8 +177,8 @@ fn test_math_ops() {
     // Exp (e^0 = 1) - create new tensor
     let data_zero = vec![0.0];
     let shape_zero = vec![1];
-    let t_zero = tl_tensor_new(data_zero.as_ptr(), 1, shape_zero.as_ptr());
-    let t_exp = tl_tensor_exp(t_zero);
+    let t_zero = unwrap_tensor(tl_tensor_new(data_zero.as_ptr(), 1, shape_zero.as_ptr()));
+    let t_exp = unwrap_tensor(tl_tensor_exp(t_zero));
     assert_approx_eq(get_item_f32(t_exp, 0), 1.0);
 
     safe_free(t);
@@ -181,35 +194,35 @@ fn test_basic_ops() {
     let data_b = vec![2.0, 5.0, 3.0];
     let shape = vec![3];
 
-    let t_a = tl_tensor_new(data_a.as_ptr(), 1, shape.as_ptr());
-    let t_b = tl_tensor_new(data_b.as_ptr(), 1, shape.as_ptr());
+    let t_a = unwrap_tensor(tl_tensor_new(data_a.as_ptr(), 1, shape.as_ptr()));
+    let t_b = unwrap_tensor(tl_tensor_new(data_b.as_ptr(), 1, shape.as_ptr()));
 
     // Sub: [8, 15, 27]
-    let t_sub = tl_tensor_sub(t_a, t_b);
+    let t_sub = unwrap_tensor(tl_tensor_sub(t_a, t_b));
     assert_approx_eq(get_item_f32(t_sub, 0), 8.0);
     assert_approx_eq(get_item_f32(t_sub, 1), 15.0);
     assert_approx_eq(get_item_f32(t_sub, 2), 27.0);
 
     // Mul: [20, 100, 90]
-    let t_mul = tl_tensor_mul(t_a, t_b);
+    let t_mul = unwrap_tensor(tl_tensor_mul(t_a, t_b));
     assert_approx_eq(get_item_f32(t_mul, 0), 20.0);
 
     // Div: [5, 4, 10]
-    let t_div = tl_tensor_div(t_a, t_b);
+    let t_div = unwrap_tensor(tl_tensor_div(t_a, t_b));
     assert_approx_eq(get_item_f32(t_div, 0), 5.0);
     assert_approx_eq(get_item_f32(t_div, 1), 4.0);
 
     // Pow: t_b ^ 2 -> [4, 25, 9]
     let factor_data = vec![2.0];
-    let t_factor = tl_tensor_new(factor_data.as_ptr(), 1, vec![1].as_ptr());
-    let t_pow = tl_tensor_pow(t_b, t_factor);
+    let t_factor = unwrap_tensor(tl_tensor_new(factor_data.as_ptr(), 1, vec![1].as_ptr()));
+    let t_pow = unwrap_tensor(tl_tensor_pow(t_b, t_factor));
     assert_approx_eq(get_item_f32(t_pow, 0), 4.0);
     assert_approx_eq(get_item_f32(t_pow, 1), 25.0);
 
     // Log: log(e) approx 1? scalar check
     // let's test log(10)
-    let t_log_input = tl_tensor_new(vec![10.0].as_ptr(), 1, vec![1].as_ptr());
-    let t_log = tl_tensor_log(t_log_input);
+    let t_log_input = unwrap_tensor(tl_tensor_new(vec![10.0].as_ptr(), 1, vec![1].as_ptr()));
+    let t_log = unwrap_tensor(tl_tensor_log(t_log_input));
     // ln(10) ~ 2.30258
     assert_approx_eq(get_item_f32(t_log, 0), 2.30258);
 
@@ -229,7 +242,7 @@ fn test_basic_ops() {
 fn test_reshape_transpose() {
     let data = vec![1.0, 2.0, 3.0, 4.0];
     let shape = vec![2, 2]; // [[1, 2], [3, 4]]
-    let t = tl_tensor_new(data.as_ptr(), 2, shape.as_ptr());
+    let t = unwrap_tensor(tl_tensor_new(data.as_ptr(), 2, shape.as_ptr()));
 
     // Transpose -> [[1, 3], [2, 4]]
     let t_transposed = tl_tensor_transpose(t, 0, 1);
@@ -241,7 +254,11 @@ fn test_reshape_transpose() {
     // tl_tensor_reshape converts shape tensor to Vec<usize>.
     let shape_data_t = vec![4.0, 1.0];
     let shape_shape = vec![2];
-    let shape_t = tl_tensor_new(shape_data_t.as_ptr(), 1, shape_shape.as_ptr());
+    let shape_t = unwrap_tensor(tl_tensor_new(
+        shape_data_t.as_ptr(),
+        1,
+        shape_shape.as_ptr(),
+    ));
 
     let t_flat = tl_tensor_reshape_new(t, shape_t);
     assert_tensor_valid(t_flat);

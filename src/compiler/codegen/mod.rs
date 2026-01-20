@@ -149,6 +149,101 @@ impl<'ctx> CodeGenerator<'ctx> {
             .map_err(|e| e.to_string())
     }
 
+    pub(crate) fn check_tensor_result(
+        &self,
+        call_site_value: inkwell::values::CallSiteValue<'ctx>,
+        _context_msg: &str,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        // Result matches existing pattern of CallResult -> BasicValue
+        let basic_value = match call_site_value.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v,
+            _ => return Err("Call returned void".into()),
+        };
+
+        if !basic_value.is_struct_value() {
+            return Ok(basic_value);
+        }
+
+        let struct_val = basic_value.into_struct_value();
+
+        let current_bb = self.builder.get_insert_block().unwrap();
+        let function = current_bb.get_parent().unwrap();
+
+        let error_val = self
+            .builder
+            .build_extract_value(struct_val, 1, "err_ptr")
+            .unwrap();
+        let error_ptr = error_val.into_pointer_value();
+
+        let i64_type = self.context.i64_type();
+        let err_int = self
+            .builder
+            .build_ptr_to_int(error_ptr, i64_type, "err_int")
+            .unwrap();
+        let is_err = self
+            .builder
+            .build_int_compare(
+                inkwell::IntPredicate::NE,
+                err_int,
+                i64_type.const_zero(),
+                "is_err",
+            )
+            .unwrap();
+
+        let error_bb = self.context.append_basic_block(function, "runtime_error");
+        let success_bb = self.context.append_basic_block(function, "runtime_success");
+
+        self.builder
+            .build_conditional_branch(is_err, error_bb, success_bb)
+            .unwrap();
+
+        // Error Handler
+        self.builder.position_at_end(error_bb);
+        let report_fn = self
+            .module
+            .get_function("tl_report_runtime_error")
+            .expect("tl_report_runtime_error missing");
+        self.builder
+            .build_call(report_fn, &[error_ptr.into()], "")
+            .unwrap();
+
+        // Return zero/null to propagate failure up (though we stop here effectively by returning garbage or empty)
+        // ideally we would unwind or exit, but user wants just handling.
+        // Actually since we print error, we should probably stop execution of this function.
+        // Since we can't easily unwind without panic, we return a default zero value.
+        // The caller might crash if it uses it, but we printed the error.
+
+        let return_type = function.get_type().get_return_type();
+
+        if let Some(rt) = return_type {
+            if rt.is_pointer_type() {
+                self.builder
+                    .build_return(Some(&rt.into_pointer_type().const_null()))
+                    .unwrap();
+            } else if rt.is_int_type() {
+                self.builder
+                    .build_return(Some(&rt.into_int_type().const_zero()))
+                    .unwrap();
+            } else if rt.is_float_type() {
+                self.builder
+                    .build_return(Some(&rt.into_float_type().const_zero()))
+                    .unwrap();
+            } else {
+                self.builder.build_return(None).unwrap();
+            }
+        } else {
+            self.builder.build_return(None).unwrap();
+        }
+
+        // Success Path
+        self.builder.position_at_end(success_bb);
+        let tensor_val = self
+            .builder
+            .build_extract_value(struct_val, 0, "tensor_ptr")
+            .unwrap();
+        Ok(tensor_val)
+    }
+
     fn register_builtins(&mut self) {
         let device_enum = EnumDef {
             name: "Device".to_string(),
@@ -1102,7 +1197,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .unwrap()
                 };
 
-                let args_tensor = match self
+                let call = self
                     .builder
                     .build_call(
                         tl_tensor_from_arr_fn,
@@ -1112,12 +1207,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         ],
                         "args_tensor",
                     )
-                    .unwrap()
-                    .try_as_basic_value()
-                {
-                    ValueKind::Basic(v) => v,
-                    _ => return Err("Expected value from tl_tensor_from_i64_array".to_string()),
-                };
+                    .unwrap();
+                let args_tensor = self.check_tensor_result(call, "args_tensor_error")?;
 
                 // Call tl_query
                 let result_tensor = match self

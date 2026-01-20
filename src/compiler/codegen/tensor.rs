@@ -479,10 +479,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 "t",
             )
             .map_err(|e| e.to_string())?;
-        let tptr = match call_result.try_as_basic_value() {
-            inkwell::values::ValueKind::Basic(v) => v,
-            _ => return Err("Invalid tl_tensor_new return".into()),
-        };
+        let tptr = self.check_tensor_result(call_result, "tl_tensor_new")?;
 
         let v_alloca = self.create_entry_block_alloca(
             parent_fn,
@@ -621,10 +618,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     )
                     .map_err(|e| e.to_string())?;
 
-                match call.try_as_basic_value() {
-                    inkwell::values::ValueKind::Basic(v) => Ok((v, tensor_type)),
-                    _ => Err(format!("{} returned void", func_name)),
-                }
+                let res_val = self.check_tensor_result(call, &func_name)?;
+                Ok((res_val, tensor_type))
             }
             Type::F32 | Type::I64 => {
                 let f32_type = self.context.f32_type();
@@ -662,10 +657,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     )
                     .map_err(|e| e.to_string())?;
 
-                let tensor_ptr = match call_site_value.try_as_basic_value() {
-                    inkwell::values::ValueKind::Basic(v) => v,
-                    _ => return Err("tl_tensor_new failed".into()),
-                };
+                let tensor_ptr = self.check_tensor_result(call_site_value, "tl_tensor_new")?;
 
                 Ok((tensor_ptr, Type::Tensor(Box::new(Type::F32), 0)))
             }
