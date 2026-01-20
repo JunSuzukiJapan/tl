@@ -177,6 +177,26 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_print_string", print_str_type.clone());
     add_fn("tl_display_string", print_str_type);
 
+    // tl_file_exists(path: *const c_char) -> bool
+    let file_exists_type = context.bool_type().fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_file_exists", file_exists_type);
+
+    // Workaround: i64 return type
+    let file_exists_i64_type = i64_type.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_file_exists_i64", file_exists_i64_type);
+
+    // tl_download_file(url: *const c_char, path: *const c_char) -> i64
+    let download_file_type = i64_type.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_download_file", download_file_type);
+
+    // tl_read_file(path: *const c_char) -> *const c_char
+    let read_file_type = i8_ptr.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_read_file", read_file_type);
+
+    // tl_write_file(path: *const c_char, content: *const c_char) -> i64
+    let write_file_type = i64_type.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_write_file", write_file_type);
+
     // tl_print_ptr for debugging tensor pointers
     let print_ptr_type = void_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_print_ptr", print_ptr_type);
@@ -396,6 +416,21 @@ pub fn declare_runtime_functions<'ctx>(
     // Manual mapping for tl_clear_grads to avoid dlsym issues
     if let Some(f) = module.get_function("tl_clear_grads") {
         execution_engine.add_global_mapping(&f, runtime::tl_clear_grads as usize);
+    }
+    if let Some(f) = module.get_function("tl_file_exists") {
+        execution_engine.add_global_mapping(&f, runtime::tl_file_exists as usize);
+    }
+    if let Some(f) = module.get_function("tl_file_exists_i64") {
+        execution_engine.add_global_mapping(&f, runtime::tl_file_exists_i64 as usize);
+    }
+    if let Some(f) = module.get_function("tl_download_file") {
+        execution_engine.add_global_mapping(&f, runtime::tl_download_file as usize);
+    }
+    if let Some(f) = module.get_function("tl_read_file") {
+        execution_engine.add_global_mapping(&f, runtime::tl_read_file as usize);
+    }
+    if let Some(f) = module.get_function("tl_write_file") {
+        execution_engine.add_global_mapping(&f, runtime::tl_write_file as usize);
     }
 
     // tl_checkpoint(ctx: *mut, func: *mut, input: *mut) -> *mut

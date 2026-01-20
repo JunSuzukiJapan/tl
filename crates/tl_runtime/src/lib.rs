@@ -3321,3 +3321,124 @@ pub extern "C" fn tl_tensor_ones(
         make_tensor(t)
     }
 }
+
+#[no_mangle]
+pub extern "C" fn tl_file_exists(path: *const std::os::raw::c_char) -> bool {
+    if path.is_null() {
+        return false;
+    }
+    let path_str = unsafe { std::ffi::CStr::from_ptr(path).to_str().unwrap_or("") };
+    if path_str.is_empty() {
+        return false;
+    }
+
+    let path_buf = if path_str.starts_with("~") {
+        if let Ok(home) = std::env::var("HOME") {
+            std::path::PathBuf::from(path_str.replace("~", &home))
+        } else {
+            std::path::PathBuf::from(path_str)
+        }
+    } else {
+        std::path::PathBuf::from(path_str)
+    };
+
+    path_buf.exists()
+}
+
+#[no_mangle]
+pub extern "C" fn tl_file_exists_i64(path: *const std::os::raw::c_char) -> i64 {
+    if tl_file_exists(path) {
+        1
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_download_file(
+    url: *const std::os::raw::c_char,
+    path: *const std::os::raw::c_char,
+) -> i64 {
+    let url_str = unsafe { std::ffi::CStr::from_ptr(url).to_string_lossy() };
+    let path_str = unsafe { std::ffi::CStr::from_ptr(path).to_string_lossy() };
+
+    // Handle home directory expansion
+    let path_buf = if path_str.starts_with("~") {
+        if let Ok(home) = std::env::var("HOME") {
+            std::path::PathBuf::from(path_str.replace("~", &home))
+        } else {
+            std::path::PathBuf::from(path_str.as_ref())
+        }
+    } else {
+        std::path::PathBuf::from(path_str.as_ref())
+    };
+
+    println!("Downloading from: {}", url_str);
+    println!("Saving to: {:?}", path_buf);
+
+    match reqwest::blocking::get(url_str.as_ref()) {
+        Ok(mut response) => {
+            if !response.status().is_success() {
+                println!("Download failed: HTTP {}", response.status());
+                return 0;
+            }
+
+            // Create directories if needed
+            if let Some(parent) = path_buf.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    println!("Failed to create directories: {}", e);
+                    return 0;
+                }
+            }
+
+            match std::fs::File::create(&path_buf) {
+                Ok(mut file) => {
+                    let total_size = response.content_length();
+                    if let Some(len) = total_size {
+                        println!("Total size: {} bytes", len);
+                    } else {
+                        println!("Total size: unknown");
+                    }
+
+                    if let Err(e) = std::io::copy(&mut response, &mut file) {
+                        println!("Error writing to file: {}", e);
+                        return 0;
+                    }
+                    println!("Download complete!");
+                    1
+                }
+                Err(e) => {
+                    println!("Failed to create file: {}", e);
+                    0
+                }
+            }
+        }
+        Err(e) => {
+            println!("Request failed: {}", e);
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_read_file(path: *const std::os::raw::c_char) -> *const std::os::raw::c_char {
+    let path_str = unsafe { std::ffi::CStr::from_ptr(path).to_string_lossy() };
+    if let Ok(content) = std::fs::read_to_string(path_str.as_ref()) {
+        let c_string = std::ffi::CString::new(content.trim()).unwrap();
+        c_string.into_raw()
+    } else {
+        std::ptr::null()
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_write_file(path: *const std::os::raw::c_char, content: *const std::os::raw::c_char) -> i64 {
+    let path_str = unsafe { std::ffi::CStr::from_ptr(path).to_string_lossy() };
+    let content_str = unsafe { std::ffi::CStr::from_ptr(content).to_string_lossy() };
+    
+    if let Ok(_) = std::fs::write(path_str.as_ref(), content_str.as_ref()) {
+        1
+    } else {
+        0
+    }
+}

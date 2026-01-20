@@ -1,5 +1,11 @@
 struct Map { _d: i64 }
-extern fn tl_gguf_load(path: String) -> Map;
+
+struct Linear { w: i64 }
+struct RMSNorm { w: Tensor<f32, 1>, e: f32 }
+struct MLP { g: Linear, u: Linear, d: Linear }
+struct Attention { q: Linear, k: Linear, v: Linear, o: Linear }
+struct Block { an: RMSNorm, ffn: RMSNorm, at: Attention, mlp: MLP }
+
 extern fn tl_tokenizer_new(path: String) -> i64;
 extern fn tl_tokenizer_encode(tok: i64, prompt: String) -> Tensor<i64, 1>;
 extern fn tl_tokenizer_decode(tok: i64, ids: Tensor<i64, 1>) -> String;
@@ -14,7 +20,6 @@ extern fn tl_tensor_mul(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
 extern fn tl_tensor_scale(a: Tensor<f32, 4>, s: f32) -> Tensor<f32, 4>;
 extern fn tl_tensor_transpose_2d(t: Tensor<f32, 2>, d1: i64, d2: i64) -> Tensor<f32, 2>;
 extern fn tl_tensor_transpose(t: Tensor<f32, 4>, d1: i64, d2: i64) -> Tensor<f32, 4>;
-
 extern fn tl_tensor_apply_rope(x: Tensor<f32, 4>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>) -> Tensor<f32, 4>;
 extern fn tl_tensor_repeat_interleave(t: Tensor<f32, 4>, repeats: i64, dim: i64) -> Tensor<f32, 4>;
 extern fn tl_tensor_new_causal_mask(dim: i64) -> Tensor<f32, 2>;
@@ -41,23 +46,28 @@ extern fn tl_string_from_int(i: i64) -> String;
 extern fn tl_tensor_matmul_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>) -> Tensor<f32, 4>;
 extern fn tl_tensor_add_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>) -> Tensor<f32, 4>;
 extern fn tl_tensor_softmax(t: Tensor<f32, 4>, d: i64) -> Tensor<f32, 4>;
-
 extern fn tl_tensor_map_get_quantized(map: Map, key: String) -> i64;
 extern fn tl_qtensor_matmul(input: Tensor<f32, 2>, weight: i64) -> Tensor<f32, 2>;
+extern fn tl_gguf_load(path: String) -> Map;
 
-struct Linear { w: i64 }
+// New functions
+extern fn tl_file_exists_i64(path: String) -> i64;
+extern fn tl_read_file(path: String) -> String;
+extern fn tl_write_file(path: String, content: String) -> i64;
+extern fn tl_download_file(url: String, path: String) -> i64;
+
 impl Linear {
     fn from_map(m: Map, k: String) -> Linear { return Linear { w: tl_tensor_map_get_quantized(m, k) }; }
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { 
         return tl_qtensor_matmul(x, self.w); 
     }
 }
-struct RMSNorm { w: Tensor<f32, 1>, e: f32 }
+
 impl RMSNorm {
     fn new(m: Map, k: String) -> RMSNorm { return RMSNorm { w: tl_tensor_map_get_1d(m, k), e: 0.00001 }; }
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { return tl_tensor_rms_norm(x, self.w, self.e); }
 }
-struct MLP { g: Linear, u: Linear, d: Linear }
+
 impl MLP {
     fn from_map(m: Map, p: String) -> MLP {
         return MLP {
@@ -70,7 +80,7 @@ impl MLP {
         return self.d.forward(tl_tensor_mul(tl_tensor_silu(self.g.forward(x.clone())), self.u.forward(x.clone())));
     }
 }
-struct Attention { q: Linear, k: Linear, v: Linear, o: Linear }
+
 impl Attention {
     fn from_map(m: Map, p: String) -> Attention {
         return Attention {
@@ -115,7 +125,7 @@ impl Attention {
         return self.o.forward(ao.reshape([sl, 4096]));
     }
 }
-struct Block { an: RMSNorm, ffn: RMSNorm, at: Attention, mlp: MLP }
+
 impl Block {
     fn from_map(m: Map, li: i64) -> Block {
         let p = tl_string_concat("blk.", tl_string_from_int(li));
@@ -131,16 +141,73 @@ impl Block {
         return tl_tensor_add(h.clone(), self.mlp.forward(self.ffn.forward(h)));
     }
 }
+
 fn main() {
     println("Llama 3.1 8B Chatbot");
     Param::set_device(Device::Auto);
-    let model_path = "~/.llm/models/models--lmstudio-community--Meta-Llama-3.1-8B-Instruct-GGUF/snapshots/8601e6db71269a2b12255ebdf09ab75becf22cc8/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf";
+    let mut model_path = "~/.llm/models/models--lmstudio-community--Meta-Llama-3.1-8B-Instruct-GGUF/snapshots/8601e6db71269a2b12255ebdf09ab75becf22cc8/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf";
     let tokenizer_path = "~/.llm/models/llama3_tokenizer.json";
+    
+    let config_path = "chatbot_config.txt";
+    
+    // Try config first
+    if tl_file_exists_i64(config_path) == 1 {
+        let saved_path = tl_read_file(config_path);
+        if tl_file_exists_i64(saved_path) == 1 {
+            model_path = saved_path;
+        }
+    }
+
+    if tl_file_exists_i64(model_path) == 0 {
+        println("Model file not found at:");
+        println(model_path);
+        println("Please select:");
+        println("1. Download Model");
+        println("2. Load from another folder");
+        
+        while true {
+            let choice = tl_read_line("Select [1/2]> ");
+            if choice == "1" {
+                println("Downloading model...");
+                println("Enter download directory path (or press Enter for default ~/.llm/models/):");
+                let dl_dir_in = tl_read_line("Path> ");
+                let dl_dir = if dl_dir_in == "" { "~/.llm/models/" } else { dl_dir_in };
+                
+                let filename = "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf";
+                let save_path = tl_string_concat(dl_dir, filename);
+                
+                let url = "https://huggingface.co/lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf";
+                if tl_download_file(url, save_path) == 1 {
+                    println("Download complete.");
+                    model_path = save_path;
+                    tl_write_file(config_path, model_path);
+                    break;
+                } else {
+                    println("Download failed.");
+                    println("Please try manual download from:");
+                    println(url);
+                    return;
+                }
+            } else {
+                if choice == "2" {
+                    let new_path = tl_read_line("Enter model absolute path> ");
+                    if tl_file_exists_i64(new_path) == 1 {
+                        model_path = new_path;
+                        tl_write_file(config_path, model_path);
+                        break;
+                    } else {
+                        println("File not found. Please try again.");
+                    }
+                } else {
+                    println("Invalid selection.");
+                }
+            }
+        }
+    }
     
     let weights = tl_gguf_load(model_path);
     let tok = tl_tokenizer_new(tokenizer_path);
     
-    // RoPE: Dim 128, Theta 500000.0
     let cos = tl_tensor_rope_new_cos(128, 8192, 500000.0);
     let sin = tl_tensor_rope_new_sin(128, 8192, 500000.0);
     
@@ -157,14 +224,12 @@ fn main() {
             return;
         }
         
-        // Llama 3 Prompt Format
-        // <|start_header_id|>user<|end_header_id|>\n\n{input}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n
         let p1 = "<|start_header_id|>user<|end_header_id|>\n\n";
         let p2 = "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n";
         let prompt = tl_string_concat(p1, tl_string_concat(input_str, p2));
         
         let mut tokens = tl_tokenizer_encode(tok, prompt);
-        let cache = tl_kv_cache_new(32); // 32 Layers
+        let cache = tl_kv_cache_new(32); 
         let mut cur_tokens = tokens.clone();
         let mut gen_idx = 0;
         let mut gen_str = "";
@@ -176,21 +241,17 @@ fn main() {
             let xi = tl_tensor_embedding(cur_tokens, emb);
             let mut x = xi;
             let mut l = 0;
-            // 32 Layers
             while l < 32 {
                 let blk = Block::from_map(weights, l);
                 x = blk.forward(x, cos, sin, batch_len, cache, l, start_pos);
                 l = l + 1;
             }
             let lo = oh.forward(on.forward(x));
-            // Sampling t=0.7, p=0.9
             let nxt = tl_tensor_sample(tl_tensor_narrow(lo, 0, batch_len - 1, 1), 0.7, 0.9);
             let s_nxt = tl_tokenizer_decode(tok, nxt);
             print(s_nxt);
             
             gen_str = tl_string_concat(gen_str, s_nxt);
-            // Llama 3 EOT ID: 128009
-            // End of Text: 128001
             let nxt_val = tl_tensor_item_i64(nxt);
             if (nxt_val == 128009 || nxt_val == 128001) {
                 gen_idx = 200;
