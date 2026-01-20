@@ -1,8 +1,14 @@
+struct Map { _d: i64 }
+struct Linear { w: Tensor<f32, 2> }
+struct RMSNorm { w: Tensor<f32, 1>, e: f32 }
+struct MLP { g: Linear, u: Linear, d: Linear }
+struct Attention { q: Linear, k: Linear, v: Linear, o: Linear }
+struct Block { an: RMSNorm, ffn: RMSNorm, at: Attention, mlp: MLP }
+
 extern fn tl_read_line(prompt: String) -> String;
 extern fn tl_string_concat(a: String, b: String) -> String;
 extern fn tl_string_contains(h: String, n: String) -> bool;
 extern fn tl_string_from_int(n: i64) -> String;
-struct Map { _d: i64 }
 extern fn tl_gguf_load(path: String) -> Map;
 extern fn tl_tokenizer_new(path: String) -> i64;
 extern fn tl_tokenizer_encode(tok: i64, prompt: String) -> Tensor<i64, 1>;
@@ -40,18 +46,25 @@ extern fn tl_tensor_len(t: Tensor<i64, 1>) -> i64;
 extern fn tl_tensor_item_i64(t: Tensor<i64, 1>) -> i64;
 extern fn tl_tensor_cat_i64(a: Tensor<i64, 1>, b: Tensor<i64, 1>, d: i64) -> Tensor<i64, 1>;
 extern fn tl_tensor_sample(t: Tensor<f32, 2>, temp: f32, top_p: f32) -> Tensor<i64, 1>;
+extern fn println(s: String);
+extern fn print(s: String);
 
-struct Linear { w: Tensor<f32, 2> }
+// New functions
+extern fn tl_file_exists_i64(path: String) -> i64;
+extern fn tl_read_file(path: String) -> String;
+extern fn tl_write_file(path: String, content: String) -> i64;
+extern fn tl_download_file(url: String, path: String) -> i64;
+
 impl Linear {
     fn from_map(m: Map, k: String) -> Linear { return Linear { w: tl_tensor_map_get(m, k) }; }
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { return tl_tensor_matmul(x, tl_tensor_transpose_2d(self.w, 0, 1)); }
 }
-struct RMSNorm { w: Tensor<f32, 1>, e: f32 }
+
 impl RMSNorm {
     fn new(m: Map, k: String) -> RMSNorm { return RMSNorm { w: tl_tensor_map_get_1d(m, k), e: 0.00001 }; }
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { return tl_tensor_rms_norm(x, self.w, self.e); }
 }
-struct MLP { g: Linear, u: Linear, d: Linear }
+
 impl MLP {
     fn from_map(m: Map, p: String) -> MLP {
         return MLP {
@@ -64,7 +77,7 @@ impl MLP {
         return self.d.forward(tl_tensor_mul(tl_tensor_silu(self.g.forward(x.clone())), self.u.forward(x.clone())));
     }
 }
-struct Attention { q: Linear, k: Linear, v: Linear, o: Linear }
+
 impl Attention {
     fn from_map(m: Map, p: String) -> Attention {
         return Attention {
@@ -95,7 +108,7 @@ impl Attention {
         return self.o.forward(tl_tensor_reshape_2d(ao, [sl, 2048], 2));
     }
 }
-struct Block { an: RMSNorm, ffn: RMSNorm, at: Attention, mlp: MLP }
+
 impl Block {
     fn from_map(m: Map, li: i64) -> Block {
         let p = tl_string_concat("blk.", tl_string_from_int(li));
@@ -111,11 +124,72 @@ impl Block {
         return tl_tensor_add(x2, self.mlp.forward(self.ffn.forward(x2.clone())));
     }
 }
+
 fn main() {
-    println("TinyLlama Chatbot (Stable)");
-    Param::ice(Device::Auto);
-    let weights = tl_gguf_load("~/.llm/models/tinyllama-1.1b-chat-q4_0.gguf");
-    let tok = tl_tokenizer_new("~/.llm/models/tokenizer.json");
+    println("TinyLlama Chatbot");
+    Param::set_device(Device::Auto);
+
+    let mut model_path = "~/.llm/models/tinyllama-1.1b-chat-q4_0.gguf";
+    let tokenizer_path = "~/.llm/models/tokenizer.json";
+    let config_path = "chatbot_config.txt";
+
+    // Try config first
+    if tl_file_exists_i64(config_path) == 1 {
+        let saved_path = tl_read_file(config_path);
+        if tl_file_exists_i64(saved_path) == 1 {
+            model_path = saved_path;
+        }
+    }
+
+    if tl_file_exists_i64(model_path) == 0 {
+        println("Model file not found at:");
+        println(model_path);
+        println("Please select:");
+        println("1. Download Model");
+        println("2. Load from another folder");
+        
+        while true {
+            let choice = tl_read_line("Select [1/2]> ");
+            if choice == "1" {
+                println("Downloading model...");
+                println("Enter download directory path (or press Enter for default ~/.llm/models/):");
+                let dl_dir_in = tl_read_line("Path> ");
+                let dl_dir = if dl_dir_in == "" { "~/.llm/models/" } else { dl_dir_in };
+                
+                let filename = "tinyllama-1.1b-chat-q4_0.gguf";
+                let save_path = tl_string_concat(dl_dir, filename);
+                
+                let url = "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf";
+                if tl_download_file(url, save_path) == 1 {
+                    println("Download complete.");
+                    model_path = save_path;
+                    tl_write_file(config_path, model_path);
+                    break;
+                } else {
+                    println("Download failed.");
+                    println("Please try manual download from:");
+                    println(url);
+                    return;
+                }
+            } else {
+                if choice == "2" {
+                    let new_path = tl_read_line("Enter model absolute path> ");
+                    if tl_file_exists_i64(new_path) == 1 {
+                        model_path = new_path;
+                        tl_write_file(config_path, model_path);
+                        break;
+                    } else {
+                        println("File not found. Please try again.");
+                    }
+                } else {
+                    println("Invalid selection.");
+                }
+            }
+        }
+    }
+
+    let weights = tl_gguf_load(model_path);
+    let tok = tl_tokenizer_new(tokenizer_path);
     let cos = tl_tensor_rope_new_cos(64, 2048, 10000.0);
     let sin = tl_tensor_rope_new_sin(64, 2048, 10000.0);
     let on = RMSNorm::new(weights, "output_norm.weight");
@@ -128,7 +202,6 @@ fn main() {
             return;
         }
         
-        // Use standard User/Assistant format since special tokens are not supported
         let prompt = tl_string_concat("User: ", tl_string_concat(input_str, "\nAssistant:"));
         let mut tokens = tl_tokenizer_encode(tok, prompt);
         let cache = tl_kv_cache_new(22);
