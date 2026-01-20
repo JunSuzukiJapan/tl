@@ -5,56 +5,6 @@ struct MLP { g: Linear, u: Linear, d: Linear }
 struct Attention { q: Linear, k: Linear, v: Linear, o: Linear }
 struct Block { an: RMSNorm, ffn: RMSNorm, at: Attention, mlp: MLP }
 
-extern fn tl_read_line(prompt: String) -> String;
-extern fn tl_string_concat(a: String, b: String) -> String;
-extern fn tl_string_contains(h: String, n: String) -> bool;
-extern fn tl_string_from_int(n: i64) -> String;
-extern fn tl_gguf_load(path: String) -> Map;
-extern fn tl_tokenizer_new(path: String) -> i64;
-extern fn tl_tokenizer_encode(tok: i64, prompt: String) -> Tensor<i64, 1>;
-extern fn tl_tokenizer_decode(tok: i64, tokens: Tensor<i64, 1>) -> String;
-extern fn tl_tensor_map_get(map: Map, key: String) -> Tensor<f32, 2>;
-extern fn tl_tensor_map_get_1d(map: Map, key: String) -> Tensor<f32, 1>;
-extern fn tl_tensor_embedding(id: Tensor<i64, 1>, w: Tensor<f32, 2>) -> Tensor<f32, 2>;
-extern fn tl_tensor_rms_norm(x: Tensor<f32, 2>, w: Tensor<f32, 1>, e: f32) -> Tensor<f32, 2>;
-extern fn tl_tensor_matmul(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
-extern fn tl_tensor_add(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
-extern fn tl_tensor_silu(x: Tensor<f32, 2>) -> Tensor<f32, 2>;
-extern fn tl_tensor_mul(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
-extern fn tl_tensor_scale(t: Tensor<f32, 4>, s: f32) -> Tensor<f32, 4>;
-extern fn tl_tensor_transpose_2d(t: Tensor<f32, 2>, d1: i64, d2: i64) -> Tensor<f32, 2>;
-extern fn tl_tensor_transpose(t: Tensor<f32, 4>, d1: i64, d2: i64) -> Tensor<f32, 4>;
-extern fn tl_tensor_reshape_dims(t: Tensor<f32, 2>, d: Tensor<i64, 1>, n: i64) -> Tensor<f32, 4>;
-extern fn tl_tensor_reshape_2d(t: Tensor<f32, 4>, d: Tensor<i64, 1>, n: i64) -> Tensor<f32, 2>;
-extern fn tl_tensor_apply_rope(x: Tensor<f32, 4>, c: Tensor<f32, 2>, s: Tensor<f32, 2>) -> Tensor<f32, 4>;
-extern fn tl_tensor_narrow(t: Tensor<f32, 2>, d: i64, s: i64, l: i64) -> Tensor<f32, 2>;
-extern fn tl_kv_cache_new(l: i64) -> i64;
-extern fn tl_kv_cache_free(id: i64) -> void;
-extern fn tl_kv_cache_update(id: i64, l: i64, k: Tensor<f32, 4>, v: Tensor<f32, 4>) -> void;
-extern fn tl_kv_cache_get_k(id: i64, l: i64) -> Tensor<f32, 4>;
-extern fn tl_kv_cache_get_v(id: i64, l: i64) -> Tensor<f32, 4>;
-extern fn tl_tensor_cat_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>, d: i64) -> Tensor<f32, 4>;
-extern fn tl_tensor_repeat_interleave(t: Tensor<f32, 4>, r: i64, d: i64) -> Tensor<f32, 4>;
-extern fn tl_tensor_matmul_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>) -> Tensor<f32, 4>;
-extern fn tl_tensor_add_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>) -> Tensor<f32, 4>;
-extern fn tl_tensor_softmax(t: Tensor<f32, 4>, d: i64) -> Tensor<f32, 4>;
-extern fn tl_tensor_new_causal_mask(l: i64) -> Tensor<f32, 2>;
-extern fn tl_tensor_rope_new_cos(d: i64, l: i64, t: f32) -> Tensor<f32, 2>;
-extern fn tl_tensor_rope_new_sin(d: i64, l: i64, t: f32) -> Tensor<f32, 2>;
-extern fn tl_tensor_argmax(t: Tensor<f32, 2>, d: i64, k: bool) -> Tensor<i64, 1>;
-extern fn tl_tensor_len(t: Tensor<i64, 1>) -> i64;
-extern fn tl_tensor_item_i64(t: Tensor<i64, 1>) -> i64;
-extern fn tl_tensor_cat_i64(a: Tensor<i64, 1>, b: Tensor<i64, 1>, d: i64) -> Tensor<i64, 1>;
-extern fn tl_tensor_sample(t: Tensor<f32, 2>, temp: f32, top_p: f32) -> Tensor<i64, 1>;
-extern fn println(s: String);
-extern fn print(s: String);
-
-// New functions
-extern fn tl_file_exists_i64(path: String) -> i64;
-extern fn tl_read_file(path: String) -> String;
-extern fn tl_write_file(path: String, content: String) -> i64;
-extern fn tl_download_file(url: String, path: String) -> i64;
-
 impl Linear {
     fn from_map(m: Map, k: String) -> Linear { return Linear { w: tl_tensor_map_get(m, k) }; }
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { return tl_tensor_matmul(x, tl_tensor_transpose_2d(self.w, 0, 1)); }
@@ -245,3 +195,53 @@ fn main() {
         println("");
     }
 }
+
+extern fn tl_read_line(prompt: String) -> String;
+extern fn tl_string_concat(a: String, b: String) -> String;
+extern fn tl_string_contains(h: String, n: String) -> bool;
+extern fn tl_string_from_int(n: i64) -> String;
+extern fn tl_gguf_load(path: String) -> Map;
+extern fn tl_tokenizer_new(path: String) -> i64;
+extern fn tl_tokenizer_encode(tok: i64, prompt: String) -> Tensor<i64, 1>;
+extern fn tl_tokenizer_decode(tok: i64, tokens: Tensor<i64, 1>) -> String;
+extern fn tl_tensor_map_get(map: Map, key: String) -> Tensor<f32, 2>;
+extern fn tl_tensor_map_get_1d(map: Map, key: String) -> Tensor<f32, 1>;
+extern fn tl_tensor_embedding(id: Tensor<i64, 1>, w: Tensor<f32, 2>) -> Tensor<f32, 2>;
+extern fn tl_tensor_rms_norm(x: Tensor<f32, 2>, w: Tensor<f32, 1>, e: f32) -> Tensor<f32, 2>;
+extern fn tl_tensor_matmul(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
+extern fn tl_tensor_add(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
+extern fn tl_tensor_silu(x: Tensor<f32, 2>) -> Tensor<f32, 2>;
+extern fn tl_tensor_mul(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
+extern fn tl_tensor_scale(t: Tensor<f32, 4>, s: f32) -> Tensor<f32, 4>;
+extern fn tl_tensor_transpose_2d(t: Tensor<f32, 2>, d1: i64, d2: i64) -> Tensor<f32, 2>;
+extern fn tl_tensor_transpose(t: Tensor<f32, 4>, d1: i64, d2: i64) -> Tensor<f32, 4>;
+extern fn tl_tensor_reshape_dims(t: Tensor<f32, 2>, d: Tensor<i64, 1>, n: i64) -> Tensor<f32, 4>;
+extern fn tl_tensor_reshape_2d(t: Tensor<f32, 4>, d: Tensor<i64, 1>, n: i64) -> Tensor<f32, 2>;
+extern fn tl_tensor_apply_rope(x: Tensor<f32, 4>, c: Tensor<f32, 2>, s: Tensor<f32, 2>) -> Tensor<f32, 4>;
+extern fn tl_tensor_narrow(t: Tensor<f32, 2>, d: i64, s: i64, l: i64) -> Tensor<f32, 2>;
+extern fn tl_kv_cache_new(l: i64) -> i64;
+extern fn tl_kv_cache_free(id: i64) -> void;
+extern fn tl_kv_cache_update(id: i64, l: i64, k: Tensor<f32, 4>, v: Tensor<f32, 4>) -> void;
+extern fn tl_kv_cache_get_k(id: i64, l: i64) -> Tensor<f32, 4>;
+extern fn tl_kv_cache_get_v(id: i64, l: i64) -> Tensor<f32, 4>;
+extern fn tl_tensor_cat_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>, d: i64) -> Tensor<f32, 4>;
+extern fn tl_tensor_repeat_interleave(t: Tensor<f32, 4>, r: i64, d: i64) -> Tensor<f32, 4>;
+extern fn tl_tensor_matmul_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>) -> Tensor<f32, 4>;
+extern fn tl_tensor_add_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>) -> Tensor<f32, 4>;
+extern fn tl_tensor_softmax(t: Tensor<f32, 4>, d: i64) -> Tensor<f32, 4>;
+extern fn tl_tensor_new_causal_mask(l: i64) -> Tensor<f32, 2>;
+extern fn tl_tensor_rope_new_cos(d: i64, l: i64, t: f32) -> Tensor<f32, 2>;
+extern fn tl_tensor_rope_new_sin(d: i64, l: i64, t: f32) -> Tensor<f32, 2>;
+extern fn tl_tensor_argmax(t: Tensor<f32, 2>, d: i64, k: bool) -> Tensor<i64, 1>;
+extern fn tl_tensor_len(t: Tensor<i64, 1>) -> i64;
+extern fn tl_tensor_item_i64(t: Tensor<i64, 1>) -> i64;
+extern fn tl_tensor_cat_i64(a: Tensor<i64, 1>, b: Tensor<i64, 1>, d: i64) -> Tensor<i64, 1>;
+extern fn tl_tensor_sample(t: Tensor<f32, 2>, temp: f32, top_p: f32) -> Tensor<i64, 1>;
+extern fn println(s: String);
+extern fn print(s: String);
+
+// New functions
+extern fn tl_file_exists_i64(path: String) -> i64;
+extern fn tl_read_file(path: String) -> String;
+extern fn tl_write_file(path: String, content: String) -> i64;
+extern fn tl_download_file(url: String, path: String) -> i64;

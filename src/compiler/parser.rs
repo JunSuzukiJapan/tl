@@ -5,7 +5,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_while, take_while1},
     character::complete::{alpha1, char, digit1, space0, space1},
-    combinator::{map, not, opt, recognize, value, verify},
+    combinator::{cut, map, not, opt, recognize, value, verify},
     multi::{separated_list0, separated_list1},
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
     IResult,
@@ -1199,36 +1199,40 @@ fn parse_fn(input: Span) -> IResult<Span, FunctionDef> {
     // [extern] fn name(arg: Type, ...) -> Type { ... }
     let (input, is_extern) = opt(ws(tag("extern")))(input)?;
     let (input, _) = tag("fn")(input)?;
-    let (input, name) = ws(identifier)(input)?;
+    let is_extern = is_extern.is_some();
 
-    // Args: (a: T, b: U)
-    let (input, args) = delimited(
-        ws(char('(')),
-        separated_list0(ws(char(',')), parse_fn_arg),
-        ws(char(')')),
-    )(input)?;
+    cut(move |input| {
+        let (input, name) = ws(identifier)(input)?;
 
-    let (input, ret_type) = opt(preceded(ws(tag("->")), ws(parse_type)))(input)?;
+        // Args: (a: T, b: U)
+        let (input, args) = delimited(
+            ws(char('(')),
+            separated_list0(ws(char(',')), parse_fn_arg),
+            ws(char(')')),
+        )(input)?;
 
-    // Body logic: if extern, expect semicolon and empty body. Else parse block.
-    let (input, body) = if is_extern.is_some() {
-        let (input, _) = ws(char(';'))(input)?;
-        (input, vec![])
-    } else {
-        parse_block(input)?
-    };
+        let (input, ret_type) = opt(preceded(ws(tag("->")), ws(parse_type)))(input)?;
 
-    Ok((
-        input,
-        FunctionDef {
-            name,
-            args,
-            return_type: ret_type.unwrap_or(Type::Void),
-            body,
-            generics: vec![],
-            is_extern: is_extern.is_some(),
-        },
-    ))
+        // Body logic: if extern, expect semicolon and empty body. Else parse block.
+        let (input, body) = if is_extern {
+            let (input, _) = ws(char(';'))(input)?;
+            (input, vec![])
+        } else {
+            parse_block(input)?
+        };
+
+        Ok((
+            input,
+            FunctionDef {
+                name,
+                args,
+                return_type: ret_type.unwrap_or(Type::Void),
+                body,
+                generics: vec![],
+                is_extern,
+            },
+        ))
+    })(input)
 }
 
 fn parse_fn_arg(input: Span) -> IResult<Span, (String, Type)> {
@@ -1255,34 +1259,37 @@ fn parse_fn_arg(input: Span) -> IResult<Span, (String, Type)> {
 fn parse_struct(input: Span) -> IResult<Span, StructDef> {
     // struct Name<T> { field: Type, ... }
     let (input, _) = tag("struct")(input)?;
-    let (input, name) = ws(identifier)(input)?;
 
-    // Generics <T>
-    let (input, generics) = opt(delimited(
-        ws(char('<')),
-        separated_list1(ws(char(',')), identifier),
-        ws(char('>')),
-    ))(input)?;
+    cut(|input| {
+        let (input, name) = ws(identifier)(input)?;
 
-    let (input, _) = ws(char('{'))(input)?;
+        // Generics <T>
+        let (input, generics) = opt(delimited(
+            ws(char('<')),
+            separated_list1(ws(char(',')), identifier),
+            ws(char('>')),
+        ))(input)?;
 
-    // Fields: name: Type,
-    let (input, fields) = separated_list0(
-        ws(char(',')),
-        pair(ws(identifier), preceded(ws(char(':')), parse_type)),
-    )(input)?;
+        let (input, _) = ws(char('{'))(input)?;
 
-    let (input, _) = opt(ws(char(',')))(input)?; // trailing comma
-    let (input, _) = ws(char('}'))(input)?;
+        // Fields: name: Type,
+        let (input, fields) = separated_list0(
+            ws(char(',')),
+            pair(ws(identifier), preceded(ws(char(':')), parse_type)),
+        )(input)?;
 
-    Ok((
-        input,
-        StructDef {
-            name,
-            fields,
-            generics: generics.unwrap_or_default(),
-        },
-    ))
+        let (input, _) = opt(ws(char(',')))(input)?; // trailing comma
+        let (input, _) = ws(char('}'))(input)?;
+
+        Ok((
+            input,
+            StructDef {
+                name,
+                fields,
+                generics: generics.unwrap_or_default(),
+            },
+        ))
+    })(input)
 }
 
 fn parse_variant_def(input: Span) -> IResult<Span, VariantDef> {
@@ -1311,27 +1318,30 @@ fn parse_variant_def(input: Span) -> IResult<Span, VariantDef> {
 fn parse_enum_def(input: Span) -> IResult<Span, EnumDef> {
     // enum Name<T> { Variant, ... }
     let (input, _) = tag("enum")(input)?;
-    let (input, name) = ws(identifier)(input)?;
 
-    let (input, generics) = opt(delimited(
-        ws(char('<')),
-        separated_list1(ws(char(',')), identifier),
-        ws(char('>')),
-    ))(input)?;
+    cut(|input| {
+        let (input, name) = ws(identifier)(input)?;
 
-    let (input, _) = ws(char('{'))(input)?;
-    let (input, variants) = separated_list0(ws(char(',')), parse_variant_def)(input)?;
-    let (input, _) = opt(ws(char(',')))(input)?;
-    let (input, _) = ws(char('}'))(input)?;
+        let (input, generics) = opt(delimited(
+            ws(char('<')),
+            separated_list1(ws(char(',')), identifier),
+            ws(char('>')),
+        ))(input)?;
 
-    Ok((
-        input,
-        EnumDef {
-            name,
-            variants,
-            generics: generics.unwrap_or_default(),
-        },
-    ))
+        let (input, _) = ws(char('{'))(input)?;
+        let (input, variants) = separated_list0(ws(char(',')), parse_variant_def)(input)?;
+        let (input, _) = opt(ws(char(',')))(input)?;
+        let (input, _) = ws(char('}'))(input)?;
+
+        Ok((
+            input,
+            EnumDef {
+                name,
+                variants,
+                generics: generics.unwrap_or_default(),
+            },
+        ))
+    })(input)
 }
 
 // --- New Top Level Parsers ---
@@ -1579,19 +1589,48 @@ pub fn parse(input: &str) -> Result<Module, TlError> {
 
     while !remaining.fragment().trim().is_empty() {
         // Try struct, then impl, then fn, then others
-        if let Ok((next, s)) = ws(parse_struct)(remaining) {
-            structs.push(s);
-            remaining = next;
-        } else if let Ok((next, e)) = ws(parse_enum_def)(remaining) {
-            enums.push(e);
-            remaining = next;
-        } else if let Ok((next, i)) = ws(parse_impl)(remaining) {
+
+        // struct (uses cut)
+        match ws(parse_struct)(remaining) {
+            Ok((next, s)) => {
+                structs.push(s);
+                remaining = next;
+                continue;
+            }
+            Err(nom::Err::Failure(e)) => return Err(convert_nom_error(e)),
+            _ => {}
+        }
+
+        // enum (uses cut)
+        match ws(parse_enum_def)(remaining) {
+            Ok((next, e)) => {
+                enums.push(e);
+                remaining = next;
+                continue;
+            }
+            Err(nom::Err::Failure(e)) => return Err(convert_nom_error(e)),
+            _ => {}
+        }
+
+        // impl
+        if let Ok((next, i)) = ws(parse_impl)(remaining) {
             impls.push(i);
             remaining = next;
-        } else if let Ok((next, f)) = ws(parse_fn)(remaining) {
-            functions.push(f);
-            remaining = next;
-        } else if let Ok((next, m)) = ws(parse_mod_decl)(remaining) {
+            continue;
+        }
+
+        // fn (uses cut)
+        match ws(parse_fn)(remaining) {
+            Ok((next, f)) => {
+                functions.push(f);
+                remaining = next;
+                continue;
+            }
+            Err(nom::Err::Failure(e)) => return Err(convert_nom_error(e)),
+            _ => {}
+        }
+
+        if let Ok((next, m)) = ws(parse_mod_decl)(remaining) {
             imports.push(m);
             remaining = next;
         } else if let Ok((next, u)) = ws(parse_use_decl)(remaining) {
@@ -1718,5 +1757,22 @@ mod tests {
         if let ExprKind::Float(val) = res.unwrap().1.inner {
             assert_eq!(val, 100000.0);
         }
+    }
+}
+
+// Helper error converter
+fn convert_nom_error(e: nom::error::Error<Span>) -> TlError {
+    let span = crate::compiler::error::Span::new(
+        e.input.location_line() as usize,
+        e.input.get_utf8_column(),
+    );
+    let msg = match e.code {
+        nom::error::ErrorKind::Tag => "expected keyword or token",
+        nom::error::ErrorKind::Char => "expected character",
+        _ => "syntax error",
+    };
+    TlError::Parse {
+        kind: ParseErrorKind::Generic(format!("{}: {:?}", msg, e.code)),
+        span: Some(span),
     }
 }

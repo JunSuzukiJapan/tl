@@ -182,6 +182,9 @@ pub enum ParseErrorKind {
 
     #[error("parse error: {0}")]
     Generic(String),
+
+    #[error("expected {expected}, found {found}")]
+    Expected { expected: String, found: String },
 }
 
 /// セマンティクスエラーの種類
