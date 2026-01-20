@@ -30,6 +30,7 @@ use std::sync::{Arc, Mutex};
 // Thread-local storage for the latest gradients computed by backward()
 thread_local! {
     static LATEST_GRADS: RefCell<Option<candle_core::backprop::GradStore>> = const { RefCell::new(None) };
+    static LAST_ERROR: RefCell<Option<crate::error::LastError>> = const { RefCell::new(None) };
 }
 
 // Global VarMap for tracking all trainable parameters
@@ -52,14 +53,122 @@ pub struct OpaqueTensor(
 // OpaqueTensor pointers are raw pointers in C-ABI and should be freed via tl_mem_exit_scope.
 
 // Helper to report runtime errors from JIT code
+// Replaced by tl_handle_runtime_error, kept for compatibility if needed.
 #[no_mangle]
 pub extern "C" fn tl_report_runtime_error(msg: *const std::os::raw::c_char) {
-    if !msg.is_null() {
+    // Deprecated
+}
+
+fn handle_runtime_error_internal(
+    code: u32,
+    msg: String,
+    file: Option<String>,
+    line: u32,
+    col: u32,
+) {
+    let error_code = unsafe { std::mem::transmute(code) };
+    LAST_ERROR.with(|e| {
+        *e.borrow_mut() = Some(crate::error::LastError {
+            code: error_code,
+            message: msg,
+            file: file.unwrap_or("unknown".to_string()),
+            line,
+            col,
+        });
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn tl_handle_runtime_error(
+    code: u32,
+    msg: *const std::os::raw::c_char,
+    file: *const std::os::raw::c_char,
+    line: u32,
+    col: u32,
+) {
+    let message = if !msg.is_null() {
+        unsafe { std::ffi::CStr::from_ptr(msg).to_string_lossy().into_owned() }
+    } else {
+        "Unknown Error".to_string()
+    };
+
+    let filename = if !file.is_null() {
         unsafe {
-            let c_str = std::ffi::CStr::from_ptr(msg);
-            eprintln!("Runtime Error: {}", c_str.to_string_lossy());
+            std::ffi::CStr::from_ptr(file)
+                .to_string_lossy()
+                .into_owned()
+        }
+    } else {
+        "unknown".to_string()
+    };
+
+    handle_runtime_error_internal(code, message, Some(filename), line, col);
+}
+
+#[no_mangle]
+pub extern "C" fn tl_amend_error_loc(file: *const std::os::raw::c_char, line: u32, col: u32) {
+    let filename = if !file.is_null() {
+        unsafe {
+            std::ffi::CStr::from_ptr(file)
+                .to_string_lossy()
+                .into_owned()
+        }
+    } else {
+        "unknown".to_string()
+    };
+
+    LAST_ERROR.with(|e| {
+        if let Some(err) = e.borrow_mut().as_mut() {
+            err.file = filename;
+            err.line = line;
+            err.col = col;
+        }
+    });
+}
+
+fn return_ptr_or_null(
+    res: std::thread::Result<Result<*mut OpaqueTensor, crate::error::RuntimeError>>,
+) -> *mut OpaqueTensor {
+    match res {
+        Ok(Ok(ptr)) => ptr,
+        Ok(Err(e)) => {
+            handle_runtime_error_internal(e.code() as u32, e.to_string(), None, 0, 0);
+            std::ptr::null_mut()
+        }
+        Err(_) => {
+            handle_runtime_error_internal(
+                crate::error::RuntimeErrorCode::InternalError as u32,
+                "Panic caught in runtime".to_string(),
+                None,
+                0,
+                0,
+            );
+            std::ptr::null_mut()
         }
     }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_get_last_error() -> crate::error::CTensorResult {
+    LAST_ERROR.with(|e| {
+        if let Some(err) = e.borrow().as_ref() {
+            // detailed error
+            let c_msg = std::ffi::CString::new(err.message.clone()).unwrap();
+            let c_file = std::ffi::CString::new(err.file.clone()).unwrap();
+
+            crate::error::CTensorResult {
+                tensor: std::ptr::null_mut(),
+                error_msg: c_msg.into_raw(),
+                error_code: err.code,
+                file: c_file.into_raw(),
+                line: err.line,
+                col: err.col,
+            }
+        } else {
+            // No error
+            crate::error::CTensorResult::ok(std::ptr::null_mut())
+        }
+    })
 }
 
 // Helper to create and register an OpaqueTensor from a Candle Tensor
@@ -155,7 +264,7 @@ pub extern "C" fn tl_tensor_new(
     data: *const f32,
     rank: usize,
     shape: *const usize,
-) -> error::CTensorResult {
+) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
 
     let res = std::panic::catch_unwind(|| {
@@ -179,12 +288,7 @@ pub extern "C" fn tl_tensor_new(
         Ok(make_tensor(tensor))
     });
 
-    match res {
-        Ok(inner_res) => error::CTensorResult::from(inner_res),
-        Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-            "Panic caught in tl_tensor_new".to_string(),
-        )),
-    }
+    return_ptr_or_null(res)
 }
 
 #[no_mangle]
@@ -192,7 +296,7 @@ pub extern "C" fn tl_tensor_new_i64(
     data: *const i64,
     rank: usize,
     shape: *const usize,
-) -> error::CTensorResult {
+) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
 
     let res = std::panic::catch_unwind(|| {
@@ -217,12 +321,7 @@ pub extern "C" fn tl_tensor_new_i64(
         Ok(make_tensor(tensor))
     });
 
-    match res {
-        Ok(inner_res) => error::CTensorResult::from(inner_res),
-        Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-            "Panic caught in tl_tensor_new_i64".to_string(),
-        )),
-    }
+    return_ptr_or_null(res)
 }
 
 // tl_tensor_argmax(t: *mut, dim: i64, keep_dim: bool) -> *mut
@@ -231,13 +330,18 @@ pub extern "C" fn tl_tensor_argmax(
     t: *mut OpaqueTensor,
     dim: i64,
     keep_dim: bool,
-) -> error::CTensorResult {
+) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
         if t.is_null() {
-            return error::CTensorResult::err(RuntimeError::InternalError(
-                "Tensor is null in argmax".to_string(),
-            ));
+            handle_runtime_error_internal(
+                crate::error::RuntimeErrorCode::NullPointerError as u32,
+                "Tensor is null".to_string(),
+                None,
+                0,
+                0,
+            );
+            return std::ptr::null_mut();
         }
         let ten = &(*t).0;
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -257,13 +361,7 @@ pub extern "C" fn tl_tensor_argmax(
             Ok(make_tensor(final_i64))
         }));
 
-        match res {
-            Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-            Ok(Err(e)) => error::CTensorResult::err(e),
-            Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-                "Panic in argmax".to_string(),
-            )),
-        }
+        return_ptr_or_null(res)
     }
 }
 
@@ -325,13 +423,18 @@ pub extern "C" fn tl_tensor_randn_debug(
     rank: usize,
     shape: *const usize,
     req_grad: bool,
-) -> error::CTensorResult {
+) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
 
     if shape.is_null() {
-        return error::CTensorResult::err(RuntimeError::InternalError(
-            "Shape pointer is null".to_string(),
-        ));
+        handle_runtime_error_internal(
+            crate::error::RuntimeErrorCode::NullPointerError as u32,
+            "Shape is null".to_string(),
+            None,
+            0,
+            0,
+        );
+        return std::ptr::null_mut();
     }
 
     let res = std::panic::catch_unwind(|| {
@@ -354,13 +457,7 @@ pub extern "C" fn tl_tensor_randn_debug(
         Ok(ptr)
     });
 
-    match res {
-        Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-        Ok(Err(e)) => error::CTensorResult::err(e),
-        Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-            "Panic in randn_debug".to_string(),
-        )),
-    }
+    return_ptr_or_null(res)
 }
 
 #[no_mangle]
@@ -368,14 +465,19 @@ pub extern "C" fn tl_tensor_zeros(
     rank: usize,
     shape: *const usize,
     req_grad: bool,
-) -> error::CTensorResult {
+) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
 
     // Safety check
     if shape.is_null() {
-        return error::CTensorResult::err(RuntimeError::InternalError(
-            "Shape pointer is null".to_string(),
-        ));
+        handle_runtime_error_internal(
+            crate::error::RuntimeErrorCode::NullPointerError as u32,
+            "Shape is null".to_string(),
+            None,
+            0,
+            0,
+        );
+        return std::ptr::null_mut();
     }
 
     let res = std::panic::catch_unwind(|| {
@@ -400,18 +502,13 @@ pub extern "C" fn tl_tensor_zeros(
         Ok(ptr)
     });
 
-    match res {
-        Ok(inner_res) => error::CTensorResult::from(inner_res),
-        Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-            "Panic caught in tl_tensor_zeros".to_string(),
-        )),
-    }
+    return_ptr_or_null(res)
 }
 
 /// Create a 1D Tensor from an i64 array (for reshape shape arguments)
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_from_i64_array(data: *const i64, len: usize) -> error::CTensorResult {
+pub extern "C" fn tl_tensor_from_i64_array(data: *const i64, len: usize) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
 
     let res = std::panic::catch_unwind(|| {
@@ -426,13 +523,7 @@ pub extern "C" fn tl_tensor_from_i64_array(data: *const i64, len: usize) -> erro
         Ok(make_tensor(tensor))
     });
 
-    match res {
-        Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-        Ok(Err(e)) => error::CTensorResult::err(e),
-        Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-            "Panic in tensor_from_i64_array".to_string(),
-        )),
-    }
+    return_ptr_or_null(res)
 }
 
 // VarBuilder-based parameter management (following Candle's official pattern)
@@ -445,15 +536,20 @@ pub extern "C" fn tl_tensor_from_i64_array(data: *const i64, len: usize) -> erro
 pub extern "C" fn tl_varbuilder_get_from_tensor(
     name_ptr: *const std::os::raw::c_char,
     shape_tensor: *mut OpaqueTensor,
-) -> error::CTensorResult {
+) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     use std::ffi::CStr;
 
     unsafe {
         if name_ptr.is_null() || shape_tensor.is_null() {
-            return error::CTensorResult::err(RuntimeError::InternalError(
-                "Null pointer in varbuilder_get".to_string(),
-            ));
+            handle_runtime_error_internal(
+                crate::error::RuntimeErrorCode::NullPointerError as u32,
+                "Null ptr".to_string(),
+                None,
+                0,
+                0,
+            );
+            return std::ptr::null_mut();
         }
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let name_str = CStr::from_ptr(name_ptr).to_string_lossy().into_owned();
@@ -474,13 +570,7 @@ pub extern "C" fn tl_varbuilder_get_from_tensor(
             tl_varbuilder_get_common(name_str, shape_slice)
         }));
 
-        match res {
-            Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-            Ok(Err(e)) => error::CTensorResult::err(e),
-            Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-                "Panic in varbuilder_get_from_tensor".to_string(),
-            )),
-        }
+        return_ptr_or_null(res)
     }
 }
 
@@ -543,7 +633,7 @@ pub extern "C" fn tl_varbuilder_get(
     name: *const std::os::raw::c_char,
     rank: usize,
     shape: *const usize,
-) -> error::CTensorResult {
+) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     use std::ffi::CStr;
 
@@ -552,13 +642,7 @@ pub extern "C" fn tl_varbuilder_get(
         let shape_slice = unsafe { slice::from_raw_parts(shape, rank) };
         tl_varbuilder_get_common(name_str, shape_slice)
     });
-    match res {
-        Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-        Ok(Err(e)) => error::CTensorResult::err(e),
-        Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-            "Panic in varbuilder_get".to_string(),
-        )),
-    }
+    return_ptr_or_null(res)
 }
 
 /// Update all parameters in VarMap using SGD
@@ -589,7 +673,7 @@ pub extern "C" fn tl_update_all_params(learning_rate: f32) {
 
 /// Get gradient for a specific parameter by name
 #[no_mangle]
-pub extern "C" fn tl_varbuilder_grad(name: *const std::os::raw::c_char) -> error::CTensorResult {
+pub extern "C" fn tl_varbuilder_grad(name: *const std::os::raw::c_char) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     use std::ffi::CStr;
 
@@ -615,20 +699,11 @@ pub extern "C" fn tl_varbuilder_grad(name: *const std::os::raw::c_char) -> error
                 return Ok(make_tensor(g));
             }
         }
-        // If not found, returning NULL is standard behavior for "no gradient yet" or "not found",
-        // but since we return CTensorResult, returning OK(NULL) is ambiguous?
-        // Actually, if we return OK(NULL), the caller sees tensor=NULL, error=NULL.
-        // This is a valid state for "Result found, but it is null/none".
+        // Return null if not found
         Ok(std::ptr::null_mut())
     });
 
-    match res {
-        Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-        Ok(Err(e)) => error::CTensorResult::err(e),
-        Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-            "Panic in varbuilder_grad".to_string(),
-        )),
-    }
+    return_ptr_or_null(res)
 }
 
 /// Get current process memory usage in MB
@@ -662,10 +737,7 @@ pub extern "C" fn tl_get_memory_mb() -> i64 {
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_add(
-    a: *mut OpaqueTensor,
-    b: *mut OpaqueTensor,
-) -> error::CTensorResult {
+pub extern "C" fn tl_tensor_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
         let t_a = &(*a).0;
@@ -677,21 +749,12 @@ pub extern "C" fn tl_tensor_add(
                 .map_err(|e| RuntimeError::ShapeMismatch(e.to_string()))?;
             Ok(make_tensor(result))
         }));
-        match res {
-            Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-            Ok(Err(e)) => error::CTensorResult::err(e),
-            Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-                "Panic in tensor_add".to_string(),
-            )),
-        }
+        return_ptr_or_null(res)
     }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_sub(
-    a: *mut OpaqueTensor,
-    b: *mut OpaqueTensor,
-) -> error::CTensorResult {
+pub extern "C" fn tl_tensor_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
         let t_a = &(*a).0;
@@ -703,21 +766,12 @@ pub extern "C" fn tl_tensor_sub(
                 .map_err(|e| RuntimeError::ShapeMismatch(e.to_string()))?;
             Ok(make_tensor(result))
         }));
-        match res {
-            Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-            Ok(Err(e)) => error::CTensorResult::err(e),
-            Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-                "Panic in tensor_sub".to_string(),
-            )),
-        }
+        return_ptr_or_null(res)
     }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_mul(
-    a: *mut OpaqueTensor,
-    b: *mut OpaqueTensor,
-) -> error::CTensorResult {
+pub extern "C" fn tl_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
         let t_a = &(*a).0;
@@ -729,39 +783,22 @@ pub extern "C" fn tl_tensor_mul(
                 .map_err(|e| RuntimeError::ShapeMismatch(e.to_string()))?;
             Ok(make_tensor(result))
         }));
-        match res {
-            Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-            Ok(Err(e)) => error::CTensorResult::err(e),
-            Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-                "Panic in tensor_mul".to_string(),
-            )),
-        }
+        return_ptr_or_null(res)
     }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_softmax(t: *mut OpaqueTensor, dim: i64) -> error::CTensorResult {
+pub extern "C" fn tl_tensor_softmax(tensor: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
-        if t.is_null() {
-            return error::CTensorResult::err(RuntimeError::InternalError(
-                "Tensor is null in softmax".to_string(),
-            ));
-        }
-        let tensor = &(*t).0;
+        let t = &(*tensor).0;
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let d = dim as usize;
-            let result = candle_nn::ops::softmax(tensor, d)
+            let result = candle_nn::ops::softmax(t, d)
                 .map_err(|e| RuntimeError::InternalError(e.to_string()))?;
             Ok(make_tensor(result))
         }));
-        match res {
-            Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-            Ok(Err(e)) => error::CTensorResult::err(e),
-            Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-                "Panic in softmax".to_string(),
-            )),
-        }
+        return_ptr_or_null(res)
     }
 }
 
@@ -769,13 +806,18 @@ pub extern "C" fn tl_tensor_softmax(t: *mut OpaqueTensor, dim: i64) -> error::CT
 pub extern "C" fn tl_tensor_cross_entropy(
     logits: *mut OpaqueTensor,
     targets: *mut OpaqueTensor,
-) -> error::CTensorResult {
+) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
         if logits.is_null() || targets.is_null() {
-            return error::CTensorResult::err(RuntimeError::InternalError(
-                "Null tensor in cross_entropy".to_string(),
-            ));
+            handle_runtime_error_internal(
+                crate::error::RuntimeErrorCode::NullPointerError as u32,
+                "Null tensor".to_string(),
+                None,
+                0,
+                0,
+            );
+            return std::ptr::null_mut();
         }
         let l = &(*logits).0;
         let t = &(*targets).0;
@@ -796,24 +838,23 @@ pub extern "C" fn tl_tensor_cross_entropy(
 
             Ok(make_tensor(loss))
         }));
-        match res {
-            Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-            Ok(Err(e)) => error::CTensorResult::err(e),
-            Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-                "Panic in cross_entropy".to_string(),
-            )),
-        }
+        return_ptr_or_null(res)
     }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_detach(t: *mut OpaqueTensor, req_grad: bool) -> error::CTensorResult {
+pub extern "C" fn tl_tensor_detach(t: *mut OpaqueTensor, req_grad: bool) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
         if t.is_null() {
-            return error::CTensorResult::err(RuntimeError::InternalError(
-                "Null tensor in detach".to_string(),
-            ));
+            handle_runtime_error_internal(
+                crate::error::RuntimeErrorCode::NullPointerError as u32,
+                "Null tensor".to_string(),
+                None,
+                0,
+                0,
+            );
+            return std::ptr::null_mut();
         }
         let tensor = &(*t).0;
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -827,13 +868,7 @@ pub extern "C" fn tl_tensor_detach(t: *mut OpaqueTensor, req_grad: bool) -> erro
             };
             Ok(ptr)
         }));
-        match res {
-            Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-            Ok(Err(e)) => error::CTensorResult::err(e),
-            Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-                "Panic in detach".to_string(),
-            )),
-        }
+        return_ptr_or_null(res)
     }
 }
 
@@ -979,13 +1014,18 @@ pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> error::CTensorResult {
+pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
         if t.is_null() {
-            return error::CTensorResult::err(RuntimeError::InternalError(
-                "Null tensor in clone".to_string(),
-            ));
+            handle_runtime_error_internal(
+                crate::error::RuntimeErrorCode::NullPointerError as u32,
+                "Null tensor".to_string(),
+                None,
+                0,
+                0,
+            );
+            return std::ptr::null_mut();
         }
         let tensor = &(*t).0;
         let var_ref = &(*t).1;
@@ -1005,13 +1045,7 @@ pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> error::CTensorResul
             Ok(ptr)
         }));
 
-        match res {
-            Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-            Ok(Err(e)) => error::CTensorResult::err(e),
-            Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-                "Panic in tensor_clone".to_string(),
-            )),
-        }
+        return_ptr_or_null(res)
     }
 }
 
@@ -1961,7 +1995,7 @@ pub extern "C" fn tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_sum(t: *mut OpaqueTensor) -> error::CTensorResult {
+pub extern "C" fn tl_tensor_sum(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
         let tensor = &(*t).0;
@@ -1971,13 +2005,7 @@ pub extern "C" fn tl_tensor_sum(t: *mut OpaqueTensor) -> error::CTensorResult {
                 .map_err(|e| RuntimeError::InternalError(e.to_string()))?;
             Ok(make_tensor(result))
         }));
-        match res {
-            Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-            Ok(Err(e)) => error::CTensorResult::err(e),
-            Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-                "Panic in tensor_sum".to_string(),
-            )),
-        }
+        return_ptr_or_null(res)
     }
 }
 
@@ -2181,10 +2209,7 @@ pub extern "C" fn tl_tensor_reshape_dims(
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_div(
-    a: *mut OpaqueTensor,
-    b: *mut OpaqueTensor,
-) -> error::CTensorResult {
+pub extern "C" fn tl_tensor_div(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
         let t_a = &(*a).0;
@@ -2196,18 +2221,12 @@ pub extern "C" fn tl_tensor_div(
                 .map_err(|e| RuntimeError::ShapeMismatch(e.to_string()))?;
             Ok(make_tensor(result))
         }));
-        match res {
-            Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-            Ok(Err(e)) => error::CTensorResult::err(e),
-            Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-                "Panic in tensor_div".to_string(),
-            )),
-        }
+        return_ptr_or_null(res)
     }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_exp(t: *mut OpaqueTensor) -> error::CTensorResult {
+pub extern "C" fn tl_tensor_exp(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
         let tensor = &(*t).0;
@@ -2217,27 +2236,23 @@ pub extern "C" fn tl_tensor_exp(t: *mut OpaqueTensor) -> error::CTensorResult {
                 .map_err(|e| RuntimeError::InternalError(e.to_string()))?;
             Ok(make_tensor(result))
         }));
-        match res {
-            Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-            Ok(Err(e)) => error::CTensorResult::err(e),
-            Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-                "Panic in tensor_exp".to_string(),
-            )),
-        }
+        return_ptr_or_null(res)
     }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_pow(
-    a: *mut OpaqueTensor,
-    b: *mut OpaqueTensor,
-) -> error::CTensorResult {
+pub extern "C" fn tl_tensor_pow(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
         if a.is_null() || b.is_null() {
-            return error::CTensorResult::err(RuntimeError::InternalError(
-                "Null tensor in pow".to_string(),
-            ));
+            handle_runtime_error_internal(
+                crate::error::RuntimeErrorCode::NullPointerError as u32,
+                "Null tensor".to_string(),
+                None,
+                0,
+                0,
+            );
+            return std::ptr::null_mut();
         }
         let t_a = &(*a).0;
         let t_b = &(*b).0;
@@ -2248,25 +2263,24 @@ pub extern "C" fn tl_tensor_pow(
                 .map_err(|e| RuntimeError::ShapeMismatch(e.to_string()))?;
             Ok(make_tensor(result))
         }));
-        match res {
-            Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-            Ok(Err(e)) => error::CTensorResult::err(e),
-            Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-                "Panic in tensor_pow".to_string(),
-            )),
-        }
+        return_ptr_or_null(res)
     }
 }
 
 /// Scalar exponent version of pow - more common use case
 #[no_mangle]
-pub extern "C" fn tl_tensor_pow_scalar(a: *mut OpaqueTensor, exp: c_float) -> error::CTensorResult {
+pub extern "C" fn tl_tensor_pow_scalar(a: *mut OpaqueTensor, exp: c_float) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
         if a.is_null() {
-            return error::CTensorResult::err(RuntimeError::InternalError(
-                "Null tensor in pow_scalar".to_string(),
-            ));
+            handle_runtime_error_internal(
+                crate::error::RuntimeErrorCode::NullPointerError as u32,
+                "Null tensor".to_string(),
+                None,
+                0,
+                0,
+            );
+            return std::ptr::null_mut();
         }
         let t_a = &(*a).0;
         let exp_f64 = exp as f64;
@@ -2276,18 +2290,12 @@ pub extern "C" fn tl_tensor_pow_scalar(a: *mut OpaqueTensor, exp: c_float) -> er
                 .map_err(|e| RuntimeError::InternalError(e.to_string()))?;
             Ok(make_tensor(result))
         }));
-        match res {
-            Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-            Ok(Err(e)) => error::CTensorResult::err(e),
-            Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-                "Panic in tensor_pow_scalar".to_string(),
-            )),
-        }
+        return_ptr_or_null(res)
     }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_log(t: *mut OpaqueTensor) -> error::CTensorResult {
+pub extern "C" fn tl_tensor_log(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
         let tensor = &(*t).0;
@@ -2297,13 +2305,7 @@ pub extern "C" fn tl_tensor_log(t: *mut OpaqueTensor) -> error::CTensorResult {
                 .map_err(|e| RuntimeError::InternalError(e.to_string()))?;
             Ok(make_tensor(result))
         }));
-        match res {
-            Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-            Ok(Err(e)) => error::CTensorResult::err(e),
-            Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-                "Panic in tensor_log".to_string(),
-            )),
-        }
+        return_ptr_or_null(res)
     }
 }
 
@@ -2445,7 +2447,7 @@ pub extern "C" fn tl_tensor_sum_dim(
     t: *mut OpaqueTensor,
     dim: usize,
     keep_dim: bool,
-) -> error::CTensorResult {
+) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
         let t_ref = &(*t).0;
@@ -2461,13 +2463,7 @@ pub extern "C" fn tl_tensor_sum_dim(
             };
             Ok(make_tensor(result))
         }));
-        match res {
-            Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-            Ok(Err(e)) => error::CTensorResult::err(e),
-            Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-                "Panic in tensor_sum_dim".to_string(),
-            )),
-        }
+        return_ptr_or_null(res)
     }
 }
 
@@ -2515,13 +2511,18 @@ pub extern "C" fn tl_tensor_sqrt(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 pub extern "C" fn tl_tensor_matmul(
     a: *mut OpaqueTensor,
     b: *mut OpaqueTensor,
-) -> error::CTensorResult {
+) -> *mut OpaqueTensor {
     use crate::error::{self, RuntimeError};
     unsafe {
         if a.is_null() || b.is_null() {
-            return error::CTensorResult::err(RuntimeError::NullPointerError(
-                "tl_tensor_matmul received NULL pointer".to_string(),
-            ));
+            handle_runtime_error_internal(
+                crate::error::RuntimeErrorCode::NullPointerError as u32,
+                "Null pointer".to_string(),
+                None,
+                0,
+                0,
+            );
+            return std::ptr::null_mut();
         }
 
         let t_a = &(*a).0;
@@ -2543,13 +2544,7 @@ pub extern "C" fn tl_tensor_matmul(
 
             Ok(make_tensor(result))
         }));
-        match res {
-            Ok(Ok(ptr)) => error::CTensorResult::ok(ptr),
-            Ok(Err(e)) => error::CTensorResult::err(e),
-            Err(_) => error::CTensorResult::err(RuntimeError::InternalError(
-                "Panic in tl_tensor_matmul".to_string(),
-            )),
-        }
+        return_ptr_or_null(res)
     }
 }
 

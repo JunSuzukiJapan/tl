@@ -576,6 +576,14 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     pub(crate) fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+        let prev_span = self.current_span.clone();
+        self.current_span = Some(stmt.span.clone());
+        let result = self.compile_stmt_inner(stmt);
+        self.current_span = prev_span;
+        result
+    }
+
+    pub(crate) fn compile_stmt_inner(&mut self, stmt: &Stmt) -> Result<(), String> {
         match &stmt.inner {
             StmtKind::Use { .. } => Ok(()),
             StmtKind::FieldAssign { obj, field, value } => {

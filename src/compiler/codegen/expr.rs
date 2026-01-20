@@ -1493,8 +1493,18 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
         Ok(())
     }
-
     pub(crate) fn compile_expr(
+        &mut self,
+        expr: &Expr,
+    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        let prev_span = self.current_span.clone();
+        self.current_span = Some(expr.span.clone());
+        let result = self.compile_expr_inner(expr);
+        self.current_span = prev_span;
+        result
+    }
+
+    pub(crate) fn compile_expr_inner(
         &mut self,
         expr: &Expr,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {

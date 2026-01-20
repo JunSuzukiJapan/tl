@@ -23,11 +23,15 @@ pub fn declare_runtime_functions<'ctx>(
     let void_type = context.void_type();
     let i8_ptr = context.ptr_type(AddressSpace::default());
 
-    // FFI Result struct: { *mut OpaqueTensor, *const c_char }
+    // FFI Result struct: { tensor, error_msg, error_code, file, line, col }
     let c_tensor_result_type = context.struct_type(
         &[
-            void_ptr.into(), // tensor
-            i8_ptr.into(),   // error message
+            void_ptr.into(), // tensor (0)
+            i8_ptr.into(),   // error_msg (1)
+            i32_type.into(), // error_code (2)
+            i8_ptr.into(),   // file (3)
+            i32_type.into(), // line (4)
+            i32_type.into(), // col (5)
         ],
         false,
     );
@@ -181,6 +185,35 @@ pub fn declare_runtime_functions<'ctx>(
     let report_err_type = void_type.fn_type(&[i8_ptr.into()], false);
     add_fn("tl_report_runtime_error", report_err_type);
 
+    // tl_handle_runtime_error(code: u32, msg: *const i8, file: *const i8, line: u32, col: u32) -> void
+    let handle_err_type = void_type.fn_type(
+        &[
+            i32_type.into(),
+            i8_ptr.into(),
+            i8_ptr.into(),
+            i32_type.into(),
+            i32_type.into(),
+        ],
+        false,
+    );
+    add_fn("tl_handle_runtime_error", handle_err_type.clone());
+
+    // tl_amend_error_loc(file: *const i8, line: u32, col: u32) -> void
+    let amend_err_type =
+        void_type.fn_type(&[i8_ptr.into(), i32_type.into(), i32_type.into()], false);
+    add_fn("tl_amend_error_loc", amend_err_type);
+
+    if let Some(f) = module.get_function("tl_handle_runtime_error") {
+        execution_engine.add_global_mapping(&f, runtime::tl_handle_runtime_error as usize);
+    }
+    if let Some(f) = module.get_function("tl_amend_error_loc") {
+        execution_engine.add_global_mapping(&f, runtime::tl_amend_error_loc as usize);
+    }
+
+    // tl_get_last_error() -> CTensorResult
+    let get_last_error_type = c_tensor_result_type.fn_type(&[], false);
+    add_fn("tl_get_last_error", get_last_error_type);
+
     // tl_set_device(name: *const i8) -> void
     let set_dev_type = void_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_set_device", set_dev_type);
@@ -229,29 +262,28 @@ pub fn declare_runtime_functions<'ctx>(
     );
     add_fn("tl_tensor_set_f32_md", set_md_type);
 
-    // tl_tensor_new(data: *const f32, rank: usize, shape: *const usize) -> CTensorResult
-    let new_type =
-        c_tensor_result_type.fn_type(&[f32_ptr.into(), i64_type.into(), usize_ptr.into()], false);
+    // tl_tensor_new(data: *const f32, rank: usize, shape: *const usize) -> *mut OpaqueTensor
+    let new_type = void_ptr.fn_type(&[f32_ptr.into(), i64_type.into(), usize_ptr.into()], false);
     add_fn("tl_tensor_new", new_type);
 
-    // tl_tensor_from_i64_array(data: *const i64, len: usize) -> CTensorResult
-    let from_i64_type = c_tensor_result_type.fn_type(&[i64_ptr.into(), i64_type.into()], false);
+    // tl_tensor_from_i64_array(data: *const i64, len: usize) -> *mut OpaqueTensor
+    let from_i64_type = void_ptr.fn_type(&[i64_ptr.into(), i64_type.into()], false);
     add_fn("tl_tensor_from_i64_array", from_i64_type);
 
-    // tl_tensor_new_i64(data: *const i64, rank: usize, shape: *const usize) -> CTensorResult
+    // tl_tensor_new_i64(data: *const i64, rank: usize, shape: *const usize) -> *mut OpaqueTensor
     let new_i64_type =
-        c_tensor_result_type.fn_type(&[i64_ptr.into(), i64_type.into(), usize_ptr.into()], false);
+        void_ptr.fn_type(&[i64_ptr.into(), i64_type.into(), usize_ptr.into()], false);
     add_fn("tl_tensor_new_i64", new_i64_type);
 
-    let binop_type = c_tensor_result_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    let binop_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_tensor_sub", binop_type);
 
     // tl_tensor_free(t: *mut) -> void
     let free_type = void_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_tensor_free", free_type);
 
-    // tl_tensor_clone(t: *mut) -> CTensorResult
-    let clone_type = c_tensor_result_type.fn_type(&[void_ptr.into()], false);
+    // tl_tensor_clone(t: *mut) -> *mut OpaqueTensor
+    let clone_type = void_ptr.fn_type(&[void_ptr.into()], false);
     add_fn("tl_tensor_clone", clone_type);
 
     // tl_tensor_acquire(t: *mut) -> void
@@ -271,8 +303,8 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_vec_void_free(ptr: *mut) -> void
     add_fn("tl_vec_void_free", free_type);
 
-    // tl_tensor_add(a: *mut, b: *mut) -> CTensorResult
-    let bin_type = c_tensor_result_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    // tl_tensor_add(a: *mut, b: *mut) -> *mut OpaqueTensor
+    let bin_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_tensor_add", bin_type);
     add_fn("tl_tensor_mul", bin_type);
 
@@ -304,12 +336,12 @@ pub fn declare_runtime_functions<'ctx>(
         void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into()], false);
     add_fn("tl_tensor_transpose", transpose_type);
 
-    // tl_tensor_pow(t: *mut Tensor, exponent: *mut Tensor) -> CTensorResult
-    let pow_type = c_tensor_result_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    // tl_tensor_pow(t: *mut Tensor, exponent: *mut Tensor) -> *mut OpaqueTensor
+    let pow_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_tensor_pow", pow_type);
 
-    // tl_tensor_pow_scalar(t: *mut Tensor, exponent: f32) -> CTensorResult
-    let pow_scalar_type = c_tensor_result_type.fn_type(&[void_ptr.into(), f32_type.into()], false);
+    // tl_tensor_pow_scalar(t: *mut Tensor, exponent: f32) -> *mut OpaqueTensor
+    let pow_scalar_type = void_ptr.fn_type(&[void_ptr.into(), f32_type.into()], false);
     add_fn("tl_tensor_pow_scalar", pow_scalar_type);
 
     // tl_tensor_sqrt(t: *mut Tensor) -> *mut Tensor
@@ -387,9 +419,9 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::tl_report_runtime_error as usize);
     }
 
-    // tl_tensor_sum_dim(t: *mut Tensor, dim: usize, keep: bool) -> CTensorResult
+    // tl_tensor_sum_dim(t: *mut Tensor, dim: usize, keep: bool) -> *mut OpaqueTensor
     // usize -> i64 on 64-bit
-    let sum_dim_type = c_tensor_result_type.fn_type(
+    let sum_dim_type = void_ptr.fn_type(
         &[void_ptr.into(), i64_type.into(), context.bool_type().into()],
         false,
     );
@@ -399,8 +431,8 @@ pub fn declare_runtime_functions<'ctx>(
     let embedding_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_tensor_embedding", embedding_type);
 
-    // tl_tensor_sum(t: *mut) -> CTensorResult
-    let unary_res_type = c_tensor_result_type.fn_type(&[void_ptr.into()], false);
+    // tl_tensor_sum(t: *mut) -> *mut OpaqueTensor
+    let unary_res_type = void_ptr.fn_type(&[void_ptr.into()], false);
     add_fn("tl_tensor_sum", unary_res_type);
 
     // tl_tensor_div(a: *mut, b: *mut) -> *mut
@@ -523,8 +555,8 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_reshape_new", reshape_tensor_type);
 
     // Randn
-    // tl_tensor_randn(rank: usize, shape: *const usize, req_grad: bool) -> CTensorResult
-    let randn_type = c_tensor_result_type.fn_type(
+    // tl_tensor_randn(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor
+    let randn_type = void_ptr.fn_type(
         &[
             i64_type.into(),            // Rank
             usize_ptr.into(),           // Shape Ptr
@@ -534,8 +566,8 @@ pub fn declare_runtime_functions<'ctx>(
     );
     add_fn("tl_tensor_randn_debug", randn_type);
 
-    // tl_tensor_zeros(rank, shape_ptr, req_grad) -> CTensorResult
-    let zeros_type = c_tensor_result_type.fn_type(
+    // tl_tensor_zeros(rank, shape_ptr, req_grad) -> *mut OpaqueTensor
+    let zeros_type = void_ptr.fn_type(
         &[
             i64_type.into(),            // rank
             usize_ptr.into(),           // shape pointer
@@ -547,23 +579,21 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_zeros", zeros_type);
 
     // VarBuilder
-
-    // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize) -> CTensorResult
+    // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize) -> *mut OpaqueTensor
     let varbuilder_get_type =
-        c_tensor_result_type.fn_type(&[i8_ptr.into(), i64_type.into(), usize_ptr.into()], false);
+        void_ptr.fn_type(&[i8_ptr.into(), i64_type.into(), usize_ptr.into()], false);
     add_fn("tl_varbuilder_get", varbuilder_get_type);
 
-    // tl_varbuilder_get_from_tensor(name: *const c_char, shape_tensor: *mut OpaqueTensor) -> CTensorResult
-    let varbuilder_get_tensor_type =
-        c_tensor_result_type.fn_type(&[i8_ptr.into(), void_ptr.into()], false);
+    // tl_varbuilder_get_from_tensor(name: *const c_char, shape_tensor: *mut OpaqueTensor) -> *mut OpaqueTensor
+    let varbuilder_get_tensor_type = void_ptr.fn_type(&[i8_ptr.into(), void_ptr.into()], false);
     add_fn("tl_varbuilder_get_from_tensor", varbuilder_get_tensor_type);
 
     // update_all_params(lr: f32)
     let update_type = void_type.fn_type(&[f32_type.into()], false);
     add_fn("tl_update_all_params", update_type);
 
-    // grad(name: *const c_char) -> CTensorResult
-    let grad_type = c_tensor_result_type.fn_type(&[i8_ptr.into()], false);
+    // grad(name: *const c_char) -> *mut OpaqueTensor
+    let grad_type = void_ptr.fn_type(&[i8_ptr.into()], false);
     add_fn("tl_varbuilder_grad", grad_type);
 
     // Autograd helpers
@@ -573,8 +603,7 @@ pub fn declare_runtime_functions<'ctx>(
     let grad_fn_type = void_ptr.fn_type(&[void_ptr.into()], false);
     add_fn("tl_tensor_grad", grad_fn_type);
 
-    let detach_type =
-        c_tensor_result_type.fn_type(&[void_ptr.into(), context.bool_type().into()], false);
+    let detach_type = void_ptr.fn_type(&[void_ptr.into(), context.bool_type().into()], false);
     add_fn("tl_tensor_detach", detach_type);
 
     // Contiguous (メモリレイアウト連続化)
@@ -582,11 +611,10 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_contiguous", contiguous_type);
 
     // Softmax / CrossEntropy
-    let softmax_type = c_tensor_result_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    let softmax_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
     add_fn("tl_tensor_softmax", softmax_type);
 
-    let cross_entropy_type =
-        c_tensor_result_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    let cross_entropy_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_tensor_cross_entropy", cross_entropy_type);
 
     // Checkpointing: save_all_params(dir), load_all...

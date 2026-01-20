@@ -14,16 +14,86 @@ fn safe_free(t: *mut OpaqueTensor) {
     }
 }
 
-fn unwrap_tensor(res: CTensorResult) -> *mut OpaqueTensor {
-    if !res.error.is_null() {
-        let err_msg = unsafe { std::ffi::CStr::from_ptr(res.error).to_string_lossy() };
-        panic!("Runtime error: {}", err_msg);
+fn unwrap_tensor(ptr: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    if ptr.is_null() {
+        // Retrieve error from LAST_ERROR
+        let res = unsafe { tl_get_last_error() };
+        if !res.error_msg.is_null() {
+            let err_msg = unsafe { std::ffi::CStr::from_ptr(res.error_msg).to_string_lossy() };
+            let file = if !res.file.is_null() {
+                unsafe { std::ffi::CStr::from_ptr(res.file).to_string_lossy() }
+            } else {
+                "unknown".into()
+            };
+            panic!(
+                "Runtime error [Code {:?} at {}:{}:{}]: {}",
+                res.error_code, file, res.line, res.col, err_msg
+            );
+        } else {
+            panic!("Runtime error occurred (null pointer returned) but no error message in LAST_ERROR.");
+        }
     }
+    ptr
+}
+
+#[test]
+fn test_error_reporting() {
+    // Test invalid matmul (Shape mismatch)
+    // 2x2 @ 3x3 -> Error
+    let data_a = vec![1.0, 2.0, 3.0, 4.0];
+    let shape_a = vec![2, 2];
+    let ptr_a = tl_tensor_new(data_a.as_ptr(), 2, shape_a.as_ptr());
+
+    let data_b = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+    let shape_b = vec![3, 3];
+    let ptr_b = tl_tensor_new(data_b.as_ptr(), 2, shape_b.as_ptr());
+
+    assert_tensor_valid(ptr_a);
+    assert_tensor_valid(ptr_b);
+
+    // This should fail
+    let res = tl_tensor_matmul(ptr_a, ptr_b);
+    assert!(res.is_null(), "Expected null pointer for invalid matmul");
+
+    let err = unsafe { tl_get_last_error() };
+    assert!(!err.error_msg.is_null());
+
+    let err_msg = unsafe { std::ffi::CStr::from_ptr(err.error_msg).to_string_lossy() };
+    println!("Caught expected error: {}", err_msg);
+    // Candle error for matmul shape mismatch often mentions dimensions
     assert!(
-        !res.tensor.is_null(),
-        "Returned tensor is null but no error reported"
+        err_msg.contains("dimension")
+            || err_msg.contains("shape")
+            || err_msg.contains("incompatible")
+            || err_msg.contains("broadcast")
     );
-    res.tensor
+    assert_ne!(err.error_code, tl_runtime::error::RuntimeErrorCode::Success);
+
+    safe_free(ptr_a);
+    safe_free(ptr_b);
+}
+
+#[test]
+fn debug_ctensor_layout() {
+    use std::mem;
+    let size = mem::size_of::<CTensorResult>();
+    println!("CTensorResult size: {}", size);
+    let error_code_offset = unsafe {
+        let dummy = std::mem::MaybeUninit::<CTensorResult>::uninit();
+        let ptr = dummy.as_ptr();
+        let code_ptr = &(*ptr).error_code as *const _ as usize;
+        let base = ptr as usize;
+        code_ptr - base
+    };
+    println!("Offset of error_code: {}", error_code_offset);
+    let file_offset = unsafe {
+        let dummy = std::mem::MaybeUninit::<CTensorResult>::uninit();
+        let ptr = dummy.as_ptr();
+        let file_ptr = &(*ptr).file as *const _ as usize;
+        let base = ptr as usize;
+        file_ptr - base
+    };
+    println!("Offset of file: {}", file_offset);
 }
 
 #[test]

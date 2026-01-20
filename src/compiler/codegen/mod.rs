@@ -31,12 +31,12 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) builtin_manager: expr::BuiltinManager,
     pub(crate) instance_methods: HashMap<String, expr::InstanceMethodManager>,
     pub(crate) static_methods: HashMap<String, expr::StaticMethodManager>,
-    /// Loop stack for break/continue: (continue_block, break_block)
     pub(crate) loop_stack: Vec<(
         inkwell::basic_block::BasicBlock<'ctx>,
         inkwell::basic_block::BasicBlock<'ctx>,
     )>,
     pub(crate) relations: std::collections::HashSet<String>,
+    pub(crate) current_span: Option<crate::compiler::error::Span>,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -65,6 +65,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             static_methods: HashMap::new(),
             loop_stack: Vec::new(),
             relations: std::collections::HashSet::new(),
+            current_span: None,
         };
 
         // Register all methods (instance and static)
@@ -152,69 +153,83 @@ impl<'ctx> CodeGenerator<'ctx> {
     pub(crate) fn check_tensor_result(
         &self,
         call_site_value: inkwell::values::CallSiteValue<'ctx>,
-        _context_msg: &str,
+        context_msg: &str,
     ) -> Result<BasicValueEnum<'ctx>, String> {
-        // Result matches existing pattern of CallResult -> BasicValue
+        let (file, line, col) = if let Some(span) = &self.current_span {
+            (span.file.as_deref(), span.line as u32, span.column as u32)
+        } else {
+            (None, 0, 0)
+        };
+        self.check_tensor_result_with_loc(call_site_value, context_msg, file, line, col)
+    }
+
+    pub(crate) fn check_tensor_result_with_loc(
+        &self,
+        call_site_value: inkwell::values::CallSiteValue<'ctx>,
+        _context_msg: &str,
+        file: Option<&str>,
+        line: u32,
+        col: u32,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
         let basic_value = match call_site_value.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(v) => v,
             _ => return Err("Call returned void".into()),
         };
 
-        if !basic_value.is_struct_value() {
+        if !basic_value.is_pointer_value() {
             return Ok(basic_value);
         }
 
-        let struct_val = basic_value.into_struct_value();
+        let ptr_val = basic_value.into_pointer_value();
 
         let current_bb = self.builder.get_insert_block().unwrap();
         let function = current_bb.get_parent().unwrap();
 
-        let error_val = self
-            .builder
-            .build_extract_value(struct_val, 1, "err_ptr")
-            .unwrap();
-        let error_ptr = error_val.into_pointer_value();
-
-        let i64_type = self.context.i64_type();
-        let err_int = self
-            .builder
-            .build_ptr_to_int(error_ptr, i64_type, "err_int")
-            .unwrap();
-        let is_err = self
-            .builder
-            .build_int_compare(
-                inkwell::IntPredicate::NE,
-                err_int,
-                i64_type.const_zero(),
-                "is_err",
-            )
-            .unwrap();
+        // Check is_null
+        let is_null = self.builder.build_is_null(ptr_val, "is_null").unwrap();
 
         let error_bb = self.context.append_basic_block(function, "runtime_error");
         let success_bb = self.context.append_basic_block(function, "runtime_success");
 
         self.builder
-            .build_conditional_branch(is_err, error_bb, success_bb)
+            .build_conditional_branch(is_null, error_bb, success_bb)
             .unwrap();
 
         // Error Handler
         self.builder.position_at_end(error_bb);
-        let report_fn = self
+
+        // Prepare location args
+        let file_str = file.unwrap_or("unknown");
+        let file_ptr = self
+            .builder
+            .build_global_string_ptr(file_str, "file_str")
+            .map_err(|e| e.to_string())?
+            .as_pointer_value();
+
+        // Call tl_amend_error_loc(file, line, col)
+        let i32_type = self.context.i32_type();
+        let amend_fn = self
             .module
-            .get_function("tl_report_runtime_error")
-            .expect("tl_report_runtime_error missing");
+            .get_function("tl_amend_error_loc")
+            .expect("tl_amend_error_loc missing");
+
+        // tl_amend_error_loc accepts (i8*, i32, i32)
+        // file_ptr is i8* (from build_global_string_ptr)
+
         self.builder
-            .build_call(report_fn, &[error_ptr.into()], "")
+            .build_call(
+                amend_fn,
+                &[
+                    file_ptr.into(),
+                    i32_type.const_int(line as u64, false).into(),
+                    i32_type.const_int(col as u64, false).into(),
+                ],
+                "",
+            )
             .unwrap();
 
-        // Return zero/null to propagate failure up (though we stop here effectively by returning garbage or empty)
-        // ideally we would unwind or exit, but user wants just handling.
-        // Actually since we print error, we should probably stop execution of this function.
-        // Since we can't easily unwind without panic, we return a default zero value.
-        // The caller might crash if it uses it, but we printed the error.
-
+        // Return zero/null
         let return_type = function.get_type().get_return_type();
-
         if let Some(rt) = return_type {
             if rt.is_pointer_type() {
                 self.builder
@@ -237,11 +252,8 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Success Path
         self.builder.position_at_end(success_bb);
-        let tensor_val = self
-            .builder
-            .build_extract_value(struct_val, 0, "tensor_ptr")
-            .unwrap();
-        Ok(tensor_val)
+
+        Ok(basic_value) // Return the original pointer (which is valid here)
     }
 
     fn register_builtins(&mut self) {
