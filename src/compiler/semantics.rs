@@ -1179,6 +1179,16 @@ impl SemanticAnalyzer {
                 self.loop_depth -= 1;
                 Ok(())
             }
+            StmtKind::Loop { body } => {
+                self.loop_depth += 1;
+                self.enter_scope();
+                for stmt in body {
+                    self.check_stmt(stmt)?;
+                }
+                self.exit_scope();
+                self.loop_depth -= 1;
+                Ok(())
+            }
             StmtKind::Use { path, alias, items } => {
                 let full_prefix = path.join("::");
 

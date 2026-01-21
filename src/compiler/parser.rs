@@ -1000,6 +1000,16 @@ fn parse_for_stmt(input: Span) -> IResult<Span, Stmt> {
         ))
     })(input)
 }
+fn parse_loop_stmt(input: Span) -> IResult<Span, Stmt> {
+    spanned(|input| {
+        // loop { ... }
+        let (input, _) = tag("loop")(input)?;
+        let (input, body) = parse_block(input)?;
+
+        Ok((input, StmtKind::Loop { body }))
+    })(input)
+}
+
 
 fn parse_while_stmt(input: Span) -> IResult<Span, Stmt> {
     spanned(|input| {
@@ -1187,6 +1197,7 @@ pub fn parse_stmt(input: Span) -> IResult<Span, Stmt> {
         parse_if_stmt,
         parse_for_stmt,
         parse_while_stmt,
+        parse_loop_stmt,
         parse_block_stmt,
         parse_use_stmt,
         parse_expr_stmt,

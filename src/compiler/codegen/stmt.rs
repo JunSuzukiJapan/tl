@@ -2324,6 +2324,55 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder.position_at_end(end_block);
                 Ok(())
             }
+            StmtKind::Loop { body } => {
+                let parent = self
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_parent()
+                    .unwrap();
+
+                let body_block = self.context.append_basic_block(parent, "loop_body");
+                let end_block = self.context.append_basic_block(parent, "loop_end");
+
+                // Jump to body from current
+                self.builder
+                    .build_unconditional_branch(body_block)
+                    .map_err(|e| e.to_string())?;
+
+                // Compile body
+                self.builder.position_at_end(body_block);
+
+                // Push loop context for break/continue
+                // In loop, continue jumps back to the START of the body.
+                self.loop_stack.push((body_block, end_block));
+
+                self.enter_scope();
+                for stmt in body {
+                    self.compile_stmt(stmt)?;
+                }
+                self.exit_scope();
+
+                // Pop loop context
+                self.loop_stack.pop();
+
+                // Loop back to start of body
+                if self
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_terminator()
+                    .is_none()
+                {
+                    self.builder
+                        .build_unconditional_branch(body_block)
+                        .map_err(|e| e.to_string())?;
+                }
+
+                // Continue at end
+                self.builder.position_at_end(end_block);
+                Ok(())
+            }
             StmtKind::Expr(expr) => {
                 let (val, ty) = self.compile_expr(expr)?;
 

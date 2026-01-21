@@ -195,6 +195,9 @@ pub enum StmtKind {
     },
     Break,
     Continue,
+    Loop {
+        body: Vec<Stmt>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
