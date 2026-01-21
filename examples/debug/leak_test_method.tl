@@ -1,5 +1,5 @@
 
-fn get_memory() -> i64 { return tl_get_memory_mb(); }
+fn get_memory() -> i64 { return System::memory_mb(); }
 
 fn main() {
     print("Test Nested Calls");

@@ -14,170 +14,22 @@ struct Block { an: RMSNorm, ffn: RMSNorm, at: Attention, mlp: MLP }
 
 // --- Standard Library Wrapper Implementations ---
 
-impl Tokenizer {
-    extern fn tl_tokenizer_new(path: String) -> i64;
-    extern fn tl_tokenizer_encode(tok: i64, prompt: String) -> Tensor<i64, 1>;
-    extern fn tl_tokenizer_decode(tok: i64, ids: Tensor<i64, 1>) -> String;
-
-    fn new(path: String) -> Tokenizer {
-        return Tokenizer { _h: Tokenizer::tl_tokenizer_new(path) };
-    }
-    fn encode(self, prompt: String) -> Tensor<i64, 1> {
-        return Tokenizer::tl_tokenizer_encode(self._h, prompt);
-    }
-    fn decode(self, ids: Tensor<i64, 1>) -> String {
-        return Tokenizer::tl_tokenizer_decode(self._h, ids);
-    }
-}
-
-impl Map {
-    extern fn tl_tensor_map_get(map: Map, key: String) -> Tensor<f32, 2>;
-    extern fn tl_tensor_map_get_1d(map: Map, key: String) -> Tensor<f32, 1>;
-    extern fn tl_tensor_map_get_quantized(map: Map, key: String) -> i64;
-    extern fn tl_gguf_load(path: String) -> Map;
-
-    fn load(path: String) -> Map {
-        return Map::tl_gguf_load(path);
-    }
-    fn get(self, key: String) -> Tensor<f32, 2> {
-        return Map::tl_tensor_map_get(self, key);
-    }
-    fn get_1d(self, key: String) -> Tensor<f32, 1> {
-        return Map::tl_tensor_map_get_1d(self, key);
-    }
-}
-
-impl KVCache {
-    extern fn tl_kv_cache_new(layers: i64) -> i64;
-    extern fn tl_kv_cache_free(cache: i64);
-    extern fn tl_kv_cache_get_k(cache: i64, layer: i64) -> Tensor<f32, 4>;
-    extern fn tl_kv_cache_get_v(cache: i64, layer: i64) -> Tensor<f32, 4>;
-    extern fn tl_kv_cache_update(cache: i64, layer: i64, k: Tensor<f32, 4>, v: Tensor<f32, 4>);
-
-    fn new(layers: i64) -> KVCache {
-        return KVCache { _h: KVCache::tl_kv_cache_new(layers) };
-    }
-    fn free(self) {
-        KVCache::tl_kv_cache_free(self._h);
-    }
-    fn get_k(self, layer: i64) -> Tensor<f32, 4> {
-        return KVCache::tl_kv_cache_get_k(self._h, layer);
-    }
-    fn get_v(self, layer: i64) -> Tensor<f32, 4> {
-        return KVCache::tl_kv_cache_get_v(self._h, layer);
-    }
-    fn update(self, layer: i64, k: Tensor<f32, 4>, v: Tensor<f32, 4>) {
-        KVCache::tl_kv_cache_update(self._h, layer, k, v);
-    }
-}
-
-impl File {
-    extern fn tl_file_exists_i64(path: String) -> i64;
-    extern fn tl_read_file(path: String) -> String;
-    extern fn tl_write_file(path: String, content: String) -> i64;
-    extern fn tl_download_file(url: String, path: String) -> i64;
-
-    fn exists(path: String) -> bool {
-        return File::tl_file_exists_i64(path) == 1;
-    }
-    fn read(path: String) -> String {
-        return File::tl_read_file(path);
-    }
-    fn write(path: String, content: String) -> bool {
-        return File::tl_write_file(path, content) == 1;
-    }
-    fn download(url: String, path: String) -> bool {
-        return File::tl_download_file(url, path) == 1;
-    }
-}
-
-impl Tensor {
-    // Basic ops
-    extern fn tl_tensor_embedding(idx: Tensor<i64, 1>, table: Tensor<f32, 2>) -> Tensor<f32, 2>;
-    extern fn tl_tensor_rms_norm(x: Tensor<f32, 2>, w: Tensor<f32, 1>, e: f32) -> Tensor<f32, 2>;
-    extern fn tl_tensor_matmul(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
-    extern fn tl_tensor_add(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
-    extern fn tl_tensor_silu(t: Tensor<f32, 2>) -> Tensor<f32, 2>;
-    extern fn tl_tensor_mul(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2>;
-    extern fn tl_tensor_scale(a: Tensor<f32, 4>, s: f32) -> Tensor<f32, 4>;
-    extern fn tl_tensor_transpose_2d(t: Tensor<f32, 2>, d1: i64, d2: i64) -> Tensor<f32, 2>;
-    extern fn tl_tensor_transpose(t: Tensor<f32, 4>, d1: i64, d2: i64) -> Tensor<f32, 4>;
-    // reshapes not needed as extern if we use intrinsic
-    extern fn tl_tensor_apply_rope(x: Tensor<f32, 4>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>) -> Tensor<f32, 4>;
-    extern fn tl_tensor_repeat_interleave(t: Tensor<f32, 4>, repeats: i64, dim: i64) -> Tensor<f32, 4>;
-    extern fn tl_tensor_new_causal_mask(dim: i64) -> Tensor<f32, 2>;
-    extern fn tl_tensor_narrow(t: Tensor<f32, 2>, dim: i64, start: i64, len: i64) -> Tensor<f32, 2>;
-    extern fn tl_tensor_cat_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>, d: i64) -> Tensor<f32, 4>;
-    extern fn tl_tensor_rope_new_cos(d: i64, l: i64, t: f32) -> Tensor<f32, 2>;
-    extern fn tl_tensor_rope_new_sin(d: i64, l: i64, t: f32) -> Tensor<f32, 2>;
-    extern fn tl_tensor_argmax(t: Tensor<f32, 2>, d: i64, k: bool) -> Tensor<i64, 1>;
-    extern fn tl_tensor_len(t: Tensor<i64, 1>) -> i64;
-    extern fn tl_tensor_item_i64(t: Tensor<i64, 1>) -> i64;
-    extern fn tl_tensor_cat_i64(a: Tensor<i64, 1>, b: Tensor<i64, 1>, d: i64) -> Tensor<i64, 1>;
-    extern fn tl_tensor_sample(t: Tensor<f32, 2>, temp: f32, top_p: f32) -> Tensor<i64, 1>;
-    extern fn tl_tensor_matmul_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>) -> Tensor<f32, 4>;
-    extern fn tl_tensor_add_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>) -> Tensor<f32, 4>;
-    extern fn tl_tensor_softmax(t: Tensor<f32, 4>, d: i64) -> Tensor<f32, 4>;
-
-    fn new_rope_cos(d: i64, l: i64, t: f32) -> Tensor<f32, 2> { return Tensor::tl_tensor_rope_new_cos(d, l, t); }
-    fn new_rope_sin(d: i64, l: i64, t: f32) -> Tensor<f32, 2> { return Tensor::tl_tensor_rope_new_sin(d, l, t); }
-    fn new_causal_mask(dim: i64) -> Tensor<f32, 2> { return Tensor::tl_tensor_new_causal_mask(dim); }
-
-    fn embedding(idx: Tensor<i64, 1>, table: Tensor<f32, 2>) -> Tensor<f32, 2> { return Tensor::tl_tensor_embedding(idx, table); }
-    fn rms_norm(x: Tensor<f32, 2>, w: Tensor<f32, 1>, e: f32) -> Tensor<f32, 2> { return Tensor::tl_tensor_rms_norm(x, w, e); }
-    fn matmul(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2> { return Tensor::tl_tensor_matmul(a, b); }
-    fn add(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2> { return Tensor::tl_tensor_add(a, b); }
-    fn silu(t: Tensor<f32, 2>) -> Tensor<f32, 2> { return Tensor::tl_tensor_silu(t); }
-    fn mul(a: Tensor<f32, 2>, b: Tensor<f32, 2>) -> Tensor<f32, 2> { return Tensor::tl_tensor_mul(a, b); }
-    fn scale(a: Tensor<f32, 4>, s: f32) -> Tensor<f32, 4> { return Tensor::tl_tensor_scale(a, s); }
-    fn transpose(t: Tensor<f32, 4>, d1: i64, d2: i64) -> Tensor<f32, 4> { return Tensor::tl_tensor_transpose(t, d1, d2); }
-    fn transpose_2d(t: Tensor<f32, 2>, d1: i64, d2: i64) -> Tensor<f32, 2> { return Tensor::tl_tensor_transpose_2d(t, d1, d2); }
-
-    fn apply_rope(x: Tensor<f32, 4>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>) -> Tensor<f32, 4> { return Tensor::tl_tensor_apply_rope(x, cos, sin); }
-    fn repeat_interleave(t: Tensor<f32, 4>, repeats: i64, dim: i64) -> Tensor<f32, 4> { return Tensor::tl_tensor_repeat_interleave(t, repeats, dim); }
-    fn narrow(t: Tensor<f32, 2>, dim: i64, start: i64, len: i64) -> Tensor<f32, 2> { return Tensor::tl_tensor_narrow(t, dim, start, len); }
-    fn cat_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>, d: i64) -> Tensor<f32, 4> { return Tensor::tl_tensor_cat_4d(a, b, d); }
-    
-    fn argmax(t: Tensor<f32, 2>, d: i64, k: bool) -> Tensor<i64, 1> { return Tensor::tl_tensor_argmax(t, d, k); }
-    fn len(t: Tensor<i64, 1>) -> i64 { return Tensor::tl_tensor_len(t); }
-    fn item_i64(t: Tensor<i64, 1>) -> i64 { return Tensor::tl_tensor_item_i64(t); }
-    fn cat_i64(a: Tensor<i64, 1>, b: Tensor<i64, 1>, d: i64) -> Tensor<i64, 1> { return Tensor::tl_tensor_cat_i64(a, b, d); }
-    fn sample(t: Tensor<f32, 2>, temp: f32, top_p: f32) -> Tensor<i64, 1> { return Tensor::tl_tensor_sample(t, temp, top_p); }
-    
-    fn matmul_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>) -> Tensor<f32, 4> { return Tensor::tl_tensor_matmul_4d(a, b); }
-    fn add_4d(a: Tensor<f32, 4>, b: Tensor<f32, 4>) -> Tensor<f32, 4> { return Tensor::tl_tensor_add_4d(a, b); }
-    fn softmax(t: Tensor<f32, 4>, d: i64) -> Tensor<f32, 4> { return Tensor::tl_tensor_softmax(t, d); }
-}
-
-struct System {}
-impl System {
-    extern fn println(s: String);
-    extern fn print(s: String);
-    extern fn tl_read_line(prompt: String) -> String;
-    extern fn tl_string_concat(a: String, b: String) -> String;
-    extern fn tl_string_from_int(i: i64) -> String;
-    extern fn tl_string_contains(h: String, n: String) -> bool;
-}
-
-fn println(s: String) { System::println(s); }
-fn print(s: String) { System::print(s); }
-fn read_line(prompt: String) -> String { return System::tl_read_line(prompt); }
-fn string_concat(a: String, b: String) -> String { return System::tl_string_concat(a, b); }
-fn string_from_int(i: i64) -> String { return System::tl_string_from_int(i); }
-fn string_contains(h: String, n: String) -> bool { return System::tl_string_contains(h, n); }
+fn string_concat(a: String, b: String) -> String { return a.concat(b); }
+fn string_from_int(i: i64) -> String { return String::from_int(i); }
+fn string_contains(h: String, n: String) -> bool { return h.contains(n); }
 
 // --- App Impls ---
 impl Linear {
     fn from_map(m: Map, k: String) -> Linear { return Linear { w: m.get(k) }; }
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { 
-        // tl_tensor_matmul(x, tl_tensor_transpose_2d(self.w, 0, 1))
-        return Tensor::matmul(x, Tensor::transpose_2d(self.w, 0, 1)); 
+        // x.matmul(self.w.transpose_2d(0, 1))
+        return x.matmul(self.w.transpose_2d(0, 1)); 
     }
 }
 
 impl RMSNorm {
     fn new(m: Map, k: String) -> RMSNorm { return RMSNorm { w: m.get_1d(k), e: 0.00001 }; }
-    fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { return Tensor::rms_norm(x, self.w, self.e); }
+    fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { return x.rms_norm(self.w, self.e); }
 }
 
 impl MLP {
@@ -190,9 +42,9 @@ impl MLP {
     }
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
         let gx = self.g.forward(x.clone());
-        let sx = Tensor::silu(gx);
+        let sx = gx.silu();
         let ux = self.u.forward(x.clone());
-        let mu = Tensor::mul(sx, ux);
+        let mu = sx.mul(ux);
         return self.d.forward(mu);
     }
 }
@@ -207,44 +59,44 @@ impl Attention {
         };
     }
     fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, sl: i64, ch: KVCache, li: i64, sp: i64) -> Tensor<f32, 2> {
-        // tl_tensor_reshape_dims(..., [1, sl, 32, 64], 4) -> .reshape(...)
+        // ....reshape([1) -> .reshape(...)
         let q_4d = self.q.forward(x.clone()).reshape([1, sl, 32, 64]);
         let k_4d = self.k.forward(x.clone()).reshape([1, sl, 4, 64]);
         let v_4d = self.v.forward(x.clone()).reshape([1, sl, 4, 64]);
         
-        let cs = Tensor::narrow(cos, 0, sp, sl);
-        let ss = Tensor::narrow(sin, 0, sp, sl);
+        let cs = cos.narrow(0, sp, sl);
+        let ss = sin.narrow(0, sp, sl);
         
-        let qr = Tensor::apply_rope(q_4d, cs, ss);
-        let kr = Tensor::apply_rope(k_4d, cs, ss);
+        let qr = q_4d.apply_rope(cs, ss);
+        let kr = k_4d.apply_rope(cs, ss);
         
-        let kt = Tensor::transpose(kr, 1, 2);
-        let vt = Tensor::transpose(v_4d, 1, 2);
+        let kt = kr.transpose(1, 2);
+        let vt = v_4d.transpose(1, 2);
         
-        let k_tot = if sp == 0 { kt } else { Tensor::cat_4d(ch.get_k(li), kt, 2) };
-        let v_tot = if sp == 0 { vt } else { Tensor::cat_4d(ch.get_v(li), vt, 2) };
+        let k_tot = if sp == 0 { kt } else { ch.get_k(li).cat_4d(kt, 2) };
+        let v_tot = if sp == 0 { vt } else { ch.get_v(li).cat_4d(vt, 2) };
         
         ch.update(li, k_tot.clone(), v_tot.clone());
         
-        let qt = Tensor::transpose(qr, 1, 2);
+        let qt = qr.transpose(1, 2);
         
-        let kw = Tensor::repeat_interleave(k_tot, 8, 1);
-        let vw = Tensor::repeat_interleave(v_tot, 8, 1);
+        let kw = k_tot.repeat_interleave(8, 1);
+        let vw = v_tot.repeat_interleave(8, 1);
         
         let sm = if sl > 1 { 
-            let mm = Tensor::matmul_4d(qt, Tensor::transpose(kw, 2, 3));
-            let sc = Tensor::scale(mm, 0.125);
+            let mm = qt.matmul_4d(kw.transpose(2, 3));
+            let sc = mm.scale(0.125);
             let mask = Tensor::new_causal_mask(sl).reshape([1, 1, sl, sl]);
-            Tensor::add_4d(sc, mask)
+            sc.add_4d(mask)
         } else { 
-            let mm = Tensor::matmul_4d(qt, Tensor::transpose(kw, 2, 3));
-            Tensor::scale(mm, 0.125)
+            let mm = qt.matmul_4d(kw.transpose(2, 3));
+            mm.scale(0.125)
         };
         
-        let sm_soft = Tensor::softmax(sm, 3);
-        let ao = Tensor::transpose(Tensor::matmul_4d(sm_soft, vw), 1, 2);
+        let sm_soft = sm.softmax(3);
+        let ao = sm_soft.matmul_4d(vw).transpose(1, 2);
         
-        // tl_tensor_reshape_2d(ao, [sl, 2048], 2) -> .reshape(...)
+        // ao.reshape([sl) -> .reshape(...)
         return self.o.forward(ao.reshape([sl, 2048]));
     }
 }
@@ -261,9 +113,9 @@ impl Block {
     }
     fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, sl: i64, ch: KVCache, li: i64, sp: i64) -> Tensor<f32, 2> {
         let attn_out = self.at.forward(self.an.forward(x.clone()), cos, sin, sl, ch, li, sp);
-        let x2 = Tensor::add(x, attn_out);
+        let x2 = x.add(attn_out);
         let ffn_out = self.mlp.forward(self.ffn.forward(x2.clone()));
-        return Tensor::add(x2, ffn_out);
+        return x2.add(ffn_out);
     }
 }
 
@@ -283,7 +135,7 @@ fn main() {
         }
     }
 
-    if File::exists(model_path) == false {
+    if !File::exists(model_path) {
         println("Model file not found at:");
         println(model_path);
         println("Please select:");
@@ -352,10 +204,10 @@ fn main() {
         let mut gen_str = "";
         print("Assistant> ");
         while gen_idx < 100 {
-            let total_len = Tensor::len(tokens);
-            let batch_len = Tensor::len(cur_tokens);
+            let total_len = tokens.len();
+            let batch_len = cur_tokens.len();
             let start_pos = total_len - batch_len;
-            let xi = Tensor::embedding(cur_tokens, emb);
+            let xi = cur_tokens.embedding(emb);
             let mut x = xi;
             let mut l = 0;
             while l < 22 {
@@ -364,8 +216,8 @@ fn main() {
                 l = l + 1;
             }
             let lo = oh.forward(on.forward(x));
-            let nxt = Tensor::sample(Tensor::narrow(lo, 0, batch_len - 1, 1), 0.7, 0.9);
-            let tid = Tensor::item_i64(nxt);
+            let nxt = lo.narrow(0, batch_len - 1, 1).sample(0.7, 0.9);
+            let tid = nxt.item_i64();
             let s_nxt = tok.decode(nxt);
             print(s_nxt);
             
@@ -379,7 +231,7 @@ fn main() {
             }
 
             if tid == 2 { gen_idx = 200; }
-            tokens = Tensor::cat_i64(tokens, nxt, 0);
+            tokens = tokens.cat_i64(nxt, 0);
             cur_tokens = nxt;
             gen_idx = gen_idx + 1;
         }

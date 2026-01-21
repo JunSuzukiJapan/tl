@@ -1,22 +1,7 @@
 
 // --- Externs ---
-extern fn tl_http_download(url: String, path: String) -> bool;
-extern fn tl_path_exists(path: String) -> bool;
-extern fn tl_file_read_string(path: String) -> String;
-extern fn tl_string_from_int(val: i64) -> String;
-extern fn tl_string_concat(s1: String, s2: String) -> String;
-
-extern fn tl_tokenizer_new(path: String) -> i64;
-extern fn tl_tokenizer_encode(tok: i64, prompt: String) -> Tensor<i64, 2>;
-extern fn tl_tokenizer_decode(tok: i64, ids: Tensor<i64, 2>) -> String;
 
 struct Map { _d: i64 }
-extern fn tl_gguf_load(path: String) -> Map;
-extern fn tl_tensor_map_get(map: Map, name: String) -> Tensor<f32, 2>;
-extern fn tl_tensor_map_get_1d(map: Map, name: String) -> Tensor<f32, 1>;
-
-extern fn tl_tensor_rope_new_cos(dim: i64, len: i64, theta: f32) -> Tensor<f32, 2>;
-extern fn tl_tensor_rope_new_sin(dim: i64, len: i64, theta: f32) -> Tensor<f32, 2>;
 
 fn main() {
     print("Test 1: start");
@@ -29,20 +14,20 @@ fn main() {
     print("Test 3: paths set");
     
     print("Loading GGUF...");
-    let weights = tl_gguf_load(model_path);
+    let weights = Map::load(model_path);
     print("Test 4: GGUF loaded");
     
     print("Loading Tokenizer...");
-    let tok = tl_tokenizer_new(tokenizer_path);
+    let tok = Tokenizer::new(tokenizer_path);
     print("Test 5: Tokenizer loaded");
     
     print("Precomputing RoPE...");
-    let cos = tl_tensor_rope_new_cos(64, 2048, 10000.0);
-    let sin = tl_tensor_rope_new_sin(64, 2048, 10000.0);
+    let cos = Tensor::rope_new_cos(64, 2048, 10000.0);
+    let sin = Tensor::rope_new_sin(64, 2048, 10000.0);
     print("Test 6: RoPE done");
     
     print("Loading embedding weights...");
-    let w_embedding = tl_tensor_map_get(weights, "token_embd.weight");
+    let w_embedding = weights.get("token_embd.weight");
     print("Test 7: Embedding loaded");
     
     // Initial tokens

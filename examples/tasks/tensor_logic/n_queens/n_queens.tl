@@ -1,14 +1,14 @@
 fn main() {
-    let argc = tl_args_count();
+    let argc = Args::count();
     
     let N = if argc > 0 {
-        tl_string_to_i64(tl_args_get(0))
+        Args::get(0.to_i64())
     } else {
         8
     };
     
     let num_solutions = if argc > 1 {
-        tl_string_to_i64(tl_args_get(1))
+        Args::get(1.to_i64())
     } else {
         10
     };

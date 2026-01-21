@@ -1,5 +1,3 @@
-
-extern fn tl_tensor_to_device(t: i64, s: String) -> i64;
 // Add a few externs just in case
 
 struct RMSNorm {

@@ -57,7 +57,7 @@ impl GPT {
 }
 
 fn get_memory() -> i64 {
-    return tl_get_memory_mb();
+    return System::memory_mb();
 }
 
 fn train_epoch(model: GPT, lr: f32, epoch: i64) {

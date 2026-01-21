@@ -1,8 +1,4 @@
 
-extern fn tl_tensor_print_2(t: Tensor<f32, 2>);
-extern fn tl_tensor_print_1(t: Tensor<f32, 1>);
-extern fn tl_clear_grads();
-
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
@@ -199,7 +195,7 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
     let loss = logits_flat.cross_entropy(Y_flat);
     
     // Print loss
-    // tl_tensor_print_1(loss.reshape([1]));
+    // loss.reshape([1].print_1());
     
     // Backprop
     print("Debug: Before backward");
@@ -209,7 +205,7 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
     m = m.step(lr);
     
     // Clear grads
-    tl_clear_grads();
+    Tensor::clear_grads();
     
     return m;
 }
@@ -235,12 +231,12 @@ fn infer(model: GPT, i: i64, j: i64) {
     
     let preds = logits.argmax(2); // [1, 4]
     print("Predictions (Whole Sequence):");
-    tl_tensor_print_2(preds.reshape([1, 4]));
+    preds.reshape([1, 4].print_2());
     
     print("Inference: Input:"); print(i); print(j);
     print("Expected (at pos 1):"); print(expected);
     print("Loss:");
-    tl_tensor_print_1(loss.reshape([1]));
+    loss.reshape([1].print_1());
 }
 
 fn main() {

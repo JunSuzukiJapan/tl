@@ -139,6 +139,7 @@ impl BuiltinManager {
         // IO functions
         self.register_uneval("print", compile_print_uneval);
         self.register_uneval("println", compile_println_uneval);
+        self.register_uneval("read_line", compile_read_line_uneval);
 
         // Command line arguments
         self.register_eval("args_count", compile_args_count);
@@ -1174,6 +1175,71 @@ impl<'ctx> CodeGenerator<'ctx> {
         param_static.register_uneval("set_device", compile_set_device);
         self.static_methods
             .insert("Param".to_string(), param_static);
+    }
+
+    fn load_struct_i64_field(
+        &mut self,
+        obj_val: BasicValueEnum<'ctx>,
+        obj_ty: &Type,
+        field_name: &str,
+    ) -> Result<BasicValueEnum<'ctx>, String> {
+        let struct_name = match obj_ty {
+            Type::Struct(name) | Type::UserDefined(name) => name.clone(),
+            _ => return Err(format!("Expected struct type for field {}", field_name)),
+        };
+
+        let simple_struct_name = if struct_name.contains("::") {
+            struct_name.split("::").last().unwrap()
+        } else {
+            struct_name.as_str()
+        };
+
+        let struct_def = self
+            .struct_defs
+            .get(simple_struct_name)
+            .ok_or(format!("Struct definition for {} not found", struct_name))?;
+
+        let field_idx = struct_def
+            .fields
+            .iter()
+            .position(|(n, _)| n == field_name)
+            .ok_or(format!(
+                "Field {} not found in struct {}",
+                field_name, struct_name
+            ))?;
+
+        if obj_val.is_pointer_value() {
+            let ptr = obj_val.into_pointer_value();
+            let st_llvm_ty = self
+                .struct_types
+                .get(simple_struct_name)
+                .ok_or(format!("Struct type {} not found", struct_name))?;
+
+            let field_ptr = self
+                .builder
+                .build_struct_gep(
+                    *st_llvm_ty,
+                    ptr,
+                    field_idx as u32,
+                    &format!("ptr_{}", field_name),
+                )
+                .map_err(|e| e.to_string())?;
+
+            let loaded = self
+                .builder
+                .build_load(self.context.i64_type(), field_ptr, field_name)
+                .map_err(|e| e.to_string())?;
+            Ok(loaded)
+        } else if obj_val.is_struct_value() {
+            let struct_val = obj_val.into_struct_value();
+            let extracted = self
+                .builder
+                .build_extract_value(struct_val, field_idx as u32, field_name)
+                .map_err(|e| e.to_string())?;
+            Ok(extracted)
+        } else {
+            Err("Cannot access field of non-pointer and non-struct value".into())
+        }
     }
 
     pub(crate) fn is_safe_to_free(&self, expr: &Expr, ty: &Type) -> bool {
@@ -3320,6 +3386,374 @@ impl<'ctx> CodeGenerator<'ctx> {
         method_name: &str,
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        if type_name == "Tokenizer" && method_name == "new" {
+            if args.len() != 1 {
+                return Err("Tokenizer::new requires 1 argument".into());
+            }
+            let (path_val, _) = self.compile_expr(&args[0])?;
+            let fn_val = self
+                .module
+                .get_function("tl_tokenizer_new")
+                .ok_or("tl_tokenizer_new not found")?;
+            let call = self
+                .builder
+                .build_call(fn_val, &[path_val.into()], "tok_new")
+                .map_err(|e| e.to_string())?;
+            let handle = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("Invalid return from Tokenizer::new".into()),
+            };
+
+            let struct_type = *self
+                .struct_types
+                .get("Tokenizer")
+                .ok_or("Struct type Tokenizer not found")?;
+            let struct_def = self
+                .struct_defs
+                .get("Tokenizer")
+                .ok_or("Struct definition Tokenizer not found")?;
+            let size = struct_type
+                .size_of()
+                .ok_or("Cannot determine size of Tokenizer")?;
+            let malloc_fn = self
+                .module
+                .get_function("malloc")
+                .ok_or("malloc not found (declare in builtins)")?;
+            let call = self
+                .builder
+                .build_call(malloc_fn, &[size.into()], "tokenizer_malloc")
+                .map_err(|e| e.to_string())?;
+            let raw_ptr = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                _ => return Err("malloc returned invalid value".into()),
+            };
+            if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
+                let cast_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        raw_ptr,
+                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                        "cast_ptr",
+                    )
+                    .unwrap();
+                self.builder
+                    .build_call(register_fn, &[cast_ptr.into()], "")
+                    .map_err(|e| e.to_string())?;
+            }
+            let struct_ptr = self
+                .builder
+                .build_pointer_cast(
+                    raw_ptr,
+                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                    "tokenizer_ptr",
+                )
+                .map_err(|e| e.to_string())?;
+            let field_idx = struct_def
+                .fields
+                .iter()
+                .position(|(n, _)| n == "_h")
+                .ok_or("Field _h not found in Tokenizer")?;
+            let field_ptr = self
+                .builder
+                .build_struct_gep(struct_type, struct_ptr, field_idx as u32, "tokenizer_h")
+                .map_err(|e| e.to_string())?;
+            self.builder
+                .build_store(field_ptr, handle)
+                .map_err(|e| e.to_string())?;
+            return Ok((struct_ptr.into(), Type::Struct("Tokenizer".to_string())));
+        }
+
+        if type_name == "KVCache" && method_name == "new" {
+            if args.len() != 1 {
+                return Err("KVCache::new requires 1 argument".into());
+            }
+            let (layers_val, _) = self.compile_expr(&args[0])?;
+            let fn_val = self
+                .module
+                .get_function("tl_kv_cache_new")
+                .ok_or("tl_kv_cache_new not found")?;
+            let call = self
+                .builder
+                .build_call(fn_val, &[layers_val.into()], "kv_new")
+                .map_err(|e| e.to_string())?;
+            let handle = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("Invalid return from KVCache::new".into()),
+            };
+
+            let struct_type = *self
+                .struct_types
+                .get("KVCache")
+                .ok_or("Struct type KVCache not found")?;
+            let struct_def = self
+                .struct_defs
+                .get("KVCache")
+                .ok_or("Struct definition KVCache not found")?;
+            let size = struct_type
+                .size_of()
+                .ok_or("Cannot determine size of KVCache")?;
+            let malloc_fn = self
+                .module
+                .get_function("malloc")
+                .ok_or("malloc not found (declare in builtins)")?;
+            let call = self
+                .builder
+                .build_call(malloc_fn, &[size.into()], "kvcache_malloc")
+                .map_err(|e| e.to_string())?;
+            let raw_ptr = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                _ => return Err("malloc returned invalid value".into()),
+            };
+            if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
+                let cast_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        raw_ptr,
+                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                        "cast_ptr",
+                    )
+                    .unwrap();
+                self.builder
+                    .build_call(register_fn, &[cast_ptr.into()], "")
+                    .map_err(|e| e.to_string())?;
+            }
+            let struct_ptr = self
+                .builder
+                .build_pointer_cast(
+                    raw_ptr,
+                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                    "kvcache_ptr",
+                )
+                .map_err(|e| e.to_string())?;
+            let field_idx = struct_def
+                .fields
+                .iter()
+                .position(|(n, _)| n == "_h")
+                .ok_or("Field _h not found in KVCache")?;
+            let field_ptr = self
+                .builder
+                .build_struct_gep(struct_type, struct_ptr, field_idx as u32, "kvcache_h")
+                .map_err(|e| e.to_string())?;
+            self.builder
+                .build_store(field_ptr, handle)
+                .map_err(|e| e.to_string())?;
+            return Ok((struct_ptr.into(), Type::Struct("KVCache".to_string())));
+        }
+
+        if type_name == "Map" && method_name == "load" {
+            if args.len() != 1 {
+                return Err("Map::load requires 1 argument".into());
+            }
+            let (path_val, _) = self.compile_expr(&args[0])?;
+            let fn_val = self
+                .module
+                .get_function("tl_gguf_load")
+                .ok_or("tl_gguf_load not found")?;
+            let call = self
+                .builder
+                .build_call(fn_val, &[path_val.into()], "map_load")
+                .map_err(|e| e.to_string())?;
+            let res = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("Invalid return from Map::load".into()),
+            };
+            return Ok((res, Type::UserDefined("Map".to_string())));
+        }
+
+        if type_name == "File" {
+            match method_name {
+                "exists" => {
+                    if args.len() != 1 {
+                        return Err("File::exists requires 1 argument".into());
+                    }
+                    let (path_val, _) = self.compile_expr(&args[0])?;
+                    let fn_val = self
+                        .module
+                        .get_function("tl_file_exists_i64")
+                        .ok_or("tl_file_exists_i64 not found")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[path_val.into()], "file_exists")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                        _ => return Err("Invalid return from File::exists".into()),
+                    };
+                    let ok = self
+                        .builder
+                        .build_int_compare(
+                            inkwell::IntPredicate::EQ,
+                            res,
+                            self.context.i64_type().const_int(1, false),
+                            "file_exists_bool",
+                        )
+                        .map_err(|e| e.to_string())?;
+                    return Ok((ok.into(), Type::Bool));
+                }
+                "read" => {
+                    if args.len() != 1 {
+                        return Err("File::read requires 1 argument".into());
+                    }
+                    let (path_val, _) = self.compile_expr(&args[0])?;
+                    let fn_val = self
+                        .module
+                        .get_function("tl_read_file")
+                        .ok_or("tl_read_file not found")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[path_val.into()], "file_read")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from File::read".into()),
+                    };
+                    return Ok((res, Type::UserDefined("String".to_string())));
+                }
+                "write" => {
+                    if args.len() != 2 {
+                        return Err("File::write requires 2 arguments".into());
+                    }
+                    let (path_val, _) = self.compile_expr(&args[0])?;
+                    let (content_val, _) = self.compile_expr(&args[1])?;
+                    let fn_val = self
+                        .module
+                        .get_function("tl_write_file")
+                        .ok_or("tl_write_file not found")?;
+                    let call = self
+                        .builder
+                        .build_call(
+                            fn_val,
+                            &[path_val.into(), content_val.into()],
+                            "file_write",
+                        )
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                        _ => return Err("Invalid return from File::write".into()),
+                    };
+                    let ok = self
+                        .builder
+                        .build_int_compare(
+                            inkwell::IntPredicate::EQ,
+                            res,
+                            self.context.i64_type().const_int(1, false),
+                            "file_write_bool",
+                        )
+                        .map_err(|e| e.to_string())?;
+                    return Ok((ok.into(), Type::Bool));
+                }
+                "download" => {
+                    if args.len() != 2 {
+                        return Err("File::download requires 2 arguments".into());
+                    }
+                    let (url_val, _) = self.compile_expr(&args[0])?;
+                    let (path_val, _) = self.compile_expr(&args[1])?;
+                    let fn_val = self
+                        .module
+                        .get_function("tl_download_file")
+                        .ok_or("tl_download_file not found")?;
+                    let call = self
+                        .builder
+                        .build_call(
+                            fn_val,
+                            &[url_val.into(), path_val.into()],
+                            "file_download",
+                        )
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                        _ => return Err("Invalid return from File::download".into()),
+                    };
+                    let ok = self
+                        .builder
+                        .build_int_compare(
+                            inkwell::IntPredicate::EQ,
+                            res,
+                            self.context.i64_type().const_int(1, false),
+                            "file_download_bool",
+                        )
+                        .map_err(|e| e.to_string())?;
+                    return Ok((ok.into(), Type::Bool));
+                }
+                "read_binary" => {
+                    if args.len() != 1 {
+                        return Err("File::read_binary requires 1 argument".into());
+                    }
+                    let (path_val, _) = self.compile_expr(&args[0])?;
+                    let fn_val = self
+                        .module
+                        .get_function("tl_file_read_binary")
+                        .ok_or("tl_file_read_binary not found")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[path_val.into()], "file_read_binary")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from File::read_binary".into()),
+                    };
+                    return Ok((res, Type::Vec(Box::new(Type::U8))));
+                }
+                _ => {}
+            }
+        }
+
+        if type_name == "System" && method_name == "memory_mb" {
+            if !args.is_empty() {
+                return Err("System::memory_mb takes no arguments".into());
+            }
+            let fn_val = self
+                .module
+                .get_function("tl_get_memory_mb")
+                .ok_or("tl_get_memory_mb not found")?;
+            let call = self
+                .builder
+                .build_call(fn_val, &[], "mem_mb")
+                .map_err(|e| e.to_string())?;
+            let res = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("Invalid return from System::memory_mb".into()),
+            };
+            return Ok((res, Type::I64));
+        }
+
+        if type_name == "Tensor" && method_name == "clear_grads" {
+            if !args.is_empty() {
+                return Err("Tensor::clear_grads takes no arguments".into());
+            }
+            let fn_val = self
+                .module
+                .get_function("tl_clear_grads")
+                .ok_or("tl_clear_grads not found")?;
+            self.builder
+                .build_call(fn_val, &[], "clear_grads")
+                .map_err(|e| e.to_string())?;
+            return Ok((
+                self.context.i64_type().const_int(0, false).into(),
+                Type::Void,
+            ));
+        }
+
+        if type_name == "Path" && method_name == "exists" {
+            if args.len() != 1 {
+                return Err("Path::exists requires 1 argument".into());
+            }
+            let (path_val, _) = self.compile_expr(&args[0])?;
+            let fn_val = self
+                .module
+                .get_function("tl_path_exists")
+                .ok_or("tl_path_exists not found")?;
+            let call = self
+                .builder
+                .build_call(fn_val, &[path_val.into()], "path_exists")
+                .map_err(|e| e.to_string())?;
+            let res = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("Invalid return from Path::exists".into()),
+            };
+            return Ok((res, Type::Bool));
+        }
+
         // 1. StaticMethodManager Lookup
         let method_opt = self
             .static_methods
@@ -4495,6 +4929,61 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         let (obj_val, obj_ty) = self.compile_expr(obj)?;
 
+        if let Type::Vec(inner) = &obj_ty {
+            if matches!(inner.as_ref(), Type::U8) {
+                match method {
+                    "len" => {
+                        let fn_val = self
+                            .module
+                            .get_function("tl_vec_u8_len")
+                            .ok_or("tl_vec_u8_len not found")?;
+                        let call = self
+                            .builder
+                            .build_call(fn_val, &[obj_val.into()], "vec_len")
+                            .map_err(|e| e.to_string())?;
+                        let res = match call.try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid return from vec.len()".into()),
+                        };
+                        return Ok((res, Type::I64));
+                    }
+                    "read_i32_be" => {
+                        if args.len() != 1 {
+                            return Err("read_i32_be requires 1 argument".into());
+                        }
+                        let (idx_val, _) = self.compile_expr(&args[0])?;
+                        let fn_val = self
+                            .module
+                            .get_function("tl_vec_u8_read_i32_be")
+                            .ok_or("tl_vec_u8_read_i32_be not found")?;
+                        let call = self
+                            .builder
+                            .build_call(fn_val, &[obj_val.into(), idx_val.into()], "vec_i32")
+                            .map_err(|e| e.to_string())?;
+                        let res = match call.try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid return from vec.read_i32_be()".into()),
+                        };
+                        return Ok((res, Type::I64));
+                    }
+                    "free" => {
+                        let fn_val = self
+                            .module
+                            .get_function("tl_vec_u8_free")
+                            .ok_or("tl_vec_u8_free not found")?;
+                        self.builder
+                            .build_call(fn_val, &[obj_val.into()], "vec_free")
+                            .map_err(|e| e.to_string())?;
+                        return Ok((
+                            self.context.i64_type().const_int(0, false).into(),
+                            Type::Void,
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         // 2. Resolve Type Name to check Manager
         let type_name = match &obj_ty {
             Type::Struct(name) => name.clone(),
@@ -4551,6 +5040,214 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Unevaluated methods handle their own arg compilation and cleanup
                     return func(self, obj, method, args);
                 }
+            }
+        }
+
+        if type_name == "Tokenizer" {
+            let handle = self.load_struct_i64_field(obj_val, &obj_ty, "_h")?;
+            match method {
+                "encode" => {
+                    if args.len() != 1 {
+                        return Err("Tokenizer::encode requires 1 argument".into());
+                    }
+                    let (prompt_val, _) = self.compile_expr(&args[0])?;
+                    let fn_val = self
+                        .module
+                        .get_function("tl_tokenizer_encode")
+                        .ok_or("tl_tokenizer_encode not found")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[handle.into(), prompt_val.into()], "tok_encode")
+                        .map_err(|e| e.to_string())?;
+                    let res = self.check_tensor_result(call, "tok_encode_error")?;
+                    let ret_ty = Type::Tensor(Box::new(Type::I64), 0);
+                    self.emit_register_tensor(res, &ret_ty)?;
+                    return Ok((res, ret_ty));
+                }
+                "decode" => {
+                    if args.len() != 1 {
+                        return Err("Tokenizer::decode requires 1 argument".into());
+                    }
+                    let (ids_val, _) = self.compile_expr(&args[0])?;
+                    let fn_val = self
+                        .module
+                        .get_function("tl_tokenizer_decode")
+                        .ok_or("tl_tokenizer_decode not found")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[handle.into(), ids_val.into()], "tok_decode")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from Tokenizer::decode".into()),
+                    };
+                    return Ok((res, Type::UserDefined("String".to_string())));
+                }
+                _ => {}
+            }
+        }
+
+        if type_name == "KVCache" {
+            let handle = self.load_struct_i64_field(obj_val, &obj_ty, "_h")?;
+            match method {
+                "free" => {
+                    let fn_val = self
+                        .module
+                        .get_function("tl_kv_cache_free")
+                        .ok_or("tl_kv_cache_free not found")?;
+                    self.builder
+                        .build_call(fn_val, &[handle.into()], "kv_free")
+                        .map_err(|e| e.to_string())?;
+                    return Ok((
+                        self.context.i64_type().const_int(0, false).into(),
+                        Type::Void,
+                    ));
+                }
+                "get_k" | "get_v" => {
+                    if args.len() != 1 {
+                        return Err("KVCache::get_k/get_v requires 1 argument".into());
+                    }
+                    let (layer_val, _) = self.compile_expr(&args[0])?;
+                    let fn_name = if method == "get_k" {
+                        "tl_kv_cache_get_k"
+                    } else {
+                        "tl_kv_cache_get_v"
+                    };
+                    let fn_val = self
+                        .module
+                        .get_function(fn_name)
+                        .ok_or(format!("{} not found", fn_name))?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[handle.into(), layer_val.into()], "kv_get")
+                        .map_err(|e| e.to_string())?;
+                    let res = self.check_tensor_result(call, "kv_get_error")?;
+                    let ret_ty = Type::Tensor(Box::new(Type::F32), 0);
+                    self.emit_register_tensor(res, &ret_ty)?;
+                    return Ok((res, ret_ty));
+                }
+                "update" => {
+                    if args.len() != 3 {
+                        return Err("KVCache::update requires 3 arguments".into());
+                    }
+                    let (layer_val, _) = self.compile_expr(&args[0])?;
+                    let (k_val, _) = self.compile_expr(&args[1])?;
+                    let (v_val, _) = self.compile_expr(&args[2])?;
+                    let fn_val = self
+                        .module
+                        .get_function("tl_kv_cache_update")
+                        .ok_or("tl_kv_cache_update not found")?;
+                    self.builder
+                        .build_call(
+                            fn_val,
+                            &[handle.into(), layer_val.into(), k_val.into(), v_val.into()],
+                            "kv_update",
+                        )
+                        .map_err(|e| e.to_string())?;
+                    return Ok((
+                        self.context.i64_type().const_int(0, false).into(),
+                        Type::Void,
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        if type_name == "Map" {
+            match method {
+                "get" | "get_1d" | "get_quantized" => {
+                    if args.len() != 1 {
+                        return Err("Map::get requires 1 argument".into());
+                    }
+                    let (key_val, _) = self.compile_expr(&args[0])?;
+                    let fn_name = match method {
+                        "get" => "tl_tensor_map_get",
+                        "get_1d" => "tl_tensor_map_get_1d",
+                        "get_quantized" => "tl_tensor_map_get_quantized",
+                        _ => unreachable!(),
+                    };
+                    let fn_val = self
+                        .module
+                        .get_function(fn_name)
+                        .ok_or(format!("{} not found", fn_name))?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into(), key_val.into()], "map_get")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from Map::get".into()),
+                    };
+                    if method == "get_quantized" {
+                        return Ok((res, Type::I64));
+                    }
+                    let ret_ty = Type::Tensor(Box::new(Type::F32), 0);
+                    self.emit_register_tensor(res, &ret_ty)?;
+                    return Ok((res, ret_ty));
+                }
+                _ => {}
+            }
+        }
+
+        if type_name == "String" {
+            match method {
+                "concat" => {
+                    if args.len() != 1 {
+                        return Err("String::concat requires 1 argument".into());
+                    }
+                    let (other_val, _) = self.compile_expr(&args[0])?;
+                    let fn_val = self
+                        .module
+                        .get_function("tl_string_concat")
+                        .ok_or("tl_string_concat not found")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into(), other_val.into()], "str_concat")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from String::concat".into()),
+                    };
+                    return Ok((res, Type::UserDefined("String".to_string())));
+                }
+                "contains" => {
+                    if args.len() != 1 {
+                        return Err("String::contains requires 1 argument".into());
+                    }
+                    let (needle_val, _) = self.compile_expr(&args[0])?;
+                    let fn_val = self
+                        .module
+                        .get_function("tl_string_contains")
+                        .ok_or("tl_string_contains not found")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into(), needle_val.into()], "str_contains")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from String::contains".into()),
+                    };
+                    return Ok((res, Type::Bool));
+                }
+                "to_i64" => {
+                    if !args.is_empty() {
+                        return Err("String::to_i64 requires 0 arguments".into());
+                    }
+                    let fn_val = self
+                        .module
+                        .get_function("tl_string_to_i64")
+                        .ok_or("tl_string_to_i64 not found")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into()], "str_to_i64")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from String::to_i64".into()),
+                    };
+                    return Ok((res, Type::I64));
+                }
+                _ => {}
             }
         }
 
@@ -4923,6 +5620,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                         inkwell::values::ValueKind::Basic(v) => v,
                         _ => return Err("Invalid return from grad()".into()),
                     };
+                    self.emit_register_tensor(res, &obj_ty)?;
+                    return Ok((res, obj_ty.clone()));
+                }
+                "matmul_quantized" => {
+                    if args.len() != 1 {
+                        return Err("matmul_quantized requires 1 argument".into());
+                    }
+                    let (weight_val, _) = self.compile_expr(&args[0])?;
+                    let fn_val = self
+                        .module
+                        .get_function("tl_qtensor_matmul")
+                        .ok_or("tl_qtensor_matmul not found")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into(), weight_val.into()], "qmatmul_res")
+                        .map_err(|e| e.to_string())?;
+                    let res = self.check_tensor_result(call, "qmatmul_error")?;
                     self.emit_register_tensor(res, &obj_ty)?;
                     return Ok((res, obj_ty.clone()));
                 }
@@ -6020,6 +6734,29 @@ fn compile_println_uneval<'ctx>(
     args: &[Expr],
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     compile_print_formatted(codegen, args, true)
+}
+
+fn compile_read_line_uneval<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: &[Expr],
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("read_line requires 1 argument".into());
+    }
+    let (prompt_val, _prompt_ty) = codegen.compile_expr(&args[0])?;
+    let fn_val = codegen
+        .module
+        .get_function("tl_read_line")
+        .ok_or("tl_read_line not found")?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[prompt_val.into()], "read_line_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from read_line".into()),
+    };
+    Ok((res, Type::UserDefined("String".to_string())))
 }
 
 fn compile_print_formatted<'ctx>(

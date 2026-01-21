@@ -2257,6 +2257,19 @@ pub fn declare_runtime_functions<'ctx>(
         "tl_string_from_int".to_string(),
         Type::UserDefined("String".to_string()),
     );
+    fn_return_types.insert("tl_tokenizer_new".to_string(), Type::I64);
+    fn_return_types.insert(
+        "tl_tokenizer_encode".to_string(),
+        Type::Tensor(Box::new(Type::I64), 0),
+    );
+    fn_return_types.insert(
+        "tl_tokenizer_decode".to_string(),
+        Type::UserDefined("String".to_string()),
+    );
+    fn_return_types.insert(
+        "tl_gguf_load".to_string(),
+        Type::UserDefined("Map".to_string()),
+    );
     fn_return_types.insert(
         "tl_file_open".to_string(),
         Type::UserDefined("File".to_string()),
@@ -2723,7 +2736,7 @@ pub fn declare_runtime_functions<'ctx>(
     // Fix: register return type
     fn_return_types.insert(
         "tl_tensor_cat_i64".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
+        Type::Tensor(Box::new(Type::I64), 1),
     );
 
     // tl_tensor_reshape -> tl_tensor_reshape_new alias for generic fallback
@@ -2746,7 +2759,10 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_sample(t, temp, topp) -> tensor (llm.rs)
     let sample_type = void_ptr.fn_type(&[void_ptr.into(), f32_type.into(), f32_type.into()], false);
     add_fn("tl_tensor_sample", sample_type);
-    fn_return_types.insert("tl_tensor_sample".to_string(), tensor_type.clone());
+    fn_return_types.insert(
+        "tl_tensor_sample".to_string(),
+        Type::Tensor(Box::new(Type::I64), 1),
+    );
     if let Some(f) = module.get_function("tl_tensor_sample") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_sample as usize);
     }

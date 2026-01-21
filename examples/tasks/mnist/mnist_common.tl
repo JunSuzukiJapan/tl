@@ -29,8 +29,8 @@ impl Linear {
 
 fn load_mnist_images(path: String) -> Tensor<f32, 2> {
     println("Loading images from: {}", path);
-    let vec = tl_file_read_binary(path);
-    let len = tl_vec_u8_len(vec);
+    let vec = File::read_binary(path);
+    let len = vec.len();
     if len == 0 {
         print("Error: Failed to read file or empty file: " + path);
         // Return dummy
@@ -38,10 +38,10 @@ fn load_mnist_images(path: String) -> Tensor<f32, 2> {
         return t;
     }
 
-    let magic = tl_vec_u8_read_i32_be(vec, 0);
-    let count = tl_vec_u8_read_i32_be(vec, 4);
-    let rows = tl_vec_u8_read_i32_be(vec, 8);
-    let cols = tl_vec_u8_read_i32_be(vec, 12);
+    let magic = vec.read_i32_be(0);
+    let count = vec.read_i32_be(4);
+    let rows = vec.read_i32_be(8);
+    let cols = vec.read_i32_be(12);
     
     println("  Count: {} Shape: {} x {}", count, rows, cols);
     
@@ -50,35 +50,35 @@ fn load_mnist_images(path: String) -> Tensor<f32, 2> {
     // WORKAROUND: Compiler bug with variable array literals [count, dim]
     if count == 60000 {
         let shape = [60000, 784];
-        let t = tl_tensor_from_vec_u8(vec, 16, shape, 2);
-        tl_vec_u8_free(vec);
+        let t = Tensor::from_vec_u8(vec, 16, shape, 2);
+        vec.free();
         return t as Tensor<f32, 2>;
     }
     
     // Assume 10000 for test set
     let shape = [10000, 784];
-    let t = tl_tensor_from_vec_u8(vec, 16, shape, 2);
+    let t = Tensor::from_vec_u8(vec, 16, shape, 2);
     
-    tl_vec_u8_free(vec);
+    vec.free();
     return t as Tensor<f32, 2>;
 }
 
 fn load_mnist_labels(path: String) -> Tensor<i64, 1> {
     println("Loading labels from: {}", path);
-    let vec = tl_file_read_binary(path);
-    let len = tl_vec_u8_len(vec);
+    let vec = File::read_binary(path);
+    let len = vec.len();
     if len == 0 {
         print("Error: Failed to read file: " + path);
         let t = Tensor::zeros([1], false).to_i64();
         return t;
     }
     
-    let magic = tl_vec_u8_read_i32_be(vec, 0);
-    let count = tl_vec_u8_read_i32_be(vec, 4);
+    let magic = vec.read_i32_be(0);
+    let count = vec.read_i32_be(4);
     println("  Count: {}", count);
     
-    let t = tl_tensor_from_u8_labels(vec, 8, count);
+    let t = Tensor::from_u8_labels(vec, 8, count);
     
-    tl_vec_u8_free(vec);
+    vec.free();
     return t as Tensor<i64, 1>;
 }

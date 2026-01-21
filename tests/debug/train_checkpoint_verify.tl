@@ -1,8 +1,4 @@
 
-extern fn tl_tensor_print_2(t: Tensor<f32, 2>);
-extern fn tl_tensor_print_1(t: Tensor<f32, 1>);
-extern fn tl_clear_grads();
-
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
@@ -191,7 +187,7 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
     loss.backward();
     
     let m = m.step(lr);
-    tl_clear_grads();
+    Tensor::clear_grads();
     return m;
 }
 
@@ -205,7 +201,7 @@ fn infer(model: GPT, i: i64, j: i64) {
     let pred = logits.argmax(2); // [1, 4]
     
     println("Input: {} {}", i, j);
-    print("Pred:"); tl_tensor_print_2(pred);
+    print("Pred:"); pred.print_2();
 }
 
 

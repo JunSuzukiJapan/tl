@@ -15,7 +15,7 @@ impl GPT { fn new(v: i64, d: i64) -> GPT { return GPT(Embedding::new(v, d), Bloc
 
 // Wrapper for memory monitoring
 fn get_memory() -> i64 {
-    return tl_get_memory_mb();
+    return System::memory_mb();
 }
 
 // CRITICAL: Extract training loop into separate function to create new stack frame

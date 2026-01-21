@@ -1,7 +1,7 @@
 fn main() {
     print("Testing tensor with memory manager...");
     
-    let mem_start = tl_get_memory_mb();
+    let mem_start = System::memory_mb();
     print("Start memory:");
     print(mem_start);
     
@@ -10,7 +10,7 @@ fn main() {
         print("Created tensor");
     }
     
-    let mem_end = tl_get_memory_mb();
+    let mem_end = System::memory_mb();
     print("End memory:");
     print(mem_end);
 }

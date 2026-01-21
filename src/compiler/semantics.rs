@@ -1817,6 +1817,20 @@ impl SemanticAnalyzer {
 
                     return Ok(Type::Void);
                 }
+                if name == "read_line" {
+                    if args.len() != 1 {
+                        return self.err(
+                            SemanticError::ArgumentCountMismatch {
+                                name: "read_line".into(),
+                                expected: 1,
+                                found: args.len(),
+                            },
+                            Some(expr.span.clone()),
+                        );
+                    }
+                    self.check_expr(&mut args[0])?;
+                    return Ok(Type::UserDefined("String".to_string()));
+                }
 
                 // --- StdLib Phase 1 ---
                 // --- StdLib Static Methods ---
@@ -2766,6 +2780,305 @@ impl SemanticAnalyzer {
                     }
                 }
 
+                if name.starts_with("tl_") {
+                    let arg_len = args.len();
+                    let mut check_all_args = |args: &mut [Expr]| -> Result<(), TlError> {
+                        for arg in args.iter_mut() {
+                            self.check_expr(arg)?;
+                        }
+                        Ok(())
+                    };
+
+                    let tensor_i64 = Type::Tensor(Box::new(Type::I64), 0);
+                    let tensor_f32 = Type::Tensor(Box::new(Type::F32), 0);
+
+                    match name.as_str() {
+                        "tl_tokenizer_new" => {
+                            if arg_len != 1 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 1,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(Type::I64);
+                        }
+                        "tl_tokenizer_encode" => {
+                            if arg_len != 2 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 2,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(tensor_i64);
+                        }
+                        "tl_tokenizer_decode" => {
+                            if arg_len != 2 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 2,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(Type::UserDefined("String".to_string()));
+                        }
+                        "tl_gguf_load" => {
+                            if arg_len != 1 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 1,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(Type::UserDefined("Map".to_string()));
+                        }
+                        "tl_tensor_map_get_quantized" => {
+                            if arg_len != 2 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 2,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(Type::I64);
+                        }
+                        "tl_kv_cache_new" => {
+                            if arg_len != 1 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 1,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(Type::I64);
+                        }
+                        "tl_kv_cache_free" => {
+                            if arg_len != 1 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 1,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(Type::Void);
+                        }
+                        "tl_kv_cache_get_k" | "tl_kv_cache_get_v" => {
+                            if arg_len != 2 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 2,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(tensor_f32);
+                        }
+                        "tl_kv_cache_update" => {
+                            if arg_len != 4 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 4,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(Type::Void);
+                        }
+                        "tl_file_exists_i64" => {
+                            if arg_len != 1 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 1,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(Type::I64);
+                        }
+                        "tl_read_file" | "tl_read_line" | "tl_prompt" => {
+                            if arg_len != 1 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 1,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(Type::UserDefined("String".to_string()));
+                        }
+                        "tl_write_file" | "tl_download_file" => {
+                            if arg_len != 2 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 2,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(Type::I64);
+                        }
+                        "tl_path_exists" => {
+                            if arg_len != 1 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 1,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(Type::Bool);
+                        }
+                        "tl_print_i64" | "tl_print_string" => {
+                            if arg_len != 1 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 1,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(Type::Void);
+                        }
+                        "tl_string_concat" => {
+                            if arg_len != 2 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 2,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(Type::UserDefined("String".to_string()));
+                        }
+                        "tl_string_from_int" => {
+                            if arg_len != 1 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 1,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(Type::UserDefined("String".to_string()));
+                        }
+                        "tl_string_contains" => {
+                            if arg_len != 2 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 2,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(Type::Bool);
+                        }
+                        "tl_clear_grads" => {
+                            if arg_len != 0 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 0,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            return Ok(Type::Void);
+                        }
+                        "tl_qtensor_matmul" => {
+                            if arg_len != 2 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: name.clone(),
+                                        expected: 2,
+                                        found: arg_len,
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            check_all_args(args)?;
+                            return Ok(tensor_f32);
+                        }
+                        _ => {}
+                    }
+
+                    if name.starts_with("tl_tensor_") {
+                        check_all_args(args)?;
+                        let return_ty = match name.as_str() {
+                            "tl_tensor_len" | "tl_tensor_item_i64" => Type::I64,
+                            "tl_tensor_argmax" | "tl_tensor_cat_i64" | "tl_tensor_sample" => {
+                                tensor_i64
+                            }
+                            "tl_tensor_get_shape" => tensor_i64,
+                            "tl_tensor_map_get_quantized" => Type::I64,
+                            "tl_tensor_print_1" | "tl_tensor_print_2" | "tl_tensor_print_3" => {
+                                Type::Void
+                            }
+                            _ => tensor_f32,
+                        };
+                        return Ok(return_ty);
+                    }
+                }
+
                 if let Some(func) = self.functions.get(name).cloned() {
                     if args.len() != func.args.len() {
                         // func.args is empty in current AST parser stub, need to fix that first to check properly
@@ -3298,6 +3611,7 @@ impl SemanticAnalyzer {
                     }
                     ("System", "time") => Ok(Type::F32),
                     ("System", "sleep") => Ok(Type::Void),
+                    ("System", "memory_mb") => Ok(Type::I64),
                     ("Env", "get") => Ok(Type::UserDefined("String".into())),
                     ("Env", "set") => {
                         if args.len() != 2 {
@@ -3317,6 +3631,22 @@ impl SemanticAnalyzer {
                     ("Image", "load_grayscale") => Ok(Type::Vec(Box::new(Type::U8))),
                     ("Image", "width") => Ok(Type::I64),
                     ("Image", "height") => Ok(Type::I64),
+                    ("Args", "count") => Ok(Type::I64),
+                    ("Args", "get") => Ok(Type::UserDefined("String".into())),
+                    ("Arena", "get_offset") => Ok(Type::I64),
+                    ("Arena", "alloc") => Ok(Type::I64),
+                    ("Arena", "init") => Ok(Type::Void),
+                    ("Arena", "is_active") => Ok(Type::Bool),
+                    ("Tokenizer", "new") => Ok(Type::Struct("Tokenizer".into())),
+                    ("KVCache", "new") => Ok(Type::Struct("KVCache".into())),
+                    ("Map", "load") => Ok(Type::UserDefined("Map".into())),
+                    ("File", "exists") => Ok(Type::Bool),
+                    ("File", "read") => Ok(Type::UserDefined("String".into())),
+                    ("File", "write") => Ok(Type::Bool),
+                    ("File", "download") => Ok(Type::Bool),
+                    ("File", "read_binary") => Ok(Type::Vec(Box::new(Type::U8))),
+                    ("Path", "exists") => Ok(Type::Bool),
+                    ("String", "from_int") => Ok(Type::UserDefined("String".into())),
                     // --- New Static Methods for Refactor ---
                     ("Tensor", "zeros") => {
                         // Tensor::zeros(shape, requires_grad)
@@ -3416,6 +3746,39 @@ impl SemanticAnalyzer {
                         let _ = self.check_expr(&mut args[0])?;
                         Ok(Type::Tensor(Box::new(Type::F32), 0))
                     }
+                    ("Tensor", "clear_grads") => Ok(Type::Void),
+                    ("Tensor", "matmul")
+                    | ("Tensor", "add")
+                    | ("Tensor", "mul")
+                    | ("Tensor", "silu")
+                    | ("Tensor", "rms_norm")
+                    | ("Tensor", "embedding")
+                    | ("Tensor", "scale")
+                    | ("Tensor", "transpose")
+                    | ("Tensor", "transpose_2d")
+                    | ("Tensor", "apply_rope")
+                    | ("Tensor", "repeat_interleave")
+                    | ("Tensor", "new_causal_mask")
+                    | ("Tensor", "narrow")
+                    | ("Tensor", "cat_4d")
+                    | ("Tensor", "matmul_4d")
+                    | ("Tensor", "add_4d")
+                    | ("Tensor", "softmax")
+                    | ("Tensor", "rope_new_cos")
+                    | ("Tensor", "rope_new_sin")
+                    | ("Tensor", "cat2")
+                    | ("Tensor", "reshape_dims")
+                    | ("Tensor", "reshape_2d")
+                    | ("Tensor", "reshape_3d_to_2d")
+                    | ("Tensor", "get_shape")
+                    | ("Tensor", "from_vec_u8") => Ok(Type::Tensor(Box::new(Type::F32), 0)),
+                    ("Tensor", "matmul_quantized") => Ok(Type::Tensor(Box::new(Type::F32), 0)),
+                    ("Tensor", "argmax") | ("Tensor", "cat_i64") | ("Tensor", "sample") => {
+                        Ok(Type::Tensor(Box::new(Type::I64), 0))
+                    }
+                    ("Tensor", "item_i64") => Ok(Type::I64),
+                    ("Tensor", "len") => Ok(Type::I64),
+                    ("Tensor", "from_u8_labels") => Ok(Type::Tensor(Box::new(Type::I64), 0)),
                     ("VarBuilder", "get") => {
                         if args.len() < 2 {
                             return self.err(
@@ -3707,6 +4070,16 @@ impl SemanticAnalyzer {
             }
             ExprKind::MethodCall(obj, method_name, args) => {
                 let obj_type = self.check_expr(obj)?;
+                if let Type::Vec(inner) = &obj_type {
+                    if matches!(inner.as_ref(), Type::U8) {
+                        match method_name.as_str() {
+                            "len" => return Ok(Type::I64),
+                            "read_i32_be" => return Ok(Type::I64),
+                            "free" => return Ok(Type::Void),
+                            _ => {}
+                        }
+                    }
+                }
                 let type_name = match &obj_type {
                     Type::UserDefined(name) => name.clone(),
                     Type::Struct(name) => name.clone(),
@@ -3831,6 +4204,19 @@ impl SemanticAnalyzer {
                                 _ => return Ok(Type::F32), // Fallback
                             }
                         }
+                        if method_name == "item_i64" {
+                            if !args.is_empty() {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: method_name.clone(),
+                                        expected: 0,
+                                        found: args.len(),
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            return Ok(Type::I64);
+                        }
                         if method_name == "cuda" || method_name == "cpu" {
                             if !args.is_empty() {
                                 return self.err(
@@ -3857,12 +4243,21 @@ impl SemanticAnalyzer {
                             }
                             return Ok(Type::Tensor(Box::new(Type::F32), 0));
                         }
+                        if method_name == "print_1"
+                            || method_name == "print_2"
+                            || method_name == "print_3"
+                        {
+                            return Ok(Type::Void);
+                        }
+                        if method_name == "get_shape" {
+                            return Ok(Type::Tensor(Box::new(Type::I64), 0));
+                        }
                         if method_name == "argmax" || method_name == "argmin" {
-                            if args.len() != 1 {
+                            if args.len() != 1 && args.len() != 2 {
                                 return self.err(
                                     SemanticError::ArgumentCountMismatch {
                                         name: method_name.clone(),
-                                        expected: 1, // dim
+                                        expected: 2, // dim, keepdim (optional)
                                         found: args.len(),
                                     },
                                     Some(expr.span.clone()),
@@ -3977,6 +4372,149 @@ impl SemanticAnalyzer {
                             }
                             return Ok(obj_type.clone());
                         }
+                        if method_name == "rms_norm" {
+                            if args.len() != 2 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: method_name.clone(),
+                                        expected: 2,
+                                        found: args.len(),
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "apply_rope" {
+                            if args.len() != 2 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: method_name.clone(),
+                                        expected: 2,
+                                        found: args.len(),
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "repeat_interleave" {
+                            if args.len() != 2 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: method_name.clone(),
+                                        expected: 2,
+                                        found: args.len(),
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "narrow" {
+                            if args.len() != 3 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: method_name.clone(),
+                                        expected: 3,
+                                        found: args.len(),
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "scale" {
+                            if args.len() != 1 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: method_name.clone(),
+                                        expected: 1,
+                                        found: args.len(),
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "matmul_4d" || method_name == "add_4d" {
+                            if args.len() != 1 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: method_name.clone(),
+                                        expected: 1,
+                                        found: args.len(),
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "cat_4d" {
+                            if args.len() != 2 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: method_name.clone(),
+                                        expected: 2,
+                                        found: args.len(),
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "transpose_2d" {
+                            if args.len() != 2 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: method_name.clone(),
+                                        expected: 2,
+                                        found: args.len(),
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "matmul_quantized" {
+                            if args.len() != 1 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: method_name.clone(),
+                                        expected: 1,
+                                        found: args.len(),
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                        }
+                        if method_name == "cat_i64" {
+                            if args.len() != 2 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: method_name.clone(),
+                                        expected: 2,
+                                        found: args.len(),
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            return Ok(obj_type.clone());
+                        }
+                        if method_name == "sample" {
+                            if args.len() != 2 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: method_name.clone(),
+                                        expected: 2,
+                                        found: args.len(),
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            return Ok(Type::Tensor(Box::new(Type::I64), 1));
+                        }
                         if method_name == "tril" {
                             if args.len() != 1 {
                                 return self.err(
@@ -4084,25 +4622,6 @@ impl SemanticAnalyzer {
                             }
                             // transpose preserves rank and type
                             return Ok(obj_type.clone());
-                        }
-                        if method_name == "argmax" {
-                            if args.len() != 2 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 2,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            // Returns tensor of indices (now converted to F32 in runtime)
-                            match obj_type {
-                                Type::Tensor(inner, _) => {
-                                    return Ok(Type::Tensor(inner.clone(), 0))
-                                } // Rank unknown/flexible, reuse inner type or F32
-                                _ => return Ok(obj_type.clone()),
-                            }
                         }
                         if method_name == "mul"
                             || method_name == "add"
@@ -4446,6 +4965,64 @@ impl SemanticAnalyzer {
                         );
                     }
                 };
+
+                if type_name == "Tokenizer" {
+                    return match method_name.as_str() {
+                        "encode" => Ok(Type::Tensor(Box::new(Type::I64), 0)),
+                        "decode" => Ok(Type::UserDefined("String".into())),
+                        _ => self.err(
+                            SemanticError::MethodNotFound {
+                                type_name,
+                                method_name: method_name.clone(),
+                            },
+                            Some(expr.span.clone()),
+                        ),
+                    };
+                }
+
+                if type_name == "KVCache" {
+                    return match method_name.as_str() {
+                        "free" => Ok(Type::Void),
+                        "get_k" | "get_v" => Ok(Type::Tensor(Box::new(Type::F32), 0)),
+                        "update" => Ok(Type::Void),
+                        _ => self.err(
+                            SemanticError::MethodNotFound {
+                                type_name,
+                                method_name: method_name.clone(),
+                            },
+                            Some(expr.span.clone()),
+                        ),
+                    };
+                }
+
+                if type_name == "Map" {
+                    return match method_name.as_str() {
+                        "get" | "get_1d" => Ok(Type::Tensor(Box::new(Type::F32), 0)),
+                        "get_quantized" => Ok(Type::I64),
+                        _ => self.err(
+                            SemanticError::MethodNotFound {
+                                type_name,
+                                method_name: method_name.clone(),
+                            },
+                            Some(expr.span.clone()),
+                        ),
+                    };
+                }
+
+                if type_name == "String" {
+                    return match method_name.as_str() {
+                        "concat" => Ok(Type::UserDefined("String".into())),
+                        "contains" => Ok(Type::Bool),
+                        "to_i64" => Ok(Type::I64),
+                        _ => self.err(
+                            SemanticError::MethodNotFound {
+                                type_name,
+                                method_name: method_name.clone(),
+                            },
+                            Some(expr.span.clone()),
+                        ),
+                    };
+                }
 
                 let method_def = if let Some(methods) = self.methods.get(&type_name) {
                     methods.get(method_name).cloned()

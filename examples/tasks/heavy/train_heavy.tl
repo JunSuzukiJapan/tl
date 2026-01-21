@@ -1,7 +1,4 @@
 // 4層GPT + d_model=384 + 強めの初期化
-extern fn tl_tensor_print_2(t: Tensor<f32, 2>);
-extern fn tl_tensor_print_1(t: Tensor<f32, 1>);
-extern fn tl_clear_grads();
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
@@ -177,8 +174,6 @@ impl GPTHeavy {
     }
 }
 
-extern fn tl_get_memory_mb() -> i64;
-
 fn train_step(model: GPTHeavy, lr: f32, i: i64, j: i64) -> GPTHeavy {
     let mut m = model.clone();
     let sum_raw = i + j;
@@ -239,11 +234,11 @@ fn train_epoch(model: GPTHeavy, lr: f32, epoch: i64) -> GPTHeavy {
         m = train_step(m, lr, i_val, j_val);
         
         // Explicitly clear gradients from this step to save memory
-        tl_clear_grads();
+        Tensor::clear_grads();
     }
 
     print("Epoch:"); print(epoch);
-    print("MB:"); print(tl_get_memory_mb());
+    print("MB:"); print(System::memory_mb());
     return m;
 }
 

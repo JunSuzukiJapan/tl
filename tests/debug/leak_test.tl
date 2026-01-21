@@ -1,6 +1,6 @@
 
 fn get_memory() -> i64 {
-    return tl_get_memory_mb();
+    return System::memory_mb();
 }
 
 struct Inner { t: Tensor<f32, 2> }

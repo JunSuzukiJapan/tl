@@ -1,4 +1,3 @@
-extern fn tl_tensor_reshape_dims(t: Tensor<f32, 1>, dims: Tensor<i64, 1>, n: i64) -> Tensor<f32, 2>;
 
 fn main() {
     print("Testing ensure_tensor transformation...");
@@ -6,7 +5,7 @@ fn main() {
     let shape = [2, 2]; 
     
     print("Calling reshape...");
-    let res = tl_tensor_reshape_dims(data, shape, 2);
+    let res = data.reshape(shape);
     
     print("Reshape done.");
 }
