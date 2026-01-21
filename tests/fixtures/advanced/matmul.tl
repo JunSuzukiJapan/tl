@@ -1,5 +1,5 @@
 // STDOUT: MatMul result shape:
-// STDOUT: Tensor[[16, 16, 16], f32]
+// STDOUT: Tensor[[16, 16, 16], f32
 
 fn main() {
     let M = 16;

@@ -6590,7 +6590,7 @@ fn compile_checkpoint<'ctx>(
     };
 
     // Register result
-    let res_ty = Type::Tensor(Box::new(Type::F32), 1);
+    let res_ty = arg_ty.clone(); // Checkpoint returns same type as input
     codegen.emit_register_tensor(res_val, &res_ty)?;
 
     Ok((res_val, res_ty))
