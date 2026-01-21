@@ -1,6 +1,7 @@
 // src/compiler/semantics.rs
 use crate::compiler::ast::*;
 use crate::compiler::error::{SemanticErrorKind, Span, TlError};
+use crate::compiler::type_registry::{TypeRegistry, ParamType, ReturnType, MethodSignature};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
@@ -172,6 +173,7 @@ pub struct SemanticAnalyzer {
     current_return_type: Option<Type>, // Expected return type for current function
     current_module: String,            // Current module prefix (e.g. "a::b")
     loop_depth: usize,                 // Track nesting level of loops for break/continue
+    type_registry: TypeRegistry,       // Centralized type and method signature registry
 }
 
 impl SemanticAnalyzer {
@@ -186,6 +188,7 @@ impl SemanticAnalyzer {
             current_return_type: None,
             current_module: String::new(),
             loop_depth: 0,
+            type_registry: TypeRegistry::new(),
         };
         analyzer.declare_builtins();
         analyzer
@@ -1255,6 +1258,149 @@ impl SemanticAnalyzer {
                 }
                 Ok(())
             }
+        }
+    }
+
+    /// Check method call arguments against a signature from the type registry.
+    /// Returns the inferred return type if successful.
+    fn check_method_call_with_registry(
+        &mut self,
+        receiver_type: &Type,
+        method_name: &str,
+        args: &mut [Expr],
+        span: &Span,
+    ) -> Result<Option<Type>, TlError> {
+        let type_key = TypeRegistry::type_to_key(receiver_type);
+        
+        if let Some(sig) = self.type_registry.get_method(&type_key, method_name) {
+            // Clone the signature to avoid borrow issues
+            let sig = sig.clone();
+            
+            // Check argument count
+            if !sig.is_varargs && args.len() != sig.params.len() {
+                return self.err(
+                    SemanticError::ArgumentCountMismatch {
+                        name: method_name.to_string(),
+                        expected: sig.params.len(),
+                        found: args.len(),
+                    },
+                    Some(span.clone()),
+                );
+            }
+            if sig.is_varargs && args.len() < sig.min_args {
+                return self.err(
+                    SemanticError::ArgumentCountMismatch {
+                        name: method_name.to_string(),
+                        expected: sig.min_args,
+                        found: args.len(),
+                    },
+                    Some(span.clone()),
+                );
+            }
+
+            // Check each argument type
+            for (i, arg) in args.iter_mut().enumerate() {
+                let arg_type = self.check_expr(arg)?;
+                
+                let expected_param = if i < sig.params.len() {
+                    &sig.params[i]
+                } else if sig.is_varargs && !sig.params.is_empty() {
+                    // For varargs, use the last param type for remaining args
+                    sig.params.last().unwrap()
+                } else {
+                    continue;
+                };
+
+                if !TypeRegistry::matches_param_type(&arg_type, expected_param, receiver_type) {
+                    let expected_desc = match expected_param {
+                        ParamType::Exact(ty) => ty.clone(),
+                        ParamType::AnyTensor => Type::Tensor(Box::new(Type::Void), 0),
+                        ParamType::ShapeArray => Type::ScalarArray(Box::new(Type::I64), 0),
+                        ParamType::AnyInt => Type::I64,
+                        ParamType::AnyNumeric => Type::F32,
+                        ParamType::Bool => Type::Bool,
+                        ParamType::SameAsReceiver => receiver_type.clone(),
+                        ParamType::TensorOf(inner) => Type::Tensor(inner.clone(), 0),
+                    };
+                    return self.err(
+                        SemanticError::TypeMismatch {
+                            expected: expected_desc,
+                            found: arg_type,
+                        },
+                        Some(arg.span.clone()),
+                    );
+                }
+            }
+
+            // Infer return type
+            let return_type = self.infer_return_type_from_sig(receiver_type, &sig, args);
+            return Ok(Some(return_type));
+        }
+
+        // Not found in registry
+        Ok(None)
+    }
+
+    /// Infer return type based on the signature's ReturnType specification
+    fn infer_return_type_from_sig(
+        &self,
+        receiver_type: &Type,
+        sig: &MethodSignature,
+        args: &[Expr],
+    ) -> Type {
+        match &sig.return_type {
+            ReturnType::Exact(ty) => ty.clone(),
+            ReturnType::SameAsReceiver => receiver_type.clone(),
+            ReturnType::TensorSameElementType(rank) => {
+                if let Type::Tensor(inner, _) = receiver_type {
+                    Type::Tensor(inner.clone(), *rank)
+                } else {
+                    Type::Tensor(Box::new(Type::F32), *rank)
+                }
+            }
+            ReturnType::TensorDynamicRank => {
+                if let Type::Tensor(inner, _) = receiver_type {
+                    Type::Tensor(inner.clone(), 0)
+                } else {
+                    Type::Tensor(Box::new(Type::F32), 0)
+                }
+            }
+            ReturnType::InferFromShapeArg => {
+                // Try to infer rank from shape argument
+                let new_rank = if !args.is_empty() {
+                    if let ExprKind::TensorLiteral(elements) = &args[0].inner {
+                        elements.len()
+                    } else if let ExprKind::TensorConstLiteral(elements) = &args[0].inner {
+                        elements.len()
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+                if let Type::Tensor(inner, _) = receiver_type {
+                    Type::Tensor(inner.clone(), new_rank)
+                } else {
+                    Type::Tensor(Box::new(Type::F32), new_rank)
+                }
+            }
+            ReturnType::ExtractedScalar => {
+                if let Type::Tensor(inner, _) = receiver_type {
+                    *inner.clone()
+                } else {
+                    Type::F32
+                }
+            }
+            ReturnType::TensorRankIncr => {
+                if let Type::Tensor(inner, rank) = receiver_type {
+                    Type::Tensor(inner.clone(), rank + 1)
+                } else if let Type::TensorShaped(inner, shape) = receiver_type {
+                    Type::Tensor(inner.clone(), shape.len() + 1)
+                } else {
+                    Type::Tensor(Box::new(Type::F32), 1)
+                }
+            }
+            ReturnType::Void => Type::Void,
         }
     }
 
@@ -4081,1230 +4227,72 @@ impl SemanticAnalyzer {
             }
             ExprKind::MethodCall(obj, method_name, args) => {
                 let obj_type = self.check_expr(obj)?;
-                if let Type::Vec(inner) = &obj_type {
-                    if matches!(inner.as_ref(), Type::U8) {
-                        match method_name.as_str() {
-                            "len" => return Ok(Type::I64),
-                            "read_i32_be" => return Ok(Type::I64),
-                            "free" => return Ok(Type::Void),
-                            _ => {}
-                        }
-                    }
+
+                // 1. Try checking with the unified TypeRegistry
+                if let Some(ret_ty) =
+                    self.check_method_call_with_registry(&obj_type, method_name, args, &expr.span)?
+                {
+                    return Ok(ret_ty);
                 }
+
+                // 2. Check for UserDefined methods (impl blocks)
                 let type_name = match &obj_type {
                     Type::UserDefined(name) => name.clone(),
                     Type::Struct(name) => name.clone(),
-                    Type::Tensor(_, _) => {
-                        // Built-in tensor methods
-                        if method_name == "backward" {
-                            return Ok(Type::Void);
-                        }
-                        if method_name == "grad" {
-                            return Ok(obj_type);
-                        } // grads have same shape
-                        if method_name == "clone" {
-                            return Ok(obj_type);
-                        }
-                        if method_name == "detach" {
-                            return Ok(obj_type);
-                        }
-                        if method_name == "enable_grad" {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type);
-                        }
-                        if method_name == "get" {
-                            if args.len() < 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(Type::F32);
-                        }
-                        if method_name == "sum" {
-                            // sum() returns a scalar tensor (rank 0) or maintains type
-                            match obj_type {
-                                Type::Tensor(inner, _) => {
-                                    return Ok(Type::Tensor(inner.clone(), 0))
-                                }
-                                _ => return Ok(obj_type.clone()),
-                            }
-                        }
-                        if method_name == "slice" {
-                            if args.len() != 2 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 2,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "contiguous" {
-                            // contiguous() returns the same tensor type
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "matmul" {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone()); // Returns Tensor
-                        }
-                        if method_name == "transpose" {
-                            if args.len() != 2 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 2,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "len" {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(Type::I64);
-                        }
-                        if method_name == "item" {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            match obj_type {
-                                Type::Tensor(inner, _) => return Ok(*inner),
-                                _ => return Ok(Type::F32), // Fallback
-                            }
-                        }
-                        if method_name == "item_i64" {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(Type::I64);
-                        }
-                        if method_name == "cuda" || method_name == "cpu" {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "max" || method_name == "min" || method_name == "mean" {
-                            if !args.is_empty() && args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1, // Optional dim? For now strict 0 or 1. Let's say 0 for global scalar, 1 for dim
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(Type::Tensor(Box::new(Type::F32), 0));
-                        }
-                        if method_name == "print_1"
-                            || method_name == "print_2"
-                            || method_name == "print_3"
-                        {
-                            return Ok(Type::Void);
-                        }
-                        if method_name == "get_shape" {
-                            return Ok(Type::Tensor(Box::new(Type::I64), 0));
-                        }
-                        if method_name == "argmax" || method_name == "argmin" {
-                            if args.len() != 1 && args.len() != 2 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 2, // dim, keepdim (optional)
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(Type::Tensor(Box::new(Type::I64), 0));
-                        }
-                        if method_name == "reshape" {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            match obj_type {
-                                Type::Tensor(inner, _) => {
-                                    // Inference Logic: Inspect args[0] AST if it's a literal
-                                    let new_rank =
-                                        if let ExprKind::TensorLiteral(elements) = &args[0].inner {
-                                            elements.len()
-                                        } else if let ExprKind::TensorConstLiteral(elements) =
-                                            &args[0].inner
-                                        {
-                                            elements.len()
-                                        } else {
-                                            0 // Unknown rank
-                                        };
-                                    return Ok(Type::Tensor(inner.clone(), new_rank));
-                                }
-                                _ => return Ok(obj_type.clone()),
-                            }
-                        }
-                        if method_name == "relu"
-                            || method_name == "gelu"
-                            || method_name == "silu"
-                            || method_name == "sin"
-                            || method_name == "cos"
-                            || method_name == "tan"
-                            || method_name == "sigmoid"
-                            || method_name == "tanh"
-                            || method_name == "sqrt"
-                            || method_name == "exp"
-                            || method_name == "log"
-                            || method_name == "abs"
-                            || method_name == "neg"
-                        {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "softmax" || method_name == "log_softmax" {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "conv2d" {
-                            if args.len() != 3 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 3,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "clamp" {
-                            if args.len() != 2 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 2,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "pow" {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "rms_norm" {
-                            if args.len() != 2 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 2,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "apply_rope" {
-                            if args.len() != 2 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 2,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "repeat_interleave" {
-                            if args.len() != 2 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 2,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "narrow" {
-                            if args.len() != 3 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 3,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "scale" {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "matmul_4d" || method_name == "add_4d" {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "cat_4d" {
-                            if args.len() != 2 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 2,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "transpose_2d" {
-                            if args.len() != 2 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 2,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "matmul_quantized" {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(Type::Tensor(Box::new(Type::F32), 0));
-                        }
-                        if method_name == "cat_i64" {
-                            if args.len() != 2 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 2,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "sample" {
-                            if args.len() != 2 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 2,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(Type::Tensor(Box::new(Type::I64), 1));
-                        }
-                        if method_name == "tril" {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "cross_entropy" {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "embedding" {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            if let Type::Tensor(_, rank) = &obj_type {
-                                return Ok(Type::Tensor(Box::new(Type::F32), rank + 1));
-                            }
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "item" {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(Type::F32); // item() returns scalar float usually
-                        }
-                        if method_name == "item_i64" {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(Type::I64);
-                        }
-                        if method_name == "to_i64" {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            match obj_type {
-                                Type::Tensor(_, rank) => {
-                                    return Ok(Type::Tensor(Box::new(Type::I64), rank))
-                                }
-                                _ => {
-                                    return self.err(
-                                        SemanticError::TypeMismatch {
-                                            expected: Type::Tensor(Box::new(Type::Void), 0),
-                                            found: obj_type.clone(),
-                                        },
-                                        Some(expr.span.clone()),
-                                    )
-                                }
-                            }
-                        }
-                        if method_name == "transpose" {
-                            if args.len() != 2 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 2,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            // transpose preserves rank and type
-                            return Ok(obj_type.clone());
-                        }
-                        if method_name == "mul"
-                            || method_name == "add"
-                            || method_name == "sub"
-                            || method_name == "div"
-                        {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            // Simplified inference: Assume result has same type/rank as self
-                            // In reality, broadcasting might change rank, but for scalar ops it's fine.
-                            return Ok(obj_type.clone());
-                        }
-
-                        return Ok(Type::Void); // Fallback
-                    }
-                    Type::F32 => {
-                        let unary_methods = [
-                            "abs",
-                            "acos",
-                            "acosh",
-                            "asin",
-                            "asinh",
-                            "atan",
-                            "atanh",
-                            "cbrt",
-                            "ceil",
-                            "cos",
-                            "cosh",
-                            "exp",
-                            "exp2",
-                            "exp_m1",
-                            "floor",
-                            "fract",
-                            "ln",
-                            "ln_1p",
-                            "log10",
-                            "log2",
-                            "recip",
-                            "round",
-                            "signum",
-                            "sin",
-                            "sinh",
-                            "sqrt",
-                            "tan",
-                            "tanh",
-                            "to_degrees",
-                            "to_radians",
-                            "trunc",
-                        ];
-                        let binary_methods = ["atan2", "copysign", "hypot", "log", "powf", "pow"];
-
-                        if unary_methods.contains(&method_name.as_str()) {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(Type::F32);
-                        }
-                        if binary_methods.contains(&method_name.as_str()) {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            let arg_ty = self.check_expr(&mut args[0])?;
-                            if !matches!(arg_ty, Type::F32 | Type::F64 | Type::I64 | Type::I32) {
-                                return self.err(
-                                    SemanticError::TypeMismatch {
-                                        expected: Type::F32,
-                                        found: arg_ty,
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(Type::F32);
-                        }
-                        if method_name == "powi" {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            let arg_ty = self.check_expr(&mut args[0])?;
-                            if !matches!(arg_ty, Type::I64 | Type::I32) {
-                                return self.err(
-                                    SemanticError::TypeMismatch {
-                                        expected: Type::I64,
-                                        found: arg_ty,
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(Type::F32);
-                        }
-                        return self.err(
-                            SemanticError::MethodNotFound {
-                                type_name: "F32".to_string(),
-                                method_name: method_name.clone(),
-                            },
-                            Some(expr.span.clone()),
-                        );
-                    }
-                    Type::F64 => {
-                        let unary_methods = [
-                            "abs",
-                            "acos",
-                            "acosh",
-                            "asin",
-                            "asinh",
-                            "atan",
-                            "atanh",
-                            "cbrt",
-                            "ceil",
-                            "cos",
-                            "cosh",
-                            "exp",
-                            "exp2",
-                            "exp_m1",
-                            "floor",
-                            "fract",
-                            "ln",
-                            "ln_1p",
-                            "log10",
-                            "log2",
-                            "recip",
-                            "round",
-                            "signum",
-                            "sin",
-                            "sinh",
-                            "sqrt",
-                            "tan",
-                            "tanh",
-                            "to_degrees",
-                            "to_radians",
-                            "trunc",
-                        ];
-                        let binary_methods = ["atan2", "copysign", "hypot", "log", "powf", "pow"];
-
-                        if unary_methods.contains(&method_name.as_str()) {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(Type::F64);
-                        }
-                        if binary_methods.contains(&method_name.as_str()) {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            let arg_ty = self.check_expr(&mut args[0])?;
-                            if !matches!(arg_ty, Type::F64 | Type::F32 | Type::I64 | Type::I32) {
-                                return self.err(
-                                    SemanticError::TypeMismatch {
-                                        expected: Type::F64,
-                                        found: arg_ty,
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(Type::F64);
-                        }
-                        if method_name == "powi" {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            let arg_ty = self.check_expr(&mut args[0])?;
-                            if !matches!(arg_ty, Type::I64 | Type::I32) {
-                                return self.err(
-                                    SemanticError::TypeMismatch {
-                                        expected: Type::I64,
-                                        found: arg_ty,
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(Type::F64);
-                        }
-                        return self.err(
-                            SemanticError::MethodNotFound {
-                                type_name: "F64".to_string(),
-                                method_name: method_name.clone(),
-                            },
-                            Some(expr.span.clone()),
-                        );
-                    }
-                    Type::I64 => {
-                        let unary_methods = ["abs", "signum", "is_positive", "is_negative"];
-                        let binary_methods = ["div_euclid", "rem_euclid", "pow"];
-
-                        if unary_methods.contains(&method_name.as_str()) {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return if method_name == "is_positive" || method_name == "is_negative" {
-                                Ok(Type::Bool)
-                            } else {
-                                Ok(Type::I64)
-                            };
-                        }
-                        if binary_methods.contains(&method_name.as_str()) {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            let arg_ty = self.check_expr(&mut args[0])?;
-                            if !matches!(arg_ty, Type::I64 | Type::I32) {
-                                return self.err(
-                                    SemanticError::TypeMismatch {
-                                        expected: Type::I64,
-                                        found: arg_ty,
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(Type::I64);
-                        }
-                        return self.err(
-                            SemanticError::MethodNotFound {
-                                type_name: "I64".to_string(),
-                                method_name: method_name.clone(),
-                            },
-                            Some(expr.span.clone()),
-                        );
-                    }
-                    Type::I32 => {
-                        let unary_methods = ["abs", "signum", "is_positive", "is_negative"];
-                        let binary_methods = ["div_euclid", "rem_euclid", "pow"];
-
-                        if unary_methods.contains(&method_name.as_str()) {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return if method_name == "is_positive" || method_name == "is_negative" {
-                                Ok(Type::Bool)
-                            } else {
-                                Ok(Type::I32)
-                            };
-                        }
-                        if binary_methods.contains(&method_name.as_str()) {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            let arg_ty = self.check_expr(&mut args[0])?;
-                            if !matches!(arg_ty, Type::I32 | Type::I64) {
-                                return self.err(
-                                    SemanticError::TypeMismatch {
-                                        expected: Type::I32,
-                                        found: arg_ty,
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            return Ok(Type::I32);
-                        }
-                        return self.err(
-                            SemanticError::MethodNotFound {
-                                type_name: "I32".to_string(),
-                                method_name: method_name.clone(),
-                            },
-                            Some(expr.span.clone()),
-                        );
-                    }
-                    _ => {
-                        return self.err(
-                            SemanticError::TypeMismatch {
-                                expected: Type::UserDefined("Struct".into()),
-                                found: obj_type,
-                            },
-                            Some(expr.span.clone()),
-                        );
-                    }
+                    Type::Enum(name) => name.clone(),
+                    _ => TypeRegistry::type_to_key(&obj_type),
                 };
 
-                if type_name == "Tokenizer" {
-                    return match method_name.as_str() {
-                        "encode" => Ok(Type::Tensor(Box::new(Type::I64), 1)),
-                        "decode" => Ok(Type::UserDefined("String".into())),
-                        _ => self.err(
-                            SemanticError::MethodNotFound {
-                                type_name,
-                                method_name: method_name.clone(),
-                            },
-                            Some(expr.span.clone()),
-                        ),
-                    };
-                }
+                if let Some(methods) = self.methods.get(&type_name) {
+                    if let Some(method_def) = methods.get(method_name) {
+                        // Clone the signature to avoid borrow checker issues with self.methods
+                        let args_types: Vec<(String, Type)> = method_def.args.clone();
+                        let ret_type = method_def.return_type.clone();
 
-                if type_name == "KVCache" {
-                    return match method_name.as_str() {
-                        "free" => Ok(Type::Void),
-                        "get_k" | "get_v" => Ok(Type::Tensor(Box::new(Type::F32), 4)),
-                        "update" => Ok(Type::Void),
-                        _ => self.err(
-                            SemanticError::MethodNotFound {
-                                type_name,
-                                method_name: method_name.clone(),
-                            },
-                            Some(expr.span.clone()),
-                        ),
-                    };
-                }
+                        let implicit_self = !args_types.is_empty() && args_types[0].0 == "self";
+                        let expected_arg_count = if implicit_self {
+                            args_types.len() - 1
+                        } else {
+                            args_types.len()
+                        };
 
-                if type_name == "Map" {
-                    return match method_name.as_str() {
-                        "get" | "get_1d" => Ok(Type::Tensor(Box::new(Type::F32), 0)),
-                        "get_quantized" => Ok(Type::I64),
-                        _ => self.err(
-                            SemanticError::MethodNotFound {
-                                type_name,
-                                method_name: method_name.clone(),
-                            },
-                            Some(expr.span.clone()),
-                        ),
-                    };
-                }
-
-                if type_name == "String" {
-                    return match method_name.as_str() {
-                        "concat" => Ok(Type::UserDefined("String".into())),
-                        "contains" => Ok(Type::Bool),
-                        "to_i64" => Ok(Type::I64),
-                        _ => self.err(
-                            SemanticError::MethodNotFound {
-                                type_name,
-                                method_name: method_name.clone(),
-                            },
-                            Some(expr.span.clone()),
-                        ),
-                    };
-                }
-
-                let method_def = if let Some(methods) = self.methods.get(&type_name) {
-                    methods.get(method_name).cloned()
-                } else {
-                    None
-                };
-
-                if let Some(mut func) = method_def {
-                    let implicit_self = !func.args.is_empty() && func.args[0].0 == "self";
-                    let expected_arg_count = if implicit_self {
-                        func.args.len() - 1
-                    } else {
-                        func.args.len()
-                    };
-
-                    if args.len() != expected_arg_count {
-                        return self.err(
-                            SemanticError::ArgumentCountMismatch {
-                                name: method_name.clone(),
-                                expected: expected_arg_count,
-                                found: args.len(),
-                            },
-                            Some(expr.span.clone()),
-                        );
-                    }
-
-                    let mut func_arg_iter = func.args.iter_mut();
-                    if implicit_self {
-                        let (_, self_type) = func_arg_iter.next().unwrap();
-                        if !self.are_types_compatible(self_type, &obj_type) {
+                        if args.len() != expected_arg_count {
                             return self.err(
-                                SemanticError::TypeMismatch {
-                                    expected: self_type.clone(),
-                                    found: obj_type,
+                                SemanticError::ArgumentCountMismatch {
+                                    name: method_name.clone(),
+                                    expected: expected_arg_count,
+                                    found: args.len(),
                                 },
                                 Some(expr.span.clone()),
                             );
                         }
-                    }
 
-                    // Check remaining args
-                    for (arg_expr, (_, expected_type)) in args.iter_mut().zip(func_arg_iter) {
-                        let arg_type = self.check_expr(arg_expr)?;
-                        if !self.are_types_compatible(expected_type, &arg_type) {
-                            return self.err(
-                                SemanticError::TypeMismatch {
-                                    expected: expected_type.clone(),
-                                    found: arg_type,
-                                },
-                                Some(arg_expr.span.clone()),
-                            );
-                        }
-                    }
-                    Ok(func.return_type)
-                } else {
-                    // Check StdLib methods
-                    match (type_name.as_str(), method_name.as_str()) {
-                        ("File", "read_string") => {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            Ok(Type::UserDefined("String".to_string()))
-                        }
-                        ("File", "write_string") => {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            self.check_expr(&mut args[0])?;
-                            Ok(Type::Void)
-                        }
-                        ("File", "close") => {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            Ok(Type::Void)
-                        }
-                        ("Path", "join") => {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            self.check_expr(&mut args[0])?;
-                            Ok(Type::UserDefined("Path".to_string()))
-                        }
-                        ("Path", "exists") => {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            Ok(Type::Bool)
-                        }
-                        // --- New Static Methods for Refactor ---
-                        ("Tensor", "randn") => {
-                            // Tensor::randn(shape, requires_grad)
-
-                            // Check args (flexible shape handling)
-                            if args.len() != 2 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: "Tensor::randn".into(),
-                                        expected: 2,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            // Arg 0: shape
-                            let _t0 = self.check_expr(&mut args[0])?;
-                            // Arg 1: requires_grad
-                            let t1 = self.check_expr(&mut args[1])?;
-
-                            if !matches!(t1, Type::Bool) {
+                        let start_idx = if implicit_self { 1 } else { 0 };
+                        for (i, arg) in args.iter_mut().enumerate() {
+                            let arg_type = self.check_expr(arg)?;
+                            let expected_type = &args_types[start_idx + i].1;
+                            if !self.are_types_compatible(&arg_type, expected_type) {
                                 return self.err(
                                     SemanticError::TypeMismatch {
-                                        expected: Type::Bool,
-                                        found: t1,
+                                        expected: expected_type.clone(),
+                                        found: arg_type,
                                     },
-                                    Some(expr.span.clone()),
+                                    Some(arg.span.clone()),
                                 );
                             }
-                            // Return Tensor<f32>
-                            Ok(Type::Tensor(Box::new(Type::F32), 0))
                         }
-                        ("VarBuilder", "get") => {
-                            if args.len() < 2 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: "VarBuilder::get".into(),
-                                        expected: 2,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            let t0 = self.check_expr(&mut args[0])?;
-                            if !matches!(t0, Type::UserDefined(ref s) if s == "String") {
-                                return self.err(
-                                    SemanticError::TypeMismatch {
-                                        expected: Type::UserDefined("String".into()),
-                                        found: t0,
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            // Remaining args must be Ints (if varargs) OR a single Tensor/Array
-                            if args.len() == 2 {
-                                let _ = self.check_expr(&mut args[1])?;
-                            } else {
-                                for arg in &mut args[1..] {
-                                    let t = self.check_expr(arg)?;
-                                    if !matches!(t, Type::I64 | Type::I32) {
-                                        return self.err(
-                                            SemanticError::TypeMismatch {
-                                                expected: Type::I64,
-                                                found: t,
-                                            },
-                                            Some(expr.span.clone()),
-                                        );
-                                    }
-                                }
-                            }
-                            Ok(Type::Tensor(Box::new(Type::F32), 0))
-                        }
-                        ("VarBuilder", "grad") => {
-                            if args.len() != 1 {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: "VarBuilder::grad".into(),
-                                        expected: 1,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            let _ = self.check_expr(&mut args[0])?;
-                            Ok(Type::Tensor(Box::new(Type::F32), 0))
-                        }
-                        ("Path", "is_dir") => {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            Ok(Type::Bool)
-                        }
-                        ("Path", "is_file") => {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            Ok(Type::Bool)
-                        }
-                        ("Path", "to_string") => {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            Ok(Type::UserDefined("String".to_string()))
-                        }
-                        ("Path", "free") => {
-                            if !args.is_empty() {
-                                return self.err(
-                                    SemanticError::ArgumentCountMismatch {
-                                        name: method_name.clone(),
-                                        expected: 0,
-                                        found: args.len(),
-                                    },
-                                    Some(expr.span.clone()),
-                                );
-                            }
-                            Ok(Type::Void)
-                        }
-                        _ => self.err(
-                            SemanticError::FunctionNotFound(format!(
-                                "{}::{}",
-                                type_name, method_name
-                            )),
-                            Some(expr.span.clone()),
-                        ),
+                        return Ok(ret_type);
                     }
                 }
+
+                // 3. Method not found
+                self.err(
+                    SemanticError::MethodNotFound {
+                        type_name,
+                        method_name: method_name.clone(),
+                    },
+                    Some(expr.span.clone()),
+                )
             }
         }
     }
@@ -5325,13 +4313,17 @@ impl SemanticAnalyzer {
             (Type::Tensor(inner, _rank), primitive)
                 if self.are_types_compatible(inner, primitive) =>
             {
-                true // Allow scalar to tensor promotion in some contexts
+                true // Allow scalar to tensor promotion
             }
             (primitive, Type::Tensor(inner, _rank))
                 if self.are_types_compatible(primitive, inner) =>
             {
                 true
             }
+            // Allow I32/I64/F32/F64 inter-compatibility for some operations
+            (Type::I64, Type::F32) | (Type::F32, Type::I64) => true,
+            (Type::I32, Type::I64) | (Type::I64, Type::I32) => true,
+            (Type::I32, Type::F32) | (Type::F32, Type::I32) => true,
             (Type::Tuple(ts1), Type::Tuple(ts2)) => {
                 if ts1.len() != ts2.len() {
                     return false;
@@ -5361,8 +4353,6 @@ impl SemanticAnalyzer {
 
             // Promotions
             (Type::F64, Type::F32) => true,
-            (Type::I64, Type::I32) => true,
-            (Type::F32, Type::I64) => true, // Allow int to float promotion
             (Type::F64, Type::I64) => true,
             _ => false,
         }

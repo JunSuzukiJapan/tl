@@ -231,12 +231,12 @@ fn infer(model: GPT, i: i64, j: i64) {
     
     let preds = logits.argmax(2); // [1, 4]
     print("Predictions (Whole Sequence):");
-    preds.reshape([1, 4].print_2());
+    preds.reshape([1, 4]).print_2();
     
     print("Inference: Input:"); print(i); print(j);
     print("Expected (at pos 1):"); print(expected);
     print("Loss:");
-    loss.reshape([1].print_1());
+    loss.reshape([1]).print_1();
 }
 
 fn main() {

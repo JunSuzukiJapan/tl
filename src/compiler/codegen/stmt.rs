@@ -101,7 +101,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                     for (i, (_, field_type)) in struct_def.fields.iter().enumerate() {
                         if matches!(
                             field_type,
-                            Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+                            Type::Tensor(_, _)
+                                | Type::TensorShaped(_, _)
+                                | Type::Struct(_)
+                                | Type::UserDefined(_)
+                                | Type::Enum(_)
+                                | Type::Vec(_)
+                                | Type::Tuple(_)
                         ) {
                             // GEP
                             let field_ptr = self
@@ -188,7 +194,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // This matches tl semantics (Structs contain pointers).
                     let store_val = if matches!(
                         field_ty,
-                        Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+                        Type::Tensor(_, _)
+                            | Type::TensorShaped(_, _)
+                            | Type::Struct(_)
+                            | Type::UserDefined(_)
+                            | Type::Enum(_)
+                            | Type::Vec(_)
+                            | Type::Tuple(_)
                     ) {
                         self.emit_deep_clone(field_val, field_ty)?
                     } else {
@@ -327,9 +339,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                             if matches!(
                                 f_ty,
                                 Type::Tensor(_, _)
+                                    | Type::TensorShaped(_, _)
                                     | Type::Struct(_)
                                     | Type::UserDefined(_)
                                     | Type::Enum(_)
+                                    | Type::Vec(_)
+                                    | Type::Tuple(_)
                             ) {
                                 let f_ptr = self
                                     .builder
@@ -354,15 +369,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                             }
                         }
                     }
-                    self.builder
-                        .build_unconditional_branch(after_switch)
-                        .unwrap();
+                    // After recursive calls, branch from current position to after_switch
+                    if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                        self.builder
+                            .build_unconditional_branch(after_switch)
+                            .unwrap();
+                    }
                 }
 
                 self.builder.position_at_end(after_switch);
-                self.builder
-                    .build_unconditional_branch(merge_block)
-                    .unwrap();
+                if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                    self.builder
+                        .build_unconditional_branch(merge_block)
+                        .unwrap();
+                }
 
                 self.builder.position_at_end(merge_block);
             }
@@ -434,9 +454,20 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 self.builder.position_at_end(free_block);
 
+                // We need to ensure proper control flow when recursively freeing fields.
+                // Each recursive call to emit_recursive_free may create new blocks and change
+                // the builder's insert position. We must branch to merge_block from wherever
+                // the builder ends up after all field cleanup.
+                
                 for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
                     match f_ty {
-                        Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => {
+                        Type::Tensor(_, _)
+                        | Type::TensorShaped(_, _)
+                        | Type::Struct(_)
+                        | Type::UserDefined(_)
+                        | Type::Enum(_)
+                        | Type::Vec(_)
+                        | Type::Tuple(_) => {
                             let f_ptr = self
                                 .builder
                                 .build_struct_gep(struct_ty, ptr, i as u32, "field_gep")
@@ -449,16 +480,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     "field_load",
                                 )
                                 .map_err(|e| e.to_string())?;
-                            // Recursively free
+                            // Recursively free - this may change builder position
                             self.emit_recursive_free(f_val, f_ty)?;
                         }
                         _ => {}
                     }
                 }
 
-                self.builder
-                    .build_unconditional_branch(merge_block)
-                    .map_err(|e| e.to_string())?;
+                // After all recursive calls, builder is at some merge block.
+                // We need to branch from HERE (current position) to our merge_block.
+                // Check if current block already has a terminator
+                if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                    self.builder
+                        .build_unconditional_branch(merge_block)
+                        .map_err(|e| e.to_string())?;
+                }
                 self.builder.position_at_end(merge_block);
             }
             Type::Vec(inner_ty) => {
@@ -877,9 +913,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 );
 
                 let should_deep_clone = match &val_ty {
-                    Type::Tensor(_, _) => !is_rvalue, // Clone only if L-value
-                    Type::Struct(_) | Type::UserDefined(_) => {
-                        // Structs/UserDefined: Pointer copy vs Deep Clone
+                    Type::Tensor(_, _) | Type::TensorShaped(_, _) => !is_rvalue, // Clone only if L-value
+                    Type::Struct(_) | Type::UserDefined(_) | Type::Enum(_) | Type::Vec(_) | Type::Tuple(_) => {
+                        // Structs/UserDefined/Enum/Vec/Tuple: Pointer copy vs Deep Clone
                         // If R-value, we own the pointer. Move.
                         !is_rvalue
                     }
@@ -898,38 +934,29 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .unwrap();
 
                 // Check for shadowing in CURRENT scope
-                if let Some(scope) = self.variables.last_mut() {
-                    if let Some((_old_ptr, _old_ty, should_free)) = scope.get(name) {
-                        // If we are shadowing, and the old value effectively goes away (we overwrite the map entry),
-                        // we MUST free it if it's a tensor and we own it.
-                        // NOTE: In Rust, shadowing doesn't drop the old var immediately, it lives until end of scope.
-                        // BUT in our compiler, we only track variables by name in the map.
-                        // If we overwrite the map entry, we lose access to the old variable.
-                        // So for our language semantics, we treat shadowing as "replacing".
-                        // Use-case: `let x = ...; let x = ...;`
+                let shadow_info = if let Some(scope) = self.variables.last() {
+                    if let Some((old_ptr, old_ty, should_free)) = scope.get(name) {
                         if *should_free {
-                            // CRITICAL FIX: Release shadowed value.
-                            // Shadowing destroys the old variable handle, so we must release its ownership.
-                            if let Some(release_fn) = self.module.get_function("tl_tensor_release")
-                            {
-                                // Load the actual pointer value from the alloca
-                                let ptr_type =
-                                    self.context.ptr_type(inkwell::AddressSpace::default());
-                                let old_value = self
-                                    .builder
-                                    .build_load(
-                                        ptr_type,
-                                        _old_ptr.into_pointer_value(),
-                                        "old_shadowed",
-                                    )
-                                    .map_err(|e| e.to_string())?;
-
-                                self.builder
-                                    .build_call(release_fn, &[old_value.into()], "")
-                                    .map_err(|e| e.to_string())?;
-                            }
+                            Some((*old_ptr, old_ty.clone()))
+                        } else {
+                            None
                         }
+                    } else {
+                        None
                     }
+                } else {
+                    None
+                };
+
+                if let Some((old_ptr_val, old_ty)) = shadow_info {
+                    // Load the actual pointer value from the alloca
+                    let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let old_value = self
+                        .builder
+                        .build_load(ptr_type, old_ptr_val.into_pointer_value(), "old_shadowed")
+                        .map_err(|e| e.to_string())?;
+
+                    self.emit_recursive_free(old_value, &old_ty)?;
                 }
 
                 let alloca = self.create_entry_block_alloca(current_function, name, &val_ty);
@@ -2383,7 +2410,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // - We need to register the return value as a temporary so it gets freed at scope exit
 
                 match &ty {
-                    Type::Struct(_) | Type::UserDefined(_) | Type::Tensor(_, _) => {
+                    Type::Struct(_)
+                    | Type::UserDefined(_)
+                    | Type::Tensor(_, _)
+                    | Type::TensorShaped(_, _)
+                    | Type::Enum(_)
+                    | Type::Vec(_)
+                    | Type::Tuple(_) => {
                         // For struct/tensor return values: Register as a temporary variable
                         // This is equivalent to `let _ = expr;`
                         // The value will be properly freed at scope exit
@@ -3004,7 +3037,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string())?;
 
                     let val = match field_ty {
-                        Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => {
+                        Type::Tensor(_, _)
+                        | Type::TensorShaped(_, _)
+                        | Type::Struct(_)
+                        | Type::UserDefined(_)
+                        | Type::Enum(_)
+                        | Type::Vec(_)
+                        | Type::Tuple(_) => {
                             let loaded = self
                                 .builder
                                 .build_load(

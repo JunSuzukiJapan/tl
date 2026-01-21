@@ -386,7 +386,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 let _ = self.builder.build_call(free_fn, &[void_ptr.into()], "");
                             }
                         }
-                    } else if matches!(ty, Type::Tensor(_, _)) {
+                    } else if matches!(ty, Type::Tensor(_, _) | Type::TensorShaped(_, _)) {
                         let ptr = val_enum.into_pointer_value();
                         let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                         if let Ok(tensor_val) =
@@ -757,6 +757,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.compile_stmt(stmt)?;
                 }
 
+                self.exit_scope(); // End method scope
+
                 if let Type::Void = method.return_type {
                     let is_terminated = self
                         .builder
@@ -764,8 +766,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map(|b| b.get_terminator().is_some())
                         .unwrap_or(false);
                     if !is_terminated {
-                        // CRITICAL FIX: Emit cleanup BEFORE the implicit return
-                        self.emit_all_scopes_cleanup();
                         self.builder.build_return(None).unwrap();
                     }
                 }
@@ -865,7 +865,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Apply LLVM optimizations
         if let Err(e) = self.module.verify() {
-            // self.module.print_to_stderr();
+            self.module.print_to_stderr();
             return Err(format!("Module verification failed: {}", e.to_string()));
         }
 
@@ -1124,9 +1124,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         if !function.verify(true) {
-            function.print_to_stderr();
-            // Try to get more specific error from LLVM
             eprintln!("=== LLVM VERIFICATION FAILED FOR: {} ===", func.name);
+            // function.verify(true) should print the error to stderr
+            function.print_to_stderr();
             return Err(format!("Invalid generated function {}", func.name));
         }
 
