@@ -1,4 +1,4 @@
-use crate::{device::get_device, make_tensor, memory_manager::tl_tensor_release, OpaqueTensor};
+use crate::{make_tensor, memory_manager::tl_tensor_release, OpaqueTensor};
 use candle_core::{CustomOp1, Layout, Result, Shape, Tensor};
 use std::ffi::c_void;
 use std::ops::Deref;
@@ -31,23 +31,16 @@ impl CustomOp1 for TlCheckpointOp {
         s1: &candle_core::CpuStorage,
         l: &Layout,
     ) -> Result<(candle_core::CpuStorage, Shape)> {
-        eprintln!("DEBUG: cpu_fwd start");
-        // Recover Tensor from Storage
-        let data = s1.as_slice::<f32>()?;
+        eprintln!("DEBUG: cpu_fwd start (zero-copy)");
         let shape = l.shape();
-        // Create tensor on current device
-        let device = get_device();
-        let t_cpu = Tensor::from_slice(data, shape, &candle_core::Device::Cpu)?;
-        let t = if device.is_metal() || device.is_cuda() {
-            t_cpu.to_device(&device)?
-        } else {
-            t_cpu
-        };
+        // Zero-copy: wrap existing storage in a Tensor
+        // NOTE: CpuStorage clone() is expensive because it's a Vec in this Candle version.
+        // But we still use from_storage to avoid the previous triple-copy logic.
+        let storage = candle_core::Storage::Cpu(s1.clone());
+        let t = candle_core::from_storage(storage, shape.clone(), candle_core::BackpropOp::none(), false);
 
         let t_ptr = make_tensor(t);
-        eprintln!("DEBUG: cpu_fwd calling func with input {:p}", t_ptr);
         let out_ptr = (self.func.0)(self.ctx.0, t_ptr);
-        eprintln!("DEBUG: cpu_fwd func returned {:p}", out_ptr);
 
         if out_ptr.is_null() {
             tl_tensor_release(t_ptr);
@@ -58,17 +51,14 @@ impl CustomOp1 for TlCheckpointOp {
 
         let out_opaque = unsafe { &*out_ptr };
         let out_tensor = &out_opaque.0;
-        let out_cpu = out_tensor.to_device(&candle_core::Device::Cpu)?;
-        let (storage, out_layout) = out_cpu.storage_and_layout();
+        let (storage, out_layout) = out_tensor.storage_and_layout();
 
-        // We need to return CpuStorage.
-        // Assuming Output is on CPU.
         match storage.deref() {
             candle_core::Storage::Cpu(cpu_storage) => {
                 let res_storage = cpu_storage.clone();
                 let res_shape = out_layout.shape().clone();
 
-                // Cleanup with proper release
+                // Cleanup
                 tl_tensor_release(t_ptr);
                 tl_tensor_release(out_ptr);
 
@@ -80,75 +70,65 @@ impl CustomOp1 for TlCheckpointOp {
         }
     }
 
+    #[cfg(feature = "cuda")]
+    fn cuda_fwd(
+        &self,
+        s1: &candle_core::CudaStorage,
+        l: &Layout,
+    ) -> Result<(candle_core::CudaStorage, Shape)> {
+        eprintln!("DEBUG: cuda_fwd start (zero-copy)");
+        let shape = l.shape();
+        // Use try_clone for zero-copy (shares the slice internally in real backend)
+        let storage = candle_core::Storage::Cuda(s1.try_clone(l)?);
+        let t = candle_core::from_storage(storage, shape.clone(), candle_core::BackpropOp::none(), false);
+
+        let t_ptr = make_tensor(t);
+        let out_ptr = (self.func.0)(self.ctx.0, t_ptr);
+
+        if out_ptr.is_null() {
+            tl_tensor_release(t_ptr);
+            return Err(candle_core::Error::Msg(
+                "Checkpoint function returned null in cuda_fwd".into(),
+            ));
+        }
+
+        let out_opaque = unsafe { &*out_ptr };
+        let out_tensor = &out_opaque.0;
+        let (storage, out_layout) = out_tensor.storage_and_layout();
+
+        match storage.deref() {
+            candle_core::Storage::Cuda(cuda_storage) => {
+                let res_storage = cuda_storage.try_clone(out_layout)?;
+                let res_shape = out_layout.shape().clone();
+
+                // Cleanup
+                tl_tensor_release(t_ptr);
+                tl_tensor_release(out_ptr);
+
+                Ok((res_storage, res_shape))
+            }
+            _ => Err(candle_core::Error::Msg(
+                "Checkpoint output must be on CUDA for cuda_fwd".into(),
+            )),
+        }
+    }
+
     #[cfg(feature = "metal")]
     fn metal_fwd(
         &self,
         storage: &candle_core::MetalStorage,
         layout: &Layout,
     ) -> Result<(candle_core::MetalStorage, Shape)> {
-        // use candle_core::backend::BackendStorage; // Unused
-        eprintln!("DEBUG: metal_fwd start");
-
-        // Create tensor from MetalStorage
+        eprintln!("DEBUG: metal_fwd start (zero-copy)");
         let shape = layout.shape();
-        let device = get_device();
-
-        #[cfg(feature = "metal")]
-        let cpu_tensor = {
-            // Manual copy from Private Metal Buffer to CPU using metal crate directly
-            use metal::MTLResourceOptions; // MTLStorageMode unused
-
-            let elem_count = shape.elem_count();
-            let size = (elem_count * std::mem::size_of::<f32>()) as u64;
-
-            // storage.buffer() returns &metal::Buffer directly
-            let buffer = storage.buffer(); // &metal::Buffer
-            let mtl_device = buffer.device(); // &metal::Device (raw from metal crate)
-
-            // Create a Shared buffer for reading
-            let options = MTLResourceOptions::StorageModeShared;
-            let read_buffer = mtl_device.new_buffer(size, options);
-
-            // Create Command Queue & Buffer
-            let command_queue = mtl_device.new_command_queue();
-            let command_buffer = command_queue.new_command_buffer();
-            let blit_encoder = command_buffer.new_blit_command_encoder();
-
-            // Encode Copy
-            blit_encoder.copy_from_buffer(buffer, 0, &read_buffer, 0, size);
-            blit_encoder.end_encoding();
-
-            // Commit and Wait
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
-
-            // Read data
-            let ptr = read_buffer.contents() as *const f32;
-            if ptr.is_null() {
-                return Err(candle_core::Error::Msg(
-                    "Failed to read from shared buffer (null ptr)".into(),
-                ));
-            }
-            let cpu_data = unsafe { std::slice::from_raw_parts(ptr, elem_count) }.to_vec();
-
-            Tensor::from_vec(cpu_data, shape, &candle_core::Device::Cpu)?
-        };
-
-        #[cfg(not(feature = "metal"))]
-        let cpu_tensor = {
-            return Err(candle_core::Error::Msg(
-                "metal feature not enabled in tl_runtime".into(),
-            ));
-        };
-
-        // Move to Metal device
-        let metal_tensor = cpu_tensor.to_device(&device)?;
+        
+        // Zero-copy: wrap existing storage in a Tensor
+        let s = candle_core::Storage::Metal(storage.clone());
+        let metal_tensor = candle_core::from_storage(s, shape.clone(), candle_core::BackpropOp::none(), false);
 
         // Call the user's function
         let t_ptr = make_tensor(metal_tensor);
-        eprintln!("DEBUG: metal_fwd calling func");
         let out_ptr = (self.func.0)(self.ctx.0, t_ptr);
-        eprintln!("DEBUG: metal_fwd func returned {:p}", out_ptr);
 
         if out_ptr.is_null() {
             tl_tensor_release(t_ptr);
@@ -159,8 +139,6 @@ impl CustomOp1 for TlCheckpointOp {
 
         let out_opaque = unsafe { &*out_ptr };
         let out_tensor = &out_opaque.0;
-
-        // Get the output storage
         let (out_storage, out_layout) = out_tensor.storage_and_layout();
 
         match out_storage.deref() {
@@ -168,35 +146,14 @@ impl CustomOp1 for TlCheckpointOp {
                 let res_storage = metal_storage.clone();
                 let res_shape = out_layout.shape().clone();
 
-                // Cleanup with proper release
+                // Cleanup
                 tl_tensor_release(t_ptr);
                 tl_tensor_release(out_ptr);
 
                 Ok((res_storage, res_shape))
             }
-            candle_core::Storage::Cpu(cpu_storage) => {
-                // Output is on CPU, need to copy to Metal
-                // Get data from CpuStorage and create new tensor
-                let cpu_slice = cpu_storage.as_slice::<f32>()?;
-                let cpu_tensor =
-                    Tensor::from_slice(cpu_slice, out_layout.shape(), &candle_core::Device::Cpu)?;
-                let metal_tensor = cpu_tensor.to_device(&device)?;
-                let (metal_storage, metal_layout) = metal_tensor.storage_and_layout();
-
-                match metal_storage.deref() {
-                    candle_core::Storage::Metal(ms) => {
-                        // Cleanup
-                        tl_tensor_release(t_ptr);
-                        tl_tensor_release(out_ptr);
-                        Ok((ms.clone(), metal_layout.shape().clone()))
-                    }
-                    _ => Err(candle_core::Error::Msg(
-                        "Failed to convert to Metal storage".into(),
-                    )),
-                }
-            }
             _ => Err(candle_core::Error::Msg(
-                "Checkpoint output has unsupported storage type".into(),
+                "Checkpoint output must be on Metal for metal_fwd".into(),
             )),
         }
     }
