@@ -188,8 +188,8 @@ fn main() {
     let weights = Map::load(model_path);
     let tok = Tokenizer::new(tokenizer_path);
     
-    let cos = Tensor::new_rope_cos(128, 8192, 500000.0);
-    let sin = Tensor::new_rope_sin(128, 8192, 500000.0);
+    let cos = Tensor::rope_new_cos(128, 8192, 500000.0);
+    let sin = Tensor::rope_new_sin(128, 8192, 500000.0);
     
     let on = RMSNorm::new(weights, "output_norm.weight");
     println("Loaded output norm");

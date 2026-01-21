@@ -184,8 +184,8 @@ fn main() {
 
     let weights = Map::load(model_path);
     let tok = Tokenizer::new(tokenizer_path);
-    let cos = Tensor::new_rope_cos(64, 2048, 10000.0);
-    let sin = Tensor::new_rope_sin(64, 2048, 10000.0);
+    let cos = Tensor::rope_new_cos(64, 2048, 10000.0);
+    let sin = Tensor::rope_new_sin(64, 2048, 10000.0);
     let on = RMSNorm::new(weights, "output_norm.weight");
     let oh = Linear::from_map(weights, "output.weight");
     let emb = weights.get("token_embd.weight");

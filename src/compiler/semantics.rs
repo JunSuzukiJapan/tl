@@ -2791,6 +2791,7 @@ impl SemanticAnalyzer {
 
                     let tensor_i64 = Type::Tensor(Box::new(Type::I64), 0);
                     let tensor_f32 = Type::Tensor(Box::new(Type::F32), 0);
+                    let tensor_f32_4 = Type::Tensor(Box::new(Type::F32), 4);
 
                     match name.as_str() {
                         "tl_tokenizer_new" => {
@@ -2903,7 +2904,7 @@ impl SemanticAnalyzer {
                                 );
                             }
                             check_all_args(args)?;
-                            return Ok(tensor_f32);
+                            return Ok(tensor_f32_4);
                         }
                         "tl_kv_cache_update" => {
                             if arg_len != 4 {
@@ -4552,8 +4553,8 @@ impl SemanticAnalyzer {
                                     Some(expr.span.clone()),
                                 );
                             }
-                            if let Type::Tensor(inner, rank) = &obj_type {
-                                return Ok(Type::Tensor(inner.clone(), rank + 1));
+                            if let Type::Tensor(_, rank) = &obj_type {
+                                return Ok(Type::Tensor(Box::new(Type::F32), rank + 1));
                             }
                             return Ok(obj_type.clone());
                         }
@@ -4968,7 +4969,7 @@ impl SemanticAnalyzer {
 
                 if type_name == "Tokenizer" {
                     return match method_name.as_str() {
-                        "encode" => Ok(Type::Tensor(Box::new(Type::I64), 0)),
+                        "encode" => Ok(Type::Tensor(Box::new(Type::I64), 1)),
                         "decode" => Ok(Type::UserDefined("String".into())),
                         _ => self.err(
                             SemanticError::MethodNotFound {
@@ -4983,7 +4984,7 @@ impl SemanticAnalyzer {
                 if type_name == "KVCache" {
                     return match method_name.as_str() {
                         "free" => Ok(Type::Void),
-                        "get_k" | "get_v" => Ok(Type::Tensor(Box::new(Type::F32), 0)),
+                        "get_k" | "get_v" => Ok(Type::Tensor(Box::new(Type::F32), 4)),
                         "update" => Ok(Type::Void),
                         _ => self.err(
                             SemanticError::MethodNotFound {
