@@ -740,7 +740,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 }
 
-                for stmt in &method.body {
+                for (i, stmt) in method.body.iter().enumerate() {
+                    if i == method.body.len() - 1 && method.return_type != Type::Void {
+                        // Check if it's an expression that should be returned
+                        if let StmtKind::Expr(expr) = &stmt.inner {
+                            let (val, ty) = self.compile_expr(expr)?;
+                            self.emit_recursive_unregister(val, &ty)?;
+                            self.emit_all_scopes_cleanup();
+                            self.variables.pop();
+                            self.builder
+                                .build_return(Some(&val))
+                                .map_err(|e| e.to_string())?;
+                            continue;
+                        }
+                    }
                     self.compile_stmt(stmt)?;
                 }
 
