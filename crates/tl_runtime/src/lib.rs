@@ -1246,7 +1246,7 @@ pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
 
             let ptr = Box::into_raw(boxed);
             memory_manager::register_tensor_global(ptr);
-            record_tensor_alloc("tensor_clone", ptr, unsafe { &(*ptr).0 }, false);
+            record_tensor_alloc("tensor_clone", ptr, &(*ptr).0, false);
 
             Ok(ptr)
         }));

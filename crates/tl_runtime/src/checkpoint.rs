@@ -87,7 +87,7 @@ impl CustomOp1 for TlCheckpointOp {
     fn metal_fwd(
         &self,
         _storage: &candle_core::MetalStorage,
-        layout: &Layout,
+        _layout: &Layout,
     ) -> Result<(candle_core::MetalStorage, Shape)> {
         Err(candle_core::Error::Msg("metal_fwd in checkpoint requires manual implementation for official candle branch".into()))
     }
