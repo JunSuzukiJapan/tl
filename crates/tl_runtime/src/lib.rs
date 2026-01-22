@@ -884,37 +884,23 @@ pub extern "C" fn tl_get_memory_mb() -> i64 {
 
 #[no_mangle]
 pub extern "C" fn tl_get_metal_pool_bytes() -> i64 {
-    match get_device() {
-        candle_core::Device::Metal(metal) => {
-            let (bytes, _count) = metal.buffer_pool_stats();
-            bytes as i64
-        }
-        _ => 0,
-    }
+    0
 }
 
 #[no_mangle]
 pub extern "C" fn tl_get_metal_pool_mb() -> i64 {
-    let bytes = tl_get_metal_pool_bytes();
-    bytes / (1024 * 1024)
+    0
 }
 
 #[no_mangle]
 pub extern "C" fn tl_get_metal_pool_count() -> i64 {
-    match get_device() {
-        candle_core::Device::Metal(metal) => {
-            let (_bytes, count) = metal.buffer_pool_stats();
-            count as i64
-        }
-        _ => 0,
-    }
+    0
 }
 
 #[no_mangle]
 pub extern "C" fn tl_metal_sync() {
     if let candle_core::Device::Metal(metal) = get_device() {
         let _ = metal.wait_until_completed();
-        let _ = metal.drop_unused_buffers();
     }
 }
 
@@ -939,20 +925,16 @@ pub extern "C" fn tl_trace_mem(
         "stmt".to_string()
     };
     let rss_mb = tl_get_memory_mb();
-    let metal_bytes = tl_get_metal_pool_bytes();
-    let metal_count = tl_get_metal_pool_count();
     let pool_count = tl_get_pool_count();
     let refcount_count = tl_get_refcount_count();
     let scope_depth = tl_get_scope_depth();
     eprintln!(
-        "[TL_MEM_TRACE] {}:{}:{} tag={} rss_mb={} metal_pool_bytes={} metal_pool_count={} pool_count={} refcount_count={} scope_depth={}",
+        "[TL_MEM_TRACE] {}:{}:{} tag={} rss_mb={} pool_count={} refcount_count={} scope_depth={}",
         file_str,
         line,
         col,
         tag_str,
         rss_mb,
-        metal_bytes,
-        metal_count,
         pool_count,
         refcount_count,
         scope_depth
