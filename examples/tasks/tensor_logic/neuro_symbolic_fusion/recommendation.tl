@@ -73,8 +73,8 @@ fn main() {
         println("\nRecommendations for User {} ({}):", user_id, u_type);
         
         let u_idx = user_id - 1;
-        let age = user_data.get(u_idx, 0);
-        let budget = user_data.get(u_idx, 1);
+        let age = user_data[u_idx, 0];
+        let budget = user_data[u_idx, 1];
 
         let mut item_id = 1;
         while item_id <= 5 {
@@ -85,13 +85,13 @@ fn main() {
                 
                 // B. Numeric Check
                 let i_idx = item_id - 1;
-                let price = item_data.get(i_idx, 0);
-                let min_age = item_data.get(i_idx, 1);
+                let price = item_data[i_idx, 0];
+                let min_age = item_data[i_idx, 1];
 
                 if age >= min_age {
                     if budget >= price {
                          // C. Tensor Scoring
-                         let score = scores.get(u_idx, i_idx);
+                         let score = scores[u_idx, i_idx];
                          
                          if score > -3.0 { 
                              println("User {} -> Item {} [Allowed] Score: {}", user_id, item_id, score);

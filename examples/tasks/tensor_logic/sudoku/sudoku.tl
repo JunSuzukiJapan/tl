@@ -135,7 +135,7 @@ fn main() {
             let mut best_digit = 0;
             let mut best_prob = -1.0;
             for d in 0..N {
-                let p = probs.get(row, col, d);
+                let p = probs[row, col, d];
                 if p > best_prob {
                     best_prob = p; // Assignment
                     best_digit = d + 1; // Assignment

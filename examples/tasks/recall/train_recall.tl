@@ -322,24 +322,24 @@ fn main() {
         
         // Input: 0..12 (13 tokens)
         let in_seq = [
-             data.get(0), data.get(1),
-             data.get(2), data.get(3),
-             data.get(4), data.get(5),
-             data.get(6), data.get(7),
-             data.get(8), data.get(9),
-             data.get(10), data.get(11),
-             data.get(12)
+             data[0, 0], data[0, 1],
+             data[0, 2], data[0, 3],
+             data[0, 4], data[0, 5],
+             data[0, 6], data[0, 7],
+             data[0, 8], data[0, 9],
+             data[0, 10], data[0, 11],
+             data[0, 12]
         ];
         let X = in_seq.reshape([1, 13]);
         
         let targets_arr = [
-             data.get(1), data.get(2),
-             data.get(3), data.get(4),
-             data.get(5), data.get(6),
-             data.get(7), data.get(8),
-             data.get(9), data.get(10),
-             data.get(11), data.get(12),
-             data.get(13)
+             data[0, 1], data[0, 2],
+             data[0, 3], data[0, 4],
+             data[0, 5], data[0, 6],
+             data[0, 7], data[0, 8],
+             data[0, 9], data[0, 10],
+             data[0, 11], data[0, 12],
+             data[0, 13]
         ];
         let Y_temp = targets_arr.reshape([1, 13]);
         let Y = Y_temp.reshape([13]);

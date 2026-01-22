@@ -280,13 +280,13 @@ fn main() {
     for i in range(start_idx, start_idx + total_count) {
         let val_data = gen_data(i);
         let val_in = [
-            val_data.get(0), val_data.get(1),
-            val_data.get(2), val_data.get(3),
-            val_data.get(4), val_data.get(5),
-            val_data.get(6), val_data.get(7),
-            val_data.get(8), val_data.get(9),
-            val_data.get(10), val_data.get(11),
-            val_data.get(12)
+            val_data[0, 0], val_data[0, 1],
+            val_data[0, 2], val_data[0, 3],
+            val_data[0, 4], val_data[0, 5],
+            val_data[0, 6], val_data[0, 7],
+            val_data[0, 8], val_data[0, 9],
+            val_data[0, 10], val_data[0, 11],
+            val_data[0, 12]
         ];
         let val_X = val_in.reshape([1, 13]);
         let val_logits = model.forward(val_X);
@@ -301,7 +301,7 @@ fn main() {
         let pred_t_f32 = pred_t_i64 as Tensor<f32, 1>;
         let pred = pred_t_f32.item() as i64;
         
-        let target = val_data.get(13) as i64;
+        let target = val_data[0, 13] as i64;
         
         print("Sample:"); print(i);
         print("Pred:"); print(pred);

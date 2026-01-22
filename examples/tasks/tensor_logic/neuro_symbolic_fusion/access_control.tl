@@ -64,7 +64,7 @@ fn main() {
     let mut i = 0;
     while i < 3 {
         // Access score from result vector
-        let score = scores.get(i, 0);
+        let score = scores[i, 0];
         
         if score > max_score {
             max_score = score;

@@ -103,12 +103,12 @@ impl TypeRegistry {
                 is_varargs: false,
                 min_args: 1,
             },
-            // sum() -> Tensor (scalar)
+            // sum(...) -> Tensor (scalar if no args, or dim reduction)
             MethodSignature {
                 name: "sum".to_string(),
-                params: vec![],
+                params: vec![ParamType::AnyInt],
                 return_type: ReturnType::TensorSameElementType(0),
-                is_varargs: false,
+                is_varargs: true,
                 min_args: 0,
             },
             // sum_dim(dim, keepdim) -> Tensor
@@ -363,14 +363,7 @@ impl TypeRegistry {
                 is_varargs: false,
                 min_args: 1,
             },
-            // get(index) -> F32 (1D access)
-            MethodSignature {
-                name: "get".to_string(),
-                params: vec![ParamType::AnyInt],
-                return_type: ReturnType::ExtractedScalar,
-                is_varargs: false,
-                min_args: 1,
-            },
+
             // argmin(dim) -> Tensor<I64>
             MethodSignature {
                 name: "argmin".to_string(),
@@ -457,10 +450,10 @@ impl TypeRegistry {
                 is_varargs: false,
                 min_args: 2,
             },
-            // pow(exponent) -> Tensor
+            // pow(exponent) -> Tensor (accepts scalar or tensor)
             MethodSignature {
                 name: "pow".to_string(),
-                params: vec![ParamType::AnyTensor],
+                params: vec![ParamType::AnyNumeric],
                 return_type: ReturnType::SameAsReceiver,
                 is_varargs: false,
                 min_args: 1,

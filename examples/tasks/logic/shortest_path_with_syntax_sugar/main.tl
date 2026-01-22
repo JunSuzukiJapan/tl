@@ -32,7 +32,7 @@ fn main() {
     println("Initial Distance Matrix:");
     for r in 0..N {
         for c in 0..N {
-            let val = dist.get(r, c);
+            let val = dist[r, c];
             if val > 900.0 {
                 print(" INF ");
             } else {
@@ -57,7 +57,7 @@ fn main() {
     println("Final Shortest Path Distance Matrix:");
     for r in 0..N {
         for c in 0..N {
-            let val = dist.get(r, c);
+            let val = dist[r, c];
             if val > 900.0 {
                 print(" INF ");
             } else {
@@ -71,11 +71,11 @@ fn main() {
     println("----------------");
     
     // Verify specific paths
-    let d_ac = dist.get(0, 2);
+    let d_ac = dist[0, 2];
     print("Shortest Path A->C (Expected 3.0): ");
     println(d_ac);
     
-    let d_ad = dist.get(0, 3);
+    let d_ad = dist[0, 3];
     print("Shortest Path A->D (Expected 4.0): ");
     println(d_ad);
 }

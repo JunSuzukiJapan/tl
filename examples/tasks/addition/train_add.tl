@@ -13,7 +13,7 @@ fn my_embedding(indices: Tensor<f32, 2>, w: Tensor<f32, 2>, V: i64) -> Tensor<f3
     
     let mut one_hot: Tensor<f32, 2> = Tensor::randn([T, V], false) * 0.0;
     for t in range(0, T) {
-        let idx = flat_indices.get(t) as i64;
+        let idx = flat_indices[t] as i64;
         one_hot[t, idx] = 1.0;
     }
     let one_hot_d = one_hot.detach(true);
@@ -48,7 +48,7 @@ fn my_cross_entropy(logits: Tensor<f32, 3>, targets: Tensor<f32, 2>) -> Tensor<f
     
     let mut mask: Tensor<f32, 2> = Tensor::randn([T, V], false) * 0.0;
     for i in range(0, T) {
-        let t = targets_flat.get(i) as i64;
+        let t = targets_flat[i] as i64;
         mask[i, t] = 1.0;
     }
     let mask_d = mask.detach(true);

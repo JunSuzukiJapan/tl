@@ -193,7 +193,7 @@ impl Transformer {
 }
 
 fn get_random_digit() -> f32 {
-    let r = Tensor::randn([1], true).get(0);
+    let r = Tensor::randn([1], true)[0];
     // Binning Normal distribution to Uniform(0..9)
     // CDF thresholds: -1.28 (10%), -0.84 (20%), -0.52 (30%), -0.25 (40%), 0 (50%)...
     let d = 0.0;

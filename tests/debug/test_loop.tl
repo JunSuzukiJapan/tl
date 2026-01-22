@@ -28,13 +28,13 @@ fn main() {
         println("Epoch: {}", epoch);
         
         let x_data = [1.0, 2.0];
-        let x = x_data.reshape(1, 2);
+        let x = x_data.reshape([1, 2]);
         
         let h = l1.forward(x).relu();
         let y = l2.forward(h);
         
         let target = [1.0, 0.0, 0.0];
-        let t = target.reshape(1, 3);
+        let t = target.reshape([1, 3]);
         let diff = y - t;
         let diff_sq = diff * diff;
         let loss = diff_sq.sum();

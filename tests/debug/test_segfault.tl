@@ -34,7 +34,7 @@ fn test_with_slice() {
     print("Forward done");
     
     print("Reshaping...");
-    let y_flat = y.reshape(10, 12);
+    let y_flat = y.reshape([10, 12]);
     print("Reshaped");
     
     print("Slicing...");

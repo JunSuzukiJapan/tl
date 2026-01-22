@@ -18,7 +18,7 @@ fn main() {
     // Print Matrix Logic Inlined
     for r in 0..N {
         for c in 0..N {
-            if parent.get(r, c) > 0.0 {
+            if parent[r, c] > 0.0 {
                 print(" 1 ");
             } else {
                 print(" . ");
@@ -38,7 +38,7 @@ fn main() {
     // Print Matrix Logic Inlined
     for r in 0..N {
         for c in 0..N {
-            if grandparent.get(r, c) > 0.0 {
+            if grandparent[r, c] > 0.0 {
                 print(" 1 ");
             } else {
                 print(" . ");
@@ -72,7 +72,7 @@ fn main() {
     // Print Matrix Logic Inlined
     for r in 0..N {
         for c in 0..N {
-            if ancestor_bool.get(r, c) > 0.0 {
+            if ancestor_bool[r, c] > 0.0 {
                 print(" 1 ");
             } else {
                 print(" . ");
@@ -88,7 +88,7 @@ fn main() {
     let alice_descendants = ancestor_bool.slice(0, 1).reshape([N]); 
     
     for c in 0..N {
-        if ancestor_bool.get(0, c) > 0.0 {
+        if ancestor_bool[0, c] > 0.0 {
              print("Found descendant ID: ");
              println(c);
         }

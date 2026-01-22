@@ -8640,7 +8640,7 @@ fn compile_tensor_reshape_uneval<'ctx>(
     args: &[Expr],
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 {
-        return Err("reshape method requires 1 argument (shape)".into());
+        return Err("reshape method requires exactly 1 argument (shape array)".into());
     }
 
     // 1. Compile Receiver
@@ -8648,12 +8648,11 @@ fn compile_tensor_reshape_uneval<'ctx>(
 
     // 2. Inspect shape argument for static rank inference
     let shape_expr = &args[0];
-    let new_rank = if let ExprKind::TensorLiteral(elements) = &shape_expr.inner {
-        Some(elements.len())
-    } else if let ExprKind::TensorConstLiteral(elements) = &shape_expr.inner {
-        Some(elements.len())
-    } else {
-        None
+    let new_rank = match &shape_expr.inner {
+        ExprKind::TensorLiteral(elements) | ExprKind::TensorConstLiteral(elements) => {
+            elements.len()
+        }
+        _ => 0, // Unknown rank
     };
 
     // 3. Compile shape argument
@@ -8675,18 +8674,17 @@ fn compile_tensor_reshape_uneval<'ctx>(
     };
 
     // 5. Construct return type
-    let new_ty = if let Some(rank) = new_rank {
-        // Preserving inner type from obj_ty
+    let new_ty = if new_rank > 0 {
         if let Type::Tensor(inner, _) = obj_ty {
-            Type::Tensor(inner, rank)
+            Type::Tensor(inner, new_rank)
         } else {
-            // Default generic fallback
-            Type::Tensor(Box::new(Type::F32), rank)
+            Type::Tensor(Box::new(Type::F32), new_rank)
         }
     } else {
-        // Fallback: keep existing rank
+        // Unknown rank - preserve original
         obj_ty
     };
 
     Ok((res, new_ty))
 }
+

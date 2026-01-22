@@ -8,8 +8,8 @@ fn main() {
     let K_orig = Tensor::randn([1, 9, 128], false);
     
     // reshape: [1, 9, 128] -> [9, 4, 32]
-    let Q_split = Q_orig.reshape(9, 4, 32);
-    let K_split = K_orig.reshape(9, 4, 32);
+    let Q_split = Q_orig.reshape([9, 4, 32]);
+    let K_split = K_orig.reshape([9, 4, 32]);
     
     println("Q_split shape: [9, 4, 32]");
     println("K_split shape: [9, 4, 32]");
