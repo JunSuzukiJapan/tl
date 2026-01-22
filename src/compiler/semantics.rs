@@ -763,7 +763,12 @@ impl SemanticAnalyzer {
 
     pub fn check_stmt(&mut self, stmt: &mut Stmt) -> Result<(), TlError> {
         match &mut stmt.inner {
-            StmtKind::FieldAssign { obj, field, value } => {
+            StmtKind::FieldAssign {
+                obj,
+                field,
+                op,
+                value,
+            } => {
                 // Check object type and verify it's a struct
                 let obj_type = self.check_expr(obj)?;
                 let struct_name = match obj_type {
@@ -805,14 +810,62 @@ impl SemanticAnalyzer {
 
                 // Check value type matches field type
                 let value_type = self.check_expr(value)?;
-                if !self.are_types_compatible(&field_type, &value_type) {
-                    return self.err(
-                        SemanticError::TypeMismatch {
-                            expected: field_type,
-                            found: value_type,
-                        },
-                        Some(stmt.span.clone()),
-                    );
+
+                match op {
+                    AssignOp::Assign => {
+                        if !self.are_types_compatible(&field_type, &value_type) {
+                            return self.err(
+                                SemanticError::TypeMismatch {
+                                    expected: field_type,
+                                    found: value_type,
+                                },
+                                Some(stmt.span.clone()),
+                            );
+                        }
+                    }
+                    _ => {
+                        // For compound assignments, allow Tensor OR Numeric types
+                        let is_numeric =
+                            matches!(field_type, Type::I64 | Type::I32 | Type::F32 | Type::F64);
+                        let is_tensor = matches!(field_type, Type::Tensor(_, _));
+
+                        if is_tensor {
+                            // Tensor compound assignment logic
+                            let is_compat = match (&field_type, &value_type) {
+                                (Type::Tensor(inner, _), val) if **inner == *val => true, // Tensor += scalar
+                                (Type::Tensor(_, _), Type::Tensor(_, _)) => true,         // Tensor += Tensor
+                                _ => false,
+                            };
+                            if !is_compat {
+                                return self.err(
+                                    SemanticError::TypeMismatch {
+                                        expected: field_type,
+                                        found: value_type,
+                                    },
+                                    Some(stmt.span.clone()),
+                                );
+                            }
+                        } else if is_numeric {
+                            // Numeric compound assignment
+                            if !self.are_types_compatible(&field_type, &value_type) {
+                                return self.err(
+                                    SemanticError::TypeMismatch {
+                                        expected: field_type,
+                                        found: value_type,
+                                    },
+                                    Some(stmt.span.clone()),
+                                );
+                            }
+                        } else {
+                            return self.err(
+                                SemanticError::MethodNotFound {
+                                    type_name: format!("{:?}", field_type),
+                                    method_name: format!("{:?}", op),
+                                },
+                                Some(stmt.span.clone()),
+                            );
+                        }
+                    }
                 }
 
                 Ok(())
@@ -988,51 +1041,53 @@ impl SemanticAnalyzer {
                                 );
                             }
                         }
-                        op => {
-                            let method_name = match op {
-                                AssignOp::AddAssign => "add_assign",
-                                AssignOp::SubAssign => "sub_assign",
-                                AssignOp::MulAssign => "mul_assign",
-                                AssignOp::DivAssign => "div_assign",
-                                AssignOp::ModAssign => "mod_assign",
-                                _ => {
+                        _ => {
+                            // Compound assignment: Check if numeric or tensor
+                            let is_numeric =
+                                matches!(var_type, Type::I64 | Type::I32 | Type::F32 | Type::F64);
+                            let is_tensor = matches!(var_type, Type::Tensor(_, _));
+
+                            if is_tensor {
+                                let is_compat = match (&var_type, &val_type) {
+                                    (Type::Tensor(inner, _), val) if **inner == *val => true,
+                                    (Type::Tensor(_, _), Type::Tensor(_, _)) => true,
+                                    _ => false,
+                                };
+                                if !is_compat {
                                     return self.err(
-                                        SemanticError::UnknownFunction(format!(
-                                            "Unsupported assign op {:?}",
-                                            op
-                                        )),
+                                        SemanticError::TypeMismatch {
+                                            expected: var_type.clone(),
+                                            found: val_type.clone(),
+                                        },
                                         Some(stmt.span.clone()),
                                     );
                                 }
-                            };
-
-                            // Check as method call logic for AssignOp (simplified)
-                            match &var_type {
-                                Type::Tensor(_, _) => {
-                                    // Check if valid method name involves resolving?
-                                    // These are built-in methods on Tensor?
-                                    // Just checks compatibility for now.
-                                    let is_compat = match (&var_type, &val_type) {
-                                        (Type::Tensor(inner, _), val) if **inner == *val => true,
-                                        (Type::Tensor(_, _), Type::Tensor(_, _)) => true,
-                                        _ => false,
-                                    };
-
-                                    if !is_compat {
-                                        return Err(SemanticError::TypeMismatch {
+                            } else if is_numeric {
+                                if !self.are_types_compatible(&var_type, &val_type) {
+                                    return self.err(
+                                        SemanticError::TypeMismatch {
                                             expected: var_type.clone(),
                                             found: val_type.clone(),
-                                        }
-                                        .to_tl_error(Some(stmt.span.clone())));
-                                    }
+                                        },
+                                        Some(stmt.span.clone()),
+                                    );
                                 }
-                                _ => {
-                                    return Err(SemanticError::MethodNotFound {
+                            } else {
+                                let method_name = match op {
+                                    AssignOp::AddAssign => "add_assign",
+                                    AssignOp::SubAssign => "sub_assign",
+                                    AssignOp::MulAssign => "mul_assign",
+                                    AssignOp::DivAssign => "div_assign",
+                                    AssignOp::ModAssign => "mod_assign",
+                                    _ => "unknown_assign",
+                                };
+                                return self.err(
+                                    SemanticError::MethodNotFound {
                                         type_name: format!("{:?}", var_type),
                                         method_name: method_name.to_string(),
-                                    }
-                                    .to_tl_error(Some(stmt.span.clone())));
-                                }
+                                    },
+                                    Some(stmt.span.clone()),
+                                );
                             }
                         }
                     }

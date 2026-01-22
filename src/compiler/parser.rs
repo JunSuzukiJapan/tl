@@ -1047,46 +1047,37 @@ fn parse_field_assign(input: Span) -> IResult<Span, Stmt> {
         let (input, lhs) = parse_expr(input)?;
         match lhs.inner {
             ExprKind::FieldAccess(obj, field) => {
-                let (input, op_str) =
-                    ws(alt((tag("="), tag("+="), tag("-="), tag("*="), tag("/="), tag("%="))))(input)?;
+                let (input, op_str) = ws(alt((
+                    tag("="),
+                    tag("+="),
+                    tag("-="),
+                    tag("*="),
+                    tag("/="),
+                    tag("%="),
+                )))(input)?;
+
+                let op = match *op_str {
+                    "=" => AssignOp::Assign,
+                    "+=" => AssignOp::AddAssign,
+                    "-=" => AssignOp::SubAssign,
+                    "*=" => AssignOp::MulAssign,
+                    "/=" => AssignOp::DivAssign,
+                    "%=" => AssignOp::ModAssign,
+                    _ => unreachable!(),
+                };
 
                 let (input, value) = parse_expr(input)?;
                 let (input, _) = ws(char(';'))(input)?;
 
-                if *op_str == "=" {
-                    Ok((
-                        input,
-                        StmtKind::FieldAssign {
-                            obj: *obj,
-                            field,
-                            value,
-                        },
-                    ))
-                } else {
-                    // Desugar x.y += z to x.y.add_assign(z)
-                    let method = match *op_str {
-                        "+=" => "add_assign",
-                        "-=" => "sub_assign",
-                        "*=" => "mul_assign",
-                        "/=" => "div_assign",
-                        "%=" => "mod_assign",
-                        _ => unreachable!(),
-                    };
-                    // Need a span for the synthetic method call. Use lhs's span.
-                    let span = lhs.span.clone();
-                    let method_call = Spanned::new(
-                        ExprKind::MethodCall(
-                            Box::new(Spanned::new(
-                                ExprKind::FieldAccess(obj, field),
-                                span.clone(),
-                            )),
-                            method.to_string(),
-                            vec![value],
-                        ),
-                        span,
-                    );
-                    Ok((input, StmtKind::Expr(method_call)))
-                }
+                Ok((
+                    input,
+                    StmtKind::FieldAssign {
+                        obj: *obj,
+                        field,
+                        op,
+                        value,
+                    },
+                ))
             }
             _ => Err(nom::Err::Error(nom::error::Error::new(
                 input,

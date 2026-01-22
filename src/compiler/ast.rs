@@ -170,6 +170,7 @@ pub enum StmtKind {
     FieldAssign {
         obj: Expr,
         field: String,
+        op: AssignOp,
         value: Expr,
     },
     Expr(Expr),

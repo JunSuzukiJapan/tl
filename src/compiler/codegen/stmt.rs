@@ -622,7 +622,12 @@ impl<'ctx> CodeGenerator<'ctx> {
     pub(crate) fn compile_stmt_inner(&mut self, stmt: &Stmt) -> Result<(), String> {
         match &stmt.inner {
             StmtKind::Use { .. } => Ok(()),
-            StmtKind::FieldAssign { obj, field, value } => {
+            StmtKind::FieldAssign {
+                obj,
+                field,
+                op,
+                value,
+            } => {
                 let (obj_val, obj_ty) = self.compile_expr(obj)?;
                 let struct_name = match obj_ty {
                     Type::Struct(name) => name,
@@ -664,9 +669,76 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .build_struct_gep(st_llvm_ty, ptr, field_idx as u32, &format!("ptr_{}", field))
                     .map_err(|e| e.to_string())?;
 
-                let (val, _) = self.compile_expr(value)?;
+                let (val, val_ty) = self.compile_expr(value)?;
 
-                // Load old value to free it
+                let final_val = match op {
+                    AssignOp::Assign => val,
+                    _ => {
+                        let load_type: inkwell::types::BasicTypeEnum = match &field_type {
+                            Type::I64 => self.context.i64_type().into(),
+                            Type::F32 => self.context.f32_type().into(),
+                            Type::Tensor(_, _) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
+                            _ => return Err(format!("Unsupported type for FieldAssign op: {:?}", field_type)),
+                        };
+
+                        let current_val = self
+                            .builder
+                            .build_load(load_type, field_ptr, "field_current")
+                            .map_err(|e| e.to_string())?;
+
+                        // Tensor optimization path (In-Place)
+                        if let Type::Tensor(_, _) = field_type {
+                            let in_place_fn_name = match op {
+                                AssignOp::SubAssign => Some("tl_tensor_sub_assign"),
+                                AssignOp::MulAssign => Some("tl_tensor_mul_assign"),
+                                AssignOp::DivAssign => Some("tl_tensor_div_assign"),
+                                AssignOp::ModAssign => Some("tl_tensor_mod_assign"),
+                                _ => None,
+                            };
+
+                            if let Some(base_fn_name) = in_place_fn_name {
+                                let (fn_name, is_scalar) = if matches!(val_ty, Type::Tensor(_, _)) {
+                                    (base_fn_name.to_string(), false)
+                                } else {
+                                    (format!("{}_scalar_f32", base_fn_name), true)
+                                };
+
+                                let target_fn = self.module.get_function(&fn_name).ok_or(format!("Function {} not found", fn_name))?;
+
+                                let val_arg: inkwell::values::BasicValueEnum = if is_scalar {
+                                    // Cast to F32
+                                    let scalar_f32: inkwell::values::FloatValue = match val_ty {
+                                        Type::F32 => val.into_float_value(),
+                                        Type::F64 => self.builder.build_float_cast(val.into_float_value(), self.context.f32_type(), "f32_cast").unwrap(),
+                                        Type::I64 | Type::I32 => self.builder.build_signed_int_to_float(val.into_int_value(), self.context.f32_type(), "f32_cast").unwrap(),
+                                        _ => return Err(format!("Cannot convert {:?} to f32 for scalar op", val_ty)),
+                                    };
+                                    scalar_f32.into()
+                                } else {
+                                    val
+                                };
+
+                                self.builder.build_call(target_fn, &[current_val.into(), val_arg.into()], "").map_err(|e| e.to_string())?;
+                                return Ok(());
+                            }
+                        }
+
+                        // Normal path (AddAssign or Tensor generic path)
+                        let bin_op = match op {
+                            AssignOp::AddAssign => BinOp::Add,
+                            AssignOp::SubAssign => BinOp::Sub,
+                            AssignOp::MulAssign => BinOp::Mul,
+                            AssignOp::DivAssign => BinOp::Div,
+                            AssignOp::ModAssign => BinOp::Mod,
+                            _ => unreachable!(),
+                        };
+
+                        let (res, _) = self.compile_bin_op(current_val, field_type.clone(), val, val_ty, bin_op)?;
+                        res
+                    }
+                };
+
+                // Free old value if it's a structural type (Tensor/Struct)
                 if matches!(
                     field_type,
                     Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
@@ -676,67 +748,45 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .builder
                         .build_load(load_type, field_ptr, "old_field_val")
                         .map_err(|e| e.to_string())?
-                        .into_pointer_value(); // Valid even if null? Yes.
+                        .into_pointer_value();
 
-                    // Fix: Check for Self-Assignment (val == current_val)
-                    // If pointers are equal, DO NOT FREE.
-                    let val_ptr = val.into_pointer_value();
+                    let val_ptr = final_val.into_pointer_value();
                     let are_diff = self
                         .builder
                         .build_int_compare(
                             inkwell::IntPredicate::NE,
                             current_val,
                             val_ptr,
-                            "cnt_free_diff",
+                            "field_free_diff",
                         )
                         .map_err(|e| e.to_string())?;
 
                     let free_block = self.context.append_basic_block(
-                        self.builder
-                            .get_insert_block()
-                            .unwrap()
-                            .get_parent()
-                            .unwrap(),
-                        "free_old_val",
+                        self.builder.get_insert_block().unwrap().get_parent().unwrap(),
+                        "field_free",
                     );
                     let skip_block = self.context.append_basic_block(
-                        self.builder
-                            .get_insert_block()
-                            .unwrap()
-                            .get_parent()
-                            .unwrap(),
-                        "skip_free",
+                        self.builder.get_insert_block().unwrap().get_parent().unwrap(),
+                        "field_skip_free",
                     );
 
-                    self.builder
-                        .build_conditional_branch(are_diff, free_block, skip_block)
-                        .unwrap();
-
+                    self.builder.build_conditional_branch(are_diff, free_block, skip_block).unwrap();
                     self.builder.position_at_end(free_block);
                     self.emit_recursive_free(current_val.into(), &field_type)?;
                     self.builder.build_unconditional_branch(skip_block).unwrap();
-
                     self.builder.position_at_end(skip_block);
                 }
 
-                self.builder
-                    .build_store(field_ptr, val)
-                    .map_err(|e| e.to_string())?;
+                self.builder.build_store(field_ptr, final_val).map_err(|e| e.to_string())?;
 
-                // Fix for Use-After-Free: Unregister the NEW value from current scope
-                // because it is now owned by the struct.
-                let unreg_fn = self.module.get_function("tl_mem_unregister");
-                if let Some(f) = unreg_fn {
+                // Ownership transfer
+                if let Some(f) = self.module.get_function("tl_mem_unregister") {
                     let should_unregister = match &field_type {
-                        Type::Tensor(_, _) => true,
-                        Type::Struct(_) | Type::UserDefined(_) => true,
+                        Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => true,
                         _ => false,
                     };
-
                     if should_unregister {
-                        self.builder
-                            .build_call(f, &[val.into()], "")
-                            .map_err(|e| e.to_string())?;
+                        self.builder.build_call(f, &[final_val.into()], "").map_err(|e| e.to_string())?;
                     }
                 }
 
@@ -1609,7 +1659,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                         op_res
                     }
                     AssignOp::SubAssign => {
-                        // SubAssign logic (In-Place for Tensor)
                         if let Type::Tensor(_, _) = var_type {
                             let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                             let current_val = self
@@ -1666,11 +1715,18 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                             return Ok(());
                         } else {
-                            return Err("SubAssign -= only supported for Tensors currently via in-place optimization".into());
+                            // Generic path for primitives
+                            let load_type: inkwell::types::BasicTypeEnum = match var_type {
+                                Type::I64 => self.context.i64_type().into(),
+                                Type::F32 => self.context.f32_type().into(),
+                                _ => return Err(format!("Unsupported type for SubAssign: {:?}", var_type)),
+                            };
+                            let current_val = self.builder.build_load(load_type, var_ptr.into_pointer_value(), "curr").unwrap();
+                            let (op_res, _) = self.compile_bin_op(current_val, var_type.clone(), val, val_type, BinOp::Sub)?;
+                            op_res
                         }
                     }
                     AssignOp::MulAssign => {
-                        // MulAssign logic (In-Place for Tensor)
                         if let Type::Tensor(_, _) = var_type {
                             let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                             let current_val = self
@@ -1729,11 +1785,18 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                             return Ok(());
                         } else {
-                            return Err("MulAssign *= only supported for Tensors currently via in-place optimization".into());
+                            // Generic path
+                            let load_type: inkwell::types::BasicTypeEnum = match var_type {
+                                Type::I64 => self.context.i64_type().into(),
+                                Type::F32 => self.context.f32_type().into(),
+                                _ => return Err(format!("Unsupported type for MulAssign: {:?}", var_type)),
+                            };
+                            let current_val = self.builder.build_load(load_type, var_ptr.into_pointer_value(), "curr").unwrap();
+                            let (op_res, _) = self.compile_bin_op(current_val, var_type.clone(), val, val_type, BinOp::Mul)?;
+                            op_res
                         }
                     }
                     AssignOp::DivAssign => {
-                        // DivAssign logic (In-Place for Tensor)
                         if let Type::Tensor(_, _) = var_type {
                             let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                             let current_val = self
@@ -1790,11 +1853,18 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                             return Ok(());
                         } else {
-                            return Err("DivAssign /= only supported for Tensors currently via in-place optimization".into());
+                            // Generic path
+                            let load_type: inkwell::types::BasicTypeEnum = match var_type {
+                                Type::I64 => self.context.i64_type().into(),
+                                Type::F32 => self.context.f32_type().into(),
+                                _ => return Err(format!("Unsupported type for DivAssign: {:?}", var_type)),
+                            };
+                            let current_val = self.builder.build_load(load_type, var_ptr.into_pointer_value(), "curr").unwrap();
+                            let (op_res, _) = self.compile_bin_op(current_val, var_type.clone(), val, val_type, BinOp::Div)?;
+                            op_res
                         }
                     }
                     AssignOp::ModAssign => {
-                        // ModAssign logic (In-Place for Tensor)
                         if let Type::Tensor(_, _) = var_type {
                             let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                             let current_val = self
@@ -1851,7 +1921,15 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                             return Ok(());
                         } else {
-                            return Err("ModAssign %= only supported for Tensors currently via in-place optimization".into());
+                            // Generic path
+                            let load_type: inkwell::types::BasicTypeEnum = match var_type {
+                                Type::I64 => self.context.i64_type().into(),
+                                Type::F32 => self.context.f32_type().into(),
+                                _ => return Err(format!("Unsupported type for ModAssign: {:?}", var_type)),
+                            };
+                            let current_val = self.builder.build_load(load_type, var_ptr.into_pointer_value(), "curr").unwrap();
+                            let (op_res, _) = self.compile_bin_op(current_val, var_type.clone(), val, val_type, BinOp::Mod)?;
+                            op_res
                         }
                     }
                     _ => return Err(format!("Unsupported assignment op: {:?}", op)),
