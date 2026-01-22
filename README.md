@@ -44,6 +44,9 @@ cargo run -- examples/hybrid_test.tl
 cargo run --features metal -- examples/gpu_test.tl
 ```
 
+> [!WARNING]
+> **Metal users**: Long-running loops may cause RSS (memory) growth due to Metal driver behavior, not TL memory leaks. For stable memory usage, use `TL_DEVICE=cpu`. See [Metal RSS Growth Notes](docs/dev/METAL_RSS_GROWTH_NOTES.md) for details.
+
 
 ## Syntax
 
@@ -316,6 +319,7 @@ fn main() {
 ## Documentation
 
 - [Advantages of TensorLogic](docs/tensor_logic_advantages.md)
+- [Tensor Comprehension Design](docs/tensor_comprehension_design.md)
 - [Language Specification](docs/reference/language_spec.md)
 - [Standard Library](docs/reference/standard_library.md)
 - [Logic Programming](docs/logic_programming.md)

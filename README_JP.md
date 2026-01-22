@@ -44,6 +44,9 @@ cargo run -- examples/hybrid_test.tl
 cargo run --features metal -- examples/gpu_test.tl
 ```
 
+> [!WARNING]
+> **Metal使用時の注意**: 長時間のループ処理では、Metalドライバの挙動によりRSS（メモリ使用量）が増加することがあります。これはTLのメモリリークではありません。安定したメモリ使用量が必要な場合は `TL_DEVICE=cpu` を使用してください。詳細は [Metal RSS Growth Notes](docs/dev/METAL_RSS_GROWTH_NOTES.md) を参照。
+
 ## 文法
 
 TLの文法は、Rustに非常によく似ています。ただし、ライフタイムはありません。
@@ -315,6 +318,7 @@ fn main() {
 ## ドキュメント
 
 - [TensorLogicの利点](docs/jp/tensor_logic_advantages_jp.md)
+- [テンソル内包表記の設計思想](docs/jp/tensor_comprehension_design.md)
 - [言語仕様](docs/jp/reference/language_spec.md)
 - [標準ライブラリ](docs/jp/reference/standard_library.md)
 - [論理プログラミング](docs/jp/logic_programming.md)
