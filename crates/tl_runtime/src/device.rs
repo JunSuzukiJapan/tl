@@ -33,6 +33,7 @@ impl DeviceManager {
             }
         };
 
+        eprintln!("Runtime device initialized: {:?}", device_type);
         DeviceManager {
             current_device: device,
             device_type,
@@ -71,15 +72,16 @@ impl DeviceManager {
                         if check_metal_health(&device) {
                             Ok((device, DeviceType::Metal))
                         } else {
-                            Err(RuntimeError::DeviceError(
-                                "Metal backend failed self-test.".to_string(),
-                            ))
+                            let msg = "Metal backend failed self-test.".to_string();
+                            eprintln!("Metal init error: {}", msg);
+                            Err(RuntimeError::DeviceError(msg))
                         }
                     }
-                    Err(e) => Err(RuntimeError::DeviceError(format!(
-                        "Metal requested but initialization failed: {}",
-                        e
-                    ))),
+                    Err(e) => {
+                        let msg = format!("Metal requested but initialization failed: {}", e);
+                        eprintln!("Metal init error: {}", msg);
+                        Err(RuntimeError::DeviceError(msg))
+                    }
                 };
             }
             #[cfg(not(feature = "metal"))]
@@ -108,6 +110,8 @@ impl DeviceManager {
                 if let Ok(device) = Device::new_metal(0) {
                     if check_metal_health(&device) {
                         return Ok((device, DeviceType::Metal));
+                    } else {
+                        eprintln!("Metal init error: Metal backend failed self-test (auto).");
                     }
                 }
             }

@@ -749,9 +749,24 @@ pub fn declare_runtime_functions<'ctx>(
 
     let mem_mb_type = i64_type.fn_type(&[], false);
     add_fn("tl_get_memory_mb", mem_mb_type);
+    add_fn("tl_get_metal_pool_bytes", mem_mb_type);
+    add_fn("tl_get_metal_pool_mb", mem_mb_type);
+    add_fn("tl_get_metal_pool_count", mem_mb_type);
     add_fn("tl_get_pool_count", mem_mb_type);
     add_fn("tl_get_refcount_count", mem_mb_type);
     add_fn("tl_get_scope_depth", mem_mb_type);
+    let trace_type = void_type.fn_type(
+        &[
+            i8_ptr.into(),
+            context.i32_type().into(),
+            context.i32_type().into(),
+            i8_ptr.into(),
+        ],
+        false,
+    );
+    add_fn("tl_trace_mem", trace_type);
+    let metal_sync_type = void_type.fn_type(&[], false);
+    add_fn("tl_metal_sync", metal_sync_type);
 
     // Memory Scope
     let enter_scope_type = void_type.fn_type(&[], false);
@@ -1422,6 +1437,30 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_get_memory_mb") {
         execution_engine.add_global_mapping(&f, runtime::tl_get_memory_mb as usize);
     }
+    if let Some(f) = module.get_function("tl_get_metal_pool_bytes") {
+        execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_bytes as usize);
+    }
+    if let Some(f) = module.get_function("tl_get_metal_pool_mb") {
+        execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_mb as usize);
+    }
+    if let Some(f) = module.get_function("tl_get_metal_pool_count") {
+        execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_count as usize);
+    }
+    if let Some(f) = module.get_function("tl_metal_sync") {
+        execution_engine.add_global_mapping(&f, runtime::tl_metal_sync as usize);
+    }
+    if let Some(f) = module.get_function("tl_trace_mem") {
+        execution_engine.add_global_mapping(&f, runtime::tl_trace_mem as usize);
+    }
+    if let Some(f) = module.get_function("tl_get_metal_pool_bytes") {
+        execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_bytes as usize);
+    }
+    if let Some(f) = module.get_function("tl_get_metal_pool_mb") {
+        execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_mb as usize);
+    }
+    if let Some(f) = module.get_function("tl_get_metal_pool_count") {
+        execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_count as usize);
+    }
     if let Some(f) = module.get_function("tl_get_pool_count") {
         execution_engine.add_global_mapping(&f, runtime::tl_get_pool_count as usize);
     }
@@ -2080,9 +2119,13 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_arena_alloc".to_string(), Type::I64);
     fn_return_types.insert("tl_arena_reset".to_string(), Type::Void);
     fn_return_types.insert("tl_get_memory_mb".to_string(), Type::I64);
+    fn_return_types.insert("tl_get_metal_pool_bytes".to_string(), Type::I64);
+    fn_return_types.insert("tl_get_metal_pool_mb".to_string(), Type::I64);
+    fn_return_types.insert("tl_get_metal_pool_count".to_string(), Type::I64);
     fn_return_types.insert("tl_get_pool_count".to_string(), Type::I64);
     fn_return_types.insert("tl_get_refcount_count".to_string(), Type::I64);
     fn_return_types.insert("tl_get_scope_depth".to_string(), Type::I64);
+    fn_return_types.insert("tl_metal_sync".to_string(), Type::Void);
 
     // VarBuilder-based parameter management
     fn_return_types.insert("tl_varbuilder_get".to_string(), tensor_type.clone());
@@ -2329,6 +2372,37 @@ pub fn declare_runtime_functions<'ctx>(
     let get_memory_type = i64_type.fn_type(&[], false);
     module.add_function("tl_get_memory_mb", get_memory_type, None);
     fn_return_types.insert("tl_get_memory_mb".to_string(), Type::I64);
+
+    // tl_get_metal_pool_bytes() -> i64
+    let get_metal_pool_bytes_type = i64_type.fn_type(&[], false);
+    module.add_function("tl_get_metal_pool_bytes", get_metal_pool_bytes_type, None);
+    fn_return_types.insert("tl_get_metal_pool_bytes".to_string(), Type::I64);
+
+    // tl_get_metal_pool_mb() -> i64
+    let get_metal_pool_mb_type = i64_type.fn_type(&[], false);
+    module.add_function("tl_get_metal_pool_mb", get_metal_pool_mb_type, None);
+    fn_return_types.insert("tl_get_metal_pool_mb".to_string(), Type::I64);
+
+    // tl_get_metal_pool_count() -> i64
+    let get_metal_pool_count_type = i64_type.fn_type(&[], false);
+    module.add_function("tl_get_metal_pool_count", get_metal_pool_count_type, None);
+    fn_return_types.insert("tl_get_metal_pool_count".to_string(), Type::I64);
+    // tl_metal_sync() -> void
+    let metal_sync_type = context.void_type().fn_type(&[], false);
+    module.add_function("tl_metal_sync", metal_sync_type, None);
+    fn_return_types.insert("tl_metal_sync".to_string(), Type::Void);
+    // tl_trace_mem(file: i8*, line: i32, col: i32, tag: i8*) -> void
+    let trace_type = context.void_type().fn_type(
+        &[
+            i8_ptr.into(),
+            context.i32_type().into(),
+            context.i32_type().into(),
+            i8_ptr.into(),
+        ],
+        false,
+    );
+    module.add_function("tl_trace_mem", trace_type, None);
+    fn_return_types.insert("tl_trace_mem".to_string(), Type::Void);
     module.add_function("tl_get_pool_count", get_memory_type, None);
     fn_return_types.insert("tl_get_pool_count".to_string(), Type::I64);
     module.add_function("tl_get_refcount_count", get_memory_type, None);

@@ -444,6 +444,46 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
+    pub(crate) fn emit_trace_mem(&self, tag: &str) -> Result<(), String> {
+        let f = match self.module.get_function("tl_trace_mem") {
+            Some(f) => f,
+            None => return Ok(()),
+        };
+        let (file, line, col) = if let Some(span) = &self.current_span {
+            (
+                span.file.as_deref().unwrap_or("unknown"),
+                span.line as u32,
+                span.column as u32,
+            )
+        } else {
+            ("unknown", 0, 0)
+        };
+        let file_ptr = self
+            .builder
+            .build_global_string_ptr(file, "trace_file")
+            .map_err(|e| e.to_string())?
+            .as_pointer_value();
+        let tag_ptr = self
+            .builder
+            .build_global_string_ptr(tag, "trace_tag")
+            .map_err(|e| e.to_string())?
+            .as_pointer_value();
+        let i32_type = self.context.i32_type();
+        self.builder
+            .build_call(
+                f,
+                &[
+                    file_ptr.into(),
+                    i32_type.const_int(line as u64, false).into(),
+                    i32_type.const_int(col as u64, false).into(),
+                    tag_ptr.into(),
+                ],
+                "",
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // Exit the current scope
     fn exit_scope(&mut self) {
         // Only emit cleanup if the current block is NOT terminated.

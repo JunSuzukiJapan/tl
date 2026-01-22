@@ -3,7 +3,7 @@ use candle_metal_kernels::Kernels;
 use metal::{Buffer, CommandBuffer, CommandQueue, MTLResourceOptions, NSUInteger};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use super::MetalError;
 
@@ -168,7 +168,7 @@ impl MetalDevice {
         &self.device
     }
 
-    fn drop_unused_buffers(&self) -> Result<()> {
+    pub fn drop_unused_buffers(&self) -> Result<()> {
         let mut buffers = self.buffers.write().map_err(MetalError::from)?;
         for subbuffers in buffers.values_mut() {
             let newbuffers = subbuffers
@@ -239,6 +239,9 @@ impl MetalDevice {
             size,
             MTLResourceOptions::StorageModeManaged,
         );
+        if !tl_metal_pool_enabled() {
+            return Ok(Arc::new(new_buffer));
+        }
         let mut buffers = self.buffers.write().map_err(MetalError::from)?;
 
         let subbuffers = buffers
@@ -247,6 +250,13 @@ impl MetalDevice {
 
         let new_buffer = Arc::new(new_buffer);
         subbuffers.push(new_buffer.clone());
+        if tl_mem_log_enabled() {
+            let (total_bytes, total_buffers) = buffer_map_stats(&buffers);
+            eprintln!(
+                "[TL_METAL] alloc_buffer_data size={} total_buffers={} total_bytes={}",
+                size, total_buffers, total_bytes
+            );
+        }
         Ok(new_buffer)
     }
 
@@ -278,8 +288,19 @@ impl MetalDevice {
         option: MTLResourceOptions,
         _name: &str,
     ) -> Result<Arc<Buffer>> {
+        if !tl_metal_pool_enabled() {
+            let new_buffer = self.device.new_buffer(size as NSUInteger, option);
+            return Ok(Arc::new(new_buffer));
+        }
         let mut buffers = self.buffers.write().map_err(MetalError::from)?;
         if let Some(b) = find_available_buffer(size, option, &buffers) {
+            if tl_mem_log_enabled() {
+                let (total_bytes, total_buffers) = buffer_map_stats(&buffers);
+                eprintln!(
+                    "[TL_METAL] reuse_buffer size={} total_buffers={} total_bytes={}",
+                    size, total_buffers, total_bytes
+                );
+            }
             // Cloning also ensures we increment the strong count
             return Ok(b.clone());
         }
@@ -290,8 +311,23 @@ impl MetalDevice {
         let new_buffer = self.device.new_buffer(size as NSUInteger, option);
         let new_buffer = Arc::new(new_buffer);
         subbuffers.push(new_buffer.clone());
+        if tl_mem_log_enabled() {
+            let (total_bytes, total_buffers) = buffer_map_stats(&buffers);
+            eprintln!(
+                "[TL_METAL] alloc_buffer size={} total_buffers={} total_bytes={}",
+                size, total_buffers, total_bytes
+            );
+        }
 
         Ok(new_buffer)
+    }
+
+    pub fn buffer_pool_stats(&self) -> (usize, usize) {
+        let buffers = match self.buffers.read() {
+            Ok(b) => b,
+            Err(_) => return (0, 0),
+        };
+        buffer_map_stats(&buffers)
     }
 
     /// Create a metal GPU capture trace on [`path`].
@@ -317,6 +353,35 @@ impl MetalDevice {
 
 fn buf_size(size: NSUInteger) -> NSUInteger {
     size.saturating_sub(1).next_power_of_two() as NSUInteger
+}
+
+fn tl_mem_log_enabled() -> bool {
+    static MEM_LOG_ENABLED: OnceLock<bool> = OnceLock::new();
+    *MEM_LOG_ENABLED.get_or_init(|| {
+        std::env::var("TL_MEM_LOG")
+            .map(|v| v != "0" && v.to_lowercase() != "false")
+            .unwrap_or(false)
+    })
+}
+
+fn tl_metal_pool_enabled() -> bool {
+    static POOL_ENABLED: OnceLock<bool> = OnceLock::new();
+    *POOL_ENABLED.get_or_init(|| {
+        std::env::var("TL_METAL_POOL")
+            .map(|v| v != "0" && v.to_lowercase() != "false")
+            .unwrap_or(true)
+    })
+}
+
+fn buffer_map_stats(buffers: &BufferMap) -> (usize, usize) {
+    let mut total_bytes = 0usize;
+    let mut total_buffers = 0usize;
+    for ((size, _opt), list) in buffers.iter() {
+        let count = list.len();
+        total_buffers += count;
+        total_bytes = total_bytes.saturating_add((*size as usize).saturating_mul(count));
+    }
+    (total_bytes, total_buffers)
 }
 
 fn find_available_buffer(

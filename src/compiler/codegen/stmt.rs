@@ -615,6 +615,17 @@ impl<'ctx> CodeGenerator<'ctx> {
         let prev_span = self.current_span.clone();
         self.current_span = Some(stmt.span.clone());
         let result = self.compile_stmt_inner(stmt);
+        if result.is_ok() {
+            let terminated = self
+                .builder
+                .get_insert_block()
+                .and_then(|b| b.get_terminator())
+                .is_some();
+            if !terminated {
+                let tag = stmt_trace_tag(stmt);
+                let _ = self.emit_trace_mem(tag);
+            }
+        }
         self.current_span = prev_span;
         result
     }
@@ -3354,5 +3365,23 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         self.builder.position_at_end(after_switch);
         Ok(new_ptr.into())
+    }
+}
+
+fn stmt_trace_tag(stmt: &Stmt) -> &'static str {
+    match &stmt.inner {
+        StmtKind::Use { .. } => "Use",
+        StmtKind::Let { .. } => "Let",
+        StmtKind::Assign { .. } => "Assign",
+        StmtKind::FieldAssign { .. } => "FieldAssign",
+        StmtKind::If { .. } => "If",
+        StmtKind::For { .. } => "For",
+        StmtKind::While { .. } => "While",
+        StmtKind::Loop { .. } => "Loop",
+        StmtKind::Return(_) => "Return",
+        StmtKind::Break => "Break",
+        StmtKind::Continue => "Continue",
+        StmtKind::Expr(_) => "Expr",
+        StmtKind::TensorDecl { .. } => "TensorDecl",
     }
 }

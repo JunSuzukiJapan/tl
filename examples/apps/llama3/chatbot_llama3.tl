@@ -199,6 +199,7 @@ fn main() {
     println("Loaded embedding");
     
     while true {
+        println("Mem: {} MB (pool={}, in_use={})", System::memory_mb(), System::pool_count(), System::refcount_count());
         let input_str = read_line("User> ");
         if (input_str == "exit" || input_str == "quit") {
             return;

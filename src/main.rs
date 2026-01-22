@@ -41,6 +41,10 @@ struct Cli {
     /// Arguments to pass to the TL program (after --)
     #[arg(last = true)]
     args: Vec<String>,
+
+    /// Enable runtime memory allocation logging
+    #[arg(long)]
+    mem_log: bool,
 }
 
 fn main() -> Result<()> {
@@ -49,6 +53,9 @@ fn main() -> Result<()> {
 
     // Set device environment variable
     std::env::set_var("TL_DEVICE", &cli.device);
+    if cli.mem_log {
+        std::env::set_var("TL_MEM_LOG", "1");
+    }
 
     let mut source_files = Vec::new();
     let mut object_files = Vec::new();

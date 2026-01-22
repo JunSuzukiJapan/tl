@@ -3,6 +3,19 @@ use std::ffi::c_void;
 
 use super::OpaqueTensor;
 
+#[derive(Clone)]
+pub struct AllocationMeta {
+    pub ctx: String,
+    pub bytes: usize,
+    pub dtype: String,
+    pub elems: usize,
+    pub shape: String,
+    pub device: String,
+    pub loc_file: String,
+    pub loc_line: u32,
+    pub pooled: bool,
+}
+
 /// Tensor pool for memory reuse
 /// Key: (num_elements, dtype_id, device_id)
 /// This avoids frequent malloc/free by reusing freed tensors of the same size
@@ -137,6 +150,8 @@ pub struct MemoryManager {
     // Tensor reference counts: ptr -> refcount
     // When refcount reaches 0, tensor is freed
     tensor_refcounts: HashMap<*mut c_void, usize>,
+    // Allocation metadata for logging (ptr -> meta)
+    tensor_meta: HashMap<*mut c_void, AllocationMeta>,
 }
 
 // SAFETY: MemoryManager contains raw pointers but they are only accessed
@@ -150,6 +165,7 @@ impl MemoryManager {
             scopes: vec![Vec::new()], // Start with Global Scope
             arena_offsets: Vec::new(),
             tensor_refcounts: HashMap::new(),
+            tensor_meta: HashMap::new(),
         }
     }
 
@@ -160,6 +176,12 @@ impl MemoryManager {
         // Save current arena offset
         let offset = super::arena::tl_arena_get_offset();
         self.arena_offsets.push(offset);
+        if crate::mem_log_enabled() {
+            eprintln!(
+                "[TL_MEM] enter_scope depth={}",
+                self.scopes.len()
+            );
+        }
     }
 
     /// Exit current scope and free ALL allocations in that scope
@@ -171,6 +193,25 @@ impl MemoryManager {
         }
 
         if let Some(allocations) = self.scopes.pop() {
+            let mut total_allocs = 0usize;
+            let mut tensor_allocs = 0usize;
+            let mut struct_allocs = 0usize;
+            for record in allocations.iter() {
+                total_allocs += 1;
+                match record.alloc_type {
+                    AllocationType::Struct => struct_allocs += 1,
+                    AllocationType::Tensor => tensor_allocs += 1,
+                }
+            }
+            if crate::mem_log_enabled() {
+                eprintln!(
+                    "[TL_MEM] exit_scope begin depth={} allocs_total={} allocs_tensor={} allocs_struct={}",
+                    self.scopes.len() + 1,
+                    total_allocs,
+                    tensor_allocs,
+                    struct_allocs
+                );
+            }
             // Free all allocations in reverse order (LIFO)
             for record in allocations.into_iter().rev() {
                 unsafe {
@@ -190,6 +231,19 @@ impl MemoryManager {
 
         if let Some(offset) = self.arena_offsets.pop() {
             super::arena::tl_arena_set_offset(offset);
+        }
+        if crate::mem_log_enabled() {
+            let pool_count = if let Ok(pool) = TENSOR_POOL.lock() {
+                pool.total_count()
+            } else {
+                0
+            };
+            eprintln!(
+                "[TL_MEM] exit_scope end depth={} refcount_count={} pool_count={}",
+                self.scopes.len(),
+                self.tensor_refcounts.len(),
+                pool_count
+            );
         }
     }
 
@@ -211,6 +265,13 @@ impl MemoryManager {
                 alloc_type: AllocationType::Struct,
             });
         }
+        if crate::mem_log_enabled() {
+            eprintln!(
+                "[TL_MEM] register_struct ptr={:p} depth={}",
+                ptr,
+                self.scopes.len()
+            );
+        }
     }
 
     /// Register a tensor allocation in the current scope
@@ -227,14 +288,37 @@ impl MemoryManager {
                     ptr: ptr as *mut c_void,
                     alloc_type: AllocationType::Tensor,
                 });
+                if crate::mem_log_enabled() {
+                    eprintln!(
+                        "[TL_MEM] register_tensor ptr={:p} refcount={} depth={}",
+                        ptr,
+                        *count,
+                        self.scopes.len()
+                    );
+                }
             } else {
                 // Tensor already registered and has refcount.
                 // Acquire increases the refcount to account for the new reference.
                 *count += 1;
+                if crate::mem_log_enabled() {
+                    eprintln!(
+                        "[TL_MEM] register_tensor_acquire ptr={:p} refcount={} depth={}",
+                        ptr,
+                        *count,
+                        self.scopes.len()
+                    );
+                }
             }
         } else {
             // No active scope, this should ideally not happen if scopes are managed correctly
         }
+    }
+
+    pub fn register_tensor_meta(&mut self, ptr: *mut c_void, meta: AllocationMeta) {
+        if ptr.is_null() {
+            return;
+        }
+        self.tensor_meta.insert(ptr, meta);
     }
 
     /// Increase reference count
@@ -244,6 +328,13 @@ impl MemoryManager {
         }
         let count = self.tensor_refcounts.entry(ptr).or_insert(0);
         *count += 1;
+        if crate::mem_log_enabled() {
+            eprintln!(
+                "[TL_MEM] tensor_acquire ptr={:p} refcount={}",
+                ptr,
+                *count
+            );
+        }
     }
 
     /// Decrease reference count and free if 0
@@ -253,10 +344,49 @@ impl MemoryManager {
         }
         if let Some(count) = self.tensor_refcounts.get_mut(&ptr) {
             *count -= 1;
+            if crate::mem_log_enabled() {
+                eprintln!(
+                    "[TL_MEM] tensor_release ptr={:p} refcount={}",
+                    ptr,
+                    *count
+                );
+            }
             if *count == 0 {
                 // println!("DEBUG: Free tensor {:p}", ptr);
                 self.tensor_refcounts.remove(&ptr);
-                super::free_tensor_resources(ptr as *mut OpaqueTensor);
+                let meta = self.tensor_meta.remove(&ptr);
+                let outcome = super::free_tensor_resources(ptr as *mut OpaqueTensor);
+                if crate::mem_log_enabled() {
+                    let outcome_str = match outcome {
+                        crate::FreeOutcome::ArenaDrop => "arena_drop",
+                        crate::FreeOutcome::Pooled => "pooled",
+                        crate::FreeOutcome::Freed => "freed",
+                    };
+                    match meta {
+                        Some(m) => {
+                            eprintln!(
+                                "[TL_MEM] free_tensor outcome={} bytes={} dtype={} elems={} shape=[{}] device={} alloc_ctx={} alloc_loc={}:{} pooled={}",
+                                outcome_str,
+                                m.bytes,
+                                m.dtype,
+                                m.elems,
+                                m.shape,
+                                m.device,
+                                m.ctx,
+                                m.loc_file,
+                                m.loc_line,
+                                m.pooled
+                            );
+                        }
+                        None => {
+                            eprintln!(
+                                "[TL_MEM] free_tensor outcome={} ptr={:p}",
+                                outcome_str,
+                                ptr
+                            );
+                        }
+                    }
+                }
             }
         }
     }
@@ -274,6 +404,15 @@ impl MemoryManager {
                 // Unregister means "Remove from Scope Ownership".
                 // The RefCount (1) is transferred to the caller (Variable, Struct, etc).
                 // If we release, we drop RefCount to 0 and Free!
+                if crate::mem_log_enabled() {
+                    let refcount = self.tensor_refcounts.get(&ptr).cloned().unwrap_or(0);
+                    eprintln!(
+                        "[TL_MEM] unregister ptr={:p} refcount={} depth={}",
+                        ptr,
+                        refcount,
+                        self.scopes.len()
+                    );
+                }
                 return;
             }
         }
@@ -338,6 +477,14 @@ pub fn register_tensor_global(ptr: *mut OpaqueTensor) {
 
     // println!("DEBUG: Register tensor {:p}", ptr);
     mgr.register_tensor(ptr);
+}
+
+pub fn register_tensor_meta_global(ptr: *mut OpaqueTensor, meta: AllocationMeta) {
+    if ptr.is_null() {
+        return;
+    }
+    let mut mgr = MEMORY_MANAGER.lock().unwrap();
+    mgr.register_tensor_meta(ptr as *mut c_void, meta);
 }
 
 /// Register a tensor allocation (C API)

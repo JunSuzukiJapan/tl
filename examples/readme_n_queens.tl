@@ -15,12 +15,22 @@ fn main() {
     } ];
 
     while found_count < solutions_to_find {
-        println("Memory: {} MB", System::memory_mb());
+        // Flush Metal command buffers to check for driver-side memory accumulation.
+        System::metal_sync();
+        println(
+            "Memory: {} MB (metal_pool_mb={}, metal_pool_count={}, metal_pool_bytes={})",
+            System::memory_mb(),
+            System::metal_pool_mb(),
+            System::metal_pool_count(),
+            System::metal_pool_bytes()
+        );
         println("=== Attempting solution #{}", found_count + 1);
         
         let lr = 0.5;
         let epochs = 1500;
         let mut board = Tensor::randn([N, N], true);
+        let enable_epoch_item = false;
+        let enable_queens_check = false;
 
         for i in 0..epochs {
              let probs = board.softmax(1);
@@ -42,20 +52,26 @@ fn main() {
              let constraint_loss = col_loss + anti_diag_loss + main_diag_loss;
              let total_loss = constraint_loss + reg_loss;
 
-             if i % 100 == 0 {
-                 println("Epoch {} - Loss: {}", i, total_loss.item());
+            if i % 100 == 0 {
+                 if enable_epoch_item {
+                     println("Epoch {} - Loss: {}", i, total_loss.item());
+                 } else {
+                     println("Epoch {}", i);
+                 }
 
                  // Early exit: Stop when we have N queens (prob > 0.5)
                  // Checking this is expensive (Tensor Comprehension + synchronization), so we only do it periodically
-                 let current_queens = [r, c | r <- 0..N, c <- 0..N { 
-                     if probs[r, c] > 0.5 { 1.0 } else { 0.0 } 
-                 }].sum().item();
+                 if enable_queens_check {
+                     let current_queens = [r, c | r <- 0..N, c <- 0..N {
+                         if probs[r, c] > 0.5 { 1.0 } else { 0.0 }
+                     }].sum().item();
 
-                 if current_queens == 8.0 {
-                     println("Converged at epoch {} (found {} queens)", i, current_queens);
-                     break;
+                     if current_queens == 8.0 {
+                         println("Converged at epoch {} (found {} queens)", i, current_queens);
+                         break;
+                     }
                  }
-             }
+            }
 
              // Original simple loss check (optional, kept for reference but relying on queens count now)
              // if constraint_loss.item() < 1e-3 && reg_loss.item() < 0.1 { ... }

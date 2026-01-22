@@ -22,7 +22,7 @@ use std::cell::RefCell;
 use std::ffi::{c_float, c_void};
 use std::io::Write;
 use std::slice;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 // Opaque struct to represent a Tensor in C-ABI (LLVM IR)
 // In reality, this will be a raw pointer to a Heap-allocated Tensor.
@@ -32,6 +32,85 @@ use std::sync::{Arc, Mutex};
 thread_local! {
     static LATEST_GRADS: RefCell<Option<candle_core::backprop::GradStore>> = const { RefCell::new(None) };
     static LAST_ERROR: RefCell<Option<crate::error::LastError>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn mem_log_enabled() -> bool {
+    static MEM_LOG_ENABLED: OnceLock<bool> = OnceLock::new();
+    *MEM_LOG_ENABLED.get_or_init(|| {
+        std::env::var("TL_MEM_LOG")
+            .map(|v| v != "0" && v.to_lowercase() != "false")
+            .unwrap_or(false)
+    })
+}
+
+fn mem_trace_enabled() -> bool {
+    static MEM_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
+    *MEM_TRACE_ENABLED.get_or_init(|| {
+        std::env::var("TL_MEM_TRACE")
+            .map(|v| v != "0" && v.to_lowercase() != "false")
+            .unwrap_or(false)
+    })
+}
+
+#[derive(Copy, Clone)]
+pub(crate) enum FreeOutcome {
+    ArenaDrop,
+    Pooled,
+    Freed,
+}
+
+fn dtype_size_bytes(dtype: candle_core::DType) -> usize {
+    match dtype {
+        candle_core::DType::F32 => 4,
+        candle_core::DType::F64 => 8,
+        candle_core::DType::I64 => 8,
+        candle_core::DType::U32 => 4,
+        candle_core::DType::U8 => 1,
+        candle_core::DType::F16 => 2,
+        candle_core::DType::BF16 => 2,
+    }
+}
+
+#[track_caller]
+fn record_tensor_alloc(ctx: &str, ptr: *mut OpaqueTensor, t: &Tensor, pooled: bool) {
+    if !mem_log_enabled() {
+        return;
+    }
+    let elem_count = t.elem_count();
+    let dtype = t.dtype();
+    let bytes = elem_count.saturating_mul(dtype_size_bytes(dtype));
+    let shape = t.dims().iter().map(|d| d.to_string()).collect::<Vec<_>>().join("x");
+    let device = match t.device() {
+        candle_core::Device::Cpu => "cpu",
+        candle_core::Device::Cuda(_) => "cuda",
+        candle_core::Device::Metal(_) => "metal",
+    };
+    let loc = std::panic::Location::caller();
+    let meta = memory_manager::AllocationMeta {
+        ctx: ctx.to_string(),
+        bytes,
+        dtype: format!("{:?}", dtype),
+        elems: elem_count,
+        shape: shape.clone(),
+        device: device.to_string(),
+        loc_file: loc.file().to_string(),
+        loc_line: loc.line(),
+        pooled,
+    };
+    memory_manager::register_tensor_meta_global(ptr, meta);
+    if !pooled {
+        eprintln!(
+            "[TL_MEM] alloc_non_pool ctx={} bytes={} dtype={:?} elems={} shape=[{}] device={} loc={}:{}",
+            ctx,
+            bytes,
+            dtype,
+            elem_count,
+            shape,
+            device,
+            loc.file(),
+            loc.line()
+        );
+    }
 }
 
 // Global VarMap for tracking all trainable parameters
@@ -198,6 +277,7 @@ pub(crate) fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
             (*ptr).2 = None; // Clear grad reference
         }
         memory_manager::register_tensor_global(ptr);
+        record_tensor_alloc("make_tensor", ptr, unsafe { &(*ptr).0 }, true);
         return ptr;
     }
 
@@ -205,6 +285,7 @@ pub(crate) fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
     let boxed = Box::new(OpaqueTensor(t, None, None));
     let ptr = Box::into_raw(boxed);
     memory_manager::register_tensor_global(ptr);
+    record_tensor_alloc("make_tensor", ptr, unsafe { &(*ptr).0 }, false);
     ptr
 }
 
@@ -241,6 +322,7 @@ pub(crate) fn make_var(v: candle_core::Var) -> *mut OpaqueTensor {
 
     // NOTE: Caller is responsible for lifetime management.
     memory_manager::register_tensor_global(ptr);
+    record_tensor_alloc("make_var", ptr, unsafe { &(*ptr).0 }, false);
     ptr
 }
 
@@ -626,6 +708,7 @@ fn tl_varbuilder_get_common(
     };
 
     memory_manager::register_tensor_global(ptr);
+    record_tensor_alloc("varbuilder_get", ptr, unsafe { &(*ptr).0 }, false);
     Ok(ptr)
 }
 
@@ -797,6 +880,83 @@ pub extern "C" fn tl_get_memory_mb() -> i64 {
     }
 
     -1
+}
+
+#[no_mangle]
+pub extern "C" fn tl_get_metal_pool_bytes() -> i64 {
+    match get_device() {
+        candle_core::Device::Metal(metal) => {
+            let (bytes, _count) = metal.buffer_pool_stats();
+            bytes as i64
+        }
+        _ => 0,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_get_metal_pool_mb() -> i64 {
+    let bytes = tl_get_metal_pool_bytes();
+    bytes / (1024 * 1024)
+}
+
+#[no_mangle]
+pub extern "C" fn tl_get_metal_pool_count() -> i64 {
+    match get_device() {
+        candle_core::Device::Metal(metal) => {
+            let (_bytes, count) = metal.buffer_pool_stats();
+            count as i64
+        }
+        _ => 0,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_metal_sync() {
+    if let candle_core::Device::Metal(metal) = get_device() {
+        let _ = metal.wait_until_completed();
+        let _ = metal.drop_unused_buffers();
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_trace_mem(
+    file: *const std::os::raw::c_char,
+    line: u32,
+    col: u32,
+    tag: *const std::os::raw::c_char,
+) {
+    if !mem_trace_enabled() {
+        return;
+    }
+    let file_str = if !file.is_null() {
+        unsafe { std::ffi::CStr::from_ptr(file).to_string_lossy().into_owned() }
+    } else {
+        "unknown".to_string()
+    };
+    let tag_str = if !tag.is_null() {
+        unsafe { std::ffi::CStr::from_ptr(tag).to_string_lossy().into_owned() }
+    } else {
+        "stmt".to_string()
+    };
+    let rss_mb = tl_get_memory_mb();
+    let metal_bytes = tl_get_metal_pool_bytes();
+    let metal_count = tl_get_metal_pool_count();
+    let pool_count = tl_get_pool_count();
+    let refcount_count = tl_get_refcount_count();
+    let scope_depth = tl_get_scope_depth();
+    eprintln!(
+        "[TL_MEM_TRACE] {}:{}:{} tag={} rss_mb={} metal_pool_bytes={} metal_pool_count={} pool_count={} refcount_count={} scope_depth={}",
+        file_str,
+        line,
+        col,
+        tag_str,
+        rss_mb,
+        metal_bytes,
+        metal_count,
+        pool_count,
+        refcount_count,
+        scope_depth
+    );
 }
 
 #[no_mangle]
@@ -1033,39 +1193,41 @@ pub extern "C" fn tl_tensor_print_3(t: *const OpaqueTensor) {
 
 /// Internal function to free tensor resources without unregistering
 /// Used by MemoryManager to avoid deadlock
-pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) {
-    if !t.is_null() {
-        unsafe {
-            // Skip arena-allocated tensors (they are NOT poolable)
-            if arena::tl_arena_contains(t as *mut std::ffi::c_void) {
-                // Arena-allocated tensors MUST be dropped to release Candle resources (GPU memory, etc)
-                // The memory for OpaqueTensor itself is reclaimed by arena reset, but the inner content needs Drop.
-                // println!("DEBUG: Drop arena tensor {:p}", t);
-                std::ptr::drop_in_place(t);
-                return;
-            }
-
-            // Try to release to pool (heap-allocated tensors only)
-            let tensor = &(*t).0;
-            let num_elements = tensor.elem_count();
-            let dtype_id = dtype_to_id(tensor.dtype());
-            let device_id = device_to_id(tensor.device());
-
-            if let Ok(mut pool) = memory_manager::TENSOR_POOL.lock() {
-                if pool.release(t, num_elements, dtype_id, device_id) {
-                    // Successfully added to pool, do NOT free
-                    // println!(
-                    //     "DEBUG: Pooled tensor {:p} (elem={}, dtype={}, dev={})",
-                    //     t, num_elements, dtype_id, device_id
-                    // );
-                    return;
-                }
-            }
-
-            // Pool is full or lock failed, actually free
-            // println!("DEBUG: Actually free tensor {:p}", t);
-            let _ = Box::from_raw(t);
+pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) -> FreeOutcome {
+    if t.is_null() {
+        return FreeOutcome::Freed;
+    }
+    unsafe {
+        // Skip arena-allocated tensors (they are NOT poolable)
+        if arena::tl_arena_contains(t as *mut std::ffi::c_void) {
+            // Arena-allocated tensors MUST be dropped to release Candle resources (GPU memory, etc)
+            // The memory for OpaqueTensor itself is reclaimed by arena reset, but the inner content needs Drop.
+            // println!("DEBUG: Drop arena tensor {:p}", t);
+            std::ptr::drop_in_place(t);
+            return FreeOutcome::ArenaDrop;
         }
+
+        // Try to release to pool (heap-allocated tensors only)
+        let tensor = &(*t).0;
+        let num_elements = tensor.elem_count();
+        let dtype_id = dtype_to_id(tensor.dtype());
+        let device_id = device_to_id(tensor.device());
+
+        if let Ok(mut pool) = memory_manager::TENSOR_POOL.lock() {
+            if pool.release(t, num_elements, dtype_id, device_id) {
+                // Successfully added to pool, do NOT free
+                // println!(
+                //     "DEBUG: Pooled tensor {:p} (elem={}, dtype={}, dev={})",
+                //     t, num_elements, dtype_id, device_id
+                // );
+                return FreeOutcome::Pooled;
+            }
+        }
+
+        // Pool is full or lock failed, actually free
+        // println!("DEBUG: Actually free tensor {:p}", t);
+        let _ = Box::from_raw(t);
+        FreeOutcome::Freed
     }
 }
 
@@ -1100,11 +1262,9 @@ pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
             let cloned_var = var_ref.as_ref().map(Arc::clone);
             let boxed = Box::new(OpaqueTensor(cloned, cloned_var, None));
 
-            // NOTE: Do NOT use arena allocator here.
-            // Arena allocations are reset on scope exit, causing memory reuse.
-            // Cloned tensors must persist beyond the clone function's scope.
             let ptr = Box::into_raw(boxed);
             memory_manager::register_tensor_global(ptr);
+            record_tensor_alloc("tensor_clone", ptr, unsafe { &(*ptr).0 }, false);
 
             Ok(ptr)
         }));

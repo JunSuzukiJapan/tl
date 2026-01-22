@@ -2631,6 +2631,33 @@ impl SemanticAnalyzer {
                         );
                     }
                     return Ok(Type::I64);
+                } else if name == "tl_get_metal_pool_bytes"
+                    || name == "tl_get_metal_pool_mb"
+                    || name == "tl_get_metal_pool_count"
+                {
+                    if !args.is_empty() {
+                        return self.err(
+                            SemanticError::ArgumentCountMismatch {
+                                name: name.clone(),
+                                expected: 0,
+                                found: args.len(),
+                            },
+                            Some(expr.span.clone()),
+                        );
+                    }
+                    return Ok(Type::I64);
+                } else if name == "tl_metal_sync" {
+                    if !args.is_empty() {
+                        return self.err(
+                            SemanticError::ArgumentCountMismatch {
+                                name: name.clone(),
+                                expected: 0,
+                                found: args.len(),
+                            },
+                            Some(expr.span.clone()),
+                        );
+                    }
+                    return Ok(Type::Void);
                 } else if name == "tl_file_read_binary" {
                     if args.len() != 1 {
                         return self.err(
@@ -3791,6 +3818,10 @@ impl SemanticAnalyzer {
                     ("System", "time") => Ok(Type::F32),
                     ("System", "sleep") => Ok(Type::Void),
                     ("System", "memory_mb") => Ok(Type::I64),
+                    ("System", "metal_pool_bytes") => Ok(Type::I64),
+                    ("System", "metal_pool_mb") => Ok(Type::I64),
+                    ("System", "metal_pool_count") => Ok(Type::I64),
+                    ("System", "metal_sync") => Ok(Type::Void),
                     ("System", "pool_count") => Ok(Type::I64),
                     ("System", "refcount_count") => Ok(Type::I64),
                     ("System", "scope_depth") => Ok(Type::I64),

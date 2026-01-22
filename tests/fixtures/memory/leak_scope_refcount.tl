@@ -7,9 +7,9 @@ fn main() {
     let mut ok = 1;
 
     let mut iter = 0;
-    while iter < 20 {
+    while iter < 50 {
         // Tensor comprehension (compile_tensor_equation path)
-        let N = 4;
+        let N = 32;
         let K = 2 * N - 1;
         let _mask = [ k, r, c | k <- 0..K, r <- 0..N, c <- 0..N {
             if r + c == k { 1.0 } else { 0.0 }
@@ -17,7 +17,7 @@ fn main() {
 
         // Loop body with break/continue to exercise cleanup
         let mut i = 0;
-        while i < 3 {
+        while i < 6 {
             if i == 1 {
                 i = i + 1;
                 continue;
@@ -26,13 +26,16 @@ fn main() {
                 break;
             }
 
-            let board = Tensor::randn([8, 8], true);
+            let board = Tensor::randn([128, 128], true);
             let probs = board.softmax(1);
             let col_sums = probs.sum(0);
             let col_loss = (col_sums - 1.0).pow(2).sum();
-            col_loss.backward();
+            let reg_loss = (probs * (1.0 - probs)).sum() * 0.05;
+            let total = col_loss + reg_loss;
+            total.backward();
             let g = board.grad();
             let _gsum = g.sum();
+            let _v = (board * 0.5 + g * 0.1).sum();
 
             i = i + 1;
         }

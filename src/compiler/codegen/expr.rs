@@ -3453,6 +3453,76 @@ impl<'ctx> CodeGenerator<'ctx> {
             };
             return Ok((res, Type::I64));
         }
+        if type_name == "System" && method_name == "metal_pool_bytes" {
+            if !args.is_empty() {
+                return Err("System::metal_pool_bytes takes no arguments".into());
+            }
+            let fn_val = self
+                .module
+                .get_function("tl_get_metal_pool_bytes")
+                .ok_or("tl_get_metal_pool_bytes not found")?;
+            let call = self
+                .builder
+                .build_call(fn_val, &[], "metal_pool_bytes")
+                .map_err(|e| e.to_string())?;
+            let res = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("Invalid return from System::metal_pool_bytes".into()),
+            };
+            return Ok((res, Type::I64));
+        }
+        if type_name == "System" && method_name == "metal_pool_mb" {
+            if !args.is_empty() {
+                return Err("System::metal_pool_mb takes no arguments".into());
+            }
+            let fn_val = self
+                .module
+                .get_function("tl_get_metal_pool_mb")
+                .ok_or("tl_get_metal_pool_mb not found")?;
+            let call = self
+                .builder
+                .build_call(fn_val, &[], "metal_pool_mb")
+                .map_err(|e| e.to_string())?;
+            let res = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("Invalid return from System::metal_pool_mb".into()),
+            };
+            return Ok((res, Type::I64));
+        }
+        if type_name == "System" && method_name == "metal_pool_count" {
+            if !args.is_empty() {
+                return Err("System::metal_pool_count takes no arguments".into());
+            }
+            let fn_val = self
+                .module
+                .get_function("tl_get_metal_pool_count")
+                .ok_or("tl_get_metal_pool_count not found")?;
+            let call = self
+                .builder
+                .build_call(fn_val, &[], "metal_pool_count")
+                .map_err(|e| e.to_string())?;
+            let res = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("Invalid return from System::metal_pool_count".into()),
+            };
+            return Ok((res, Type::I64));
+        }
+        if type_name == "System" && method_name == "metal_sync" {
+            if !args.is_empty() {
+                return Err("System::metal_sync takes no arguments".into());
+            }
+            let fn_val = self
+                .module
+                .get_function("tl_metal_sync")
+                .ok_or("tl_metal_sync not found")?;
+            self.builder
+                .build_call(fn_val, &[], "metal_sync")
+                .map_err(|e| e.to_string())?;
+            return Ok((
+                self.context.i64_type().const_int(0, false).into(),
+                Type::Void,
+            ));
+        }
         if type_name == "System" && method_name == "pool_count" {
             if !args.is_empty() {
                 return Err("System::pool_count takes no arguments".into());
