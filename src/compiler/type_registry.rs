@@ -474,13 +474,13 @@ impl TypeRegistry {
                 is_varargs: false,
                 min_args: 2,
             },
-            // conv2d(weight, bias?, stride?, padding?, dilation?, groups?) -> Tensor
+            // conv2d(weight, padding, stride) -> Tensor
             MethodSignature {
                 name: "conv2d".to_string(),
-                params: vec![ParamType::AnyTensor, ParamType::AnyTensor, ParamType::AnyInt],
+                params: vec![ParamType::AnyTensor, ParamType::AnyInt, ParamType::AnyInt],
                 return_type: ReturnType::SameAsReceiver,
-                is_varargs: true,
-                min_args: 2,
+                is_varargs: false,
+                min_args: 3,
             },
             // scale(factor) -> Tensor
             MethodSignature {
@@ -903,6 +903,13 @@ impl TypeRegistry {
                 name: "print".to_string(),
                 params: vec![],
                 return_type: ReturnType::Void,
+                is_varargs: false,
+                min_args: 0,
+            },
+            MethodSignature {
+                name: "to_i64".to_string(),
+                params: vec![],
+                return_type: ReturnType::Exact(Type::I64),
                 is_varargs: false,
                 min_args: 0,
             },

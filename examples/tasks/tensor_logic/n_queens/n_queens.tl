@@ -1,17 +1,15 @@
 fn main() {
     let argc = Args::count();
     
-    let N = if argc > 0 {
-        Args::get(0.to_i64())
-    } else {
-        8
-    };
+    let mut N = 8;
+    if argc > 0 {
+        N = Args::get(0).to_i64();
+    }
     
-    let num_solutions = if argc > 1 {
-        Args::get(1.to_i64())
-    } else {
-        10
-    };
+    let mut num_solutions = 10;
+    if argc > 1 {
+        num_solutions = Args::get(1).to_i64();
+    }
     
     println("Initializing N-Queens Solver. N={}, Solutions to find={}", N, num_solutions);
 

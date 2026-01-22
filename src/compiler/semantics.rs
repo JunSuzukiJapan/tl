@@ -3620,6 +3620,8 @@ impl SemanticAnalyzer {
                     }
                     (Type::I64, Type::F32) => Ok(Type::F32),
                     (Type::F32, Type::I64) => Ok(Type::I64),
+                    (Type::I64, Type::Usize) => Ok(Type::Usize),
+                    (Type::Usize, Type::I64) => Ok(Type::I64),
                     (Type::I64, Type::I32) => Ok(Type::I32),
                     (Type::I32, Type::I64) => Ok(Type::I64),
                     (Type::Bool, Type::I64) => Ok(Type::I64),
