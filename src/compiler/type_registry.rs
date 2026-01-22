@@ -563,7 +563,7 @@ impl TypeRegistry {
             // matmul_quantized(other) -> Tensor
             MethodSignature {
                 name: "matmul_quantized".to_string(),
-                params: vec![ParamType::AnyTensor],
+                params: vec![ParamType::AnyTensorOrNumeric],
                 return_type: ReturnType::Exact(Type::Tensor(Box::new(Type::F32), 0)),
                 is_varargs: false,
                 min_args: 1,
@@ -579,7 +579,7 @@ impl TypeRegistry {
             // sample(num_samples, temperature) -> Tensor<I64>
             MethodSignature {
                 name: "sample".to_string(),
-                params: vec![ParamType::AnyInt, ParamType::AnyNumeric],
+                params: vec![ParamType::AnyNumeric, ParamType::AnyNumeric],
                 return_type: ReturnType::Exact(Type::Tensor(Box::new(Type::I64), 1)),
                 is_varargs: false,
                 min_args: 2,
@@ -592,6 +592,14 @@ impl TypeRegistry {
                 is_varargs: false,
                 min_args: 1,
             },
+            // repeat_interleave(repeats, dim) -> Tensor
+            MethodSignature {
+                name: "repeat_interleave".to_string(),
+                params: vec![ParamType::AnyInt, ParamType::AnyInt],
+                return_type: ReturnType::SameAsReceiver,
+                is_varargs: false,
+                min_args: 2,
+            },
             // embedding(indices) -> Tensor
             MethodSignature {
                 name: "embedding".to_string(),
@@ -600,10 +608,38 @@ impl TypeRegistry {
                 is_varargs: false,
                 min_args: 1,
             },
-            // mul(scalar/tensor) -> Tensor
+            // Element-wise binary ops (accepts scalar or tensor)
+            MethodSignature {
+                name: "add".to_string(),
+                params: vec![ParamType::AnyTensorOrNumeric],
+                return_type: ReturnType::SameAsReceiver,
+                is_varargs: false,
+                min_args: 1,
+            },
+            MethodSignature {
+                name: "sub".to_string(),
+                params: vec![ParamType::AnyTensorOrNumeric],
+                return_type: ReturnType::SameAsReceiver,
+                is_varargs: false,
+                min_args: 1,
+            },
             MethodSignature {
                 name: "mul".to_string(),
-                params: vec![ParamType::AnyNumeric],
+                params: vec![ParamType::AnyTensorOrNumeric],
+                return_type: ReturnType::SameAsReceiver,
+                is_varargs: false,
+                min_args: 1,
+            },
+            MethodSignature {
+                name: "div".to_string(),
+                params: vec![ParamType::AnyTensorOrNumeric],
+                return_type: ReturnType::SameAsReceiver,
+                is_varargs: false,
+                min_args: 1,
+            },
+            MethodSignature {
+                name: "mod".to_string(),
+                params: vec![ParamType::AnyTensorOrNumeric],
                 return_type: ReturnType::SameAsReceiver,
                 is_varargs: false,
                 min_args: 1,
@@ -1062,6 +1098,36 @@ impl TypeRegistry {
         // KVCache
         let mut kvcache_methods = HashMap::new();
         kvcache_methods.insert(
+            "get_k".to_string(),
+            MethodSignature {
+                name: "get_k".to_string(),
+                params: vec![ParamType::AnyInt],
+                return_type: ReturnType::Exact(Type::Tensor(Box::new(Type::F32), 0)),
+                is_varargs: false,
+                min_args: 1,
+            },
+        );
+        kvcache_methods.insert(
+            "get_v".to_string(),
+            MethodSignature {
+                name: "get_v".to_string(),
+                params: vec![ParamType::AnyInt],
+                return_type: ReturnType::Exact(Type::Tensor(Box::new(Type::F32), 0)),
+                is_varargs: false,
+                min_args: 1,
+            },
+        );
+        kvcache_methods.insert(
+            "update".to_string(),
+            MethodSignature {
+                name: "update".to_string(),
+                params: vec![ParamType::AnyInt, ParamType::AnyTensor, ParamType::AnyTensor],
+                return_type: ReturnType::Void,
+                is_varargs: false,
+                min_args: 3,
+            },
+        );
+        kvcache_methods.insert(
             "free".to_string(),
             MethodSignature {
                 name: "free".to_string(),
@@ -1080,7 +1146,27 @@ impl TypeRegistry {
             MethodSignature {
                 name: "get".to_string(),
                 params: vec![ParamType::Exact(Type::UserDefined("String".to_string()))],
-                return_type: ReturnType::Exact(Type::UserDefined("String".to_string())),
+                return_type: ReturnType::Exact(Type::Tensor(Box::new(Type::F32), 0)),
+                is_varargs: false,
+                min_args: 1,
+            },
+        );
+        map_methods.insert(
+            "get_1d".to_string(),
+            MethodSignature {
+                name: "get_1d".to_string(),
+                params: vec![ParamType::Exact(Type::UserDefined("String".to_string()))],
+                return_type: ReturnType::Exact(Type::Tensor(Box::new(Type::F32), 1)),
+                is_varargs: false,
+                min_args: 1,
+            },
+        );
+        map_methods.insert(
+            "get_quantized".to_string(),
+            MethodSignature {
+                name: "get_quantized".to_string(),
+                params: vec![ParamType::Exact(Type::UserDefined("String".to_string()))],
+                return_type: ReturnType::Exact(Type::I64),
                 is_varargs: false,
                 min_args: 1,
             },

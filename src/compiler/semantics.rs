@@ -3598,13 +3598,15 @@ impl SemanticAnalyzer {
                 };
 
                 // Merge types
-                if then_type == else_type {
-                    Ok(then_type)
+                if self.are_types_compatible(&then_type, &else_type) {
+                    // Return the more specific type (e.g. if one is rank 0 and another is rank N)
+                    let ret_ty = match (&then_type, &else_type) {
+                        (Type::Tensor(_i1, r1), Type::Tensor(_, r2)) if *r1 == 0 && *r2 != 0 => else_type,
+                        (Type::Tensor(_i1, r1), Type::Tensor(_, r2)) if *r1 != 0 && *r2 == 0 => then_type,
+                        _ => then_type,
+                    };
+                    Ok(ret_ty)
                 } else {
-                    // Simple compatibility check (e.g. F32 vs I64 casting?)
-                    // For strict semantics, error.
-                    // But if one is Void (e.g. if-without-else used as expr?), error.
-                    // If ExprKind::IfExpr is used, it expects a value. If else is missing, it returns Void?
                     self.err(
                         SemanticError::TypeMismatch {
                             expected: then_type,
