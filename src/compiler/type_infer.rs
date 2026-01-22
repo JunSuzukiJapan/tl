@@ -228,15 +228,7 @@ impl TypeInferencer {
                 })
             }
 
-            ExprKind::Aggregation { expr, .. } => {
-                // Aggregation returns scalar of same element type
-                let inner_ty = self.infer_expr(expr)?;
-                match inner_ty {
-                    Type::Tensor(elem, _) => Ok(*elem),
-                    Type::TensorShaped(elem, _) => Ok(*elem),
-                    _ => Ok(inner_ty),
-                }
-            }
+
 
             _ => Ok(self.fresh_type_var()),
         }

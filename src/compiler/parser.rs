@@ -353,45 +353,6 @@ fn parse_tensor_literal(input: Span) -> IResult<Span, Expr> {
 }
 
 // Aggregation: sum(expr for var in range) or sum(expr for var in range where cond)
-fn parse_aggregation(input: Span) -> IResult<Span, Expr> {
-    spanned(map(
-        tuple((
-            ws(alt((
-                tag("sum"),
-                tag("max"),
-                tag("min"),
-                tag("avg"),
-                tag("count"),
-            ))),
-            delimited(
-                ws(char('(')),
-                tuple((
-                    parse_expr,
-                    preceded(ws(tag("for")), ws(identifier)),
-                    preceded(ws(tag("in")), parse_expr),
-                    opt(preceded(ws(tag("where")), parse_expr)),
-                )),
-                ws(char(')')),
-            ),
-        )),
-        |(op_str, (expr, var, range, condition))| {
-            let op = match *op_str {
-                "sum" => AggregateOp::Sum,
-                "max" => AggregateOp::Max,
-                "min" => AggregateOp::Min,
-                "avg" => AggregateOp::Avg,
-                _ => unreachable!(),
-            };
-            ExprKind::Aggregation {
-                op,
-                expr: Box::new(expr),
-                var,
-                range: Box::new(range),
-                condition: condition.map(Box::new),
-            }
-        },
-    ))(input)
-}
 
 fn parse_struct_init(input: Span) -> IResult<Span, Expr> {
     spanned(map(
@@ -560,7 +521,6 @@ fn parse_atom(input: Span) -> IResult<Span, Expr> {
         parse_logic_query_expr,     // ?... queries
         parse_tensor_comprehension, // Try parsing comprehension before literal array
         parse_tensor_literal,
-        parse_aggregation,
         parse_struct_init,
         parse_match_expr,
         parse_block_expr,
@@ -1088,7 +1048,7 @@ fn parse_field_assign(input: Span) -> IResult<Span, Stmt> {
         match lhs.inner {
             ExprKind::FieldAccess(obj, field) => {
                 let (input, op_str) =
-                    ws(alt((tag("="), tag("+="), tag("-="), tag("*="), tag("/="))))(input)?;
+                    ws(alt((tag("="), tag("+="), tag("-="), tag("*="), tag("/="), tag("%="))))(input)?;
 
                 let (input, value) = parse_expr(input)?;
                 let (input, _) = ws(char(';'))(input)?;
@@ -1109,6 +1069,7 @@ fn parse_field_assign(input: Span) -> IResult<Span, Stmt> {
                         "-=" => "sub_assign",
                         "*=" => "mul_assign",
                         "/=" => "div_assign",
+                        "%=" => "mod_assign",
                         _ => unreachable!(),
                     };
                     // Need a span for the synthetic method call. Use lhs's span.

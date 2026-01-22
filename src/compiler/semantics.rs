@@ -1321,6 +1321,7 @@ impl SemanticAnalyzer {
                         ParamType::Bool => Type::Bool,
                         ParamType::SameAsReceiver => receiver_type.clone(),
                         ParamType::TensorOf(inner) => Type::Tensor(inner.clone(), 0),
+                        ParamType::AnyTensorOrNumeric => Type::Tensor(Box::new(Type::F32), 0),
                     };
                     return self.err(
                         SemanticError::TypeMismatch {
@@ -3559,45 +3560,7 @@ impl SemanticAnalyzer {
                 }
                 // End of ExprKind::IfExpr
             }
-            ExprKind::Aggregation {
-                op: _,
-                expr,
-                var,
-                range,
-                condition,
-            } => {
-                // Type check the range expression
-                let _range_ty = self.check_expr(range)?;
 
-                // Declare the loop variable in a new scope
-                self.enter_scope();
-                self.declare_variable(var.clone(), Type::I64, true)?; // Assume integer index
-
-                // Check the aggregated expression
-                let expr_ty = self.check_expr(expr)?;
-
-                // Check condition if present
-                if let Some(cond) = condition {
-                    let cond_ty = self.check_expr(cond)?;
-                    if cond_ty != Type::Bool {
-                        return self.err(
-                            SemanticError::TypeMismatch {
-                                expected: Type::Bool,
-                                found: cond_ty,
-                            },
-                            Some(expr.span.clone()),
-                        );
-                    }
-                }
-
-                self.exit_scope();
-
-                // Aggregation returns same type as the expression (for sum/avg)
-                // or I64 for count
-                // Aggregation returns same type as the expression (for sum/avg)
-                // or I64 for count
-                Ok(expr_ty)
-            }
             ExprKind::As(expr, target_type) => {
                 let source_type = self.check_expr(expr)?;
 

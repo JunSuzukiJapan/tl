@@ -227,12 +227,7 @@ fn test_constructors() {
         panic!("Expected TensorComprehension");
     }
 
-    // Aggregation
-    if let ExprKind::Aggregation { op, .. } = p_expr("sum(x for i in 0..10)") {
-        assert_eq!(op, AggregateOp::Sum);
-    } else {
-        panic!("Expected Aggregation");
-    }
+
 }
 
 #[test]

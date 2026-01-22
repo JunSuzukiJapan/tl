@@ -267,14 +267,6 @@ pub enum ExprKind {
     },
     Block(Vec<Stmt>),
 
-    // Aggregation: sum(expr for var in range where condition)
-    Aggregation {
-        op: AggregateOp,
-        expr: Box<Expr>,
-        var: String,
-        range: Box<Expr>,             // e.g., 0..n or a collection
-        condition: Option<Box<Expr>>, // where clause
-    },
 
     // Struct Init: Name { field: value, ... }
     StructInit(String, Vec<(String, Expr)>),
@@ -307,14 +299,6 @@ pub enum Pattern {
     Wildcard,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum AggregateOp {
-    Sum,
-    Max,
-    Min,
-    Avg,
-    Count,
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinOp {

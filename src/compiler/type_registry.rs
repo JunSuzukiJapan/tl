@@ -41,6 +41,8 @@ pub enum ParamType {
     SameAsReceiver,
     /// Boolean
     Bool,
+    /// Any tensor or numeric type
+    AnyTensorOrNumeric,
 }
 
 /// Return type specification
@@ -481,6 +483,42 @@ impl TypeRegistry {
                 return_type: ReturnType::SameAsReceiver,
                 is_varargs: false,
                 min_args: 3,
+            },
+            // Compound assignment methods (used for desugaring field += val)
+            MethodSignature {
+                name: "add_assign".to_string(),
+                params: vec![ParamType::AnyTensorOrNumeric],
+                return_type: ReturnType::Exact(Type::Void),
+                is_varargs: false,
+                min_args: 1,
+            },
+            MethodSignature {
+                name: "sub_assign".to_string(),
+                params: vec![ParamType::AnyTensorOrNumeric],
+                return_type: ReturnType::Exact(Type::Void),
+                is_varargs: false,
+                min_args: 1,
+            },
+            MethodSignature {
+                name: "mul_assign".to_string(),
+                params: vec![ParamType::AnyTensorOrNumeric],
+                return_type: ReturnType::Exact(Type::Void),
+                is_varargs: false,
+                min_args: 1,
+            },
+            MethodSignature {
+                name: "div_assign".to_string(),
+                params: vec![ParamType::AnyTensorOrNumeric],
+                return_type: ReturnType::Exact(Type::Void),
+                is_varargs: false,
+                min_args: 1,
+            },
+            MethodSignature {
+                name: "mod_assign".to_string(),
+                params: vec![ParamType::AnyTensorOrNumeric],
+                return_type: ReturnType::Exact(Type::Void),
+                is_varargs: false,
+                min_args: 1,
             },
             // scale(factor) -> Tensor
             MethodSignature {
@@ -1125,6 +1163,18 @@ impl TypeRegistry {
             }
             ParamType::SameAsReceiver => Self::types_compatible(actual, receiver),
             ParamType::Bool => matches!(actual, Type::Bool),
+            ParamType::AnyTensorOrNumeric => {
+                matches!(
+                    actual,
+                    Type::Tensor(_, _)
+                        | Type::TensorShaped(_, _)
+                        | Type::ScalarArray(_, _)
+                        | Type::F32
+                        | Type::F64
+                        | Type::I64
+                        | Type::I32
+                )
+            }
         }
     }
 

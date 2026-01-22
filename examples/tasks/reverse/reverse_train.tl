@@ -14,8 +14,8 @@ impl Linear {
     fn step(self, lr: f32) { 
         let gW = self.W.grad(); 
         let gb = self.b.grad(); 
-        self.W = self.W - (gW * lr); 
-        self.b = self.b - (gb * lr); 
+        self.W -= (gW * lr); 
+        self.b -= (gb * lr); 
     } 
 }
 
@@ -29,7 +29,7 @@ impl Embedding {
     } 
     fn step(self, lr: f32) { 
         let g = self.w.grad(); 
-        self.w = self.w - (g * lr); 
+        self.w -= (g * lr); 
     } 
 }
 
@@ -48,8 +48,8 @@ impl LayerNorm {
     fn step(self, lr: f32) { 
         let gw = self.w.grad();
         let gb = self.b.grad(); 
-        self.w = self.w - (gw * lr);
-        self.b = self.b - (gb * lr); 
+        self.w -= (gw * lr);
+        self.b -= (gb * lr); 
     } 
 }
 
