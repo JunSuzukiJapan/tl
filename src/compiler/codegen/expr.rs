@@ -3453,6 +3453,60 @@ impl<'ctx> CodeGenerator<'ctx> {
             };
             return Ok((res, Type::I64));
         }
+        if type_name == "System" && method_name == "pool_count" {
+            if !args.is_empty() {
+                return Err("System::pool_count takes no arguments".into());
+            }
+            let fn_val = self
+                .module
+                .get_function("tl_get_pool_count")
+                .ok_or("tl_get_pool_count not found")?;
+            let call = self
+                .builder
+                .build_call(fn_val, &[], "pool_count")
+                .map_err(|e| e.to_string())?;
+            let res = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("Invalid return from System::pool_count".into()),
+            };
+            return Ok((res, Type::I64));
+        }
+        if type_name == "System" && method_name == "refcount_count" {
+            if !args.is_empty() {
+                return Err("System::refcount_count takes no arguments".into());
+            }
+            let fn_val = self
+                .module
+                .get_function("tl_get_refcount_count")
+                .ok_or("tl_get_refcount_count not found")?;
+            let call = self
+                .builder
+                .build_call(fn_val, &[], "refcount_count")
+                .map_err(|e| e.to_string())?;
+            let res = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("Invalid return from System::refcount_count".into()),
+            };
+            return Ok((res, Type::I64));
+        }
+        if type_name == "System" && method_name == "scope_depth" {
+            if !args.is_empty() {
+                return Err("System::scope_depth takes no arguments".into());
+            }
+            let fn_val = self
+                .module
+                .get_function("tl_get_scope_depth")
+                .ok_or("tl_get_scope_depth not found")?;
+            let call = self
+                .builder
+                .build_call(fn_val, &[], "scope_depth")
+                .map_err(|e| e.to_string())?;
+            let res = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("Invalid return from System::scope_depth".into()),
+            };
+            return Ok((res, Type::I64));
+        }
 
         if type_name == "Tensor" && method_name == "clear_grads" {
             if !args.is_empty() {
@@ -8424,4 +8478,3 @@ fn compile_tensor_reshape_uneval<'ctx>(
 
     Ok((res, new_ty))
 }
-

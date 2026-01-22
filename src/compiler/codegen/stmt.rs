@@ -2194,9 +2194,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Push loop context for break/continue
                 // continue -> latch (to increment index), break -> loop_end
-                self.loop_stack.push((loop_latch, loop_end));
-
+                let loop_depth = self.variables.len();
                 self.enter_scope();
+                self.loop_stack.push((loop_latch, loop_end, loop_depth));
 
                 // Bind loop variable
                 let loop_var_val = if is_tensor_iter {
@@ -2401,9 +2401,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder.position_at_end(body_block);
 
                 // Push loop context for break/continue
-                self.loop_stack.push((cond_block, end_block));
-
+                let loop_depth = self.variables.len();
                 self.enter_scope();
+                self.loop_stack.push((cond_block, end_block, loop_depth));
                 for stmt in body {
                     self.compile_stmt(stmt)?;
                 }
@@ -2450,9 +2450,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Push loop context for break/continue
                 // In loop, continue jumps back to the START of the body.
-                self.loop_stack.push((body_block, end_block));
-
+                let loop_depth = self.variables.len();
                 self.enter_scope();
+                self.loop_stack.push((body_block, end_block, loop_depth));
                 for stmt in body {
                     self.compile_stmt(stmt)?;
                 }
@@ -2532,10 +2532,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(())
             }
             StmtKind::Break => {
-                // Cleanup current scope before jumping
-                self.emit_top_scope_cleanup();
-
-                if let Some((_, break_block)) = self.loop_stack.last() {
+                // Cleanup all scopes up to loop entry before jumping
+                if let Some((_, break_block, loop_depth)) = self.loop_stack.last() {
+                    self.emit_cleanup_to_depth(*loop_depth);
                     self.builder
                         .build_unconditional_branch(*break_block)
                         .map_err(|e| e.to_string())?;
@@ -2543,10 +2542,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(())
             }
             StmtKind::Continue => {
-                // Cleanup current scope before jumping
-                self.emit_top_scope_cleanup();
-
-                if let Some((continue_block, _)) = self.loop_stack.last() {
+                // Cleanup all scopes up to loop entry before jumping
+                if let Some((continue_block, _, loop_depth)) = self.loop_stack.last() {
+                    self.emit_cleanup_to_depth(*loop_depth);
                     self.builder
                         .build_unconditional_branch(*continue_block)
                         .map_err(|e| e.to_string())?;

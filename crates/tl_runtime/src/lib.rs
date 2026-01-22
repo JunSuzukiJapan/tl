@@ -3,6 +3,7 @@ pub mod args;
 pub mod device;
 pub mod error;
 pub mod memory_manager; // Arena allocator for tensor memory optimization
+pub use memory_manager::{tl_get_pool_count, tl_get_refcount_count, tl_get_scope_depth};
 
 pub mod checkpoint;
 pub mod context;
@@ -712,19 +713,81 @@ pub extern "C" fn tl_varbuilder_grad(name: *const std::os::raw::c_char) -> *mut 
 pub extern "C" fn tl_get_memory_mb() -> i64 {
     #[cfg(target_os = "macos")]
     {
-        use std::process::Command;
+        #[allow(non_camel_case_types)]
+        use libc::{c_int, c_uint, c_void};
 
-        let pid = std::process::id();
-        let output = Command::new("ps")
-            .args(["-o", "rss=", "-p", &pid.to_string()])
-            .output();
+        #[allow(non_camel_case_types)]
+        type kern_return_t = c_int;
+        #[allow(non_camel_case_types)]
+        type mach_port_t = c_uint;
+        #[allow(non_camel_case_types)]
+        type mach_msg_type_number_t = c_uint;
+        #[allow(non_camel_case_types)]
+        type natural_t = c_uint;
+        #[allow(non_camel_case_types)]
+        type integer_t = c_int;
+        #[allow(non_camel_case_types)]
+        type policy_t = c_int;
+        #[allow(non_camel_case_types)]
+        type mach_vm_size_t = u64;
 
-        if let Ok(output) = output {
-            if let Ok(s) = String::from_utf8(output.stdout) {
-                if let Ok(kb) = s.trim().parse::<i64>() {
-                    return kb / 1024; // Convert KB to MB
-                }
-            }
+        #[repr(C)]
+        struct time_value_t {
+            seconds: integer_t,
+            microseconds: integer_t,
+        }
+
+        #[repr(C)]
+        struct mach_task_basic_info {
+            virtual_size: mach_vm_size_t,
+            resident_size: mach_vm_size_t,
+            resident_size_max: mach_vm_size_t,
+            user_time: time_value_t,
+            system_time: time_value_t,
+            policy: policy_t,
+            suspend_count: integer_t,
+        }
+
+        extern "C" {
+            fn mach_task_self() -> mach_port_t;
+            fn task_info(
+                target_task: mach_port_t,
+                flavor: c_int,
+                task_info_out: *mut c_void,
+                task_info_out_cnt: *mut mach_msg_type_number_t,
+            ) -> kern_return_t;
+        }
+
+        const KERN_SUCCESS: kern_return_t = 0;
+        const MACH_TASK_BASIC_INFO: c_int = 20;
+
+        let mut info = mach_task_basic_info {
+            virtual_size: 0,
+            resident_size: 0,
+            resident_size_max: 0,
+            user_time: time_value_t {
+                seconds: 0,
+                microseconds: 0,
+            },
+            system_time: time_value_t {
+                seconds: 0,
+                microseconds: 0,
+            },
+            policy: 0,
+            suspend_count: 0,
+        };
+
+        let mut count = (std::mem::size_of::<mach_task_basic_info>() / std::mem::size_of::<natural_t>()) as mach_msg_type_number_t;
+        let kr = unsafe {
+            task_info(
+                mach_task_self(),
+                MACH_TASK_BASIC_INFO,
+                &mut info as *mut _ as *mut c_void,
+                &mut count as *mut mach_msg_type_number_t,
+            )
+        };
+        if kr == KERN_SUCCESS {
+            return (info.resident_size / (1024 * 1024)) as i64;
         }
     }
 
@@ -1041,6 +1104,7 @@ pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
             // Arena allocations are reset on scope exit, causing memory reuse.
             // Cloned tensors must persist beyond the clone function's scope.
             let ptr = Box::into_raw(boxed);
+            memory_manager::register_tensor_global(ptr);
 
             Ok(ptr)
         }));

@@ -34,6 +34,7 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) loop_stack: Vec<(
         inkwell::basic_block::BasicBlock<'ctx>,
         inkwell::basic_block::BasicBlock<'ctx>,
+        usize,
     )>,
     pub(crate) relations: std::collections::HashSet<String>,
     pub(crate) current_span: Option<crate::compiler::error::Span>,
@@ -428,6 +429,18 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
             self.builder.build_call(f, &[], "").unwrap();
+        }
+    }
+
+    // Emit cleanup for all scopes down to (but not including) target_depth.
+    pub(crate) fn emit_cleanup_to_depth(&self, target_depth: usize) {
+        if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
+            let mut idx = self.variables.len();
+            while idx > target_depth {
+                idx -= 1;
+                self.emit_cleanup_vars_in_scope(idx);
+                self.builder.build_call(f, &[], "").unwrap();
+            }
         }
     }
 

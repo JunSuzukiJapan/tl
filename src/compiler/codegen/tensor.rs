@@ -403,10 +403,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             last_processed_bb = *aft_bb;
         }
-        self.exit_scope();
-
         let after_bb = last_processed_bb;
         self.builder.position_at_end(after_bb);
+        self.exit_scope();
 
         let new_fn = self.module.get_function("tl_tensor_new").unwrap();
         let loop_rank = indices.len();

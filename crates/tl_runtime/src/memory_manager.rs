@@ -101,6 +101,11 @@ impl TensorPool {
             }
         }
     }
+
+    /// Total number of pooled tensors
+    pub fn total_count(&self) -> usize {
+        self.free_list.values().map(|v| v.len()).sum()
+    }
 }
 
 // Global tensor pool instance
@@ -367,6 +372,30 @@ pub extern "C" fn tl_tensor_release(ptr: *mut OpaqueTensor) {
         let mut mgr = MEMORY_MANAGER.lock().unwrap();
         mgr.release_tensor_ptr(ptr as *mut c_void);
     }
+}
+
+/// Get number of tensors currently stored in the pool
+#[no_mangle]
+pub extern "C" fn tl_get_pool_count() -> i64 {
+    if let Ok(pool) = TENSOR_POOL.lock() {
+        pool.total_count() as i64
+    } else {
+        -1
+    }
+}
+
+/// Get number of live tensor refcount entries
+#[no_mangle]
+pub extern "C" fn tl_get_refcount_count() -> i64 {
+    let mgr = MEMORY_MANAGER.lock().unwrap();
+    mgr.tensor_refcounts.len() as i64
+}
+
+/// Get current scope depth (including global scope)
+#[no_mangle]
+pub extern "C" fn tl_get_scope_depth() -> i64 {
+    let mgr = MEMORY_MANAGER.lock().unwrap();
+    mgr.scopes.len() as i64
 }
 
 #[cfg(test)]

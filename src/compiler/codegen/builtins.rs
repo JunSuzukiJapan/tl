@@ -749,6 +749,9 @@ pub fn declare_runtime_functions<'ctx>(
 
     let mem_mb_type = i64_type.fn_type(&[], false);
     add_fn("tl_get_memory_mb", mem_mb_type);
+    add_fn("tl_get_pool_count", mem_mb_type);
+    add_fn("tl_get_refcount_count", mem_mb_type);
+    add_fn("tl_get_scope_depth", mem_mb_type);
 
     // Memory Scope
     let enter_scope_type = void_type.fn_type(&[], false);
@@ -1419,6 +1422,15 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_get_memory_mb") {
         execution_engine.add_global_mapping(&f, runtime::tl_get_memory_mb as usize);
     }
+    if let Some(f) = module.get_function("tl_get_pool_count") {
+        execution_engine.add_global_mapping(&f, runtime::tl_get_pool_count as usize);
+    }
+    if let Some(f) = module.get_function("tl_get_refcount_count") {
+        execution_engine.add_global_mapping(&f, runtime::tl_get_refcount_count as usize);
+    }
+    if let Some(f) = module.get_function("tl_get_scope_depth") {
+        execution_engine.add_global_mapping(&f, runtime::tl_get_scope_depth as usize);
+    }
 
     // Args (command line arguments)
     if let Some(f) = module.get_function("tl_args_count") {
@@ -2068,6 +2080,9 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_arena_alloc".to_string(), Type::I64);
     fn_return_types.insert("tl_arena_reset".to_string(), Type::Void);
     fn_return_types.insert("tl_get_memory_mb".to_string(), Type::I64);
+    fn_return_types.insert("tl_get_pool_count".to_string(), Type::I64);
+    fn_return_types.insert("tl_get_refcount_count".to_string(), Type::I64);
+    fn_return_types.insert("tl_get_scope_depth".to_string(), Type::I64);
 
     // VarBuilder-based parameter management
     fn_return_types.insert("tl_varbuilder_get".to_string(), tensor_type.clone());
@@ -2314,6 +2329,12 @@ pub fn declare_runtime_functions<'ctx>(
     let get_memory_type = i64_type.fn_type(&[], false);
     module.add_function("tl_get_memory_mb", get_memory_type, None);
     fn_return_types.insert("tl_get_memory_mb".to_string(), Type::I64);
+    module.add_function("tl_get_pool_count", get_memory_type, None);
+    fn_return_types.insert("tl_get_pool_count".to_string(), Type::I64);
+    module.add_function("tl_get_refcount_count", get_memory_type, None);
+    fn_return_types.insert("tl_get_refcount_count".to_string(), Type::I64);
+    module.add_function("tl_get_scope_depth", get_memory_type, None);
+    fn_return_types.insert("tl_get_scope_depth".to_string(), Type::I64);
 
     // Memory manager functions
     let void_type = context.void_type();

@@ -3791,6 +3791,9 @@ impl SemanticAnalyzer {
                     ("System", "time") => Ok(Type::F32),
                     ("System", "sleep") => Ok(Type::Void),
                     ("System", "memory_mb") => Ok(Type::I64),
+                    ("System", "pool_count") => Ok(Type::I64),
+                    ("System", "refcount_count") => Ok(Type::I64),
+                    ("System", "scope_depth") => Ok(Type::I64),
                     ("Env", "get") => Ok(Type::UserDefined("String".into())),
                     ("Env", "set") => {
                         if args.len() != 2 {

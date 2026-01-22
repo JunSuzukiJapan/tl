@@ -15,6 +15,7 @@ fn main() {
     } ];
 
     while found_count < solutions_to_find {
+        println("Memory: {} MB", System::memory_mb());
         println("=== Attempting solution #{}", found_count + 1);
         
         let lr = 0.5;
