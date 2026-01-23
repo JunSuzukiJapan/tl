@@ -920,26 +920,7 @@ fn parse_assign_stmt(input: Span) -> IResult<Span, Stmt> {
     })(input)
 }
 
-// if (stmt version usually wraps expression if return ignored, or purely statement)
-// For now, treat top-level if as StmtKind::If.
-fn parse_if_stmt(input: Span) -> IResult<Span, Stmt> {
-    spanned(|input| {
-        let (input, _) = tag("if")(input)?;
-        let (input, cond) = parse_expr(input)?;
-        let (input, then_block) = parse_block(input)?;
 
-        let (input, else_block) = opt(preceded(ws(tag("else")), parse_block))(input)?;
-
-        Ok((
-            input,
-            StmtKind::If {
-                cond,
-                then_block,
-                else_block,
-            },
-        ))
-    })(input)
-}
 
 fn parse_for_stmt(input: Span) -> IResult<Span, Stmt> {
     spanned(|input| {
@@ -1146,7 +1127,6 @@ pub fn parse_stmt(input: Span) -> IResult<Span, Stmt> {
         parse_return_stmt,
         parse_break_stmt,
         parse_continue_stmt,
-        parse_if_stmt,
         parse_for_stmt,
         parse_while_stmt,
         parse_loop_stmt,

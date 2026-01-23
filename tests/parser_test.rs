@@ -256,8 +256,11 @@ fn test_statements() {
     }
 
     match p_stmt("if true { } else { }") {
-        StmtKind::If { .. } => {}
-        _ => panic!("Expected If"),
+        StmtKind::Expr(expr) => match expr.inner {
+            ExprKind::IfExpr(_, _, _) => {}
+            _ => panic!("Expected IfExpr"),
+        },
+        _ => panic!("Expected Expr containing IfExpr"),
     }
 
     match p_stmt("for i in 0..10 { }") {

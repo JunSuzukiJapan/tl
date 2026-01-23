@@ -1951,74 +1951,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
                 Ok(())
             }
-            StmtKind::If {
-                cond,
-                then_block,
-                else_block,
-            } => {
-                let parent = self
-                    .builder
-                    .get_insert_block()
-                    .unwrap()
-                    .get_parent()
-                    .unwrap();
-
-                let (cond_val, _) = self.compile_expr(cond)?;
-                let cond_int = self
-                    .builder
-                    .build_int_cast(
-                        cond_val.into_int_value(),
-                        self.context.bool_type(),
-                        "boolcast",
-                    )
-                    .unwrap();
-
-                let then_bb = self.context.append_basic_block(parent, "then");
-                let else_bb = self.context.append_basic_block(parent, "else");
-                let merge_bb = self.context.append_basic_block(parent, "merge");
-
-                self.builder
-                    .build_conditional_branch(cond_int, then_bb, else_bb)
-                    .unwrap();
-
-                // Then
-                self.builder.position_at_end(then_bb);
-                self.enter_scope();
-                for stmt in then_block {
-                    self.compile_stmt(stmt)?;
-                }
-                // Branch to merge if current block has no terminator
-                // Use get_insert_block() because nested statements may have changed current block
-                // Check current block
-                let current_block = self.builder.get_insert_block().unwrap();
-                if current_block.get_terminator().is_none() {
-                    self.exit_scope();
-                    self.builder.build_unconditional_branch(merge_bb).unwrap();
-                } else {
-                    self.exit_scope();
-                }
-
-                // Else
-                self.builder.position_at_end(else_bb);
-                self.enter_scope();
-                if let Some(else_stmts) = else_block {
-                    for stmt in else_stmts {
-                        self.compile_stmt(stmt)?;
-                    }
-                }
-                // Check current block (not else_bb) since nested if may have changed it
-                let current_block = self.builder.get_insert_block().unwrap();
-                if current_block.get_terminator().is_none() {
-                    self.exit_scope();
-                    self.builder.build_unconditional_branch(merge_bb).unwrap();
-                } else {
-                    self.exit_scope();
-                }
-
-                // Merge
-                self.builder.position_at_end(merge_bb);
-                Ok(())
-            }
             StmtKind::For {
                 loop_var,
                 iterator,
@@ -3374,7 +3306,6 @@ fn stmt_trace_tag(stmt: &Stmt) -> &'static str {
         StmtKind::Let { .. } => "Let",
         StmtKind::Assign { .. } => "Assign",
         StmtKind::FieldAssign { .. } => "FieldAssign",
-        StmtKind::If { .. } => "If",
         StmtKind::For { .. } => "For",
         StmtKind::While { .. } => "While",
         StmtKind::Loop { .. } => "Loop",

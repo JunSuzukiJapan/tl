@@ -699,57 +699,6 @@ impl SemanticAnalyzer {
             if i == stmts_len - 1 {
                 if let StmtKind::Expr(e) = &mut stmt.inner {
                     ret_type = self.check_expr(e)?;
-                } else if let StmtKind::If {
-                    cond,
-                    then_block,
-                    else_block,
-                } = &mut stmt.inner
-                {
-                    // Check Cond
-                    let cond_type = self.check_expr(cond)?;
-                    if cond_type != Type::Bool {
-                        return self.err(
-                            SemanticError::TypeMismatch {
-                                expected: Type::Bool,
-                                found: cond_type,
-                            },
-                            Some(cond.span.clone()),
-                        );
-                    }
-
-                    self.enter_scope();
-                    let then_type = self.check_block_stmts(then_block)?;
-                    self.exit_scope();
-
-                    let else_type = if let Some(block) = else_block {
-                        self.enter_scope();
-                        let t = self.check_block_stmts(block)?;
-                        self.exit_scope();
-                        t
-                    } else {
-                        Type::Void
-                    };
-
-                    // If types differ, usually logic is Void unless they match?
-                    // Codegen IfExpr matches types.
-                    // If one is Void and other is not, result is Void (in original IfExpr logic).
-                    // But if we want to return value, they MUST match.
-                    // Or if else is missing -> Void.
-                    // If else is Void -> Void.
-                    // So if then_type != else_type, return Error?
-                    // Unless one is implicit void?
-                    if then_type == else_type {
-                        ret_type = then_type;
-                    } else {
-                        // If mismatch, should error?
-                        return self.err(
-                            SemanticError::TypeMismatch {
-                                expected: then_type,
-                                found: else_type,
-                            },
-                            Some(stmt.span.clone()),
-                        );
-                    }
                 } else {
                     self.check_stmt(stmt)?;
                     ret_type = Type::Void;
@@ -1115,37 +1064,6 @@ impl SemanticAnalyzer {
             }
             StmtKind::Expr(expr) => {
                 self.check_expr(expr)?;
-                Ok(())
-            }
-            StmtKind::If {
-                cond,
-                then_block,
-                else_block,
-            } => {
-                let cond_type = self.check_expr(cond)?;
-                if cond_type != Type::Bool {
-                    return self.err(
-                        SemanticError::TypeMismatch {
-                            expected: Type::Bool,
-                            found: cond_type,
-                        },
-                        Some(stmt.span.clone()),
-                    );
-                }
-
-                self.enter_scope();
-                for s in then_block {
-                    self.check_stmt(s)?;
-                }
-                self.exit_scope();
-
-                if let Some(block) = else_block {
-                    self.enter_scope();
-                    for s in block {
-                        self.check_stmt(s)?;
-                    }
-                    self.exit_scope();
-                }
                 Ok(())
             }
             StmtKind::For {

@@ -1582,20 +1582,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if i == stmts.len() - 1 {
                         if let StmtKind::Expr(e) = &stmt.inner {
                             last_val = Some(self.compile_expr(e)?);
-                        } else if let StmtKind::If {
-                            cond,
-                            then_block,
-                            else_block,
-                        } = &stmt.inner
-                        {
-                            // Promote StmtKind::If to ExprKind::IfExpr if it's the last statement
-                            let kind = ExprKind::IfExpr(
-                                Box::new(cond.clone()),
-                                then_block.clone(),
-                                else_block.clone(),
-                            );
-                            let expr = Spanned::new(kind, stmt.span.clone());
-                            last_val = Some(self.compile_expr(&expr)?);
                         } else {
                             self.compile_stmt(stmt)?;
                         }

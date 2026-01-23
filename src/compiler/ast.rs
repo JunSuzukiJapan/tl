@@ -175,11 +175,6 @@ pub enum StmtKind {
     },
     Expr(Expr),
     Return(Option<Expr>),
-    If {
-        cond: Expr,
-        then_block: Vec<Stmt>,
-        else_block: Option<Vec<Stmt>>,
-    },
     For {
         loop_var: String,
         iterator: Expr, // range or Vec

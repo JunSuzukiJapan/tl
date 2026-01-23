@@ -306,18 +306,6 @@ impl ShapeAnalyzer {
                         }
                     }
                 }
-                StmtKind::If {
-                    then_block,
-                    else_block,
-                    ..
-                } => {
-                    let p1 = self.analyze_block(then_block);
-                    allocation_count += p1.max_allocations;
-                    if let Some(eb) = else_block {
-                        let p2 = self.analyze_block(eb);
-                        allocation_count += p2.max_allocations;
-                    }
-                }
                 _ => {}
             }
         }

@@ -107,20 +107,20 @@ fn test_binary_ops_type_check() {
 fn test_if_stmt() {
     let mut analyzer = SemanticAnalyzer::new(String::new());
 
-    // Valid If
-    let mut stmt = Spanned::dummy(StmtKind::If {
-        cond: expr_bool(true),
-        then_block: vec![],
-        else_block: None,
-    });
+    // Valid If (as expression)
+    let mut stmt = Spanned::dummy(StmtKind::Expr(Spanned::dummy(ExprKind::IfExpr(
+        Box::new(expr_bool(true)),
+        vec![],
+        None,
+    ))));
     assert!(analyzer.check_stmt(&mut stmt).is_ok());
 
     // Invalid Condition (Int instead of Bool)
-    let mut stmt = Spanned::dummy(StmtKind::If {
-        cond: expr_int(1),
-        then_block: vec![],
-        else_block: None,
-    });
+    let mut stmt = Spanned::dummy(StmtKind::Expr(Spanned::dummy(ExprKind::IfExpr(
+        Box::new(expr_int(1)),
+        vec![],
+        None,
+    ))));
     // If check_stmt implementation for If is strict, this should fail.
     // If it currently passes (due to bug/incomplete impl), we should fix impl or update test expectation.
     // Based on standard semantic rules, this MUST fail.
