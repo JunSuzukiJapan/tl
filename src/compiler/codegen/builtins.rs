@@ -523,7 +523,21 @@ pub fn declare_runtime_functions<'ctx>(
     let add_entity_type = context.i64_type().fn_type(&[i8_ptr.into()], false);
     add_fn("tl_kb_add_entity", add_entity_type);
 
-    // tl_kb_add_fact(relation: *const i8, args: *const i64, arity: i64) -> void
+    // tl_kb_add_fact_serialized(relation: *const i8) -> void
+    let add_fact_serialized_type = void_type.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_kb_add_fact_serialized", add_fact_serialized_type);
+
+    // tl_kb_fact_args_clear()
+    add_fn("tl_kb_fact_args_clear", void_type.fn_type(&[], false));
+
+    // tl_kb_fact_args_add_*
+    add_fn("tl_kb_fact_args_add_int", void_type.fn_type(&[context.i64_type().into()], false));
+    add_fn("tl_kb_fact_args_add_float", void_type.fn_type(&[context.f64_type().into()], false));
+    add_fn("tl_kb_fact_args_add_bool", void_type.fn_type(&[context.bool_type().into()], false));
+    add_fn("tl_kb_fact_args_add_entity", void_type.fn_type(&[context.i64_type().into()], false));
+    add_fn("tl_kb_fact_args_add_string", void_type.fn_type(&[i8_ptr.into()], false));
+
+    // Old API for compatibility
     let args_ptr_type = context.ptr_type(AddressSpace::default());
     let add_fact_type = void_type.fn_type(
         &[
@@ -547,14 +561,18 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_kb_rule_add_head_arg_var(index: i64)
     let arg_i64_type = void_type.fn_type(&[context.i64_type().into()], false);
     add_fn("tl_kb_rule_add_head_arg_var", arg_i64_type);
-    add_fn("tl_kb_rule_add_head_arg_const", arg_i64_type);
+    add_fn("tl_kb_rule_add_head_arg_const_int", arg_i64_type);
+    let arg_f64_type = void_type.fn_type(&[context.f64_type().into()], false);
+    add_fn("tl_kb_rule_add_head_arg_const_float", arg_f64_type);
+    add_fn("tl_kb_rule_add_head_arg_const_entity", arg_i64_type);
 
-    // tl_kb_rule_add_body_atom(rel: *const i8)
     add_fn("tl_kb_rule_add_body_atom", rule_start_type);
 
-    // tl_kb_rule_add_body_arg_var/const(i64)
+    // tl_kb_rule_add_body_arg_var(index: i64)
     add_fn("tl_kb_rule_add_body_arg_var", arg_i64_type);
-    add_fn("tl_kb_rule_add_body_arg_const", arg_i64_type);
+    add_fn("tl_kb_rule_add_body_arg_const_int", arg_i64_type);
+    add_fn("tl_kb_rule_add_body_arg_const_float", arg_f64_type);
+    add_fn("tl_kb_rule_add_body_arg_const_entity", arg_i64_type);
 
     // tl_kb_rule_finish()
     add_fn("tl_kb_rule_finish", infer_type);
@@ -1303,10 +1321,64 @@ pub fn declare_runtime_functions<'ctx>(
             runtime::knowledge_base::tl_kb_rule_add_head_arg_var as usize,
         );
     }
-    if let Some(f) = module.get_function("tl_kb_rule_add_head_arg_const") {
+    if let Some(f) = module.get_function("tl_kb_add_fact_serialized") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_rule_add_head_arg_const as usize,
+            runtime::knowledge_base::tl_kb_add_fact_serialized as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_kb_fact_args_clear") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::knowledge_base::tl_kb_fact_args_clear as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_kb_fact_args_add_int") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::knowledge_base::tl_kb_fact_args_add_int as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_kb_fact_args_add_float") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::knowledge_base::tl_kb_fact_args_add_float as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_kb_fact_args_add_bool") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::knowledge_base::tl_kb_fact_args_add_bool as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_kb_fact_args_add_entity") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::knowledge_base::tl_kb_fact_args_add_entity as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_kb_fact_args_add_string") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::knowledge_base::tl_kb_fact_args_add_string as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_kb_rule_add_head_arg_const_int") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::knowledge_base::tl_kb_rule_add_head_arg_const_int as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_kb_rule_add_head_arg_const_float") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::knowledge_base::tl_kb_rule_add_head_arg_const_float as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_kb_rule_add_head_arg_const_entity") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::knowledge_base::tl_kb_rule_add_head_arg_const_entity as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_rule_add_body_atom") {
@@ -1321,10 +1393,22 @@ pub fn declare_runtime_functions<'ctx>(
             runtime::knowledge_base::tl_kb_rule_add_body_arg_var as usize,
         );
     }
-    if let Some(f) = module.get_function("tl_kb_rule_add_body_arg_const") {
+    if let Some(f) = module.get_function("tl_kb_rule_add_body_arg_const_int") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_rule_add_body_arg_const as usize,
+            runtime::knowledge_base::tl_kb_rule_add_body_arg_const_int as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_kb_rule_add_body_arg_const_float") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::knowledge_base::tl_kb_rule_add_body_arg_const_float as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_kb_rule_add_body_arg_const_entity") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::knowledge_base::tl_kb_rule_add_body_arg_const_entity as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_rule_finish") {
@@ -2614,8 +2698,11 @@ pub fn declare_runtime_functions<'ctx>(
     module.add_function("tl_free_tmp", free_tmp_type, None);
     fn_return_types.insert("tl_free_tmp".to_string(), Type::Void);
 
-    // tl_query(name: *i8, mask: i64, args: *Tensor) -> *Tensor
-    let query_type = void_ptr.fn_type(&[i8_ptr.into(), i64_type.into(), void_ptr.into()], false);
+    // tl_query(name: *i8, mask: i64, args: *Tensor, tags: *u8) -> *Tensor
+    let query_type = void_ptr.fn_type(
+        &[i8_ptr.into(), i64_type.into(), void_ptr.into(), i8_ptr.into()],
+        false,
+    );
     module.add_function("tl_query", query_type, None);
     fn_return_types.insert("tl_query".to_string(), tensor_type.clone());
 

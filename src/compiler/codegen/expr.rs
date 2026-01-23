@@ -6034,6 +6034,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         let mut mask: i64 = 0;
         let mut compiled_args = Vec::new();
+        let mut tags = Vec::new();
+        let i64_type = self.context.i64_type();
+        let i8_type = self.context.i8_type();
 
         // Semantics phase no longer injects metadata. Start index is always 0.
         let start_index = 0;
@@ -6044,7 +6047,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Variable argument -> Set mask bit
                     mask |= 1 << i;
                     // Pass 0 placeholder
-                    compiled_args.push(self.context.i64_type().const_int(0, false).into());
+                    compiled_args.push(i64_type.const_int(0, false).into());
+                    tags.push(3); // Default to Entity
                 }
                 ExprKind::Symbol(sym_name) => {
                     // Check if variable exists in scope
@@ -6058,13 +6062,20 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                     if found {
                         // Treat as Variable lookup
-                        // We construct a temporary Expr to leverage compile_expr(Variable) logic (loading ptrs etc)
                         let var_expr = Expr {
                             inner: ExprKind::Variable(sym_name.clone()),
                             span: arg.span.clone(),
                         };
-                        let (val, _ty) = self.compile_expr(&var_expr)?;
+                        let (val, ty) = self.compile_expr(&var_expr)?;
                         compiled_args.push(val);
+                        let tag = match ty {
+                            Type::I64 | Type::I32 | Type::I8 | Type::U8 | Type::U16 | Type::U32 | Type::Usize => 0, // Int
+                            Type::F32 | Type::F64 | Type::F16 | Type::BF16 => 1,             // Float
+                            Type::Bool => 2,                        // Bool
+                            Type::Entity => 3,                      // Entity
+                            _ => 3,
+                        };
+                        tags.push(tag);
                     } else {
                         // Assume constant Entity Name
                         let add_entity_fn = self.module.get_function("tl_kb_add_entity").unwrap();
@@ -6086,6 +6097,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             _ => return Err("Invalid return from add_entity".into()),
                         };
                         compiled_args.push(val);
+                        tags.push(3); // ConstantTag::Entity
                     }
                 }
                 ExprKind::StringLiteral(s) => {
@@ -6107,17 +6119,64 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => return Err("Invalid return from add_entity".into()),
                     };
                     compiled_args.push(val);
+                    tags.push(4); // ConstantTag::String
                 }
                 _ => {
-                    let (val, _ty) = self.compile_expr(arg)?;
+                    let (val, ty) = self.compile_expr(arg)?;
                     compiled_args.push(val);
+                    let tag = match ty {
+                        Type::I64 | Type::I32 | Type::I8 | Type::U8 | Type::U16 | Type::U32 | Type::Usize => 0, // Int
+                        Type::F32 | Type::F64 | Type::F16 | Type::BF16 => 1,             // Float
+                        Type::Bool => 2,                        // Bool
+                        Type::Entity => 3,                      // Entity
+                        _ => 0,
+                    };
+                    tags.push(tag);
                 }
             }
         }
 
+        // Generate tags pointer
+        let tags_ptr = if tags.is_empty() {
+            self.context.ptr_type(inkwell::AddressSpace::default()).const_null()
+        } else {
+            let tags_arr_type = i8_type.array_type(tags.len() as u32);
+            let tags_alloca = self.builder.build_alloca(tags_arr_type, "query_tags").unwrap();
+            for (i, &tag) in tags.iter().enumerate() {
+                let ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            tags_arr_type,
+                            tags_alloca,
+                            &[
+                                i64_type.const_int(0, false),
+                                i64_type.const_int(i as u64, false),
+                            ],
+                            "",
+                        )
+                        .unwrap()
+                };
+                self.builder
+                    .build_store(ptr, i8_type.const_int(tag as u64, false))
+                    .unwrap();
+            }
+            unsafe {
+                self.builder
+                    .build_gep(
+                        tags_arr_type,
+                        tags_alloca,
+                        &[i64_type.const_int(0, false), i64_type.const_int(0, false)],
+                        "tags_decayed",
+                    )
+                    .unwrap()
+            }
+        };
+
         // Insert Mask at beginning
-        let mask_val = self.context.i64_type().const_int(mask as u64, false);
+        let mask_val = i64_type.const_int(mask as u64, false);
         compiled_args.insert(0, mask_val.into());
+        // Append tags pointer at end
+        compiled_args.push(tags_ptr.into());
 
         let final_args: Vec<inkwell::values::BasicMetadataValueEnum> =
             compiled_args.iter().map(|&val| val.into()).collect();

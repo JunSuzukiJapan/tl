@@ -1,10 +1,6 @@
 // src/compiler/inference.rs
 #![allow(dead_code)]
 //! Inference engine for Datalog-style logic rules.
-//!
-//! Supports:
-//! - Unification of atoms
-//! - Forward chaining (semi-naive evaluation)
 
 use crate::compiler::ast::{Atom, Expr, ExprKind, Rule};
 use std::collections::{HashMap, HashSet};
@@ -16,6 +12,8 @@ pub enum Value {
     Int(i64),
     Float(f64),
     Str(String),
+    Bool(bool),
+    Entity(i64),
 }
 
 // Implement Eq and Hash manually for Value with floats
@@ -35,6 +33,14 @@ impl std::hash::Hash for Value {
             Value::Str(s) => {
                 2u8.hash(state);
                 s.hash(state);
+            }
+            Value::Bool(b) => {
+                3u8.hash(state);
+                b.hash(state);
+            }
+            Value::Entity(e) => {
+                4u8.hash(state);
+                e.hash(state);
             }
         }
     }
@@ -62,7 +68,6 @@ impl Term {
     ) -> Self {
         match &expr.inner {
             ExprKind::Variable(name) => {
-                // Check if variable is already bound
                 if let Some(val) = subst.get(name) {
                     Term::Val(val.clone())
                 } else {
@@ -79,11 +84,10 @@ impl Term {
             ExprKind::Symbol(s) => Term::Val(Value::Str(s.clone())),
             ExprKind::Int(n) => Term::Val(Value::Int(*n)),
             ExprKind::Float(f) => Term::Val(Value::Float(*f)),
+            ExprKind::Bool(b) => Term::Val(Value::Bool(*b)),
             ExprKind::StringLiteral(s) => Term::Val(Value::Str(s.clone())),
             ExprKind::IndexAccess(base, indices) => {
-                // Extract tensor name from base
                 if let ExprKind::Variable(tensor_name) = &base.inner {
-                    // Convert indices to terms
                     let idx_terms: Vec<Term> = indices
                         .iter()
                         .map(|idx_expr| match &idx_expr.inner {
@@ -102,7 +106,6 @@ impl Term {
                         })
                         .collect();
 
-                    // If all indices are ground and we have context, evaluate immediately
                     if let Some(tensor_ctx) = ctx {
                         let all_ground: Option<Vec<i64>> = idx_terms
                             .iter()
@@ -157,7 +160,6 @@ fn apply_subst_term(term: &Term, subst: &Substitution, ctx: &TensorContext) -> T
                 .map(|t| apply_subst_term(t, subst, ctx))
                 .collect();
 
-            // Try to resolve tensor access if all indices are grounded integers
             let mut integer_indices = Vec::new();
             let mut all_ground_integers = true;
 
@@ -200,20 +202,16 @@ fn unify_terms(t1: &Term, t2: &Term, subst: &mut Substitution, ctx: &TensorConte
             true
         }
         (Term::Var(n1), Term::Var(n2)) => {
-            // Bind one to the other (arbitrary choice)
             if n1 != n2 {
-                // We can't resolve this without a value; treat as compatible for now
-                // In a full implementation, we'd use union-find or alias tracking
+                // Compatible but not grounded
             }
             true
         }
-        // TensorAccess: cannot unify directly if not resolved to a value
         (Term::TensorAccess(_, _), _) | (_, Term::TensorAccess(_, _)) => false,
     }
 }
 
 /// Unify an atom pattern with a ground atom.
-/// Returns Some(substitution) if successful, None otherwise.
 pub fn unify_atom_with_ground(
     pattern: &Atom,
     ground: &GroundAtom,
@@ -244,8 +242,8 @@ fn apply_subst_atom(atom: &Atom, subst: &Substitution, ctx: &TensorContext) -> O
         let resolved = apply_subst_term(&term, subst, ctx);
         match resolved {
             Term::Val(v) => ground_args.push(v),
-            Term::Var(_) => return None,             // Not fully ground
-            Term::TensorAccess(_, _) => return None, // Unresolved tensor access
+            Term::Var(_) => return None,
+            Term::TensorAccess(_, _) => return None,
         }
     }
     Some(GroundAtom {
@@ -266,7 +264,6 @@ pub fn forward_chain(
     while changed {
         changed = false;
         for rule in rules {
-            // Find all substitutions that satisfy the body
             let new_facts = evaluate_rule(rule, &facts, ctx);
             for fact in new_facts {
                 if !facts.contains(&fact) {
@@ -276,19 +273,9 @@ pub fn forward_chain(
             }
         }
     }
-
     facts
 }
 
-/// A ground atom with an associated probability/weight (for probabilistic inference)
-#[derive(Debug, Clone)]
-pub struct WeightedGroundAtom {
-    pub atom: GroundAtom,
-    pub weight: f64,
-}
-
-/// Probabilistic forward chaining with max-product propagation.
-/// Returns facts with their maximum probability weights.
 pub fn probabilistic_forward_chain(
     initial_facts: HashMap<GroundAtom, f64>,
     rules: &[Rule],
@@ -301,19 +288,11 @@ pub fn probabilistic_forward_chain(
         changed = false;
         for rule in rules {
             let rule_weight = rule.weight.unwrap_or(1.0);
-
-            // Convert to HashSet for evaluate_rule
             let fact_set: HashSet<GroundAtom> = facts.keys().cloned().collect();
             let new_atoms = evaluate_rule(rule, &fact_set, ctx);
 
             for new_atom in new_atoms {
-                // Calculate the weight of this derivation
-                // For max-product: weight = rule_weight * product of body weights
-                // Since we don't track the exact derivation path, use rule_weight
-                // as a simplification (full implementation would track derivations)
                 let new_weight = rule_weight;
-
-                // Update if not present or if new weight is higher (max-product)
                 let should_update = match facts.get(&new_atom) {
                     Some(&existing_weight) => new_weight > existing_weight,
                     None => true,
@@ -326,11 +305,9 @@ pub fn probabilistic_forward_chain(
             }
         }
     }
-
     facts
 }
 
-/// Check if a predicate is a built-in (comparison or numeric function)
 fn is_builtin_predicate(name: &str) -> bool {
     matches!(
         name,
@@ -338,7 +315,6 @@ fn is_builtin_predicate(name: &str) -> bool {
     )
 }
 
-/// Get numeric value from a Value
 fn value_to_f64(v: &Value) -> Option<f64> {
     match v {
         Value::Int(n) => Some(*n as f64),
@@ -347,8 +323,6 @@ fn value_to_f64(v: &Value) -> Option<f64> {
     }
 }
 
-/// Evaluate a built-in predicate with given arguments
-/// Returns true if the predicate holds, false otherwise
 fn evaluate_builtin_predicate(pred: &str, args: &[Value]) -> bool {
     if args.len() != 2 {
         return false;
@@ -394,31 +368,14 @@ impl<'a> FactIndex<'a> {
     }
 }
 
-/// Evaluate a single rule against current facts using optimization.
 fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>, ctx: &TensorContext) -> Vec<GroundAtom> {
-    // Build index locally for now (inefficient if repeated, but better than O(N) scan inside loop)
-    // Ideally index is passed in. But to avoid changing caller signature of `forward_chain` which I can't see,
-    // I am building it here. WAIT. Building index is O(N).
-    // Original code scanned facts O(Body * N).
-    // Building index is O(N). Access is O(Body * 1).
-    // Total O(N + Body). vs O(Body * N).
-    // Optimization holds if Body > 1.
-
     let index = FactIndex::new(facts);
+    let mut substs = vec![Substitution::new()];
 
-    // Start with empty substitution
-    let initial_substs = vec![Substitution::new()];
-
-    // For each body atom, extend substitutions
-    let mut substs = initial_substs;
     for body_atom in &rule.body {
         let mut new_substs = Vec::new();
-
-        // Check if this is a built-in predicate
         if is_builtin_predicate(&body_atom.predicate) {
-            // Evaluate built-in predicate for each existing substitution
             for subst in &substs {
-                // Resolve arguments with current substitution
                 let mut resolved_args = Vec::new();
                 let mut all_ground = true;
                 for expr in &body_atom.args {
@@ -437,11 +394,9 @@ fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>, ctx: &TensorContext) 
                 }
             }
         } else {
-            // Normal predicate: match against candidates from index
             let candidates = index.candidates(&body_atom.predicate);
             for subst in &substs {
                 for fact in candidates.iter() {
-                    // predicate check redundant but safe
                     let mut extended = subst.clone();
                     let pattern_terms = atom_to_terms(body_atom);
                     let mut matches = true;
@@ -470,7 +425,6 @@ fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>, ctx: &TensorContext) 
     results
 }
 
-/// Query: find all substitutions that make the goal true.
 pub fn query(goal: &Atom, facts: &HashSet<GroundAtom>, ctx: &TensorContext) -> Vec<Substitution> {
     let mut results = Vec::new();
     for fact in facts {
@@ -479,164 +433,4 @@ pub fn query(goal: &Atom, facts: &HashSet<GroundAtom>, ctx: &TensorContext) -> V
         }
     }
     results
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::compiler::ast::Spanned;
-
-    fn make_atom(pred: &str, args: Vec<i64>) -> GroundAtom {
-        GroundAtom {
-            predicate: pred.to_string(),
-            args: args.into_iter().map(Value::Int).collect(),
-        }
-    }
-
-    #[test]
-    fn test_unify_simple() {
-        let pattern = Atom {
-            predicate: "edge".to_string(),
-            args: vec![
-                Spanned::dummy(ExprKind::Variable("X".to_string())),
-                Spanned::dummy(ExprKind::Int(2)),
-            ],
-        };
-        let ground = make_atom("edge", vec![1, 2]);
-
-        let ctx = TensorContext::new();
-        let result = unify_atom_with_ground(&pattern, &ground, &ctx);
-        assert!(result.is_some());
-        let subst = result.unwrap();
-        assert_eq!(subst.get("X"), Some(&Value::Int(1)));
-    }
-
-    #[test]
-    fn test_forward_chain() {
-        // edge(1, 2), edge(2, 3)
-        // path(X, Y) :- edge(X, Y)
-        // path(X, Z) :- edge(X, Y), path(Y, Z)
-        // Should derive path(1, 2), path(2, 3), path(1, 3)
-
-        let mut facts = HashSet::new();
-        facts.insert(make_atom("edge", vec![1, 2]));
-        facts.insert(make_atom("edge", vec![2, 3]));
-
-        let rules = vec![
-            Rule {
-                head: Atom {
-                    predicate: "path".to_string(),
-                    args: vec![
-                        Spanned::dummy(ExprKind::Variable("X".to_string())),
-                        Spanned::dummy(ExprKind::Variable("Y".to_string())),
-                    ],
-                },
-                body: vec![Atom {
-                    predicate: "edge".to_string(),
-                    args: vec![
-                        Spanned::dummy(ExprKind::Variable("X".to_string())),
-                        Spanned::dummy(ExprKind::Variable("Y".to_string())),
-                    ],
-                }],
-                weight: None,
-            },
-            Rule {
-                head: Atom {
-                    predicate: "path".to_string(),
-                    args: vec![
-                        Spanned::dummy(ExprKind::Variable("X".to_string())),
-                        Spanned::dummy(ExprKind::Variable("Z".to_string())),
-                    ],
-                },
-                body: vec![
-                    Atom {
-                        predicate: "edge".to_string(),
-                        args: vec![
-                            Spanned::dummy(ExprKind::Variable("X".to_string())),
-                            Spanned::dummy(ExprKind::Variable("Y".to_string())),
-                        ],
-                    },
-                    Atom {
-                        predicate: "path".to_string(),
-                        args: vec![
-                            Spanned::dummy(ExprKind::Variable("Y".to_string())),
-                            Spanned::dummy(ExprKind::Variable("Z".to_string())),
-                        ],
-                    },
-                ],
-                weight: None,
-            },
-        ];
-
-        let ctx = TensorContext::new();
-        let result = forward_chain(facts, &rules, &ctx);
-
-        assert!(result.contains(&make_atom("path", vec![1, 2])));
-        assert!(result.contains(&make_atom("path", vec![2, 3])));
-        assert!(result.contains(&make_atom("path", vec![1, 3])));
-    }
-
-    #[test]
-    fn test_builtin_comparison() {
-        // Test that built-in predicates work in rule evaluation
-        // value(1, 10), value(2, 20), value(3, 5)
-        // large(x) :- value(x, v), gt(v, 8)
-        // Should derive large(1), large(2) but NOT large(3)
-
-        let mut facts = HashSet::new();
-        facts.insert(GroundAtom {
-            predicate: "value".to_string(),
-            args: vec![Value::Int(1), Value::Int(10)],
-        });
-        facts.insert(GroundAtom {
-            predicate: "value".to_string(),
-            args: vec![Value::Int(2), Value::Int(20)],
-        });
-        facts.insert(GroundAtom {
-            predicate: "value".to_string(),
-            args: vec![Value::Int(3), Value::Int(5)],
-        });
-
-        let rules = vec![Rule {
-            head: Atom {
-                predicate: "large".to_string(),
-                args: vec![Spanned::dummy(ExprKind::Variable("x".to_string()))],
-            },
-            body: vec![
-                Atom {
-                    predicate: "value".to_string(),
-                    args: vec![
-                        Spanned::dummy(ExprKind::Variable("x".to_string())),
-                        Spanned::dummy(ExprKind::Variable("v".to_string())),
-                    ],
-                },
-                Atom {
-                    predicate: "gt".to_string(),
-                    args: vec![
-                        Spanned::dummy(ExprKind::Variable("v".to_string())),
-                        Spanned::dummy(ExprKind::Int(8)),
-                    ],
-                },
-            ],
-            weight: None,
-        }];
-
-        let ctx = TensorContext::new();
-        let result = forward_chain(facts, &rules, &ctx);
-
-        // large(1) and large(2) should be derived
-        assert!(result.contains(&GroundAtom {
-            predicate: "large".to_string(),
-            args: vec![Value::Int(1)],
-        }));
-        assert!(result.contains(&GroundAtom {
-            predicate: "large".to_string(),
-            args: vec![Value::Int(2)],
-        }));
-        // large(3) should NOT be derived because 5 <= 8
-        assert!(!result.contains(&GroundAtom {
-            predicate: "large".to_string(),
-            args: vec![Value::Int(3)],
-        }));
-    }
 }

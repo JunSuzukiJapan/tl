@@ -436,6 +436,8 @@ fn try_atom_to_ground(atom: &tl_lang::compiler::ast::Atom) -> Option<GroundAtom>
         match &expr.inner {
             ExprKind::Int(n) => args.push(Value::Int(*n)),
             ExprKind::Float(f) => args.push(Value::Float(*f)),
+            ExprKind::Symbol(s) => args.push(Value::Str(s.clone())),
+            ExprKind::Bool(b) => args.push(Value::Bool(*b)),
             ExprKind::StringLiteral(s) => args.push(Value::Str(s.clone())),
             _ => return None, // Contains variable or complex expression
         }

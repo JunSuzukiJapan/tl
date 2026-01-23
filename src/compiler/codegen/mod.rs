@@ -4,6 +4,7 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Module as InkwellModule;
+use inkwell::AddressSpace;
 use inkwell::types::{BasicMetadataTypeEnum, StructType};
 use inkwell::values::ValueKind; // Used in relation wrappers
 use inkwell::values::{BasicValueEnum, FunctionValue};
@@ -1086,9 +1087,13 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Initialize Arena in main if needed
         if func.name == "main" {
-            // Logic Engine Init
+            // Logic Engine Init - MUST be before anything else
             if let Some(init_kb) = self.module.get_function("_tl_init_kb") {
                 self.builder.build_call(init_kb, &[], "").unwrap();
+            }
+            // Execute infer to ensure queries work inside main
+            if let Some(infer_fn) = self.module.get_function("tl_kb_infer") {
+                self.builder.build_call(infer_fn, &[], "").unwrap();
             }
 
             let mut analyzer = ShapeAnalyzer::new();
@@ -1228,6 +1233,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             for _ in 0..rel.args.len() {
                 arg_types.push(i64_type.into());
             }
+            // Tags pointer
+            arg_types.push(self.context.ptr_type(AddressSpace::default()).into());
 
             let fn_type = tensor_ptr_type.fn_type(&arg_types, false);
             let function = self.module.add_function(func_name, fn_type, None);
@@ -1300,12 +1307,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .unwrap();
                 let args_tensor = self.check_tensor_result(call, "args_tensor_error")?;
 
+                // Get tags passed from call-site
+                let tags_arg = function.get_nth_param((num_args + 1) as u32).unwrap();
+
                 // Call tl_query
                 let result_tensor = match self
                     .builder
                     .build_call(
                         tl_query_fn,
-                        &[name_ptr.into(), mask_arg.into(), args_tensor.into()],
+                        &[
+                            name_ptr.into(),
+                            mask_arg.into(),
+                            args_tensor.into(),
+                            tags_arg.into(),
+                        ],
                         "res",
                     )
                     .unwrap()
@@ -1326,11 +1341,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Create empty tensor
                 // Or pass null? tl_query check for null args
                 let null_ptr = tensor_ptr_type.const_null();
+                let tags_arg = function.get_nth_param(1).unwrap(); // tags is at index 1 for no-arg relation
                 let result_tensor = match self
                     .builder
                     .build_call(
                         tl_query_fn,
-                        &[name_ptr.into(), mask_arg.into(), null_ptr.into()],
+                        &[
+                            name_ptr.into(),
+                            mask_arg.into(),
+                            null_ptr.into(),
+                            tags_arg.into(),
+                        ],
                         "res",
                     )
                     .unwrap()

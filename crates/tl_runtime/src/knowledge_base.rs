@@ -10,8 +10,61 @@ use std::sync::Mutex;
 // In a real implementation, we might pass a KB pointer around.
 static GLOBAL_KB: Lazy<Mutex<KnowledgeBase>> = Lazy::new(|| Mutex::new(KnowledgeBase::new()));
 
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub enum Constant {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Char(u32),
+    String(String),
+    Entity(i64), // Internal ID for symbolic atoms
+}
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConstantTag {
+    Int = 0,
+    Float = 1,
+    Bool = 2,
+    Entity = 3,
+    String = 4,
+}
+
+impl std::hash::Hash for Constant {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Constant::Int(i) => {
+                0u8.hash(state);
+                i.hash(state);
+            }
+            Constant::Float(f) => {
+                1u8.hash(state);
+                f.to_bits().hash(state);
+            }
+            Constant::Bool(b) => {
+                2u8.hash(state);
+                b.hash(state);
+            }
+            Constant::Char(c) => {
+                3u8.hash(state);
+                c.hash(state);
+            }
+            Constant::String(s) => {
+                4u8.hash(state);
+                s.hash(state);
+            }
+            Constant::Entity(e) => {
+                5u8.hash(state);
+                e.hash(state);
+            }
+        }
+    }
+}
+
+impl Eq for Constant {}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Tuple(Vec<i64>);
+pub struct Tuple(pub Vec<Constant>);
 
 pub struct KnowledgeBase {
     // facts: Relation Name -> Set of Tuples
@@ -51,7 +104,7 @@ impl KnowledgeBase {
         self.id_to_name.get(&id).map(|s| s.as_str())
     }
 
-    pub fn add_fact(&mut self, relation: &str, args: Vec<i64>) {
+    pub fn add_fact(&mut self, relation: &str, args: Vec<Constant>) {
         self.facts
             .entry(relation.to_string())
             .or_insert_with(HashSet::new)
@@ -69,7 +122,6 @@ impl KnowledgeBase {
         while changed {
             changed = false;
             _iteration += 1;
-            // println!("DEBUG: Inference iteration {}", _iteration);
 
             // Collect all new facts first to avoid borrowing issues
             let mut new_facts: Vec<(String, Tuple)> = Vec::new();
@@ -92,7 +144,6 @@ impl KnowledgeBase {
                 }
             }
         }
-        // println!("DEBUG: Inference converged after {} iterations", iteration);
     }
 
     fn has_fact(&self, rel: &str, tuple: &Tuple) -> bool {
@@ -100,11 +151,8 @@ impl KnowledgeBase {
     }
 
     fn evaluate_rule(&self, rule: &RuleImpl) -> Vec<Tuple> {
-        // Simple backtracking / join implementation
-        // For each body atom, find matching facts, join results
-
         // Initial bindings: empty
-        let mut bindings: Vec<HashMap<usize, i64>> = vec![HashMap::new()];
+        let mut bindings: Vec<HashMap<usize, Constant>> = vec![HashMap::new()];
 
         for atom in &rule.body {
             let mut new_bindings = Vec::new();
@@ -128,16 +176,10 @@ impl KnowledgeBase {
         let mut results = Vec::new();
         for binding in bindings {
             let mut tuple_args = Vec::new();
-            // Need to know head structure.
-            // Simplified: RuleImpl needs to store head structure (variables/consts)
-            // But current AST doesn't pass head args structure easily to runtime...
-            // Wait, logic.rs stub didn't handle this.
-
-            // REVISION: RuleImpl needs 'head_args' definition.
             for arg in &rule.head_args {
                 let val = match arg {
-                    Arg::Var(v) => *binding.get(v).unwrap_or(&0), // Should be bound
-                    Arg::Const(c) => *c,
+                    Arg::Var(v) => binding.get(v).cloned().unwrap_or(Constant::Bool(false)),
+                    Arg::Const(c) => c.clone(),
                 };
                 tuple_args.push(val);
             }
@@ -149,10 +191,10 @@ impl KnowledgeBase {
 
     fn unify(
         &self,
-        current_binding: &HashMap<usize, i64>,
+        current_binding: &HashMap<usize, Constant>,
         atom: &BodyAtom,
-        fact_args: &[i64],
-    ) -> Option<HashMap<usize, i64>> {
+        fact_args: &[Constant],
+    ) -> Option<HashMap<usize, Constant>> {
         if atom.args.len() != fact_args.len() {
             return None;
         }
@@ -160,20 +202,20 @@ impl KnowledgeBase {
         let mut new_binding = current_binding.clone();
 
         for (i, arg) in atom.args.iter().enumerate() {
-            let fact_val = fact_args[i];
+            let fact_val = &fact_args[i];
             match arg {
                 Arg::Const(c) => {
-                    if *c != fact_val {
+                    if c != fact_val {
                         return None;
                     }
                 }
                 Arg::Var(v) => {
-                    if let Some(&bound_val) = new_binding.get(v) {
+                    if let Some(bound_val) = new_binding.get(v) {
                         if bound_val != fact_val {
                             return None; // Conflict
                         }
                     } else {
-                        new_binding.insert(*v, fact_val);
+                        new_binding.insert(*v, fact_val.clone());
                     }
                 }
             }
@@ -182,32 +224,27 @@ impl KnowledgeBase {
         Some(new_binding)
     }
 
-    pub fn query(&self, relation: &str, args: &[i64], mask: i64) -> Vec<Vec<i64>> {
+    pub fn query(&self, relation: &str, args: &[Constant], mask: i64) -> Vec<Vec<Constant>> {
         let mut results = Vec::new();
         if let Some(tuples) = self.facts.get(relation) {
             for tuple in tuples {
                 if self.tuple_matches(tuple, args, mask) {
                     let extracted = self.extract_vars(tuple, mask);
                     results.push(extracted);
-                } else {
-                    // Mismatch
                 }
             }
-        } else {
-            // Relation not found
         }
         results
     }
 
-    fn tuple_matches(&self, tuple: &Tuple, args: &[i64], mask: i64) -> bool {
+    fn tuple_matches(&self, tuple: &Tuple, args: &[Constant], mask: i64) -> bool {
         if tuple.0.len() != args.len() {
             return false;
         }
-        for (i, &val) in tuple.0.iter().enumerate() {
+        for (i, val) in tuple.0.iter().enumerate() {
             let is_var = (mask >> i) & 1 == 1;
             if !is_var {
-                // Must match argument value
-                if val != args[i] {
+                if val != &args[i] {
                     return false;
                 }
             }
@@ -215,12 +252,11 @@ impl KnowledgeBase {
         true
     }
 
-    fn extract_vars(&self, tuple: &Tuple, mask: i64) -> Vec<i64> {
+    fn extract_vars(&self, tuple: &Tuple, mask: i64) -> Vec<Constant> {
         let mut vars = Vec::new();
-        // If mask is 0, we still return empty vec (signifying success)
-        for (i, &val) in tuple.0.iter().enumerate() {
+        for (i, val) in tuple.0.iter().enumerate() {
             if (mask >> i) & 1 == 1 {
-                vars.push(val);
+                vars.push(val.clone());
             }
         }
         vars
@@ -237,10 +273,10 @@ pub struct BodyAtom {
     pub args: Vec<Arg>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Arg {
     Var(usize),
-    Const(i64),
+    Const(Constant),
 }
 
 // --- C ABI ---
@@ -252,12 +288,57 @@ pub extern "C" fn tl_kb_add_entity(name: *const c_char) -> i64 {
     GLOBAL_KB.lock().unwrap().get_entity_id(r_str)
 }
 
+// Serialization state for fact construction
+static GLOBAL_FACT_ARGS: Lazy<Mutex<Vec<Constant>>> = Lazy::new(|| Mutex::new(Vec::new()));
+
+#[no_mangle]
+pub extern "C" fn tl_kb_fact_args_clear() {
+    GLOBAL_FACT_ARGS.lock().unwrap().clear();
+}
+
+#[no_mangle]
+pub extern "C" fn tl_kb_fact_args_add_int(val: i64) {
+    GLOBAL_FACT_ARGS.lock().unwrap().push(Constant::Int(val));
+}
+
+#[no_mangle]
+pub extern "C" fn tl_kb_fact_args_add_float(val: f64) {
+    GLOBAL_FACT_ARGS.lock().unwrap().push(Constant::Float(val));
+}
+
+#[no_mangle]
+pub extern "C" fn tl_kb_fact_args_add_bool(val: bool) {
+    GLOBAL_FACT_ARGS.lock().unwrap().push(Constant::Bool(val));
+}
+
+#[no_mangle]
+pub extern "C" fn tl_kb_fact_args_add_entity(id: i64) {
+    GLOBAL_FACT_ARGS.lock().unwrap().push(Constant::Entity(id));
+}
+
+#[no_mangle]
+pub extern "C" fn tl_kb_fact_args_add_string(ptr: *const c_char) {
+    let c_str = unsafe { CStr::from_ptr(ptr) };
+    let r_str = c_str.to_str().unwrap().to_string();
+    GLOBAL_FACT_ARGS.lock().unwrap().push(Constant::String(r_str));
+}
+
+#[no_mangle]
+pub extern "C" fn tl_kb_add_fact_serialized(relation: *const c_char) {
+    let c_str = unsafe { CStr::from_ptr(relation) };
+    let rel_name = c_str.to_str().unwrap();
+    let args = std::mem::take(&mut *GLOBAL_FACT_ARGS.lock().unwrap());
+
+    GLOBAL_KB.lock().unwrap().add_fact(rel_name, args);
+}
+
+// Keep old API for compatibility if needed, but it only supports i64 (Entities/Ints)
 #[no_mangle]
 pub extern "C" fn tl_kb_add_fact(relation: *const c_char, args: *const i64, arity: i64) {
     let c_str = unsafe { CStr::from_ptr(relation) };
     let rel_name = c_str.to_str().unwrap();
     let args_slice = unsafe { std::slice::from_raw_parts(args, arity as usize) };
-    let args_vec = args_slice.to_vec();
+    let args_vec = args_slice.iter().map(|&x| Constant::Int(x)).collect();
 
     GLOBAL_KB.lock().unwrap().add_fact(rel_name, args_vec);
 }
@@ -266,14 +347,6 @@ pub extern "C" fn tl_kb_add_fact(relation: *const c_char, args: *const i64, arit
 pub extern "C" fn tl_kb_get_entity_name(id: i64) -> *const c_char {
     let kb = GLOBAL_KB.lock().unwrap();
     if let Some(name) = kb.get_entity_name(id) {
-        // Warning: leaking memory / string pointer stability?
-        // Since entities are permanent in KB, we can return pointer to cached string?
-        // But HashMap keys/values might move if map resizes? No, String contents on heap?
-        // Safest is to duplicate or ensure stability.
-        // For POC, we assume KB strings are stable enough or leak a CString.
-        // Actually, let's just return a pointer if we can, or null.
-        // We'll trust the caller not to free it? Or we leak.
-        // Let's create a CString and leak it for now (simple, safe from moves).
         std::ffi::CString::new(name).unwrap().into_raw()
     } else {
         std::ptr::null()
@@ -321,10 +394,26 @@ pub extern "C" fn tl_kb_rule_add_head_arg_var(index: i64) {
 }
 
 #[no_mangle]
-pub extern "C" fn tl_kb_rule_add_head_arg_const(val: i64) {
+pub extern "C" fn tl_kb_rule_add_head_arg_const_int(val: i64) {
     let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
     if let Some(builder) = builder_lock.as_mut() {
-        builder.head_args.push(Arg::Const(val));
+        builder.head_args.push(Arg::Const(Constant::Int(val)));
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_kb_rule_add_head_arg_const_float(val: f64) {
+    let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
+    if let Some(builder) = builder_lock.as_mut() {
+        builder.head_args.push(Arg::Const(Constant::Float(val)));
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_kb_rule_add_head_arg_const_entity(id: i64) {
+    let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
+    if let Some(builder) = builder_lock.as_mut() {
+        builder.head_args.push(Arg::Const(Constant::Entity(id)));
     }
 }
 
@@ -335,7 +424,6 @@ pub extern "C" fn tl_kb_rule_add_body_atom(rel: *const c_char) {
 
     let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
     if let Some(builder) = builder_lock.as_mut() {
-        // flush previous atom if any
         if let Some(prev_rel) = builder.current_body_atom_rel.take() {
             let prev_args = std::mem::take(&mut builder.current_body_atom_args);
             builder.body.push(BodyAtom {
@@ -343,7 +431,6 @@ pub extern "C" fn tl_kb_rule_add_body_atom(rel: *const c_char) {
                 args: prev_args,
             });
         }
-
         builder.current_body_atom_rel = Some(r_str);
     }
 }
@@ -352,17 +439,31 @@ pub extern "C" fn tl_kb_rule_add_body_atom(rel: *const c_char) {
 pub extern "C" fn tl_kb_rule_add_body_arg_var(index: i64) {
     let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
     if let Some(builder) = builder_lock.as_mut() {
-        builder
-            .current_body_atom_args
-            .push(Arg::Var(index as usize));
+        builder.current_body_atom_args.push(Arg::Var(index as usize));
     }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_kb_rule_add_body_arg_const(val: i64) {
+pub extern "C" fn tl_kb_rule_add_body_arg_const_int(val: i64) {
     let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
     if let Some(builder) = builder_lock.as_mut() {
-        builder.current_body_atom_args.push(Arg::Const(val));
+        builder.current_body_atom_args.push(Arg::Const(Constant::Int(val)));
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_kb_rule_add_body_arg_const_float(val: f64) {
+    let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
+    if let Some(builder) = builder_lock.as_mut() {
+        builder.current_body_atom_args.push(Arg::Const(Constant::Float(val)));
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_kb_rule_add_body_arg_const_entity(id: i64) {
+    let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
+    if let Some(builder) = builder_lock.as_mut() {
+        builder.current_body_atom_args.push(Arg::Const(Constant::Entity(id)));
     }
 }
 
@@ -370,7 +471,6 @@ pub extern "C" fn tl_kb_rule_add_body_arg_const(val: i64) {
 pub extern "C" fn tl_kb_rule_finish() {
     let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
     if let Some(mut builder) = builder_lock.take() {
-        // flush last atom
         if let Some(prev_rel) = builder.current_body_atom_rel.take() {
             let prev_args = std::mem::take(&mut builder.current_body_atom_args);
             builder.body.push(BodyAtom {
@@ -378,16 +478,14 @@ pub extern "C" fn tl_kb_rule_finish() {
                 args: prev_args,
             });
         }
-
         let rule = RuleImpl {
             head_args: builder.head_args,
             body: builder.body,
         };
-
         GLOBAL_KB.lock().unwrap().add_rule(builder.head_rel, rule);
     }
 }
 
-pub fn perform_kb_query(relation: &str, args: &[i64], mask: i64) -> Vec<Vec<i64>> {
+pub fn perform_kb_query(relation: &str, args: &[Constant], mask: i64) -> Vec<Vec<Constant>> {
     GLOBAL_KB.lock().unwrap().query(relation, args, mask)
 }
