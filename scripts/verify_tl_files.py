@@ -86,6 +86,9 @@ EXPECTED_FAILURES = {
     "match_unreachable_after_wildcard.tl",
     "if_let_missing_else_value.tl",
     "if_let_type_mismatch.tl",
+    "negation_cycle.tl",
+    "negation_multi_neg_layers_cycle.tl",
+    "negation_unbound.tl",
 }
 
 def should_skip(filepath: Path) -> Tuple[bool, str]:
