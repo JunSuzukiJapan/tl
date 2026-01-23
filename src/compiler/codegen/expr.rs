@@ -5100,6 +5100,29 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Special Handling for Tensor methods
         if let Type::Tensor(elem_ty, _) = &obj_ty {
             match method {
+                "to_i64" => {
+                    if !args.is_empty() {
+                        return Err("Tensor::to_i64 requires 0 arguments".into());
+                    }
+                    if matches!(elem_ty.as_ref(), Type::I64) {
+                        return Ok((obj_val, obj_ty.clone()));
+                    }
+                    let fn_val = self
+                        .module
+                        .get_function("tl_tensor_to_i64")
+                        .ok_or("tl_tensor_to_i64 not found")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into()], "tensor_to_i64")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from Tensor::to_i64".into()),
+                    };
+                    let ret_ty = Type::Tensor(Box::new(Type::I64), 0);
+                    self.emit_register_tensor(res, &ret_ty)?;
+                    return Ok((res, ret_ty));
+                }
                 "cuda" => {
                     let fn_val = self
                         .module
@@ -6525,6 +6548,18 @@ fn compile_print_common<'ctx>(
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
                 .map_err(|e| e.to_string())?;
         }
+        Type::I32 => {
+            let fn_name = if is_newline {
+                "tl_print_i32"
+            } else {
+                "tl_display_i32"
+            };
+            let fn_val = codegen.module.get_function(fn_name).unwrap();
+            codegen
+                .builder
+                .build_call(fn_val, &[(*arg_val).into()], "print_call")
+                .map_err(|e| e.to_string())?;
+        }
         Type::F32 => {
             let fn_name = if is_newline {
                 "tl_print_f32"
@@ -6536,6 +6571,115 @@ fn compile_print_common<'ctx>(
                 .builder
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
                 .map_err(|e| e.to_string())?;
+        }
+        Type::F64 => {
+            let fn_name = if is_newline {
+                "tl_print_f64"
+            } else {
+                "tl_display_f64"
+            };
+            let fn_val = codegen.module.get_function(fn_name).unwrap();
+            codegen
+                .builder
+                .build_call(fn_val, &[(*arg_val).into()], "print_call")
+                .map_err(|e| e.to_string())?;
+        }
+        Type::Bool => {
+            let fn_name = if is_newline {
+                "tl_print_bool"
+            } else {
+                "tl_display_bool"
+            };
+            let fn_val = codegen.module.get_function(fn_name).unwrap();
+            codegen
+                .builder
+                .build_call(fn_val, &[(*arg_val).into()], "print_call")
+                .map_err(|e| e.to_string())?;
+        }
+        Type::Tuple(elem_types) => {
+            // Print tuple as (a, b, c)
+            let display_fn = codegen
+                .module
+                .get_function("tl_display_string")
+                .ok_or("tl_display_string not found")?;
+            let print_fn = codegen
+                .module
+                .get_function("tl_print_string")
+                .ok_or("tl_print_string not found")?;
+
+            fn emit_tuple_str<'ctx>(
+                codegen: &mut CodeGenerator<'ctx>,
+                s: &str,
+                newline: bool,
+                display_fn: inkwell::values::FunctionValue<'ctx>,
+                print_fn: inkwell::values::FunctionValue<'ctx>,
+            ) -> Result<(), String> {
+                let s_val = codegen.context.const_string(s.as_bytes(), true);
+                let global = codegen.module.add_global(
+                    s_val.get_type(),
+                    Some(inkwell::AddressSpace::default()),
+                    "tuple_part",
+                );
+                global.set_initializer(&s_val);
+                global.set_linkage(inkwell::module::Linkage::Internal);
+                global.set_constant(true);
+
+                let ptr = unsafe {
+                    codegen
+                        .builder
+                        .build_in_bounds_gep(
+                            s_val.get_type(),
+                            global.as_pointer_value(),
+                            &[
+                                codegen.context.i64_type().const_int(0, false),
+                                codegen.context.i64_type().const_int(0, false),
+                            ],
+                            "tuple_str_ptr",
+                        )
+                        .map_err(|e| e.to_string())?
+                };
+
+                let fn_val = if newline { print_fn } else { display_fn };
+                codegen
+                    .builder
+                    .build_call(fn_val, &[ptr.into()], "print_tuple_part")
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+
+            emit_tuple_str(codegen, "(", false, display_fn, print_fn)?;
+
+            if !arg_val.is_pointer_value() {
+                return Err("Tuple value is not a pointer".into());
+            }
+            let tuple_ptr = arg_val.into_pointer_value();
+
+            let mut llvm_types = Vec::new();
+            for ty in elem_types.iter() {
+                llvm_types.push(codegen.get_llvm_type(ty)?);
+            }
+            let tuple_struct_type = codegen.context.struct_type(&llvm_types, false);
+
+            for (idx, ty) in elem_types.iter().enumerate() {
+                if idx > 0 {
+                    emit_tuple_str(codegen, ", ", false, display_fn, print_fn)?;
+                }
+                let field_ptr = codegen
+                    .builder
+                    .build_struct_gep(tuple_struct_type, tuple_ptr, idx as u32, "tuple_elem_ptr")
+                    .map_err(|e| e.to_string())?;
+                let llvm_field_ty = codegen.get_llvm_type(ty)?;
+                let val = codegen
+                    .builder
+                    .build_load(llvm_field_ty, field_ptr, "tuple_elem")
+                    .map_err(|e| e.to_string())?;
+                compile_print_common(codegen, vec![(val, ty.clone())], false)?;
+            }
+
+            emit_tuple_str(codegen, ")", false, display_fn, print_fn)?;
+            if is_newline {
+                emit_tuple_str(codegen, "", true, display_fn, print_fn)?;
+            }
         }
         Type::Tensor(_, _) => {
             let fn_name = if is_newline {
@@ -6567,6 +6711,7 @@ fn compile_print_common<'ctx>(
         }
         Type::ScalarArray(ref elem_type, len) => {
             let i64_type = codegen.context.i64_type();
+            let i32_type = codegen.context.i32_type();
             let f32_type = codegen.context.f32_type();
 
             let (llvm_elem_type, print_fn_name): (inkwell::types::BasicTypeEnum, &str) =
@@ -6577,6 +6722,30 @@ fn compile_print_common<'ctx>(
                             "tl_print_i64"
                         } else {
                             "tl_display_i64"
+                        },
+                    ),
+                    Type::I32 => (
+                        i32_type.into(),
+                        if is_newline {
+                            "tl_print_i32"
+                        } else {
+                            "tl_display_i32"
+                        },
+                    ),
+                    Type::F64 => (
+                        codegen.context.f64_type().into(),
+                        if is_newline {
+                            "tl_print_f64"
+                        } else {
+                            "tl_display_f64"
+                        },
+                    ),
+                    Type::Bool => (
+                        codegen.context.bool_type().into(),
+                        if is_newline {
+                            "tl_print_bool"
+                        } else {
+                            "tl_display_bool"
                         },
                     ),
                     _ => (

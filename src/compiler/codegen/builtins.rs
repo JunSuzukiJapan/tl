@@ -48,14 +48,26 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_print_i64", print_i64_type.clone());
     add_fn("tl_display_i64", print_i64_type);
 
+    let print_i32_type = void_type.fn_type(&[i32_type.into()], false);
+    add_fn("tl_print_i32", print_i32_type.clone());
+    add_fn("tl_display_i32", print_i32_type);
+
     let print_f32_type = void_type.fn_type(&[f32_type.into()], false);
     add_fn("tl_print_f32", print_f32_type.clone());
     add_fn("tl_display_f32", print_f32_type);
 
+    let f64_type = context.f64_type();
+    let print_f64_type = void_type.fn_type(&[f64_type.into()], false);
+    add_fn("tl_print_f64", print_f64_type.clone());
+    add_fn("tl_display_f64", print_f64_type);
+
+    let print_bool_type = void_type.fn_type(&[context.bool_type().into()], false);
+    add_fn("tl_print_bool", print_bool_type.clone());
+    add_fn("tl_display_bool", print_bool_type);
+
     let f32_unary_type = f32_type.fn_type(&[f32_type.into()], false);
     let f32_binary_type = f32_type.fn_type(&[f32_type.into(), f32_type.into()], false);
     let f32_powi_type = f32_type.fn_type(&[f32_type.into(), i64_type.into()], false);
-    let f64_type = context.f64_type();
     let f64_unary_type = f64_type.fn_type(&[f64_type.into()], false);
     let f64_binary_type = f64_type.fn_type(&[f64_type.into(), f64_type.into()], false);
     let f64_powi_type = f64_type.fn_type(&[f64_type.into(), i64_type.into()], false);
@@ -941,6 +953,18 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_display_f32") {
         execution_engine.add_global_mapping(&f, runtime::tl_display_f32 as *const () as usize);
     }
+    if let Some(f) = module.get_function("tl_print_f64") {
+        execution_engine.add_global_mapping(&f, runtime::tl_print_f64 as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_display_f64") {
+        execution_engine.add_global_mapping(&f, runtime::tl_display_f64 as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_print_bool") {
+        execution_engine.add_global_mapping(&f, runtime::tl_print_bool as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_display_bool") {
+        execution_engine.add_global_mapping(&f, runtime::tl_display_bool as *const () as usize);
+    }
     let f32_unary_mappings: [(&str, usize); 31] = [
         ("tl_f32_abs", runtime::tl_f32_abs as *const () as usize),
         ("tl_f32_acos", runtime::tl_f32_acos as *const () as usize),
@@ -1134,8 +1158,14 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_print_i64") {
         execution_engine.add_global_mapping(&f, runtime::tl_print_i64 as *const () as usize);
     }
+    if let Some(f) = module.get_function("tl_print_i32") {
+        execution_engine.add_global_mapping(&f, runtime::tl_print_i32 as *const () as usize);
+    }
     if let Some(f) = module.get_function("tl_display_i64") {
         execution_engine.add_global_mapping(&f, runtime::tl_display_i64 as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_display_i32") {
+        execution_engine.add_global_mapping(&f, runtime::tl_display_i32 as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_print_ptr") {
         execution_engine.add_global_mapping(&f, runtime::tl_print_ptr as *const () as usize);
@@ -1912,7 +1942,10 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_tensor_print_2".to_string(), Type::Void);
     fn_return_types.insert("tl_tensor_print_3".to_string(), Type::Void);
     fn_return_types.insert("tl_print_i64".to_string(), Type::Void);
+    fn_return_types.insert("tl_print_i32".to_string(), Type::Void);
     fn_return_types.insert("tl_print_f32".to_string(), Type::Void);
+    fn_return_types.insert("tl_print_f64".to_string(), Type::Void);
+    fn_return_types.insert("tl_print_bool".to_string(), Type::Void);
     let f32_unary_methods = [
         "abs",
         "acos",

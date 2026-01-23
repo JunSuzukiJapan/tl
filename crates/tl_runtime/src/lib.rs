@@ -1142,6 +1142,34 @@ pub extern "C" fn tl_tensor_display(t: *const OpaqueTensor) {
         print!("Tensor(NULL)");
     } else {
         let tensor = unsafe { &(*t).0 };
+        // Logic Integration: Check if tensor is i64 and contains entities
+        if tensor.dtype() == candle_core::DType::I64 {
+            extern "C" {
+                fn tl_kb_get_entity_name(id: i64) -> *const std::os::raw::c_char;
+            }
+
+            let dims = tensor.dims();
+            if dims.len() == 2 && dims[1] == 1 {
+                print!("[");
+                let vec: Vec<i64> = tensor.flatten_all().unwrap().to_vec1().unwrap();
+                for (i, &val) in vec.iter().enumerate() {
+                    if i > 0 {
+                        print!(", ");
+                    }
+
+                    let name_ptr = unsafe { tl_kb_get_entity_name(val) };
+                    if !name_ptr.is_null() {
+                        let c_str = unsafe { std::ffi::CStr::from_ptr(name_ptr) };
+                        print!("{}", c_str.to_string_lossy());
+                    } else {
+                        print!("{}", val);
+                    }
+                }
+                print!("]");
+                let _ = std::io::stdout().flush();
+                return;
+            }
+        }
         print!("{}", tensor);
     }
     let _ = std::io::stdout().flush();
@@ -1460,6 +1488,17 @@ pub extern "C" fn tl_display_i64(v: i64) {
 }
 
 #[no_mangle]
+pub extern "C" fn tl_print_i32(v: i32) {
+    println!("{}", v);
+}
+
+#[no_mangle]
+pub extern "C" fn tl_display_i32(v: i32) {
+    print!("{}", v);
+    let _ = std::io::stdout().flush();
+}
+
+#[no_mangle]
 pub extern "C" fn tl_print_ptr(_ptr: *const std::ffi::c_void) {
     // Debug function - no output in production
 }
@@ -1472,6 +1511,36 @@ pub extern "C" fn tl_print_f32(v: c_float) {
 #[no_mangle]
 pub extern "C" fn tl_display_f32(v: c_float) {
     print!("{}", v);
+    let _ = std::io::stdout().flush();
+}
+
+#[no_mangle]
+pub extern "C" fn tl_print_f64(v: f64) {
+    println!("{}", v);
+}
+
+#[no_mangle]
+pub extern "C" fn tl_display_f64(v: f64) {
+    print!("{}", v);
+    let _ = std::io::stdout().flush();
+}
+
+#[no_mangle]
+pub extern "C" fn tl_print_bool(v: bool) {
+    if v {
+        println!("true");
+    } else {
+        println!("false");
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_display_bool(v: bool) {
+    if v {
+        print!("true");
+    } else {
+        print!("false");
+    }
     let _ = std::io::stdout().flush();
 }
 

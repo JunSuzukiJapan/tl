@@ -137,6 +137,14 @@ impl TypeRegistry {
                 is_varargs: false,
                 min_args: 1,
             },
+            // to_i64() -> Tensor<I64>
+            MethodSignature {
+                name: "to_i64".to_string(),
+                params: vec![],
+                return_type: ReturnType::Exact(Type::Tensor(Box::new(Type::I64), 0)),
+                is_varargs: false,
+                min_args: 0,
+            },
             // softmax(dim) -> Tensor
             MethodSignature {
                 name: "softmax".to_string(),
