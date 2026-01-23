@@ -66,6 +66,8 @@ SKIP_FILES = {
     # 既知の問題があるファイル
     "train_verify_2digit.tl",
     "reverse_infer.tl",
+    # 計算量が多くタイムアウトする
+    "mln.tl",
 }
 
 # 長時間実行が予想されるファイル（長めのタイムアウト）

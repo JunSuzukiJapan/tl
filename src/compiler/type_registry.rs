@@ -644,14 +644,7 @@ impl TypeRegistry {
                 is_varargs: false,
                 min_args: 1,
             },
-            // set(...) -> Void
-            MethodSignature {
-                name: "set".to_string(),
-                params: vec![ParamType::AnyNumeric], // Varargs for indices and value
-                return_type: ReturnType::Void,
-                is_varargs: true,
-                min_args: 2,
-            },
+
             // detach(requires_grad) -> Tensor
             MethodSignature {
                 name: "detach".to_string(),
