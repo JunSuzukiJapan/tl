@@ -322,7 +322,6 @@ fn main() {
 - [Tensor Comprehension Design](docs/tensor_comprehension_design.md)
 - [Language Specification](docs/reference/language_spec.md)
 - [API Reference](docs/functions_and_types.md)
-- [Standard Library](docs/reference/standard_library.md)
 - [Logic Programming](docs/logic_programming.md)
 
 # LICENSE

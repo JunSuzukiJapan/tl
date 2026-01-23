@@ -320,8 +320,7 @@ fn main() {
 - [TensorLogicの利点](docs/jp/tensor_logic_advantages_jp.md)
 - [テンソル内包表記の設計思想](docs/jp/tensor_comprehension_design.md)
 - [言語仕様](docs/jp/reference/language_spec.md)
-- [APIリファレンス](docs/functions_and_types.md)
-- [標準ライブラリ](docs/jp/reference/standard_library.md)
+- [APIリファレンス](docs/jp/reference/functions_and_types.md)
 - [論理プログラミング](docs/jp/logic_programming.md)
 
 # LICENSE
