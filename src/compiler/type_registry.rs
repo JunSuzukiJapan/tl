@@ -995,6 +995,13 @@ impl TypeRegistry {
                 is_varargs: false,
                 min_args: 0,
             },
+            MethodSignature {
+                name: "contains".to_string(),
+                params: vec![ParamType::Exact(Type::UserDefined("String".to_string()))],
+                return_type: ReturnType::Exact(Type::Bool),
+                is_varargs: false,
+                min_args: 1,
+            },
         ];
 
         let mut string_map = HashMap::new();
