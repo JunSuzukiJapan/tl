@@ -13,14 +13,14 @@ fn main() {
     
     // Self-loops distance is 0
     for i in 0..N {
-        dist.set(i, i, 0.0);
+        dist[i, i] = 0.0;
     }
     
     // Define edges using tensor (weights are numeric, so we use tensor operations)
-    dist.set(0, 1, 1.0); // A -> B (cost 1.0)
-    dist.set(1, 2, 2.0); // B -> C (cost 2.0)
-    dist.set(0, 2, 5.0); // A -> C (cost 5.0)
-    dist.set(2, 3, 1.0); // C -> D (cost 1.0)
+    dist[0, 1] = 1.0; // A -> B (cost 1.0)
+    dist[1, 2] = 2.0; // B -> C (cost 2.0)
+    dist[0, 2] = 5.0; // A -> C (cost 5.0)
+    dist[2, 3] = 1.0; // C -> D (cost 1.0)
     
     // Query: Is there an edge from A to B?
     println("Query: edge(a, b)?");

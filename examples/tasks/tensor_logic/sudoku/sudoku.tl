@@ -24,10 +24,8 @@ fn main() {
     // mask: [9, 9, 1] - 1.0 if hint exists, 0.0 otherwise
     // target_probs: [9, 9, 9] - One-hot encoding of hints
     
-    let hint_mask_2d = Tensor::zeros([N, N]);
-    let target_probs = Tensor::zeros([N, N, N]);
-    
-    let target_probs = Tensor::zeros([N, N, N]);
+    let mut hint_mask_2d = Tensor::zeros([N, N]);
+    let mut target_probs = Tensor::zeros([N, N, N]);
     
     println("Parsing puzzle...");
     // Parse puzzle string
@@ -52,12 +50,12 @@ fn main() {
             let col = i - (row * 9); // Modulo replacement
             
             // Set mask
-            hint_mask_2d.set(row, col, 1.0);
+            hint_mask_2d[row, col] = 1.0;
             
             // Set target probability (one-hot)
             // digit is val-1 (0-8)
             let digit_idx = val - 1;
-            target_probs.set(row, col, digit_idx, 1.0);
+            target_probs[row, col, digit_idx] = 1.0;
         }
     }
     println("Parsing done.");

@@ -10,9 +10,9 @@ fn main() {
     let mut parent = Tensor::zeros([N, N]);
     
     // Add Facts: Relations
-    parent.set(0, 1, 1.0); // Alice -> Bob
-    parent.set(1, 2, 1.0); // Bob -> Charlie
-    parent.set(2, 3, 1.0); // Charlie -> Diana
+    parent[0, 1] = 1.0; // Alice -> Bob
+    parent[1, 2] = 1.0; // Bob -> Charlie
+    parent[2, 3] = 1.0; // Charlie -> Diana
     
     println("Parent Matrix:");
     // Print Matrix Logic Inlined
