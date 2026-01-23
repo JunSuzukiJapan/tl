@@ -6,7 +6,7 @@ use nom::{
     bytes::complete::{tag, take_while, take_while1},
     character::complete::{alpha1, char, digit1, space0, space1},
     combinator::{cut, map, not, opt, recognize, value, verify},
-    multi::{separated_list0, separated_list1},
+    multi::{many0, separated_list0, separated_list1},
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
     IResult,
 };
@@ -1345,15 +1345,65 @@ fn parse_symbol(input: Span) -> IResult<Span, Expr> {
     })(input)
 }
 
-fn parse_logic_arg(input: Span) -> IResult<Span, Expr> {
+fn parse_logic_primary(input: Span) -> IResult<Span, Expr> {
     alt((
         parse_logic_var,
         parse_literal_string,
         parse_literal_float,
         parse_int,
         parse_bool,
-        parse_symbol, // Fallback for identifiers
+        parse_symbol,
+        map(
+            delimited(ws(char('(')), parse_logic_expr, ws(char(')'))),
+            |e| e,
+        ),
     ))(input)
+}
+
+fn parse_logic_unary(input: Span) -> IResult<Span, Expr> {
+    let (input, op) = opt(ws(char('-')))(input)?;
+    let (input, expr) = parse_logic_primary(input)?;
+    if op.is_some() {
+        Ok((
+            input,
+            Spanned::dummy(ExprKind::UnOp(UnOp::Neg, Box::new(expr))),
+        ))
+    } else {
+        Ok((input, expr))
+    }
+}
+
+fn parse_logic_factor(input: Span) -> IResult<Span, Expr> {
+    let (input, init) = parse_logic_unary(input)?;
+    let (input, rest) = many0(pair(ws(alt((char('*'), char('/'), char('%')))), parse_logic_unary))(input)?;
+    let expr = rest.into_iter().fold(init, |acc, (op, rhs)| {
+        let binop = match op {
+            '*' => BinOp::Mul,
+            '/' => BinOp::Div,
+            '%' => BinOp::Mod,
+            _ => BinOp::Mul,
+        };
+        Spanned::dummy(ExprKind::BinOp(Box::new(acc), binop, Box::new(rhs)))
+    });
+    Ok((input, expr))
+}
+
+fn parse_logic_expr(input: Span) -> IResult<Span, Expr> {
+    let (input, init) = parse_logic_factor(input)?;
+    let (input, rest) = many0(pair(ws(alt((char('+'), char('-')))), parse_logic_factor))(input)?;
+    let expr = rest.into_iter().fold(init, |acc, (op, rhs)| {
+        let binop = match op {
+            '+' => BinOp::Add,
+            '-' => BinOp::Sub,
+            _ => BinOp::Add,
+        };
+        Spanned::dummy(ExprKind::BinOp(Box::new(acc), binop, Box::new(rhs)))
+    });
+    Ok((input, expr))
+}
+
+fn parse_logic_arg(input: Span) -> IResult<Span, Expr> {
+    parse_logic_expr(input)
 }
 
 fn parse_datalog_atom(input: Span) -> IResult<Span, Atom> {
@@ -1365,6 +1415,44 @@ fn parse_datalog_atom(input: Span) -> IResult<Span, Atom> {
         ws(char(')')),
     )(input)?;
     Ok((input, Atom { predicate, args }))
+}
+
+fn parse_logic_infix_atom(input: Span) -> IResult<Span, Atom> {
+    // term OP term  (for comparisons / arithmetic eval)
+    let (input, left) = ws(parse_logic_arg)(input)?;
+    let (input, op) = ws(alt((
+        tag("=:="),
+        tag("=\\\\="),
+        tag("\\\\=="),
+        tag("\\\\="),
+        tag(">="),
+        tag("<="),
+        tag("=="),
+        tag("!="),
+        tag(">"),
+        tag("<"),
+        tag("is"),
+    )))(input)?;
+    let (input, right) = ws(parse_logic_arg)(input)?;
+
+    Ok((
+        input,
+        Atom {
+            predicate: op.fragment().to_string(),
+            args: vec![left, right],
+        },
+    ))
+}
+
+fn parse_logic_literal(input: Span) -> IResult<Span, LogicLiteral> {
+    let (input, neg) = opt(ws(alt((tag("not"), tag("\\\\+")))))(input)?;
+    let (input, atom) = alt((parse_logic_infix_atom, parse_datalog_atom))(input)?;
+    let lit = if neg.is_some() {
+        LogicLiteral::Neg(atom)
+    } else {
+        LogicLiteral::Pos(atom)
+    };
+    Ok((input, lit))
 }
 
 fn parse_fact(input: Span) -> IResult<Span, Rule> {
@@ -1386,7 +1474,7 @@ fn parse_rule(input: Span) -> IResult<Span, Rule> {
     // Head(args) :- Body(args), ...
     let (input, head) = parse_datalog_atom(input)?;
     let (input, _) = ws(tag(":-"))(input)?;
-    let (input, body) = separated_list1(ws(char(',')), parse_datalog_atom)(input)?;
+    let (input, body) = separated_list1(ws(char(',')), parse_logic_literal)(input)?;
     let (input, _) = ws(alt((char('.'), char(';'))))(input)?;
 
     Ok((
@@ -1411,7 +1499,7 @@ fn parse_auto_logic_stmt(input: Span) -> IResult<Span, Rule> {
 
     if is_rule.is_some() {
         // It's a rule
-        let (input, body) = separated_list1(ws(char(',')), parse_datalog_atom)(input)?;
+        let (input, body) = separated_list1(ws(char(',')), parse_logic_literal)(input)?;
         let (input, _) = ws(alt((char('.'), char(';'))))(input)?;
         Ok((
             input,

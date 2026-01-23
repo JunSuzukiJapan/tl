@@ -51,6 +51,8 @@ pub enum SemanticError {
     BreakOutsideLoop,
     #[error("continue outside of loop")]
     ContinueOutsideLoop,
+    #[error("negation is not stratified: {0}")]
+    NegationNotStratified(String),
 }
 
 impl SemanticError {
@@ -101,6 +103,9 @@ impl SemanticError {
             SemanticError::AssignToImmutable(name) => SemanticErrorKind::AssignToImmutable(name),
             SemanticError::BreakOutsideLoop => SemanticErrorKind::BreakOutsideLoop,
             SemanticError::ContinueOutsideLoop => SemanticErrorKind::ContinueOutsideLoop,
+            SemanticError::NegationNotStratified(name) => {
+                SemanticErrorKind::NegationNotStratified(name)
+            }
         };
         TlError::Semantic { kind, span }
     }
@@ -463,6 +468,7 @@ impl SemanticAnalyzer {
 
     pub fn check_module(&mut self, module: &mut Module) -> Result<(), TlError> {
         self.register_module_symbols(module, "")?;
+        self.check_stratified_negation(module)?;
         self.check_module_bodies(module, "")?;
         Ok(())
     }
@@ -590,6 +596,374 @@ impl SemanticAnalyzer {
 
         self.current_module = saved_prefix;
         Ok(())
+    }
+
+    fn check_stratified_negation(&self, module: &Module) -> Result<(), TlError> {
+        let mut edges: HashMap<String, Vec<(String, bool)>> = HashMap::new();
+        let mut nodes: HashSet<String> = HashSet::new();
+        let mut neg_edges: Vec<(String, String, Span, Span)> = Vec::new();
+
+        fn collect(
+            module: &Module,
+            edges: &mut HashMap<String, Vec<(String, bool)>>,
+            nodes: &mut HashSet<String>,
+            neg_edges: &mut Vec<(String, String, Span, Span)>,
+        ) {
+            for rule in &module.rules {
+                let head = rule.head.predicate.clone();
+                nodes.insert(head.clone());
+                let head_span = rule
+                    .head
+                    .args
+                    .get(0)
+                    .map(|e| e.span.clone())
+                    .unwrap_or_default();
+                for lit in &rule.body {
+                    let (atom, negated) = match lit {
+                        LogicLiteral::Pos(a) => (a, false),
+                        LogicLiteral::Neg(a) => (a, true),
+                    };
+                    if is_builtin_relation(&atom.predicate) {
+                        continue;
+                    }
+                    nodes.insert(atom.predicate.clone());
+                    edges.entry(head.clone()).or_default().push((atom.predicate.clone(), negated));
+                    if negated {
+                        let atom_span = atom
+                            .args
+                            .get(0)
+                            .map(|e| e.span.clone())
+                            .unwrap_or_default();
+                        neg_edges.push((head.clone(), atom.predicate.clone(), head_span.clone(), atom_span));
+                    }
+                }
+            }
+            for sub in module.submodules.values() {
+                collect(sub, edges, nodes, neg_edges);
+            }
+        }
+
+        collect(module, &mut edges, &mut nodes, &mut neg_edges);
+
+        let neg_unbound = self.check_negation_bound_vars(module)?;
+        if !neg_unbound.is_empty() {
+            let mut formatted = String::new();
+            formatted.push_str("\n  - ");
+            formatted.push_str(&neg_unbound.join("\n  - "));
+            return self.err(
+                SemanticError::NegationNotStratified(format!(
+                    "unbound variables in negation:{}",
+                    formatted
+                )),
+                None,
+            );
+        }
+
+        let mut index = 0i32;
+        let mut indices: HashMap<String, i32> = HashMap::new();
+        let mut lowlink: HashMap<String, i32> = HashMap::new();
+        let mut stack: Vec<String> = Vec::new();
+        let mut on_stack: HashSet<String> = HashSet::new();
+        let mut scc_id: HashMap<String, i32> = HashMap::new();
+        let mut scc_count = 0i32;
+
+        fn strongconnect(
+            v: &str,
+            index: &mut i32,
+            indices: &mut HashMap<String, i32>,
+            lowlink: &mut HashMap<String, i32>,
+            stack: &mut Vec<String>,
+            on_stack: &mut HashSet<String>,
+            edges: &HashMap<String, Vec<(String, bool)>>,
+            scc_id: &mut HashMap<String, i32>,
+            scc_count: &mut i32,
+        ) {
+            indices.insert(v.to_string(), *index);
+            lowlink.insert(v.to_string(), *index);
+            *index += 1;
+            stack.push(v.to_string());
+            on_stack.insert(v.to_string());
+
+            if let Some(neigh) = edges.get(v) {
+                for (w, _) in neigh {
+                    if !indices.contains_key(w) {
+                        strongconnect(
+                            w,
+                            index,
+                            indices,
+                            lowlink,
+                            stack,
+                            on_stack,
+                            edges,
+                            scc_id,
+                            scc_count,
+                        );
+                        let low_v = *lowlink.get(v).unwrap();
+                        let low_w = *lowlink.get(w).unwrap();
+                        if low_w < low_v {
+                            lowlink.insert(v.to_string(), low_w);
+                        }
+                    } else if on_stack.contains(w) {
+                        let low_v = *lowlink.get(v).unwrap();
+                        let idx_w = *indices.get(w).unwrap();
+                        if idx_w < low_v {
+                            lowlink.insert(v.to_string(), idx_w);
+                        }
+                    }
+                }
+            }
+
+            let low_v = *lowlink.get(v).unwrap();
+            let idx_v = *indices.get(v).unwrap();
+            if low_v == idx_v {
+                loop {
+                    if let Some(w) = stack.pop() {
+                        on_stack.remove(&w);
+                        scc_id.insert(w.clone(), *scc_count);
+                        if w == v {
+                            break;
+                        }
+                    }
+                }
+                *scc_count += 1;
+            }
+        }
+
+        for node in nodes.iter() {
+            if !indices.contains_key(node) {
+                strongconnect(
+                    node,
+                    &mut index,
+                    &mut indices,
+                    &mut lowlink,
+                    &mut stack,
+                    &mut on_stack,
+                    &edges,
+                    &mut scc_id,
+                    &mut scc_count,
+                );
+            }
+        }
+
+        for (head, dep, head_span, atom_span) in &neg_edges {
+            let scc_head = scc_id.get(head).cloned().unwrap_or(-1);
+            let scc_dep = scc_id.get(dep).cloned().unwrap_or(-1);
+            if scc_head == scc_dep {
+                let mut others = Vec::new();
+                for (h2, d2, hs2, as2) in &neg_edges {
+                    let scc_h2 = scc_id.get(h2).cloned().unwrap_or(-1);
+                    let scc_d2 = scc_id.get(d2).cloned().unwrap_or(-1);
+                    if scc_h2 == scc_head && scc_d2 == scc_head {
+                        let hloc = if hs2.line > 0 {
+                            if let Some(file) = &hs2.file {
+                                format!("{}:{}:{}", file, hs2.line, hs2.column)
+                            } else {
+                                format!("{}:{}", hs2.line, hs2.column)
+                            }
+                        } else {
+                            "<unknown>".to_string()
+                        };
+                        let aloc = if as2.line > 0 {
+                            if let Some(file) = &as2.file {
+                                format!("{}:{}:{}", file, as2.line, as2.column)
+                            } else {
+                                format!("{}:{}", as2.line, as2.column)
+                            }
+                        } else {
+                            "<unknown>".to_string()
+                        };
+                        others.push(format!("{} -> {} (rule at {}; negation at {})", h2, d2, hloc, aloc));
+                    }
+                }
+                others.sort();
+                others.dedup();
+                let head_loc = if head_span.line > 0 {
+                    if let Some(file) = &head_span.file {
+                        format!("{}:{}:{}", file, head_span.line, head_span.column)
+                    } else {
+                        format!("{}:{}", head_span.line, head_span.column)
+                    }
+                } else {
+                    "<unknown>".to_string()
+                };
+                let atom_loc = if atom_span.line > 0 {
+                    if let Some(file) = &atom_span.file {
+                        format!("{}:{}:{}", file, atom_span.line, atom_span.column)
+                    } else {
+                        format!("{}:{}", atom_span.line, atom_span.column)
+                    }
+                } else {
+                    "<unknown>".to_string()
+                };
+                let mut other_lines = String::new();
+                if !others.is_empty() {
+                    other_lines.push_str("\n  - ");
+                    other_lines.push_str(&others.join("\n  - "));
+                }
+                return self.err(
+                    SemanticError::NegationNotStratified(format!(
+                        "negative cycle edge: {} -> {} (rule at {}; negation at {}); other negative edges in SCC:{}",
+                        head, dep, head_loc, atom_loc, other_lines
+                    )),
+                    None,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn check_negation_bound_vars(&self, module: &Module) -> Result<Vec<String>, TlError> {
+        let mut errors = Vec::new();
+
+        fn collect_vars(expr: &Expr, out: &mut HashSet<String>) {
+            match &expr.inner {
+                ExprKind::Variable(name)
+                | ExprKind::LogicVar(name)
+                | ExprKind::Symbol(name) => {
+                    out.insert(name.clone());
+                }
+                ExprKind::BinOp(lhs, _, rhs) => {
+                    collect_vars(lhs, out);
+                    collect_vars(rhs, out);
+                }
+                ExprKind::UnOp(_, inner) => {
+                    collect_vars(inner, out);
+                }
+                ExprKind::Tuple(items) => {
+                    for item in items {
+                        collect_vars(item, out);
+                    }
+                }
+                ExprKind::IndexAccess(base, indices) => {
+                    collect_vars(base, out);
+                    for idx in indices {
+                        collect_vars(idx, out);
+                    }
+                }
+                ExprKind::MethodCall(target, _, args) => {
+                    collect_vars(target, out);
+                    for a in args {
+                        collect_vars(a, out);
+                    }
+                }
+                ExprKind::FnCall(_, args) => {
+                    for a in args {
+                        collect_vars(a, out);
+                    }
+                }
+                ExprKind::Range(a, b) => {
+                    collect_vars(a, out);
+                    collect_vars(b, out);
+                }
+                ExprKind::As(inner, _) => collect_vars(inner, out),
+                _ => {}
+            }
+        }
+
+        fn atom_label(atom: &Atom) -> String {
+            let arity = atom.args.len();
+            let span = atom.args.get(0).map(|e| e.span.clone()).unwrap_or_default();
+            if span.line > 0 {
+                if let Some(file) = span.file {
+                    format!(
+                        "{} /{} at {}:{}:{}",
+                        atom.predicate, arity, file, span.line, span.column
+                    )
+                } else {
+                    format!("{} /{} at {}:{}", atom.predicate, arity, span.line, span.column)
+                }
+            } else {
+                format!("{} /{}", atom.predicate, arity)
+            }
+        }
+
+        fn check_rule(rule: &Rule, errors: &mut Vec<String>) {
+            let mut bound: HashMap<String, String> = HashMap::new();
+            let head_span = rule
+                .head
+                .args
+                .get(0)
+                .map(|e| e.span.clone())
+                .unwrap_or_default();
+            let head_label = if head_span.line > 0 {
+                if let Some(file) = head_span.file {
+                    format!(
+                        "rule {} at {}:{}:{}",
+                        rule.head.predicate, file, head_span.line, head_span.column
+                    )
+                } else {
+                    format!(
+                        "rule {} at {}:{}",
+                        rule.head.predicate, head_span.line, head_span.column
+                    )
+                }
+            } else {
+                format!("rule {}", rule.head.predicate)
+            };
+            for lit in &rule.body {
+                let (atom, negated) = match lit {
+                    LogicLiteral::Pos(a) => (a, false),
+                    LogicLiteral::Neg(a) => (a, true),
+                };
+                let mut vars = HashSet::new();
+                for arg in &atom.args {
+                    collect_vars(arg, &mut vars);
+                }
+                if negated {
+                    let neg_span = atom.args.get(0).map(|e| e.span.clone()).unwrap_or_default();
+                    let neg_loc = if neg_span.line > 0 {
+                        if let Some(file) = neg_span.file {
+                            format!("negation at {}:{}:{}", file, neg_span.line, neg_span.column)
+                        } else {
+                            format!("negation at {}:{}", neg_span.line, neg_span.column)
+                        }
+                    } else {
+                        "negation at <unknown>".to_string()
+                    };
+                    for v in vars {
+                        if !bound.contains_key(&v) {
+                            let bound_list = if bound.is_empty() {
+                                "none".to_string()
+                            } else {
+                                let mut items: Vec<String> = bound
+                                    .iter()
+                                    .map(|(var, src)| format!("{} from {}", var, src))
+                                    .collect();
+                                items.sort();
+                                items.join(", ")
+                            };
+                            errors.push(format!(
+                                "{} in not {} ({}; {}; {}; bound: {})",
+                                v,
+                                atom_label(atom),
+                                head_label,
+                                "unbound before negation",
+                                neg_loc,
+                                bound_list
+                            ));
+                        }
+                    }
+                } else {
+                    let src = atom_label(atom);
+                    for v in vars {
+                        bound.entry(v).or_insert_with(|| src.clone());
+                    }
+                }
+            }
+        }
+
+        fn walk(module: &Module, errors: &mut Vec<String>) {
+            for rule in &module.rules {
+                check_rule(rule, errors);
+            }
+            for sub in module.submodules.values() {
+                walk(sub, errors);
+            }
+        }
+
+        walk(module, &mut errors);
+        Ok(errors)
     }
 
     fn check_impl_block(&mut self, impl_block: &mut ImplBlock) -> Result<(), TlError> {
@@ -4438,4 +4812,33 @@ impl SemanticAnalyzer {
         free_indices.sort();
         free_indices
     }
+}
+
+fn is_builtin_relation(pred: &str) -> bool {
+    matches!(
+        pred,
+        ">"
+            | "<"
+            | ">="
+            | "<="
+            | "=="
+            | "!="
+            | "=:="
+            | "=\\="
+            | "\\="
+            | "\\=="
+            | "is"
+            | "gt"
+            | "lt"
+            | "ge"
+            | "le"
+            | "eq"
+            | "ne"
+            | "add"
+            | "sub"
+            | "mul"
+            | "div"
+            | "mod"
+            | "neg"
+    )
 }

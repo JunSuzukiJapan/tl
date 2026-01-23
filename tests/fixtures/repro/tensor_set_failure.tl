@@ -7,11 +7,11 @@ fn main() {
     // STDOUT: char_at(1): 2
 
     println("Testing Tensor::set...");
-    let t = Tensor::zeros([2, 2]);
-    t.set(0, 0, 1.0);
+    let mut t = Tensor::zeros([2, 2]);
+    t[0, 0] = 1.0;
     println("Set 0,0 to 1.0");
     // STDOUT: Set 0,0 to 1.0
-    t.set(1, 1, 2.0);
+    t[1, 1] = 2.0;
     println("Set 1,1 to 2.0");
     // STDOUT: Set 1,1 to 2.0
     

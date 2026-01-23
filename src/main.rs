@@ -52,7 +52,9 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Set device environment variable
-    std::env::set_var("TL_DEVICE", &cli.device);
+    if std::env::var("TL_DEVICE").is_err() {
+        std::env::set_var("TL_DEVICE", &cli.device);
+    }
     if cli.mem_log {
         std::env::set_var("TL_MEM_LOG", "1");
     }
@@ -368,7 +370,7 @@ fn run_logic_program(
     module: &tl_lang::compiler::ast::Module,
     ctx: &tl_lang::compiler::inference::TensorContext,
 ) {
-    use tl_lang::compiler::ast::{Atom, ExprKind};
+use tl_lang::compiler::ast::{Atom, ExprKind};
 
     println!("Executing logic program...");
 
@@ -449,12 +451,15 @@ fn try_atom_to_ground(atom: &tl_lang::compiler::ast::Atom) -> Option<GroundAtom>
 }
 
 /// Check if the body is trivially true (empty or contains only "true").
-fn is_trivially_true(body: &[tl_lang::compiler::ast::Atom]) -> bool {
+fn is_trivially_true(body: &[tl_lang::compiler::ast::LogicLiteral]) -> bool {
+    use tl_lang::compiler::ast::LogicLiteral;
     if body.is_empty() {
         return true;
     }
-    if body.len() == 1 && body[0].predicate == "true" && body[0].args.is_empty() {
-        return true;
+    if body.len() == 1 {
+        if let LogicLiteral::Pos(atom) = &body[0] {
+            return atom.predicate == "true" && atom.args.is_empty();
+        }
     }
     false
 }

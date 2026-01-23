@@ -334,8 +334,14 @@ pub struct RelationDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Rule {
     pub head: Atom,
-    pub body: Vec<Atom>,
+    pub body: Vec<LogicLiteral>,
     pub weight: Option<f64>, // Optional probability/weight for probabilistic rules
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LogicLiteral {
+    Pos(Atom),
+    Neg(Atom),
 }
 
 #[derive(Debug, Clone, PartialEq)]

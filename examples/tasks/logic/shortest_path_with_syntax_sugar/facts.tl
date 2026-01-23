@@ -9,10 +9,10 @@
 // A(0) -> C(2), weight 5.0 (slower direct path)
 // C(2) -> D(3), weight 1.0
 
-edge(a, b).
-edge(b, c).
-edge(a, c).
-edge(c, d).
+edge(a, b, 1.0).
+edge(b, c, 2.0).
+edge(a, c, 5.0).
+edge(c, d, 1.0).
 
 // Shortest path is computed using tropical matrix operations in main.tl
 // This file demonstrates how graph structure can be declared using facts.

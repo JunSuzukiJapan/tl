@@ -16,17 +16,22 @@ fn main() {
         dist[i, i] = 0.0;
     }
     
-    // Define edges using tensor (weights are numeric, so we use tensor operations)
-    dist[0, 1] = 1.0; // A -> B (cost 1.0)
-    dist[1, 2] = 2.0; // B -> C (cost 2.0)
-    dist[0, 2] = 5.0; // A -> C (cost 5.0)
-    dist[2, 3] = 1.0; // C -> D (cost 1.0)
-    
-    // Query: Is there an edge from A to B?
-    println("Query: edge(a, b)?");
-    let res = ?edge(a, b);
-    print("Result: ");
-    println(res);
+    // Define edges by querying facts
+    println("Initializing distance matrix from facts...");
+    let results = ?edge($U, $V, $W);
+    for i in 0..results.dim(0) {
+        let u = results[i, 0] as i64;
+        let v = results[i, 1] as i64;
+        let w = results[i, 2];
+        dist[u, v] = w;
+        print("Loaded edge: ");
+        print(u);
+        print(" -> ");
+        print(v);
+        print(" (weight: ");
+        print(w);
+        println(")");
+    }
     
     println("");
     println("Initial Distance Matrix:");

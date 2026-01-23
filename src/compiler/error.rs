@@ -239,6 +239,9 @@ pub enum SemanticErrorKind {
     #[error("tuple index out of bounds: index {0} is out of bounds for tuple of size {1}")]
     TupleIndexOutOfBounds(usize, usize),
 
+    #[error("negation is not stratified: {0}")]
+    NegationNotStratified(String),
+
     #[error("cannot index into non-tuple type: {0}")]
     NotATuple(String),
 

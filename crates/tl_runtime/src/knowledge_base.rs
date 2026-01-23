@@ -156,7 +156,29 @@ impl KnowledgeBase {
 
         for atom in &rule.body {
             let mut new_bindings = Vec::new();
-            if let Some(facts) = self.facts.get(&atom.relation) {
+            if is_builtin_relation(&atom.relation) {
+                for binding in bindings {
+                    let all_bound = args_all_bound(atom, &binding);
+                    let res = eval_builtin_atom(atom, &binding);
+                    if atom.negated {
+                        if all_bound && res.is_none() {
+                            new_bindings.push(binding);
+                        }
+                    } else if let Some(b) = res {
+                        new_bindings.push(b);
+                    }
+                }
+            } else if atom.negated {
+                for binding in bindings {
+                    if !args_all_bound(atom, &binding) {
+                        continue;
+                    }
+                    let matched = self.fact_matches_binding(atom, &binding);
+                    if !matched {
+                        new_bindings.push(binding);
+                    }
+                }
+            } else if let Some(facts) = self.facts.get(&atom.relation) {
                 for binding in bindings {
                     for fact in facts {
                         // Check if fact matches current binding & atom constraint
@@ -224,6 +246,52 @@ impl KnowledgeBase {
         Some(new_binding)
     }
 
+    fn fact_matches_binding(
+        &self,
+        atom: &BodyAtom,
+        binding: &HashMap<usize, Constant>,
+    ) -> bool {
+        if let Some(facts) = self.facts.get(&atom.relation) {
+            for fact in facts {
+                if self.match_fact_no_bind(atom, binding, &fact.0) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn match_fact_no_bind(
+        &self,
+        atom: &BodyAtom,
+        binding: &HashMap<usize, Constant>,
+        fact_args: &[Constant],
+    ) -> bool {
+        if atom.args.len() != fact_args.len() {
+            return false;
+        }
+        for (i, arg) in atom.args.iter().enumerate() {
+            let fact_val = &fact_args[i];
+            match arg {
+                Arg::Const(c) => {
+                    if c != fact_val {
+                        return false;
+                    }
+                }
+                Arg::Var(v) => {
+                    if let Some(bound) = binding.get(v) {
+                        if bound != fact_val {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
     pub fn query(&self, relation: &str, args: &[Constant], mask: i64) -> Vec<Vec<Constant>> {
         let mut results = Vec::new();
         if let Some(tuples) = self.facts.get(relation) {
@@ -263,6 +331,234 @@ impl KnowledgeBase {
     }
 }
 
+fn is_builtin_relation(rel: &str) -> bool {
+    matches!(
+        rel,
+        ">"
+            | "<"
+            | ">="
+            | "<="
+            | "=="
+            | "!="
+            | "=:="
+            | "=\\="
+            | "\\="
+            | "\\=="
+            | "is"
+            | "gt"
+            | "lt"
+            | "ge"
+            | "le"
+            | "eq"
+            | "ne"
+    )
+}
+
+fn resolve_arg(arg: &Arg, binding: &HashMap<usize, Constant>) -> Option<Constant> {
+    match arg {
+        Arg::Const(c) => Some(c.clone()),
+        Arg::Var(v) => binding.get(v).cloned(),
+    }
+}
+
+fn const_to_f64(c: &Constant) -> Option<f64> {
+    match c {
+        Constant::Int(i) => Some(*i as f64),
+        Constant::Float(f) => Some(*f),
+        Constant::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
+        _ => None,
+    }
+}
+
+fn numeric_eq(a: &Constant, b: &Constant) -> Option<bool> {
+    let left = const_to_f64(a)?;
+    let right = const_to_f64(b)?;
+    Some((left - right).abs() < 1e-9)
+}
+
+fn eval_builtin_atom(
+    atom: &BodyAtom,
+    binding: &HashMap<usize, Constant>,
+) -> Option<HashMap<usize, Constant>> {
+    if atom.args.len() != 2 {
+        return None;
+    }
+
+    let rel = atom.relation.as_str();
+    let left = &atom.args[0];
+    let right = &atom.args[1];
+
+    if rel == "is" {
+        let right_val = resolve_arg(right, binding)?;
+        if const_to_f64(&right_val).is_none() {
+            return None;
+        }
+        match left {
+            Arg::Var(v) => {
+                if let Some(existing) = binding.get(v) {
+                    if let Some(eq) = numeric_eq(existing, &right_val) {
+                        if eq {
+                            return Some(binding.clone());
+                        }
+                    } else if existing == &right_val {
+                        return Some(binding.clone());
+                    }
+                    None
+                } else {
+                    let mut new_binding = binding.clone();
+                    new_binding.insert(*v, right_val);
+                    Some(new_binding)
+                }
+            }
+            Arg::Const(c) => {
+                if let Some(eq) = numeric_eq(c, &right_val) {
+                    if eq {
+                        Some(binding.clone())
+                    } else {
+                        None
+                    }
+                } else if c == &right_val {
+                    Some(binding.clone())
+                } else {
+                    None
+                }
+            }
+        }
+    } else if rel == "add" || rel == "sub" || rel == "mul" || rel == "div" || rel == "mod" {
+        if atom.args.len() != 3 {
+            return None;
+        }
+        let a = resolve_arg(&atom.args[0], binding)?;
+        let b = resolve_arg(&atom.args[1], binding)?;
+        let av = const_to_f64(&a)?;
+        let bv = const_to_f64(&b)?;
+        let res = match rel {
+            "add" => av + bv,
+            "sub" => av - bv,
+            "mul" => av * bv,
+            "div" => av / bv,
+            "mod" => av % bv,
+            _ => return None,
+        };
+        let out = &atom.args[2];
+        let res_const = Constant::Float(res);
+        match out {
+            Arg::Var(v) => {
+                if let Some(existing) = binding.get(v) {
+                    if let Some(eq) = numeric_eq(existing, &res_const) {
+                        if eq {
+                            Some(binding.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    let mut new_binding = binding.clone();
+                    new_binding.insert(*v, res_const);
+                    Some(new_binding)
+                }
+            }
+            Arg::Const(c) => {
+                if let Some(eq) = numeric_eq(c, &res_const) {
+                    if eq {
+                        Some(binding.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+        }
+    } else if rel == "neg" {
+        if atom.args.len() != 2 {
+            return None;
+        }
+        let a = resolve_arg(&atom.args[0], binding)?;
+        let av = const_to_f64(&a)?;
+        let res_const = Constant::Float(-av);
+        let out = &atom.args[1];
+        match out {
+            Arg::Var(v) => {
+                if let Some(existing) = binding.get(v) {
+                    if let Some(eq) = numeric_eq(existing, &res_const) {
+                        if eq {
+                            Some(binding.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    let mut new_binding = binding.clone();
+                    new_binding.insert(*v, res_const);
+                    Some(new_binding)
+                }
+            }
+            Arg::Const(c) => {
+                if let Some(eq) = numeric_eq(c, &res_const) {
+                    if eq {
+                        Some(binding.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+        }
+    } else if rel == "==" || rel == "!=" || rel == "\\=" || rel == "\\==" {
+        let left_val = resolve_arg(left, binding)?;
+        let right_val = resolve_arg(right, binding)?;
+        let eq = left_val == right_val;
+        let ok = if rel == "==" { eq } else { !eq };
+        if ok {
+            Some(binding.clone())
+        } else {
+            None
+        }
+    } else {
+        let left_val = resolve_arg(left, binding)?;
+        let right_val = resolve_arg(right, binding)?;
+        let l = const_to_f64(&left_val)?;
+        let r = const_to_f64(&right_val)?;
+        let ok = match rel {
+            "gt" => l > r,
+            "lt" => l < r,
+            "ge" => l >= r,
+            "le" => l <= r,
+            "eq" => (l - r).abs() < 1e-9,
+            "ne" => (l - r).abs() >= 1e-9,
+            "=:=" => (l - r).abs() < 1e-9,
+            "=\\=" => (l - r).abs() >= 1e-9,
+            ">" => l > r,
+            "<" => l < r,
+            ">=" => l >= r,
+            "<=" => l <= r,
+            _ => false,
+        };
+        if ok {
+            Some(binding.clone())
+        } else {
+            None
+        }
+    }
+}
+
+fn args_all_bound(atom: &BodyAtom, binding: &HashMap<usize, Constant>) -> bool {
+    for arg in &atom.args {
+        if let Arg::Var(v) = arg {
+            if !binding.contains_key(v) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 pub struct RuleImpl {
     pub head_args: Vec<Arg>,
     pub body: Vec<BodyAtom>,
@@ -271,6 +567,7 @@ pub struct RuleImpl {
 pub struct BodyAtom {
     pub relation: String,
     pub args: Vec<Arg>,
+    pub negated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -366,6 +663,7 @@ struct RuleBuilder {
     body: Vec<BodyAtom>,
     current_body_atom_rel: Option<String>,
     current_body_atom_args: Vec<Arg>,
+    current_body_atom_negated: bool,
 }
 
 static GLOBAL_RULE_BUILDER: Lazy<Mutex<Option<RuleBuilder>>> = Lazy::new(|| Mutex::new(None));
@@ -382,6 +680,7 @@ pub extern "C" fn tl_kb_rule_start(head_rel: *const c_char) {
         body: Vec::new(),
         current_body_atom_rel: None,
         current_body_atom_args: Vec::new(),
+        current_body_atom_negated: false,
     });
 }
 
@@ -429,9 +728,31 @@ pub extern "C" fn tl_kb_rule_add_body_atom(rel: *const c_char) {
             builder.body.push(BodyAtom {
                 relation: prev_rel,
                 args: prev_args,
+                negated: builder.current_body_atom_negated,
             });
         }
         builder.current_body_atom_rel = Some(r_str);
+        builder.current_body_atom_negated = false;
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_kb_rule_add_body_atom_neg(rel: *const c_char) {
+    let c_str = unsafe { CStr::from_ptr(rel) };
+    let r_str = c_str.to_str().unwrap().to_string();
+
+    let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
+    if let Some(builder) = builder_lock.as_mut() {
+        if let Some(prev_rel) = builder.current_body_atom_rel.take() {
+            let prev_args = std::mem::take(&mut builder.current_body_atom_args);
+            builder.body.push(BodyAtom {
+                relation: prev_rel,
+                args: prev_args,
+                negated: builder.current_body_atom_negated,
+            });
+        }
+        builder.current_body_atom_rel = Some(r_str);
+        builder.current_body_atom_negated = true;
     }
 }
 
@@ -476,6 +797,7 @@ pub extern "C" fn tl_kb_rule_finish() {
             builder.body.push(BodyAtom {
                 relation: prev_rel,
                 args: prev_args,
+                negated: builder.current_body_atom_negated,
             });
         }
         let rule = RuleImpl {

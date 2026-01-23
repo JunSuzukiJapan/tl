@@ -78,22 +78,21 @@ pub extern "C" fn tl_query(
         };
 
         if has_float {
-            // Use F64 for precision and direct visibility
-            let mut flat: Vec<f64> = Vec::with_capacity(rows * cols);
+            let mut flat: Vec<f32> = Vec::with_capacity(rows * cols);
             for row in results {
                 for val in row {
                     let v = match val {
-                        Constant::Int(i) => i as f64,
-                        Constant::Float(f) => f,
+                        Constant::Int(i) => i as f32,
+                        Constant::Float(f) => f as f32,
                         Constant::Bool(b) => if b { 1.0 } else { 0.0 },
-                        Constant::Entity(e) => e as f64,
+                        Constant::Entity(e) => e as f32,
                         _ => 0.0,
                     };
                     flat.push(v);
                 }
             }
             if flat.is_empty() {
-                Tensor::zeros((rows, cols), candle_core::DType::F64, &device)
+                Tensor::zeros((rows, cols), candle_core::DType::F32, &device)
             } else {
                 Tensor::from_slice(&flat, (rows, cols), &device)
             }

@@ -567,6 +567,7 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_kb_rule_add_head_arg_const_entity", arg_i64_type);
 
     add_fn("tl_kb_rule_add_body_atom", rule_start_type);
+    add_fn("tl_kb_rule_add_body_atom_neg", rule_start_type);
 
     // tl_kb_rule_add_body_arg_var(index: i64)
     add_fn("tl_kb_rule_add_body_arg_var", arg_i64_type);
@@ -1385,6 +1386,12 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(
             &f,
             runtime::knowledge_base::tl_kb_rule_add_body_atom as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_kb_rule_add_body_atom_neg") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::knowledge_base::tl_kb_rule_add_body_atom_neg as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_rule_add_body_arg_var") {

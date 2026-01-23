@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 //! Inference engine for Datalog-style logic rules.
 
-use crate::compiler::ast::{Atom, Expr, ExprKind, Rule};
+use crate::compiler::ast::{Atom, BinOp, Expr, ExprKind, LogicLiteral, Rule, UnOp};
 use std::collections::{HashMap, HashSet};
 pub use tl_runtime::context::{TensorContext, TensorValue};
 
@@ -128,8 +128,55 @@ impl Term {
                     panic!("Unsupported tensor access base: {:?}", base)
                 }
             }
+            ExprKind::BinOp(_, _, _) | ExprKind::UnOp(_, _) => {
+                if let Some(v) = eval_numeric_expr(expr, subst, ctx) {
+                    Term::Val(Value::Float(v))
+                } else {
+                    Term::TensorAccess("__expr".to_string(), vec![])
+                }
+            }
             _ => panic!("Unsupported expression in logic term: {:?}", expr),
         }
+    }
+}
+
+fn eval_numeric_expr(
+    expr: &Expr,
+    subst: &Substitution,
+    ctx: Option<&TensorContext>,
+) -> Option<f64> {
+    match &expr.inner {
+        ExprKind::Int(n) => Some(*n as f64),
+        ExprKind::Float(f) => Some(*f),
+        ExprKind::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
+        ExprKind::Variable(name) | ExprKind::LogicVar(name) | ExprKind::Symbol(name) => {
+            subst.get(name).and_then(value_to_f64)
+        }
+        ExprKind::BinOp(lhs, op, rhs) => {
+            let l = eval_numeric_expr(lhs, subst, ctx)?;
+            let r = eval_numeric_expr(rhs, subst, ctx)?;
+            match op {
+                BinOp::Add => Some(l + r),
+                BinOp::Sub => Some(l - r),
+                BinOp::Mul => Some(l * r),
+                BinOp::Div => Some(l / r),
+                BinOp::Mod => Some(l % r),
+                _ => None,
+            }
+        }
+        ExprKind::UnOp(UnOp::Neg, inner) => {
+            let v = eval_numeric_expr(inner, subst, ctx)?;
+            Some(-v)
+        }
+        ExprKind::IndexAccess(_, _) => {
+            let term = Term::from_expr_with_context(expr, ctx, subst);
+            if let Term::Val(v) = term {
+                value_to_f64(&v)
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
@@ -311,7 +358,29 @@ pub fn probabilistic_forward_chain(
 fn is_builtin_predicate(name: &str) -> bool {
     matches!(
         name,
-        "gt" | "lt" | "ge" | "le" | "eq" | "ne" | ">" | "<" | ">=" | "<=" | "==" | "!="
+        "gt"
+            | "lt"
+            | "ge"
+            | "le"
+            | "eq"
+            | "ne"
+            | ">"
+            | "<"
+            | ">="
+            | "<="
+            | "=="
+            | "!="
+            | "=:="
+            | "=\\="
+            | "\\="
+            | "\\=="
+            | "is"
+            | "add"
+            | "sub"
+            | "mul"
+            | "div"
+            | "mod"
+            | "neg"
     )
 }
 
@@ -324,27 +393,73 @@ fn value_to_f64(v: &Value) -> Option<f64> {
 }
 
 fn evaluate_builtin_predicate(pred: &str, args: &[Value]) -> bool {
-    if args.len() != 2 {
-        return false;
-    }
-
-    let left = match value_to_f64(&args[0]) {
-        Some(v) => v,
-        None => return false,
-    };
-    let right = match value_to_f64(&args[1]) {
-        Some(v) => v,
-        None => return false,
-    };
-
     match pred {
-        "gt" | ">" => left > right,
-        "lt" | "<" => left < right,
-        "ge" | ">=" => left >= right,
-        "le" | "<=" => left <= right,
-        "eq" | "==" => (left - right).abs() < f64::EPSILON,
-        "ne" | "!=" => (left - right).abs() >= f64::EPSILON,
-        _ => false,
+        "add" | "sub" | "mul" | "div" | "mod" => {
+            if args.len() != 3 {
+                return false;
+            }
+            let a = match value_to_f64(&args[0]) {
+                Some(v) => v,
+                None => return false,
+            };
+            let b = match value_to_f64(&args[1]) {
+                Some(v) => v,
+                None => return false,
+            };
+            let c = match value_to_f64(&args[2]) {
+                Some(v) => v,
+                None => return false,
+            };
+            let res = match pred {
+                "add" => a + b,
+                "sub" => a - b,
+                "mul" => a * b,
+                "div" => a / b,
+                "mod" => a % b,
+                _ => return false,
+            };
+            (res - c).abs() < f64::EPSILON
+        }
+        "neg" => {
+            if args.len() != 2 {
+                return false;
+            }
+            let a = match value_to_f64(&args[0]) {
+                Some(v) => v,
+                None => return false,
+            };
+            let b = match value_to_f64(&args[1]) {
+                Some(v) => v,
+                None => return false,
+            };
+            (-a - b).abs() < f64::EPSILON
+        }
+        _ => {
+            if args.len() != 2 {
+                return false;
+            }
+            let left = match value_to_f64(&args[0]) {
+                Some(v) => v,
+                None => return false,
+            };
+            let right = match value_to_f64(&args[1]) {
+                Some(v) => v,
+                None => return false,
+            };
+            match pred {
+                "gt" | ">" => left > right,
+                "lt" | "<" => left < right,
+                "ge" | ">=" => left >= right,
+                "le" | "<=" => left <= right,
+                "eq" | "==" => (left - right).abs() < f64::EPSILON,
+                "ne" | "!=" => (left - right).abs() >= f64::EPSILON,
+                "=:=" => (left - right).abs() < f64::EPSILON,
+                "=\\=" => (left - right).abs() >= f64::EPSILON,
+                "\\=" | "\\==" => (left - right).abs() >= f64::EPSILON,
+                "is" => (left - right).abs() < f64::EPSILON,
+                _ => false,
+            }
+        }
     }
 }
 
@@ -372,14 +487,18 @@ fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>, ctx: &TensorContext) 
     let index = FactIndex::new(facts);
     let mut substs = vec![Substitution::new()];
 
-    for body_atom in &rule.body {
+    for lit in &rule.body {
         let mut new_substs = Vec::new();
+        let (body_atom, negated) = match lit {
+            LogicLiteral::Pos(a) => (a, false),
+            LogicLiteral::Neg(a) => (a, true),
+        };
         if is_builtin_predicate(&body_atom.predicate) {
             for subst in &substs {
                 let mut resolved_args = Vec::new();
                 let mut all_ground = true;
                 for expr in &body_atom.args {
-                    let term = Term::from_expr(expr);
+                    let term = term_from_expr_with_subst(expr, subst, ctx);
                     let resolved = apply_subst_term(&term, subst, ctx);
                     match resolved {
                         Term::Val(v) => resolved_args.push(v),
@@ -389,7 +508,40 @@ fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>, ctx: &TensorContext) 
                         }
                     }
                 }
-                if all_ground && evaluate_builtin_predicate(&body_atom.predicate, &resolved_args) {
+                if all_ground {
+                    let ok = evaluate_builtin_predicate(&body_atom.predicate, &resolved_args);
+                    if (ok && !negated) || (!ok && negated) {
+                        new_substs.push(subst.clone());
+                    }
+                }
+            }
+        } else if negated {
+            for subst in &substs {
+                let mut all_ground = true;
+                let mut grounded = Vec::new();
+                for expr in &body_atom.args {
+                    let term = term_from_expr_with_subst(expr, subst, ctx);
+                    let resolved = apply_subst_term(&term, subst, ctx);
+                    match resolved {
+                        Term::Val(v) => grounded.push(v),
+                        _ => {
+                            all_ground = false;
+                            break;
+                        }
+                    }
+                }
+                if !all_ground {
+                    continue;
+                }
+                let candidates = index.candidates(&body_atom.predicate);
+                let mut matched = false;
+                for fact in candidates.iter() {
+                    if fact.args == grounded {
+                        matched = true;
+                        break;
+                    }
+                }
+                if !matched {
                     new_substs.push(subst.clone());
                 }
             }
@@ -398,7 +550,11 @@ fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>, ctx: &TensorContext) 
             for subst in &substs {
                 for fact in candidates.iter() {
                     let mut extended = subst.clone();
-                    let pattern_terms = atom_to_terms(body_atom);
+                    let pattern_terms: Vec<Term> = body_atom
+                        .args
+                        .iter()
+                        .map(|e| term_from_expr_with_subst(e, subst, ctx))
+                        .collect();
                     let mut matches = true;
                     for (term, ground_val) in pattern_terms.iter().zip(fact.args.iter()) {
                         let ground_term = Term::Val(ground_val.clone());
@@ -423,6 +579,14 @@ fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>, ctx: &TensorContext) 
         }
     }
     results
+}
+
+fn term_from_expr_with_subst(expr: &Expr, subst: &Substitution, ctx: &TensorContext) -> Term {
+    if let Some(v) = eval_numeric_expr(expr, subst, Some(ctx)) {
+        Term::Val(Value::Float(v))
+    } else {
+        Term::from_expr(expr)
+    }
 }
 
 pub fn query(goal: &Atom, facts: &HashSet<GroundAtom>, ctx: &TensorContext) -> Vec<Substitution> {
