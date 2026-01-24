@@ -1253,7 +1253,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Struct(_, _) | Type::UserDefined(_, _) => {
                 match &expr.inner {
                     // Fresh allocations are safe to free
-                    ExprKind::StaticMethodCall(_, _, _) | ExprKind::StructInit(_, _) => true,
+                    ExprKind::StaticMethodCall(_, _, _) | ExprKind::StructInit(_, _, _) => true,
                     // Variables and Fields are L-values, not safe to free
                     ExprKind::Variable(_) | ExprKind::FieldAccess(_, _) => false,
                     // Method calls: Check recursively if the receiver was safe to free.
@@ -2131,7 +2131,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 Err(format!("Variable {} not found in scopes", name))
             }
-            ExprKind::StructInit(name, fields) => self.compile_struct_init(name, fields),
+            ExprKind::StructInit(name, _, fields) => self.compile_struct_init(name, fields),
             ExprKind::StaticMethodCall(type_name, method_name, args) => {
                 self.compile_static_method_call(type_name, method_name, args)
             }

@@ -265,7 +265,7 @@ pub enum ExprKind {
 
 
     // Struct Init: Name { field: value, ... }
-    StructInit(String, Vec<(String, Expr)>),
+    StructInit(String, Vec<Type>, Vec<(String, Expr)>),
 
     // Enum Init: Enum::Variant { field: value, ... }
     EnumInit {

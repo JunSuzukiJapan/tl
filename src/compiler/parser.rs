@@ -358,6 +358,11 @@ fn parse_struct_init(input: Span) -> IResult<Span, Expr> {
     spanned(map(
         tuple((
             ws(identifier),
+            opt(delimited(
+                ws(char('<')),
+                separated_list1(ws(char(',')), parse_type),
+                ws(char('>')),
+            )),
             delimited(
                 ws(char('{')),
                 terminated(
@@ -370,7 +375,7 @@ fn parse_struct_init(input: Span) -> IResult<Span, Expr> {
                 ws(char('}')),
             ),
         )),
-        |(name, fields)| ExprKind::StructInit(name, fields),
+        |(name, generics, fields)| ExprKind::StructInit(name, generics.unwrap_or_default(), fields),
     ))(input)
 }
 

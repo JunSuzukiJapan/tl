@@ -228,6 +228,22 @@ impl SemanticAnalyzer {
             ],
         };
         self.enums.insert("Device".to_string(), device_enum);
+
+        // Register Vec<T> struct
+        let vec_struct = StructDef {
+            name: "Vec".to_string(),
+            generics: vec!["T".to_string()],
+            fields: vec![],
+        };
+        self.structs.insert("Vec".to_string(), vec_struct);
+
+        // Register Map<K, V> struct
+        let map_struct = StructDef {
+            name: "Map".to_string(),
+            generics: vec!["K".to_string(), "V".to_string()],
+            fields: vec![],
+        };
+        self.structs.insert("Map".to_string(), map_struct);
     }
 
     pub fn enter_scope(&mut self) {
@@ -516,6 +532,27 @@ impl SemanticAnalyzer {
         self.register_module_symbols(module, "")?;
         self.check_stratified_negation(module)?;
         self.check_module_bodies(module, "")?;
+
+        // Context: Inject built-in generic structs (Vec, Map) and enums into the AST module so Monomorphizer can see them.
+        // These are defined in declare_builtins but not present in the input AST.
+        let builtin_structs = ["Vec", "Map"];
+        for name in builtin_structs {
+            if let Some(def) = self.structs.get(name) {
+                // Avoid duplication if already present (e.g. if we run check multiple times or user defined it shadow)
+                if !module.structs.iter().any(|s| s.name == *name) {
+                    module.structs.push(def.clone());
+                }
+            }
+        }
+        let builtin_enums = ["Device"];
+        for name in builtin_enums {
+            if let Some(def) = self.enums.get(name) {
+                if !module.enums.iter().any(|e| e.name == *name) {
+                    module.enums.push(def.clone());
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -1845,7 +1882,7 @@ impl SemanticAnalyzer {
                     self.err(SemanticError::NotATuple(ty), Some(expr.span.clone()))
                 }
             }
-            ExprKind::StructInit(name, fields) => {
+            ExprKind::StructInit(name, explicit_generics, fields) => {
                 let resolved_name = self.resolve_symbol_name(name);
                 if *name != resolved_name {
                     *name = resolved_name.clone();
@@ -1854,6 +1891,23 @@ impl SemanticAnalyzer {
                 if let Some(struct_def) = self.structs.get(name).cloned() {
                     let mut initialized_fields = HashSet::new();
                     let mut inferred_generics: HashMap<String, Type> = HashMap::new();
+
+                    // Seed inference with explicit generics
+                    if !explicit_generics.is_empty() {
+                        if explicit_generics.len() != struct_def.generics.len() {
+                            return self.err(
+                                SemanticError::ArgumentCountMismatch {
+                                    name: format!("Struct {} generics", name),
+                                    expected: struct_def.generics.len(),
+                                    found: explicit_generics.len(),
+                                },
+                                Some(expr.span.clone()),
+                            );
+                        }
+                        for (i, param) in struct_def.generics.iter().enumerate() {
+                            inferred_generics.insert(param.clone(), explicit_generics[i].clone());
+                        }
+                    }
 
                     for (field_name, field_expr) in fields {
                         if initialized_fields.contains(field_name) {

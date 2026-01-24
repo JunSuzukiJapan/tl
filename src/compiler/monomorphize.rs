@@ -258,10 +258,28 @@ impl Monomorphizer {
 
      fn rewrite_expr(&mut self, expr: &mut ExprKind, subst: &HashMap<String, Type>, expected_type: Option<&Type>) {
          match expr {
-             ExprKind::StructInit(name, fields) => {
+             ExprKind::StructInit(name, explicit_generics, fields) => {
+                 // 0. Resolve explicit generics
+                 let mut resolved_generics = Vec::new();
+                 if !explicit_generics.is_empty() {
+                     for g in explicit_generics {
+                         *g = self.substitute_type(g, subst);
+                         *g = self.resolve_type(g);
+                         resolved_generics.push(g.clone());
+                     }
+                 }
+
                  // Try to resolve generic struct instantiation             ExprKind::StructInit(name, fields) => {
                  // println!("Visiting StructInit: {} expected {:?}", name, expected_type);
-                 if let Some(Type::UserDefined(expected_name, _)) | Some(Type::Struct(expected_name, _)) = expected_type {
+                 // 1. Explicit Generics
+                 if !resolved_generics.is_empty() {
+                     if self.generic_structs.contains_key(name) {
+                         let concrete_name = self.request_struct_instantiation(name, resolved_generics);
+                         *name = concrete_name;
+                     }
+                 }
+                 // 2. Try context inference if not resolved
+                 else if let Some(Type::UserDefined(expected_name, _)) | Some(Type::Struct(expected_name, _)) = expected_type {
                      if expected_name.starts_with(name.as_str()) {
                          // println!("Rewrite StructInit: {} -> {} (ctx: {:?})", name, expected_name, expected_type);
                          *name = expected_name.clone();
@@ -869,7 +887,7 @@ impl Monomorphizer {
                 None
             }
             ExprKind::BinOp(lhs, _, _) => self.infer_expr_type(&lhs.inner), // Assume LHS determines type (mostly true)
-            ExprKind::StructInit(name, _) => Some(Type::UserDefined(name.clone(), vec![])), // Could be Generic?
+            ExprKind::StructInit(name, _, _) => Some(Type::UserDefined(name.clone(), vec![])), // Could be Generic?
             // FnCall return type inference requires looking up the function
             ExprKind::FnCall(name, _) => {
                 // If it's a concrete function we already processed
