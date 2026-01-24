@@ -138,7 +138,8 @@ impl ShapeAnalyzer {
             ExprKind::FnCall(fname, args) => self.infer_fn_call_shape(fname, args),
 
             // Static method calls (e.g., Tensor::new)
-            ExprKind::StaticMethodCall(type_name, method, args) => {
+            ExprKind::StaticMethodCall(type_ty, method, args) => {
+                let type_name = crate::compiler::type_registry::TypeRegistry::type_to_key(type_ty);
                 if type_name == "Tensor" && method == "new" {
                     self.infer_tensor_new_shape(args)
                 } else {

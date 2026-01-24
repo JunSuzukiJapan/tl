@@ -4223,14 +4223,22 @@ impl SemanticAnalyzer {
                     ),
                 }
             }
-            ExprKind::StaticMethodCall(type_name, method_name, args) => {
-                let resolved_type = self.resolve_symbol_name(type_name);
-                if *type_name != resolved_type {
-                    *type_name = resolved_type.clone();
+            ExprKind::StaticMethodCall(type_node, method_name, args) => {
+                let resolved_type = match type_node {
+                    Type::UserDefined(name, generics) => {
+                         let resolved_name = self.resolve_symbol_name(name);
+                         Type::UserDefined(resolved_name, generics.clone())
+                    }
+                    _ => type_node.clone(),
+                };
+                if *type_node != resolved_type {
+                    *type_node = resolved_type.clone();
                 }
+                let type_name = type_node; // Alias for following code (which expects &Type now)
 
                 // Special handling for Param::checkpoint to allow method references
-                if type_name == "Param" && method_name == "checkpoint" {
+                let type_name_key = TypeRegistry::type_to_key(type_name);
+                if type_name_key == "Param" && method_name == "checkpoint" {
                     if args.len() != 2 {
                         return self.err(
                             SemanticError::ArgumentCountMismatch {
@@ -4279,7 +4287,8 @@ impl SemanticAnalyzer {
                     self.check_expr(arg)?;
                 }
 
-                let user_func = if let Some(methods_map) = self.methods.get(type_name) {
+                let type_name_key = TypeRegistry::type_to_key(type_name);
+                let user_func = if let Some(methods_map) = self.methods.get(&type_name_key) {
                     methods_map.get(method_name).cloned()
                 } else {
                     None
@@ -4289,7 +4298,7 @@ impl SemanticAnalyzer {
                     if func.args.len() != args.len() {
                         return self.err(
                             SemanticError::ArgumentCountMismatch {
-                                name: format!("{}::{}", type_name, method_name),
+                                name: format!("{}::{}", type_name_key, method_name),
                                 expected: func.args.len(),
                                 found: args.len(),
                             },
@@ -4298,13 +4307,15 @@ impl SemanticAnalyzer {
                     }
 
                     // Retrieve struct generics
-                    let struct_generics = if let Some(s) = self.structs.get(type_name) {
+                    let type_name_str = TypeRegistry::type_to_key(type_name);
+                    let struct_generics = if let Some(s) = self.structs.get(&type_name_str) {
                         s.generics.clone()
                     } else {
                         vec![]
                     };
                     
                     let mut inferred_generics: HashMap<String, Type> = HashMap::new();
+                    inferred_generics.insert("Self".to_string(), type_name.clone());
 
                     for (arg_val, (_, arg_type)) in args.iter_mut().zip(&func.args) {
                         let val_type = self.check_expr(arg_val)?;
@@ -4376,10 +4387,16 @@ impl SemanticAnalyzer {
                     // Resolve return type: if it's Self or short name, use method's impl target type
                     let resolved_return = match &func.return_type {
                         Type::UserDefined(ret_name, _) => {
+                            let type_key = TypeRegistry::type_to_key(type_name);
                             if ret_name == "Self"
-                                || ret_name == type_name.split("::").last().unwrap_or(type_name)
+                                || ret_name == type_key.split("::").last().unwrap_or(&type_key)
                             {
-                                Type::UserDefined(type_name.clone(), vec![])
+
+                                // Wait, simple UserDefined("Name", []) is not enough if we have generics.
+                                // But here we are just resolving return type alias.
+                                // If function returns Self, and Self is `Wrapper<T>`, we should return `Wrapper<T>`.
+                                // `type_name` holds `Wrapper<T>`.
+                                type_name.clone()
                             } else {
                                 func.return_type.clone()
                             }
@@ -4390,7 +4407,9 @@ impl SemanticAnalyzer {
                 }
 
                 // Fallback for builtins
-                match (type_name.as_str(), method_name.as_str()) {
+                // Use type_to_key for string comparison
+                let type_key = TypeRegistry::type_to_key(type_name);
+                match (type_key.as_str(), method_name.as_str()) {
                     ("File", "open") => {
                         if args.len() != 2 {
                             return self.err(
@@ -4816,7 +4835,7 @@ impl SemanticAnalyzer {
                     }
                     _ => {
                         // Try as a module function: type_name::method_name might be a qualified function call
-                        let full_name = format!("{}::{}", type_name, method_name);
+                        let full_name = format!("{}::{}", TypeRegistry::type_to_key(type_name), method_name);
                         if let Some(func) = self.functions.get(&full_name).cloned() {
                             // Check arguments
                             if args.len() != func.args.len() && !func.args.is_empty() {

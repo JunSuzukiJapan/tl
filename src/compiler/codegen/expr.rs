@@ -2132,8 +2132,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Err(format!("Variable {} not found in scopes", name))
             }
             ExprKind::StructInit(name, _, fields) => self.compile_struct_init(name, fields),
-            ExprKind::StaticMethodCall(type_name, method_name, args) => {
-                self.compile_static_method_call(type_name, method_name, args)
+            ExprKind::StaticMethodCall(type_ty, method_name, args) => {
+                // Resolve type name from Type
+                let type_name = crate::compiler::type_registry::TypeRegistry::type_to_key(&type_ty);
+                self.compile_static_method_call(&type_name, method_name, args)
             }
             ExprKind::BinOp(lhs, op, rhs) => {
                 let left = self.compile_expr(lhs)?;

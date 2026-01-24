@@ -248,7 +248,7 @@ pub enum ExprKind {
     // Calls
     FnCall(String, Vec<Expr>),
     MethodCall(Box<Expr>, String, Vec<Expr>),
-    StaticMethodCall(String, String, Vec<Expr>), // Type::method(args)
+    StaticMethodCall(Type, String, Vec<Expr>), // Type::method(args)
 
     // Cast: expr as Type
     As(Box<Expr>, Type),

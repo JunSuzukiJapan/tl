@@ -541,9 +541,30 @@ fn parse_atom(input: Span) -> IResult<Span, Expr> {
         parse_struct_init,
         parse_match_expr,
         parse_block_expr,
+        parse_static_method_call, // Try parsing Type::method
         parse_tuple_or_grouping,
         parse_variable, // Variable must be last to avoid shadowing keywords/other structures?
     )))(input)
+}
+
+fn parse_static_method_call(input: Span) -> IResult<Span, Expr> {
+    spanned(|input| {
+        // Attempt to parse a Type followed by :: and an identifier.
+        let (rest, ty) = parse_type(input)?;
+        let (rest, _) = ws(tag("::"))(rest)?;
+        let (rest, method) = identifier(rest)?;
+        
+        // Check if (...) follows
+        if let Ok((rest2, _)) = ws(char::<Span, nom::error::Error<Span>>('('))(rest) {
+             // It is a call
+             let (rest3, mut args) = separated_list0(ws(char(',')), parse_expr)(rest2)?;
+             let (rest4, _) = ws(char(')'))(rest3)?;
+             Ok((rest4, ExprKind::StaticMethodCall(ty, method, args)))
+        } else {
+            // No args
+            Ok((rest, ExprKind::StaticMethodCall(ty, method, vec![])))
+        }
+    })(input)
 }
 
 fn parse_tuple_or_grouping(input: Span) -> IResult<Span, Expr> {
@@ -627,7 +648,7 @@ fn parse_postfix(input: Span) -> IResult<Span, Expr> {
                                 let parts: Vec<&str> = fname.split("::").collect();
                                 if parts.len() == 2 {
                                     ExprKind::StaticMethodCall(
-                                        parts[0].to_string(),
+                                        Type::UserDefined(parts[0].to_string(), vec![]),
                                         parts[1].to_string(),
                                         args,
                                     )

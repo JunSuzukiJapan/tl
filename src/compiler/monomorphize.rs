@@ -20,6 +20,7 @@ pub struct Monomorphizer {
     
     // Scopes for variable type tracking during rewrite
     scopes: Vec<HashMap<String, Type>>,
+    current_return_type: Option<Type>,
     
     // Resulting concrete definitions
     concrete_structs: Vec<StructDef>,
@@ -46,6 +47,7 @@ impl Monomorphizer {
             generic_impls: Vec::new(),
             pending_queue: VecDeque::new(),
             scopes: Vec::new(),
+            current_return_type: None,
             concrete_structs: Vec::new(),
             concrete_functions: Vec::new(),
             concrete_enums: Vec::new(),
@@ -130,7 +132,7 @@ impl Monomorphizer {
                 let empty_subst = HashMap::new();
                 for method in &mut impl_block.methods {
                     for stmt in &mut method.body {
-                        self.rewrite_stmt(&mut stmt.inner, &empty_subst);
+                        self.rewrite_stmt(&mut stmt.inner, &empty_subst, None);
                     }
                 }
                 self.concrete_impls.push(impl_block);
@@ -148,7 +150,7 @@ impl Monomorphizer {
         
         // 3. Scan global statements
         for stmt in &mut module.tensor_decls {
-            self.rewrite_stmt(&mut stmt.inner, &empty_subst);
+            self.rewrite_stmt(&mut stmt.inner, &empty_subst, None);
         }
     }
 
@@ -189,7 +191,7 @@ impl Monomorphizer {
         }
     }
 
-    fn rewrite_stmt(&mut self, stmt: &mut StmtKind, subst: &HashMap<String, Type>) {
+    fn rewrite_stmt(&mut self, stmt: &mut StmtKind, subst: &HashMap<String, Type>, expected_type: Option<&Type>) {
         match stmt {
             StmtKind::Let { name, type_annotation, value, .. } => {
                 let context_ty = if let Some(ty) = type_annotation {
@@ -210,10 +212,12 @@ impl Monomorphizer {
                 }
             }
             StmtKind::Expr(e) => {
-                self.rewrite_expr(&mut e.inner, subst, None);
+                self.rewrite_expr(&mut e.inner, subst, expected_type);
             }
             StmtKind::Return(Some(e)) => {
-                self.rewrite_expr(&mut e.inner, subst, None);
+                // Use current_return_type as expected type
+                let ctx = self.current_return_type.clone();
+                self.rewrite_expr(&mut e.inner, subst, ctx.as_ref());
             }
             StmtKind::Assign { value, indices, .. } => {
                 self.rewrite_expr(&mut value.inner, subst, None);
@@ -230,18 +234,18 @@ impl Monomorphizer {
             StmtKind::For { iterator, body, .. } => {
                 self.rewrite_expr(&mut iterator.inner, subst, None);
                 for s in body {
-                    self.rewrite_stmt(&mut s.inner, subst);
+                    self.rewrite_stmt(&mut s.inner, subst, None);
                 }
             }
             StmtKind::While { cond, body } => {
                 self.rewrite_expr(&mut cond.inner, subst, None);
                 for s in body {
-                    self.rewrite_stmt(&mut s.inner, subst);
+                    self.rewrite_stmt(&mut s.inner, subst, None);
                 }
             }
              StmtKind::Loop { body } => {
                  for s in body {
-                    self.rewrite_stmt(&mut s.inner, subst);
+                    self.rewrite_stmt(&mut s.inner, subst, None);
                 }
              }
             StmtKind::TensorDecl { type_annotation, init, .. } => {
@@ -532,61 +536,66 @@ impl Monomorphizer {
                       }
                   }
               }
-              ExprKind::StaticMethodCall(type_name, method_name, args) => {
-                  // Rewrite args first
-                  for arg in args.iter_mut() {
-                      self.rewrite_expr(&mut arg.inner, subst, None);
-                  }
-                  
-                  // Check if type_name references a generic struct
-                  // Box::new -> look up Box
-                  if let Some(def) = self.generic_structs.get(type_name).cloned() {
-                      // We need to infer generic args T from the method signature `fn new(T)`?
-                      // We need to find the method definition in generic impls!
-                      let mut best_impl: Option<&ImplBlock> = None;
-                      for impl_block in &self.generic_impls {
-                          if let Type::Struct(target, _) | Type::UserDefined(target, _) = &impl_block.target_type {
-                              if target.as_str() == type_name.as_str() {
-                                  // Check if method exists
-                                  if impl_block.methods.iter().any(|m| m.name == *method_name) {
-                                      best_impl = Some(impl_block);
-                                      break; 
+              ExprKind::StaticMethodCall(type_ty, method_name, args) => {
+                          println!("DEBUG: StaticMethodCall {:?}::{}", type_ty, method_name);
+                          *type_ty = self.substitute_type(type_ty, subst);
+                          *type_ty = self.resolve_type(type_ty);
+                          for arg in args.iter_mut() {
+                              self.rewrite_expr(&mut arg.inner, subst, None);
+                          }
+                          
+                          // Check if it's a generic struct constructor/method that needs instantiation?
+                          // Check if it's a generic struct constructor/method that needs instantiation?
+                          let type_name_str = crate::compiler::type_registry::TypeRegistry::type_to_key(type_ty);
+                          if let Some(def) = self.generic_structs.get(&type_name_str).cloned() {
+                              // Find implementation handling this call
+                              let mut best_impl: Option<&ImplBlock> = None;
+                              for impl_block in &self.generic_impls {
+                                  if let Type::Struct(target, _) | Type::UserDefined(target, _) = &impl_block.target_type {
+                                      if target.as_str() == type_name_str.as_str() {
+                                          if impl_block.methods.iter().any(|m| m.name == *method_name) {
+                                              best_impl = Some(impl_block);
+                                              break;
+                                          }
+                                      }
+                                  }
+                              }
+                              
+                              if let Some(impl_block) = best_impl {
+                                  if let Some(method) = impl_block.methods.iter().find(|m| m.name == *method_name) {
+                                      // Infer generic args from arguments
+                                      let mut type_args = Vec::new();
+                                      let mut inference_map = HashMap::new();
+                                      let mut all_inferred = true;
+                                      
+                                      for (i, (arg_val, _)) in args.iter().zip(&method.args).enumerate() {
+                                          let param_ty = &method.args[i].1;
+                                          if let Some(val_ty) = self.infer_expr_type(&arg_val.inner) {
+                                              self.unify_types(param_ty, &val_ty, &mut inference_map);
+                                          }
+                                      }
+                                      
+                                      // Construct impl generics
+                                      for param in &def.generics {
+                                          if let Some(ty) = inference_map.get(param) {
+                                              type_args.push(ty.clone());
+                                          } else {
+                                              all_inferred = false;
+                                          }
+                                      }
+                                      
+                                      if all_inferred && !type_args.is_empty() {
+                                          let concrete_name = self.request_struct_instantiation(&type_name_str, type_args);
+                                          *type_ty = Type::UserDefined(concrete_name, vec![]);
+                                      }
                                   }
                               }
                           }
-                      }
-                      
-                      if let Some(impl_block) = best_impl {
-                          if let Some(method) = impl_block.methods.iter().find(|m| m.name == *method_name) {
-                              // Infer generic args from arguments
-                              let mut type_args = Vec::new();
-                              let mut inference_map = HashMap::new();
-                              let mut all_inferred = true;
-                              
-                              for (i, (arg_val, _)) in args.iter().zip(&method.args).enumerate() {
-                                  let param_ty = &method.args[i].1;
-                                  if let Some(val_ty) = self.infer_expr_type(&arg_val.inner) {
-                                      self.unify_types(param_ty, &val_ty, &mut inference_map);
-                                  }
-                              }
-                              
-                              // Construct impl generics (which match struct generics usually)
-                              for param in &def.generics {
-                                  if let Some(ty) = inference_map.get(param) {
-                                      type_args.push(ty.clone());
-                                  } else {
-                                      all_inferred = false;
-                                  }
-                              }
-                              
-                              if all_inferred && !type_args.is_empty() {
-                                  let concrete_name = self.request_struct_instantiation(type_name, type_args);
-                                  *type_name = concrete_name;
-                              }
+                          
+                          if type_name_str.as_str() == "Tensor" {
+                               // ignore
                           }
                       }
-                  }
-              }
               ExprKind::MethodCall(_, _, args) => {
                   for arg in args {
                       self.rewrite_expr(&mut arg.inner, subst, None);
@@ -599,18 +608,18 @@ impl Monomorphizer {
               ExprKind::Block(stmts) => {
                   self.scopes.push(HashMap::new());
                   for s in stmts {
-                      self.rewrite_stmt(&mut s.inner, subst);
+                      self.rewrite_stmt(&mut s.inner, subst, None);
                   }
                   self.scopes.pop();
               }
               ExprKind::IfExpr(cond, then_block, else_block) => {
                    self.rewrite_expr(&mut cond.inner, subst, None);
                    for s in then_block {
-                       self.rewrite_stmt(&mut s.inner, subst);
+                       self.rewrite_stmt(&mut s.inner, subst, None);
                    }
                    if let Some(eb) = else_block {
                        for s in eb {
-                           self.rewrite_stmt(&mut s.inner, subst);
+                           self.rewrite_stmt(&mut s.inner, subst, None);
                        }
                    }
               }
@@ -653,6 +662,8 @@ impl Monomorphizer {
              }
              
              if matches {
+                 subst.insert("Self".to_string(), Type::UserDefined(concrete_struct_name.clone(), vec![]));
+                 
                  let mut new_impl = impl_block.clone();
                  new_impl.generics.clear();
                  new_impl.target_type = Type::UserDefined(concrete_struct_name.clone(), vec![]);
@@ -824,11 +835,25 @@ impl Monomorphizer {
     
     fn rewrite_function_body(&mut self, func: &mut FunctionDef, subst: &HashMap<String, Type>) {
         self.scopes.push(HashMap::new());
-        // ...
-        
-        for stmt in &mut func.body {
-            self.rewrite_stmt(&mut stmt.inner, subst);
+        // Register params
+        for (name, ty) in &func.args {
+            if let Some(scope) = self.scopes.last_mut() {
+                scope.insert(name.clone(), ty.clone());
+            }
         }
+        
+        let old_ret = self.current_return_type.clone();
+        self.current_return_type = Some(func.return_type.clone());
+
+        let len = func.body.len();
+        for (i, stmt) in func.body.iter_mut().enumerate() {
+            let is_last = i == len - 1;
+            // Clone the type to avoid borrowing `self` which is needed mutably for rewrite_stmt
+            let expected_owned = if is_last { self.current_return_type.clone() } else { None };
+            self.rewrite_stmt(&mut stmt.inner, subst, expected_owned.as_ref());
+        }
+        
+        self.current_return_type = old_ret;
         self.scopes.pop();
     }
     
