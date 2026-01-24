@@ -299,7 +299,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         if let Some(scope) = self.variables.get(scope_idx) {
             for (_name, (val_enum, ty, should_free)) in scope {
                 if *should_free {
-                    if let Type::UserDefined(name) = ty {
+                    if let Type::UserDefined(name, _) = ty {
                         let ptr = val_enum.into_pointer_value();
                         let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                         if let Ok(obj_val) = self.builder.build_load(load_type, ptr, "obj_to_free")
@@ -338,7 +338,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 }
                             }
                         }
-                    } else if matches!(ty, Type::Struct(_)) {
+                    } else if matches!(ty, Type::Struct(_, _)) {
                         // Load the struct pointer from the stack variable (Alloca)
                         let ptr = val_enum.into_pointer_value();
                         let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
@@ -510,7 +510,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Only for types that would be freed recursively
                 if matches!(
                     ty,
-                    Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+                    Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _)
                 ) {
                     let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
                     let null_ptr = ptr_type.const_null();
@@ -545,7 +545,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .context
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(), // OpaqueTensor*
-                    Type::Struct(name) | Type::UserDefined(name) => {
+                    Type::Struct(name, _) | Type::UserDefined(name, _) => {
                         if self.struct_types.contains_key(name) || name == "String" {
                             self.context
                                 .ptr_type(inkwell::AddressSpace::default())
@@ -600,7 +600,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::Struct(_) | Type::Enum(_) | Type::UserDefined(_) => {
+                        Type::Struct(_, _) | Type::Enum(_, _) | Type::UserDefined(_, _) => {
                             // Objects are pointers
                             self.context
                                 .ptr_type(inkwell::AddressSpace::default())
@@ -650,10 +650,14 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Pass 1: Declare all methods (Prototypes) and register return types
         for imp in impls {
             for method in &imp.methods {
-                let simple_target = if imp.target_type.contains("::") {
-                    imp.target_type.split("::").last().unwrap()
+                let target_name = match &imp.target_type {
+                    Type::Struct(n, _) | Type::UserDefined(n, _) | Type::Enum(n, _) => n,
+                    _ => panic!("Invalid impl target type"),
+                };
+                let simple_target = if target_name.contains("::") {
+                    target_name.split("::").last().unwrap()
                 } else {
-                    &imp.target_type
+                    target_name
                 };
                 let mangled_name = if method.is_extern {
                     method.name.clone()
@@ -677,9 +681,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Add regular arguments
                 for (_arg_name, arg_ty) in &method.args {
-                    let resolved_ty = if let Type::UserDefined(name) = arg_ty {
+                    let resolved_ty = if let Type::UserDefined(name, _) = arg_ty {
                         if name == "Self" {
-                            Type::UserDefined(imp.target_type.clone())
+                            imp.target_type.clone()
                         } else {
                             arg_ty.clone()
                         }
@@ -695,7 +699,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::Struct(_) | Type::UserDefined(_) => self
+                        Type::Struct(_, _) | Type::UserDefined(_, _) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
@@ -722,7 +726,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .fn_type(&param_types, false),
-                        Type::Struct(_) | Type::UserDefined(_) => self
+                        Type::Struct(_, _) | Type::UserDefined(_, _) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .fn_type(&param_types, false),
@@ -739,10 +743,14 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Pass 2: Compile Bodies
         for imp in impls {
             for method in &imp.methods {
-                let simple_target = if imp.target_type.contains("::") {
-                    imp.target_type.split("::").last().unwrap()
+                let target_name = match &imp.target_type {
+                    Type::Struct(n, _) | Type::UserDefined(n, _) | Type::Enum(n, _) => n,
+                    _ => panic!("Invalid impl target type"),
+                };
+                let simple_target = if target_name.contains("::") {
+                    target_name.split("::").last().unwrap()
                 } else {
-                    &imp.target_type
+                    target_name
                 };
                 let mangled_name = if method.is_extern {
                     method.name.clone()
@@ -770,9 +778,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Get params and store them (skip sret param if present)
                 for (i, (arg_name, arg_ty)) in method.args.iter().enumerate() {
-                    let resolved_ty = if let Type::UserDefined(name) = arg_ty {
+                    let resolved_ty = if let Type::UserDefined(name, _) = arg_ty {
                         if name == "Self" {
-                            Type::UserDefined(imp.target_type.clone())
+                            imp.target_type.clone()
                         } else {
                             arg_ty.clone()
                         }
@@ -983,7 +991,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .context
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
-                Type::UserDefined(_) | Type::Struct(_) | Type::Enum(_) => self
+                Type::UserDefined(_, _) | Type::Struct(_, _) | Type::Enum(_, _) => self
                     .context
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
@@ -1007,7 +1015,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),
                 ),
-                Type::Struct(_) | Type::UserDefined(_) | Type::Enum(_) => Some(
+                Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Enum(_, _) => Some(
                     self.context
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),

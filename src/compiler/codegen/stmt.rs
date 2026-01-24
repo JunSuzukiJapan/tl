@@ -80,8 +80,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             .ok_or("tl_mem_unregister not found")?;
 
         match ty {
-            Type::UserDefined(name) if name == "String" => {} // Skip String
-            Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => {
+            Type::UserDefined(name, _) if name == "String" => {} // Skip String
+            Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _) => {
                 self.builder
                     .build_call(unreg_fn, &[val.into()], "")
                     .map_err(|e| e.to_string())?;
@@ -90,7 +90,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         match ty {
-            Type::Struct(name) | Type::UserDefined(name) => {
+            Type::Struct(name, _) | Type::UserDefined(name, _) => {
                 if name == "String" {
                     return Ok(());
                 }
@@ -103,9 +103,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                             field_type,
                             Type::Tensor(_, _)
                                 | Type::TensorShaped(_, _)
-                                | Type::Struct(_)
-                                | Type::UserDefined(_)
-                                | Type::Enum(_)
+                                | Type::Struct(_, _)
+                                | Type::UserDefined(_, _)
+                                | Type::Enum(_, _)
                                 | Type::Vec(_)
                                 | Type::Tuple(_)
                         ) {
@@ -146,7 +146,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         ty: &Type,
     ) -> Result<(), String> {
         match ty {
-            Type::Struct(name) | Type::UserDefined(name) => {
+            Type::Struct(name, _) | Type::UserDefined(name, _) => {
                 let struct_def = self
                     .struct_defs
                     .get(name)
@@ -173,7 +173,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Type::I64 => self.context.i64_type().into(),
                         Type::I32 => self.context.i32_type().into(),
                         Type::Bool => self.context.bool_type().into(),
-                        Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => self
+                        Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
@@ -196,9 +196,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                         field_ty,
                         Type::Tensor(_, _)
                             | Type::TensorShaped(_, _)
-                            | Type::Struct(_)
-                            | Type::UserDefined(_)
-                            | Type::Enum(_)
+                            | Type::Struct(_, _)
+                            | Type::UserDefined(_, _)
+                            | Type::Enum(_, _)
                             | Type::Vec(_)
                             | Type::Tuple(_)
                     ) {
@@ -227,7 +227,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         ty: &Type,
     ) -> Result<(), String> {
         match ty {
-            Type::Enum(name) => {
+            Type::Enum(name, _) => {
                 let enum_def = self
                     .enum_defs
                     .get(name)
@@ -311,7 +311,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .context
                                     .ptr_type(inkwell::AddressSpace::default())
                                     .into(),
-                                Type::Struct(_) | Type::Enum(_) | Type::UserDefined(_) => self
+                                Type::Struct(_, _) | Type::Enum(_, _) | Type::UserDefined(_, _) => self
                                     .context
                                     .ptr_type(inkwell::AddressSpace::default())
                                     .into(),
@@ -340,9 +340,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 f_ty,
                                 Type::Tensor(_, _)
                                     | Type::TensorShaped(_, _)
-                                    | Type::Struct(_)
-                                    | Type::UserDefined(_)
-                                    | Type::Enum(_)
+                                    | Type::Struct(_, _)
+                                    | Type::UserDefined(_, _)
+                                    | Type::Enum(_, _)
                                     | Type::Vec(_)
                                     | Type::Tuple(_)
                             ) {
@@ -421,7 +421,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
                 self.builder.position_at_end(merge_block);
             }
-            Type::Struct(name) | Type::UserDefined(name) => {
+            Type::Struct(name, _) | Type::UserDefined(name, _) => {
                 // Skip String
                 if name == "String" {
                     return Ok(());
@@ -463,9 +463,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     match f_ty {
                         Type::Tensor(_, _)
                         | Type::TensorShaped(_, _)
-                        | Type::Struct(_)
-                        | Type::UserDefined(_)
-                        | Type::Enum(_)
+                        | Type::Struct(_, _)
+                        | Type::UserDefined(_, _)
+                        | Type::Enum(_, _)
                         | Type::Vec(_)
                         | Type::Tuple(_) => {
                             let f_ptr = self
@@ -501,7 +501,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Only support Vec<Tensor> or Vec<Struct> (pointer-sized elements) for now
                 if matches!(
                     inner_ty.as_ref(),
-                    Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+                    Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _)
                 ) {
                     let len_fn = self
                         .module
@@ -641,8 +641,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             } => {
                 let (obj_val, obj_ty) = self.compile_expr(obj)?;
                 let struct_name = match obj_ty {
-                    Type::Struct(name) => name,
-                    Type::UserDefined(name) => name,
+                    Type::Struct(name, _) => name,
+                    Type::UserDefined(name, _) => name,
                     _ => return Err(format!("Field assignment on non-struct type {:?}", obj_ty)),
                 };
 
@@ -752,7 +752,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Free old value if it's a structural type (Tensor/Struct)
                 if matches!(
                     field_type,
-                    Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_)
+                    Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _)
                 ) {
                     let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                     let current_val = self
@@ -793,7 +793,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Ownership transfer
                 if let Some(f) = self.module.get_function("tl_mem_unregister") {
                     let should_unregister = match &field_type {
-                        Type::Tensor(_, _) | Type::Struct(_) | Type::UserDefined(_) => true,
+                        Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _) => true,
                         _ => false,
                     };
                     if should_unregister {
@@ -975,7 +975,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let should_deep_clone = match &val_ty {
                     Type::Tensor(_, _) | Type::TensorShaped(_, _) => !is_rvalue, // Clone only if L-value
-                    Type::Struct(_) | Type::UserDefined(_) | Type::Enum(_) | Type::Vec(_) | Type::Tuple(_) => {
+                    Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Enum(_, _) | Type::Vec(_) | Type::Tuple(_) => {
                         // Structs/UserDefined/Enum/Vec/Tuple: Pointer copy vs Deep Clone
                         // If R-value, we own the pointer. Move.
                         !is_rvalue
@@ -1042,7 +1042,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                                                                                   .map_err(|e| e.to_string())?;
                                                                                           }
                                                                                       }
-                                                                                      Type::Struct(_) | Type::UserDefined(_) => {
+                                                                                      Type::Struct(_, _) | Type::UserDefined(_, _) => {
                                                                                           /*
                                                                                           if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
                                                                                               self.builder
@@ -1098,7 +1098,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                         .unwrap();
                                 }
                             }
-                            Type::Struct(_) | Type::UserDefined(_) => {
+                            Type::Struct(_, _) | Type::UserDefined(_, _) => {
                                 // CRITICAL FIX: Unregister struct from scope to transfer ownership to caller.
                                 // Without this, exit_scope will free the struct before the caller can use it.
                                 // CRITICAL FIX: recursively unregister struct fields (like Tensors)
@@ -1457,7 +1457,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Fix: Ownership Transfer (Runtime -> Compiler)
                 // Unregister the new value (RHS) to take ownership.
                 match val_type {
-                    Type::Struct(_) | Type::UserDefined(_) | Type::Tensor(_, _) => {
+                    Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Tensor(_, _) => {
                         if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
                             let ptr = val.into_pointer_value();
                             let cast_ptr = self
@@ -1488,7 +1488,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // Free old value if it is a Struct OR Tensor
                         if matches!(
                             var_type,
-                            Type::Struct(_) | Type::UserDefined(_) | Type::Tensor(_, _)
+                            Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Tensor(_, _)
                         ) {
                             let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                             let current_val = self
@@ -1607,7 +1607,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     self.builder
                                         .build_call(f, &[new_val_basic.into()], "")
                                         .map_err(|e| e.to_string())?;
-                                } else if matches!(var_type, Type::Struct(_) | Type::UserDefined(_))
+                                } else if matches!(var_type, Type::Struct(_, _) | Type::UserDefined(_, _))
                                 {
                                     // Recursive unregister for struct fields
                                     self.emit_recursive_unregister(new_val_basic, &var_type)?;
@@ -2431,11 +2431,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // - We need to register the return value as a temporary so it gets freed at scope exit
 
                 match &ty {
-                    Type::Struct(_)
-                    | Type::UserDefined(_)
+                    Type::Struct(_, _)
+                    | Type::UserDefined(_, _)
                     | Type::Tensor(_, _)
                     | Type::TensorShaped(_, _)
-                    | Type::Enum(_)
+                    | Type::Enum(_, _)
                     | Type::Vec(_)
                     | Type::Tuple(_) => {
                         // For struct/tensor return values: Register as a temporary variable
@@ -2605,7 +2605,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Ok((res, Type::F32))
                 }
             }
-            (Type::UserDefined(s1), Type::UserDefined(s2)) if s1 == "String" && s2 == "String" => {
+            (Type::UserDefined(s1, _), Type::UserDefined(s2, _)) if s1 == "String" && s2 == "String" => {
                 match op {
                     BinOp::Add => {
                         let concat_fn = self
@@ -2620,7 +2620,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             ValueKind::Basic(v) => v,
                             _ => return Err("Invalid string concat return".into()),
                         };
-                        Ok((res_val, Type::UserDefined("String".to_string())))
+                        Ok((res_val, Type::UserDefined("String".to_string(), vec![])))
                     }
                     BinOp::Eq | BinOp::Neq => {
                         let strcmp_fn = self
@@ -2955,14 +2955,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Return the SAME pointer
                 Ok(val)
             }
-            Type::Enum(name) => {
+            Type::Enum(name, _) => {
                 let enum_def = self
                     .enum_defs
                     .get(name)
                     .ok_or(format!("Enum {} definition not found", name))?;
                 self.emit_enum_deep_clone(val, enum_def)
             }
-            Type::Struct(name) | Type::UserDefined(name) => {
+            Type::Struct(name, _) | Type::UserDefined(name, _) => {
                 // Check if it is an Enum
                 if let Some(enum_def) = self.enum_defs.get(name) {
                     return self.emit_enum_deep_clone(val, enum_def);
@@ -3058,9 +3058,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let val = match field_ty {
                         Type::Tensor(_, _)
                         | Type::TensorShaped(_, _)
-                        | Type::Struct(_)
-                        | Type::UserDefined(_)
-                        | Type::Enum(_)
+                        | Type::Struct(_, _)
+                        | Type::UserDefined(_, _)
+                        | Type::Enum(_, _)
                         | Type::Vec(_)
                         | Type::Tuple(_) => {
                             let loaded = self
@@ -3240,7 +3240,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::Struct(_) | Type::Enum(_) | Type::UserDefined(_) => self
+                        Type::Struct(_, _) | Type::Enum(_, _) | Type::UserDefined(_, _) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),

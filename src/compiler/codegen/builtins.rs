@@ -1713,7 +1713,7 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_string_to_i64".to_string(), Type::I64);
     fn_return_types.insert(
         "tl_args_get".to_string(),
-        Type::UserDefined("String".to_string()),
+        Type::UserDefined("String".to_string(), vec![]),
     );
 
     // Added missing ones (Define type locally as declared later)
@@ -2433,11 +2433,11 @@ pub fn declare_runtime_functions<'ctx>(
     // Return types
     fn_return_types.insert(
         "tl_string_concat".to_string(),
-        Type::UserDefined("String".to_string()),
+        Type::UserDefined("String".to_string(), vec![]),
     );
     fn_return_types.insert(
         "tl_string_from_int".to_string(),
-        Type::UserDefined("String".to_string()),
+        Type::UserDefined("String".to_string(), vec![]),
     );
     fn_return_types.insert("tl_tokenizer_new".to_string(), Type::I64);
     fn_return_types.insert(
@@ -2446,50 +2446,50 @@ pub fn declare_runtime_functions<'ctx>(
     );
     fn_return_types.insert(
         "tl_tokenizer_decode".to_string(),
-        Type::UserDefined("String".to_string()),
+        Type::UserDefined("String".to_string(), vec![]),
     );
     fn_return_types.insert(
         "tl_gguf_load".to_string(),
-        Type::UserDefined("Map".to_string()),
+        Type::UserDefined("Map".to_string(), vec![]),
     );
     fn_return_types.insert(
         "tl_file_open".to_string(),
-        Type::UserDefined("File".to_string()),
+        Type::UserDefined("File".to_string(), vec![]),
     );
     fn_return_types.insert(
         "tl_file_read_string".to_string(),
-        Type::UserDefined("String".to_string()),
+        Type::UserDefined("String".to_string(), vec![]),
     );
     fn_return_types.insert("tl_file_write_string".to_string(), Type::Void);
     fn_return_types.insert("tl_file_close".to_string(), Type::Void);
     fn_return_types.insert(
         "tl_path_new".to_string(),
-        Type::UserDefined("Path".to_string()),
+        Type::UserDefined("Path".to_string(), vec![]),
     );
     fn_return_types.insert(
         "tl_path_join".to_string(),
-        Type::UserDefined("Path".to_string()),
+        Type::UserDefined("Path".to_string(), vec![]),
     );
     fn_return_types.insert("tl_path_exists".to_string(), Type::Bool);
     fn_return_types.insert("tl_path_is_dir".to_string(), Type::Bool);
     fn_return_types.insert("tl_path_is_file".to_string(), Type::Bool);
     fn_return_types.insert(
         "tl_path_to_string".to_string(),
-        Type::UserDefined("String".to_string()),
+        Type::UserDefined("String".to_string(), vec![]),
     );
     fn_return_types.insert("tl_path_free".to_string(), Type::Void);
     fn_return_types.insert("tl_http_download".to_string(), Type::Bool);
     fn_return_types.insert(
         "tl_http_get".to_string(),
-        Type::UserDefined("String".to_string()),
+        Type::UserDefined("String".to_string(), vec![]),
     );
     fn_return_types.insert(
         "tl_env_get".to_string(),
-        Type::UserDefined("String".to_string()),
+        Type::UserDefined("String".to_string(), vec![]),
     );
     fn_return_types.insert(
         "tl_read_line".to_string(),
-        Type::UserDefined("String".to_string()),
+        Type::UserDefined("String".to_string(), vec![]),
     );
 
     // tl_get_memory_mb() -> i64
@@ -2926,7 +2926,7 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_string_from_int", str_from_int_type);
     fn_return_types.insert(
         "tl_string_from_int".to_string(),
-        Type::UserDefined("String".into()),
+        Type::UserDefined("String".into(), vec![]),
     );
     if let Some(f) = module.get_function("tl_string_from_int") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_int as usize);

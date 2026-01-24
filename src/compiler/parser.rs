@@ -108,13 +108,13 @@ fn parse_tensor_type(input: Span) -> IResult<Span, Type> {
 }
 
 fn parse_user_type(input: Span) -> IResult<Span, Type> {
-    // Check for Enum vs Struct in identifier context? No, just identifier.
-    // Type::Struct / Type::Enum / Type::UserDefined are currently ambiguous in parser until resolution.
-    // Let's use UserDefined for now for any identifier in type position.
-    // But later semantics will resolve it.
-    // However, if we want explicit Type::Enum for syntax highlighting or specialized parsing?
-    // For now, Type::UserDefined covers both.
-    map(identifier, Type::UserDefined)(input)
+    let (input, name) = identifier(input)?;
+    let (input, args) = opt(delimited(
+        ws(char('<')),
+        separated_list1(ws(char(',')), parse_type),
+        ws(char('>')),
+    ))(input)?;
+    Ok((input, Type::UserDefined(name, args.unwrap_or_default())))
 }
 
 fn parse_tuple_type(input: Span) -> IResult<Span, Type> {
@@ -1185,7 +1185,7 @@ fn parse_fn_arg(input: Span) -> IResult<Span, (String, Type)> {
         Some(t) => Ok((input, (name, t))),
         None => {
             if name == "self" {
-                Ok((input, (name, Type::UserDefined("Self".to_string()))))
+                Ok((input, (name, Type::UserDefined("Self".to_string(), vec![]))))
             } else {
                 // Fail if no type and not self
                 Err(nom::Err::Error(nom::error::Error::new(
@@ -1545,18 +1545,8 @@ fn parse_impl(input: Span) -> IResult<Span, ImplBlock> {
         ws(char('>')),
     ))(input)?;
 
-    let (input, target_type) = ws(identifier)(input)?;
-
-    // Type args for target? e.g. Linear<T>
-    // For now skip parsing <T> on target type name in AST or parse it?
-    // The AST has target_type: String. Let's just parse the name.
-    // If there is <T>, consume it but ignore for now or store in name?
-    // Let's consume it.
-    let (input, _) = opt(delimited(
-        ws(char('<')),
-        take_while(|c: char| c != '>'),
-        ws(char('>')),
-    ))(input)?;
+    // Parse target type (can be generic, e.g. Struct<T>)
+    let (input, target_type) = ws(parse_type)(input)?;
 
     let (input, _) = ws(char('{'))(input)?;
 

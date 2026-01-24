@@ -822,13 +822,13 @@ impl TypeRegistry {
             MethodSignature {
                 name: "read_string".to_string(),
                 params: vec![],
-                return_type: ReturnType::Exact(Type::UserDefined("String".to_string())),
+                return_type: ReturnType::Exact(Type::UserDefined("String".to_string(), vec![])),
                 is_varargs: false,
                 min_args: 0,
             },
             MethodSignature {
                 name: "write_string".to_string(),
-                params: vec![ParamType::Exact(Type::UserDefined("String".to_string()))],
+                params: vec![ParamType::Exact(Type::UserDefined("String".to_string(), vec![]))],
                 return_type: ReturnType::Void,
                 is_varargs: false,
                 min_args: 1,
@@ -875,8 +875,8 @@ impl TypeRegistry {
         let path_methods = vec![
             MethodSignature {
                 name: "join".to_string(),
-                params: vec![ParamType::Exact(Type::UserDefined("String".to_string()))],
-                return_type: ReturnType::Exact(Type::UserDefined("Path".to_string())),
+                params: vec![ParamType::Exact(Type::UserDefined("String".to_string(), vec![]))],
+                return_type: ReturnType::Exact(Type::UserDefined("Path".to_string(), vec![])),
                 is_varargs: false,
                 min_args: 1,
             },
@@ -904,7 +904,7 @@ impl TypeRegistry {
             MethodSignature {
                 name: "to_string".to_string(),
                 params: vec![],
-                return_type: ReturnType::Exact(Type::UserDefined("String".to_string())),
+                return_type: ReturnType::Exact(Type::UserDefined("String".to_string(), vec![])),
                 is_varargs: false,
                 min_args: 0,
             },
@@ -929,14 +929,14 @@ impl TypeRegistry {
         let vb_methods = vec![
             MethodSignature {
                 name: "get".to_string(),
-                params: vec![ParamType::Exact(Type::UserDefined("String".to_string())), ParamType::ShapeArray],
+                params: vec![ParamType::Exact(Type::UserDefined("String".to_string(), vec![])), ParamType::ShapeArray],
                 return_type: ReturnType::TensorSameElementType(0),
                 is_varargs: false,
                 min_args: 2,
             },
             MethodSignature {
                 name: "grad".to_string(),
-                params: vec![ParamType::Exact(Type::UserDefined("String".to_string()))],
+                params: vec![ParamType::Exact(Type::UserDefined("String".to_string(), vec![]))],
                 return_type: ReturnType::TensorSameElementType(0),
                 is_varargs: false,
                 min_args: 1,
@@ -962,15 +962,15 @@ impl TypeRegistry {
             },
             MethodSignature {
                 name: "concat".to_string(),
-                params: vec![ParamType::Exact(Type::UserDefined("String".to_string()))],
-                return_type: ReturnType::Exact(Type::UserDefined("String".to_string())),
+                params: vec![ParamType::Exact(Type::UserDefined("String".to_string(), vec![]))],
+                return_type: ReturnType::Exact(Type::UserDefined("String".to_string(), vec![])),
                 is_varargs: false,
                 min_args: 1,
             },
             MethodSignature {
                 name: "char_at".to_string(),
                 params: vec![ParamType::AnyInt],
-                return_type: ReturnType::Exact(Type::UserDefined("String".to_string())),
+                return_type: ReturnType::Exact(Type::UserDefined("String".to_string(), vec![])),
                 is_varargs: false,
                 min_args: 1,
             },
@@ -997,7 +997,7 @@ impl TypeRegistry {
             },
             MethodSignature {
                 name: "contains".to_string(),
-                params: vec![ParamType::Exact(Type::UserDefined("String".to_string()))],
+                params: vec![ParamType::Exact(Type::UserDefined("String".to_string(), vec![]))],
                 return_type: ReturnType::Exact(Type::Bool),
                 is_varargs: false,
                 min_args: 1,
@@ -1055,7 +1055,7 @@ impl TypeRegistry {
             "encode".to_string(),
             MethodSignature {
                 name: "encode".to_string(),
-                params: vec![ParamType::Exact(Type::UserDefined("String".to_string()))],
+                params: vec![ParamType::Exact(Type::UserDefined("String".to_string(), vec![]))],
                 return_type: ReturnType::Exact(Type::Tensor(Box::new(Type::I64), 1)),
                 is_varargs: false,
                 min_args: 1,
@@ -1066,7 +1066,7 @@ impl TypeRegistry {
             MethodSignature {
                 name: "decode".to_string(),
                 params: vec![ParamType::Exact(Type::Tensor(Box::new(Type::I64), 1))],
-                return_type: ReturnType::Exact(Type::UserDefined("String".to_string())),
+                return_type: ReturnType::Exact(Type::UserDefined("String".to_string(), vec![])),
                 is_varargs: false,
                 min_args: 1,
             },
@@ -1075,7 +1075,7 @@ impl TypeRegistry {
             "token_id".to_string(),
             MethodSignature {
                 name: "token_id".to_string(),
-                params: vec![ParamType::Exact(Type::UserDefined("String".to_string()))],
+                params: vec![ParamType::Exact(Type::UserDefined("String".to_string(), vec![]))],
                 return_type: ReturnType::Exact(Type::I64),
                 is_varargs: false,
                 min_args: 1,
@@ -1153,7 +1153,7 @@ impl TypeRegistry {
             "get".to_string(),
             MethodSignature {
                 name: "get".to_string(),
-                params: vec![ParamType::Exact(Type::UserDefined("String".to_string()))],
+                params: vec![ParamType::Exact(Type::UserDefined("String".to_string(), vec![]))],
                 return_type: ReturnType::Exact(Type::Tensor(Box::new(Type::F32), 0)),
                 is_varargs: false,
                 min_args: 1,
@@ -1163,7 +1163,7 @@ impl TypeRegistry {
             "get_1d".to_string(),
             MethodSignature {
                 name: "get_1d".to_string(),
-                params: vec![ParamType::Exact(Type::UserDefined("String".to_string()))],
+                params: vec![ParamType::Exact(Type::UserDefined("String".to_string(), vec![]))],
                 return_type: ReturnType::Exact(Type::Tensor(Box::new(Type::F32), 1)),
                 is_varargs: false,
                 min_args: 1,
@@ -1173,7 +1173,7 @@ impl TypeRegistry {
             "get_quantized".to_string(),
             MethodSignature {
                 name: "get_quantized".to_string(),
-                params: vec![ParamType::Exact(Type::UserDefined("String".to_string()))],
+                params: vec![ParamType::Exact(Type::UserDefined("String".to_string(), vec![]))],
                 return_type: ReturnType::Exact(Type::I64),
                 is_varargs: false,
                 min_args: 1,
@@ -1184,8 +1184,8 @@ impl TypeRegistry {
             MethodSignature {
                 name: "set".to_string(),
                 params: vec![
-                    ParamType::Exact(Type::UserDefined("String".to_string())),
-                    ParamType::Exact(Type::UserDefined("String".to_string())),
+                    ParamType::Exact(Type::UserDefined("String".to_string(), vec![])),
+                    ParamType::Exact(Type::UserDefined("String".to_string(), vec![])),
                 ],
                 return_type: ReturnType::Void,
                 is_varargs: false,
@@ -1222,9 +1222,9 @@ impl TypeRegistry {
             Type::I64 => "I64".to_string(),
             Type::I32 => "I32".to_string(),
             Type::Bool => "Bool".to_string(),
-            Type::UserDefined(name) => name.clone(),
-            Type::Struct(name) => name.clone(),
-            Type::Enum(name) => name.clone(),
+            Type::UserDefined(name, _) => name.clone(),
+            Type::Struct(name, _) => name.clone(),
+            Type::Enum(name, _) => name.clone(),
             Type::Vec(inner) => format!("Vec<{}>", Self::type_to_key(inner)),
             _ => "Unknown".to_string(),
         }

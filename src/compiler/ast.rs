@@ -88,10 +88,10 @@ pub enum Type {
     Vec(Box<Type>),
 
     // User defined struct
-    Struct(String),
+    Struct(String, Vec<Type>), // Name, Component Types (Generics)
 
     // User defined enum
-    Enum(String),
+    Enum(String, Vec<Type>), // Name, Component Types
 
     // Optimized small constant array (elements up to 4, stored as scalars)
     ScalarArray(Box<Type>, usize), // (element_type, length)
@@ -99,8 +99,8 @@ pub enum Type {
     // Tuple type: (Type, Type, ...)
     Tuple(Vec<Type>),
 
-    // Generic placeholder
-    UserDefined(String),
+    // Generic placeholder or unresolved type
+    UserDefined(String, Vec<Type>), // Name, Generic Args
 
     Void, // For functions returning nothing
 }
@@ -124,7 +124,7 @@ pub struct StructDef {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImplBlock {
-    pub target_type: String,
+    pub target_type: Type, // Changed from String to Type to generic support (e.g. Struct<T>)
     pub generics: Vec<String>,
     pub methods: Vec<FunctionDef>,
 }
