@@ -4,8 +4,8 @@ use crate::compiler::error::{ParseErrorKind, TlError};
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_while, take_while1},
-    character::complete::{alpha1, char, digit1, space0, space1},
-    combinator::{cut, map, not, opt, recognize, value, verify},
+    character::complete::{alpha1, char, digit1, satisfy, space0, space1},
+    combinator::{cut, map, not, opt, peek, recognize, value, verify},
     multi::{many0, separated_list0, separated_list1},
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
     IResult,
@@ -497,7 +497,7 @@ fn parse_pattern(input: Span) -> IResult<Span, Pattern> {
 fn parse_match_expr(input: Span) -> IResult<Span, Expr> {
     spanned(map(
         tuple((
-            preceded(tag("match"), cut(parse_expr)),
+            preceded(terminated(tag("match"), peek(not(satisfy(|c: char| c.is_alphanumeric() || c == '_')))), cut(parse_expr)),
             cut(delimited(
                 ws(char('{')),
                 terminated(
