@@ -55,6 +55,7 @@ tokenizers = "0.19.1"
 byteorder = "1.5"
 rand = "0.8.5"
 nom_locate = "4.1.0"
+logos = "0.16.0"
 
 
 [features]

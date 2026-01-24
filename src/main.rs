@@ -513,7 +513,7 @@ fn load_module_recursive(
     };
     let source = content.clone();
 
-    let mut module = match tl_lang::compiler::parser::parse(&content) {
+    let mut module = match tl_lang::compiler::parser::parse_from_source(&content) {
         Ok(m) => m,
         Err(e) => {
             // visited.remove(&canonical_path);

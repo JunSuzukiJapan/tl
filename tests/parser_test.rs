@@ -1,24 +1,38 @@
-use tl_lang::compiler::ast::*;
-use tl_lang::compiler::parser::*;
+use tl_lang::compiler::lexer::{tokenize, Token};
+use tl_lang::compiler::ast::{ExprKind, StmtKind, Type, AssignOp, BinOp, UnOp, Spanned};
+use tl_lang::compiler::parser::{parse_expr, parse_stmt, parse, parse_type};
+use tl_lang::compiler::error::Span;
 
 fn p_expr(input: &str) -> ExprKind {
-    let (rest, expr) = parse_expr(Span::new(input)).expect("Parse error");
-    assert!(rest.fragment().trim().is_empty(), "Trailing text: {}", rest);
+    let tokens_res = tokenize(input);
+    let tokens: Vec<_> = tokens_res.into_iter().map(|r| r.unwrap()).collect();
+    let (rest, expr) = parse_expr(&tokens).expect("Parse error");
+    assert!(rest.is_empty(), "Trailing tokens: {:?}", rest);
     expr.inner
 }
 
 fn p_stmt(input: &str) -> StmtKind {
-    let (rest, stmt) = parse_stmt(Span::new(input)).expect("Parse error");
-    assert!(rest.fragment().trim().is_empty(), "Trailing text: {}", rest);
+    let tokens_res = tokenize(input);
+    let tokens: Vec<_> = tokens_res.into_iter().map(|r| r.unwrap()).collect();
+    let (rest, stmt) = parse_stmt(&tokens).expect("Parse error");
+    assert!(rest.is_empty(), "Trailing tokens: {:?}", rest);
     stmt.inner
+}
+
+fn p_type(input: &str) -> Type {
+    let tokens_res = tokenize(input);
+    let tokens: Vec<_> = tokens_res.into_iter().map(|r| r.unwrap()).collect();
+    let (rest, ty) = parse_type(&tokens).expect("Parse error");
+    assert!(rest.is_empty(), "Trailing tokens: {:?}", rest);
+    ty
 }
 
 #[test]
 fn test_types() {
-    let (_, t) = parse_type(Span::new("f32")).unwrap();
+    let t = p_type("f32");
     assert_eq!(t, Type::F32);
 
-    let (_, t) = parse_type(Span::new("Tensor<f32, 2>")).unwrap();
+    let t = p_type("Tensor<f32, 2>");
     if let Type::Tensor(inner, rank) = t {
         assert_eq!(*inner, Type::F32);
         assert_eq!(rank, 2);
@@ -26,7 +40,7 @@ fn test_types() {
         panic!("Expected Tensor type");
     }
 
-    let (_, t) = parse_type(Span::new("(f32, i32)")).unwrap();
+    let t = p_type("(f32, i32)");
     if let Type::Tuple(ts) = t {
         assert_eq!(ts.len(), 2);
     } else {
@@ -161,7 +175,8 @@ fn test_postfix() {
 
     // Static Method
     if let ExprKind::StaticMethodCall(type_name, method, _) = p_expr("MyType::new()") {
-        assert_eq!(type_name, "MyType");
+        // assert_eq!(type_name, "MyType"); // Legacy
+        assert_eq!(type_name, Type::UserDefined("MyType".to_string(), vec![]));
         assert_eq!(method, "new");
     } else {
         panic!("Expected StaticMethodCall");
@@ -191,7 +206,7 @@ fn test_range() {
 #[test]
 fn test_constructors() {
     // Struct init
-    if let ExprKind::StructInit(name, fields) = p_expr("Point { x: 1, y: 2 }") {
+    if let ExprKind::StructInit(name, _, fields) = p_expr("Point { x: 1, y: 2 }") {
         assert_eq!(name, "Point");
         assert_eq!(fields.len(), 2);
     } else {
@@ -199,7 +214,7 @@ fn test_constructors() {
     }
 
     // Tensor literal
-    if let ExprKind::TensorConstLiteral(elems) = p_expr("[1, 2, 3]") {
+    if let ExprKind::TensorLiteral(elems) = p_expr("[1, 2, 3]") {
         assert_eq!(elems.len(), 3);
     } else {
         panic!("Expected TensorConstLiteral");
@@ -295,16 +310,24 @@ fn test_top_level() {
         tensor W: Tensor<f32, 2>;
     "#;
 
-    let module = parse(input).expect("Failed to parse module");
-    assert_eq!(module.imports.len(), 2);
-    assert!(module.imports.contains(&"foo".to_string()));
+    let tokens_res = tokenize(input);
+    let tokens: Vec<_> = tokens_res.into_iter().map(|r| r.unwrap()).collect();
+    let module = parse(&tokens).expect("Failed to parse module");
+    assert_eq!(module.imports.len(), 1);
     assert!(module.imports.contains(&"std::math".to_string()));
+    assert_eq!(module.submodules.len(), 1);
+    assert!(module.submodules.contains_key("foo"));
 
     assert_eq!(module.structs.len(), 1);
     assert_eq!(module.structs[0].name, "Point");
 
     assert_eq!(module.impls.len(), 1);
-    assert_eq!(module.impls[0].target_type, "Point");
+    // assert_eq!(module.impls[0].target_type, "Point");
+    match &module.impls[0].target_type {
+        Type::UserDefined(name, _) => assert_eq!(name, "Point"),
+        Type::Struct(name, _) => assert_eq!(name, "Point"),
+        _ => panic!("Expected UserDefined or Struct type"),
+    }
 
     assert_eq!(module.functions.len(), 1);
     assert_eq!(module.functions[0].name, "main");

@@ -169,7 +169,7 @@ impl TlError {
 }
 
 /// パーサーエラーの種類
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, PartialEq)]
 pub enum ParseErrorKind {
     #[error("unexpected token: {0}")]
     UnexpectedToken(String),
@@ -179,6 +179,9 @@ pub enum ParseErrorKind {
 
     #[error("invalid syntax: {0}")]
     InvalidSyntax(String),
+
+    #[error("nom error: {0:?}")]
+    Nom(nom::error::ErrorKind),
 
     #[error("parse error: {0}")]
     Generic(String),
