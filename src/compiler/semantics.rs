@@ -415,6 +415,11 @@ impl SemanticAnalyzer {
     ) -> Result<Option<usize>, SemanticError> {
         match pattern {
             Pattern::Wildcard => Ok(None),
+            Pattern::Literal(_lit_expr) => {
+                // Literal patterns don't bind variables or select a variant index.
+                // The type checking for the literal itself would happen in the calling context.
+                Ok(None)
+            }
             Pattern::EnumPattern {
                 enum_name: p_enum,
                 variant_name,
@@ -1957,6 +1962,8 @@ impl SemanticAnalyzer {
                     .map_err(|e| e.to_tl_error(Some(expr.span.clone())))?;
 
                 let mut initialized_fields = HashSet::new();
+                let mut inferred_generics: HashMap<String, Type> = HashMap::new();
+
                 for (field_name, field_expr) in fields {
                     if initialized_fields.contains(field_name) {
                         return self.err(
@@ -1983,7 +1990,23 @@ impl SemanticAnalyzer {
                         .map_err(|e| e.to_tl_error(Some(expr.span.clone())))?;
 
                     let found_type = self.check_expr(field_expr)?;
-                    if !self.are_types_compatible(expected_type, &found_type) {
+                    
+                    // Infer generics
+                    let mut unify = |t1: &Type, t2: &Type| -> bool {
+                        if let Type::UserDefined(n1, _) = t1 {
+                            if enum_def.generics.contains(n1) {
+                                if let Some(existing) = inferred_generics.get(n1) {
+                                    return self.are_types_compatible(existing, t2);
+                                } else {
+                                    inferred_generics.insert(n1.clone(), t2.clone());
+                                    return true;
+                                }
+                            }
+                        }
+                        self.are_types_compatible(t1, t2)
+                    };
+
+                    if !unify(expected_type, &found_type) {
                         return self.err(
                             SemanticError::TypeMismatch {
                                 expected: expected_type.clone(),
@@ -2007,8 +2030,25 @@ impl SemanticAnalyzer {
                         );
                     }
                 }
+                
+                // Construct type args
+                let mut type_args = Vec::new();
+                for param in &enum_def.generics {
+                    if let Some(ty) = inferred_generics.get(param) {
+                        type_args.push(ty.clone());
+                    } else {
+                        // defaulting to Void or error?
+                        // For now allow partial? Or error?
+                        // If un-inferred, return param itself? No that's monomorphization job.
+                        // Semantics expects concrete types?
+                        // Let's assume they are "Unknown" or just keep them generic?
+                        // But we return Type::Enum which expects args.
+                        // Let's assume Type::UserDefined(param)
+                        type_args.push(Type::UserDefined(param.clone(), vec![])); 
+                    }
+                }
 
-                Ok(Type::Enum(enum_name.clone(), vec![]))
+                Ok(Type::Enum(enum_name.clone(), type_args))
             }
             ExprKind::Match {
                 expr: subject_expr,

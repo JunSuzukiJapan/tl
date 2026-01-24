@@ -259,16 +259,17 @@ impl Monomorphizer {
      fn rewrite_expr(&mut self, expr: &mut ExprKind, subst: &HashMap<String, Type>, expected_type: Option<&Type>) {
          match expr {
              ExprKind::StructInit(name, fields) => {
-                 // Try to resolve generic struct instantiation from expected_type
+                 // Try to resolve generic struct instantiation             ExprKind::StructInit(name, fields) => {
+                 // println!("Visiting StructInit: {} expected {:?}", name, expected_type);
                  if let Some(Type::UserDefined(expected_name, _)) | Some(Type::Struct(expected_name, _)) = expected_type {
                      if expected_name.starts_with(name.as_str()) {
-                         println!("Rewrite StructInit: {} -> {} (ctx: {:?})", name, expected_name, expected_type);
+                         // println!("Rewrite StructInit: {} -> {} (ctx: {:?})", name, expected_name, expected_type);
                          *name = expected_name.clone();
                      } else {
-                         println!("Rewrite StructInit mismatch: {} vs context {}", name, expected_name);
+                         // println!("Rewrite StructInit mismatch: {} vs context {}", name, expected_name);
                      }
                  } else {
-                     println!("Rewrite StructInit no context for {}", name);
+                     // println!("Rewrite StructInit no context for {}", name);
                  }
                  
                  // Look up the concrete struct definition (renamed) to propagate field types
@@ -281,6 +282,7 @@ impl Monomorphizer {
                      }
                  } 
                  // 2. Try generic (if not renamed? but name is likely mangled here if we renamed it)
+                 // 2. Try generic Struct
                  else if let Some(def) = self.generic_structs.get(name) {
                      // Try to infer generics from fields!
                      let mut inferred_map = HashMap::new();
@@ -292,9 +294,6 @@ impl Monomorphizer {
                              if let Some(val_ty) = self.infer_expr_type(&val.inner) {
                                  // Unify field_ty (e.g. T) with val_ty (e.g. I64)
                                  self.unify_types(field_ty, &val_ty, &mut inferred_map);
-                             } else {
-                                 // If we can't infer value type (complex expr), we might fail to infer generics.
-                                 // But maybe other fields provide enough info.
                              }
                          }
                      }
@@ -311,24 +310,20 @@ impl Monomorphizer {
                      
                      if all_inferred && !type_args.is_empty() {
                          let concrete_name = self.request_struct_instantiation(name, type_args.clone());
-                         println!("Inferred StructInit: {} -> {} args {:?}", name, concrete_name, type_args);
                          *name = concrete_name;
                          
-                         // Now re-lookup concrete definition to populate field_types_map correctly
                          if let Some(c_def) = self.concrete_structs.iter().find(|s| s.name == *name) {
                              for (fname, fty) in &c_def.fields {
                                  field_types_map.insert(fname.clone(), fty.clone());
                              }
                          }
                      } else {
-                         // Fallback? If unable to infer, maybe fields are enough?
-                         // Or just populate map with generic fields (T) pending rewrite?
-                         // But we want to rewrite fields with concrete types if possible.
                          for (fname, fty) in &def.fields {
                              field_types_map.insert(fname.clone(), fty.clone());
                          }
                      }
                  }
+                 // 3. Try generic Enum (e.g. Option::Some)
                  // 3. Try reverse lookup (Mangled -> Original + Args)
                  else if let Some((orig_name, args)) = self.reverse_struct_instances.get(name) {
                      if let Some(def) = self.generic_structs.get(orig_name) {
@@ -341,11 +336,66 @@ impl Monomorphizer {
                          }
                          for (fname, fty) in &def.fields {
                              let resolved_fty = self.substitute_type(fty, &inner_subst);
-                             // Also fully resolve it? substitute_type is recursive for subst values.
-                             // But we might need resolve_type if it produces complex types.
-                             // substitute_type should be enough if args are already resolved 
-                             // (request_struct_instantiation args are resolved).
                              field_types_map.insert(fname.clone(), resolved_fty);
+                         }
+                     }
+                 }
+                 // 4. Try generic Enum (e.g. Option::Some)
+                 else {
+                     // Extract type name from "Type::Variant"
+                     // Clone to avoid borrowing `name`
+                     let (type_name_str, variant_name_str) = {
+                        let parts: Vec<&str> = name.split("::").collect();
+                        let t = if parts.len() > 1 { parts[0].to_string() } else { name.clone() };
+                        let v = if parts.len() > 1 { parts[1].to_string() } else { "".to_string() };
+                        (t, v)
+                     };
+                     
+                     if let Some(def) = self.generic_enums.get(&type_name_str) {
+                         // Find variant def
+                         let variant_def = def.variants.iter().find(|v| v.name == variant_name_str);
+                         
+                         if let Some(v_def) = variant_def {
+                             let mut inferred_map = HashMap::new();
+                             let mut all_inferred = true;
+                             
+                             for (fname, val) in fields.iter() {
+                                 if let Some(field_ty) = v_def.fields.iter().find(|(f, _)| f == fname).map(|(_, t)| t) {
+                                     if let Some(val_ty) = self.infer_expr_type(&val.inner) {
+                                         self.unify_types(field_ty, &val_ty, &mut inferred_map);
+                                     }
+                                 }
+                             }
+                             
+                             let mut type_args = Vec::new();
+                             for param in &def.generics {
+                                 if let Some(ty) = inferred_map.get(param) {
+                                     type_args.push(ty.clone());
+                                 } else {
+                                     all_inferred = false;
+                                 }
+                             }
+                             
+                             if all_inferred && !type_args.is_empty() {
+                                 println!("Rewriting Enum Init: {} -> {} with args {:?}", name, type_name_str, type_args);
+                                 // Instantiate Enum
+                                 let concrete_enum_name = self.request_struct_instantiation(&type_name_str, type_args.clone());
+                                 // Rewrite Name to "ConcreteEnum::Variant"
+                                 *name = format!("{}::{}", concrete_enum_name, variant_name_str);
+                                 
+                                 // Populate field context
+                                 if let Some(c_def) = self.concrete_enums.iter().find(|e| e.name == concrete_enum_name) {
+                                     if let Some(c_v) = c_def.variants.iter().find(|v| v.name == variant_name_str) {
+                                         for (fname, fty) in &c_v.fields {
+                                             field_types_map.insert(fname.clone(), fty.clone());
+                                         }
+                                     }
+                                 }
+                             } else {
+                                 for (fname, fty) in &v_def.fields {
+                                     field_types_map.insert(fname.clone(), fty.clone());
+                                 }
+                             }
                          }
                      }
                  }
@@ -356,6 +406,63 @@ impl Monomorphizer {
                  }
                  return;
              }
+             ExprKind::EnumInit { enum_name, variant_name, fields } => {
+                 if let Some(def) = self.generic_enums.get(enum_name) {
+                     if let Some(v_def) = def.variants.iter().find(|v| v.name == *variant_name) {
+                         let mut inferred_map = HashMap::new();
+                         let mut all_inferred = true;
+                         
+                         for (fname, val) in fields.iter() {
+                             if let Some(field_ty) = v_def.fields.iter().find(|(f, _)| f == fname).map(|(_, t)| t) {
+                                 if let Some(val_ty) = self.infer_expr_type(&val.inner) {
+                                     self.unify_types(field_ty, &val_ty, &mut inferred_map);
+                                 }
+                             }
+                         }
+                         
+                         let mut type_args = Vec::new();
+                         for param in &def.generics {
+                             if let Some(ty) = inferred_map.get(param) {
+                                 type_args.push(ty.clone());
+                             } else {
+                                 all_inferred = false;
+                             }
+                         }
+                         
+                         if all_inferred && !type_args.is_empty() {
+                             let concrete_enum_name = self.request_struct_instantiation(enum_name, type_args.clone());
+                             *enum_name = concrete_enum_name;
+                             
+                             // Populate field types context?
+                             // We need to rewrite fields.
+                             if let Some(c_def) = self.concrete_enums.iter().find(|e| e.name == *enum_name) {
+                                 if let Some(c_v) = c_def.variants.iter().find(|v| v.name == *variant_name) {
+                                     let mut field_types_map = HashMap::new();
+                                     for (fname, fty) in &c_v.fields {
+                                         field_types_map.insert(fname.clone(), fty.clone());
+                                     }
+                                     
+                                     for (fname, val) in fields {
+                                         let ctx_ty = field_types_map.get(fname);
+                                         self.rewrite_expr(&mut val.inner, subst, ctx_ty);
+                                     }
+                                     return;
+                                 }
+                             }
+                         } else {
+                             // Generic, but not fully inferred?
+                             // Just rewrite fields with generic types if possible.
+                             // But we lack concrete types.
+                         }
+                     }
+                 }
+                 
+                 // Recurse fields even if not generic rewrite
+                 for (_fname, val) in fields {
+                     self.rewrite_expr(&mut val.inner, subst, None);
+                 }
+             }
+             
              _ => {}
          }
          
@@ -693,12 +800,7 @@ impl Monomorphizer {
     
     fn rewrite_function_body(&mut self, func: &mut FunctionDef, subst: &HashMap<String, Type>) {
         self.scopes.push(HashMap::new());
-        // Register params
-        for (name, ty) in &func.args {
-            if let Some(scope) = self.scopes.last_mut() {
-                scope.insert(name.clone(), ty.clone());
-            }
-        }
+        // ...
         
         for stmt in &mut func.body {
             self.rewrite_stmt(&mut stmt.inner, subst);

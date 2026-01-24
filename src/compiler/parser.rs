@@ -414,6 +414,15 @@ fn parse_pattern(input: Span) -> IResult<Span, Pattern> {
         return Ok((input, Pattern::Wildcard));
     }
 
+    // Literals
+    if let Ok((input, val)) = parse_int(input) {
+        return Ok((input, Pattern::Literal(Box::new(val))));
+    }
+    if let Ok((input, val)) = parse_bool(input) {
+        return Ok((input, Pattern::Literal(Box::new(val))));
+    }
+    // TODO: String/Float literals in patterns if needed
+
     // Enum Pattern: Enum::Variant { x, y } (shorthand) or { f: x }
     // Or just Variant { ... }?
     // Let's support Identifier { ... }
@@ -483,15 +492,18 @@ fn parse_pattern(input: Span) -> IResult<Span, Pattern> {
 fn parse_match_expr(input: Span) -> IResult<Span, Expr> {
     spanned(map(
         tuple((
-            preceded(tag("match"), parse_expr),
-            delimited(
+            preceded(tag("match"), cut(parse_expr)),
+            cut(delimited(
                 ws(char('{')),
-                separated_list0(
-                    ws(char(',')),
-                    pair(ws(parse_pattern), preceded(ws(tag("=>")), parse_expr)),
+                terminated(
+                    separated_list0(
+                        ws(char(',')),
+                        pair(ws(parse_pattern), preceded(ws(tag("=>")), parse_expr)),
+                    ),
+                    opt(ws(char(','))),
                 ),
                 terminated(ws(char('}')), opt(ws(char(',')))),
-            ),
+            )),
         )),
         |(expr, arms)| ExprKind::Match {
             expr: Box::new(expr),

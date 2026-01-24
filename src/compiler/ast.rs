@@ -293,6 +293,8 @@ pub enum Pattern {
     },
     // Wildcard
     Wildcard,
+    // Literal
+    Literal(Box<Expr>),
 }
 
 
