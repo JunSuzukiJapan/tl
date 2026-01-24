@@ -1146,6 +1146,14 @@ fn parse_fn(input: Span) -> IResult<Span, FunctionDef> {
     cut(move |input| {
         let (input, name) = ws(identifier)(input)?;
 
+        // Generics: <T, U>
+        let (input, generics) = opt(delimited(
+            ws(char('<')),
+            separated_list1(ws(char(',')), ws(identifier)),
+            ws(char('>')),
+        ))(input)?;
+        let generics = generics.unwrap_or_default();
+
         // Args: (a: T, b: U)
         let (input, args) = delimited(
             ws(char('(')),
@@ -1170,7 +1178,7 @@ fn parse_fn(input: Span) -> IResult<Span, FunctionDef> {
                 args,
                 return_type: ret_type.unwrap_or(Type::Void),
                 body,
-                generics: vec![],
+                generics,
                 is_extern,
             },
         ))

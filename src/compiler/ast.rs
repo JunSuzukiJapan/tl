@@ -57,7 +57,7 @@ pub enum Dim {
     Symbolic(String), // Named dimension (e.g., "batch", "seq_len")
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[allow(dead_code)]
 pub enum Type {
     // Primitive types
@@ -312,6 +312,8 @@ pub enum BinOp {
     And,
     Or, // Logical
 }
+
+
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnOp {

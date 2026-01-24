@@ -4612,6 +4612,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         match ty {
             Type::I64 => Ok(self.context.i64_type().into()),
             Type::I32 => Ok(self.context.i32_type().into()), // Support I32
+            Type::F64 => Ok(self.context.f64_type().into()),
             Type::F32 => Ok(self.context.f32_type().into()),
             Type::Bool => Ok(self.context.bool_type().into()),
             Type::Tensor(_, _) => Ok(self

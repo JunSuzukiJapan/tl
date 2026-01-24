@@ -3,6 +3,7 @@ pub mod ast;
 pub mod codegen;
 pub mod error;
 pub mod inference;
+pub mod monomorphize;
 pub mod parser;
 pub mod type_infer;
 pub mod type_registry;

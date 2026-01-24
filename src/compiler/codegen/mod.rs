@@ -539,6 +539,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             for (_field_name, field_type) in &s.fields {
                 let llvm_type = match field_type {
                     Type::F32 => self.context.f32_type().into(),
+                    Type::F64 => self.context.f64_type().into(),
                     Type::I64 | Type::Entity => self.context.i64_type().into(),
                     Type::Bool => self.context.bool_type().into(),
                     Type::Tensor(_, _) => self
@@ -594,6 +595,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 for (_, ty) in &v.fields {
                     let field_llvm_ty = match ty {
                         Type::F32 => self.context.f32_type().into(),
+                        Type::F64 => self.context.f64_type().into(),
                         Type::I64 | Type::Entity => self.context.i64_type().into(),
                         Type::Bool => self.context.bool_type().into(),
                         Type::Tensor(_, _) => self

@@ -3076,6 +3076,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => {
                             let llvm_ty: inkwell::types::BasicTypeEnum = match field_ty {
                                 Type::F32 => self.context.f32_type().into(),
+                                Type::F64 => self.context.f64_type().into(),
                                 Type::I64 => self.context.i64_type().into(),
                                 Type::I32 => self.context.i32_type().into(),
                                 Type::Bool => self.context.bool_type().into(),

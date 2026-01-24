@@ -1,0 +1,827 @@
+use crate::compiler::ast::*;
+use std::collections::{HashMap, VecDeque, HashSet};
+
+pub struct Monomorphizer {
+    // Map from (OriginalName, ConcreteTypes) -> MangledName
+    struct_instances: HashMap<(String, Vec<Type>), String>,
+    function_instances: HashMap<(String, Vec<Type>), String>,
+    
+    // Original definitions to instantiate from
+    generic_structs: HashMap<String, StructDef>,
+    generic_functions: HashMap<String, FunctionDef>,
+    generic_enums: HashMap<String, EnumDef>,
+    generic_impls: Vec<ImplBlock>,
+    
+    // Map from mangled name to (original_name, args)
+    reverse_struct_instances: HashMap<String, (String, Vec<Type>)>,
+    
+    // Queue of pending instantiations: (OriginalName, ConcreteTypes, IsStruct)
+    pending_queue: VecDeque<(String, Vec<Type>, bool)>,
+    
+    // Scopes for variable type tracking during rewrite
+    scopes: Vec<HashMap<String, Type>>,
+    
+    // Resulting concrete definitions
+    concrete_structs: Vec<StructDef>,
+    concrete_functions: Vec<FunctionDef>,
+    concrete_enums: Vec<EnumDef>,
+    concrete_impls: Vec<ImplBlock>,
+    
+    // Track visited functions to avoid cycles or re-scanning? 
+    // Actually we only scan reachable functions.
+    // If we reach a generic function, we instantiate it and queue it.
+    // The instantiated function will be scanned later when popped from queue.
+    // Non-generic functions are scanned once at start.
+}
+
+impl Monomorphizer {
+    pub fn new() -> Self {
+        Self {
+            struct_instances: HashMap::new(),
+            reverse_struct_instances: HashMap::new(),
+            function_instances: HashMap::new(),
+            generic_structs: HashMap::new(),
+            generic_functions: HashMap::new(),
+            generic_enums: HashMap::new(),
+            generic_impls: Vec::new(),
+            pending_queue: VecDeque::new(),
+            scopes: Vec::new(),
+            concrete_structs: Vec::new(),
+            concrete_functions: Vec::new(),
+            concrete_enums: Vec::new(),
+            concrete_impls: Vec::new(),
+        }
+    }
+
+    pub fn run(&mut self, module: &mut Module) {
+        println!("Starting Monomorphization");
+        // 1. Collect generic definitions
+        self.collect_generics(module);
+        
+        let initial_structs = module.structs.len();
+        println!("Generic structs collected: {}", self.generic_structs.len());
+        
+        // 2. Scan for initial usages in main and non-generic functions
+        println!("Scanning module...");
+        self.scan_module(module);
+        
+        // 3. Process queue until empty
+        let mut steps = 0;
+        while let Some((name, types, is_struct)) = self.pending_queue.pop_front() {
+            println!("Processing pending: {} {:?}", name, types);
+            steps += 1;
+            if steps > 10000 {
+                panic!("Monomorphization limit reached. Infinite recursion?");
+            }
+            if is_struct {
+                self.instantiate_struct(&name, &types);
+            } else {
+                self.instantiate_function(&name, &types);
+            }
+        }
+        
+        // 4. Update module with concrete definitions
+        println!("Adding {} concrete structs", self.concrete_structs.len());
+        module.structs.extend(self.concrete_structs.drain(..));
+        module.functions.extend(self.concrete_functions.drain(..));
+        module.enums.extend(self.concrete_enums.drain(..));
+        module.impls.extend(self.concrete_impls.drain(..));
+        
+        // 5. Remove original generic definitions to avoid codegen errors
+        module.structs.retain(|s| s.generics.is_empty());
+        module.functions.retain(|f| f.generics.is_empty()); 
+        module.enums.retain(|e| e.generics.is_empty());
+        
+        println!("Monomorphization done. Structs: {} -> {}", initial_structs, module.structs.len());
+    }
+
+    fn collect_generics(&mut self, module: &Module) {
+        for s in &module.structs {
+            // println!("Struct {} generics: {:?}", s.name, s.generics);
+            if !s.generics.is_empty() {
+                self.generic_structs.insert(s.name.clone(), s.clone());
+            }
+        }
+        for f in &module.functions {
+            if !f.generics.is_empty() {
+                self.generic_functions.insert(f.name.clone(), f.clone());
+            }
+        }
+        for e in &module.enums {
+            if !e.generics.is_empty() {
+                self.generic_enums.insert(e.name.clone(), e.clone());
+            }
+        }
+    }
+
+    fn scan_module(&mut self, module: &mut Module) {
+        // 1. Process impls logic FIRST so they are available for resolution
+        for mut impl_block in module.impls.drain(..) {
+            let is_generic_target = if let Type::Struct(name, _) | Type::UserDefined(name, _) = &impl_block.target_type {
+                self.generic_structs.contains_key(name)
+            } else {
+                false
+            };
+
+            if !impl_block.generics.is_empty() || is_generic_target {
+                self.generic_impls.push(impl_block);
+            } else {
+                // Rewrite methods in non-generic impl
+                let empty_subst = HashMap::new();
+                for method in &mut impl_block.methods {
+                    for stmt in &mut method.body {
+                        self.rewrite_stmt(&mut stmt.inner, &empty_subst);
+                    }
+                }
+                self.concrete_impls.push(impl_block);
+            }
+        }
+
+
+        // 2. Scan all non-generic function bodies (roots) e.g. main
+        let empty_subst = HashMap::new();
+        for f in &mut module.functions {
+            if f.generics.is_empty() {
+                 self.rewrite_function_body(f, &empty_subst);
+            }
+        }
+        
+        // 3. Scan global statements
+        for stmt in &mut module.tensor_decls {
+            self.rewrite_stmt(&mut stmt.inner, &empty_subst);
+        }
+    }
+
+
+    
+    fn resolve_type(&mut self, ty: &Type) -> Type {
+        match ty {
+            Type::UserDefined(name, args) | Type::Struct(name, args) => {
+                 if !args.is_empty() {
+                     // Check if this is a generic struct instantiation
+                     if self.generic_structs.contains_key(name) {
+                         let concrete_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
+                         let mangled = self.request_struct_instantiation(name, concrete_args);
+                         // Return as UserDefined with NO args (concrete name)
+                         return Type::UserDefined(mangled, vec![]); 
+                     }
+                     // Check enum
+                     if self.generic_enums.contains_key(name) {
+                          let concrete_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
+                          let mangled = self.request_enum_instantiation(name, concrete_args);
+                          return Type::UserDefined(mangled, vec![]);
+                     }
+                 }
+                 // Recurse for args even if not generic struct (e.g. unknown type?)
+                 let new_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
+                 if matches!(ty, Type::Struct(_, _)) {
+                     Type::Struct(name.clone(), new_args)
+                 } else {
+                     Type::UserDefined(name.clone(), new_args)
+                 }
+            }
+            // Recursive resolution
+            Type::Tensor(inner, r) => Type::Tensor(Box::new(self.resolve_type(inner)), *r),
+            Type::Vec(inner) => Type::Vec(Box::new(self.resolve_type(inner))),
+            Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.resolve_type(t)).collect()),
+            Type::TensorShaped(inner, dims) => Type::TensorShaped(Box::new(self.resolve_type(inner)), dims.clone()),
+            _ => ty.clone()
+        }
+    }
+
+    fn rewrite_stmt(&mut self, stmt: &mut StmtKind, subst: &HashMap<String, Type>) {
+        match stmt {
+            StmtKind::Let { name, type_annotation, value, .. } => {
+                let context_ty = if let Some(ty) = type_annotation {
+                    *ty = self.substitute_type(ty, subst);
+                    *ty = self.resolve_type(ty);
+                    Some(ty.clone())
+                } else {
+                    None
+                };
+                self.rewrite_expr(&mut value.inner, subst, context_ty.as_ref());
+                
+                // If type inferred or annotated, add to scope
+                let var_type = context_ty.or_else(|| self.infer_expr_type(&value.inner));
+                if let Some(ty) = var_type {
+                    if let Some(scope) = self.scopes.last_mut() {
+                        scope.insert(name.clone(), ty);
+                    }
+                }
+            }
+            StmtKind::Expr(e) => {
+                self.rewrite_expr(&mut e.inner, subst, None);
+            }
+            StmtKind::Return(Some(e)) => {
+                self.rewrite_expr(&mut e.inner, subst, None);
+            }
+            StmtKind::Assign { value, indices, .. } => {
+                self.rewrite_expr(&mut value.inner, subst, None);
+                if let Some(idxs) = indices {
+                    for idx in idxs {
+                        self.rewrite_expr(&mut idx.inner, subst, None);
+                    }
+                }
+            }
+            StmtKind::FieldAssign { obj, value, .. } => {
+                self.rewrite_expr(&mut obj.inner, subst, None);
+                self.rewrite_expr(&mut value.inner, subst, None);
+            }
+            StmtKind::For { iterator, body, .. } => {
+                self.rewrite_expr(&mut iterator.inner, subst, None);
+                for s in body {
+                    self.rewrite_stmt(&mut s.inner, subst);
+                }
+            }
+            StmtKind::While { cond, body } => {
+                self.rewrite_expr(&mut cond.inner, subst, None);
+                for s in body {
+                    self.rewrite_stmt(&mut s.inner, subst);
+                }
+            }
+             StmtKind::Loop { body } => {
+                 for s in body {
+                    self.rewrite_stmt(&mut s.inner, subst);
+                }
+             }
+            StmtKind::TensorDecl { type_annotation, init, .. } => {
+                 *type_annotation = self.substitute_type(type_annotation, subst);
+                 *type_annotation = self.resolve_type(type_annotation);
+                 let ctx = Some(type_annotation.clone());
+                 if let Some(e) = init {
+                     self.rewrite_expr(&mut e.inner, subst, ctx.as_ref());
+                 }
+            }
+             _ => {}
+        }
+    }
+
+     fn rewrite_expr(&mut self, expr: &mut ExprKind, subst: &HashMap<String, Type>, expected_type: Option<&Type>) {
+         match expr {
+             ExprKind::StructInit(name, fields) => {
+                 // Try to resolve generic struct instantiation from expected_type
+                 if let Some(Type::UserDefined(expected_name, _)) | Some(Type::Struct(expected_name, _)) = expected_type {
+                     if expected_name.starts_with(name.as_str()) {
+                         println!("Rewrite StructInit: {} -> {} (ctx: {:?})", name, expected_name, expected_type);
+                         *name = expected_name.clone();
+                     } else {
+                         println!("Rewrite StructInit mismatch: {} vs context {}", name, expected_name);
+                     }
+                 } else {
+                     println!("Rewrite StructInit no context for {}", name);
+                 }
+                 
+                 // Look up the concrete struct definition (renamed) to propagate field types
+                 let mut field_types_map = HashMap::new();
+                 
+                 // 1. Try concrete (if already compiled/available)
+                 if let Some(def) = self.concrete_structs.iter().find(|s| s.name == *name) {
+                     for (fname, fty) in &def.fields {
+                         field_types_map.insert(fname.clone(), fty.clone());
+                     }
+                 } 
+                 // 2. Try generic (if not renamed? but name is likely mangled here if we renamed it)
+                 else if let Some(def) = self.generic_structs.get(name) {
+                     // Try to infer generics from fields!
+                     let mut inferred_map = HashMap::new();
+                     let mut all_inferred = true;
+                     
+                     for (fname, val) in fields.iter() {
+                         if let Some(field_ty) = def.fields.iter().find(|(f, _)| f == fname).map(|(_, t)| t) {
+                             // Infer type of value expression
+                             if let Some(val_ty) = self.infer_expr_type(&val.inner) {
+                                 // Unify field_ty (e.g. T) with val_ty (e.g. I64)
+                                 self.unify_types(field_ty, &val_ty, &mut inferred_map);
+                             } else {
+                                 // If we can't infer value type (complex expr), we might fail to infer generics.
+                                 // But maybe other fields provide enough info.
+                             }
+                         }
+                     }
+                     
+                     // Construct args
+                     let mut type_args = Vec::new();
+                     for param in &def.generics {
+                         if let Some(ty) = inferred_map.get(param) {
+                             type_args.push(ty.clone());
+                         } else {
+                             all_inferred = false;
+                         }
+                     }
+                     
+                     if all_inferred && !type_args.is_empty() {
+                         let concrete_name = self.request_struct_instantiation(name, type_args.clone());
+                         println!("Inferred StructInit: {} -> {} args {:?}", name, concrete_name, type_args);
+                         *name = concrete_name;
+                         
+                         // Now re-lookup concrete definition to populate field_types_map correctly
+                         if let Some(c_def) = self.concrete_structs.iter().find(|s| s.name == *name) {
+                             for (fname, fty) in &c_def.fields {
+                                 field_types_map.insert(fname.clone(), fty.clone());
+                             }
+                         }
+                     } else {
+                         // Fallback? If unable to infer, maybe fields are enough?
+                         // Or just populate map with generic fields (T) pending rewrite?
+                         // But we want to rewrite fields with concrete types if possible.
+                         for (fname, fty) in &def.fields {
+                             field_types_map.insert(fname.clone(), fty.clone());
+                         }
+                     }
+                 }
+                 // 3. Try reverse lookup (Mangled -> Original + Args)
+                 else if let Some((orig_name, args)) = self.reverse_struct_instances.get(name) {
+                     if let Some(def) = self.generic_structs.get(orig_name) {
+                         // Create substitution map
+                         let mut inner_subst = HashMap::new();
+                         for (i, param) in def.generics.iter().enumerate() {
+                             if i < args.len() {
+                                 inner_subst.insert(param.clone(), args[i].clone());
+                             }
+                         }
+                         for (fname, fty) in &def.fields {
+                             let resolved_fty = self.substitute_type(fty, &inner_subst);
+                             // Also fully resolve it? substitute_type is recursive for subst values.
+                             // But we might need resolve_type if it produces complex types.
+                             // substitute_type should be enough if args are already resolved 
+                             // (request_struct_instantiation args are resolved).
+                             field_types_map.insert(fname.clone(), resolved_fty);
+                         }
+                     }
+                 }
+
+                 for (fname, val) in fields {
+                     let ctx_ty = field_types_map.get(fname);
+                     self.rewrite_expr(&mut val.inner, subst, ctx_ty);
+                 }
+                 return;
+             }
+             _ => {}
+         }
+         
+         match expr {
+              ExprKind::FnCall(name, args) => {
+                  // Rewrite args first
+                  for arg in args.iter_mut() {
+                      self.rewrite_expr(&mut arg.inner, subst, None);
+                  }
+                  
+                  // Check if this is a generic function call
+                  if let Some(def) = self.generic_functions.get(name).cloned() {
+                      // Infer type arguments
+                      let mut type_args = Vec::new();
+                      let mut inference_map: HashMap<String, Type> = HashMap::new();
+                      
+                      // Match arguments to parameters to infer types
+                      for (i, (arg_val, _)) in args.iter().zip(&def.args).enumerate() {
+                          let param_ty = &def.args[i].1;
+                          let arg_expr_ty = self.infer_expr_type(&arg_val.inner);
+                          
+                          if let Some(concrete_ty) = arg_expr_ty {
+                              // unify param_ty (e.g. T) with concrete_ty (e.g. I64)
+                              self.unify_types(param_ty, &concrete_ty, &mut inference_map);
+                          }
+                      }
+                      
+                      // Construct type args vector in order of generics
+                      for param_name in &def.generics {
+                          if let Some(ty) = inference_map.get(param_name) {
+                              type_args.push(ty.clone());
+                          } else {
+                              // Default or Error?
+                              // If un-inferable, we might have issues. Assume resolved for now or skip.
+                              // println!("Could not infer type for generic param {}", param_name);
+                          }
+                      }
+                      
+                      if type_args.len() == def.generics.len() {
+                          // Instantiate!
+                          let new_name = self.request_function_instantiation(name, type_args);
+                          *name = new_name;
+                      }
+                  }
+              }
+              ExprKind::StaticMethodCall(type_name, method_name, args) => {
+                  // Rewrite args first
+                  for arg in args.iter_mut() {
+                      self.rewrite_expr(&mut arg.inner, subst, None);
+                  }
+                  
+                  // Check if type_name references a generic struct
+                  // Box::new -> look up Box
+                  if let Some(def) = self.generic_structs.get(type_name).cloned() {
+                      // We need to infer generic args T from the method signature `fn new(T)`?
+                      // We need to find the method definition in generic impls!
+                      let mut best_impl: Option<&ImplBlock> = None;
+                      for impl_block in &self.generic_impls {
+                          if let Type::Struct(target, _) | Type::UserDefined(target, _) = &impl_block.target_type {
+                              if target.as_str() == type_name.as_str() {
+                                  // Check if method exists
+                                  if impl_block.methods.iter().any(|m| m.name == *method_name) {
+                                      best_impl = Some(impl_block);
+                                      break; 
+                                  }
+                              }
+                          }
+                      }
+                      
+                      if let Some(impl_block) = best_impl {
+                          if let Some(method) = impl_block.methods.iter().find(|m| m.name == *method_name) {
+                              // Infer generic args from arguments
+                              let mut type_args = Vec::new();
+                              let mut inference_map = HashMap::new();
+                              let mut all_inferred = true;
+                              
+                              for (i, (arg_val, _)) in args.iter().zip(&method.args).enumerate() {
+                                  let param_ty = &method.args[i].1;
+                                  if let Some(val_ty) = self.infer_expr_type(&arg_val.inner) {
+                                      self.unify_types(param_ty, &val_ty, &mut inference_map);
+                                  }
+                              }
+                              
+                              // Construct impl generics (which match struct generics usually)
+                              for param in &def.generics {
+                                  if let Some(ty) = inference_map.get(param) {
+                                      type_args.push(ty.clone());
+                                  } else {
+                                      all_inferred = false;
+                                  }
+                              }
+                              
+                              if all_inferred && !type_args.is_empty() {
+                                  let concrete_name = self.request_struct_instantiation(type_name, type_args);
+                                  *type_name = concrete_name;
+                              }
+                          }
+                      }
+                  }
+              }
+              ExprKind::MethodCall(_, _, args) => {
+                  for arg in args {
+                      self.rewrite_expr(&mut arg.inner, subst, None);
+                  }
+              }
+              ExprKind::BinOp(l, _, r) => {
+                  self.rewrite_expr(&mut l.inner, subst, None);
+                  self.rewrite_expr(&mut r.inner, subst, None);
+              }
+              ExprKind::Block(stmts) => {
+                  self.scopes.push(HashMap::new());
+                  for s in stmts {
+                      self.rewrite_stmt(&mut s.inner, subst);
+                  }
+                  self.scopes.pop();
+              }
+              ExprKind::IfExpr(cond, then_block, else_block) => {
+                   self.rewrite_expr(&mut cond.inner, subst, None);
+                   for s in then_block {
+                       self.rewrite_stmt(&mut s.inner, subst);
+                   }
+                   if let Some(eb) = else_block {
+                       for s in eb {
+                           self.rewrite_stmt(&mut s.inner, subst);
+                       }
+                   }
+              }
+              _ => {}
+         }
+     }
+
+     fn instantiate_impls(&mut self, name: &str, args: &[Type]) {
+         let concrete_struct_name = if let Some(mangled) = self.struct_instances.get(&(name.to_string(), args.to_vec())) {
+             mangled.clone()
+         } else {
+             format!("{}_{}", name, self.mangle_types(args))
+         };
+
+         let mut new_impls = Vec::new();
+         let generic_impls = self.generic_impls.clone();
+         
+         for impl_block in &generic_impls {
+             // Check compatibility
+             let mut subst = HashMap::new();
+             let mut matches = false;
+             
+             if let Type::Struct(target, target_args) | Type::UserDefined(target, target_args) = &impl_block.target_type {
+                 if target == name {
+                     // Check args match length
+                     // If target has generic params, unifying them with concrete args gives substitution
+                     // But target_args in impl might be specific e.g. impl Box<i64>.
+                     // Or generic: impl<T> Box<T>.
+                     // We need to map impl generics to concrete types.
+                     
+                     // Case 1: Impl args match Generic Struct definition args (canonical).
+                     // Usually impl<U> Struct<U>.
+                     if target_args.len() == args.len() {
+                         matches = true;
+                         for (impl_arg, concrete_arg) in target_args.iter().zip(args) {
+                             self.unify_types(impl_arg, concrete_arg, &mut subst);
+                         }
+                     }
+                 }
+             }
+             
+             if matches {
+                 let mut new_impl = impl_block.clone();
+                 new_impl.generics.clear();
+                 new_impl.target_type = Type::UserDefined(concrete_struct_name.clone(), vec![]);
+                 
+                 // Rewrite methods
+                 for method in &mut new_impl.methods {
+                    // Substitute signature and then RESOLVE to concrete names
+                    for (_, ty) in &mut method.args {
+                        *ty = self.substitute_type(ty, &subst);
+                        *ty = self.resolve_type(ty);
+                    }
+                    method.return_type = self.substitute_type(&method.return_type, &subst);
+                    method.return_type = self.resolve_type(&method.return_type);
+                    
+                    // Rewrite body using helper (pushes scope)
+                    self.rewrite_function_body(method, &subst);
+                 }
+                 
+                 new_impls.push(new_impl);
+             }
+         }
+         
+         self.concrete_impls.extend(new_impls);
+     }
+
+     
+     fn request_struct_instantiation(&mut self, name: &str, args: Vec<Type>) -> String {
+        let key = (name.to_string(), args.clone());
+        if let Some(mangled) = self.struct_instances.get(&key) {
+            return mangled.clone();
+        }
+        
+        let mangled = format!("{}_{}", name, self.mangle_types(&args));
+        self.struct_instances.insert(key, mangled.clone());
+        self.reverse_struct_instances.insert(mangled.clone(), (name.to_string(), args.clone()));
+        self.pending_queue.push_back((name.to_string(), args, true));
+        mangled
+    }
+
+    fn request_enum_instantiation(&mut self, name: &str, args: Vec<Type>) -> String {
+        // Similar to struct
+        let key = (name.to_string(), args.clone());
+        // Reuse struct_instances map or create new one?
+        // Enums and Structs share Type::UserDefined namespace effectively.
+        // Let's use separate map for safety or reuse struct_instances if we treat them same.
+        // But we need to know if it is struct or enum for `pending_queue`?
+        // Actually pending_queue boolean `is_struct` handles it.
+        // But for storage... using `struct_instances` is fine if names are unique.
+        if let Some(mangled) = self.struct_instances.get(&key) {
+            return mangled.clone();
+        }
+        let mangled = format!("{}_{}", name, self.mangle_types(&args));
+        self.struct_instances.insert(key, mangled.clone());
+         // We need to know it IS an enum to set `is_struct=false`? No `is_struct` param in queue is binary.
+         // We need `is_enum`?
+         // Let's assume queue: (name, types, kind) where kind=0:struct, 1:fn, 2:enum
+         // For now hack: check `generic_enums`.
+         self.pending_queue.push_back((name.to_string(), args, true)); // Reuse true for "Type" (Struct/Enum)?
+         // But `instantiate_struct` handles structs. We need `instantiate_enum`.
+         // Let's modify pending_queue to be `(String, Vec<Type>, ItemKind)`
+         mangled
+    }
+    
+    fn request_function_instantiation(&mut self, name: &str, args: Vec<Type>) -> String {
+         let key = (name.to_string(), args.clone());
+         if let Some(mangled) = self.function_instances.get(&key) {
+             return mangled.clone();
+         }
+         let mangled = format!("{}_{}", name, self.mangle_types(&args));
+         self.function_instances.insert(key, mangled.clone());
+         self.pending_queue.push_back((name.to_string(), args, false));
+         mangled
+    }
+    
+    fn instantiate_struct(&mut self, name: &str, args: &[Type]) {
+        if self.generic_enums.contains_key(name) {
+             self.instantiate_enum(name, args);
+             return;
+        }
+
+        if let Some(def) = self.generic_structs.get(name) {
+            let mangled = self.struct_instances.get(&(name.to_string(), args.to_vec())).unwrap().clone();
+            println!("Instantiating struct {} -> {} with args {:?}", name, mangled, args);
+            
+            // Substitution map
+            let mut subst = HashMap::new();
+            for (i, param) in def.generics.iter().enumerate() {
+                if i < args.len() {
+                     subst.insert(param.clone(), args[i].clone());
+                }
+            }
+            
+            let mut new_def = def.clone();
+            new_def.name = mangled;
+            new_def.generics.clear(); // Concrete now
+            
+            for (_fname, ty) in &mut new_def.fields {
+                *ty = self.substitute_type(ty, &subst);
+            }
+            
+            self.concrete_structs.push(new_def);
+            
+            // Also instantiate associated impl blocks
+            self.instantiate_impls(name, args);
+        }
+    }
+
+    fn instantiate_enum(&mut self, name: &str, args: &[Type]) {
+         if let Some(def) = self.generic_enums.get(name) {
+            let mangled = self.struct_instances.get(&(name.to_string(), args.to_vec())).unwrap().clone();
+            
+            let mut subst = HashMap::new();
+            for (i, param) in def.generics.iter().enumerate() {
+                if i < args.len() {
+                     subst.insert(param.clone(), args[i].clone());
+                }
+            }
+            
+            let mut new_def = def.clone();
+            new_def.name = mangled;
+            new_def.generics.clear();
+            
+            for variant in &mut new_def.variants {
+                for (_, ty) in &mut variant.fields {
+                    *ty = self.substitute_type(ty, &subst);
+                }
+            }
+            
+            self.concrete_enums.push(new_def);
+         }
+    }
+    
+    fn instantiate_function(&mut self, name: &str, args: &[Type]) {
+         if let Some(def) = self.generic_functions.get(name) {
+            let mangled = self.function_instances.get(&(name.to_string(), args.to_vec())).unwrap().clone();
+            
+            let mut subst = HashMap::new();
+            for (i, param) in def.generics.iter().enumerate() {
+                if i < args.len() {
+                     subst.insert(param.clone(), args[i].clone());
+                }
+            }
+            
+            let mut new_def = def.clone();
+            new_def.name = mangled;
+            new_def.generics.clear();
+            
+            // Substitute signature
+            for (_, ty) in &mut new_def.args {
+                *ty = self.substitute_type(ty, &subst);
+            }
+            new_def.return_type = self.substitute_type(&new_def.return_type, &subst);
+            
+            // Rewrite Body
+            // Push new scope for arguments
+            // self.scopes.push(HashMap::new()); // Moved to rewrite_function_body
+            // for (arg_name, arg_ty) in &new_def.args { // Moved to rewrite_function_body
+            //     self.scopes.last_mut().unwrap().insert(arg_name.clone(), arg_ty.clone()); // Moved to rewrite_function_body
+            // }
+
+            self.rewrite_function_body(&mut new_def, &subst);
+            
+            // Pop scope // Moved to rewrite_function_body
+            // self.scopes.pop();
+
+            self.concrete_functions.push(new_def);
+         }
+    }
+    
+    fn rewrite_function_body(&mut self, func: &mut FunctionDef, subst: &HashMap<String, Type>) {
+        self.scopes.push(HashMap::new());
+        // Register params
+        for (name, ty) in &func.args {
+            if let Some(scope) = self.scopes.last_mut() {
+                scope.insert(name.clone(), ty.clone());
+            }
+        }
+        
+        for stmt in &mut func.body {
+            self.rewrite_stmt(&mut stmt.inner, subst);
+        }
+        self.scopes.pop();
+    }
+    
+
+
+    fn substitute_type(&self, ty: &Type, subst: &HashMap<String, Type>) -> Type {
+        match ty {
+            Type::UserDefined(name, args) => {
+                 if let Some(replacement) = subst.get(name) {
+                     return replacement.clone();
+                 }
+                 let new_args = args.iter().map(|a| self.substitute_type(a, subst)).collect();
+                 Type::UserDefined(name.clone(), new_args)
+            }
+             Type::Tensor(inner, r) => Type::Tensor(Box::new(self.substitute_type(inner, subst)), *r),
+             Type::Struct(name, args) => Type::Struct(name.clone(), args.iter().map(|a| self.substitute_type(a, subst)).collect()),
+             // ... other recursive cases
+             _ => ty.clone()
+        }
+    }
+
+    fn mangle_types(&self, types: &[Type]) -> String {
+        types.iter().map(|t| self.mangle_type(t)).collect::<Vec<_>>().join("_")
+    }
+
+    fn mangle_type(&self, ty: &Type) -> String {
+        match ty {
+            Type::I64 => "i64".to_string(),
+            Type::F64 => "f64".to_string(),
+            Type::F32 => "f32".to_string(),
+            Type::Bool => "bool".to_string(),
+            Type::Struct(name, args) | Type::UserDefined(name, args) => {
+                 if args.is_empty() {
+                     name.clone()
+                 } else {
+                     format!("{}_{}", name, self.mangle_types(args))
+                 }
+            }
+            Type::Tensor(inner, _) => format!("Tensor_{}", self.mangle_type(inner)),
+            _ => "unknown".to_string(),
+        }
+    }
+
+    fn infer_expr_type(&self, expr: &ExprKind) -> Option<Type> {
+        match expr {
+            ExprKind::Int(_) => Some(Type::I64),
+            ExprKind::Float(_) => Some(Type::F32), // Match Semantics default (F32)
+            ExprKind::Bool(_) => Some(Type::Bool),
+            ExprKind::StringLiteral(_) => Some(Type::UserDefined("String".to_string(), vec![])),
+            ExprKind::Variable(name) => {
+                for scope in self.scopes.iter().rev() {
+                    if let Some(ty) = scope.get(name) {
+                        return Some(ty.clone());
+                    }
+                }
+                None
+            }
+            ExprKind::BinOp(lhs, _, _) => self.infer_expr_type(&lhs.inner), // Assume LHS determines type (mostly true)
+            ExprKind::StructInit(name, _) => Some(Type::UserDefined(name.clone(), vec![])), // Could be Generic?
+            // FnCall return type inference requires looking up the function
+            ExprKind::FnCall(name, _) => {
+                // If it's a concrete function we already processed
+                if let Some(f) = self.concrete_functions.iter().find(|f| f.name == *name) {
+                    return Some(f.return_type.clone());
+                }
+                // If it's a generic function (not instantiated yet? or name is original?)
+                // If it's a generic function (not instantiated yet? or name is original?)
+                if let Some(f) = self.generic_functions.get(name) {
+                    return Some(f.return_type.clone()); // Returns potentially generic type T
+                }
+                // If it's a regular function
+                // We need to look up in module functions? We assume we have all defs.
+                // We don't have list of all non-generic functions readily available in struct?
+                // We scan module at start. Maybe we should store signature of all functions?
+                None
+            }
+            _ => None,
+        }
+    }
+
+    // Helper to unify generic param with concrete type
+    fn unify_types(&self, generic: &Type, concrete: &Type, map: &mut HashMap<String, Type>) {
+        match (generic, concrete) {
+            (Type::UserDefined(name, args), _) => {
+                // If this UserDefined is actually a generic parameter (T)
+                // We assume generic parameters are represented as UserDefined in current AST for "T"
+                
+                // If simple T -> Concrete
+                if args.is_empty() {
+                    // Check if 'name' is in knowledge base of generics?
+                    // Currently unbound check: we just insert.
+                    if !map.contains_key(name) {
+                        map.insert(name.clone(), concrete.clone());
+                    } else {
+                        // verify consistency?
+                    }
+                } else if let Type::UserDefined(c_name, c_args) = concrete {
+                    // T<A> vs List<B> ?
+                    if name == c_name && args.len() == c_args.len() {
+                        for (a, b) in args.iter().zip(c_args) {
+                            self.unify_types(a, b, map);
+                        }
+                    }
+                }
+            }
+            (Type::Tensor(inner_g, _), Type::Tensor(inner_c, _)) => {
+                self.unify_types(inner_g, inner_c, map);
+            }
+            (Type::Struct(_, args_g), Type::Struct(_, args_c)) => {
+                if args_g.len() == args_c.len() {
+                    for (a, b) in args_g.iter().zip(args_c) {
+                        self.unify_types(a, b, map);
+                    }
+                }
+            }
+            (Type::Vec(inner_g), Type::Vec(inner_c)) => {
+                self.unify_types(inner_g, inner_c, map);
+            }
+            _ => {}
+        }
+    }
+}

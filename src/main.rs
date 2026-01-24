@@ -112,6 +112,10 @@ fn main() -> Result<()> {
                 std::process::exit(1);
             }
 
+            // Monomorphization
+            let mut monomorphizer = tl_lang::compiler::monomorphize::Monomorphizer::new();
+            monomorphizer.run(&mut ast);
+
             // Codegen
             let context = InkwellContext::create();
             // Module name from filename
@@ -320,6 +324,10 @@ fn main() -> Result<()> {
             print_tl_error_with_source(&tl_err, &combined_source, file_hint);
             std::process::exit(1);
         }
+
+        // Monomorphization (JIT)
+        let mut monomorphizer = tl_lang::compiler::monomorphize::Monomorphizer::new();
+        monomorphizer.run(&mut combined_module);
 
         // JIT Execution
         use tl_runtime::registry;

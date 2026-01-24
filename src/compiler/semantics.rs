@@ -3699,22 +3699,74 @@ impl SemanticAnalyzer {
                             );
                         }
                     }
+
+                    let mut inferred_generics: HashMap<String, Type> = HashMap::new();
+
                     // Check arg types for function
                     for (i, arg) in args.iter_mut().enumerate() {
                         if i < func.args.len() {
                             let arg_type = self.check_expr(arg)?;
                             let expected_type = &func.args[i].1;
-                            if !self.are_types_compatible(expected_type, &arg_type) {
-                                return self.err(
-                                    SemanticError::TypeMismatch {
-                                        expected: expected_type.clone(),
-                                        found: arg_type,
-                                    },
-                                    Some(args[i].span.clone()),
-                                );
+
+                            if !func.generics.is_empty() {
+                                 let mut unify = |t1: &Type, t2: &Type| -> bool {
+                                    if let Type::UserDefined(n1, _) = t1 {
+                                        if func.generics.contains(n1) {
+                                            if let Some(existing) = inferred_generics.get(n1) {
+                                                return self.are_types_compatible(existing, t2);
+                                            } else {
+                                                inferred_generics.insert(n1.clone(), t2.clone());
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                    self.are_types_compatible(t1, t2)
+                                 };
+                                 
+                                 if !unify(expected_type, &arg_type) {
+                                    return self.err(
+                                        SemanticError::TypeMismatch {
+                                            expected: expected_type.clone(),
+                                            found: arg_type,
+                                        },
+                                        Some(arg.span.clone()),
+                                    );
+                                 }
+                            } else {
+                                if !self.are_types_compatible(expected_type, &arg_type) {
+                                    return self.err(
+                                        SemanticError::TypeMismatch {
+                                            expected: expected_type.clone(),
+                                            found: arg_type,
+                                        },
+                                        Some(arg.span.clone()),
+                                    );
+                                }
                             }
                         }
                     }
+
+                    if !func.generics.is_empty() {
+                        fn substitute(ty: &Type, map: &HashMap<String, Type>) -> Type {
+                            match ty {
+                                Type::UserDefined(n, args) => {
+                                    if let Some(val) = map.get(n) {
+                                        val.clone()
+                                    } else {
+                                        Type::UserDefined(n.clone(), args.iter().map(|a| substitute(a, map)).collect())
+                                    }
+                                }
+                                Type::Tensor(inner, r) => Type::Tensor(Box::new(substitute(inner, map)), *r),
+                                Type::Struct(n, args) => Type::Struct(n.clone(), args.iter().map(|a| substitute(a, map)).collect()),
+                                Type::Vec(inner) => Type::Vec(Box::new(substitute(inner, map))),
+                                Type::ScalarArray(inner, r) => Type::ScalarArray(Box::new(substitute(inner, map)), *r),
+                                Type::Tuple(ts) => Type::Tuple(ts.iter().map(|t| substitute(t, map)).collect()),
+                                _ => ty.clone() 
+                            }
+                        }
+                        return Ok(substitute(&func.return_type, &inferred_generics));
+                    }
+
                     return Ok(func.return_type.clone());
                 }
 
@@ -4122,19 +4174,82 @@ impl SemanticAnalyzer {
                             Some(expr.span.clone()),
                         );
                     }
+
+                    // Retrieve struct generics
+                    let struct_generics = if let Some(s) = self.structs.get(type_name) {
+                        s.generics.clone()
+                    } else {
+                        vec![]
+                    };
+                    
+                    let mut inferred_generics: HashMap<String, Type> = HashMap::new();
+
                     for (arg_val, (_, arg_type)) in args.iter_mut().zip(&func.args) {
                         let val_type = self.check_expr(arg_val)?;
-                        if !self.are_types_compatible(&val_type, arg_type) {
-                            return self.err(
-                                SemanticError::TypeMismatch {
-                                    expected: arg_type.clone(),
-                                    found: val_type,
-                                },
-                                Some(arg_val.span.clone()),
-                            ); // Need index for args[i]. But loop iterates over args.iter_mut().zip.
-                               // Wait, args is specific arg.
-                               // arg_val is &mut Expr. So arg_val.span is available.
+                        
+                        if !struct_generics.is_empty() || !func.generics.is_empty() {
+                             let mut unify = |t1: &Type, t2: &Type| -> bool {
+                                if let Type::UserDefined(n1, _) = t1 {
+                                    if struct_generics.contains(n1) || func.generics.contains(n1) {
+                                        if let Some(existing) = inferred_generics.get(n1) {
+                                            return self.are_types_compatible(existing, t2);
+                                        } else {
+                                            inferred_generics.insert(n1.clone(), t2.clone());
+                                            return true;
+                                        }
+                                    }
+                                }
+                                self.are_types_compatible(t1, t2)
+                             };
+                             
+                             if !unify(arg_type, &val_type) {
+                                return self.err(
+                                    SemanticError::TypeMismatch {
+                                        expected: arg_type.clone(),
+                                        found: val_type,
+                                    },
+                                    Some(arg_val.span.clone()),
+                                );
+                             }
+                        } else {
+                            if !self.are_types_compatible(&val_type, arg_type) {
+                                return self.err(
+                                    SemanticError::TypeMismatch {
+                                        expected: arg_type.clone(),
+                                        found: val_type,
+                                    },
+                                    Some(arg_val.span.clone()),
+                                ); 
+                            }
                         }
+                    }
+                    
+                    // Resolve return type with substitutions
+                    if !struct_generics.is_empty() || !func.generics.is_empty() {
+                        fn substitute(ty: &Type, map: &HashMap<String, Type>) -> Type {
+                            match ty {
+                                Type::UserDefined(n, args) => {
+                                    if let Some(val) = map.get(n) {
+                                        val.clone()
+                                    } else {
+                                        Type::UserDefined(n.clone(), args.iter().map(|a| substitute(a, map)).collect())
+                                    }
+                                }
+                                Type::Tensor(inner, r) => Type::Tensor(Box::new(substitute(inner, map)), *r),
+                                Type::Struct(n, args) => Type::Struct(n.clone(), args.iter().map(|a| substitute(a, map)).collect()),
+                                Type::Vec(inner) => Type::Vec(Box::new(substitute(inner, map))),
+                                Type::ScalarArray(inner, r) => Type::ScalarArray(Box::new(substitute(inner, map)), *r),
+                                Type::Tuple(ts) => Type::Tuple(ts.iter().map(|t| substitute(t, map)).collect()),
+                                _ => ty.clone() 
+                            }
+                        }
+                        
+                        // If return type is Self or matches struct name, treat as Struct(Name, inferred_args ?? no inferred_args is T)
+                        // Actually, substitute handles T -> I64.
+                        // If return type is `Box<T>`, it is `Struct("Box", [UserDefined("T")])`.
+                        // Substitute replaces T with I64. -> `Struct("Box", [I64])`.
+                        // So we just run substitute on func.return_type.
+                        return Ok(substitute(&func.return_type, &inferred_generics));
                     }
                     // Resolve return type: if it's Self or short name, use method's impl target type
                     let resolved_return = match &func.return_type {
