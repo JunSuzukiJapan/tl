@@ -318,6 +318,34 @@ impl SemanticAnalyzer {
     // --- Main Checking Logic ---
 
     // Helper to resolve a name based on current scope aliases and module context
+    fn substitute_generics(&self, ty: &Type, subst: &HashMap<String, Type>) -> Type {
+        match ty {
+            Type::UserDefined(name, args) => {
+                if let Some(replacement) = subst.get(name) {
+                    // What if replacement has args and we have args? 
+                    // e.g. T<U> replaced by List<X>.
+                    // For now assume T is parameter without args in usage, or T is fully applied replacement.
+                    return replacement.clone();
+                }
+                let new_args = args.iter().map(|a| self.substitute_generics(a, subst)).collect();
+                Type::UserDefined(name.clone(), new_args)
+            }
+            Type::Struct(name, args) => {
+                let new_args = args.iter().map(|a| self.substitute_generics(a, subst)).collect();
+                Type::Struct(name.clone(), new_args)
+            }
+            Type::Enum(name, args) => {
+                let new_args = args.iter().map(|a| self.substitute_generics(a, subst)).collect();
+                Type::Enum(name.clone(), new_args)
+            }
+            Type::Vec(inner) => Type::Vec(Box::new(self.substitute_generics(inner, subst))),
+            Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.substitute_generics(t, subst)).collect()),
+            Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.substitute_generics(inner, subst)), *rank),
+            Type::TensorShaped(inner, dims) => Type::TensorShaped(Box::new(self.substitute_generics(inner, subst)), dims.clone()),
+            _ => ty.clone(),
+        }
+    }
+
     fn resolve_symbol_name(&self, name: &str) -> String {
         // 1. Check aliases
         let parts: Vec<&str> = name.split("::").collect();
@@ -4774,9 +4802,9 @@ impl SemanticAnalyzer {
             }
             ExprKind::FieldAccess(obj, field_name) => {
                 let obj_type = self.check_expr(obj)?;
-                let name = match obj_type {
-                    Type::UserDefined(n, _) => n,
-                    Type::Struct(n, _) => n,
+                let (name, args) = match &obj_type {
+                    Type::UserDefined(n, a) => (n.clone(), a.clone()),
+                    Type::Struct(n, a) => (n.clone(), a.clone()),
                     _ => {
                         return self.err(
                             SemanticError::TypeMismatch {
@@ -4791,6 +4819,16 @@ impl SemanticAnalyzer {
                 if let Some(struct_def) = self.structs.get(&name) {
                     for (f_name, f_type) in &struct_def.fields {
                         if f_name == field_name {
+                            // Substitute generics if present
+                            if !args.is_empty() {
+                                let mut subst = HashMap::new();
+                                for (i, param) in struct_def.generics.iter().enumerate() {
+                                    if i < args.len() {
+                                        subst.insert(param.clone(), args[i].clone());
+                                    }
+                                }
+                                return Ok(self.substitute_generics(f_type, &subst));
+                            }
                             return Ok(f_type.clone());
                         }
                     }

@@ -283,9 +283,15 @@ impl Monomorphizer {
                  } 
                  // 2. Try generic (if not renamed? but name is likely mangled here if we renamed it)
                  // 2. Try generic Struct
-                 else if let Some(def) = self.generic_structs.get(name) {
-                     // Try to infer generics from fields!
-                     let mut inferred_map = HashMap::new();
+                 else if self.generic_structs.contains_key(name) {
+                     // Pre-rewrite fields to resolve generic arguments in nested structures
+                     for (_fname, val) in fields.iter_mut() {
+                         self.rewrite_expr(&mut val.inner, subst, None);
+                     }
+
+                     if let Some(def) = self.generic_structs.get(name) {
+                         // Try to infer generics from fields!
+                         let mut inferred_map = HashMap::new();
                      let mut all_inferred = true;
                      
                      for (fname, val) in fields.iter() {
@@ -323,7 +329,7 @@ impl Monomorphizer {
                          }
                      }
                  }
-                 // 3. Try generic Enum (e.g. Option::Some)
+                 }
                  // 3. Try reverse lookup (Mangled -> Original + Args)
                  else if let Some((orig_name, args)) = self.reverse_struct_instances.get(name) {
                      if let Some(def) = self.generic_structs.get(orig_name) {

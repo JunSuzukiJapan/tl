@@ -2,13 +2,8 @@ struct Container<T> {
     val: T
 }
 
-fn map<T, U>(c: Container<T>, f: fn(T) -> U) -> Container<U> {
-    Container { val: f(c.val) }
-}
+// Function pointers and casts are separate features
 
-fn to_int(x: f64) -> i64 {
-    x as i64
-}
 
 fn main() {
     let c = Container { val: 3.14 };
