@@ -29,6 +29,7 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) struct_defs: HashMap<String, StructDef>,
     pub(crate) enum_types: HashMap<String, StructType<'ctx>>,
     pub(crate) enum_defs: HashMap<String, EnumDef>,
+    pub(crate) generic_fn_defs: HashMap<String, FunctionDef>,
     pub(crate) fn_entry_scope_depth: usize,
     pub(crate) builtin_manager: expr::BuiltinManager,
     pub(crate) instance_methods: HashMap<String, expr::InstanceMethodManager>,
@@ -62,6 +63,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             struct_defs: HashMap::new(),
             enum_types: HashMap::new(),
             enum_defs: HashMap::new(),
+            generic_fn_defs: HashMap::new(),
             fn_entry_scope_depth: 0,
             builtin_manager: expr::BuiltinManager::new(),
             instance_methods: HashMap::new(),
@@ -880,6 +882,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut main_exists = false;
 
         for func in &ast_module.functions {
+            // If function is generic, skip compilation and store in registry
+            if !func.generics.is_empty() {
+                self.generic_fn_defs.insert(func.name.clone(), func.clone());
+                continue;
+            }
+
             if func.name == "main" {
                 main_exists = true;
             }
@@ -966,7 +974,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         false
     }
 
-    fn compile_fn_proto(&mut self, func: &FunctionDef) -> Result<FunctionValue<'ctx>, String> {
+    pub(crate) fn compile_fn_proto(&mut self, func: &FunctionDef) -> Result<FunctionValue<'ctx>, String> {
         self.fn_return_types
             .insert(func.name.clone(), func.return_type.clone());
 
@@ -1051,7 +1059,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(val)
     }
 
-    fn compile_fn(&mut self, func: &FunctionDef, extra_stmts: &[Stmt]) -> Result<(), String> {
+    pub(crate) fn compile_fn(&mut self, func: &FunctionDef, extra_stmts: &[Stmt]) -> Result<(), String> {
         let function = self
             .module
             .get_function(&func.name)

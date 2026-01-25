@@ -1,17 +1,142 @@
-// src/compiler/codegen/mono.rs
-//! On-demand monomorphization for generic types and methods.
-//!
-//! This module provides utilities to generate specialized LLVM functions and types
-//! when a generic type (like `Vec<T>`) or a user-defined generic struct (like `Rect<T>`)
-//! is instantiated with concrete type arguments.
-
 use super::CodeGenerator;
-use crate::compiler::ast::Type;
+use crate::compiler::ast::{Type, FunctionDef, Stmt};
+use crate::compiler::ast_subst::TypeSubstitutor;
 use inkwell::types::{BasicTypeEnum, StructType};
 use inkwell::AddressSpace;
 use std::collections::HashMap;
 
 impl<'ctx> CodeGenerator<'ctx> {
+    /// On-demand monomorphization of a user-defined generic function.
+    pub fn monomorphize_generic_function(
+        &mut self,
+        func_name: &str,
+        arg_types: &[Type],
+    ) -> Result<String, String> {
+        // 1. Check if the function exists in generic registry
+        if !self.generic_fn_defs.contains_key(func_name) {
+             // Not a generic function, or not found.
+             return Ok(func_name.to_string());
+        }
+        
+        // 2. Retrieve definition
+        let func_def = self.generic_fn_defs.get(func_name).cloned().unwrap();
+        
+        // 3. Unify argument types to infer type parameters
+        // func_def.generics vs func_def.args vs arg_types
+        if func_def.args.len() != arg_types.len() {
+             return Err(format!("Argument count mismatch for generic function {}: expected {}, got {}", 
+                 func_name, func_def.args.len(), arg_types.len()));
+        }
+
+        let mut subst_map: HashMap<String, Type> = HashMap::new();
+        for ((_, expected_ty), actual_ty) in func_def.args.iter().zip(arg_types) {
+            self.unify_types(expected_ty, actual_ty, &mut subst_map)?;
+        }
+        
+        // Ensure all generics are inferred
+        for param in &func_def.generics {
+            if !subst_map.contains_key(param) {
+                 return Err(format!("Could not infer type parameter {} for function {}", param, func_name));
+            }
+        }
+        
+        // 4. Mangle name based on concrete types
+        // Create a list of type args in the order of declaration
+        let type_args: Vec<Type> = func_def.generics.iter().map(|g| subst_map[g].clone()).collect();
+        let mangled_name = format!("{}_{}", func_name, 
+             type_args.iter().map(|t| self.type_to_suffix(t)).collect::<Vec<_>>().join("_"));
+             
+        // 5. Check cache/module
+        if self.module.get_function(&mangled_name).is_some() || self.fn_return_types.contains_key(&mangled_name) {
+            return Ok(mangled_name);
+        }
+        
+        // 6. Instantiate
+        let substitutor = TypeSubstitutor::new(subst_map);
+        
+        let mut new_func = func_def.clone();
+        new_func.name = mangled_name.clone();
+        new_func.generics = vec![]; // Concrete now
+        
+        // Substitute args
+        for (_, ty) in &mut new_func.args {
+            *ty = substitutor.substitute_type(ty);
+        }
+        // Substitute return type
+        new_func.return_type = substitutor.substitute_type(&new_func.return_type);
+        // Substitute body
+        new_func.body = new_func.body.iter().map(|s| substitutor.substitute_stmt(s)).collect();
+        
+        // 7. Compile
+        // Need to register proto first (for recursion support etc)
+        self.fn_return_types.insert(mangled_name.clone(), new_func.return_type.clone());
+        self.compile_fn_proto(&new_func)?;
+        self.compile_fn(&new_func, &[])?;
+        
+        Ok(mangled_name)
+    }
+
+    fn unify_types(
+        &self,
+        expected: &Type,
+        actual: &Type,
+        map: &mut HashMap<String, Type>,
+    ) -> Result<(), String> {
+         match (expected, actual) {
+             (Type::UserDefined(name, args), _) => {
+                 // If It's a Type Parameter (no args), infer it.
+                 // Need to know if 'name' is a generic param.
+                 // For now assume if it's in the generic list it is.
+                 // But here we don't have scope.
+                 // However, UserDefined type params usually have empty args.
+                 if args.is_empty() {
+                     // Check if already mapped
+                     if let Some(existing) = map.get(name) {
+                         if existing != actual {
+                              return Err(format!("Type mismatch for generic {}: expected {:?}, got {:?}", name, existing, actual));
+                         }
+                     } else {
+                         // Map it!
+                         // But wait, what if 'name' is "Vec"? We shouldn't map "Vec" to actual.
+                         // We should only map if 'name' is in Fn generics.
+                         // But unification helper doesn't know the list.
+                         // We can assume valid AST would prevent Shadowing of "Vec" by "T".
+                         // So if we see UserDefined("T"), we map it.
+                         // Ideally we should pass the set of generic params to safe guard.
+                         map.insert(name.clone(), actual.clone());
+                     }
+                     return Ok(());
+                 }
+                 // If recursive generic (e.g. MyStruct<T>)
+                 if let Type::UserDefined(act_name, act_args) = actual {
+                     if name != act_name || args.len() != act_args.len() {
+                          return Err("Type mismatch or arity mismatch".into());
+                     }
+                     for (e, a) in args.iter().zip(act_args) {
+                         self.unify_types(e, a, map)?;
+                     }
+                     return Ok(());
+                 }
+                 // If structural match fails
+                 // Might handle Struct vs UserDefined aliases?
+             }
+             (Type::Vec(e), Type::Vec(a)) => self.unify_types(e, a, map)?,
+             (Type::Tensor(e, r), Type::Tensor(a, ar)) => {
+                 if r != ar { return Err("Rank mismatch".into()); }
+                 self.unify_types(e, a, map)?;
+             }
+             // Add other structural recursions as needed
+             _ => {
+                 if expected != actual {
+                     // If they are different concrete types, error.
+                     // But wait, what if expected is concrete? (e.g. Fn(i64, T))
+                     return Err(format!("Type mismatch: expected {:?}, got {:?}", expected, actual));
+                 }
+             }
+         }
+         Ok(())
+    }
+
     /// Generate a mangled name for a monomorphized type.
     /// Example: `Vec` + `[i64]` -> `Vec_i64`
     pub fn mangle_type_name(&self, base_name: &str, type_args: &[Type]) -> String {

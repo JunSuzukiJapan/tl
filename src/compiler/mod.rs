@@ -1,5 +1,6 @@
 // src/compiler/mod.rs
 pub mod ast;
+pub mod ast_subst;
 pub mod codegen;
 pub mod error;
 pub mod inference;

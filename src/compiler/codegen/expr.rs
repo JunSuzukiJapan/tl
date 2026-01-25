@@ -2014,9 +2014,14 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             ExprKind::FieldAccess(obj, field) => {
                 let (obj_val, obj_ty) = self.compile_expr(obj)?;
-                let struct_name = match obj_ty {
-                    Type::Struct(name, _) => name,
-                    Type::UserDefined(name, _) => name,
+                let struct_name = match &obj_ty {
+                    Type::Struct(name, args) | Type::UserDefined(name, args) => {
+                         if args.is_empty() {
+                             name.clone()
+                         } else {
+                             self.mangle_type_name(name, args)
+                         }
+                    }
                     _ => return Err(format!("Field access on non-struct type {:?}", obj_ty)),
                 };
 
@@ -2134,7 +2139,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 Err(format!("Variable {} not found in scopes", name))
             }
-            ExprKind::StructInit(name, _, fields) => self.compile_struct_init(name, fields),
+            ExprKind::StructInit(name, generics, fields) => self.compile_struct_init(name, generics, fields),
             ExprKind::StaticMethodCall(type_ty, method_name, args) => {
                 self.compile_static_method_call(type_ty, method_name, args)
             }
@@ -2827,17 +2832,33 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn compile_struct_init(
         &mut self,
         name: &str,
+        generics: &[Type],
         fields: &[(String, Expr)],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        let lookup_name = if generics.is_empty() {
+             name.to_string()
+        } else {
+             self.mangle_type_name(name, generics)
+        };
+        
+        // Debug:
+        // if generics.len() > 0 { eprintln!("DEBUG: compiling init for {}, lookup {}", name, lookup_name); }
+
         let struct_type = *self
             .struct_types
-            .get(name)
-            .ok_or(format!("Struct type {} not found in codegen", name))?;
+            .get(&lookup_name)
+            .ok_or_else(|| {
+                 eprintln!("DEBUG: struct_types keys: {:?}", self.struct_types.keys());
+                 format!("Struct type {} not found in codegen", lookup_name)
+            })?;
 
         let struct_def = self
             .struct_defs
-            .get(name)
-            .ok_or(format!("Struct definition {} not found", name))?
+            .get(&lookup_name)
+            .ok_or_else(|| {
+                 eprintln!("DEBUG: struct_defs keys: {:?}", self.struct_defs.keys());
+                 format!("Struct definition {} not found", lookup_name)
+            })?
             .clone();
 
         // Determine allocation strategy: Arena or Heap
@@ -2926,7 +2947,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // Return the pointer directly (no load)
-        Ok((struct_ptr.into(), Type::Struct(name.to_string(), vec![])))
+        Ok((struct_ptr.into(), Type::Struct(name.to_string(), generics.to_vec())))
     }
 
     fn compile_string_literal(&self, s: &str) -> Result<(BasicValueEnum<'ctx>, Type), String> {
@@ -6623,14 +6644,36 @@ impl<'ctx> CodeGenerator<'ctx> {
             llvm_func_name.to_string()
         };
 
-        let lookup_name = resolved_name.as_str();
+        // Monomorphization Logic: Check if generic
+        let mut final_resolved_name = resolved_name.clone();
+        let mut precompiled_args = None;
+        
+        if self.module.get_function(&final_resolved_name).is_none() && self.generic_fn_defs.contains_key(&final_resolved_name) {
+             let mut args_vec = Vec::new();
+             let mut arg_types = Vec::new();
+             for arg in args {
+                  let (mut val, mut ty) = self.compile_expr(arg)?;
+                  if let Type::ScalarArray(_, _) = ty {
+                        let (new_val, new_ty) = self.ensure_tensor_v2(arg, 0)?;
+                        val = new_val.try_into().unwrap();
+                        ty = new_ty;
+                  }
+                  args_vec.push((val, ty.clone()));
+                  arg_types.push(ty);
+             }
+             
+             final_resolved_name = self.monomorphize_generic_function(&resolved_name, &arg_types)?;
+             precompiled_args = Some(args_vec);
+        }
+
+        let lookup_name = final_resolved_name.as_str();
         let ret_type = self
             .fn_return_types
             .get(lookup_name)
             .cloned()
             .unwrap_or(Type::Void);
 
-        let func_opt = self.module.get_function(&resolved_name);
+        let func_opt = self.module.get_function(&final_resolved_name);
 
         let func = if let Some(f) = func_opt {
             f
@@ -6659,21 +6702,28 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Handle SRET: If return type is Struct/UserDefined, allocate memory and pass as first arg
         let sret_ptr: Option<inkwell::values::PointerValue> = None; /* SRET DISABLED */
 
-        for arg in args {
-            let (mut val, mut ty) = self.compile_expr(arg)?;
+        if let Some(pre_values) = precompiled_args {
+             for (val, ty) in pre_values {
+                  compiled_args_vals.push(val.into());
+                  compiled_args_types.push((val, ty));
+             }
+        } else {
+            for arg in args {
+                let (mut val, mut ty) = self.compile_expr(arg)?;
 
-            // Move Semantics disabled: function arguments remain valid after calls.
+                // Move Semantics disabled: function arguments remain valid after calls.
 
-            // Auto-convert ScalarArray to Tensor
-            // Functions in Runtime expecting Tensor arguments need OpaqueTensor*, not [T; N]*
-            if let Type::ScalarArray(_, _) = ty {
-                let (new_val, new_ty) = self.ensure_tensor_v2(arg, 0)?;
-                val = new_val.try_into().unwrap(); // BasicValueEnum
-                ty = new_ty;
+                // Auto-convert ScalarArray to Tensor
+                // Functions in Runtime expecting Tensor arguments need OpaqueTensor*, not [T; N]*
+                if let Type::ScalarArray(_, _) = ty {
+                    let (new_val, new_ty) = self.ensure_tensor_v2(arg, 0)?;
+                    val = new_val.try_into().unwrap(); // BasicValueEnum
+                    ty = new_ty;
+                }
+
+                compiled_args_vals.push(val.into());
+                compiled_args_types.push((val, ty));
             }
-
-            compiled_args_vals.push(val.into());
-            compiled_args_types.push((val, ty));
         }
 
         let call = self
