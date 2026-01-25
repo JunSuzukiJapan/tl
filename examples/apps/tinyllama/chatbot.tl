@@ -122,8 +122,8 @@ fn main() {
     println("TinyLlama Chatbot");
     Param::set_device(Device::Auto);
 
-    let mut model_path = "~/.llm/models/tinyllama-1.1b-chat-q4_0.gguf";
-    let tokenizer_path = "~/.llm/models/tokenizer.json";
+    let mut model_path = "~/.llm/models/tinyllama/tinyllama-1.1b-chat-q4_0.gguf";
+    let tokenizer_path = "~/.llm/models/tinyllama/tokenizer.json";
     let config_path = "chatbot_config.txt";
 
     // Try config first
@@ -219,7 +219,9 @@ fn main() {
             return;
         }
         
-        let prompt = string_concat("User: ", string_concat(input_str, "\nAssistant:"));
+        let p1 = "<|system|>\nYou are a generic chatbot</s>\n<|user|>\n";
+        let p2 = "</s>\n<|assistant|>\n";
+        let prompt = string_concat(p1, string_concat(input_str, p2));
         let mut tokens = tok.encode(prompt);
         let cache = KVCache::new(22);
         let mut cur_tokens = tokens.clone();
@@ -262,10 +264,10 @@ fn main() {
             
             // Stop String Check
             gen_str = string_concat(gen_str, s_nxt);
-            if string_contains(gen_str, "User") {
+            if string_contains(gen_str, "<|user|>") {
                 gen_idx = 200; // Break loop
             }
-            if string_contains(gen_str, "Assistant") {
+            if string_contains(gen_str, "<|assistant|>") {
                 gen_idx = 200; // Break loop
             }
 
