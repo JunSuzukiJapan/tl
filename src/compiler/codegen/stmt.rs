@@ -388,7 +388,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
                 if !val.is_pointer_value() {
-                    panic!("Tensor value is not pointer: {:?}", val);
+                    return Err(format!("Tensor value is not pointer: {:?}", val));
                 }
                 let ptr = val.into_pointer_value();
 
@@ -847,7 +847,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .unwrap()
                             .get_parent()
                             .unwrap();
-                        let ptr = self.create_entry_block_alloca(fn_val, name, &val_ty);
+                        let ptr = self.create_entry_block_alloca(fn_val, name, &val_ty)?;
                         self.builder
                             .build_store(ptr, val_ir)
                             .map_err(|e| e.to_string())?;
@@ -1020,7 +1020,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.emit_recursive_free(old_value, &old_ty)?;
                 }
 
-                let alloca = self.create_entry_block_alloca(current_function, name, &val_ty);
+                let alloca = self.create_entry_block_alloca(current_function, name, &val_ty)?;
                 self.builder
                     .build_store(alloca, val_ir)
                     .map_err(|e| e.to_string())?;
@@ -2250,7 +2250,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
 
                 // Create alloca for loop var and store
-                let var_alloca = self.create_entry_block_alloca(parent, loop_var, &loop_var_val.1);
+                let var_alloca = self.create_entry_block_alloca(parent, loop_var, &loop_var_val.1)?;
                 self.builder
                     .build_store(var_alloca, loop_var_val.0)
                     .map_err(|e| e.to_string())?;
@@ -2459,7 +2459,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .unwrap();
 
                         let alloca =
-                            self.create_entry_block_alloca(current_function, &temp_name, &ty);
+                            self.create_entry_block_alloca(current_function, &temp_name, &ty)?;
                         self.builder
                             .build_store(alloca, val)
                             .map_err(|e| e.to_string())?;
@@ -2757,14 +2757,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let parent_fn = current_block.get_parent().unwrap();
 
                 let data_alloca =
-                    self.create_entry_block_alloca(parent_fn, "scalar_data_rhs", &Type::F32);
+                    self.create_entry_block_alloca(parent_fn, "scalar_data_rhs", &Type::F32)?;
                 self.builder
                     .build_store(data_alloca, val)
                     .map_err(|e| e.to_string())?;
 
                 // 2. Shape Alloca (dummy i64)
                 let shape_alloca =
-                    self.create_entry_block_alloca(parent_fn, "scalar_shape_rhs", &Type::I64);
+                    self.create_entry_block_alloca(parent_fn, "scalar_shape_rhs", &Type::I64)?;
 
                 // 3. New Tensor
                 let new_fn = self.module.get_function("tl_tensor_new").unwrap();
@@ -2829,13 +2829,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let parent_fn = current_block.get_parent().unwrap();
 
                 let data_alloca =
-                    self.create_entry_block_alloca(parent_fn, "scalar_data_lhs", &Type::F32);
+                    self.create_entry_block_alloca(parent_fn, "scalar_data_lhs", &Type::F32)?;
                 self.builder
                     .build_store(data_alloca, val)
                     .map_err(|e| e.to_string())?;
 
                 let shape_alloca =
-                    self.create_entry_block_alloca(parent_fn, "scalar_shape_lhs", &Type::I64);
+                    self.create_entry_block_alloca(parent_fn, "scalar_shape_lhs", &Type::I64)?;
 
                 let new_fn = self.module.get_function("tl_tensor_new").unwrap();
                 let rank_val = i64_type.const_int(0, false);

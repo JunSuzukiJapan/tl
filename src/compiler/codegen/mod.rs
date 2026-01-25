@@ -654,7 +654,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             for method in &imp.methods {
                 let target_name = match &imp.target_type {
                     Type::Struct(n, _) | Type::UserDefined(n, _) | Type::Enum(n, _) => n,
-                    _ => panic!("Invalid impl target type"),
+                    _ => return Err("Invalid impl target type".to_string()),
                 };
                 let simple_target = if target_name.contains("::") {
                     target_name.split("::").last().unwrap()
@@ -793,7 +793,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if let Some(param_val) = function.get_nth_param((i + param_offset) as u32) {
                         param_val.set_name(arg_name);
                         let alloca =
-                            self.create_entry_block_alloca(function, arg_name, &resolved_ty);
+                            self.create_entry_block_alloca(function, arg_name, &resolved_ty)?;
                         self.builder.build_store(alloca, param_val).unwrap();
 
                         // Register in scope
@@ -1070,7 +1070,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Register arguments (skip sret param if present)
         for (i, arg) in function.get_param_iter().skip(param_offset).enumerate() {
             let (arg_name, arg_type) = &func.args[i];
-            let alloca = self.create_entry_block_alloca(function, arg_name, arg_type);
+            let alloca = self.create_entry_block_alloca(function, arg_name, arg_type)?;
 
             // Borrowing Semantics: Just store the pointer/value.
             // Do NOT Acquire/DeepClone. The caller owns the data.
@@ -1084,7 +1084,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 inkwell::values::BasicValueEnum::IntValue(v) => {
                     self.builder.build_store(alloca, v).unwrap()
                 }
-                _ => panic!("Unsupported arg type"),
+                _ => return Err("Unsupported arg type".to_string()),
             };
 
             // Insert into current scope with should_free=FALSE

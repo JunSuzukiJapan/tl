@@ -57,7 +57,7 @@ pub enum Term {
 
 impl Term {
     /// Convert an Expr to a Term (without tensor context).
-    pub fn from_expr(expr: &Expr) -> Self {
+    pub fn from_expr(expr: &Expr) -> Result<Self, String> {
         Self::from_expr_with_context(expr, None, &HashMap::new())
     }
 
@@ -66,21 +66,14 @@ impl Term {
         expr: &Expr,
         ctx: Option<&TensorContext>,
         subst: &Substitution,
-    ) -> Self {
-        match &expr.inner {
-            ExprKind::Variable(name) => {
-                if let Some(val) = subst.get(name) {
-                    Term::Val(val.clone())
-                } else {
-                    Term::Var(name.clone())
-                }
-            }
-            ExprKind::LogicVar(name) => {
-                if let Some(val) = subst.get(name) {
-                    Term::Val(val.clone())
-                } else {
-                    Term::Var(name.clone())
-                }
+    ) -> Result<Self, String> {
+        let term = match &expr.inner {
+            ExprKind::Variable(name) | ExprKind::LogicVar(name) => {
+                 if let Some(val) = subst.get(name) {
+                     Term::Val(val.clone())
+                 } else {
+                     Term::Var(name.clone())
+                 }
             }
             ExprKind::Symbol(s) => Term::Val(Value::Str(s.clone())),
             ExprKind::Int(n) => Term::Val(Value::Int(*n)),
@@ -89,23 +82,23 @@ impl Term {
             ExprKind::StringLiteral(s) => Term::Val(Value::Str(s.clone())),
             ExprKind::IndexAccess(base, indices) => {
                 if let ExprKind::Variable(tensor_name) = &base.inner {
-                    let idx_terms: Vec<Term> = indices
+                    let idx_terms = indices
                         .iter()
                         .map(|idx_expr| match &idx_expr.inner {
-                            ExprKind::Int(n) => Term::Val(Value::Int(*n)),
-                            ExprKind::Variable(name) => {
-                                if let Some(val) = subst.get(name) {
-                                    Term::Val(val.clone())
-                                } else {
-                                    Term::Var(name.clone())
-                                }
-                            }
-                            _ => panic!(
+                             ExprKind::Int(n) => Ok(Term::Val(Value::Int(*n))),
+                             ExprKind::Variable(name) => {
+                                 if let Some(val) = subst.get(name) {
+                                     Ok(Term::Val(val.clone()))
+                                 } else {
+                                     Ok(Term::Var(name.clone()))
+                                 }
+                             }
+                             _ => Err(format!(
                                 "Unsupported expression in tensor index (inference): {:?}",
                                 idx_expr
-                            ),
+                             )),
                         })
-                        .collect();
+                        .collect::<Result<Vec<Term>, String>>()?;
 
                     if let Some(tensor_ctx) = ctx {
                         let all_ground: Option<Vec<i64>> = idx_terms
@@ -117,28 +110,29 @@ impl Term {
                             .collect();
 
                         if let Some(ground_indices) = all_ground {
-                            if let Some(tensor) = tensor_ctx.get(tensor_name) {
-                                if let Some(val) = tensor.get(&ground_indices) {
-                                    return Term::Val(Value::Float(val));
-                                }
-                            }
+                             if let Some(tensor) = tensor_ctx.get(tensor_name) {
+                                 if let Some(val) = tensor.get(&ground_indices) {
+                                     return Ok(Term::Val(Value::Float(val)));
+                                 }
+                             }
                         }
                     }
                     Term::TensorAccess(tensor_name.clone(), idx_terms)
                 } else {
-                    panic!("Unsupported tensor access base: {:?}", base)
+                    return Err(format!("Unsupported tensor access base: {:?}", base));
                 }
             }
             ExprKind::Wildcard => Term::Wildcard,
             ExprKind::BinOp(_, _, _) | ExprKind::UnOp(_, _) => {
-                if let Some(v) = eval_numeric_expr(expr, subst, ctx) {
-                    Term::Val(Value::Float(v))
-                } else {
-                    Term::TensorAccess("__expr".to_string(), vec![])
-                }
+                 if let Some(v) = eval_numeric_expr(expr, subst, ctx) {
+                     Term::Val(Value::Float(v))
+                 } else {
+                     Term::TensorAccess("__expr".to_string(), vec![])
+                 }
             }
-            _ => panic!("Unsupported expression in logic term: {:?}", expr),
-        }
+            _ => return Err(format!("Unsupported expression in logic term: {:?}", expr)),
+        };
+        Ok(term)
     }
 }
 
@@ -171,7 +165,7 @@ fn eval_numeric_expr(
             Some(-v)
         }
         ExprKind::IndexAccess(_, _) => {
-            let term = Term::from_expr_with_context(expr, ctx, subst);
+            let term = Term::from_expr_with_context(expr, ctx, subst).ok()?;
             if let Term::Val(v) = term {
                 value_to_f64(&v)
             } else {
@@ -241,7 +235,7 @@ fn apply_subst_term(term: &Term, subst: &Substitution, ctx: &TensorContext) -> T
 }
 
 /// Convert Atom (from AST) to a list of Terms.
-fn atom_to_terms(atom: &Atom) -> Vec<Term> {
+fn atom_to_terms(atom: &Atom) -> Result<Vec<Term>, String> {
     atom.args.iter().map(Term::from_expr).collect()
 }
 
@@ -277,7 +271,7 @@ pub fn unify_atom_with_ground(
         return None;
     }
 
-    let terms = atom_to_terms(pattern);
+    let terms = atom_to_terms(pattern).ok()?;
     let mut subst = Substitution::new();
 
     for (term, ground_val) in terms.iter().zip(ground.args.iter()) {
@@ -294,7 +288,7 @@ pub fn unify_atom_with_ground(
 fn apply_subst_atom(atom: &Atom, subst: &Substitution, ctx: &TensorContext) -> Option<GroundAtom> {
     let mut ground_args = Vec::new();
     for expr in &atom.args {
-        let term = Term::from_expr(expr);
+        let term = Term::from_expr(expr).ok()?;
         let resolved = apply_subst_term(&term, subst, ctx);
         match resolved {
             Term::Val(v) => ground_args.push(v),
@@ -314,14 +308,14 @@ pub fn forward_chain(
     initial_facts: HashSet<GroundAtom>,
     rules: &[Rule],
     ctx: &TensorContext,
-) -> HashSet<GroundAtom> {
+) -> Result<HashSet<GroundAtom>, String> {
     let mut facts = initial_facts;
     let mut changed = true;
 
     while changed {
         changed = false;
         for rule in rules {
-            let new_facts = evaluate_rule(rule, &facts, ctx);
+            let new_facts = evaluate_rule(rule, &facts, ctx)?;
             for fact in new_facts {
                 if !facts.contains(&fact) {
                     facts.insert(fact);
@@ -330,14 +324,14 @@ pub fn forward_chain(
             }
         }
     }
-    facts
+    Ok(facts)
 }
 
 pub fn probabilistic_forward_chain(
     initial_facts: HashMap<GroundAtom, f64>,
     rules: &[Rule],
     ctx: &TensorContext,
-) -> HashMap<GroundAtom, f64> {
+) -> Result<HashMap<GroundAtom, f64>, String> {
     let mut facts = initial_facts;
     let mut changed = true;
 
@@ -346,7 +340,7 @@ pub fn probabilistic_forward_chain(
         for rule in rules {
             let rule_weight = rule.weight.unwrap_or(1.0);
             let fact_set: HashSet<GroundAtom> = facts.keys().cloned().collect();
-            let new_atoms = evaluate_rule(rule, &fact_set, ctx);
+            let new_atoms = evaluate_rule(rule, &fact_set, ctx)?;
 
             for new_atom in new_atoms {
                 let new_weight = rule_weight;
@@ -362,7 +356,7 @@ pub fn probabilistic_forward_chain(
             }
         }
     }
-    facts
+    Ok(facts)
 }
 
 fn is_builtin_predicate(name: &str) -> bool {
@@ -493,7 +487,7 @@ impl<'a> FactIndex<'a> {
     }
 }
 
-fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>, ctx: &TensorContext) -> Vec<GroundAtom> {
+fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>, ctx: &TensorContext) -> Result<Vec<GroundAtom>, String> {
     let index = FactIndex::new(facts);
     let mut substs = vec![Substitution::new()];
 
@@ -508,7 +502,7 @@ fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>, ctx: &TensorContext) 
                 let mut resolved_args = Vec::new();
                 let mut all_ground = true;
                 for expr in &body_atom.args {
-                    let term = term_from_expr_with_subst(expr, subst, ctx);
+                    let term = term_from_expr_with_subst(expr, subst, ctx)?;
                     let resolved = apply_subst_term(&term, subst, ctx);
                     match resolved {
                         Term::Val(v) => resolved_args.push(v),
@@ -530,7 +524,7 @@ fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>, ctx: &TensorContext) 
                 let mut all_ground = true;
                 let mut grounded = Vec::new();
                 for expr in &body_atom.args {
-                    let term = term_from_expr_with_subst(expr, subst, ctx);
+                    let term = term_from_expr_with_subst(expr, subst, ctx)?;
                     let resolved = apply_subst_term(&term, subst, ctx);
                     match resolved {
                         Term::Val(v) => grounded.push(v),
@@ -564,7 +558,7 @@ fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>, ctx: &TensorContext) 
                         .args
                         .iter()
                         .map(|e| term_from_expr_with_subst(e, subst, ctx))
-                        .collect();
+                        .collect::<Result<Vec<_>, _>>()?;
                     let mut matches = true;
                     for (term, ground_val) in pattern_terms.iter().zip(fact.args.iter()) {
                         let ground_term = Term::Val(ground_val.clone());
@@ -588,12 +582,12 @@ fn evaluate_rule(rule: &Rule, facts: &HashSet<GroundAtom>, ctx: &TensorContext) 
             results.push(ground_head);
         }
     }
-    results
+    Ok(results)
 }
 
-fn term_from_expr_with_subst(expr: &Expr, subst: &Substitution, ctx: &TensorContext) -> Term {
+fn term_from_expr_with_subst(expr: &Expr, subst: &Substitution, ctx: &TensorContext) -> Result<Term, String> {
     if let Some(v) = eval_numeric_expr(expr, subst, Some(ctx)) {
-        Term::Val(Value::Float(v))
+        Ok(Term::Val(Value::Float(v)))
     } else {
         Term::from_expr(expr)
     }

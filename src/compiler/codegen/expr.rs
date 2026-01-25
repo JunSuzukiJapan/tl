@@ -4728,7 +4728,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             let llvm_ty = self.get_llvm_type(f_ty)?;
             let f_val = self.builder.build_load(llvm_ty, f_ptr, "bind_val").unwrap();
 
-            let alloca = self.create_entry_block_alloca(current_func, bind_name, f_ty);
+            let alloca = self.create_entry_block_alloca(current_func, bind_name, f_ty)?;
             let stored_val = if matches!(
                 f_ty,
                 Type::Tensor(_, _)
@@ -4806,7 +4806,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         function: FunctionValue<'ctx>,
         name: &str,
         ty: &Type,
-    ) -> inkwell::values::PointerValue<'ctx> {
+    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
         let builder = self.context.create_builder();
         let entry = function.get_first_basic_block().unwrap();
         match entry.get_first_instruction() {
@@ -4816,13 +4816,13 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         let llvm_type: inkwell::types::BasicTypeEnum = self
             .get_llvm_type(ty)
-            .unwrap_or_else(|e| panic!("Failed to get LLVM type for alloca: {}", e));
+            .map_err(|e| format!("Failed to get LLVM type for alloca: {}", e))?;
         let alloca = builder.build_alloca(llvm_type, name).unwrap();
         if let Some(instr) = alloca.as_instruction_value() {
             // Force 16-byte alignment to satisfy SIMD/slice requirements
             instr.set_alignment(16).ok();
         }
-        alloca
+        Ok(alloca)
     }
 
     // Debug method to print IR

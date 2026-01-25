@@ -484,7 +484,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             parent_fn,
             name,
             &Type::Tensor(Box::new(Type::F32), rank),
-        );
+        )?;
         self.builder
             .build_store(v_alloca, tptr)
             .map_err(|e| e.to_string())?;
@@ -624,7 +624,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let f32_type = self.context.f32_type();
                 let current_block = self.builder.get_insert_block().unwrap();
                 let parent_fn = current_block.get_parent().unwrap();
-                let data_ptr = self.create_entry_block_alloca(parent_fn, "scalar_data", &Type::F32);
+                let data_ptr = self.create_entry_block_alloca(parent_fn, "scalar_data", &Type::F32)?;
 
                 let cast_val = if let Type::I64 = ty {
                     self.builder
@@ -640,7 +640,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let rank_val = self.context.i64_type().const_int(0, false);
                 let shape_ptr =
-                    self.create_entry_block_alloca(parent_fn, "scalar_shape", &Type::I64);
+                    self.create_entry_block_alloca(parent_fn, "scalar_shape", &Type::I64)?;
 
                 let tensor_new_fn = self
                     .module
@@ -740,7 +740,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .unwrap();
 
         self.builder.position_at_end(body_bb);
-        let alloca = self.create_entry_block_alloca(parent_fn, name, &Type::I64);
+        let alloca = self.create_entry_block_alloca(parent_fn, name, &Type::I64)?;
         self.builder.build_store(alloca, iv).unwrap();
 
         Ok((cond_bb, body_bb, aft_bb, phi, alloca))

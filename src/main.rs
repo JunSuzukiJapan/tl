@@ -450,7 +450,13 @@ use tl_lang::compiler::ast::{Atom, ExprKind};
     log::info!("Rules: {}", rules.len());
 
     // 3. Run forward chaining
-    let derived_facts = forward_chain(initial_facts, &rules, ctx);
+    let derived_facts = match forward_chain(initial_facts, &rules, ctx) {
+        Ok(f) => f,
+        Err(e) => {
+            log::error!("Inference error: {}", e);
+            return;
+        }
+    };
     log::info!("Derived facts: {}", derived_facts.len());
 
     // 4. Execute queries
