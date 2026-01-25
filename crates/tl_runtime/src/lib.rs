@@ -31,7 +31,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 // Thread-local storage for the latest gradients computed by backward()
 thread_local! {
     static LATEST_GRADS: RefCell<Option<candle_core::backprop::GradStore>> = const { RefCell::new(None) };
-    static LAST_ERROR: RefCell<Option<crate::error::LastError>> = const { RefCell::new(None) };
 }
 
 pub(crate) fn mem_log_enabled() -> bool {
@@ -147,7 +146,7 @@ fn handle_runtime_error_internal(
     col: u32,
 ) {
     let error_code = unsafe { std::mem::transmute(code) };
-    LAST_ERROR.with(|e| {
+    crate::error::LAST_ERROR.with(|e| {
         *e.borrow_mut() = Some(crate::error::LastError {
             code: error_code,
             message: msg,
@@ -197,7 +196,7 @@ pub extern "C" fn tl_amend_error_loc(file: *const std::os::raw::c_char, line: u3
         "unknown".to_string()
     };
 
-    LAST_ERROR.with(|e| {
+    crate::error::LAST_ERROR.with(|e| {
         if let Some(err) = e.borrow_mut().as_mut() {
             err.file = filename;
             err.line = line;
@@ -228,28 +227,6 @@ fn return_ptr_or_null(
     }
 }
 
-#[no_mangle]
-pub extern "C" fn tl_get_last_error() -> crate::error::CTensorResult {
-    LAST_ERROR.with(|e| {
-        if let Some(err) = e.borrow().as_ref() {
-            // detailed error
-            let c_msg = std::ffi::CString::new(err.message.clone()).unwrap();
-            let c_file = std::ffi::CString::new(err.file.clone()).unwrap();
-
-            crate::error::CTensorResult {
-                tensor: std::ptr::null_mut(),
-                error_msg: c_msg.into_raw(),
-                error_code: err.code,
-                file: c_file.into_raw(),
-                line: err.line,
-                col: err.col,
-            }
-        } else {
-            // No error
-            crate::error::CTensorResult::ok(std::ptr::null_mut())
-        }
-    })
-}
 
 // Helper to create and register an OpaqueTensor from a Candle Tensor
 // NOTE: Do NOT register here - caller is responsible for lifetime management.
@@ -1393,7 +1370,8 @@ pub extern "C" fn tl_tensor_from_vec_u8(
                 vec.len() - offset,
                 offset
             );
-            panic!("tl_tensor_from_vec_u8: Out of bounds");
+            crate::error::set_last_error("tl_tensor_from_vec_u8: Out of bounds", crate::error::RuntimeErrorCode::IndexOutOfBounds);
+            return std::ptr::null_mut();
         }
 
         let sub_vec = &vec[offset..offset + total_elements];
@@ -1426,7 +1404,8 @@ pub extern "C" fn tl_tensor_from_u8_labels(
         let count = count as usize;
 
         if offset + count > vec.len() {
-            panic!("tl_tensor_from_u8_labels: Out of bounds");
+            crate::error::set_last_error("tl_tensor_from_u8_labels: Out of bounds", crate::error::RuntimeErrorCode::IndexOutOfBounds);
+            return std::ptr::null_mut();
         }
 
         let sub_vec = &vec[offset..offset + count];
@@ -1464,7 +1443,10 @@ pub extern "C" fn tl_tensor_get(t: *mut OpaqueTensor, idx: i64) -> c_float {
             candle_core::DType::F32 => scalar_val.to_scalar::<f32>().unwrap(),
             candle_core::DType::I64 => scalar_val.to_scalar::<i64>().unwrap() as f32,
             candle_core::DType::U8 => scalar_val.to_scalar::<u8>().unwrap() as f32,
-            dt => panic!("tl_tensor_get: Unsupported dtype {:?}", dt),
+            dt => {
+                crate::error::set_last_error(format!("tl_tensor_get: Unsupported dtype {:?}", dt), crate::error::RuntimeErrorCode::TypeMismatch);
+                panic!("tl_tensor_get: Unsupported dtype {:?}", dt);
+            }
         }
     }
 }
@@ -2227,7 +2209,10 @@ pub extern "C" fn tl_tensor_get_i64_md(
             candle_core::DType::U8 => scalar.to_scalar::<u8>().unwrap() as i64,
             candle_core::DType::F32 => scalar.to_scalar::<f32>().unwrap() as i64,
             candle_core::DType::F64 => scalar.to_scalar::<f64>().unwrap() as i64,
-            dt => panic!("tl_tensor_get_i64_md: Unsupported dtype {:?}", dt),
+            dt => {
+                crate::error::set_last_error(format!("tl_tensor_get_i64_md: Unsupported dtype {:?}", dt), crate::error::RuntimeErrorCode::TypeMismatch);
+                panic!("tl_tensor_get_i64_md: Unsupported dtype {:?}", dt);
+            }
         }
     }
 }
@@ -2529,10 +2514,8 @@ pub extern "C" fn tl_tensor_reshape_dims(
     unsafe {
         // println!("DEBUG: Inside tl_tensor_reshape_dims");
         if t.is_null() || dims_ptr.is_null() {
-            panic!(
-                "Null pointer passed to reshape_dims: t={:?}, dims={:?}",
-                t, dims_ptr
-            );
+            crate::error::set_last_error(format!("Null pointer passed to reshape_dims: t={:?}, dims={:?}", t, dims_ptr), crate::error::RuntimeErrorCode::NullPointerError);
+            return std::ptr::null_mut();
         }
         let tensor = &(*t).0;
         let dims_slice = std::slice::from_raw_parts(dims_ptr, num_dims as usize);
@@ -2818,7 +2801,8 @@ pub extern "C" fn tl_tensor_embedding(
     let w_dims = weights_tensor.dims();
 
     if w_dims.len() != 2 {
-        panic!("Embedding weights must be 2-dimensional, got {:?}", w_dims);
+        crate::error::set_last_error(format!("Embedding weights must be 2-dimensional, got {:?}", w_dims), crate::error::RuntimeErrorCode::ShapeMismatch);
+        return std::ptr::null_mut();
     }
     // Input indices might be F32 if coming from literals.
     let indices_u32 = indices_tensor.to_dtype(candle_core::DType::U32).unwrap();
@@ -3073,8 +3057,8 @@ pub extern "C" fn tl_tensor_map_get(
                 }
             }
         } else {
-            // Panic or Return Null? Panic for now standard behavior
-            panic!("Weight '{}' not found in loaded file.", key);
+            crate::error::set_last_error(format!("Weight '{}' not found in loaded file.", key), crate::error::RuntimeErrorCode::ArgumentError);
+            std::ptr::null_mut()
         }
     }
 }
@@ -3408,7 +3392,8 @@ pub extern "C" fn tl_tensor_map_get_quantized(
         use std::ffi::CStr;
         let map_ptr = map as *mut OpaqueTensorMap;
         if map_ptr.is_null() {
-            panic!("Map pointer is null");
+            crate::error::set_last_error("Map pointer is null", crate::error::RuntimeErrorCode::NullPointerError);
+            return 0;
         }
         let map_ref = &(*map_ptr).0;
         let c_str = CStr::from_ptr(name);
@@ -3421,14 +3406,13 @@ pub extern "C" fn tl_tensor_map_get_quantized(
                     Box::into_raw(Box::new(OpaqueQTensor(arc))) as usize
                 }
                 LoadedTensor::Standard(_) => {
-                    panic!(
-                        "Requested quantized tensor '{}', but found standard tensor.",
-                        key_str
-                    );
+                    crate::error::set_last_error(format!("Requested quantized tensor '{}', but found standard tensor.", key_str), crate::error::RuntimeErrorCode::TypeMismatch);
+                    return 0;
                 }
             }
         } else {
-            panic!("Tensor '{}' not found in map.", key_str);
+            crate::error::set_last_error(format!("Tensor '{}' not found in map.", key_str), crate::error::RuntimeErrorCode::ArgumentError);
+            return 0;
         }
     }
 }

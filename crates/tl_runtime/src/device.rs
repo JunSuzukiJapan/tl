@@ -29,6 +29,7 @@ impl DeviceManager {
                 // Fallback to CPU or exit?
                 // Since this is static initialization, we must panic or exit.
                 // We will panic with the error message.
+                crate::error::set_last_error(format!("Device initialization failed: {}", e), crate::error::RuntimeErrorCode::DeviceError);
                 panic!("Device initialization failed: {}", e);
             }
         };

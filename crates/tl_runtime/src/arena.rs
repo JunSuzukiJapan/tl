@@ -73,7 +73,8 @@ impl Drop for Arena {
 #[no_mangle]
 pub extern "C" fn tl_arena_init(capacity: i64) {
     if capacity <= 0 {
-        panic!("Arena capacity must be positive, got {}", capacity);
+        crate::error::set_last_error(format!("Arena capacity must be positive, got {}", capacity), crate::error::RuntimeErrorCode::ArgumentError);
+        return;
     }
 
     ARENA.with(|arena| {
