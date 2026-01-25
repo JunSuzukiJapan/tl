@@ -408,6 +408,15 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 self.builder.position_at_end(free_block);
 
+                // Use check-and-release pattern for Tensors too?
+                // Actually tl_tensor_release handles it internally (dec ref + free if 0).
+                // So we assume tl_tensor_release is safe to call multiple times (it decrements).
+                // Yes, tl_tensor_release calls release_ptr.
+                // So we DON'T need conditional Logic here, just call the release function.
+                // But wait, if we call it unconditionally, we assume CodeGen owns a reference.
+                // CodeGen emits free for variables. Variable is a reference.
+                // So calling Release is correct (consuming the reference).
+                // So Tensors are fine as is.
                 let free_fn = self
                     .module
                     .get_function("tl_tensor_release")
@@ -477,6 +486,8 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 self.builder.position_at_end(free_block);
 
+
+
                 // We need to ensure proper control flow when recursively freeing fields.
                 // Each recursive call to emit_recursive_free may create new blocks and change
                 // the builder's insert position. We must branch to merge_block from wherever
@@ -518,6 +529,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .build_unconditional_branch(merge_block)
                         .map_err(|e| e.to_string())?;
                 }
+                
+
+                
                 self.builder.position_at_end(merge_block);
             }
             Type::Vec(inner_ty) => {

@@ -3826,19 +3826,45 @@ pub extern "C" fn tl_vec_ptr_len(ptr: *mut Vec<*mut std::ffi::c_void>) -> usize 
 #[no_mangle]
 pub extern "C" fn tl_vec_ptr_push(ptr: *mut Vec<*mut std::ffi::c_void>, val: *mut std::ffi::c_void) {
     if ptr.is_null() { return; }
-    unsafe { (*ptr).push(val); }
+    unsafe { 
+        (*ptr).push(val);
+        // Acquire reference for the vector (strong reference)
+        memory_manager::tl_ptr_acquire(val);
+    }
 }
 #[no_mangle]
 pub extern "C" fn tl_vec_ptr_get(ptr: *mut Vec<*mut std::ffi::c_void>, idx: usize) -> *mut std::ffi::c_void {
     if ptr.is_null() { return std::ptr::null_mut(); }
     unsafe {
         let vec = &*ptr;
-        if idx < vec.len() { vec[idx] } else { std::ptr::null_mut() }
+        if idx < vec.len() { 
+            let val = vec[idx];
+            // Register in current scope (return owned reference)
+            memory_manager::tl_mem_register_ptr(val);
+            val 
+        } else { 
+            std::ptr::null_mut() 
+        }
     }
 }
+
 #[no_mangle]
 pub extern "C" fn tl_vec_ptr_free(ptr: *mut Vec<*mut std::ffi::c_void>) {
-    if !ptr.is_null() { unsafe { let _ = Box::from_raw(ptr); } }
+    if !ptr.is_null() { 
+        // Try release via Manager
+        let processed = memory_manager::tl_ptr_release_bool(ptr as *mut std::ffi::c_void);
+        if !processed {
+             // Not registered (Local variable). Manual Cleanup.
+             unsafe {
+                let v = std::ptr::read(ptr);
+                for elem in &v {
+                    memory_manager::tl_ptr_release(*elem);
+                }
+                drop(v);
+                libc::free(ptr as *mut std::ffi::c_void);
+             }
+        }
+    }
 }
 
 // Constructors
@@ -3852,5 +3878,16 @@ pub extern "C" fn tl_vec_f32_new() -> *mut Vec<f32> {
 }
 #[no_mangle]
 pub extern "C" fn tl_vec_ptr_new() -> *mut Vec<*mut std::ffi::c_void> {
-    Box::into_raw(Box::new(Vec::new()))
+    unsafe {
+        // Allocate container via malloc matchin AllocType::Struct/VecPtr deletion expectations
+        let ptr = libc::malloc(std::mem::size_of::<Vec<*mut std::ffi::c_void>>()) as *mut Vec<*mut std::ffi::c_void>;
+        if ptr.is_null() { return std::ptr::null_mut(); }
+        // Initialize
+        std::ptr::write(ptr, Vec::new());
+        
+        // DO NOT Register. CodeGenerator manages variable lifetime.
+        // We only register if explicit ownership transfer occurs (e.g. into Struct? handled by StructInit).
+        
+        ptr
+    }
 }

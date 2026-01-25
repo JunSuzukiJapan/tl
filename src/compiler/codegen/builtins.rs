@@ -324,6 +324,10 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_release(t: *mut) -> void
     add_fn("tl_tensor_release", free_type);
 
+    // tl_ptr_dec_ref(ptr: *mut) -> i32
+    let dec_ref_type = i32_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_ptr_dec_ref", dec_ref_type);
+
     // tl_vec_void_len(ptr: *mut) -> usize
     let len_type = i64_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_vec_void_len", len_type);
