@@ -213,14 +213,11 @@ impl MemoryManager {
                 );
             }
             // Free all allocations in reverse order (LIFO)
-            eprintln!("DEBUG: exit_scope running. {} allocations.", allocations.len());
             for record in allocations.into_iter().rev() {
-                eprintln!("DEBUG: exit_scope visiting {:p} {:?}", record.ptr, record.alloc_type);
                 unsafe {
                     match record.alloc_type {
                         AllocationType::Struct => {
                             // Structs are simple mallocs, just free
-                            println!("DEBUG: Freeing Struct ptr {:p}", record.ptr);
                             libc::free(record.ptr);
                         }
                         AllocationType::Tensor => {
@@ -355,7 +352,6 @@ impl MemoryManager {
                 );
             }
             if *count == 0 {
-                // println!("DEBUG: Free tensor {:p}", ptr);
                 self.tensor_refcounts.remove(&ptr);
                 let meta = self.tensor_meta.remove(&ptr);
                 let outcome = super::free_tensor_resources(ptr as *mut OpaqueTensor);
