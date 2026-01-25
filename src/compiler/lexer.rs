@@ -180,6 +180,8 @@ pub enum Token {
     StarAssign,
     #[token("/=")]
     SlashAssign,
+    #[token("%=")]
+    PercentAssign,
 
     // Error
     // Logos automatically handles errors but we can have an explicit Error variant if needed.

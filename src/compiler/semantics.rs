@@ -1889,6 +1889,7 @@ impl SemanticAnalyzer {
             ExprKind::StringLiteral(_) => Ok(Type::UserDefined("String".to_string(), vec![])), // Placeholder
             ExprKind::Symbol(_) => Ok(Type::Entity),
             ExprKind::LogicVar(_) => Ok(Type::Entity),
+            ExprKind::Wildcard => Ok(Type::Entity), // Wildcard treated as Entity type? Or generic?
             ExprKind::Tuple(exprs) => {
                 let mut types = Vec::new();
                 for e in exprs {

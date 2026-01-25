@@ -51,6 +51,7 @@ impl std::hash::Hash for Value {
 pub enum Term {
     Var(String),
     Val(Value),
+    Wildcard,
     TensorAccess(String, Vec<Term>), // tensor_name, indices
 }
 
@@ -128,6 +129,7 @@ impl Term {
                     panic!("Unsupported tensor access base: {:?}", base)
                 }
             }
+            ExprKind::Wildcard => Term::Wildcard,
             ExprKind::BinOp(_, _, _) | ExprKind::UnOp(_, _) => {
                 if let Some(v) = eval_numeric_expr(expr, subst, ctx) {
                     Term::Val(Value::Float(v))
@@ -201,6 +203,7 @@ fn apply_subst_term(term: &Term, subst: &Substitution, ctx: &TensorContext) -> T
             }
         }
         Term::Val(v) => Term::Val(v.clone()),
+        Term::Wildcard => Term::Wildcard,
         Term::TensorAccess(name, indices) => {
             let resolved_indices: Vec<Term> = indices
                 .iter()
@@ -217,6 +220,11 @@ fn apply_subst_term(term: &Term, subst: &Substitution, ctx: &TensorContext) -> T
                     all_ground_integers = false;
                     break;
                 }
+            }
+            
+            // If wildcards are in indices, we can't look up tensor value
+            if resolved_indices.iter().any(|t| matches!(t, Term::Wildcard)) {
+                return Term::TensorAccess(name.clone(), resolved_indices);
             }
 
             if all_ground_integers {
@@ -243,6 +251,7 @@ fn unify_terms(t1: &Term, t2: &Term, subst: &mut Substitution, ctx: &TensorConte
     let t2_resolved = apply_subst_term(t2, subst, ctx);
 
     match (&t1_resolved, &t2_resolved) {
+        (Term::Wildcard, _) | (_, Term::Wildcard) => true,
         (Term::Val(v1), Term::Val(v2)) => v1 == v2,
         (Term::Var(name), Term::Val(v)) | (Term::Val(v), Term::Var(name)) => {
             subst.insert(name.clone(), v.clone());
@@ -290,6 +299,7 @@ fn apply_subst_atom(atom: &Atom, subst: &Substitution, ctx: &TensorContext) -> O
         match resolved {
             Term::Val(v) => ground_args.push(v),
             Term::Var(_) => return None,
+            Term::Wildcard => return None, // Wildcard prevents grounding
             Term::TensorAccess(_, _) => return None,
         }
     }

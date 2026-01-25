@@ -4,9 +4,9 @@ use crate::compiler::error::ParseErrorKind;
 use crate::compiler::lexer::{Token, SpannedToken}; // Import Lexer
 use nom::{
     branch::alt,
-    combinator::{map, opt, value, verify, eof, cut},
+    combinator::{map, opt, value, cut},
     multi::{many0, separated_list0, separated_list1},
-    sequence::{delimited, pair, preceded, terminated, tuple},
+    sequence::{delimited, pair, preceded, tuple},
     IResult,
 };
 
@@ -244,6 +244,21 @@ fn parse_tensor_comprehension_or_literal(input: Input) -> IResult<Input, Expr, P
                  let (rest, expr) = parse_expr(input)?;
                  Ok((rest, (None, Some(expr))))
              })(input)?;
+
+             // Check for optional comma
+             let (input, _) = opt(expect_token(Token::Comma))(input)?;
+
+             // 4. Check for trailing block (body) { ... }
+             // This supports syntax like [ ... | cond { body } ] without comma
+             let (input, items) = if let Ok((_, _)) = expect_token(Token::LBrace)(input) {
+                  // Found braces, parse as block expr
+                  let (rest, body_expr) = parse_block(input)?;
+                  let mut new_items = items;
+                  new_items.push((None, Some(body_expr)));
+                  (rest, new_items)
+             } else {
+                  (input, items)
+             };
              
              // Process items
              let mut clauses = vec![];
@@ -406,7 +421,13 @@ fn parse_atom(input: Input) -> IResult<Input, Expr, ParserError> {
         parse_variable,
         parse_self,
         parse_logic_var,
+        parse_wildcard,
     ))(input)
+}
+
+fn parse_wildcard(input: Input) -> IResult<Input, Expr, ParserError> {
+    let (input, _) = expect_token(Token::Underscore)(input)?;
+    Ok((input, Spanned::new(ExprKind::Wildcard, crate::compiler::error::Span::default())))
 }
 
 fn parse_logic_var(input: Input) -> IResult<Input, Expr, ParserError> {
@@ -709,6 +730,7 @@ fn parse_assign_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
         value(AssignOp::SubAssign, expect_token(Token::MinusAssign)),
         value(AssignOp::MulAssign, expect_token(Token::StarAssign)),
         value(AssignOp::DivAssign, expect_token(Token::SlashAssign)),
+        value(AssignOp::ModAssign, expect_token(Token::PercentAssign)),
     ))(input)?;
     
     // 3. Parse RHS
@@ -1204,15 +1226,17 @@ fn parse_enum_def(input: Input) -> IResult<Input, crate::compiler::ast::EnumDef,
 }
 
 // Module items: struct, impl, fn, ...
-fn parse_item(input: Input) -> IResult<Input, (), ParserError> {
-    // Only used to confirm item parsing logic? 
-    // parse_module loops manually.
-    Ok((input, ()))
-}
+
 
 fn parse_use_decl(input: Input) -> IResult<Input, String, ParserError> {
     let (input, _) = expect_token(Token::Use)(input)?;
-    let (input, path) = separated_list1(expect_token(Token::DoubleColon), identifier)(input)?;
+    let (input, path) = separated_list1(
+        expect_token(Token::DoubleColon), 
+        alt((
+            identifier, 
+            map(expect_token(Token::Star), |_| "*".to_string())
+        ))
+    )(input)?;
     let (input, _) = expect_token(Token::SemiColon)(input)?;
     Ok((input, path.join("::")))
 }
@@ -1324,6 +1348,7 @@ fn parse_module(input: Input) -> IResult<Input, crate::compiler::ast::Module, Pa
         }
         match parse_mod_decl(input) {
             Ok((rest, m)) => { 
+                module.imports.push(m.clone()); // Trigger loading
                 module.submodules.insert(m, crate::compiler::ast::Module {
                     structs: vec![],
                     enums: vec![],

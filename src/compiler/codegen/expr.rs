@@ -1815,6 +1815,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.compile_match_like(expr, &arms)
             }
 
+            ExprKind::Wildcard => {
+                Err("ExprKind::Wildcard should only appear in logic rules".to_string())
+            }
             ExprKind::Range(_, _) => {
                 Err("ExprKind::Range should only appear in For loops".to_string())
             }

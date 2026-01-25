@@ -21,10 +21,10 @@ fn main() {
     println("--- RBAC (Logic-only) ---");
 
     // Query: all (user, permission) pairs
-    let res = ?allowed($U, $P).to_i64();
+    let res = allowed($U, $P).to_i64();
 
     // Print by user
-    let users = ?user($U).to_i64();
+    let users = user($U).to_i64();
     println("By user");
     println("-------");
     for ui in 0..users.dim(0) {
@@ -46,7 +46,7 @@ fn main() {
     }
 
     // Print by permission
-    let perms = ?permission($P).to_i64();
+    let perms = permission($P).to_i64();
     println("");
     println("By permission");
     println("-------------");
@@ -71,7 +71,8 @@ fn main() {
     println("");
     println("Check a specific permission:");
     println("alice can deploy? ");
-    println((?allowed(alice, deploy))[0] > 0.0);
+    println("alice can deploy? ");
+    println((allowed(alice, deploy))[0] > 0.0);
     println("dave can merge_pr? ");
-    println((?allowed(dave, merge_pr))[0] > 0.0);
+    println((allowed(dave, merge_pr))[0] > 0.0);
 }

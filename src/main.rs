@@ -356,7 +356,10 @@ fn main() -> Result<()> {
                 // println!("Program returned: {}", ret)
                 let _ = ret; // suppress unused
             }
-            Err(e) => println!("Execution failed: {}", e),
+            Err(e) => {
+                println!("Execution failed: {}", e);
+                std::process::exit(1);
+            }
         }
 
         // Logic program logic
@@ -523,14 +526,23 @@ fn load_module_recursive(
 
     let parent_dir = path.parent().unwrap_or(Path::new("."));
 
-    for import_name in &module.imports {
-        let import_path = parent_dir.join(format!("{}.tl", import_name));
+    // Use index to avoid borrowing module.imports while mutating module
+    let imports = module.imports.clone();
+    for import_name in &imports {
+        let is_wildcard = import_name.ends_with("::*");
+        let real_name = if is_wildcard {
+            import_name.trim_end_matches("::*")
+        } else {
+            import_name
+        };
+
+        let import_path = parent_dir.join(format!("{}.tl", real_name));
 
         if !import_path.exists() {
             return Err(TlError::Parse {
                 kind: tl_lang::compiler::error::ParseErrorKind::Generic(format!(
                     "Module {} not found at {:?}",
-                    import_name, import_path
+                    real_name, import_path
                 )),
                 span: None,
             });
@@ -538,7 +550,23 @@ fn load_module_recursive(
 
         match load_module_recursive(import_path, visited) {
             Ok((submodule, _)) => {
-                module.submodules.insert(import_name.clone(), submodule);
+                if is_wildcard {
+                     // Merge content into current module
+                     module.structs.extend(submodule.structs);
+                     module.enums.extend(submodule.enums);
+                     module.impls.extend(submodule.impls);
+                     module.functions.extend(submodule.functions);
+                     module.tensor_decls.extend(submodule.tensor_decls);
+                     module.relations.extend(submodule.relations);
+                     module.rules.extend(submodule.rules);
+                     module.queries.extend(submodule.queries);
+                     // module.imports.extend(submodule.imports); // Should we merge imports? Recursive loading handles it?
+                     // If submodule had imports, they are already loaded into submodule.submodules.
+                     // We need to merge submodules too!
+                     module.submodules.extend(submodule.submodules);
+                } else {
+                     module.submodules.insert(import_name.clone(), submodule);
+                }
             }
             Err(e) => return Err(e),
         }

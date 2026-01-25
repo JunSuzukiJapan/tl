@@ -1,5 +1,5 @@
 use crate::compiler::ast::*;
-use std::collections::{HashMap, VecDeque, HashSet};
+use std::collections::{HashMap, VecDeque};
 
 pub struct Monomorphizer {
     // Map from (OriginalName, ConcreteTypes) -> MangledName

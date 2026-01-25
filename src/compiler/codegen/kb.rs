@@ -272,6 +272,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let v = self.context.f64_type().const_float(*val);
                 self.builder.build_call(fn_val, &[v.into()], "").map_err(|e| e.to_string())?;
             }
+            ExprKind::Wildcard => {
+                // Anonymous variable: always new index, do not cache in local_vars
+                let idx = *next_var_idx;
+                *next_var_idx += 1;
+                let fn_name = format!("tl_kb_rule_add_{}_var", suffix);
+                let fn_val = self.module.get_function(&fn_name).unwrap();
+                let v = self.context.i64_type().const_int(idx as u64, false);
+                self.builder.build_call(fn_val, &[v.into()], "").map_err(|e| e.to_string())?;
+            }
             _ => return Err(format!("Unsupported expression in rule arg: {:?}", expr_kind)),
         }
 
@@ -316,6 +325,7 @@ fn is_simple_logic_arg(expr: &Expr) -> bool {
             | ExprKind::LogicVar(_)
             | ExprKind::Int(_)
             | ExprKind::Float(_)
+            | ExprKind::Wildcard
     )
 }
 
