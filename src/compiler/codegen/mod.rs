@@ -1192,7 +1192,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         if !function.verify(true) {
-            eprintln!("=== LLVM VERIFICATION FAILED FOR: {} ===", func.name);
+            log::error!("=== LLVM VERIFICATION FAILED FOR: {} ===", func.name);
             // function.verify(true) should print the error to stderr
             function.print_to_stderr();
             return Err(format!("Invalid generated function {}", func.name));

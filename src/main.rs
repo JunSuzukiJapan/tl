@@ -167,7 +167,7 @@ fn main() -> Result<()> {
 
             if cli.save_asm {
                 if let Err(e) = codegen.emit_assembly_file(&asm_path) {
-                    eprintln!("Failed to emit assembly for {:?}: {}", file, e);
+                    log::error!("Failed to emit assembly for {:?}: {}", file, e);
                     std::process::exit(1);
                 }
                 log::info!("Generated assembly: {:?}", asm_path);
@@ -175,7 +175,7 @@ fn main() -> Result<()> {
 
                 let obj_path = file.with_extension("o");
                 if let Err(e) = codegen.emit_object_file(&obj_path) {
-                    eprintln!("Failed to emit object file for {:?}: {}", file, e);
+                    log::error!("Failed to emit object file for {:?}: {}", file, e);
                     std::process::exit(1);
                 }
                 generated_objects.push(obj_path);
@@ -271,7 +271,7 @@ fn main() -> Result<()> {
                 .context("Failed to run linker (cc)")?;
 
             if !status.success() {
-                eprintln!("Linking failed");
+                log::error!("Linking failed");
                 std::process::exit(1);
             }
             log::info!("Build successful: {:?}", output_exe);
