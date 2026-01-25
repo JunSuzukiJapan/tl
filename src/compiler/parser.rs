@@ -1265,12 +1265,22 @@ fn parse_tensor_decl(input: Input) -> IResult<Input, Stmt, ParserError> {
 }
 
 fn parse_datalog_atom(input: Input) -> IResult<Input, crate::compiler::ast::Atom, ParserError> {
-    let (input, predicate) = identifier(input)?;
-    let (input, _) = expect_token(Token::LParen)(input)?;
-    let (input, args) = separated_list0(expect_token(Token::Comma), parse_expr)(input)?;
-    let (input, _) = expect_token(Token::RParen)(input)?;
+    let (input, predicate) = alt((
+        identifier,
+        map(expect_token(Token::True), |_| "true".to_string()),
+        map(expect_token(Token::False), |_| "false".to_string()),
+    ))(input)?;
+
+    let (input, args) = if let Ok((rest, _)) = expect_token(Token::LParen)(input) {
+        let (rest, args) = separated_list0(expect_token(Token::Comma), parse_expr)(rest)?;
+        let (rest, _) = expect_token(Token::RParen)(rest)?;
+        (rest, args)
+    } else {
+        (input, vec![])
+    };
     Ok((input, crate::compiler::ast::Atom { predicate, args }))
 }
+
 
 fn parse_logic_literal(input: Input) -> IResult<Input, crate::compiler::ast::LogicLiteral, ParserError> {
     if let Ok((rest, _)) = expect_token(Token::Not)(input) {
