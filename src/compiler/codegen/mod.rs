@@ -747,7 +747,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             for method in &imp.methods {
                 let target_name = match &imp.target_type {
                     Type::Struct(n, _) | Type::UserDefined(n, _) | Type::Enum(n, _) => n,
-                    _ => panic!("Invalid impl target type"),
+                    _ => return Err("Invalid impl target type".to_string()),
                 };
                 let simple_target = if target_name.contains("::") {
                     target_name.split("::").last().unwrap()
