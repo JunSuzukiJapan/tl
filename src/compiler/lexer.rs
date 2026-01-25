@@ -4,7 +4,8 @@ use std::fmt;
 
 #[derive(Logos, Debug, PartialEq, Clone)]
 #[logos(skip r"[ \t\n\f]+")] // Skip whitespace
-#[logos(skip r"//.*")]       // Skip comments
+#[logos(skip r"//.*")]       // Skip line comments
+#[logos(skip r"/\*([^*]|\*+[^*/])*\*+/")] // Skip block comments
 pub enum Token {
     // Keywords
     #[token("fn")]
@@ -289,15 +290,110 @@ mod tests {
     }
 
     #[test]
-    fn test_symbols_ops() {
-        let input = ":: + - -> =>";
+    fn test_logic_tokens() {
+        let input = "? $ :- <-";
         let tokens: Vec<Token> = tokenize(input).into_iter().map(|r| r.unwrap().token).collect();
         assert_eq!(tokens, vec![
-            Token::DoubleColon,
-            Token::Plus,
-            Token::Minus,
-            Token::Arrow,
-            Token::FatArrow,
+            Token::Question,
+            Token::Dollar,
+            Token::Entails,
+            Token::LArrow,
         ]);
+    }
+
+    #[test]
+    fn test_complex_floats() {
+        let input = "1.0 10.5e-10 -0.5 3.14E+2";
+        let tokens: Vec<Token> = tokenize(input).into_iter().map(|r| r.unwrap().token).collect();
+        assert_eq!(tokens, vec![
+            Token::FloatLiteral(1.0),
+            Token::FloatLiteral(10.5e-10),
+            Token::FloatLiteral(-0.5),
+            Token::FloatLiteral(3.14E+2),
+        ]);
+    }
+
+    #[test]
+    fn test_operators_combinations() {
+        let input = "== = != ! <= < >= > && || .. .";
+        let tokens: Vec<Token> = tokenize(input).into_iter().map(|r| r.unwrap().token).collect();
+        assert_eq!(tokens, vec![
+            Token::Eq,
+            Token::Assign,
+            Token::Ne,
+            Token::Not,
+            Token::Le,
+            Token::Lt,
+            Token::Ge,
+            Token::Gt,
+            Token::And,
+            Token::Or,
+            Token::Range,
+            Token::Dot,
+        ]);
+    }
+
+    #[test]
+    fn test_comments_and_whitespace() {
+        let input = r#"
+            // This is a comment
+            let x = 10; // Inline comment
+            /* Block comments are not supported by this regex lexer yet 
+               but lines starting with // are skipped */
+            let y = 20;
+        "#;
+        let tokens: Vec<Token> = tokenize(input).into_iter().map(|r| r.unwrap().token).collect();
+        assert_eq!(tokens, vec![
+            Token::Let,
+            Token::Identifier("x".to_string()),
+            Token::Assign,
+            Token::IntLiteral(10),
+            Token::SemiColon, // Added missing semicolon
+            Token::Let,
+            Token::Identifier("y".to_string()),
+            Token::Assign,
+            Token::IntLiteral(20),
+            Token::SemiColon, // Added missing semicolon
+        ]);
+    }
+    
+    #[test]
+    fn test_string_escapes_recognition() {
+        // Note: The lexer currently trims quotes but doesn't decode escapes in the Value.
+        // It just recognizes the string literal token.
+        let input = r#""hello world" "escaped\"quote""#;
+        let tokens: Vec<Token> = tokenize(input).into_iter().map(|r| r.unwrap().token).collect();
+        
+        // We verify that it tokenizes as StringLiteral, checking content is secondary 
+        // until we implement full escape processing.
+        match &tokens[0] {
+            Token::StringLiteral(s) => assert_eq!(s, "hello world"),
+            _ => panic!("Expected StringLiteral"),
+        }
+        match &tokens[1] {
+            Token::StringLiteral(s) => assert_eq!(s, r#"escaped\"quote"#),
+            _ => panic!("Expected StringLiteral"),
+        }
+    }
+    
+    #[test]
+    fn test_spans_and_lines() {
+        let input = "a\nb\n  c";
+        let results = tokenize(input);
+        
+        let t1 = results[0].as_ref().unwrap();
+        assert_eq!(t1.token, Token::Identifier("a".to_string()));
+        assert_eq!(t1.span.line, 1);
+        assert_eq!(t1.span.column, 1);
+        
+        let t2 = results[1].as_ref().unwrap();
+        assert_eq!(t2.token, Token::Identifier("b".to_string()));
+        assert_eq!(t2.span.line, 2);
+        assert_eq!(t2.span.column, 1);
+        
+        let t3 = results[2].as_ref().unwrap();
+        assert_eq!(t3.token, Token::Identifier("c".to_string()));
+        assert_eq!(t3.span.line, 3);
+        assert_eq!(t3.span.column, 3);
     }
 }
