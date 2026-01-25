@@ -111,7 +111,7 @@ fn main() -> Result<()> {
         let mut generated_objects = Vec::new();
 
         for file in &source_files {
-            println!("Compiling file: {:?}", file);
+            log::info!("Compiling file: {:?}", file);
             let (mut ast, source) = match load_module_with_source(file.clone()) {
                 Ok((ast, source)) => (ast, source),
                 Err(e) => {
@@ -166,13 +166,13 @@ fn main() -> Result<()> {
             }
 
             if cli.save_asm {
-                let asm_path = file.with_extension("s");
                 if let Err(e) = codegen.emit_assembly_file(&asm_path) {
                     eprintln!("Failed to emit assembly for {:?}: {}", file, e);
                     std::process::exit(1);
                 }
-                println!("Generated assembly: {:?}", asm_path);
+                log::info!("Generated assembly: {:?}", asm_path);
             } else {
+
                 let obj_path = file.with_extension("o");
                 if let Err(e) = codegen.emit_object_file(&obj_path) {
                     eprintln!("Failed to emit object file for {:?}: {}", file, e);
@@ -213,7 +213,7 @@ fn main() -> Result<()> {
                 }
             };
 
-            println!("Linking to {:?}", output_exe);
+            log::info!("Linking to {:?}", output_exe);
 
             // Invoke cc
             // We need to link against runtime libs if needed.
@@ -274,7 +274,7 @@ fn main() -> Result<()> {
                 eprintln!("Linking failed");
                 std::process::exit(1);
             }
-            println!("Build successful: {:?}", output_exe);
+            log::info!("Build successful: {:?}", output_exe);
         }
     } else {
         // Interpreter Mode
@@ -406,9 +406,10 @@ fn run_logic_program(
     module: &tl_lang::compiler::ast::Module,
     ctx: &tl_lang::compiler::inference::TensorContext,
 ) {
+) {
 use tl_lang::compiler::ast::{Atom, ExprKind};
 
-    println!("Executing logic program...");
+    log::info!("Executing logic program...");
 
     // 1. Extract facts from rules with empty body or special handling
     // For now, we don't have explicit facts - we'll need to add them.
@@ -431,12 +432,15 @@ use tl_lang::compiler::ast::{Atom, ExprKind};
         rules.push(rule.clone());
     }
 
-    println!("Initial facts: {}", initial_facts.len());
-    println!("Rules: {}", rules.len());
+        rules.push(rule.clone());
+    }
+
+    log::info!("Initial facts: {}", initial_facts.len());
+    log::info!("Rules: {}", rules.len());
 
     // 3. Run forward chaining
     let derived_facts = forward_chain(initial_facts, &rules, ctx);
-    println!("Derived facts: {}", derived_facts.len());
+    log::info!("Derived facts: {}", derived_facts.len());
 
     // 4. Execute queries
     for query_expr in &module.queries {

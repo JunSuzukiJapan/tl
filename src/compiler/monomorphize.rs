@@ -409,7 +409,7 @@ impl Monomorphizer {
                              }
                              
                              if all_inferred && !type_args.is_empty() {
-                                 println!("Rewriting Enum Init: {} -> {} with args {:?}", name, type_name_str, type_args);
+                                 log::debug!("Rewriting Enum Init: {} -> {} with args {:?}", name, type_name_str, type_args);
                                  // Instantiate Enum
                                  let concrete_enum_name = self.request_struct_instantiation(&type_name_str, type_args.clone());
                                  // Rewrite Name to "ConcreteEnum::Variant"
@@ -749,7 +749,7 @@ impl Monomorphizer {
 
         if let Some(def) = self.generic_structs.get(name) {
             let mangled = self.struct_instances.get(&(name.to_string(), args.to_vec())).unwrap().clone();
-            println!("Instantiating struct {} -> {} with args {:?}", name, mangled, args);
+            log::debug!("Instantiating struct {} -> {} with args {:?}", name, mangled, args);
             
             // Substitution map
             let mut subst = HashMap::new();
