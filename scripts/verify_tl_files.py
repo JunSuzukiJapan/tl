@@ -131,8 +131,10 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int) -> TestResult:
              # 1. Compile (Must run from project root for library resolution)
              script_dir = Path(__file__).parent
              project_root = script_dir.parent
+
+             exe_path = filepath.with_suffix('.bin') # Use .bin suffix to avoid collision with directories (e.g. tests/generics)
              
-             compile_cmd = [str(tl_binary), "-c", str(filepath)]
+             compile_cmd = [str(tl_binary), "-c", str(filepath), "-o", str(exe_path)]
              compile_result = subprocess.run(
                  compile_cmd,
                  capture_output=True,
@@ -142,6 +144,16 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int) -> TestResult:
              )
              
              if compile_result.returncode != 0:
+                 if is_expected_to_fail:
+                     return TestResult(
+                         file=str(filepath),
+                         status=Status.PASS,
+                         output=compile_result.stdout,
+                         error=compile_result.stderr,
+                         duration=time.time() - start_time,
+                         reason="(Expected Compilation Failure)"
+                     )
+                 
                  return TestResult(
                      file=str(filepath),
                      status=Status.FAIL,
@@ -152,7 +164,7 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int) -> TestResult:
                  )
 
              # 2. Run Executable
-             exe_path = filepath.with_suffix('') # Remove .tl
+             # exe_path is already set above to .bin
              run_cmd = [str(exe_path)]
              result = subprocess.run(
                  run_cmd,

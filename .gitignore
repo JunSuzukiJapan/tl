@@ -15,3 +15,6 @@ examples/tasks/mnist/data/
 test_dl.txt
 test_output.txt
 *.txt
+
+*.bin
+*.o

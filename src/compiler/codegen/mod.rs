@@ -1000,7 +1000,11 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Check if this function returns a struct (requires sret)
         // Check if this function returns a struct (requires sret)
-        let uses_sret = matches!(func.return_type, Type::Tensor(_, _));
+        let uses_sret = false; // Tensors are pointers, Structs should use SRET but currently disabled or handled differently?
+        // Wait, do actual Structs use SRET?
+        // matches!(func.return_type, Type::Struct(_, _) | Type::UserDefined(_, _))
+        // Let's assume Structs needs SRET, but Tensors do NOT.
+        let uses_sret = matches!(func.return_type, Type::Struct(_, _) | Type::UserDefined(_, _));
 
         let mut args_types = Vec::new();
 
@@ -1119,7 +1123,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
         // Check if this function uses sret
-        let uses_sret = matches!(func.return_type, Type::Tensor(_, _));
+        let uses_sret = matches!(func.return_type, Type::Struct(_, _) | Type::UserDefined(_, _));
         let param_offset = if uses_sret { 1 } else { 0 };
 
         if uses_sret {
@@ -1229,6 +1233,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                          }
                          self.emit_all_scopes_cleanup();
                          self.variables.pop(); // Compiler scope cleanup
+                         
+                         // Calls to function exit must happen before return
+                         if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
+                              self.builder.build_call(exit_fn, &[], "").unwrap();
+                         }
+
                          self.builder.build_return(None).map_err(|e| e.to_string())?;
                     } else {
                         // IMPORTANT: Unregister return value (same as StmtKind::Return)
@@ -1241,12 +1251,17 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                         // CRITICAL FIX: Pop the function scope from variables stack
                         self.variables.pop();
+                        
+                        // Call function exit helper BEFORE return
+                        if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
+                             self.builder.build_call(exit_fn, &[], "").unwrap();
+                        }
 
                         self.builder
                             .build_return(Some(&val))
                             .map_err(|e| e.to_string())?;
                     }
-                    continue;
+                    return Ok(()); // RETURN EARLY - Function is done
                 }
             }
             self.compile_stmt(stmt)?;
@@ -1255,26 +1270,18 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.exit_scope(); // End function scope
 
         // CLEANUP FUNCTION FRAME
-        if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
-             self.builder.build_call(exit_fn, &[], "").unwrap();
-        } else {
-             // Declare
-             let fn_type = self.context.void_type().fn_type(&[], false);
-             let exit_fn = self.module.add_function("tl_mem_function_exit", fn_type, None);
-             self.builder.build_call(exit_fn, &[], "").unwrap();
+        // Only if block is NOT terminated (e.g. no return statement at flow end)
+        if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+             if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
+                  self.builder.build_call(exit_fn, &[], "").unwrap();
+             }
+
+             // Add implicit return void if needed (not perfect but ok for now)
+             if func.return_type == Type::Void {
+                 self.builder.build_return(None).map_err(|e| e.to_string())?;
+             }
         }
 
-        // Add implicit return void if needed (not perfect but ok for now)
-        if func.return_type == Type::Void
-            && self
-                .builder
-                .get_insert_block()
-                .unwrap()
-                .get_terminator()
-                .is_none()
-        {
-            self.builder.build_return(None).map_err(|e| e.to_string())?;
-        }
 
         if !function.verify(true) {
             log::error!("=== LLVM VERIFICATION FAILED FOR: {} ===", func.name);

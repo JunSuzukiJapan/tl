@@ -1286,10 +1286,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let src_ptr = val.into_pointer_value();
                         self.emit_struct_copy(sret_ptr, src_ptr, &ty)?;
                         self.emit_all_scopes_cleanup();
+                        if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
+                             self.builder.build_call(exit_fn, &[], "").unwrap();
+                        }
                         self.builder.build_return(None).map_err(|e| e.to_string())?;
                     } else {
                         // Normal return: cleanup then return value
                         self.emit_all_scopes_cleanup();
+                        if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
+                             self.builder.build_call(exit_fn, &[], "").unwrap();
+                        }
                         self.builder
                             .build_return(Some(&val))
                             .map_err(|e| e.to_string())?;
@@ -1297,6 +1303,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 } else {
                     // return; (Void return)
                     self.emit_all_scopes_cleanup();
+                    if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
+                            self.builder.build_call(exit_fn, &[], "").unwrap();
+                    }
                     self.builder.build_return(None).map_err(|e| e.to_string())?;
                 }
                 Ok(())

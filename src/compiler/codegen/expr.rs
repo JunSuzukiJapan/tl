@@ -6724,9 +6724,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut compiled_args_vals = Vec::with_capacity(args.len() + 1);
         let mut compiled_args_types = Vec::with_capacity(args.len());
 
-        // DPS: If return type is Tensor, handle hidden dest argument
+        // DPS: If return type is Struct (and SRET enabled), handle hidden dest argument
+        // Tensors are returned by pointer directly, so exclude them.
         let mut dest_val = None;
-        if matches!(ret_type, Type::Tensor(_, _)) {
+        if matches!(ret_type, Type::Struct(_, _) | Type::UserDefined(_, _)) {
              if let Some(d) = dest {
                  dest_val = Some(d);
              } else {
