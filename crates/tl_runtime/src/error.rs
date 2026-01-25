@@ -145,23 +145,22 @@ pub fn set_last_error<S: Into<String>>(msg: S, code: RuntimeErrorCode) {
 
 
 #[no_mangle]
-pub extern "C" fn tl_get_last_error() -> *const c_char {
+pub extern "C" fn tl_get_last_error() -> CTensorResult {
     LAST_ERROR.with(|e| {
-        if e.borrow().is_some() {
-            // Leak string to return safe pointer? Or use buffer?
-            // For simple implementation, we might need a persistent buffer.
-            // But let's check how to return string FFI safely.
-            // Usually we return a static buffer or standard string.
-            // Here we just return the inner pointer if string is kept alive? 
-            // String in RefCell is alive as long as thread lives and not overwritten?
-            // No, RefCell borrow ends.
-            // Let's store a CString in LastError instead of String?
-            // Or convert on demand and store cached CString?
-            // Simplification: We just want to store it for now.
-            // Returning it is bonus.
-            std::ptr::null()
+        if let Some(err) = e.borrow().as_ref() {
+            let c_msg = CString::new(err.message.clone()).unwrap();
+            let c_file = CString::new(err.file.clone()).unwrap();
+
+            CTensorResult {
+                tensor: ptr::null_mut(),
+                error_msg: c_msg.into_raw(),
+                error_code: err.code,
+                file: c_file.into_raw(),
+                line: err.line,
+                col: err.col,
+            }
         } else {
-            std::ptr::null()
+            CTensorResult::ok(ptr::null_mut())
         }
     })
 }

@@ -1,7 +1,6 @@
-use tl_lang::compiler::lexer::{tokenize, Token};
-use tl_lang::compiler::ast::{ExprKind, StmtKind, Type, AssignOp, BinOp, UnOp, Spanned};
+use tl_lang::compiler::lexer::{tokenize};
+use tl_lang::compiler::ast::{ExprKind, StmtKind, Type, AssignOp, BinOp, UnOp};
 use tl_lang::compiler::parser::{parse_expr, parse_stmt, parse, parse_type};
-use tl_lang::compiler::error::Span;
 
 fn p_expr(input: &str) -> ExprKind {
     let tokens_res = tokenize(input);

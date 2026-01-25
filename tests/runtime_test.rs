@@ -1,6 +1,7 @@
 use serial_test::serial;
 use tl_runtime::error::CTensorResult;
 use tl_runtime::*;
+use tl_runtime::error::tl_get_last_error;
 
 // Helper to check if a tensor is not null
 fn assert_tensor_valid(t: *mut OpaqueTensor) {
