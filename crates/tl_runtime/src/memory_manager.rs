@@ -155,6 +155,10 @@ pub struct MemoryManager {
     ptr_types: HashMap<*mut c_void, AllocationType>,
     // Allocation metadata for logging (ptr -> meta)
     tensor_meta: HashMap<*mut c_void, AllocationMeta>,
+    
+    // Stack of Function Frames for reused buffers
+    // Frame: Vec<Slot>, Slot: Option<(Pointer, Capacity)>
+    call_stack_slots: Vec<Vec<Option<(*mut c_void, usize)>>>,
 }
 
 // SAFETY: MemoryManager contains raw pointers but they are only accessed
@@ -170,6 +174,7 @@ impl MemoryManager {
             refcounts: HashMap::new(),
             ptr_types: HashMap::new(),
             tensor_meta: HashMap::new(),
+            call_stack_slots: Vec::new(),
         }
     }
 
@@ -457,6 +462,67 @@ impl MemoryManager {
         }
     }
 
+    /// Enter a function frame with N slots
+    pub fn function_enter(&mut self, num_slots: usize) {
+        // Initialize slots with None (no allocation yet)
+        self.call_stack_slots.push(vec![None; num_slots]);
+        if crate::mem_log_enabled() {
+             eprintln!("[TL_MEM] function_enter slots={}", num_slots);
+        }
+    }
+
+    /// Exit function frame and free all slot buffers
+    pub fn function_exit(&mut self) {
+        if let Some(frame) = self.call_stack_slots.pop() {
+            for (i, slot) in frame.into_iter().enumerate() {
+                if let Some((ptr, size)) = slot {
+                    unsafe { libc::free(ptr); }
+                    if crate::mem_log_enabled() {
+                         eprintln!("[TL_MEM] function_exit free_slot id={} ptr={:p} size={}", i, ptr, size);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get a buffer for a slot, reallocating if necessary
+    pub fn get_buffer(&mut self, slot_id: usize, min_size: usize) -> *mut c_void {
+        if let Some(frame) = self.call_stack_slots.last_mut() {
+            if slot_id < frame.len() {
+                if let Some((ptr, cap)) = frame[slot_id] {
+                    if cap >= min_size {
+                        // Reuse
+                        if crate::mem_log_enabled() {
+                             eprintln!("[TL_MEM] reuse_buffer slot={} ptr={:p} cap={}", slot_id, ptr, cap);
+                        }
+                        return ptr;
+                    } else {
+                        // Realloc (Free + Malloc to avoid copy overhead since we don't care about old data)
+                        unsafe { libc::free(ptr); }
+                        let new_ptr = unsafe { libc::malloc(min_size) };
+                        frame[slot_id] = Some((new_ptr, min_size));
+                        if crate::mem_log_enabled() {
+                             eprintln!("[TL_MEM] expand_buffer slot={} old_cap={} new_cap={} ptr={:p}", slot_id, cap, min_size, new_ptr);
+                        }
+                        return new_ptr;
+                    }
+                } else {
+                    // Alloc
+                    let new_ptr = unsafe { libc::malloc(min_size) };
+                    frame[slot_id] = Some((new_ptr, min_size));
+                    if crate::mem_log_enabled() {
+                         eprintln!("[TL_MEM] alloc_buffer slot={} size={} ptr={:p}", slot_id, min_size, new_ptr);
+                    }
+                    return new_ptr;
+                }
+            }
+            eprintln!("[TL_MEM] ERROR: Slot ID {} out of bounds (frame size {})", slot_id, frame.len());
+        } else {
+            eprintln!("[TL_MEM] ERROR: No function frame active for get_buffer");
+        }
+        std::ptr::null_mut()
+    }
+
     /// Unregister a pointer (e.g., when it's reassigned)
     /// The memory won't be freed on scope exit
     /// Unregister a pointer from the CURRENT scope only (for move semantics)
@@ -675,6 +741,24 @@ pub extern "C" fn tl_get_refcount_count() -> i64 {
 pub extern "C" fn tl_get_scope_depth() -> i64 {
     let mgr = MEMORY_MANAGER.lock().unwrap();
     mgr.scopes.len() as i64
+}
+
+#[no_mangle]
+pub extern "C" fn tl_mem_function_enter(num_slots: i64) {
+    let mut mgr = MEMORY_MANAGER.lock().unwrap();
+    mgr.function_enter(num_slots as usize);
+}
+
+#[no_mangle]
+pub extern "C" fn tl_mem_function_exit() {
+    let mut mgr = MEMORY_MANAGER.lock().unwrap();
+    mgr.function_exit();
+}
+
+#[no_mangle]
+pub extern "C" fn tl_mem_get_buffer(slot_id: i64, min_size: i64) -> *mut c_void {
+    let mut mgr = MEMORY_MANAGER.lock().unwrap();
+    mgr.get_buffer(slot_id as usize, min_size as usize)
 }
 
 #[cfg(test)]

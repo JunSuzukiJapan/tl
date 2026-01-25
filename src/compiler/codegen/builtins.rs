@@ -795,8 +795,35 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_path_is_dir", path_exists_type);
     add_fn("tl_path_is_file", path_exists_type);
 
+    // tl_mem_get_buffer(slot_id: i64, min_size: i64) -> *mut c_void
+    let get_buffer_type = void_ptr.fn_type(&[i64_type.into(), i64_type.into()], false);
+    add_fn("tl_mem_get_buffer", get_buffer_type);
+    
+    if let Some(f) = module.get_function("tl_mem_get_buffer") {
+        execution_engine.add_global_mapping(&f, runtime::tl_mem_get_buffer as usize);
+    }
+    
     let path_to_str_type = i8_ptr.fn_type(&[void_ptr.into()], false);
     add_fn("tl_path_to_string", path_to_str_type);
+
+    // DEBUG: Explicitly map tl_print_string
+    if let Some(f) = module.get_function("tl_print_string") {
+        execution_engine.add_global_mapping(&f, runtime::tl_print_string as usize);
+    }
+    
+    // Explicitly map tl_mem_function_exit
+    let exit_fn_type = void_type.fn_type(&[], false);
+    add_fn("tl_mem_function_exit", exit_fn_type);
+    if let Some(f) = module.get_function("tl_mem_function_exit") {
+        execution_engine.add_global_mapping(&f, runtime::memory_manager::tl_mem_function_exit as usize);
+    }
+
+    // Explicitly map tl_arena_init
+    let arena_init_type = void_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_arena_init", arena_init_type);
+    if let Some(f) = module.get_function("tl_arena_init") {
+        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_init as usize);
+    }
 
     let path_free_type = void_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_path_free", path_free_type);

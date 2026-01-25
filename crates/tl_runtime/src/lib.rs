@@ -3,7 +3,7 @@ pub mod args;
 pub mod device;
 pub mod error;
 pub mod memory_manager; // Arena allocator for tensor memory optimization
-pub use memory_manager::{tl_get_pool_count, tl_get_refcount_count, tl_get_scope_depth};
+pub use memory_manager::{tl_get_pool_count, tl_get_refcount_count, tl_get_scope_depth, tl_mem_get_buffer};
 
 pub mod checkpoint;
 pub mod context;
@@ -1276,6 +1276,18 @@ pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
     }
 }
 
+/// Finalize a tensor (drop content) without freeing the struct memory
+/// Used for Slot-backed tensors where the container is managed by the slot/stack
+#[no_mangle]
+pub extern "C" fn tl_tensor_finalize(t: *mut OpaqueTensor) {
+    if !t.is_null() {
+         unsafe {
+             // Drop the content (Tensor, Var, etc)
+             std::ptr::drop_in_place(t);
+         }
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
     // use crate::error::RuntimeError;
@@ -2125,6 +2137,9 @@ pub fn force_link() {
     std::hint::black_box(tl_tensor_free as *const ());
     std::hint::black_box(tl_tensor_pow_scalar as *const ());
     std::hint::black_box(memory_manager::tl_mem_unregister as *const ());
+    std::hint::black_box(memory_manager::tl_mem_function_exit as *const ());
+    std::hint::black_box(memory_manager::tl_mem_get_buffer as *const ());
+    std::hint::black_box(crate::arena::tl_arena_init as *const ());
     std::hint::black_box(tl_tensor_reshape_dims as *const ());
     std::hint::black_box(crate::stdlib::tl_prompt as *const ());
     std::hint::black_box(crate::stdlib::tl_string_contains as *const ());

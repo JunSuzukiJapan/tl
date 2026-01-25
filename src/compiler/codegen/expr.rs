@@ -4803,7 +4803,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.variables
                 .last_mut()
                 .unwrap()
-                .insert(bind_name.clone(), (alloca.into(), f_ty.clone(), true));
+                .insert(bind_name.clone(), (alloca.into(), f_ty.clone(), super::CLEANUP_FULL));
         }
 
         Ok(())
@@ -5961,7 +5961,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                           | ExprKind::TensorLiteral(_)
                   );
                   if is_temp {
-                      self.emit_recursive_free(obj_val, &obj_ty)?;
+                      self.emit_recursive_free(obj_val, &obj_ty, super::CLEANUP_FULL)?;
                   }
 
                   Ok((res, Type::F32))
@@ -5972,7 +5972,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                       .build_call(fn_val, &[obj_val.into()], "backward_call")
                       .map_err(|e| e.to_string())?;
                   if self.is_safe_to_free(obj, &obj_ty) {
-                      self.emit_recursive_free(obj_val, &obj_ty)?;
+                      self.emit_recursive_free(obj_val, &obj_ty, super::CLEANUP_FULL)?;
                   }
 
                   Ok((
@@ -5993,7 +5993,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                   };
 
                   if self.is_safe_to_free(obj, &obj_ty) {
-                      self.emit_recursive_free(obj_val, &obj_ty)?;
+                      self.emit_recursive_free(obj_val, &obj_ty, super::CLEANUP_FULL)?;
                   }
 
                   self.emit_register_tensor(res, &obj_ty)?;
@@ -6068,7 +6068,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                       .map_err(|e| e.to_string())?;
 
                   if self.is_safe_to_free(obj, &obj_ty) {
-                      self.emit_recursive_free(obj_val, &obj_ty)?;
+                      self.emit_recursive_free(obj_val, &obj_ty, super::CLEANUP_FULL)?;
                   }
                   // args[0] is path (String). String is UserDefined.
                   // If path expr was temporary, we should free it?
@@ -6105,7 +6105,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                   };
 
                   if self.is_safe_to_free(obj, &obj_ty) {
-                      self.emit_recursive_free(obj_val, &obj_ty)?;
+                      self.emit_recursive_free(obj_val, &obj_ty, super::CLEANUP_FULL)?;
                   }
                   // args[0] is shape tensor.
                   // We compiled it to s_val. Ty is unknown here?
@@ -6130,7 +6130,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                   let res = self.check_tensor_result(call.map_err(|e| e.to_string())?, "sum_error")?;
 
                   if self.is_safe_to_free(obj, &obj_ty) {
-                      self.emit_recursive_free(obj_val, &obj_ty)?;
+                      self.emit_recursive_free(obj_val, &obj_ty, super::CLEANUP_FULL)?;
                   }
 
                   // sum returns scalar tensor (rank 0 or 1 depending on impl).
@@ -6166,7 +6166,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                   };
 
                   if self.is_safe_to_free(obj, &obj_ty) {
-                      self.emit_recursive_free(obj_val, &obj_ty)?;
+                      self.emit_recursive_free(obj_val, &obj_ty, super::CLEANUP_FULL)?;
                   }
 
                   self.emit_register_tensor(res, &obj_ty)?;
@@ -6200,7 +6200,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                   };
 
                   if self.is_safe_to_free(obj, &obj_ty) {
-                      self.emit_recursive_free(obj_val, &obj_ty)?;
+                      self.emit_recursive_free(obj_val, &obj_ty, super::CLEANUP_FULL)?;
                   }
 
                   // Note: Do NOT call emit_register_tensor here.
@@ -6234,7 +6234,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                   if self.is_safe_to_free(obj, &obj_ty) {
                       // For assign ops, obj is often a field or var, so safe=false.
                       // But if obj is (a+b), then safe=true, and we MUST free it.
-                      self.emit_recursive_free(obj_val, &obj_ty)?;
+                      self.emit_recursive_free(obj_val, &obj_ty, super::CLEANUP_FULL)?;
                   }
 
                   // args[0] is RHS.
@@ -6270,7 +6270,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let res = self.check_tensor_result(call.map_err(|e| e.to_string())?, "matmul_error")?;
 
                     if self.is_safe_to_free(obj, &obj_ty) {
-                        self.emit_recursive_free(obj_val, &obj_ty)?;
+                        self.emit_recursive_free(obj_val, &obj_ty, super::CLEANUP_FULL)?;
                     }
                     self.emit_register_tensor(res, &obj_ty)?;
                     Ok((res, obj_ty))
@@ -6289,7 +6289,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let res = self.check_tensor_result(call.map_err(|e| e.to_string())?, &format!("{}_error", method))?;
 
                     if self.is_safe_to_free(obj, &obj_ty) {
-                        self.emit_recursive_free(obj_val, &obj_ty)?;
+                        self.emit_recursive_free(obj_val, &obj_ty, super::CLEANUP_FULL)?;
                     }
                     self.emit_register_tensor(res, &obj_ty)?;
                     Ok((res, obj_ty))
@@ -6354,14 +6354,14 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                       // FIX: Free temporary receiver
                       if self.is_safe_to_free(obj, &obj_ty) {
-                          self.emit_recursive_free(obj_val, &obj_ty)?;
+                          self.emit_recursive_free(obj_val, &obj_ty, super::CLEANUP_FULL)?;
                       }
 
                       // FIX: Free temporary arguments
                       for (i, (val, ty)) in compiled_args_types.iter().enumerate() {
                           let arg_expr = &args[i];
                           if self.is_safe_to_free(arg_expr, ty) {
-                              self.emit_recursive_free(*val, ty)?;
+                              self.emit_recursive_free(*val, ty, super::CLEANUP_FULL)?;
                           }
                       }
 
@@ -6582,10 +6582,19 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok((res, Type::Tensor(Box::new(Type::F32), 1)))
     }
 
-    fn compile_fn_call(
+    pub(crate) fn compile_fn_call(
         &mut self,
         name: &str,
         args: &[Expr],
+    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        self.compile_fn_call_dps(name, args, None)
+    }
+
+    pub(crate) fn compile_fn_call_dps(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        dest: Option<BasicValueEnum<'ctx>>,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         // 0. Check if it's a relation query (handle module path resolution)
         let simple_name = name.split("::").last().unwrap_or(name);
@@ -6715,8 +6724,30 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut compiled_args_vals = Vec::with_capacity(args.len() + 1);
         let mut compiled_args_types = Vec::with_capacity(args.len());
 
-        // Handle SRET: If return type is Struct/UserDefined, allocate memory and pass as first arg
-        let sret_ptr: Option<inkwell::values::PointerValue> = None; /* SRET DISABLED */
+        // DPS: If return type is Tensor, handle hidden dest argument
+        let mut dest_val = None;
+        if matches!(ret_type, Type::Tensor(_, _)) {
+             if let Some(d) = dest {
+                 dest_val = Some(d);
+             } else {
+                 // Allocate Temp Buffer
+                 // We use a fixed size sufficient for OpaqueTensor struct (96 bytes safe upper bound)
+                 let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
+                 let size = self.context.i64_type().const_int(96, false);
+                 let call = self.builder.build_call(malloc_fn, &[size.into()], "tensor_tmp").map_err(|e| e.to_string())?;
+                 let raw_ptr = match call.try_as_basic_value() {
+                      ValueKind::Basic(v) => v.into_pointer_value(),
+                      _ => return Err("malloc failed".into()),
+                 };
+                 // Cast to opaque ptr
+                 let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_tmp").unwrap();
+                 dest_val = Some(cast_ptr.into());
+             }
+             
+             if let Some(d) = dest_val {
+                 compiled_args_vals.push(d.into());
+             }
+        }
 
         if let Some(pre_values) = precompiled_args {
              for (val, ty) in pre_values {
@@ -6744,25 +6775,19 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         let call = self
             .builder
-            .build_call(func, &compiled_args_vals, "call_tmp")
+            .build_call(func, &compiled_args_vals, if dest_val.is_some() { "" } else { "call_tmp" })
             .map_err(|e| e.to_string())?;
 
         // FIX: Free temporary arguments
-        // Tensors are registered to scope via make_tensor, BUT enabling immediate release
-        // prevents OOM in tight loops by clearing them from registry and freeing them.
         for (i, (val, ty)) in compiled_args_types.into_iter().enumerate() {
             let arg_expr = &args[i];
             if self.is_safe_to_free(arg_expr, &ty) {
-                self.emit_recursive_free(val, &ty)?;
+                self.emit_recursive_free(val, &ty, super::CLEANUP_FULL)?;
             }
         }
 
-        if let Some(_) = sret_ptr {
-            // SRET Return
-            return Ok((
-                self.context.i64_type().const_int(0, false).into(),
-                Type::Void, // Or actual struct type? But caller expects (val, ty)
-            ));
+        if let Some(d) = dest_val {
+             return Ok((d, ret_type));
         }
 
         let res = match call.try_as_basic_value() {

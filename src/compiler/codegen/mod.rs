@@ -11,6 +11,10 @@ use inkwell::values::{BasicValueEnum, FunctionValue};
 use inkwell::OptimizationLevel;
 use std::collections::HashMap;
 
+pub const CLEANUP_NONE: u8 = 0;
+pub const CLEANUP_FULL: u8 = 1;
+pub const CLEANUP_FINALIZE: u8 = 2;
+
 pub mod builtins;
 pub mod expr;
 pub mod kb;
@@ -23,7 +27,7 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) module: InkwellModule<'ctx>,
     pub(crate) builder: Builder<'ctx>,
     pub(crate) execution_engine: ExecutionEngine<'ctx>,
-    pub(crate) variables: Vec<HashMap<String, (BasicValueEnum<'ctx>, Type, bool)>>,
+    pub(crate) variables: Vec<HashMap<String, (BasicValueEnum<'ctx>, Type, u8)>>,
     pub(crate) fn_return_types: HashMap<String, Type>,
     pub(crate) struct_types: HashMap<String, StructType<'ctx>>,
     pub(crate) struct_defs: HashMap<String, StructDef>,
@@ -42,6 +46,8 @@ pub struct CodeGenerator<'ctx> {
     )>,
     pub(crate) relations: std::collections::HashSet<String>,
     pub(crate) current_span: Option<crate::compiler::error::Span>,
+    pub(crate) function_analysis: Option<crate::compiler::liveness::FunctionAnalysis>,
+    pub(crate) current_sret_dest: Option<inkwell::values::PointerValue<'ctx>>,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -49,7 +55,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let module = context.create_module(module_name);
         let builder = context.create_builder();
         let execution_engine = module
-            .create_jit_execution_engine(OptimizationLevel::Aggressive)
+            .create_jit_execution_engine(OptimizationLevel::None)
             .map_err(|e| e.to_string())
             .unwrap();
 
@@ -73,6 +79,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             loop_stack: Vec::new(),
             relations: std::collections::HashSet::new(),
             current_span: None,
+            function_analysis: None,
+            current_sret_dest: None,
         };
 
         // Register all methods (instance and static)
@@ -302,8 +310,8 @@ impl<'ctx> CodeGenerator<'ctx> {
     // Helper to generate free calls for variables in a specific scope index
     fn emit_cleanup_vars_in_scope(&self, scope_idx: usize) {
         if let Some(scope) = self.variables.get(scope_idx) {
-            for (_name, (val_enum, ty, should_free)) in scope {
-                if *should_free {
+            for (_name, (val_enum, ty, cleanup_mode)) in scope {
+                if *cleanup_mode != CLEANUP_NONE {
                     if let Type::UserDefined(name, _) = ty {
                         let ptr = val_enum.into_pointer_value();
                         let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
@@ -314,31 +322,36 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 "File" | "Path" => {}
                                 "Env" | "Http" => {}
                                 _ => {
-                                    let _ = self.emit_recursive_free(obj_val, ty);
-                                    if let Some(unreg_fn) =
-                                        self.module.get_function("tl_mem_unregister")
-                                    {
-                                        let _ = self.builder.build_call(
-                                            unreg_fn,
-                                            &[obj_val.into()],
-                                            "",
-                                        );
-                                    }
-                                    if let Some(free_fn) = self.module.get_function("free") {
-                                        let void_ptr = self
-                                            .builder
-                                            .build_pointer_cast(
-                                                obj_val.into_pointer_value(),
-                                                self.context
-                                                    .ptr_type(inkwell::AddressSpace::default()),
-                                                "void_ptr",
-                                            )
-                                            .unwrap();
-                                        let _ = self.builder.build_call(
-                                            free_fn,
-                                            &[void_ptr.into()],
-                                            "",
-                                        );
+                                    // Pass cleanup_mode to recursive free
+                                    let _ = self.emit_recursive_free(obj_val, ty, *cleanup_mode);
+                                    
+                                    // Only free container if FULL cleanup
+                                    if *cleanup_mode == CLEANUP_FULL {
+                                        if let Some(unreg_fn) =
+                                            self.module.get_function("tl_mem_unregister")
+                                        {
+                                            let _ = self.builder.build_call(
+                                                unreg_fn,
+                                                &[obj_val.into()],
+                                                "",
+                                            );
+                                        }
+                                        if let Some(free_fn) = self.module.get_function("free") {
+                                            let void_ptr = self
+                                                .builder
+                                                .build_pointer_cast(
+                                                    obj_val.into_pointer_value(),
+                                                    self.context
+                                                        .ptr_type(inkwell::AddressSpace::default()),
+                                                    "void_ptr",
+                                                )
+                                                .unwrap();
+                                            let _ = self.builder.build_call(
+                                                free_fn,
+                                                &[void_ptr.into()],
+                                                "",
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -352,54 +365,44 @@ impl<'ctx> CodeGenerator<'ctx> {
                             self.builder.build_load(load_type, ptr, "struct_to_free")
                         {
                             // Recursive free handles null check
-                            let _ = self.emit_recursive_free(struct_val, ty);
+                            let _ = self.emit_recursive_free(struct_val, ty, *cleanup_mode);
 
-                            if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
-                                let _ = self.builder.build_call(unreg_fn, &[struct_val.into()], "");
-                            }
+                            if *cleanup_mode == CLEANUP_FULL {
+                                if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                                    let _ = self.builder.build_call(unreg_fn, &[struct_val.into()], "");
+                                }
 
-                            // CRITICAL FIX: Free the struct pointer itself (container)
-                            // recursive_free only freed the fields. unregister removed it from Runtime auto-free.
-                            // We must explicitly free the malloc'd struct now.
-                            // Use 'free' from libc (or tl_free_tmp if appropriate, but standard free is safer for general malloc)
-                            if let Some(free_fn) = self.module.get_function("free") {
-                                let void_ptr = self
-                                    .builder
-                                    .build_pointer_cast(
-                                        struct_val.into_pointer_value(),
-                                        self.context.ptr_type(inkwell::AddressSpace::default()),
-                                        "void_ptr",
-                                    )
-                                    .unwrap();
-                                let _ = self.builder.build_call(free_fn, &[void_ptr.into()], "");
-                            } else {
-                                // Try to declare free if not found (unlikely if stdlib loaded, but safe fallback)
-                                let free_type = self.context.void_type().fn_type(
-                                    &[self
-                                        .context
-                                        .ptr_type(inkwell::AddressSpace::default())
-                                        .into()],
-                                    false,
-                                );
-                                let free_fn = self.module.add_function("free", free_type, None);
-                                let void_ptr = self
-                                    .builder
-                                    .build_pointer_cast(
-                                        struct_val.into_pointer_value(),
-                                        self.context.ptr_type(inkwell::AddressSpace::default()),
-                                        "void_ptr",
-                                    )
-                                    .unwrap();
-                                let _ = self.builder.build_call(free_fn, &[void_ptr.into()], "");
+                                // Free container
+                                if let Some(free_fn) = self.module.get_function("free") {
+                                    let void_ptr = self
+                                        .builder
+                                        .build_pointer_cast(
+                                            struct_val.into_pointer_value(),
+                                            self.context.ptr_type(inkwell::AddressSpace::default()),
+                                            "void_ptr",
+                                        )
+                                        .unwrap();
+                                    let _ = self.builder.build_call(free_fn, &[void_ptr.into()], "");
+                                } else {
+                                     // Declare free
+                                     let free_type = self.context.void_type().fn_type(
+                                         &[self.context.ptr_type(inkwell::AddressSpace::default()).into()],
+                                         false
+                                     );
+                                     let free_fn = self.module.add_function("free", free_type, None);
+                                     let void_ptr = self.builder.build_pointer_cast(struct_val.into_pointer_value(), self.context.ptr_type(inkwell::AddressSpace::default()), "void_ptr").unwrap();
+                                     let _ = self.builder.build_call(free_fn, &[void_ptr.into()], "");
+                                }
                             }
                         }
-                    } else if matches!(ty, Type::Tensor(_, _) | Type::TensorShaped(_, _)) {
+                    } else if matches!(ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Tuple(_) | Type::Vec(_)) {
+                         // Tuple and Vec also need loading from Alloca
                         let ptr = val_enum.into_pointer_value();
                         let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                        if let Ok(tensor_val) =
-                            self.builder.build_load(load_type, ptr, "tensor_to_free")
+                        if let Ok(val) =
+                            self.builder.build_load(load_type, ptr, "val_to_free")
                         {
-                            let _ = self.emit_recursive_free(tensor_val, ty);
+                            let _ = self.emit_recursive_free(val, ty, *cleanup_mode);
                         }
                     }
                 }
@@ -820,7 +823,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         self.variables
                             .last_mut()
                             .unwrap()
-                            .insert(arg_name.clone(), (alloca.into(), resolved_ty, false));
+                            .insert(arg_name.clone(), (alloca.into(), resolved_ty, CLEANUP_NONE));
                     }
                 }
 
@@ -996,7 +999,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             .insert(func.name.clone(), func.return_type.clone());
 
         // Check if this function returns a struct (requires sret)
-        let uses_sret = false; /* SRET DISABLED */
+        // Check if this function returns a struct (requires sret)
+        let uses_sret = matches!(func.return_type, Type::Tensor(_, _));
 
         let mut args_types = Vec::new();
 
@@ -1081,17 +1085,50 @@ impl<'ctx> CodeGenerator<'ctx> {
             .module
             .get_function(&func.name)
             .ok_or("Function not found")?;
+
+        // Run Liveness Analysis
+        self.function_analysis = Some(crate::compiler::liveness::LivenessAnalyzer::analyze(func));
+
         // Initialize entry block
         let entry = self.context.append_basic_block(function, "entry");
         self.builder.position_at_end(entry);
+
+        // SETUP FUNCTION FRAME (SLOTS)
+        let num_slots = self.function_analysis.as_ref().map(|a| a.num_slots).unwrap_or(0);
+        if let Some(enter_fn) = self.module.get_function("tl_mem_function_enter") {
+             self.builder.build_call(
+                 enter_fn,
+                 &[self.context.i64_type().const_int(num_slots as u64, false).into()],
+                 ""
+             ).unwrap();
+        } else {
+            // Declare it if missing
+            let i64_type = self.context.i64_type();
+            let fn_type = self.context.void_type().fn_type(&[i64_type.into()], false);
+            let enter_fn = self.module.add_function("tl_mem_function_enter", fn_type, None);
+            self.builder.build_call(
+                 enter_fn,
+                 &[self.context.i64_type().const_int(num_slots as u64, false).into()],
+                 ""
+             ).unwrap();
+        }
 
         // Push a new scope for function arguments
         self.fn_entry_scope_depth = self.variables.len();
         self.enter_scope(); // Function scope
 
+
         // Check if this function uses sret
-        let uses_sret = false; /* SRET DISABLED */
+        let uses_sret = matches!(func.return_type, Type::Tensor(_, _));
         let param_offset = if uses_sret { 1 } else { 0 };
+
+        if uses_sret {
+             if let Some(param) = function.get_nth_param(0) {
+                 self.current_sret_dest = Some(param.into_pointer_value());
+             }
+        } else {
+             self.current_sret_dest = None;
+        }
 
         // Register arguments (skip sret param if present)
         for (i, arg) in function.get_param_iter().skip(param_offset).enumerate() {
@@ -1118,7 +1155,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.variables
                 .last_mut()
                 .unwrap()
-                .insert(arg_name.clone(), (alloca.into(), arg_type.clone(), false));
+                .insert(arg_name.clone(), (alloca.into(), arg_type.clone(), CLEANUP_NONE));
         }
 
         // Initialize Arena in main if needed
@@ -1184,19 +1221,31 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if let StmtKind::Expr(expr) = &stmt.inner {
                     let (val, ty) = self.compile_expr(expr)?;
 
-                    // IMPORTANT: Unregister return value (same as StmtKind::Return)
-                    self.emit_recursive_unregister(val, &ty)?;
+                    if uses_sret {
+                         // SRET Logic
+                         if let Some(dest) = self.current_sret_dest {
+                             let src_ptr = val.into_pointer_value();
+                             self.emit_struct_copy(dest, src_ptr, &ty)?;
+                         }
+                         self.emit_all_scopes_cleanup();
+                         self.variables.pop(); // Compiler scope cleanup
+                         self.builder.build_return(None).map_err(|e| e.to_string())?;
+                    } else {
+                        // IMPORTANT: Unregister return value (same as StmtKind::Return)
+                        // If not SRET, we assume returning by value (or pointer ownership transfer)
+                        // Note: For Tensors, "Returning by Value" means returning the pointer.
+                        // And we must unregister it from scope so it doesn't get freed.
+                        self.emit_recursive_unregister(val, &ty)?;
 
-                    self.emit_all_scopes_cleanup();
+                        self.emit_all_scopes_cleanup();
 
-                    // CRITICAL FIX: Pop the function scope from variables stack
-                    // emit_all_scopes_cleanup only emits LLVM IR calls to tl_mem_exit_scope
-                    // but doesn't update the Rust compiler's scope tracking
-                    self.variables.pop();
+                        // CRITICAL FIX: Pop the function scope from variables stack
+                        self.variables.pop();
 
-                    self.builder
-                        .build_return(Some(&val))
-                        .map_err(|e| e.to_string())?;
+                        self.builder
+                            .build_return(Some(&val))
+                            .map_err(|e| e.to_string())?;
+                    }
                     continue;
                 }
             }
@@ -1204,6 +1253,16 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         self.exit_scope(); // End function scope
+
+        // CLEANUP FUNCTION FRAME
+        if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
+             self.builder.build_call(exit_fn, &[], "").unwrap();
+        } else {
+             // Declare
+             let fn_type = self.context.void_type().fn_type(&[], false);
+             let exit_fn = self.module.add_function("tl_mem_function_exit", fn_type, None);
+             self.builder.build_call(exit_fn, &[], "").unwrap();
+        }
 
         // Add implicit return void if needed (not perfect but ok for now)
         if func.return_type == Type::Void

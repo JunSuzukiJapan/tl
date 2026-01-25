@@ -225,7 +225,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         &self,
         val: BasicValueEnum<'ctx>,
         ty: &Type,
+        mode: u8,
     ) -> Result<(), String> {
+        if mode == super::CLEANUP_NONE {
+             return Ok(());
+        }
+
         match ty {
             Type::Enum(name, _) => {
                 let enum_def = self
@@ -365,23 +370,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     )
                                     .map_err(|e| e.to_string())?;
 
-                                self.emit_recursive_free(f_val, f_ty)?;
+                                // Recursive calls use DEFAULT (FULL) cleanup for contents
+                                self.emit_recursive_free(f_val, f_ty, super::CLEANUP_FULL)?;
                             }
                         }
                     }
                     // After recursive calls, branch from current position to after_switch
                     if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-                        self.builder
-                            .build_unconditional_branch(after_switch)
-                            .unwrap();
+                         self.builder.build_unconditional_branch(after_switch).unwrap();
                     }
                 }
 
                 self.builder.position_at_end(after_switch);
                 if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-                    self.builder
-                        .build_unconditional_branch(merge_block)
-                        .unwrap();
+                     self.builder.build_unconditional_branch(merge_block).unwrap();
                 }
 
                 self.builder.position_at_end(merge_block);
@@ -408,22 +410,31 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 self.builder.position_at_end(free_block);
 
-                // Use check-and-release pattern for Tensors too?
-                // Actually tl_tensor_release handles it internally (dec ref + free if 0).
-                // So we assume tl_tensor_release is safe to call multiple times (it decrements).
-                // Yes, tl_tensor_release calls release_ptr.
-                // So we DON'T need conditional Logic here, just call the release function.
-                // But wait, if we call it unconditionally, we assume CodeGen owns a reference.
-                // CodeGen emits free for variables. Variable is a reference.
-                // So calling Release is correct (consuming the reference).
-                // So Tensors are fine as is.
-                let free_fn = self
-                    .module
-                    .get_function("tl_tensor_release")
-                    .ok_or("tl_tensor_release not found")?;
-                self.builder
-                    .build_call(free_fn, &[val.into()], "")
-                    .map_err(|e| e.to_string())?;
+                if mode == super::CLEANUP_FINALIZE {
+                    // Call tl_tensor_finalize (Drop content, Keep struct)
+                    let finalize_fn = self
+                        .module
+                        .get_function("tl_tensor_finalize")
+                        .or_else(|| {
+                             // Declare if missing
+                             let void_ty = self.context.void_type();
+                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                             let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                             Some(self.module.add_function("tl_tensor_finalize", ft, None))
+                        })
+                        .ok_or("tl_tensor_finalize not found")?;
+                    
+                    self.builder.build_call(finalize_fn, &[val.into()], "").map_err(|e| e.to_string())?;
+                } else {
+                    // Call tl_tensor_release (Standard RefCount check + Free)
+                    let free_fn = self
+                        .module
+                        .get_function("tl_tensor_release")
+                        .ok_or("tl_tensor_release not found")?;
+                    self.builder
+                        .build_call(free_fn, &[val.into()], "")
+                        .map_err(|e| e.to_string())?;
+                }
 
                 self.builder
                     .build_unconditional_branch(merge_block)
@@ -451,7 +462,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     } else {
                         Type::Void
                     };
-                    return self.emit_recursive_free(val, &Type::Vec(Box::new(inner_ty)));
+                    return self.emit_recursive_free(val, &Type::Vec(Box::new(inner_ty)), super::CLEANUP_FULL);
                 }
 
                 // Skip String
@@ -514,8 +525,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     "field_load",
                                 )
                                 .map_err(|e| e.to_string())?;
-                            // Recursively free - this may change builder position
-                            self.emit_recursive_free(f_val, f_ty)?;
+                            // Recursively free content (Clean FULL)
+                            self.emit_recursive_free(f_val, f_ty, super::CLEANUP_FULL)?;
                         }
                         _ => {}
                     }
@@ -544,10 +555,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .module
                         .get_function("tl_vec_void_len")
                         .ok_or("tl_vec_void_len not found")?;
-                    let get_fn = self
-                        .module
-                        .get_function("tl_vec_void_get")
-                        .ok_or("tl_vec_void_get not found")?;
                     let free_fn = self
                         .module
                         .get_function("tl_vec_void_free")
@@ -599,34 +606,35 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let idx_val = idx_phi.as_basic_value().into_int_value();
                     let cmp = self
                         .builder
-                        .build_int_compare(inkwell::IntPredicate::ULT, idx_val, len_val, "cmp")
+                        .build_int_compare(
+                            inkwell::IntPredicate::SLT,
+                            idx_val,
+                            len_val,
+                            "cmp",
+                        )
                         .map_err(|e| e.to_string())?;
                     self.builder
                         .build_conditional_branch(cmp, body_bb, end_bb)
                         .map_err(|e| e.to_string())?;
 
-                    // Loop Body
+                    // Body
                     self.builder.position_at_end(body_bb);
-                    let elem_ptr_call = self
-                        .builder
-                        .build_call(get_fn, &[cast_ptr.into(), idx_val.into()], "elem_ptr")
-                        .map_err(|e| e.to_string())?;
-                    let elem_ptr_void = match elem_ptr_call.try_as_basic_value() {
+                    
+                    // Access Element (requires runtime function for valid bounds access or just assume safe)
+                    // We need tl_vec_void_get(ptr, i) -> element_ptr (or copied value?)
+                    // The runtime Vec stores POINTERS (*mut c_void).
+                    // tl_vec_void_get returns *mut c_void (the element value).
+                    let get_fn = self.module.get_function("tl_vec_void_get").unwrap();
+                    let call = self.builder.build_call(get_fn, &[cast_ptr.into(), idx_val.into()], "elem").map_err(|e| e.to_string())?;
+                    let elem_ptr = match call.try_as_basic_value() {
                         inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("elem_ptr call returned non-basic value".to_string()),
+                        _ => panic!("tl_vec_void_get returned non-basic"),
                     };
+                    
+                    // Recursively free ELEMENT (Full cleanup)
+                    self.emit_recursive_free(elem_ptr, inner_ty, super::CLEANUP_FULL)?;
 
-                    let cast_elem = self
-                        .builder
-                        .build_pointer_cast(
-                            elem_ptr_void.into_pointer_value(),
-                            void_ptr_type,
-                            "cast_elem",
-                        )
-                        .unwrap();
-                    self.emit_recursive_free(cast_elem.into(), inner_ty)?;
-
-                    // Increment and Jump
+                    // Next Iteration
                     let next_idx = self
                         .builder
                         .build_int_add(idx_val, i64_type.const_int(1, false), "next_i")
@@ -638,10 +646,59 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                     // End
                     self.builder.position_at_end(end_bb);
-                    self.builder
+
+                    // Free Vector Container
+                     self.builder
                         .build_call(free_fn, &[cast_ptr.into()], "")
                         .map_err(|e| e.to_string())?;
                 }
+            }
+            Type::Tuple(elem_types) => {
+                 // Check if any element needs freeing
+                 let needs_free = elem_types.iter().any(|t| matches!(t, Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _)));
+                 if !needs_free {
+                     return Ok(());
+                 }
+                 
+                 let ptr = val.into_pointer_value();
+
+                 // Reconstruct LLVM struct type for GEP
+                 let mut llvm_types = Vec::new();
+                 for ty in elem_types {
+                     // Need get_llvm_type accessible or inline mapping
+                     // Using simpler match map since self.get_llvm_type might be restricted?
+                     // Actually self.context...
+                     llvm_types.push(match ty {
+                         Type::F32 => self.context.f32_type().into(),
+                         Type::I64 => self.context.i64_type().into(),
+                         Type::I32 => self.context.i32_type().into(),
+                         Type::Bool => self.context.bool_type().into(),
+                         Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Enum(_, _) | Type::Vec(_) | Type::Tuple(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
+                          Type::Void => self.context.i8_type().into(),
+                         _ => self.context.i64_type().into(), // Placeholder, potentially unsafe if not matching
+                     });
+                 }
+                 let struct_ty = self.context.struct_type(&llvm_types, false);
+                 
+                 for (i, ty) in elem_types.iter().enumerate() {
+                      if matches!(ty, Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Enum(_, _) | Type::Vec(_) | Type::Tuple(_)) {
+                           let f_ptr = self.builder.build_struct_gep(struct_ty, ptr, i as u32, "tup_elem").unwrap();
+                           let load = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "load").unwrap();
+                           self.emit_recursive_free(load, ty, super::CLEANUP_FULL)?;
+                      }
+                 }
+                 // Only free content. The tuple struct itself?
+                 // Usually tuple struct is Alloc'd. We should free it if it's heap?
+                 // But tuples in TL might be fully structural?
+                 // Current impl allocates tuples on Heap (malloc).
+                 // So we should free the tuple pointer too.
+                 // Assuming CLEANUP_FULL.
+                 if mode == super::CLEANUP_FULL {
+                      let free = self.module.get_function("free").or_else(|| self.module.get_function("libc_free"));
+                      if let Some(f) = free {
+                            self.builder.build_call(f, &[ptr.into()], "").unwrap();
+                      }
+                 }
             }
             _ => {}
         }
@@ -820,7 +877,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                     self.builder.build_conditional_branch(are_diff, free_block, skip_block).unwrap();
                     self.builder.position_at_end(free_block);
-                    self.emit_recursive_free(current_val.into(), &field_type)?;
+                    self.emit_recursive_free(current_val.into(), &field_type, super::CLEANUP_FULL)?;
                     self.builder.build_unconditional_branch(skip_block).unwrap();
                     self.builder.position_at_end(skip_block);
                 }
@@ -860,9 +917,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                     if self.variables.last().unwrap().contains_key(name) {
                         // Start of double-free fix logic
-                        let (_var_val, _, should_free) = &self.variables.last().unwrap()[name];
+                        let (_var_val, _, cleanup_mode) = &self.variables.last().unwrap()[name];
 
-                        if *should_free {
+                        if *cleanup_mode != super::CLEANUP_NONE {
                             // Free logic removed to prevent double-free with MemoryManager.
                             // Old value remains in scope list and will be freed at scope exit.
                         }
@@ -876,7 +933,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         self.variables
                             .last_mut()
                             .unwrap()
-                            .insert(name.clone(), (ptr.into(), val_ty, true));
+                            .insert(name.clone(), (ptr.into(), val_ty, super::CLEANUP_FULL));
                     } else {
                         let fn_val = self
                             .builder
@@ -892,7 +949,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         self.variables
                             .last_mut()
                             .unwrap()
-                            .insert(name.clone(), (ptr.into(), val_ty, true));
+                            .insert(name.clone(), (ptr.into(), val_ty, super::CLEANUP_FULL));
                     }
                 }
                 Ok(())
@@ -972,7 +1029,63 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string());
                 }
 
-                let (mut val_ir, mut val_ty) = self.compile_expr(value)?;
+                let mut is_slot_backed = false;
+                let mut dps_result = None;
+
+                if let ExprKind::FnCall(fn_name, args) = &value.inner {
+                    // Check if function returns Tensor
+                    // We need to resolve name properly if it's imported (simplified check for now)
+                    let simple_name = fn_name.split("::").last().unwrap_or(fn_name);
+                    let lookup_name = if self.fn_return_types.contains_key(fn_name) {
+                         fn_name
+                    } else if self.fn_return_types.contains_key(simple_name) {
+                         simple_name
+                    } else {
+                         fn_name
+                    };
+
+                    if let Some(ret_ty) = self.fn_return_types.get(lookup_name) {
+                         if matches!(ret_ty, Type::Tensor(_, _)) {
+                             // Check if we have a slot for this variable
+                             if let Some(analysis) = &self.function_analysis {
+                                 if let Some(&slot_id) = analysis.slots.get(name) {
+                                      // DO DPS
+                                      // Get Buffer from Slot
+                                      let buf_fn_name = "tl_mem_get_buffer";
+                                      let buf_fn = if let Some(f) = self.module.get_function(buf_fn_name) {
+                                           f
+                                      } else {
+                                           let i64_ty = self.context.i64_type();
+                                           let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                                           let ft = ptr_ty.fn_type(&[i64_ty.into(), i64_ty.into()], false);
+                                           self.module.add_function(buf_fn_name, ft, None)
+                                      };
+
+                                      // Assuming 96 bytes for Tensor struct
+                                      let size = self.context.i64_type().const_int(96, false);
+                                      let slot = self.context.i64_type().const_int(slot_id as u64, false);
+                                      let call = self.builder.build_call(buf_fn, &[slot.into(), size.into()], "slot_buf").unwrap();
+                                      let raw_ptr = match call.try_as_basic_value() {
+                                          inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                                          _ => panic!("tl_mem_get_buffer returned non-basic value"),
+                                      };
+                                      let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_slot").unwrap();
+                                      
+                                      // Call compile_fn_call_dps
+                                      let res = self.compile_fn_call_dps(fn_name, args, Some(cast_ptr.into()))?;
+                                      dps_result = Some(res);
+                                      is_slot_backed = true;
+                                 }
+                             }
+                         }
+                    }
+                }
+
+                let (mut val_ir, mut val_ty) = if let Some((r, t)) = dps_result {
+                    (r, t)
+                } else {
+                    self.compile_expr(value)?
+                };
 
                 // Ownership: Shared. The temporary (value) remains in scope and will be released at scope exit.
                 // The variable (name) acquires a NEW reference via deep_clone below.
@@ -1038,9 +1151,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Check for shadowing in CURRENT scope
                 let shadow_info = if let Some(scope) = self.variables.last() {
-                    if let Some((old_ptr, old_ty, should_free)) = scope.get(name) {
-                        if *should_free {
-                            Some((*old_ptr, old_ty.clone()))
+                    if let Some((old_ptr, old_ty, cleanup_mode)) = scope.get(name) {
+                        if *cleanup_mode != super::CLEANUP_NONE {
+                            Some((*old_ptr, old_ty.clone(), *cleanup_mode))
                         } else {
                             None
                         }
@@ -1051,7 +1164,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     None
                 };
 
-                if let Some((old_ptr_val, old_ty)) = shadow_info {
+                if let Some((old_ptr_val, old_ty, old_mode)) = shadow_info {
                     // Load the actual pointer value from the alloca
                     let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
                     let old_value = self
@@ -1059,7 +1172,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .build_load(ptr_type, old_ptr_val.into_pointer_value(), "old_shadowed")
                         .map_err(|e| e.to_string())?;
 
-                    self.emit_recursive_free(old_value, &old_ty)?;
+                    self.emit_recursive_free(old_value, &old_ty, old_mode)?;
                 }
 
                 let alloca = self.create_entry_block_alloca(current_function, name, &val_ty)?;
@@ -1070,7 +1183,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.variables
                     .last_mut()
                     .unwrap()
-                    .insert(name.clone(), (alloca.into(), val_ty.clone(), true)); // Store pointer and type
+                    .insert(
+                        name.clone(),
+                        (
+                            alloca.into(),
+                            val_ty.clone(),
+                            if is_slot_backed {
+                                super::CLEANUP_FINALIZE
+                            } else {
+                                super::CLEANUP_FULL
+                            },
+                        ),
+                    ); // Store pointer and type
                                                                                   /*
                                                                                   match &val_ty {
                                                                                       Type::Tensor(_, _) => {
@@ -1104,7 +1228,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if let ExprKind::Variable(name) = &expr.inner {
                         for scope in self.variables.iter_mut().rev() {
                             if let Some(entry) = scope.get_mut(name) {
-                                entry.2 = false;
+                                entry.2 = super::CLEANUP_NONE;
                                 break;
                             }
                         }
@@ -1112,7 +1236,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let (val, ty) = self.compile_expr(expr)?;
 
                     // Check if this is a struct return (uses sret)
-                    let uses_sret = false; /* SRET DISABLED */
+                    let uses_sret = self.current_sret_dest.is_some();
 
                     // IMPORTANT: Do NOT unregister. Instead Acquire/Copy to preserve for caller.
                     // If we unregister, it releases (decrements refcount).
@@ -1154,15 +1278,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if uses_sret {
                         // CRITICAL: Copy to sret BEFORE cleanup to avoid stale pointer access
                         // Get the sret pointer (first parameter)
-                        let current_fn = self
-                            .builder
-                            .get_insert_block()
-                            .and_then(|b| b.get_parent())
-                            .ok_or("No current function")?;
-                        let sret_ptr = current_fn
-                            .get_nth_param(0)
-                            .ok_or("Sret function missing sret parameter")?
-                            .into_pointer_value();
+                        // CRITICAL: Copy to sret BEFORE cleanup to avoid stale pointer access
+                        // Get the sret pointer
+                        let sret_ptr = self.current_sret_dest.unwrap();
 
                         // Copy struct contents to sret pointer BEFORE cleanup
                         let src_ptr = val.into_pointer_value();
@@ -1483,12 +1601,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Lookup variable
                 let mut found_var_ptr = None;
                 let mut found_var_type = None;
-                let mut found_should_free = false;
+                let mut found_should_free = super::CLEANUP_NONE;
                 for scope in self.variables.iter().rev() {
-                    if let Some((v, t, sf)) = scope.get(name) {
+                    if let Some((v, t, mode)) = scope.get(name) {
                         found_var_ptr = Some(*v);
                         found_var_type = Some(t.clone());
-                        found_should_free = *sf;
+                        found_should_free = *mode;
                         break;
                     }
                 }
@@ -1532,104 +1650,96 @@ impl<'ctx> CodeGenerator<'ctx> {
                             var_type,
                             Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Tensor(_, _)
                         ) {
-                            let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                            let current_val = self
-                                .builder
-                                .build_load(
-                                    load_type,
-                                    var_ptr.into_pointer_value(),
-                                    "old_val_to_free",
-                                )
-                                .map_err(|e| e.to_string())?
-                                .into_pointer_value();
+                             if found_should_free != super::CLEANUP_NONE {
+                                 let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                                 let current_val = self
+                                     .builder
+                                     .build_load(
+                                         load_type,
+                                         var_ptr.into_pointer_value(),
+                                         "old_val_to_free",
+                                     )
+                                     .map_err(|e| e.to_string())?
+                                     .into_pointer_value();
 
-                            // Only free if not null
-                            let null_ptr = load_type.const_null();
-                            let is_not_null = self
-                                .builder
-                                .build_int_compare(
-                                    inkwell::IntPredicate::NE,
-                                    current_val,
-                                    null_ptr,
-                                    "is_not_null",
-                                )
-                                .map_err(|e| e.to_string())?;
+                                 // Only free if not null
+                                 let null_ptr = load_type.const_null();
+                                 let is_not_null = self
+                                     .builder
+                                     .build_int_compare(
+                                         inkwell::IntPredicate::NE,
+                                         current_val,
+                                         null_ptr,
+                                         "is_not_null",
+                                     )
+                                     .map_err(|e| e.to_string())?;
 
-                            // AND also check if we own it
-                            let should_free_val = self
-                                .context
-                                .bool_type()
-                                .const_int(found_should_free as u64, false);
+                                 // AND check if pointers differ (prevent self-free on return self)
+                                 let new_ptr = val.into_pointer_value();
+                                 let are_diff = self
+                                     .builder
+                                     .build_int_compare(
+                                         inkwell::IntPredicate::NE,
+                                         current_val,
+                                         new_ptr,
+                                         "are_diff",
+                                     )
+                                     .map_err(|e| e.to_string())?;
 
-                            // AND check if pointers differ (prevent self-free on return self)
-                            let new_ptr = val.into_pointer_value();
-                            let are_diff = self
-                                .builder
-                                .build_int_compare(
-                                    inkwell::IntPredicate::NE,
-                                    current_val,
-                                    new_ptr,
-                                    "are_diff",
-                                )
-                                .map_err(|e| e.to_string())?;
+                                 let can_free = self
+                                     .builder
+                                     .build_and(is_not_null, are_diff, "can_free")
+                                     .unwrap();
 
-                            let can_free_1 = self
-                                .builder
-                                .build_and(is_not_null, should_free_val, "can_free_1")
-                                .unwrap();
-                            let can_free = self
-                                .builder
-                                .build_and(can_free_1, are_diff, "can_free")
-                                .unwrap();
+                                 let free_block = self.context.append_basic_block(
+                                     self.builder
+                                         .get_insert_block()
+                                         .unwrap()
+                                         .get_parent()
+                                         .unwrap(),
+                                     "free_struct",
+                                 );
+                                 let continue_block = self.context.append_basic_block(
+                                     self.builder
+                                         .get_insert_block()
+                                         .unwrap()
+                                         .get_parent()
+                                         .unwrap(),
+                                     "continue_after_free",
+                                 );
 
-                            let free_block = self.context.append_basic_block(
-                                self.builder
-                                    .get_insert_block()
-                                    .unwrap()
-                                    .get_parent()
-                                    .unwrap(),
-                                "free_struct",
-                            );
-                            let continue_block = self.context.append_basic_block(
-                                self.builder
-                                    .get_insert_block()
-                                    .unwrap()
-                                    .get_parent()
-                                    .unwrap(),
-                                "continue_after_free",
-                            );
+                                 self.builder
+                                     .build_conditional_branch(can_free, free_block, continue_block)
+                                     .map_err(|e| e.to_string())?;
 
-                            self.builder
-                                .build_conditional_branch(can_free, free_block, continue_block)
-                                .map_err(|e| e.to_string())?;
+                                 // Free block
+                                 self.builder.position_at_end(free_block);
 
-                            // Free block
-                            self.builder.position_at_end(free_block);
+                                 // Recursive free fields of the OLD struct (or Tensor content)
+                                 self.emit_recursive_free(current_val.into(), &var_type, found_should_free)?;
 
-                            // Recursive free fields of the OLD struct
-                            self.emit_recursive_free(current_val.into(), &var_type)?;
+                                 // Also unregister the struct shell itself so Runtime doesn't track it
+                                 if found_should_free == super::CLEANUP_FULL {
+                                     if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                                         let cast_ptr = self
+                                             .builder
+                                             .build_pointer_cast(
+                                                 current_val,
+                                                 self.context.ptr_type(inkwell::AddressSpace::default()),
+                                                 "cast_unreg_struct",
+                                             )
+                                             .unwrap();
+                                         let _ = self.builder.build_call(unreg_fn, &[cast_ptr.into()], "");
+                                     }
+                                 }
 
-                            // Also unregister the struct shell itself so Runtime doesn't track it
-                            if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
-                                let cast_ptr = self
-                                    .builder
-                                    .build_pointer_cast(
-                                        current_val,
-                                        self.context.ptr_type(inkwell::AddressSpace::default()),
-                                        "cast_unreg_struct",
-                                    )
-                                    .unwrap();
-                                let _ = self.builder.build_call(unreg_fn, &[cast_ptr.into()], "");
-                            }
+                                 self.builder
+                                     .build_unconditional_branch(continue_block)
+                                     .map_err(|e| e.to_string())?;
 
-                            // Note: We don't free(malloc) the struct shell. It leaks (small).
-
-                            self.builder
-                                .build_unconditional_branch(continue_block)
-                                .map_err(|e| e.to_string())?;
-
-                            // Continue block
-                            self.builder.position_at_end(continue_block);
+                                 // Continue block
+                                 self.builder.position_at_end(continue_block);
+                             }
                         }
 
                         // Duplicate Tensor free logic removed
@@ -2072,7 +2182,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // Register tensor alloca for later use
                         self.variables.last_mut().unwrap().insert(
                             "__for_tensor__".to_string(),
-                            (tensor_alloca.into(), tensor_ty.clone(), false),
+                            (tensor_alloca.into(), tensor_ty.clone(), super::CLEANUP_NONE),
                         );
 
                         (i64_type.const_int(0, false), len, true)
@@ -2117,7 +2227,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                         self.variables.last_mut().unwrap().insert(
                             "__for_tensor__".to_string(),
-                            (tensor_alloca.into(), iter_ty.clone(), false),
+                            (tensor_alloca.into(), iter_ty.clone(), super::CLEANUP_NONE),
                         );
 
                         (i64_type.const_int(0, false), len, true)
@@ -2299,7 +2409,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.variables
                     .last_mut()
                     .unwrap()
-                    .insert(loop_var.clone(), (var_alloca.into(), loop_var_val.1, false));
+                    .insert(loop_var.clone(), (var_alloca.into(), loop_var_val.1, super::CLEANUP_NONE));
 
                 // Compile body
                 for stmt in body {
@@ -2511,7 +2621,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         self.variables
                             .last_mut()
                             .unwrap()
-                            .insert(temp_name, (alloca.into(), ty.clone(), true));
+                            .insert(temp_name, (alloca.into(), ty.clone(), super::CLEANUP_FULL));
                     }
 
                     _ => {

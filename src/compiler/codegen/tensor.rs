@@ -187,7 +187,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         self.variables
                             .last_mut()
                             .unwrap()
-                            .insert(name.clone(), (alloca.into(), Type::I64, false));
+                            .insert(name.clone(), (alloca.into(), Type::I64, super::CLEANUP_NONE));
                     }
                     ComprehensionClause::Condition(cond_expr) => {
                         let (true_bb, false_bb) = self
@@ -213,7 +213,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.variables
                         .last_mut()
                         .unwrap()
-                        .insert(name.clone(), (alloca.into(), Type::I64, false));
+                        .insert(name.clone(), (alloca.into(), Type::I64, super::CLEANUP_NONE));
                 }
             }
         }
@@ -493,7 +493,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             (
                 v_alloca.into(),
                 Type::Tensor(Box::new(Type::F32), rank),
-                true,
+                super::CLEANUP_FULL,
             ),
         );
 
