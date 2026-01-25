@@ -2848,7 +2848,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             .struct_types
             .get(&lookup_name)
             .ok_or_else(|| {
-                 // eprintln("debug keys");
                  format!("Struct type {} not found in codegen", lookup_name)
             })?;
 
@@ -2856,7 +2855,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             .struct_defs
             .get(&lookup_name)
             .ok_or_else(|| {
-                 // eprintln("debug keys");
                  format!("Struct definition {} not found", lookup_name)
             })?
             .clone();

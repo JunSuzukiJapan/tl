@@ -310,7 +310,6 @@ fn main() -> Result<()> {
         let mut combined_source = String::new();
 
         for file in &source_files {
-            // println!("Loading file: {:?}", file);
             match load_module_with_source(file.clone()) {
                 Ok((mod_, source)) => {
                     // Merge
@@ -389,10 +388,8 @@ fn main() -> Result<()> {
             codegen.dump_ir();
         }
 
-        // println!("Executing...");
         match codegen.jit_execute("main") {
             Ok(ret) => {
-                // println!("Program returned: {}", ret)
                 let _ = ret; // suppress unused
             }
             Err(e) => {

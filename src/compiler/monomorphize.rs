@@ -110,7 +110,6 @@ impl Monomorphizer {
 
     fn collect_generics(&mut self, module: &Module) {
         for s in &module.structs {
-            // println!("Struct {} generics: {:?}", s.name, s.generics);
             if !s.generics.is_empty() {
                 self.generic_structs.insert(s.name.clone(), s.clone());
             }
@@ -284,8 +283,7 @@ impl Monomorphizer {
                      }
                  }
 
-                 // Try to resolve generic struct instantiation             ExprKind::StructInit(name, fields) => {
-                 // println!("Visiting StructInit: {} expected {:?}", name, expected_type);
+                // Try to resolve generic struct instantiation             ExprKind::StructInit(name, fields) => {
                  // 1. Explicit Generics
                  if !resolved_generics.is_empty() {
                      if self.generic_structs.contains_key(name) {
@@ -296,13 +294,10 @@ impl Monomorphizer {
                  // 2. Try context inference if not resolved
                  else if let Some(Type::UserDefined(expected_name, _)) | Some(Type::Struct(expected_name, _)) = expected_type {
                      if expected_name.starts_with(name.as_str()) {
-                         // println!("Rewrite StructInit: {} -> {} (ctx: {:?})", name, expected_name, expected_type);
                          *name = expected_name.clone();
                      } else {
-                         // println!("Rewrite StructInit mismatch: {} vs context {}", name, expected_name);
                      }
                  } else {
-                     // println!("Rewrite StructInit no context for {}", name);
                  }
                  
                  // Look up the concrete struct definition (renamed) to propagate field types
@@ -536,7 +531,6 @@ impl Monomorphizer {
                           } else {
                               // Default or Error?
                               // If un-inferable, we might have issues. Assume resolved for now or skip.
-                              // println!("Could not infer type for generic param {}", param_name);
                           }
                       }
                       

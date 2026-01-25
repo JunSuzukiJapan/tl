@@ -597,9 +597,7 @@ impl SemanticAnalyzer {
         }
 
         // Register relations
-        // println("debug count");
         for r in &module.relations {
-            // println("debug reg");
             let full_name = if prefix.is_empty() {
                 r.name.clone()
             } else {
@@ -2504,7 +2502,6 @@ impl SemanticAnalyzer {
                 }
             }
             ExprKind::FnCall(name, args) => {
-                // println("debug check");
                 // Resolve name first
                 let resolved_name = self.resolve_symbol_name(name);
                 if *name != resolved_name {
