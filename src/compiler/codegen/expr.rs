@@ -2409,12 +2409,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 _ => return Err("Failed neg".into()),
                             };
 
-                            // Fix: Free operand if temporary
-                            if self.is_safe_to_free(expr, &ty) {
-                                self.emit_recursive_free(val.into(), &ty)?;
-                            }
 
                             Ok((res, ty.clone()))
+
                         }
                         _ => Err("Negation only on int/float/tensor".into()),
                     },
@@ -2453,12 +2450,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 _ => return Err("Failed len".into()),
                             };
                             
-                            // Free temporary tensor if needed
-                            if self.is_safe_to_free(expr, &ty) {
-                                self.emit_recursive_free(val.into(), &ty)?;
-                            }
 
                             // Check len > 0
+
                             let zero = self.context.i64_type().const_zero();
                             let bool_val = self
                                 .builder
@@ -3729,16 +3723,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                     let res = func(self, compiled_args);
 
-                    // Free args
-                    for (i, (val, ty)) in compiled_args_types.into_iter().enumerate() {
-                        let arg_expr = &args.get(i);
-                        if let Some(arg_expr) = arg_expr {
-                            if self.is_safe_to_free(arg_expr, &ty) {
-                                self.emit_recursive_free(val, &ty)?;
-                            }
-                        }
                     }
                     return res;
+
                 }
                 StaticMethod::Unevaluated(func) => {
                     return func(self, args);
@@ -3864,13 +3851,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             .build_call(func, &compiled_args, "static_call")
             .map_err(|e| e.to_string())?;
 
-        // Free args
-        for (i, (val, ty)) in compiled_args_types.into_iter().enumerate() {
-            if let Some(arg_expr) = args.get(i) {
-                if self.is_safe_to_free(arg_expr, &ty) {
-                    self.emit_recursive_free(val, &ty)?;
-                }
-            }
         }
 
         match call.try_as_basic_value() {
@@ -5025,19 +5005,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Call function
                     let res_result = func(self, obj_val, obj_ty.clone(), compiled_args);
 
-                    // Free args and receiver (if safe)
-                    for (i, (val, ty)) in compiled_args_types.into_iter().enumerate() {
-                        if let Some(arg_expr) = args.get(i) {
-                            if self.is_safe_to_free(arg_expr, &ty) {
-                                self.emit_recursive_free(val, &ty)?;
-                            }
-                        }
-                    }
-                    if self.is_safe_to_free(obj, &obj_ty) {
-                        self.emit_recursive_free(obj_val, &obj_ty)?;
                     }
 
                     return res_result;
+
                 }
                 InstanceMethod::Unevaluated(func) => {
                     // Unevaluated methods handle their own arg compilation and cleanup
@@ -5433,9 +5404,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => return Err("Invalid return from tril()".into()),
                     };
                     self.emit_register_tensor(res, &obj_ty)?;
-                    if self.is_safe_to_free(obj, &obj_ty) {
-                        self.emit_recursive_free(obj_val, &obj_ty)?;
-                    }
                     return Ok((res, obj_ty.clone()));
                 }
                 "mul" | "add" | "sub" | "div" => {
@@ -5464,9 +5432,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let res = self.check_tensor_result(call, "binop_error")?;
 
                     self.emit_register_tensor(res, &obj_ty)?;
-                    if self.is_safe_to_free(obj, &obj_ty) {
-                        self.emit_recursive_free(obj_val, &obj_ty)?;
-                    }
 
                     // Note: ensure_tensor_v2 result might need freeing if it was promoted
                     // But currently arguments cleanup loop handles args[0].
@@ -5720,18 +5685,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             .builder
             .build_call(func_val, &compiled_args_vals, "method_call")
             .map_err(|e| e.to_string())?;
-
-        // Cleanup
-        if self.is_safe_to_free(obj, &obj_ty) {
-            self.emit_recursive_free(obj_val, &obj_ty)?;
-        }
-        for (i, (val, ty)) in compiled_args_types.into_iter().enumerate() {
-            if let Some(arg_expr) = args.get(i) {
-                if self.is_safe_to_free(arg_expr, &ty) {
-                    self.emit_recursive_free(val, &ty)?;
-                }
-            }
-        }
 
         // Return handling
         match call.try_as_basic_value() {

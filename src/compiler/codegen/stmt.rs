@@ -2762,6 +2762,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let scalar_tensor = self
                     .check_tensor_result(call, "scalar_tensor_rhs_error")?
                     .into_pointer_value();
+                self.emit_register_tensor(scalar_tensor.into(), &Type::Tensor(Box::new(Type::F32), 0))?;
+
 
                 // 4. Call Op
                 let fn_name = match op {
@@ -2822,6 +2824,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let scalar_tensor = self
                     .check_tensor_result(call, "scalar_tensor_lhs_error")?
                     .into_pointer_value();
+                self.emit_register_tensor(scalar_tensor.into(), &Type::Tensor(Box::new(Type::F32), 0))?;
+
 
                 let fn_name = match op {
                     BinOp::Add => "tl_tensor_add",
@@ -2891,8 +2895,12 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let l_tensor =
                     create_tensor(&self.builder, &self.module, lhs.into_pointer_value(), *len1)?;
+                self.emit_register_tensor(l_tensor.into(), &Type::Tensor(Box::new(Type::F32), 1))?;
+
                 let r_tensor =
                     create_tensor(&self.builder, &self.module, rhs.into_pointer_value(), *len2)?;
+                self.emit_register_tensor(r_tensor.into(), &Type::Tensor(Box::new(Type::F32), 1))?;
+
 
                 // Now call tensor binary op
                 let fn_name = match op {
