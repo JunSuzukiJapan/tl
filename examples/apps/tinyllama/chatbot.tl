@@ -3,7 +3,7 @@
 struct Tokenizer { _h: i64 }
 struct KVCache { _h: i64 }
 struct File {} 
-struct Map { _d: i64 }
+// struct Map { _d: i64 } // Builtin
 struct Tensor {} // Dummy namespace
 
 struct Linear { w: Tensor<f32, 2> }
