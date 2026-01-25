@@ -2842,13 +2842,13 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
         
         // Debug:
-        // if generics.len() > 0 { eprintln!("DEBUG: compiling init for {}, lookup {}", name, lookup_name); }
+        // if generics.len() > 0 { ... }
 
         let struct_type = *self
             .struct_types
             .get(&lookup_name)
             .ok_or_else(|| {
-                 eprintln!("DEBUG: struct_types keys: {:?}", self.struct_types.keys());
+                 // eprintln("debug keys");
                  format!("Struct type {} not found in codegen", lookup_name)
             })?;
 
@@ -2856,7 +2856,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .struct_defs
             .get(&lookup_name)
             .ok_or_else(|| {
-                 eprintln!("DEBUG: struct_defs keys: {:?}", self.struct_defs.keys());
+                 // eprintln("debug keys");
                  format!("Struct definition {} not found", lookup_name)
             })?
             .clone();

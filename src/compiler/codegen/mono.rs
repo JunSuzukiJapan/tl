@@ -87,7 +87,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         
         // Compile
         self.fn_return_types.insert(mangled_name.clone(), new_method.return_type.clone());
-        // eprintln!("DEBUG: Monomorphizing {}, return type: {:?}", mangled_name, new_method.return_type);
+        // Compile
         
         // Add to module
         // We need to compile it as a function.
