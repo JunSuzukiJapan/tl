@@ -1,5 +1,5 @@
 use super::CodeGenerator;
-use crate::compiler::ast::{Type, FunctionDef, Stmt};
+use crate::compiler::ast::Type;
 use crate::compiler::ast_subst::TypeSubstitutor;
 use inkwell::types::{BasicTypeEnum, StructType};
 use inkwell::AddressSpace;
@@ -479,15 +479,15 @@ impl<'ctx> CodeGenerator<'ctx> {
              let call = self.builder.build_call(core_fn, &args, "");
              
              if core_fn.get_type().get_return_type().is_none() {
-                 self.builder.build_return(None);
+                 let _ = self.builder.build_return(None);
              } else {
                  match call.unwrap().try_as_basic_value() {
                      inkwell::values::ValueKind::Basic(v) => {
-                         self.builder.build_return(Some(&v));
+                         let _ = self.builder.build_return(Some(&v));
                      }
                      _ => {
                         // Should not happen if return type is not none?
-                        self.builder.build_return(None);
+                        let _ = self.builder.build_return(None);
                      }
                  }
              }
