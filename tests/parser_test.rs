@@ -335,3 +335,84 @@ fn test_top_level() {
     // use stmt + tensor decl
     assert_eq!(module.tensor_decls.len(), 1);
 }
+#[test]
+fn test_match_expr() {
+    let input = r#"
+    match x {
+        Ok(v) => v,
+        Err(e) => 0,
+        _ => -1,
+    }
+    "#;
+    if let ExprKind::Match { expr: target, arms } = p_expr(input) {
+        assert_eq!(target.inner, ExprKind::Variable("x".to_string()));
+        assert_eq!(arms.len(), 3);
+    } else {
+        panic!("Expected Match");
+    }
+}
+
+#[test]
+fn test_if_let() {
+    let input = "if let Some(x) = opt { x } else { 0 }";
+    if let ExprKind::IfLet { pattern, expr, then_block, else_block } = p_expr(input) {
+        assert!(matches!(pattern, tl_lang::compiler::ast::Pattern::EnumPattern { .. }));
+        assert_eq!(expr.inner, ExprKind::Variable("opt".to_string()));
+        assert_eq!(then_block.len(), 1); // Expr stmt
+        assert!(else_block.is_some());
+    } else {
+        panic!("Expected IfLet");
+    }
+}
+
+#[test]
+fn test_generics() {
+    // Generic Function
+    let input = "fn map<T, U>(x: T) -> U { }";
+    let tokens = tokenize(input).into_iter().map(|r| r.unwrap()).collect::<Vec<_>>();
+    let module = parse(&tokens).expect("Failed to parse generic fn");
+    let func = &module.functions[0];
+    assert_eq!(func.name, "map");
+    assert_eq!(func.generics, vec!["T", "U"]);
+
+    // Generic Struct
+    let input = "struct Container<T> { value: T }";
+    let tokens = tokenize(input).into_iter().map(|r| r.unwrap()).collect::<Vec<_>>();
+    let module = parse(&tokens).expect("Failed to parse generic struct");
+    let strct = &module.structs[0];
+    assert_eq!(strct.name, "Container");
+    assert_eq!(strct.generics, vec!["T"]);
+}
+
+#[test]
+fn test_enums() {
+    let input = r#"
+    enum Option<T> {
+        Some(T),
+        None,
+    }
+    "#;
+    let tokens = tokenize(input).into_iter().map(|r| r.unwrap()).collect::<Vec<_>>();
+    let module = parse(&tokens).expect("Failed to parse enum");
+    let enm = &module.enums[0];
+    assert_eq!(enm.name, "Option");
+    assert_eq!(enm.generics, vec!["T"]);
+    assert_eq!(enm.variants.len(), 2);
+    // Variant Payload checking if possible via public AST
+}
+
+#[test]
+fn test_logic_query() {
+    match p_expr("?path(a, $x)") {
+        ExprKind::UnOp(UnOp::Query, inner) => {
+            if let ExprKind::FnCall(name, args) = inner.inner {
+                assert_eq!(name, "path");
+                assert_eq!(args.len(), 2);
+                assert_eq!(args[1].inner, ExprKind::LogicVar("x".to_string()));
+            } else {
+                panic!("Expected Predicate Call");
+            }
+        }
+        _ => panic!("Expected Query"),
+    }
+}
