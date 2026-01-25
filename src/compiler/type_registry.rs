@@ -1430,7 +1430,7 @@ impl TypeRegistry {
             (Type::Tensor(_, _), Type::Tensor(_, _)) => true,
             (Type::TensorShaped(_, _), Type::Tensor(_, _)) => true,
             (Type::Tensor(_, _), Type::TensorShaped(_, _)) => true,
-            _ => a == b,
+            _ => crate::compiler::generics::GenericResolver::types_equivalent(a, b),
         }
     }
 }

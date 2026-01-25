@@ -422,6 +422,29 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder.position_at_end(merge_block);
             }
             Type::Struct(name, _) | Type::UserDefined(name, _) => {
+                // Fix: Vec<T> is often represented as UserDefined("Vec", [T])
+                // We must treat it as Type::Vec to ensure:
+                // 1. Elements are recursively freed
+                // 2. The container is freed via tl_vec_void_free (Box::from_raw) to avoid malloc/free mismatch crash.
+                if name.starts_with("Vec") {
+                    let inner_ty = if let Type::UserDefined(_, args) = ty {
+                        if !args.is_empty() {
+                             args[0].clone()
+                        } else {
+                             Type::Void
+                        }
+                    } else if let Type::Struct(_, args) = ty {
+                        if !args.is_empty() {
+                             args[0].clone()
+                        } else {
+                             Type::Void
+                        }
+                    } else {
+                        Type::Void
+                    };
+                    return self.emit_recursive_free(val, &Type::Vec(Box::new(inner_ty)));
+                }
+
                 // Skip String
                 if name == "String" {
                     return Ok(());
@@ -501,7 +524,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Only support Vec<Tensor> or Vec<Struct> (pointer-sized elements) for now
                 if matches!(
                     inner_ty.as_ref(),
-                    Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _)
+                    Type::Tensor(_, _) // Structs/UserDefined are Scope-Owned, do not free in Vec
                 ) {
                     let len_fn = self
                         .module

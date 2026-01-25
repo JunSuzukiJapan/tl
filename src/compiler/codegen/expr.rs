@@ -4800,44 +4800,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         )
     }
 
-    // Helper to get LLVM BasicType from tl::Type
-    pub(crate) fn get_llvm_type(
-        &self,
-        ty: &Type,
-    ) -> Result<inkwell::types::BasicTypeEnum<'ctx>, String> {
-        match ty {
-            Type::I64 => Ok(self.context.i64_type().into()),
-            Type::I32 => Ok(self.context.i32_type().into()), // Support I32
-            Type::F64 => Ok(self.context.f64_type().into()),
-            Type::F32 => Ok(self.context.f32_type().into()),
-            Type::Bool => Ok(self.context.bool_type().into()),
-            Type::Tensor(_, _) => Ok(self
-                .context
-                .ptr_type(inkwell::AddressSpace::default())
-                .into()),
-            Type::UserDefined(_, _) | Type::Struct(_, _) | Type::Enum(_, _) => {
-                // Return pointer type for structs
-                Ok(self
-                    .context
-                    .ptr_type(inkwell::AddressSpace::default())
-                    .into())
-            }
-            Type::ScalarArray(_, _) => Ok(self
-                .context
-                .ptr_type(inkwell::AddressSpace::default())
-                .into()),
-            Type::Vec(_) => Ok(self
-                .context
-                .ptr_type(inkwell::AddressSpace::default())
-                .into()),
-            Type::Tuple(_) => Ok(self
-                .context
-                .ptr_type(inkwell::AddressSpace::default())
-                .into()),
-            Type::Void => Err("Void type has no LLVM BasicType".into()),
-            _ => Err(format!("Unsupported type for get_llvm_type: {:?}", ty)),
-        }
-    }
 
     pub(crate) fn create_entry_block_alloca(
         &self,
@@ -4991,7 +4953,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                          "f32" => Some(Box::new(Type::F32)),
                          "u8" => Some(Box::new(Type::U8)),
                          "String" => Some(Box::new(Type::UserDefined(String::from("String"), vec![]))),
-                         _ => Some(Box::new(Type::Void)), // Default fallback
+                         _ => Some(Box::new(Type::UserDefined(suffix.to_string(), vec![]))),
                      }
                  } else {
                      None
@@ -5027,51 +4989,61 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if args.len() != 1 {
                         return Err("push requires 1 argument".into());
                     }
-                    let (arg_val, _) = self.compile_expr(&args[0])?;
-                    let fn_name = match inner.as_ref() {
-                        Type::U8 => "tl_vec_u8_push",
-                        Type::I64 => "tl_vec_i64_push",
-                        Type::F32 => "tl_vec_f32_push",
-                        _ => "tl_vec_ptr_push",
-                    };
+                    let (arg_val, arg_ty) = self.compile_expr(&args[0])?;
                     
-                    let arg_casted = if fn_name == "tl_vec_ptr_push" {
-                         // Build pointer cast to i8* (void*)
+                    // Use Monomorphizer to get/create specialized method
+                    let fn_name = self.ensure_vec_method(&inner, "push")
+                        .map_err(|e| format!("Failed to monomorphize push: {}", e))?;
+                    
+                    let fn_val = self.module.get_function(&fn_name)
+                        .ok_or(format!("{} not found", fn_name))?;
+
+                    // Prepare argument: cast if necessary
+                    // For struct types (which use generic ptr implementation), we need to cast to i8*
+                    // unless we generated a specialized wrapper (which ensure_vec_method handles via aliasing to core fn)
+                    // The core fn for structs is tl_vec_ptr_push(vec*, void*)
+                    // So we expect the function to take i8*.
+                    
+                    // However, we added alias with correct name, but sharing the SAME signature as core function?
+                    // In ensure_vec_method: "let fn_type = core_fn.get_type();"
+                    // So checks against fn_type param types.
+                    
+                    let param_type = fn_val.get_nth_param(1).unwrap().get_type();
+                    let arg_casted = if param_type.is_pointer_type() {
+                         // Cast arg to whatever pointer type the function expects (likely i8*)
                          let ptr = arg_val.into_pointer_value();
                          self.builder.build_pointer_cast(
                              ptr, 
-                             self.context.i8_type().ptr_type(inkwell::AddressSpace::default()),
-                             "void_ptr"
+                             param_type.into_pointer_type(),
+                             "arg_cast"
                          ).unwrap().into()
-                    } else if fn_name == "tl_vec_u8_push" {
-                         // arg is usually I64/I32, truncate to u8?
-                         // Assuming arg is passed as i64 or i32. 
-                         // tl_vec_u8_push takes u8.
-                         // But compile_expr returns BasicValueEnum.
-                         // If we are pushing 1, it's I64 const.
-                         // We need to cast.
-                         // For now, let's allow implicit cast or trust the runtime signature?
-                         // C function takes `uint8_t`. We should pass `i8`.
+                    } else if param_type.is_int_type() {
                          if arg_val.is_int_value() {
-                             self.builder.build_int_cast(
-                                 arg_val.into_int_value(), 
-                                 self.context.i8_type(), 
-                                 "to_u8"
-                             ).unwrap().into()
+                             if arg_val.into_int_value().get_type() != param_type.into_int_type() {
+                                 // Cast int (e.g. i64 -> u8)
+                                 self.builder.build_int_cast(
+                                     arg_val.into_int_value(),
+                                     param_type.into_int_type(),
+                                     "arg_int_cast"
+                                 ).unwrap().into()
+                             } else {
+                                 arg_val
+                             }
                          } else {
-                             arg_val
+                             return Err(format!("Expected int for push, got {:?}", arg_ty));
                          }
+                    } else if param_type.is_float_type() {
+                         // Check float types
+                         arg_val
                     } else {
                         arg_val
                     };
 
-                    let fn_val = self
-                        .module
-                        .get_function(fn_name)
-                        .ok_or(format!("{} not found", fn_name))?;
                     self.builder
                         .build_call(fn_val, &[obj_val.into(), arg_casted.into()], "")
                         .map_err(|e| e.to_string())?;
+                    
+                    // Return Void
                     return Ok((
                         self.context.i64_type().const_int(0, false).into(),
                         Type::Void,
@@ -5094,16 +5066,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                          return Err("Index must be integer".into());
                     };
 
-                    let fn_name = match inner.as_ref() {
-                        Type::U8 => "tl_vec_u8_get",
-                        Type::I64 => "tl_vec_i64_get",
-                        Type::F32 => "tl_vec_f32_get",
-                        _ => "tl_vec_ptr_get",
-                    };
+                    // Use Monomorphizer
+                    let fn_name = self.ensure_vec_method(&inner, "get")
+                        .map_err(|e| format!("Failed to monomorphize get: {}", e))?;
                     
-                    let fn_val = self
-                        .module
-                        .get_function(fn_name)
+                    let fn_val = self.module.get_function(&fn_name)
                         .ok_or(format!("{} not found", fn_name))?;
                         
                     let call = self
@@ -5115,29 +5082,39 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => return Err("Invalid return from vec.get()".into()),
                     };
                     
-                    // Cast back if needed
-                    let final_res = if fn_name == "tl_vec_ptr_get" {
-                        let inner_llvm_ty = self.get_llvm_type(&inner)?;
-                        let ptr_ty = match inner_llvm_ty {
+                    // No need to cast back if specialized wrapper returns correct type!
+                    // If ensure_vec_method creates a wrapper that calls core fn (which returns i8*)
+                    // The wrapper logic in mono.rs (generic call) returns whatever core fn returns (i8*).
+                    // So we STILL need to cast if the wrapper returns i8* but we expect Point*.
+                    
+                    // Wait, ensure_vec_method in mono.rs creates wrapper with SAME signature as core fn.
+                    // core fn for struct is `tl_vec_ptr_get` -> returns i8*.
+                    // So `fn_val` returns i8*.
+                    // So we DO need to cast result to `inner` type pointer.
+                    
+                    // But if inner is i64, core fn is `tl_vec_i64_get` -> returns i64.
+                    // Wrapper returns i64. No cast needed.
+                    
+                    // So we check return type of `fn_val`.
+                    let ret_type = fn_val.get_type().get_return_type().unwrap(); // We know it's not void for get
+                    
+                    let final_res = if ret_type.is_pointer_type() {
+                         // Cast to expected inner type pointer
+                         let inner_llvm_ty = self.get_llvm_type(&inner)?;
+                         // If inner is Struct, get_llvm_type returns pointer (opaque struct ptr).
+                         // That's what we want.
+                         let ptr_ty = match inner_llvm_ty {
                             inkwell::types::BasicTypeEnum::PointerType(p) => p,
                             _ => return Err("Expected pointer type for Vec inner element".into()), 
-                            // If inner is struct, get_llvm_type returns pointer.
-                        };
-                        self.builder.build_pointer_cast(
-                            res.into_pointer_value(),
-                            ptr_ty,
-                            "cast_back"
-                        ).unwrap().into()
-                    } else if fn_name == "tl_vec_u8_get" {
-                        // Returns u8 (i8). Extend to i64 for consistency?
-                        // Type system expects U8 (which is likely i64/i32 or u8).
-                        // Type::U8 usually treated as integer.
-                        // If we return i8, but system expects i64...
-                        // Let's zext to i64.
-                         self.builder.build_int_z_extend(
-                             res.into_int_value(),
-                             self.context.i64_type(),
-                             "u8_to_i64"
+                         };
+                         
+                         // If check if res is already correct type?
+                         // struct types are opaque pointers. i8* is opaque pointer (in new LLVM).
+                         // But if we need explicit cast for strictness or older LLVM...
+                         self.builder.build_pointer_cast(
+                             res.into_pointer_value(),
+                             ptr_ty,
+                             "cast_back"
                          ).unwrap().into()
                     } else {
                         res

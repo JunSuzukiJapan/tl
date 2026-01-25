@@ -32,14 +32,15 @@ impl GenericResolver {
     ) -> Result<(), String> {
         match (gen, conc) {
             // Case 1: Generic parameter (e.g. T) matching any concrete type
-            (Type::UserDefined(name, args), _) if args.is_empty() && Self::is_likely_generic_param(name) => {
+            // This handles UserDefined("T", []) matching Struct("Point", []), I64, etc.
+            (Type::UserDefined(name, args), conc_ty) if args.is_empty() && Self::is_likely_generic_param(name) => {
                 // Check if already bound
                 if let Some(existing) = bindings.get(name) {
-                     if existing != conc {
-                         return Err(format!("Generic parameter {} bound to mismatched types: {:?} vs {:?}", name, existing, conc));
+                     if !Self::types_equivalent(existing, conc_ty) {
+                         return Err(format!("Generic parameter {} bound to mismatched types: {:?} vs {:?}", name, existing, conc_ty));
                      }
                 } else {
-                    bindings.insert(name.clone(), conc.clone());
+                    bindings.insert(name.clone(), conc_ty.clone());
                 }
                 Ok(())
             }
@@ -96,6 +97,38 @@ impl GenericResolver {
         // In this codebase, String is UserDefined("String", vec![]).
         if name == "String" { return false; }
         return true; 
+    }
+
+    /// Check if two types are equivalent (handles cross-variant matching like UserDefined vs Struct).
+    pub fn types_equivalent(t1: &Type, t2: &Type) -> bool {
+        match (t1, t2) {
+            // Primitives must match exactly
+            (Type::I64, Type::I64) => true,
+            (Type::I32, Type::I32) => true,
+            (Type::F32, Type::F32) => true,
+            (Type::F64, Type::F64) => true,
+            (Type::Bool, Type::Bool) => true,
+            (Type::Void, Type::Void) => true,
+            
+            // UserDefined("Point", []) is equivalent to Struct("Point", [])
+            (Type::UserDefined(n1, a1), Type::Struct(n2, a2))
+            | (Type::Struct(n1, a1), Type::UserDefined(n2, a2))
+            | (Type::UserDefined(n1, a1), Type::UserDefined(n2, a2))
+            | (Type::Struct(n1, a1), Type::Struct(n2, a2)) => {
+                n1 == n2 && a1.len() == a2.len() && 
+                    a1.iter().zip(a2.iter()).all(|(x, y)| Self::types_equivalent(x, y))
+            }
+            
+            (Type::Enum(n1, a1), Type::Enum(n2, a2)) => {
+                n1 == n2 && a1.len() == a2.len() && 
+                    a1.iter().zip(a2.iter()).all(|(x, y)| Self::types_equivalent(x, y))
+            }
+            
+            (Type::Vec(i1), Type::Vec(i2)) => Self::types_equivalent(i1, i2),
+            (Type::Tensor(i1, r1), Type::Tensor(i2, r2)) => r1 == r2 && Self::types_equivalent(i1, i2),
+            
+            _ => t1 == t2,
+        }
     }
 
     /// Substitutes generic parameters in `ty` using `bindings`.
