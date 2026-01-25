@@ -139,7 +139,15 @@ fn main() -> Result<()> {
 
             // Monomorphization
             let mut monomorphizer = tl_lang::compiler::monomorphize::Monomorphizer::new();
-            monomorphizer.run(&mut ast);
+            if let Err(e) = monomorphizer.run(&mut ast) {
+                let tl_err = e.with_file(file.to_str().unwrap_or("unknown"));
+                print_tl_error_with_source(
+                    &tl_err,
+                    &source,
+                    Some(file.to_str().unwrap_or("unknown")),
+                );
+                std::process::exit(1);
+            }
 
             // Codegen
             let context = InkwellContext::create();
@@ -166,6 +174,7 @@ fn main() -> Result<()> {
             }
 
             if cli.save_asm {
+                let asm_path = file.with_extension("s");
                 if let Err(e) = codegen.emit_assembly_file(&asm_path) {
                     log::error!("Failed to emit assembly for {:?}: {}", file, e);
                     std::process::exit(1);
@@ -352,7 +361,10 @@ fn main() -> Result<()> {
 
         // Monomorphization (JIT)
         let mut monomorphizer = tl_lang::compiler::monomorphize::Monomorphizer::new();
-        monomorphizer.run(&mut combined_module);
+        if let Err(e) = monomorphizer.run(&mut combined_module) {
+             print_tl_error_with_source(&e, &combined_source, None);
+             std::process::exit(1);
+        }
 
         // JIT Execution
         use tl_runtime::registry;
@@ -406,7 +418,7 @@ fn run_logic_program(
     module: &tl_lang::compiler::ast::Module,
     ctx: &tl_lang::compiler::inference::TensorContext,
 ) {
-) {
+
 use tl_lang::compiler::ast::{Atom, ExprKind};
 
     log::info!("Executing logic program...");
@@ -432,8 +444,7 @@ use tl_lang::compiler::ast::{Atom, ExprKind};
         rules.push(rule.clone());
     }
 
-        rules.push(rule.clone());
-    }
+
 
     log::info!("Initial facts: {}", initial_facts.len());
     log::info!("Rules: {}", rules.len());

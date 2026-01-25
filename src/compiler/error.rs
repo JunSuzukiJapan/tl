@@ -74,6 +74,14 @@ pub enum TlError {
         span: Option<Span>,
     },
 
+    /// モノモーフィゼーションエラー
+    #[error("{kind}")]
+    Monomorphization {
+        kind: MonomorphizationErrorKind,
+        span: Option<Span>,
+    },
+
+
     /// I/Oエラー
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -86,9 +94,11 @@ impl TlError {
             TlError::Parse { span, .. } => span.as_ref(),
             TlError::Semantic { span, .. } => span.as_ref(),
             TlError::Codegen { span, .. } => span.as_ref(),
+            TlError::Monomorphization { span, .. } => span.as_ref(),
             TlError::Io(_) => None,
         }
     }
+
 
     /// ファイル名を設定（既存のSpanに追加）
     pub fn with_file(mut self, file: impl Into<String>) -> Self {
@@ -127,6 +137,18 @@ impl TlError {
                     });
                 }
             }
+            TlError::Monomorphization { span, .. } => {
+                if let Some(s) = span {
+                    s.file = Some(file);
+                } else {
+                    *span = Some(Span {
+                        file: Some(file),
+                        line: 0,
+                        column: 0,
+                    });
+                }
+            }
+
             TlError::Io(_) => {}
         }
         self
@@ -138,15 +160,19 @@ impl TlError {
             TlError::Parse { .. } => "parse error",
             TlError::Semantic { .. } => "semantic error",
             TlError::Codegen { .. } => "codegen error",
+            TlError::Monomorphization { .. } => "monomorphization error",
             TlError::Io(_) => "io error",
         };
+
 
         let message = match self {
             TlError::Parse { kind, .. } => kind.to_string(),
             TlError::Semantic { kind, .. } => kind.to_string(),
             TlError::Codegen { kind, .. } => kind.to_string(),
+            TlError::Monomorphization { kind, .. } => kind.to_string(),
             TlError::Io(e) => e.to_string(),
         };
+
 
         if let Some(span) = self.span() {
             if span.line > 0 {
@@ -280,6 +306,20 @@ pub enum CodegenErrorKind {
     Generic(String),
 }
 
+/// モノモーフィゼーションエラーの種類
+#[derive(Error, Debug, Clone)]
+pub enum MonomorphizationErrorKind {
+    #[error("recursion limit reached: {0}")]
+    RecursionLimitReached(String),
+
+    #[error("generic item not found during instantiation: {0}")]
+    GenericItemNotFound(String),
+    
+    #[error("generic inference failed: {0}")]
+    InferenceFailed(String),
+}
+
+
 /// 入力文字列とオフセットから行と列を計算
 pub fn offset_to_line_col(input: &str, offset: usize) -> (usize, usize) {
     let mut line = 1;
@@ -315,16 +355,20 @@ pub fn format_error_with_source(error: &TlError, source: &str, file_name: Option
         TlError::Parse { .. } => "parse",
         TlError::Semantic { .. } => "semantic",
         TlError::Codegen { .. } => "codegen",
+        TlError::Monomorphization { .. } => "monomorphization",
         TlError::Io(_) => "io",
     };
+
 
     // エラーメッセージ
     let message = match error {
         TlError::Parse { kind, .. } => kind.to_string(),
         TlError::Semantic { kind, .. } => kind.to_string(),
         TlError::Codegen { kind, .. } => kind.to_string(),
+        TlError::Monomorphization { kind, .. } => kind.to_string(),
         TlError::Io(e) => e.to_string(),
     };
+
 
     // ヘッダー: error[E0001]: <message>
     output.push_str(&format!("\x1b[1;31merror[E0001]\x1b[0m: {}\n", message));

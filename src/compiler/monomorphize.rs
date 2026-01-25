@@ -1,5 +1,7 @@
 use crate::compiler::ast::*;
+use crate::compiler::error::{TlError, MonomorphizationErrorKind};
 use std::collections::{HashMap, VecDeque};
+
 
 pub struct Monomorphizer {
     // Map from (OriginalName, ConcreteTypes) -> MangledName
@@ -55,7 +57,7 @@ impl Monomorphizer {
         }
     }
 
-    pub fn run(&mut self, module: &mut Module) {
+    pub fn run(&mut self, module: &mut Module) -> Result<(), TlError> {
         log::debug!("Starting Monomorphization");
         // 1. Collect generic definitions
         self.collect_generics(module);
@@ -75,12 +77,15 @@ impl Monomorphizer {
 
             steps += 1;
             if steps > 10000 {
-                panic!("Monomorphization limit reached. Infinite recursion?");
+                return Err(TlError::Monomorphization {
+                    kind: MonomorphizationErrorKind::RecursionLimitReached(format!("Processing {} with args {:?}", name, types)),
+                    span: None,
+                });
             }
             if is_struct {
-                self.instantiate_struct(&name, &types);
+                self.instantiate_struct(&name, &types)?;
             } else {
-                self.instantiate_function(&name, &types);
+                self.instantiate_function(&name, &types)?;
             }
         }
         
@@ -98,7 +103,9 @@ impl Monomorphizer {
         module.enums.retain(|e| e.generics.is_empty());
         
         log::info!("Monomorphization done. Structs: {} -> {}", initial_structs, module.structs.len());
+        Ok(())
     }
+
 
 
     fn collect_generics(&mut self, module: &Module) {
@@ -741,14 +748,18 @@ impl Monomorphizer {
          mangled
     }
     
-    fn instantiate_struct(&mut self, name: &str, args: &[Type]) {
+    fn instantiate_struct(&mut self, name: &str, args: &[Type]) -> Result<(), TlError> {
         if self.generic_enums.contains_key(name) {
-             self.instantiate_enum(name, args);
-             return;
+             self.instantiate_enum(name, args)?;
+             return Ok(());
         }
 
         if let Some(def) = self.generic_structs.get(name) {
-            let mangled = self.struct_instances.get(&(name.to_string(), args.to_vec())).unwrap().clone();
+            let mangled = self.struct_instances.get(&(name.to_string(), args.to_vec()))
+                .ok_or_else(|| TlError::Monomorphization {
+                    kind: MonomorphizationErrorKind::GenericItemNotFound(format!("Struct instance {} {:?} not found in map", name, args)),
+                    span: None
+                })?.clone();
             log::debug!("Instantiating struct {} -> {} with args {:?}", name, mangled, args);
             
             // Substitution map
@@ -772,11 +783,17 @@ impl Monomorphizer {
             // Also instantiate associated impl blocks
             self.instantiate_impls(name, args);
         }
+        Ok(())
     }
 
-    fn instantiate_enum(&mut self, name: &str, args: &[Type]) {
+
+    fn instantiate_enum(&mut self, name: &str, args: &[Type]) -> Result<(), TlError> {
          if let Some(def) = self.generic_enums.get(name) {
-            let mangled = self.struct_instances.get(&(name.to_string(), args.to_vec())).unwrap().clone();
+            let mangled = self.struct_instances.get(&(name.to_string(), args.to_vec()))
+                .ok_or_else(|| TlError::Monomorphization {
+                    kind: MonomorphizationErrorKind::GenericItemNotFound(format!("Enum instance {} {:?} not found in map", name, args)),
+                    span: None
+                })?.clone();
             
             let mut subst = HashMap::new();
             for (i, param) in def.generics.iter().enumerate() {
@@ -797,11 +814,17 @@ impl Monomorphizer {
             
             self.concrete_enums.push(new_def);
          }
+         Ok(())
     }
+
     
-    fn instantiate_function(&mut self, name: &str, args: &[Type]) {
+    fn instantiate_function(&mut self, name: &str, args: &[Type]) -> Result<(), TlError> {
          if let Some(def) = self.generic_functions.get(name) {
-            let mangled = self.function_instances.get(&(name.to_string(), args.to_vec())).unwrap().clone();
+            let mangled = self.function_instances.get(&(name.to_string(), args.to_vec()))
+                .ok_or_else(|| TlError::Monomorphization {
+                    kind: MonomorphizationErrorKind::GenericItemNotFound(format!("Function instance {} {:?} not found in map", name, args)),
+                    span: None
+                })?.clone();
             
             let mut subst = HashMap::new();
             for (i, param) in def.generics.iter().enumerate() {
@@ -834,7 +857,9 @@ impl Monomorphizer {
 
             self.concrete_functions.push(new_def);
          }
+         Ok(())
     }
+
     
     fn rewrite_function_body(&mut self, func: &mut FunctionDef, subst: &HashMap<String, Type>) {
         self.scopes.push(HashMap::new());
