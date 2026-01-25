@@ -56,21 +56,23 @@ impl Monomorphizer {
     }
 
     pub fn run(&mut self, module: &mut Module) {
-        println!("Starting Monomorphization");
+        log::debug!("Starting Monomorphization");
         // 1. Collect generic definitions
         self.collect_generics(module);
         
         let initial_structs = module.structs.len();
-        println!("Generic structs collected: {}", self.generic_structs.len());
+        log::debug!("Generic structs collected: {}", self.generic_structs.len());
         
         // 2. Scan for initial usages in main and non-generic functions
-        println!("Scanning module...");
+        log::debug!("Scanning module...");
         self.scan_module(module);
+
         
         // 3. Process queue until empty
         let mut steps = 0;
         while let Some((name, types, is_struct)) = self.pending_queue.pop_front() {
-            println!("Processing pending: {} {:?}", name, types);
+            log::trace!("Processing pending: {} {:?}", name, types);
+
             steps += 1;
             if steps > 10000 {
                 panic!("Monomorphization limit reached. Infinite recursion?");
@@ -83,7 +85,8 @@ impl Monomorphizer {
         }
         
         // 4. Update module with concrete definitions
-        println!("Adding {} concrete structs", self.concrete_structs.len());
+        // 4. Update module with concrete definitions
+        log::debug!("Adding {} concrete structs", self.concrete_structs.len());
         module.structs.extend(self.concrete_structs.drain(..));
         module.functions.extend(self.concrete_functions.drain(..));
         module.enums.extend(self.concrete_enums.drain(..));
@@ -94,8 +97,9 @@ impl Monomorphizer {
         module.functions.retain(|f| f.generics.is_empty()); 
         module.enums.retain(|e| e.generics.is_empty());
         
-        println!("Monomorphization done. Structs: {} -> {}", initial_structs, module.structs.len());
+        log::info!("Monomorphization done. Structs: {} -> {}", initial_structs, module.structs.len());
     }
+
 
     fn collect_generics(&mut self, module: &Module) {
         for s in &module.structs {

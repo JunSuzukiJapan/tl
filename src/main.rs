@@ -45,11 +45,36 @@ struct Cli {
     /// Enable runtime memory allocation logging
     #[arg(long)]
     mem_log: bool,
+
+    /// Verbose logging (-v info, -vv debug)
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    verbose: u8,
 }
 
+
 fn main() -> Result<()> {
-    env_logger::init();
+    // env_logger::init(); // Moved to after CLI parse to use verbose flag
     let cli = Cli::parse();
+
+    // Initialize Logger
+    let mut builder = env_logger::Builder::new();
+    // Default level: WARN
+    builder.filter_level(log::LevelFilter::Warn);
+    
+    // Override with CLI verbose level
+    match cli.verbose {
+        0 => { 
+            // Check RUST_LOG env var if no -v flag
+             if std::env::var("RUST_LOG").is_ok() {
+                  builder.parse_default_env();
+             }
+        } 
+        1 => { builder.filter_level(log::LevelFilter::Info); }
+        2 => { builder.filter_level(log::LevelFilter::Debug); }
+        _ => { builder.filter_level(log::LevelFilter::Trace); }
+    };
+
+    builder.init();
 
     // Set device environment variable
     if std::env::var("TL_DEVICE").is_err() {
