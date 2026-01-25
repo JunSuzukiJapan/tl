@@ -537,7 +537,6 @@ impl Monomorphizer {
                   }
               }
               ExprKind::StaticMethodCall(type_ty, method_name, args) => {
-                          println!("DEBUG: StaticMethodCall {:?}::{}", type_ty, method_name);
                           *type_ty = self.substitute_type(type_ty, subst);
                           *type_ty = self.resolve_type(type_ty);
                           for arg in args.iter_mut() {

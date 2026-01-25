@@ -614,7 +614,6 @@ impl SemanticAnalyzer {
         }
 
         // Implicit relations from rules
-        println!("DEBUG: Rules count: {}", module.rules.len());
         for rule in &module.rules {
              let full_name = if prefix.is_empty() {
                  rule.head.predicate.clone()

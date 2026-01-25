@@ -1296,10 +1296,7 @@ fn parse_rule(input: Input) -> IResult<Input, crate::compiler::ast::Rule, Parser
     // Head :- Body. or Head.
     let (rest_after_head, head) = parse_datalog_atom(input)?;
     
-    // Debug
-    if let Some(tok) = rest_after_head.first() {
-        println!("DEBUG: parse_rule head parsed: {:?}, next token: {:?}", head.predicate, tok.token);
-    }
+
 
     if let Ok((rest, _)) = expect_token(Token::Entails)(rest_after_head) {
         // Rule
