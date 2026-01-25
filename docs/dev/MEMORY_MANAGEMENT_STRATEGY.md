@@ -1,262 +1,182 @@
-# TensorLogic Memory Management Strategy
-# TensorLogic メモリ管理戦略
+# TensorLogic Memory Management Strategy V2 (Hybrid Static Analysis)
+# TensorLogic メモリ管理戦略 V2 (ハイブリッド静的解析)
 
-This document outlines the memory management strategy used in the TensorLogic (tl) runtime and compiler.
-本ドキュメントでは、TensorLogic (tl) ランタイムおよびコンパイラで使用されるメモリ管理戦略について概説します。
+This document outlines the **V2 Memory Memory Management Strategy** implemented in TensorLogic.
+This strategy resolves the performance bottlenecks of the V1 (RefCounting + Scope) system by introducing **Static Analysis** and **Liveness-based Memory Reuse**.
 
----
-
-## [English] Memory Management Strategy
-
-### 1. Core Philosophy: Hybrid Reference Counting & Scope-Based Management
-
-TensorLogic uses a **Hybrid Memory Management** system that combines **Reference Counting** with **Scope-Based Automatic Deallocation**.
-
-- **Scopes**: Manage the lifecycle of temporary tensors (intermediate calculation results). When a scope exits, all tensors registered in that scope have their reference count decremented.
-- **Reference Counting**: Manages the precise lifecycle of tensors. A tensor is only freed when its reference count reaches zero. This allows tensors to safely outlive the scope that created them (e.g., when assigned to a variable or returned from a function).
-
-### 2. Runtime Mechanisms (MemoryManager)
-
-The `MemoryManager` is a global singleton responsible for tracking all tensor allocations.
-
-#### A. Reference Counting (`refcounts`)
-Every tensor pointer (`*mut OpaqueTensor`) tracked by the system has an associated reference count in a `HashMap`.
-- **Alloc**: Initial RefCount = 1 (Owned by the Scope).
-- **Acquire**: RefCount += 1 (Shared ownership, e.g., variable assignment).
-- **Release**: RefCount -= 1. If RefCount == 0, the underlying device memory is freed.
-
-#### B. Scope Stack (`scopes`)
-The manager maintains a stack of scopes (Vec of Vecs).
-- **Enter Scope**: Pushes a new list to the stack.
-- **Register**: Adds a tensor pointer to the current (top) scope.
-- **Exit Scope**: Iterates through the current scope's list and calls **Release** on every pointer.
-
-#### C. Handling Address Reuse (Critical)
-Since `malloc` (or the underlying allocator) may reuse memory addresses of freed tensors, the `MemoryManager` must handle "Address Re-use" carefully.
-- **Detection**: When registering a new tensor, if the address is already present in `is_registered` but NOT in `refcounts` (meaning it was freed), it is identified as a **Stale Record**.
-- **Action**: The Stale Record is purged from the scope stack before the new tensor is registered. This prevents the "Double Free" or "Premature Free" bugs where an old scope entry would inadvertently release a new tensor.
-
-#### D. Unregister vs. Release
-- **Release**: Decrements RefCount. Used when an owner (Scope or Variable) goes away.
-- **Unregister**: Removes the record from the Scope *without* decrementing RefCount.
-    - **Use Case**: **Move Semantics**. When a temporary tensor is moved into a struct or specific raw-pointer context where scope management is no longer desired, but ownership is transferred (not shared). *Note: Modern `Let` bindings use Shared Ownership (Acquire) instead of Unregister.*
-
-### 3. Compiler Ownership Model (Codegen)
-
-The compiler generates code to enforce this strategy via LLVM IR.
-
-#### A. Variable Assignment (`Stmt::Let`) = Shared Ownership
-When a variable is defined (`let x = y`), we employ a **Shared Ownership** model.
-- **Action**: `emit_deep_clone(y)` is called. For tensors, this performs an **Acquire** (Ref += 1).
-- **Result**: The temporary `y` remains in the Scope (Ref 1). The variable `x` holds a new reference (Ref 2).
-- **Cleanup**: When the scope exits, standard cleanup releases `y` (Ref 2 -> 1). Variable `x` persists until its own scope ends or it is dropped.
-
-#### B. Shadowing = Release
-When a variable is shadowed (`let x = ...; let x = ...;`), the old variable's handle is lost.
-- **Action**: The compiler emits a **Release** call for the old `x` before overwriting it.
-- **Rationale**: Variables are "Owned" references. If we lose the handle, we must release ownership.
-
-#### C. Parameters & Global Registry
-- **Parameters**: Global parameters (trainable weights) are registered in a global `VAR_MAP`.
-- **Action**: `tl_register_parameter` explicitly **Acquires** result.
-- **Lifecycle**: Temporary Scope (Ref 1) + Global Registry (Ref 1) = Ref 2. Scope Exit -> Ref 1 (Alive in Registry).
-
-#### D. Structs & Vectors
-- **Recursive Free**: When a container (Struct or Vec) is released, the runtime recursively iterates through its fields/elements and calls **Release** on them.
-
-### 4. Structure Memory Management Strategy
-
-**Allocation**:
-- Structs are allocated on the heap via `malloc` but are **not refcounted** in the same way as tensors. They are simple Containers.
-- However, Structs *containing* Tensors act as "Owners" of those tensors.
-
-**Lifecycle**:
-1.  **Creation (`StructInit`)**:
-    -   Memory is allocated (`malloc`).
-    -   Fields are populated. If a field is a Tensor, the struct **Acquires** it (Ref += 1) via `emit_deep_clone`.
-    -   The Struct pointer is registered to the Scope (`tl_mem_register_struct`).
-
-2.  **Usage**:
-    -   Passed by pointer.
-    -   **Function Returns**:
-        -   **Caller Responsibility**: The caller must allocate memory for the returned struct and pass it as a hidden first argument (SRET). The caller is also responsible for freeing this memory.
-        -   **Shallow Copy**: The compiler performs a **Shallow Copy** of the fields to the pre-allocated return slot. Since it's a copy of the *container* but the *content pointers* remain the same, we do NOT Acquire/Release the fields again during return to avoid overhead, relying on the caller to manage the new container instance.
-
-3.  **Destruction**:
-    -   When a struct goes out of scope, the runtime calls `free_struct`.
-    -   **Recursive Free**: Crucially, this function iterates over all fields. If a field is a Tensor or another Struct, it calls `release` or `free` on it.
-    - `free(struct_ptr)` is called last.
-
-    -   Finally, `free(struct_ptr)` is called.
-
-**Copying / Assignment**:
-- When a struct is assigned to a new variable (e.g., `let x = struct_y`), a **Deep Clone of the Container** occurs.
-    - **Allocation**: A new struct container is allocated on the heap (`malloc`).
-    - **Fields**: Each field is recursively deep-cloned.
-        - Primitives (i64, f32): Copied by value.
-        - Tensors: **Acquired** (Ref += 1).
-        - Structs/Enums: Recursively cloned (new container, shared content).
-    - **Result**: `x` and `y` are distinct containers, but they share the underlying tensors. Modifying a field in `x` (e.g., `x.tensor = new_tensor`) does not affect `y`. However, modifying the *content* of a shared tensor affects both.
-
-### 5. Enum Memory Management Strategy
-
-Enums are **Tagged Unions**.
-
-**Layout**:
-- **Tag**: A `u32` discriminant indicating the active variant.
-- **Payload**: A union of structs, one for each variant.
-- **Size**: `sizeof(u32) + max(sizeof(Variant1), sizeof(Variant2), ...)`.
-
-**Allocation**:
-- Heap allocated via `malloc`.
-- Like structs, they are containers and valid as long as the pointer is valid (managed by scope or owner).
-
-**Lifecycle**:
-1.  **Creation**:
-    -   Allocate memory (`malloc(tag_size + max_payload_size)`).
-    -   Set `tag`.
-    -   Populate fields of the active variant.
-    -   If fields contain tensors, **Acquire** them (Ref += 1).
-    -   Register Enum pointer to Scope.
-
-2.  **Destruction** (`free_enum`):
-    -   Runtime reads the `tag`.
-    -   Based on the tag, it interprets the payload as the specific variant struct.
-    -   **Recursive Free**: It iterates over the fields of that variant. If a field is a Tensor/Struct/Enum, it calls **Release/Free** on it.
-    -   Finally, `free(enum_ptr)` is called.
-
+本ドキュメントでは、TensorLogicに実装された **V2 メモリ管理戦略** について概説します。
+この戦略は、**静的解析** と **生存区間ベースのメモリ再利用** を導入することで、V1（参照カウント+スコープ）システムのパフォーマンスボトルネックを解消します。
 
 ---
 
-## [Japanese] メモリ管理戦略
+## [English] Memory Management Strategy V2
 
-### 1. 中心哲学: 参照カウントとスコープベース管理のハイブリッド
+### 1. Core Philosophy: "Zero-Overhead Abstraction for Memory"
 
-TensorLogicは、**参照カウント (Reference Counting)** と **スコープベースの自動解放 (Scope-Based Automatic Deallocation)** を組み合わせた **ハイブリッドメモリ管理** システムを採用しています。
+The V2 system aims to determine **at compile time** exactly *when* memory is needed and *when* it can be reused.
 
-- **スコープ**: 一時的なテンソル（計算の中間結果など）のライフサイクルを管理します。スコープを抜ける際、そのスコープに登録されたすべてのテンソルの参照カウントがデクリメントされます。
-- **参照カウント**: テンソルの正確なライフサイクルを管理します。参照カウントが0になった時点でのみ、実際のデバイスメモリが解放されます。これにより、テンソルが作成されたスコープよりも長く生存すること（変数への代入や関数からの返却など）が可能になります。
+- **Static Analysis**: The compiler analyzes the lifespan of every tensor variable (Liveness Analysis).
+- **Stack-Like Allocation**: Tensors are allocated in a pre-calculated "Function Frame" in a linear Arena, rather than individual `malloc` calls.
+- **Memory Reuse (Aliasing)**: Two variables that never exist simultaneously (e.g., `a` in the first half of a function and `b` in the second half) are assigned the **same memory slot**.
+- **Hybrid Approach**: If tensor shapes cannot be determined at compile-time (Dynamic Shapes), the system falls back to the V1 Dynamic Allocator (malloc/free).
 
-### 2. ランタイムの仕組み (MemoryManager)
+### 2. Compiler Pipeline (Static Analysis)
 
-`MemoryManager` は、すべてのテンソル割り当てを追跡するグローバルシングルトンです。
+The memory optimization happens in several passes before CodeGen:
 
-#### A. 参照カウント (`refcounts`)
-システムが追跡するすべてのテンソルポインタ (`*mut OpaqueTensor`) は、`HashMap` で参照カウントを保持します。
-- **Alloc (割り当て)**: 初期参照カウント = 1（スコープが所有）。
-- **Acquire (共有)**: 参照カウント += 1（共有所有権、例：変数への代入）。
-- **Release (解放)**: 参照カウント -= 1。0になった場合、メモリを解放します。
+#### Phase 1: Shape Inference & Liveness Analysis
+The compiler walks through the AST to:
+1.  **Infer Shapes**: Propagate tensor shapes (e.g., `[10, 10] * [10, 10] -> [10, 10]`).
+2.  **Calculate Liveness**: Track the "Start" and "End" statement index for every variable.
+    -   *Start*: When the variable is defined.
+    -   *End*: The last time the variable is used.
 
-#### B. スコープスタック (`scopes`)
-マネージャーはスコープのスタック（リストのリスト）を保持します。
-- **Enter Scope**: 新しいリストをスタックにプッシュします。
-- **Register**: 現在の（最上位の）スコープにテンソルポインタを追加します。
-- **Exit Scope**: 現在のスコープリストを走査し、各ポインタに対して **Release** を呼び出します。
+#### Phase 2: Greedy Slot Allocation (Linear Scan)
+Using the liveness intervals, the compiler runs a **Greedy Allocation Algorithm**:
+1.  It maintains a list of "Active Intervals" (variables currently in memory).
+2.  For each new variable, it tries to find a **free offset** in the current Function Frame that comfortably fits the tensor size.
+3.  If a previous variable has "died" (its End < Current Start), its offset is marked as free and **reused**.
+4.  **Result**: A map of `Variable -> Offset` and a total `FrameSize` required for the function.
 
-#### C. アドレス再利用のハンドリング（重要）
-`malloc`（アロケータ）は解放されたメモリのアドレスを再利用する可能性があるため、`MemoryManager` は「アドレス再利用」を慎重に扱います。
-- **検出**: 新しいテンソルを登録する際、そのアドレスが `is_registered` (登録済み) であるが `refcounts` には存在しない（解放済み）場合、それは **Stale Record（古いレコード）** とみなされます。
-- **対処**: 新しい登録を行う前に、この古いレコードをスコープスタックから削除（Purge）します。これにより、古いスコープエントリが誤って新しいテンソルを解放してしまう「二重解放」や「早すぎる解放」バグを防ぎます。
+#### Phase 3: Destination Passing Style (DPS)
+For operations that return large tensors (e.g., `matmul`), the compiler passes the **destination pointer** (calculated from the Offset) as a hidden argument.
+-   **V1**: `let c = matmul(a, b)` -> `c = malloc(...); matmul(a, b)` -> return pointer.
+-   **V2**: `matmul(a, b, &frame[offset_c])`. The operation writes directly into the pre-allocated slot. Zero copy, zero malloc.
 
-#### D. Unregister (登録解除) と Release (解放) の違い
-- **Release**: 参照カウントを減らします。所有者（スコープや変数）がいなくなる場合に使用します。
-- **Unregister**: 参照カウントを減らさずに、スコープからレコードを削除します。
-    - **用途**: **Moveセマンティクス**。一時テンソルの所有権を構造体や特定のポインタコンテキストに完全に「移動」させ、スコープ管理から外したい場合に使用します。 *注: 現在の `Let` 束縛は Unregister ではなく共有所有権 (Acquire) を使用しています。*
+---
 
-### 3. コンパイラの所有権モデル (Codegen)
+### 3. Runtime Mechanisms
 
-コンパイラは、この戦略を適用するために以下のルールで LLVM IR を生成します。
+The Runtime has been updated to support this "Arena-based" model seamlessly.
 
-#### A. 変数代入 (`Stmt::Let`) = 共有所有権 (Shared Ownership)
-変数が定義される際 (`let x = y`)、**共有所有権** モデルを採用します。
-- **動作**: `emit_deep_clone(y)` を呼び出します。テンソルの場合、これは **Acquire** (Ref += 1) を実行します。
-- **結果**: 一時変数 `y` はスコープに残ります (Ref 1)。変数 `x` は新しい参照を持ちます (Ref 2)。
-- **クリーンアップ**: スコープ終了時、標準のクリーンアップで `y` が解放されます (Ref 2 -> 1)。変数 `x` は自身のスコープが終わるか、ドロップされるまで生存します。
+#### A. Memory Arena (Per-Thread)
+Each thread maintains a large, contiguous block of memory (The Arena).
+-   **Stack-like usage**: When entering a function, we simply move the "Stack Pointer" of the arena forward by `FrameSize`.
+-   **Alloc**: `ptr = arena_base + current_offset + variable_offset`. (Integer addition, extremely fast).
+-   **Free**: When exiting the function, we simply move the "Stack Pointer" back. No individual `free()` calls.
 
-#### B. シャドーイング = Release
-変数がシャドーイングされる場合 (`let x = ...; let x = ...;`)、古い変数のハンドルは失われます。
-- **動作**: コンパイラは上書きする前に、古い `x` に対して **Release** 呼び出しを生成します。
-- **理由**: 変数は「所有」参照であるため、ハンドルを失う場合は所有権を手放す（解放する）必要があります。
+#### B. Fallback Mechanism (Dynamic Tensors)
+If the shape inference fails (e.g., loading data from a file with unknown dimensions), the compiler marks the variable as **Dynamic**.
+-   Dynamic variables are handled via the V1 **MemoryManager** (malloc + refcount).
+-   They are NOT placed in the Arena to prevent fragmentation or overflow.
 
-#### C. パラメータとグローバルレジストリ
-- **パラメータ**: グローバルな学習可能パラメータ（重みなど）は `VAR_MAP` に登録されます。
-- **動作**: `tl_register_parameter` は明示的に結果を **Acquire** します。
-- **ライフサイクル**: 一時スコープ (Ref 1) + グローバルレジストリ (Ref 1) = Ref 2。スコープ終了 -> Ref 1（レジストリ内で生存）。
+---
 
-#### D. 構造体とベクタ
-- **再帰的解放**: コンテナ（構造体やVec）が解放される際、ランタイムはそのフィールドや要素を再帰的に走査し、それぞれの要素に対して **Release** を呼び出します。
+### 4. Benefits (V1 vs V2)
 
-### 4. 構造体のメモリ管理戦略
+| Feature | V1 (Old) | V2 (New) |
+| :--- | :--- | :--- |
+| **Allocation** | `malloc` per tensor (Slow) | Pointer bump (Instant) |
+| **Deallocation** | `free` per tensor (Slow) | Function exit (Instant) |
+| **Peak Memory** | High (Cumulative) | **Minimal** (Reused via Liveness) |
+| **Fragmentaton** | High | Low (Contiguous stacks) |
+| **Analysis** | None (Runtime only) | **Full Static Analysis** |
 
-**割り当て (Allocation)**:
-- 構造体は `malloc` によってヒープに割り当てられますが、テンソルのような **参照カウント管理は行われません**。これらは単なるコンテナとして扱われます。
-- ただし、テンソルを *含む* 構造体は、それらのテンソルの「所有者」として機能します。
+---
 
-**ライフサイクル**:
+### 5. Code Example & Visualization
 
-1.  **作成 (`StructInit`)**:
-    -   メモリが割り当てられます (`malloc`)。
-    -   フィールドが埋められます。フィールドがテンソルである場合、構造体はそれを **Acquire** (Ref += 1) します (`emit_deep_clone` 経由)。これにより、テンソルは構造体が存在する限り生存します。
-    -   構造体自体のポインタがスコープに登録されます (`tl_mem_register_struct`)。
+```rust
+fn process() {
+    // Offset 0, Size 1MB
+    let a = Tensor::zeros([512, 512]); 
+    
+    // Offset 1MB, Size 1MB
+    let b = a + 1.0;
+    
+    // 'a' is dead here. Memory available from 0..1MB.
+    
+    // Offset 0, Size 1MB (REUSES 'a's memory!)
+    let c = b * 2.0; 
+}
+```
 
-2.  **使用**:
-    -   ポインタ渡しで関数に渡されます。
-    -   **関数戻り値**:
-        -   **呼び出し元の責任**: 構造体を返す場合、**呼び出し元** が戻り値用のメモリを確保し、隠れ第一引数 (SRET) として渡す必要があります。また、このメモリの解放も呼び出し元の責任です。
-        -   **シャローコピー**: コンパイラは確保された戻り値用スロットにフィールドの **シャローコピー (Shallow Copy)** を行います。コンテナは複製されますが、中身のポインタ（テンソル）は同じものを指すため、戻り値処理中に再度の Acquire/Release は行いません（呼び出し元が新しいコンテナインスタンスを管理します）。
+In V1, this would require 3MB peak memory.
+In V2, due to Liveness Analysis + Aliasing, this requires only **2MB** (or even less with advanced reusing), and consistently reuses the cache-hot memory at Offset 0.
 
-3.  **破棄 (Destruction)**:
-    -   構造体がスコープを抜ける際、ランタイムは `free_struct` を呼び出します。
-    -   **再帰的解放 (Recursive Free)**: 重要な点として、この関数はすべてのフィールドを走査します。フィールドがテンソルや別の構造体である場合、それらに対して `release` または `free` を呼び出します。
-    -   最後に `free(struct_ptr)` が呼び出され、コンテナ自体のメモリが解放されます。
+---
 
-    -   最後に `free(struct_ptr)` が呼び出され、コンテナ自体のメモリが解放されます。
+## [Japanese] メモリ管理戦略 V2 (ハイブリッド静的解析)
 
-**コピー / 代入 (Copying / Assignment)**:
-- 構造体が新しい変数に代入される場合（例: `let x = struct_y`）、**コンテナのディープクローン** が発生します。
-    - **割り当て**: 新しい構造体コンテナがヒープに割り当てられます (`malloc`)。
-    - **フィールド**: 各フィールドは再帰的にディープクローンされます。
-        - プリミティブ (i64, f32): 値コピー。
-        - テンソル: **Acquire** (参照カウント + 1)。
-        - 構造体/Enum: 再帰的にクローン（新しいコンテナ、中身は共有）。
-    - **結果**: `x` と `y` は別のコンテナですが、内部のテンソルは共有します。`x` のフィールド自体を変更しても `y` には影響しませんが、共有しているテンソルの *内容* を書き換えると両方に影響します。
+### 1. 中心哲学: "メモリのためのゼロオーバーヘッド抽象化"
 
-### 5. タプルのメモリ管理戦略
+V2システムの目標は、**コンパイル時** に「いつメモリが必要で、いつ再利用できるか」を完全に決定することです。
 
-タプルは **無名構造体 (Anonymous Structs)** として扱われます。
-メモリ管理のルールは構造体と完全に同一です。
+- **静的解析**: コンパイラはすべてのテンソル変数の生存期間（Lifetime）を解析します（生存区間解析）。
+- **スタックライクな割り当て**: テンソルは個別の `malloc` ではなく、リニアな「アリーナ」領域上の事前に計算された「関数フレーム」内に割り当てられます。
+- **メモリ再利用 (Aliasing)**: 同時に存在しない2つの変数（例：関数の前半の `a` と後半の `b`）は、**全く同じメモリスロット** に割り当てられます。
+- **ハイブリッドアプローチ**: コンパイル時にテンソル形状が確定しない場合（Dynamic Shapes）は、自動的にV1の動的アロケータ（malloc/free）にフォールバックします。
 
-- **割り当て**: ヒープに割り当てられます。
-- **ライフサイクル**:
-    - 作成時、要素に含まれるテンソルは **Acquire** されます。
-    - タプルが破棄される際、ランタイムは要素を再帰的に走査し、テンソルや他のコンテナに対して **Release** を呼び出します。
+### 2. コンパイラパイプライン (静的解析)
 
-### 6. Enum (列挙型) のメモリ管理戦略
+CodeGen（コード生成）の前に、以下の最適化パスが実行されます。
 
-Enumは **タグ付き共用体 (Tagged Unions)** として実装されます。
+#### Phase 1: 形状推論と生存区間解析 (Shape Inference & Liveness Analysis)
+ASTを走査し、以下を行います：
+1.  **形状推論**: テンソルの形状を伝播させます（例: `[10, 10] * [10, 10] -> [10, 10]`）。
+2.  **生存区間計算**: 各変数の「開始」と「終了」のステートメントインデックスを追跡します。
+    -   *Start*: 変数が定義された時点。
+    -   *End*: 変数が最後に使用された時点。
 
-**メモリレイアウト**:
-- **タグ (Tag)**: アクティブなバリアントを示す `u32` の判別子。
-- **ペイロード (Payload)**: 各バリアントの構造体の共用体 (Union)。
-- **サイズ**: `sizeof(u32) + max(sizeof(Variant1), sizeof(Variant2), ...)`。
-  - 実際に確保されるメモリサイズは、全バリアントの中で最大サイズを持つものにタグ分を加えたサイズとなります。
+#### Phase 2: Greedyスロット割り当て (Linear Scan Allocation)
+生存区間情報を用いて、**Greedy割り当てアルゴリズム** を実行します：
+1.  「アクティブな区間」（現在メモリ上にある変数）のリストを維持します。
+2.  新しい変数に対し、現在の「関数フレーム」内でサイズが収まる **空きオフセット** を探します。
+3.  過去の変数で「寿命が尽きた」もの（End < Current Start）があれば、そのオフセットを空きとしてマークし、**再利用** します。
+4.  **結果**: `変数 -> オフセット` のマップと、関数全体で必要な `TotalFrameSize` が決定されます。
 
-**割り当て**:
-- `malloc` によってヒープに割り当てられます。
-- 構造体と同様に、参照カウント管理ではなく、スコープまたは所有者によって管理されるコンテナです。
+#### Phase 3: DPS (Destination Passing Style)
+巨大なテンソルを返す操作（`matmul`など）において、コンパイラは（オフセットから計算された）**出力先ポインタ** を隠れ引数として関数に渡します。
+-   **V1**: `let c = matmul(a, b)` -> `c = malloc(...); matmul(a, b)` -> ポインタを返す。
+-   **V2**: `matmul(a, b, &frame[offset_c])`. 操作は事前に割り当てられたスロットに直接書き込みます。ゼロコピー、ゼロmallocです。
 
-**ライフサイクル**:
-1.  **作成**:
-    -   メモリを割り当てます (`malloc(tag_size + max_payload_size)`)。
-    -   `tag` を設定します。
-    -   アクティブなバリアントのフィールドを埋めます。
-    -   フィールドにテンソルが含まれる場合、それらを **Acquire** します。
-    -   Enumのポインタをスコープに登録します。
+---
 
-2.  **破棄 (`free_enum`)**:
-    -   ランタイムは `tag` を読み取ります。
-    -   タグに基づいて、ペイロードを特定のバリアントの構造体として解釈します。
-    -   **再帰的解放**: そのバリアントの各フィールドを走査し、テンソル・構造体・Enumなどがあれば、それらに対して **Release/Free** を呼び出します。
-        - アクティブでないバリアントのフィールドは無視されます（メモリ上はゴミデータとして扱われます）。
-    -   最後に `free(enum_ptr)` を呼び出します。
+### 3. ランタイムメカニズム
 
+ランタイムはこの「アリーナベース」モデルをシームレスにサポートするよう更新されました。
+
+#### A. メモリアリーナ (スレッドごと)
+各スレッドは巨大な連続メモリブロック（アリーナ）を保持します。
+-   **スタック的な使用**: 関数に入る際、アリーナの「スタックポインタ」を `FrameSize` 分だけ進めます。
+-   **割り当て**: `ptr = arena_base + current_offset + variable_offset`。（単なる整数加算であり、極めて高速）。
+-   **解放**: 関数を抜ける際、アリーナの「スタックポインタ」を元に戻すだけです。個別の `free()` は不要です。
+
+#### B. フォールバック機構 (動的テンソル)
+形状推論に失敗した場合（例：次元不明のファイル読み込み）、コンパイラはその変数を **Dynamic** とマークします。
+-   Dynamic変数は、従来の V1 **MemoryManager** (malloc + refcount) で扱われます。
+-   これらはアリーナには配置されず、断片化やオーバーフローを防ぎます。
+
+---
+
+### 4. 比較 (V1 vs V2)
+
+| 機能 | V1 (旧) | V2 (新) |
+| :--- | :--- | :--- |
+| **割り当て** | テンソル毎に `malloc` (遅い) | ポインタの加算 (一瞬) |
+| **解放** | テンソル毎に `free` (遅い) | 関数終了時に一括 (一瞬) |
+| **ピークメモリ** | 高い (累積的) | **最小限** (生存区間による再利用) |
+| **断片化** | 高い | 低い (連続スタック) |
+| **解析** | なし (実行時のみ) | **完全な静的解析** |
+
+---
+
+### 5. コード例と可視化
+
+```rust
+fn process() {
+    // オフセット 0, サイズ 1MB
+    let a = Tensor::zeros([512, 512]); 
+    
+    // オフセット 1MB, サイズ 1MB
+    let b = a + 1.0;
+    
+    // ここで 'a' はもう使用されない (Dead)。 0..1MB の領域は空く。
+    
+    // オフセット 0, サイズ 1MB ('a' のメモリを再利用！)
+    let c = b * 2.0; 
+}
+```
+
+V1では、ピーク時に3MBが必要でした。
+V2では、静的解析とエイリアシングにより、わずか **2MB**（さらに高度な再利用ならそれ以下）で済み、かつキャッシュ効率の良いオフセット0の領域を再利用し続けます。
