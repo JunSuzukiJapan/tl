@@ -125,13 +125,53 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int) -> TestResult:
     is_expected_to_fail = filepath.name in EXPECTED_FAILURES
     
     try:
-        result = subprocess.run(
-            [str(tl_binary), str(filepath)],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=filepath.parent
-        )
+        # Static Compilation Override
+        import sys
+        if "--static" in sys.argv:
+             # 1. Compile (Must run from project root for library resolution)
+             script_dir = Path(__file__).parent
+             project_root = script_dir.parent
+             
+             compile_cmd = [str(tl_binary), "-c", str(filepath)]
+             compile_result = subprocess.run(
+                 compile_cmd,
+                 capture_output=True,
+                 text=True,
+                 timeout=timeout,
+                 cwd=project_root # Fix: Compile from root so 'target/debug' path in tl main.rs works
+             )
+             
+             if compile_result.returncode != 0:
+                 return TestResult(
+                     file=str(filepath),
+                     status=Status.FAIL,
+                     output=compile_result.stdout,
+                     error=f"Compilation Failed:\n{compile_result.stderr}",
+                     duration=time.time() - start_time,
+                     reason=f"Compilation Failed (Exit: {compile_result.returncode})"
+                 )
+
+             # 2. Run Executable
+             exe_path = filepath.with_suffix('') # Remove .tl
+             run_cmd = [str(exe_path)]
+             result = subprocess.run(
+                 run_cmd,
+                 capture_output=True,
+                 text=True,
+                 timeout=timeout,
+                 cwd=filepath.parent
+             )
+        else:
+            # JIT Execution (Default)
+            result = subprocess.run(
+                [str(tl_binary), str(filepath)],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=filepath.parent
+            )
+
+
         duration = time.time() - start_time
         
         # セグメンテーションフォールトの検出
@@ -265,6 +305,7 @@ def main():
     parser.add_argument("--timeout", "-t", type=int, default=30, help="タイムアウト秒数 (デフォルト: 30)")
     parser.add_argument("--filter", "-f", type=str, help="ファイルパターンでフィルタ")
     parser.add_argument("--parallel", "-p", type=int, default=1, help="並列実行数 (デフォルト: 1)")
+    parser.add_argument("--static", action="store_true", help="静的コンパイルモードで実行 (JIT回避)")
     args = parser.parse_args()
     
     # プロジェクトルートを検出
