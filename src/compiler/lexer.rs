@@ -51,6 +51,11 @@ pub enum Token {
     As,
     #[token("extern")]
     Extern,
+    #[token("enum")]
+    Enum,
+    #[token("self")]
+    Self_,
+
 
     // Types (primitive types also act as keywords in some context)
     #[token("f32")]
@@ -146,6 +151,7 @@ pub enum Token {
     #[token("||")]
     Or,
     #[token("!")]
+    #[token("not")]
     Not,
     #[token("|")]
     Pipe,
@@ -155,6 +161,15 @@ pub enum Token {
     Caret,
     #[token("<-")]
     LArrow,
+    #[token(":-")]
+    Entails,
+    
+    #[token("_", priority = 3)]
+    Underscore,
+    #[token("?")]
+    Question,
+    #[token("$")]
+    Dollar,
     
     #[token("+=")]
     PlusAssign,

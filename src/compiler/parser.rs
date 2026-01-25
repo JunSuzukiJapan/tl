@@ -119,6 +119,10 @@ where F: Fn(&Token) -> bool {
 }
 
 // --- Types ---
+
+
+
+
 fn parse_primitive_type(input: Input) -> IResult<Input, Type, ParserError> {
     alt((
         value(Type::F32, expect_token(Token::F32Type)),
@@ -312,90 +316,33 @@ fn parse_block(input: Input) -> IResult<Input, Expr, ParserError> {
 
 
 
-fn parse_path_or_var(input: Input) -> IResult<Input, Expr, ParserError> {
-    // Try to parse as Type first?
-    // A Type can be Identifier, Primitive, or Tensor<...>.
-    // If it is followed by ::, it is a static path.
-    // If it is followed by {, it might be StructInit (if Type is Identifier).
-    
-    // Attempt to parse a Type. 
-    // If Type is just Identifier, it consumes Identifier.
-    let (rest, ty) = parse_type(input)?;
-    
-    // Check next token
-    if let Ok((rest2, _)) = expect_token(Token::DoubleColon)(rest) {
-        // Static Method Call: Type :: Identifier (args)
-        let (rest3, method) = identifier(rest2)?;
-        // Optional args? StaticMethodCall always has args in AST?
-        // If ( follows, parse args.
-        // If no (, it might be Unit Variant path? treated as call with empty args?
-        let (rest4, args) = if let Ok((r, _)) = expect_token(Token::LParen)(rest3) {
-            let (r, args) = separated_list0(expect_token(Token::Comma), parse_expr)(r)?;
-            let (r, _) = expect_token(Token::RParen)(r)?;
-            (r, args)
-        } else {
-            (rest3, vec![])
-        };
-        
-        let span = crate::compiler::error::Span::default(); // TODO: Proper spanning
-        return Ok((rest4, Spanned::new(ExprKind::StaticMethodCall(ty, method, args), span)));
-    } else if let Ok((rest2, _)) = expect_token(Token::LBrace)(rest) {
-        // Struct Init: Type { ... }
-        // Only if Type is UserDefined (Identifier). f32 { } is invalid.
-        if let Type::UserDefined(name, generics) = ty {
-            // Parse fields: ident : expr
-            let (rest3, fields) = separated_list0(
-                expect_token(Token::Comma),
-                map(
-                    tuple((identifier, expect_token(Token::Colon), parse_expr)),
-                    |(id, _, e)| (id, e)
-                )
-            )(rest2)?;
-            // Trailing comma allowed? separated_list0 doesn't handle trailing.
-            // Ignore trailing comma for now (or handle it).
-            let (rest3, _) = opt(expect_token(Token::Comma))(rest3)?;
-            let (rest4, _) = expect_token(Token::RBrace)(rest3)?;
-            
-            let span = crate::compiler::error::Span::default();
-            return Ok((rest4, Spanned::new(ExprKind::StructInit(name, generics, fields), span)));
-        }
-    }
-    
-    // Fallback: If it was just a Type which happened to be an Identifier, behave as Variable.
-    // If Type was Primitive (f32) and not followed by ::, it's an error in expression context?
-    // Or is `let x = f32;` valid? No.
-    if let Type::UserDefined(name, generics) = ty {
-        if generics.is_empty() {
-            let span = crate::compiler::error::Span::default();
-            return Ok((rest, Spanned::new(ExprKind::Variable(name), span)));
-        }
-        // Identifier<T> is not a value unless it's a constructor? 
-        // But StructInit handled above.
-        // Maybe generic function call? func::<T>()?
-        // Parser for fn call is postfix.
-        // Getting here means `name<T>`.
-        // This implies variable with generic args? `var<T>` isn't valid syntax usually.
-        // `func::<T>` uses turbofish.
-        // So `parse_type` was too eager parsing `<...>`?
-        // `parse_type` parses `Ident < T >`.
-        // In expression `a < b`, `parse_type` might match `a < b` if `b` is type.
-        // This is the classic matching ambiguity.
-        // We should restrict `parse_type` usage here or use `parse_atom` for Variable specifically.
-    }
-    
-    // If we parsed `f32`, and it's not a static call, it's error.
-    Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Invalid path/type in expression".to_string()) }))
-}
+
 
 fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
-    // Tries to parse Type followed by :: or {
-    // This handles StaticMethodCall and StructInit
     let (rest, ty) = parse_type(input)?;
     
     if let Ok((rest2, _)) = expect_token(Token::DoubleColon)(rest) {
-        // Static Call: Type :: Method (args)
         let (rest3, method) = identifier(rest2)?;
-        // Method args
+        
+        if let Ok((rest4, _)) = expect_token(Token::LBrace)(rest3) {
+            // Enum Init: Type :: Variant { ... }
+            if let Type::UserDefined(name, _generics) = ty {
+                 let (rest5, fields) = separated_list0(
+                    expect_token(Token::Comma),
+                    map(
+                        tuple((identifier, expect_token(Token::Colon), parse_expr)),
+                        |(id, _, e)| (id, e)
+                    )
+                )(rest4)?;
+                let (rest5, _) = opt(expect_token(Token::Comma))(rest5)?;
+                let (rest5, _) = expect_token(Token::RBrace)(rest5)?;
+                return Ok((rest5, Spanned::new(ExprKind::EnumInit { enum_name: name, variant_name: method, fields }, crate::compiler::error::Span::default())));
+            } else {
+                 return Err(nom::Err::Error(ParserError { input: rest3, kind: ParseErrorKind::UnexpectedToken("Enum init requires UserDefined type".to_string()) }));
+            }
+        }
+        
+        // Static Call or Tuple Variant
         let (rest4, args) = if let Ok((r, _)) = expect_token(Token::LParen)(rest3) {
             let (r, args) = separated_list0(expect_token(Token::Comma), parse_expr)(r)?;
             let (r, _) = expect_token(Token::RParen)(r)?;
@@ -404,9 +351,9 @@ fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
             (rest3, vec![])
         };
         Ok((rest4, Spanned::new(ExprKind::StaticMethodCall(ty, method, args), crate::compiler::error::Span::default())))
+
     } else if let Ok((rest2, _)) = expect_token(Token::LBrace)(rest) {
-        // Struct Init: Ident { field: val, ... }
-        // Type parses "Ident < T >".
+        // Struct Init
         if let Type::UserDefined(name, generics) = ty {
              let (rest3, fields) = separated_list0(
                 expect_token(Token::Comma),
@@ -422,9 +369,6 @@ fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
             Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Struct init requires UserDefined type".to_string()) }))
         }
     } else {
-        // Parsed type but no :: or {.
-        // This is not a path-based atom (unless we support Type as expression?).
-        // Fail so we fallback to Variable parser.
         Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Not a path atom".to_string()) }))
     }
 }
@@ -439,7 +383,10 @@ fn parse_atom(input: Input) -> IResult<Input, Expr, ParserError> {
         parse_literal,
         parse_tensor_comprehension_or_literal,
         parse_block,
+        parse_block,
         parse_if_expr,
+        parse_match_expr,
+        parse_path_based_atom,
         map(
             delimited(
                 expect_token(Token::LParen),
@@ -448,15 +395,29 @@ fn parse_atom(input: Input) -> IResult<Input, Expr, ParserError> {
             ),
             |exprs| {
                 if exprs.len() == 1 {
-                    exprs.into_iter().next().unwrap()
+                    // (expr) -> expr (preserve span?)
+                    exprs[0].clone()
                 } else {
+                    // Tuple
                     Spanned::new(ExprKind::Tuple(exprs), crate::compiler::error::Span::default())
                 }
             }
         ),
-        parse_path_based_atom, // Try Type::... or Type { ... } first
-        parse_variable,        // Fallback to simple variable
+        parse_variable,
+        parse_self,
+        parse_logic_var,
     ))(input)
+}
+
+fn parse_logic_var(input: Input) -> IResult<Input, Expr, ParserError> {
+    let (input, _) = expect_token(Token::Dollar)(input)?;
+    let (input, name) = identifier(input)?;
+    Ok((input, Spanned::new(ExprKind::LogicVar(name), crate::compiler::error::Span::default())))
+}
+
+fn parse_self(input: Input) -> IResult<Input, Expr, ParserError> {
+    let (input, _) = expect_token(Token::Self_)(input)?;
+    Ok((input, Spanned::new(ExprKind::Variable("self".to_string()), crate::compiler::error::Span::default())))
 }
 
 fn parse_postfix(input: Input) -> IResult<Input, Expr, ParserError> {
@@ -548,10 +509,11 @@ fn parse_cast(input: Input) -> IResult<Input, Expr, ParserError> {
 }
 
 fn parse_unary(input: Input) -> IResult<Input, Expr, ParserError> {
-    if let Ok((rest, op_tok)) = satisfy_token(|t| matches!(t, Token::Minus | Token::Not))(input) {
+    if let Ok((rest, op_tok)) = satisfy_token(|t| matches!(t, Token::Minus | Token::Not | Token::Question))(input) {
         let op = match op_tok.token {
             Token::Minus => UnOp::Neg,
             Token::Not => UnOp::Not,
+            Token::Question => UnOp::Query,
             _ => unreachable!(),
         };
         let (rest, expr) = parse_unary(rest)?;
@@ -683,25 +645,49 @@ fn parse_binary_logic(input: Input) -> IResult<Input, Expr, ParserError> {
 
 // --- Statements ---
 
-fn parse_let_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
+fn parse_let_or_tensor_decl(input: Input) -> IResult<Input, Stmt, ParserError> {
     let (input, _) = expect_token(Token::Let)(input)?;
     let (input, is_mut) = opt(expect_token(Token::Mut))(input)?;
     let (input, name) = identifier(input)?;
     
-    // Type annotation? : Type
-    let (input, ty) = opt(preceded(expect_token(Token::Colon), parse_type))(input)?;
-    
-    let (input, _) = expect_token(Token::Assign)(input)?;
-    let (input, value) = parse_expr(input)?;
-    let (input, _) = expect_token(Token::SemiColon)(input)?;
-    
-    Ok((input, Spanned::new(StmtKind::Let {
-        name,
-        type_annotation: ty,
-        value,
-        mutable: is_mut.is_some(),
-    }, crate::compiler::error::Span::default())))
+    // Check for [ (Tensor Declaration / Comprehension sugar)
+    if let Ok((rest, _)) = expect_token(Token::LBracket)(input) {
+         let (rest, indices) = separated_list1(expect_token(Token::Comma), identifier)(rest)?;
+         let (rest, _) = expect_token(Token::RBracket)(rest)?;
+         let (rest, _) = expect_token(Token::Assign)(rest)?;
+         let (rest, rhs) = parse_expr(rest)?; 
+         let (rest, _) = expect_token(Token::SemiColon)(rest)?;
+
+         // Desugar to: let C = [ indices | RHS ]
+         let comprehension = ExprKind::TensorComprehension {
+             indices,
+             clauses: vec![], // No explicit generator implies implicit range inference
+             body: Some(Box::new(rhs)),
+         };
+         let expr = Spanned::new(comprehension, crate::compiler::error::Span::default());
+         
+         Ok((rest, Spanned::new(StmtKind::Let {
+             name,
+             type_annotation: None, 
+             value: expr,
+             mutable: is_mut.is_some(),
+         }, crate::compiler::error::Span::default())))
+    } else {
+        // Normal Let
+        let (input, ty) = opt(preceded(expect_token(Token::Colon), parse_type))(input)?;
+        let (input, _) = expect_token(Token::Assign)(input)?;
+        let (input, value) = parse_expr(input)?;
+        let (input, _) = expect_token(Token::SemiColon)(input)?;
+        
+        Ok((input, Spanned::new(StmtKind::Let {
+            name,
+            type_annotation: ty,
+            value,
+            mutable: is_mut.is_some(),
+        }, crate::compiler::error::Span::default())))
+    }
 }
+
 
 fn parse_return_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
     let (input, _) = expect_token(Token::Return)(input)?;
@@ -713,65 +699,60 @@ fn parse_return_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
 
 
 fn parse_assign_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
-    // Identifier op expr ;
-    // But LHS can be field access or index.
-    // This overlaps with ExprStmt parsing.
-    // parse_expr will parse "x[i]".
-    // Then we see "=".
-    // So usually we parse expr, then check if followed by =?
-    // Or we use separate parser if we can distinguish.
-    // Let's try to parse LHS expr (limited?), then =, then RHS.
-    // "x = 1;"
-    // parse_expr parses "x".
-    // "x + 1 = 2" is invalid LHS.
-    // For now, let's match identifier-based assignment specifically?
-    // "x = ..."
-    // Legacy parser had specific logic.
-    // Let's peek?
-    // If we have Ident/Postfix then =, it's assignment.
-    // If we interpret as Expr, we consume x.
-    // Then we see =. parse_expr_stmt expects ;. Fails.
-    // So parse_assign_stmt must be tried BEFORE parse_expr_stmt.
+    // 1. Parse LHS Expr
+    let (input, lhs) = parse_expr(input)?;
     
-    let (rest, lhs) = parse_postfix(input)?;
-    // Check for assign op
-    if let Ok((rest2, op_tok)) = satisfy_token(|t| matches!(t, Token::Assign | Token::PlusAssign | Token::MinusAssign | Token::StarAssign | Token::SlashAssign))(rest) {
-        let op = match op_tok.token {
-            Token::Assign => AssignOp::Assign,
-            Token::PlusAssign => AssignOp::AddAssign,
-            Token::MinusAssign => AssignOp::SubAssign,
-            Token::StarAssign => AssignOp::MulAssign,
-            Token::SlashAssign => AssignOp::DivAssign,
-            _ => unreachable!(),
-        };
-        let (rest3, val) = parse_expr(rest2)?;
-        let (rest4, _) = expect_token(Token::SemiColon)(rest3)?;
+    // 2. Parse Operator
+    let (input, op) = alt((
+        value(AssignOp::Assign, expect_token(Token::Assign)),
+        value(AssignOp::AddAssign, expect_token(Token::PlusAssign)),
+        value(AssignOp::SubAssign, expect_token(Token::MinusAssign)),
+        value(AssignOp::MulAssign, expect_token(Token::StarAssign)),
+        value(AssignOp::DivAssign, expect_token(Token::SlashAssign)),
+    ))(input)?;
+    
+    // 3. Parse RHS
+    let (input, rhs) = parse_expr(input)?;
+    let (input, _) = expect_token(Token::SemiColon)(input)?;
+    
+    // 4. Construct Stmt
+    match lhs.inner {
+        ExprKind::Variable(name) => Ok((input, Spanned::new(StmtKind::Assign {
+            name,
+            indices: None,
+            op,
+            value: rhs,
+        }, crate::compiler::error::Span::default()))),
         
-        // Extract name from LHS?
-        // Legacy StmtKind::Assign stores `name: String` which is limited to variables?
-        // Or `lhs: Expr`?
-        // StmtKind::Assign { name: String, ... }.
-        // If LHS is `x.y`, we need `StmtKind::FieldAssign`?
-        // Legacy had `parse_field_assign`.
+        ExprKind::IndexAccess(target, indices) => {
+            if let ExprKind::Variable(name) = target.inner {
+                Ok((input, Spanned::new(StmtKind::Assign {
+                    name,
+                    indices: Some(indices),
+                    op,
+                    value: rhs,
+                }, crate::compiler::error::Span::default())))
+            } else {
+               Err(nom::Err::Error(ParserError { 
+                   input, 
+                   kind: crate::compiler::error::ParseErrorKind::Generic("Complex assignment target not supported yet".to_string()) 
+               }))
+            }
+        },
         
-        match lhs.inner {
-            ExprKind::Variable(name) => {
-                Ok((rest4, Spanned::new(StmtKind::Assign { name, value: val, op, indices: None }, crate::compiler::error::Span::default())))
-            }
-            ExprKind::FieldAccess(obj, field) => {
-                // If op is Assign.
-                if op == AssignOp::Assign {
-                    Ok((rest4, Spanned::new(StmtKind::FieldAssign { obj: *obj, field, value: val, op: AssignOp::Assign }, crate::compiler::error::Span::default())))
-                } else {
-                    // Complex assign on field not supported in legacy?
-                    Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Compound align on field not supported yet".to_string()) }))
-                }
-            }
-            _ => Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Invalid LHS for assignment".to_string()) }))
-        }
-    } else {
-        // Not an assignment, fail so alt can try expr_stmt
-        Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Not assignment".to_string()) }))
+        ExprKind::FieldAccess(obj, field) => {
+            Ok((input, Spanned::new(StmtKind::FieldAssign {
+                obj: *obj,
+                field,
+                op,
+                value: rhs,
+            }, crate::compiler::error::Span::default())))
+        },
+        
+        _ => Err(nom::Err::Error(ParserError { 
+            input, 
+            kind: crate::compiler::error::ParseErrorKind::Generic("Invalid left-hand side of assignment".to_string()) 
+        })),
     }
 }
 
@@ -821,24 +802,47 @@ fn parse_block_stmts(input: Input) -> IResult<Input, Vec<Stmt>, ParserError> {
 
 fn parse_if_expr(input: Input) -> IResult<Input, Expr, ParserError> {
     let (input, _) = expect_token(Token::If)(input)?;
-    let (input, cond) = parse_expr(input)?;
-    let (input, then_block) = parse_block_stmts(input)?;
-    let (input, else_block_opt) = opt(preceded(
-        expect_token(Token::Else),
-        alt((
-            map(parse_block_stmts, |s| Some(s)),
-            map(parse_if_expr, |e| {
-                // else if ... -> Treat as else { if ... }
-                // AST expectation: else_block is Option<Vec<Stmt>>.
-                // Wrap the IfExpr in a Stmt::Expr.
-                Some(vec![Spanned::new(StmtKind::Expr(e), crate::compiler::error::Span::default())])
-            }),
-        ))
-    ))(input)?;
+    cut(|input| {
+        // Check for `let` (if let)
+        if let Ok((rest, _)) = expect_token(Token::Let)(input) {
+             let (rest, pattern) = parse_pattern(rest)?;
+             let (rest, _) = expect_token(Token::Assign)(rest)?;
+             let (rest, expr) = parse_expr(rest)?;
+             let (rest, then_block) = parse_block_stmts(rest)?;
+             
+             let (rest, else_block_opt) = opt(preceded(
+                expect_token(Token::Else),
+                alt((
+                    map(parse_block_stmts, |s| Some(s)),
+                    map(parse_if_expr, |e| {
+                        Some(vec![Spanned::new(StmtKind::Expr(e), crate::compiler::error::Span::default())])
+                    }),
+                ))
+            ))(rest)?;
+            let else_block = else_block_opt.flatten();
+            
+            Ok((rest, Spanned::new(ExprKind::IfLet { pattern, expr: Box::new(expr), then_block, else_block }, crate::compiler::error::Span::default())))
+        } else {
+            let (input, cond) = parse_expr(input)?;
+            let (input, then_block) = parse_block_stmts(input)?;
+            let (input, else_block_opt) = opt(preceded(
+                expect_token(Token::Else),
+                alt((
+                    map(parse_block_stmts, |s| Some(s)),
+                    map(parse_if_expr, |e| {
+                        // else if ... -> Treat as else { if ... }
+                        // AST expectation: else_block is Option<Vec<Stmt>>.
+                        // Wrap the IfExpr in a Stmt::Expr.
+                        Some(vec![Spanned::new(StmtKind::Expr(e), crate::compiler::error::Span::default())])
+                    }),
+                ))
+            ))(input)?;
+            
+            let else_block = else_block_opt.flatten();
     
-    let else_block = else_block_opt.flatten();
-
-    Ok((input, Spanned::new(ExprKind::IfExpr(Box::new(cond), then_block, else_block), crate::compiler::error::Span::default())))
+            Ok((input, Spanned::new(ExprKind::IfExpr(Box::new(cond), then_block, else_block), crate::compiler::error::Span::default())))
+        }
+    })(input)
 }
 
 fn parse_while_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
@@ -863,11 +867,23 @@ fn parse_for_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
     Ok((input, Spanned::new(StmtKind::For { loop_var, iterator, body }, crate::compiler::error::Span::default())))
 }
 
+fn parse_break_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
+    let (input, _) = expect_token(Token::Break)(input)?;
+    let (input, _) = expect_token(Token::SemiColon)(input)?;
+    Ok((input, Spanned::new(StmtKind::Break, crate::compiler::error::Span::default())))
+}
+
+fn parse_continue_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
+    let (input, _) = expect_token(Token::Continue)(input)?;
+    let (input, _) = expect_token(Token::SemiColon)(input)?;
+    Ok((input, Spanned::new(StmtKind::Continue, crate::compiler::error::Span::default())))
+}
+
 fn parse_expr_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
     let (input, expr) = parse_expr(input)?;
     
     let is_block_like = match expr.inner {
-         ExprKind::IfExpr(..) | ExprKind::Block(..) | ExprKind::Match{..} => true,
+         ExprKind::IfExpr(..) | ExprKind::Block(..) | ExprKind::Match{..} | ExprKind::IfLet{..} => true,
          _ => false,
     };
     
@@ -882,11 +898,13 @@ fn parse_expr_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
 
 pub fn parse_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
     alt((
-        parse_let_stmt,
+        parse_let_or_tensor_decl,
         parse_return_stmt,
         parse_while_stmt,
         parse_for_stmt,
         parse_loop_stmt,
+        parse_break_stmt,
+        parse_continue_stmt,
         parse_assign_stmt, // Tries to match assignment. If fails (not assignment), falls back.
         parse_expr_stmt,
     ))(input)
@@ -904,6 +922,129 @@ fn parse_generic_params(input: Input) -> IResult<Input, Vec<String>, ParserError
     }
 }
 
+fn parse_match_expr(input: Input) -> IResult<Input, Expr, ParserError> {
+    let (input, _) = expect_token(Token::Match)(input)?;
+    let (input, target) = parse_expr(input)?;
+    let (input, _) = expect_token(Token::LBrace)(input)?;
+    
+    let (input, arms) = separated_list0(
+        expect_token(Token::Comma),
+        parse_match_arm
+    )(input)?;
+    
+    let (input, _) = opt(expect_token(Token::Comma))(input)?;
+    let (input, _) = expect_token(Token::RBrace)(input)?;
+    
+    let span = crate::compiler::error::Span::default();
+    Ok((input, Spanned::new(ExprKind::Match { expr: Box::new(target), arms }, span)))
+}
+
+fn parse_match_arm(input: Input) -> IResult<Input, (Pattern, Expr), ParserError> {
+    let (input, pattern) = parse_pattern(input)?;
+    let (input, _) = expect_token(Token::FatArrow)(input)?;
+    let (input, expr) = parse_expr(input)?;
+    Ok((input, (pattern, expr)))
+}
+
+fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
+    // Wildcard
+    if let Ok((rest, _)) = expect_token(Token::Underscore)(input) {
+        return Ok((rest, Pattern::Wildcard));
+    }
+    
+    // Literal
+    if let Ok((rest, lit)) = parse_literal(input) {
+         return Ok((rest, Pattern::Literal(Box::new(lit))));
+    }
+    
+    // Enum Pattern (Path)
+    // Tries to parse Type (Ident or Type::Ident)
+    // Then check for { or (
+    if let Ok((rest, ty)) = parse_type(input) {
+         // Check for ::
+         if let Ok((rest2, _)) = expect_token(Token::DoubleColon)(rest) {
+             let (rest3, method) = identifier(rest2)?;
+             // Enum Pattern: Type::Variant ...
+             if let Type::UserDefined(name, _) = ty {
+                  if let Ok((rest4, _)) = expect_token(Token::LBrace)(rest3) {
+                      // Struct Pattern { field: var, ... }
+                      // Need to map `field: var` or `field`.
+                      // Pattern definition expects `Vec<(String, String)>`.
+                      // Example: `Some { value: x }` -> ("value", "x").
+                      let (rest5, bindings) = separated_list0(
+                         expect_token(Token::Comma),
+                         |input| {
+                             let (input, field) = identifier(input)?;
+                             if let Ok((img, _)) = expect_token(Token::Colon)(input) {
+                                 let (img, var) = identifier(img)?;
+                                 Ok((img, (field, var)))
+                             } else {
+                                 // Shorthand { field } -> field: field
+                                 Ok((input, (field.clone(), field)))
+                             }
+                         }
+                      )(rest4)?;
+                      let (rest5, _) = opt(expect_token(Token::Comma))(rest5)?;
+                      let (rest5, _) = expect_token(Token::RBrace)(rest5)?;
+                      return Ok((rest5, Pattern::EnumPattern { enum_name: name, variant_name: method, bindings }));
+                  } else if let Ok((rest4, _)) = expect_token(Token::LParen)(rest3) {
+                      // Tuple Pattern ( ... )
+                      // Pattern only supports `bindings: Vec<(String, String)>`.
+                      // Map tuple args to "0", "1"...
+                      let (rest5, vars) = separated_list0(expect_token(Token::Comma), identifier)(rest4)?;
+                      let (rest5, _) = expect_token(Token::RParen)(rest5)?;
+                      let bindings = vars.into_iter().enumerate().map(|(i, v)| (i.to_string(), v)).collect();
+                      return Ok((rest5, Pattern::EnumPattern { enum_name: name, variant_name: method, bindings }));
+                  } else {
+                      // Unit Variant
+                      return Ok((rest3, Pattern::EnumPattern { enum_name: name, variant_name: method, bindings: vec![] }));
+                  }
+             }
+         } else {
+             // Just Type (Identifier). `None`. `Some`.
+             // Treat as EnumPattern with empty enum_name? Or infer?
+             // Since AST has enum_name, using "" as placeholder?
+             // Or assumes `ty` is the variant name if enum_name is missing?
+             // If `MaybeInt::Some` -> enum=MaybeInt, variant=Some.
+             // If `None` -> enum="?", variant=None.
+             // Or checks if `ty` is UserDefined(name). Use name as variant name.
+             if let Type::UserDefined(name, _) = ty {
+                  // Check for { or (
+                  if let Ok((rest2, _)) = expect_token(Token::LBrace)(rest) {
+                      let (rest3, bindings) = separated_list0(
+                         expect_token(Token::Comma),
+                         |input| {
+                             let (input, field) = identifier(input)?;
+                             if let Ok((img, _)) = expect_token(Token::Colon)(input) {
+                                 let (img, var) = identifier(img)?;
+                                 Ok((img, (field, var)))
+                             } else {
+                                 Ok((input, (field.clone(), field)))
+                             }
+                         }
+                      )(rest2)?;
+                       let (rest3, _) = opt(expect_token(Token::Comma))(rest3)?;
+                       let (rest3, _) = expect_token(Token::RBrace)(rest3)?;
+                       // Assume Enum name is unknown/global? 
+                       // Wait, AST requires enum_name.
+                       // Use "Unknown" or empty?
+                       return Ok((rest3, Pattern::EnumPattern { enum_name: String::new(), variant_name: name, bindings }));
+                  } else if let Ok((rest2, _)) = expect_token(Token::LParen)(rest) {
+                      let (rest3, vars) = separated_list0(expect_token(Token::Comma), identifier)(rest2)?;
+                      let (rest3, _) = expect_token(Token::RParen)(rest3)?;
+                      let bindings = vars.into_iter().enumerate().map(|(i, v)| (i.to_string(), v)).collect();
+                      return Ok((rest3, Pattern::EnumPattern { enum_name: String::new(), variant_name: name, bindings }));
+                  } else {
+                       // Unit variant
+                       return Ok((rest, Pattern::EnumPattern { enum_name: String::new(), variant_name: name, bindings: vec![] }));
+                  }
+             }
+         }
+    }
+    
+    Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Invalid pattern".to_string()) }))
+}
+
 fn parse_function_def(input: Input) -> IResult<Input, crate::compiler::ast::FunctionDef, ParserError> {
     // [extern] fn name<T>(args) [: Ret] { body }
     let (input, is_extern) = map(opt(expect_token(Token::Extern)), |o| o.is_some())(input)?;
@@ -915,10 +1056,25 @@ fn parse_function_def(input: Input) -> IResult<Input, crate::compiler::ast::Func
         let (input, generics) = parse_generic_params(input)?;
         
         let (input, _) = expect_token(Token::LParen)(input)?;
-        let (input, args) = separated_list0(
+
+        // Handle optional self
+        let (input, has_self) = map(opt(expect_token(Token::Self_)), |o| o.is_some())(input)?;
+        let input = if has_self {
+             opt(expect_token(Token::Comma))(input)?.0
+        } else {
+             input
+        };
+
+        let (input, mut args) = separated_list0(
             expect_token(Token::Comma),
             pair(identifier, preceded(expect_token(Token::Colon), parse_type))
         )(input)?;
+
+        if has_self {
+            // Add self with placeholder type
+            args.insert(0, ("self".to_string(), crate::compiler::ast::Type::Struct("Self".to_string(), vec![])));
+        }
+
         let (input, _) = expect_token(Token::RParen)(input)?;
         
         let (input, return_type) = if let Ok((rest, _)) = expect_token(Token::Arrow)(input) {
@@ -974,8 +1130,19 @@ fn parse_impl_block(input: Input) -> IResult<Input, crate::compiler::ast::ImplBl
         let (input, target_type) = parse_type(input)?;
         
         let (input, _) = expect_token(Token::LBrace)(input)?;
-        let (input, methods) = many0(parse_function_def)(input)?;
+        let (input, mut methods) = many0(parse_function_def)(input)?;
         let (input, _) = expect_token(Token::RBrace)(input)?;
+
+        // Resolve `Self` in method arguments/return types
+        for method in &mut methods {
+             for arg in &mut method.args {
+                 if let crate::compiler::ast::Type::Struct(name, _) = &arg.1 {
+                     if name == "Self" {
+                         arg.1 = target_type.clone();
+                     }
+                 }
+             }
+        }
 
         Ok((input, crate::compiler::ast::ImplBlock {
             target_type,
@@ -985,11 +1152,55 @@ fn parse_impl_block(input: Input) -> IResult<Input, crate::compiler::ast::ImplBl
     })(input)
 }
 
-// Placeholder for enums
+// Enum definition
 fn parse_enum_def(input: Input) -> IResult<Input, crate::compiler::ast::EnumDef, ParserError> {
-     // enum Name<T> { Variant, Variant(Type), ... }
-     // Implement later or stub.
-     Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Enum parsing not implemented".to_string()) }))
+    let (rest, _) = expect_token(Token::Enum)(input)?;
+    
+    cut(move |input| {
+        let (input, name) = identifier(input)?;
+        let (input, generics) = parse_generic_params(input)?;
+        
+        let (input, _) = expect_token(Token::LBrace)(input)?;
+        let (input, variants) = separated_list0(
+            expect_token(Token::Comma),
+            move |input| {
+                let (input, v_name) = identifier(input)?;
+                // Check if Tuple Variant: Variant(Type, ...)
+                if let Ok((rest, _)) = expect_token(Token::LParen)(input) {
+                    let (rest, types) = separated_list1(expect_token(Token::Comma), parse_type)(rest)?;
+                    let (rest, _) = expect_token(Token::RParen)(rest)?;
+                    
+                    // Map tuple fields to named fields "0", "1", ...
+                    let fields = types.into_iter().enumerate().map(|(i, t)| (i.to_string(), t)).collect();
+                    Ok((rest, crate::compiler::ast::VariantDef { name: v_name, fields }))
+                } else if let Ok((rest, _)) = expect_token(Token::LBrace)(input) {
+                    // Struct Variant: Variant { name: Type, ... }
+                    let (rest, fields) = separated_list1(
+                        expect_token(Token::Comma),
+                        move |input| {
+                             let (input, f_name) = identifier(input)?;
+                             let (input, _) = expect_token(Token::Colon)(input)?;
+                             let (input, f_type) = parse_type(input)?;
+                             Ok((input, (f_name, f_type)))
+                        }
+                    )(rest)?;
+                    let (rest, _) = expect_token(Token::RBrace)(rest)?;
+                    Ok((rest, crate::compiler::ast::VariantDef { name: v_name, fields }))
+                } else {
+                     Ok((input, crate::compiler::ast::VariantDef { name: v_name, fields: vec![] }))
+                }
+            }
+        )(input)?;
+        
+        let (input, _) = opt(expect_token(Token::Comma))(input)?; // Allow trailing comma
+        let (input, _) = expect_token(Token::RBrace)(input)?;
+        
+        Ok((input, crate::compiler::ast::EnumDef {
+            name,
+            generics,
+            variants,
+        }))
+    })(rest)
 }
 
 // Module items: struct, impl, fn, ...
@@ -1027,6 +1238,47 @@ fn parse_tensor_decl(input: Input) -> IResult<Input, Stmt, ParserError> {
     let (input, _) = expect_token(Token::SemiColon)(input)?;
     
     Ok((input, Spanned::new(StmtKind::TensorDecl { name, type_annotation: ty, init }, crate::compiler::error::Span::default())))
+}
+
+fn parse_datalog_atom(input: Input) -> IResult<Input, crate::compiler::ast::Atom, ParserError> {
+    let (input, predicate) = identifier(input)?;
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, args) = separated_list0(expect_token(Token::Comma), parse_expr)(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    Ok((input, crate::compiler::ast::Atom { predicate, args }))
+}
+
+fn parse_logic_literal(input: Input) -> IResult<Input, crate::compiler::ast::LogicLiteral, ParserError> {
+    if let Ok((rest, _)) = expect_token(Token::Not)(input) {
+        let (rest, atom) = parse_datalog_atom(rest)?;
+        Ok((rest, crate::compiler::ast::LogicLiteral::Neg(atom)))
+    } else {
+        let (rest, atom) = parse_datalog_atom(input)?;
+        Ok((rest, crate::compiler::ast::LogicLiteral::Pos(atom)))
+    }
+}
+
+fn parse_rule(input: Input) -> IResult<Input, crate::compiler::ast::Rule, ParserError> {
+    // Head :- Body. or Head.
+    let (rest_after_head, head) = parse_datalog_atom(input)?;
+    
+    // Debug
+    if let Some(tok) = rest_after_head.first() {
+        println!("DEBUG: parse_rule head parsed: {:?}, next token: {:?}", head.predicate, tok.token);
+    }
+
+    if let Ok((rest, _)) = expect_token(Token::Entails)(rest_after_head) {
+        // Rule
+        let (rest, body) = separated_list1(expect_token(Token::Comma), parse_logic_literal)(rest)?;
+        let (rest, _) = expect_token(Token::Dot)(rest)?;
+        Ok((rest, crate::compiler::ast::Rule { head, body, weight: None }))
+    } else if let Ok((rest, _)) = expect_token(Token::Dot)(rest_after_head) {
+        // Fact
+        Ok((rest, crate::compiler::ast::Rule { head, body: vec![], weight: None }))
+    } else {
+        // Not a rule/fact
+        Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Expected . or :- after datalog atom".to_string()) }))
+    }
 }
 
 fn parse_module(input: Input) -> IResult<Input, crate::compiler::ast::Module, ParserError> {
@@ -1090,8 +1342,18 @@ fn parse_module(input: Input) -> IResult<Input, crate::compiler::ast::Module, Pa
             Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
             Err(nom::Err::Error(_)) | Err(nom::Err::Incomplete(_)) => {}
         }
+        match parse_enum_def(input) {
+            Ok((rest, e)) => { module.enums.push(e); input = rest; continue; }
+            Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
+            Err(nom::Err::Error(_)) | Err(nom::Err::Incomplete(_)) => {}
+        }
         match parse_tensor_decl(input) {
             Ok((rest, t)) => { module.tensor_decls.push(t); input = rest; continue; }
+            Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
+            Err(nom::Err::Error(_)) | Err(nom::Err::Incomplete(_)) => {}
+        }
+        match parse_rule(input) {
+            Ok((rest, r)) => { module.rules.push(r); input = rest; continue; }
             Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
             Err(nom::Err::Error(_)) | Err(nom::Err::Incomplete(_)) => {}
         }

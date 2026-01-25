@@ -1243,8 +1243,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             for _ in 0..rel.args.len() {
                 arg_types.push(i64_type.into());
             }
-            // Tags pointer
-            arg_types.push(self.context.ptr_type(AddressSpace::default()).into());
+            // Tags pointer (as ALLOCATED INT for safe passing)
+            arg_types.push(i64_type.into());
 
             let fn_type = tensor_ptr_type.fn_type(&arg_types, false);
             let function = self.module.add_function(func_name, fn_type, None);
@@ -1329,7 +1329,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             name_ptr.into(),
                             mask_arg.into(),
                             args_tensor.into(),
-                            tags_arg.into(),
+                            self.builder.build_int_to_ptr(tags_arg.into_int_value(), self.context.ptr_type(AddressSpace::default()), "tags_ptr").unwrap().into(),
                         ],
                         "res",
                     )
@@ -1360,7 +1360,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             name_ptr.into(),
                             mask_arg.into(),
                             null_ptr.into(),
-                            tags_arg.into(),
+                            self.builder.build_int_to_ptr(tags_arg.into_int_value(), self.context.ptr_type(AddressSpace::default()), "tags_ptr").unwrap().into(),
                         ],
                         "res",
                     )

@@ -558,7 +558,7 @@ impl SemanticAnalyzer {
 
     fn register_module_symbols(
         &mut self,
-        module: &Module, // Register doesn't need to mutate? Except if we rename structs/fns?
+        module: &mut Module, // Register mutates module to add implicit relations
         // Current logic: clones S/F, renames clone, inserts clone. Original AST undefs remain "Struct".
         // BUT if we want original AST definition nodes to have explicit names?
         // Actually, we don't need to rename definition nodes if we register them with full names in symbol table.
@@ -613,6 +613,35 @@ impl SemanticAnalyzer {
             self.relations.insert(full_name, r_clone);
         }
 
+        // Implicit relations from rules
+        println!("DEBUG: Rules count: {}", module.rules.len());
+        for rule in &module.rules {
+             let full_name = if prefix.is_empty() {
+                 rule.head.predicate.clone()
+             } else {
+                 format!("{}::{}", prefix, rule.head.predicate)
+             };
+             
+             if !self.relations.contains_key(&full_name) {
+                 // Register implicit relation
+                 // Infer args?
+                 // For negation_and_arith.tl, atoms are like allowed(u, p).
+                 // We don't know types. Assume Entity/I64?
+                 // Creating explicit RelationDecl
+                 let args = rule.head.args.iter().enumerate().map(|(i, _)| (format!("arg{}", i), Type::I64)).collect();
+                 let rel = crate::compiler::ast::RelationDecl {
+                     name: rule.head.predicate.clone(), // Use simple name in decl (though stored with full key)
+                     args,
+                 };
+                 let mut r_clone = rel.clone();
+                 r_clone.name = full_name.clone(); // Store full name
+                 self.relations.insert(full_name, r_clone);
+                 
+                 // Also add to module.relations so CodeGen sees it
+                 module.relations.push(rel);
+             }
+        }
+
         // Register functions
         for f in &module.functions {
             let full_name = if prefix.is_empty() {
@@ -636,7 +665,7 @@ impl SemanticAnalyzer {
         }
 
         // Submodules
-        for (name, submodule) in &module.submodules {
+        for (name, submodule) in &mut module.submodules {
             let sub_prefix = if prefix.is_empty() {
                 name.clone()
             } else {
@@ -3935,9 +3964,23 @@ impl SemanticAnalyzer {
 
                     // Check arguments (Entity/Symbol/LogicVar)
                     for arg in args.iter_mut() {
-                        let arg_ty = self.check_expr(arg)?;
-                        if !matches!(arg_ty, Type::Entity | Type::I64) {
-                            // Potentially error, or allow implicit casting?
+                        let arg_ty_res = self.check_expr(arg);
+                        match arg_ty_res {
+                            Ok(t) => {
+                                if !matches!(t, Type::Entity | Type::I64 | Type::F32 | Type::F64 | Type::Bool) {
+                                     // Warnings or errors?
+                                }
+                            }
+                            Err(e) => {
+                                // Check if error is VariableNotFound
+                                if let TlError::Semantic { kind: SemanticErrorKind::VariableNotFound(name), .. } = &e {
+                                    // Transform to Symbol
+                                    arg.inner = ExprKind::Symbol(name.clone());
+                                    // Symbol type is likely Entity or I64 (hash)
+                                } else {
+                                    return Err(e);
+                                }
+                            }
                         }
                     }
 
@@ -4058,6 +4101,11 @@ impl SemanticAnalyzer {
                                 Some(inner.span.clone()),
                             ),
                         }
+                    }
+                    UnOp::Query => {
+                        // Query returns a probability score (Tensor<f32, 0>)
+                        // Previously this was the behavior, allowing .item() > 0.5 checks.
+                        Ok(Type::Tensor(Box::new(Type::F32), 0))
                     }
                 }
             }
@@ -4293,6 +4341,90 @@ impl SemanticAnalyzer {
                 } else {
                     None
                 };
+
+                if user_func.is_none() {
+                    // Check if it's an Enum Variant constructor (Unit or Tuple)
+                    // Struct variants are parsed as EnumInit or StructInit, so shouldn't appear here (unless parser produces StaticCall for brace variants?)
+                    // Current parser produces EnumInit for brace variants relative to module, but if path-based?
+                    // Parser handles `Type::Variant { }` as EnumInit.
+                    // So here likely `Type::Variant(args)` or `Type::Variant`.
+                    
+                    if let Some(enum_def_ref) = self.enums.get(&type_name_key) {
+                        if let Some(variant_ref) = enum_def_ref.variants.iter().find(|v| v.name == *method_name) {
+                             // Clone to avoid borrow issues
+                             let enum_def = enum_def_ref.clone();
+                             let variant = variant_ref.clone();
+
+                             // Found variant. Check args.
+                             // Unit Variant: args should be empty.
+                             // Tuple Variant: args should match fields.
+                             
+                             // Mapped fields "0", "1"... => positional.
+                             // EnumDef fields are Vec<(String, Type)>.
+                             
+                             if args.len() != variant.fields.len() {
+                                 return self.err(
+                                     SemanticError::ArgumentCountMismatch {
+                                         name: format!("{}::{}", type_name_key, method_name),
+                                         expected: variant.fields.len(),
+                                         found: args.len(),
+                                     },
+                                     Some(expr.span.clone()),
+                                 );
+                             }
+                             
+                             // Check argument types
+                             // Assuming positional matching for Tuple variants.
+                             // What about named fields? Can we call Struct Variant like a function?
+                             // Rust syntax `Variant { ... }`. `Variant(...)` is only for Tuple Variants.
+                             // If user writes `StructVariant(1, 2)`, it's error?
+                             // For now assume positional match works if counts match?
+                             // Or strictly check field names? Tuple variants have names "0", "1".
+                             
+                             let mut inferred_generics: HashMap<String, Type> = HashMap::new();
+                             
+                             for (i, arg_expr) in args.iter_mut().enumerate() {
+                                 let arg_type = self.check_expr(arg_expr)?;
+                                 let expected_type_def = &variant.fields[i].1;
+                                 
+                                 // Substitute enum generics if any?
+                                 // Enum Type::UserDefined(name, generics).
+                                 // We need to map EnumDef generics to provided generics.
+                                 // resolved_type (type_name alias) has generics.
+                                 // Construct substitution map.
+                                 if !enum_def.generics.is_empty() {
+                                     if let Type::UserDefined(_, provided_generics) = type_name {
+                                         if provided_generics.len() == enum_def.generics.len() {
+                                             for (ename, ptype) in enum_def.generics.iter().zip(provided_generics.iter()) {
+                                                 inferred_generics.insert(ename.clone(), ptype.clone());
+                                             }
+                                         }
+                                     }
+                                 }
+                                 
+                                 let expected_type = self.substitute_generics(expected_type_def, &inferred_generics);
+                                 
+                                 if !self.are_types_compatible(&arg_type, &expected_type) {
+                                     return self.err(
+                                         SemanticError::TypeMismatch {
+                                             expected: expected_type,
+                                             found: arg_type,
+                                         },
+                                         Some(arg_expr.span.clone()),
+                                     );
+                                 }
+                             }
+                             
+                             // Return the Enum type
+                             // return Ok(type_name.clone());
+                             
+
+                             // Return the Enum type
+                             return Ok(type_name.clone());
+
+                        }
+                    }
+                }
 
                 if let Some(func) = user_func {
                     if func.args.len() != args.len() {

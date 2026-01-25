@@ -7,6 +7,7 @@ fn main() {
     let x = 100;
     println("Querying with literal 100:");
     let r1 = ?p(100);
+    // Formerly logic returned Tensor, now we restored it.
     if r1.item() > 0.5 { println("Literal OK"); } else { println("Literal FAIL"); }
 
     println("Querying with variable x=100:");

@@ -2429,6 +2429,105 @@ impl<'ctx> CodeGenerator<'ctx> {
                             _ => Err("Not only on bool".into()),
                         }
                     }
+                    UnOp::Query => {
+                        // Logic Query: check if result tensor is non-empty
+                        if let Type::Tensor(_, _) = ty {
+                            let len_fn = self.module.get_function("tl_tensor_len").unwrap();
+                            let cast_ptr = self
+                                .builder
+                                .build_pointer_cast(
+                                    val.into_pointer_value(),
+                                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                                    "cast_len",
+                                )
+                                .unwrap();
+                            let call = self
+                                .builder
+                                .build_call(len_fn, &[cast_ptr.into()], "len")
+                                .map_err(|e| e.to_string())?;
+                            let len = match call.try_as_basic_value() {
+                                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                                _ => return Err("Failed len".into()),
+                            };
+                            
+                            // Free temporary tensor if needed
+                            if self.is_safe_to_free(expr, &ty) {
+                                self.emit_recursive_free(val.into(), &ty)?;
+                            }
+
+                            // Check len > 0
+                            let zero = self.context.i64_type().const_zero();
+                            let bool_val = self
+                                .builder
+                                .build_int_compare(
+                                    inkwell::IntPredicate::SGT,
+                                    len,
+                                    zero,
+                                    "is_true",
+                                )
+                                .map_err(|e| e.to_string())?;
+
+                            // Convert i1 bool to f32 (0.0 or 1.0)
+                            let float_val = self.builder.build_unsigned_int_to_float(
+                                bool_val,
+                                self.context.f32_type(),
+                                "bool_to_f32"
+                            ).map_err(|e| e.to_string())?;
+
+                            // Create scalar tensor using tl_tensor_new(data_ptr, rank=0, shape_ptr=NULL)
+                            // 1. Alloca for f32 data
+                            let current_block = self.builder.get_insert_block().unwrap();
+                            let func = current_block.get_parent().unwrap();
+                            let entry_block = func.get_first_basic_block().unwrap();
+                            
+                            // Insert at the beginning of entry block to avoid being after terminator
+                            if let Some(first_inst) = entry_block.get_first_instruction() {
+                                self.builder.position_before(&first_inst);
+                            } else {
+                                self.builder.position_at_end(entry_block);
+                            }
+                            
+                            let f32_ptr = self.builder.build_alloca(self.context.f32_type(), "scalar_data").map_err(|e| e.to_string())?;
+                            // Also allocate dummy shape pointer (i64/usize aligned) to satisfy slice::from_raw_parts alignment check
+                            let shape_dummy_ptr = self.builder.build_alloca(self.context.i64_type(), "shape_dummy").map_err(|e| e.to_string())?;
+                            
+                            self.builder.position_at_end(current_block); // Back to current
+                            
+                            // 2. Store value
+                            self.builder.build_store(f32_ptr, float_val).map_err(|e| e.to_string())?;
+
+                            // 3. Call tl_tensor_new
+                            let tensor_new_fn = self.module.get_function("tl_tensor_new").ok_or("tl_tensor_new not found")?;
+                            // tl_tensor_new(data: *const f32, rank: usize, shape: *const usize)
+                            let zero_sz = self.context.i64_type().const_zero(); // rank = 0
+                            
+                            // Pass properly aligned dummy pointer
+                            let shape_ptr = self.builder.build_pointer_cast(
+                                shape_dummy_ptr,
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "shape_ptr_cast"
+                            ).map_err(|e| e.to_string())?;
+
+                            let tensor_call = self.builder.build_call(
+                                tensor_new_fn, 
+                                &[f32_ptr.into(), zero_sz.into(), shape_ptr.into()], 
+                                "pred_tensor"
+                            ).map_err(|e| e.to_string())?;
+                            
+                            let res = match tensor_call.try_as_basic_value() {
+                                inkwell::values::ValueKind::Basic(v) => v,
+                                _ => return Err("Invalid return from tl_tensor_new".into()),
+                            };
+
+                            // Register result
+                            let res_ty = Type::Tensor(Box::new(Type::F32), 0);
+                            self.emit_register_tensor(res, &res_ty)?;
+
+                            Ok((res, res_ty))
+                        } else {
+                            Err("Query on non-tensor".into())
+                        }
+                    }
                 }
             }
 
@@ -3661,6 +3760,58 @@ impl<'ctx> CodeGenerator<'ctx> {
         } else if let Some(f) = self.module.get_function(method_name) {
             (f, method_name.to_string())
         } else {
+             // Fallback: Check if it is an Enum Variant initialization
+             if let Some(enum_def) = self.enum_defs.get(type_name).cloned() {
+                 if let Some(variant_idx) = enum_def.variants.iter().position(|v| v.name == method_name) {
+                     let variant_def = &enum_def.variants[variant_idx];
+                     if args.len() != variant_def.fields.len() {
+                         return Err(format!("Enum variant {}::{} expects {} args, got {}", type_name, method_name, variant_def.fields.len(), args.len()));
+                     }
+                     
+                     let enum_ty = *self.enum_types.get(type_name).ok_or(format!("Enum type {} not found", type_name))?;
+                     
+                     // Allocate
+                     let alloca = self.builder.build_malloc(enum_ty, &format!("enum_{}", type_name)).map_err(|e| e.to_string())?;
+                     
+                     // Store Tag
+                     let tag_ptr = self.builder.build_struct_gep(enum_ty, alloca, 0, "tag_ptr").map_err(|e| e.to_string())?;
+                     self.builder.build_store(tag_ptr, self.context.i32_type().const_int(variant_idx as u64, false)).map_err(|e| e.to_string())?;
+                     
+                     // Store Fields
+                     if !variant_def.fields.is_empty() {
+                         let payload_ptr_raw = self.builder.build_struct_gep(enum_ty, alloca, 1, "payload_ptr_raw").map_err(|e| e.to_string())?;
+                         
+                         let mut field_types = vec![];
+                         for (_, ty) in &variant_def.fields {
+                             let llvm_ty = match ty {
+                                 Type::F32 => self.context.f32_type().into(),
+                                 Type::I64 => self.context.i64_type().into(),
+                                 Type::Bool => self.context.bool_type().into(),
+                                 Type::Tensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::UserDefined(_, _) | Type::Vec(_) => 
+                                     self.context.ptr_type(inkwell::AddressSpace::default()).into(),
+                                 _ => self.context.i64_type().into(),
+                             };
+                             field_types.push(llvm_ty);
+                         }
+                         let variant_struct_ty = self.context.struct_type(&field_types, false);
+                         
+                         let payload_ptr = self.builder.build_pointer_cast(
+                             payload_ptr_raw,
+                             self.context.ptr_type(inkwell::AddressSpace::default()),
+                             "payload_cast"
+                         ).unwrap();
+                         
+                         for (i, arg) in args.iter().enumerate() {
+                             let (val, _) = self.compile_expr(arg)?;
+                             let field_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, i as u32, "field_ptr").map_err(|e| e.to_string())?;
+                             self.builder.build_store(field_ptr, val).map_err(|e| e.to_string())?;
+                         }
+                     }
+                     
+                     return Ok((alloca.into(), Type::Enum(type_name.to_string(), vec![])));
+                 }
+             }
+
             return Err(format!(
                 "Static method {}::{} not found (checked {}, {}, and {})",
                 type_name, method_name, mangled_name, stdlib_name, method_name
@@ -6149,7 +6300,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 _ => {
                     let (val, ty) = self.compile_expr(arg)?;
-                    compiled_args.push(val);
+                     // Force cast to i64
+                    let i64_type = self.context.i64_type();
+                    let val_i64 = if val.is_int_value() {
+                        self.builder.build_int_cast(val.into_int_value(), i64_type, "arg_cast").unwrap().into()
+                    } else {
+                        // If float, cast to int? Or bitcast?
+                        // For now assume logic args are ints or entities (i64)
+                        // If boolean?
+                         if val.is_int_value() { // Bool is int(1)
+                             self.builder.build_int_cast(val.into_int_value(), i64_type, "bool_cast").unwrap().into()
+                         } else {
+                             val // Cannot cast pointer to int easily here without ptrtoint
+                         }
+                    };
+                    compiled_args.push(val_i64);
                     let tag = match ty {
                         Type::I64 | Type::I32 | Type::I8 | Type::U8 | Type::U16 | Type::U32 | Type::Usize => 0, // Int
                         Type::F32 | Type::F64 | Type::F16 | Type::BF16 => 1,             // Float
@@ -6201,8 +6366,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Insert Mask at beginning
         let mask_val = i64_type.const_int(mask as u64, false);
         compiled_args.insert(0, mask_val.into());
-        // Append tags pointer at end
-        compiled_args.push(tags_ptr.into());
+        // Append tags pointer at end (as i64)
+        // let null_tags = i8_type.ptr_type(inkwell::AddressSpace::default()).const_null();
+        let tags_int = self.builder.build_ptr_to_int(tags_ptr, i64_type, "tags_int").unwrap();
+        compiled_args.push(tags_int.into());
+        // compiled_args.push(null_tags.into()); // FORCE NULL TAGS
+        // compiled_args.push(tags_ptr.into());
 
         let final_args: Vec<inkwell::values::BasicMetadataValueEnum> =
             compiled_args.iter().map(|&val| val.into()).collect();
@@ -6211,6 +6380,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             .builder
             .build_call(function, &final_args, "query_res")
             .map_err(|e| e.to_string())?;
+
+        // Debug signature mismatch
+        
 
         let res = match call.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(v) => v,

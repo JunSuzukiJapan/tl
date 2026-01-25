@@ -74,7 +74,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     fn collect_entities(&self, expr_kind: &ExprKind, entities: &mut HashSet<String>) {
         match expr_kind {
-            ExprKind::Symbol(name) => {
+            ExprKind::Symbol(name) | ExprKind::Variable(name) => {
                 entities.insert(name.clone());
             }
             _ => {}
@@ -107,7 +107,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     fn emit_fact_arg(&self, expr_kind: &ExprKind) -> Result<(), String> {
         match expr_kind {
-            ExprKind::Symbol(name) => {
+            ExprKind::Symbol(name) | ExprKind::Variable(name) => {
                 let add_entity_fn = self.module.get_function("tl_kb_add_entity").unwrap();
                 let name_ptr = self
                     .builder
@@ -223,7 +223,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let suffix = if is_head { "head_arg" } else { "body_arg" };
 
         match expr_kind {
-            ExprKind::Symbol(name) => {
+            ExprKind::Symbol(name) | ExprKind::Variable(name) => {
                 if known_entities.contains(name) {
                     let add_entity_fn = self.module.get_function("tl_kb_add_entity").unwrap();
                     let name_ptr = self.builder.build_global_string_ptr(name, "entity_name").map_err(|e| e.to_string())?;
@@ -312,6 +312,7 @@ fn is_simple_logic_arg(expr: &Expr) -> bool {
     matches!(
         expr.inner,
         ExprKind::Symbol(_)
+            | ExprKind::Variable(_)
             | ExprKind::LogicVar(_)
             | ExprKind::Int(_)
             | ExprKind::Float(_)

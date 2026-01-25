@@ -83,7 +83,10 @@ impl TensorPool {
 
 impl Drop for TensorPool {
     fn drop(&mut self) {
-        self.clear();
+        // self.clear();
+        // WORKAROUND: In Metal backend, destroying tensors at thread/process exit 
+        // can cause segfaults/exit code 1 due to driver shutdown race conditions.
+        // We leaks these tensors knowingly; OS will reclaim process memory.
     }
 }
 
