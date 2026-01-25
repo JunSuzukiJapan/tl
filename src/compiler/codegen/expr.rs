@@ -2155,12 +2155,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 )?;
 
                 // Register intermediate tensor result
-                self.emit_register_tensor(res.0, &res.1)?;
-
-                // MEMORY STRATEGY FIX: Removed manual emit_recursive_free for operands.
-                // Operands are already registered in scope and will be released by exit_scope.
-                // Manual release here caused double-free (scope release + manual release).
-
                 Ok(res)
             }
 
@@ -2521,7 +2515,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                             // Register result
                             let res_ty = Type::Tensor(Box::new(Type::F32), 0);
-                            self.emit_register_tensor(res, &res_ty)?;
+
 
                             Ok((res, res_ty))
                         } else {
@@ -3936,9 +3930,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             inkwell::values::ValueKind::Basic(_) => {
                 let v = self.check_tensor_result(call, "static_call_error")?;
                 // Register intermediate tensor result
-                if matches!(ret_ty, Type::Tensor(_, _)) {
-                    self.emit_register_tensor(v, &ret_ty)?;
-                }
+                // REMOVED REDUNDANT REGISTRATION
+
                 Ok((v, ret_ty))
             }
             _ => Ok((
@@ -4198,7 +4191,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .unwrap();
 
         let result_ty = Type::Tensor(Box::new(result_inner_type), rank);
-        self.emit_register_tensor(res, &result_ty)?;
+
 
         Ok((res, result_ty))
     }
@@ -5251,7 +5244,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string())?;
                     let res = self.check_tensor_result(call, "tok_encode_error")?;
                     let ret_ty = Type::Tensor(Box::new(Type::I64), 0);
-                    self.emit_register_tensor(res, &ret_ty)?;
+                    let ret_ty = Type::Tensor(Box::new(Type::I64), 0);
+
                     return Ok((res, ret_ty));
                 }
                 "decode" => {
@@ -5313,7 +5307,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string())?;
                     let res = self.check_tensor_result(call, "kv_get_error")?;
                     let ret_ty = Type::Tensor(Box::new(Type::F32), 0);
-                    self.emit_register_tensor(res, &ret_ty)?;
+                    let ret_ty = Type::Tensor(Box::new(Type::F32), 0);
+
                     return Ok((res, ret_ty));
                 }
                 "update" => {
@@ -5372,7 +5367,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         return Ok((res, Type::I64));
                     }
                     let ret_ty = Type::Tensor(Box::new(Type::F32), 0);
-                    self.emit_register_tensor(res, &ret_ty)?;
+                    let ret_ty = Type::Tensor(Box::new(Type::F32), 0);
+
                     return Ok((res, ret_ty));
                 }
                 _ => {}
@@ -5464,7 +5460,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => return Err("Invalid return from Tensor::to_i64".into()),
                     };
                     let ret_ty = Type::Tensor(Box::new(Type::I64), 0);
-                    self.emit_register_tensor(res, &ret_ty)?;
+                    let ret_ty = Type::Tensor(Box::new(Type::I64), 0);
+
                     return Ok((res, ret_ty));
                 }
                 "cuda" => {
@@ -5481,7 +5478,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         inkwell::values::ValueKind::Basic(v) => v,
                         _ => return Err("Invalid return from cuda()".into()),
                     };
-                    self.emit_register_tensor(res, &obj_ty)?;
+
+
                     return Ok((res, obj_ty.clone()));
                 }
                 "cpu" => {
@@ -5498,7 +5496,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         inkwell::values::ValueKind::Basic(v) => v,
                         _ => return Err("Invalid return from cpu()".into()),
                     };
-                    self.emit_register_tensor(res, &obj_ty)?;
+
+
                     return Ok((res, obj_ty.clone()));
                 }
                 "item" => {
@@ -5562,7 +5561,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                             inkwell::values::ValueKind::Basic(v) => v,
                             _ => return Err(format!("Invalid return from {}()", method).into()),
                         };
-                        self.emit_register_tensor(res, &Type::Tensor(Box::new(Type::F32), 1))?;
+    
+
                         return Ok((res, obj_ty.clone()));
                     } else {
                         if method == "argmax" || method == "argmin" {
@@ -5584,7 +5584,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         inkwell::values::ValueKind::Basic(v) => v,
                         _ => return Err("Invalid return from detach()".into()),
                     };
-                    self.emit_register_tensor(res, &obj_ty)?;
+
+
                     return Ok((res, obj_ty.clone()));
                 }
                 "tril" => {
@@ -5619,7 +5620,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         inkwell::values::ValueKind::Basic(v) => v,
                         _ => return Err("Invalid return from tril()".into()),
                     };
-                    self.emit_register_tensor(res, &obj_ty)?;
+
+
                     return Ok((res, obj_ty.clone()));
                 }
                 "mul" | "add" | "sub" | "div" => {
@@ -5645,9 +5647,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .builder
                         .build_call(fn_val, &[obj_val.into(), rhs_val.into()], "binop_res")
                         .map_err(|e| e.to_string())?;
+
+
                     let res = self.check_tensor_result(call, "binop_error")?;
 
-                    self.emit_register_tensor(res, &obj_ty)?;
+
 
                     // Note: ensure_tensor_v2 result might need freeing if it was promoted
                     // But currently arguments cleanup loop handles args[0].
@@ -5672,7 +5676,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         inkwell::values::ValueKind::Basic(v) => v,
                         _ => return Err("Invalid return from contiguous()".into()),
                     };
-                    self.emit_register_tensor(res, &obj_ty)?;
+
+
                     return Ok((res, obj_ty.clone()));
                 }
                 "conv2d" => {
@@ -5739,7 +5744,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         inkwell::values::ValueKind::Basic(v) => v,
                         _ => return Err("Invalid return from conv2d()".into()),
                     };
-                    self.emit_register_tensor(res, &obj_ty)?;
+
+
                     return Ok((res, obj_ty.clone()));
                 }
                 "clamp" => {
@@ -5795,7 +5801,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         inkwell::values::ValueKind::Basic(v) => v,
                         _ => return Err("Invalid return from clamp()".into()),
                     };
-                    self.emit_register_tensor(res, &obj_ty)?;
+
+
                     return Ok((res, obj_ty.clone()));
                 }
                 "clone" => {
@@ -5811,7 +5818,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         inkwell::values::ValueKind::Basic(v) => v,
                         _ => return Err("Invalid return from clone()".into()),
                     };
-                    self.emit_register_tensor(res, &obj_ty)?;
+
+
                     return Ok((res, obj_ty.clone()));
                 }
                 "grad" => {
@@ -5827,7 +5835,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         inkwell::values::ValueKind::Basic(v) => v,
                         _ => return Err("Invalid return from grad()".into()),
                     };
-                    self.emit_register_tensor(res, &obj_ty)?;
+
+
                     return Ok((res, obj_ty.clone()));
                 }
                 "matmul_quantized" => {
@@ -5843,8 +5852,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .builder
                         .build_call(fn_val, &[obj_val.into(), weight_val.into()], "qmatmul_res")
                         .map_err(|e| e.to_string())?;
+
                     let res = self.check_tensor_result(call, "qmatmul_error")?;
-                    self.emit_register_tensor(res, &obj_ty)?;
+
                     return Ok((res, obj_ty.clone()));
                 }
                 _ => {}
@@ -5907,9 +5917,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             inkwell::values::ValueKind::Basic(_) => {
                 let v = self.check_tensor_result(call, "method_call_error")?;
                 // Register intermediate tensor result
-                if matches!(ret_ty, Type::Tensor(_, _)) {
-                    self.emit_register_tensor(v, &ret_ty)?;
-                }
+                // REMOVED REDUNDANT REGISTRATION
+
                 Ok((v, ret_ty))
             }
             _ => Ok((

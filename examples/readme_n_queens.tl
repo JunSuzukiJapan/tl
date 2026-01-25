@@ -56,7 +56,7 @@ fn main() {
                  if enable_epoch_item {
                      println("Epoch {} - Loss: {}", i, total_loss.item());
                  } else {
-                     println("Epoch {}", i);
+                     println("Epoch {} (Mem: {} MB)", i, System::memory_mb());
                  }
 
                  // Early exit: Stop when we have N queens (prob > 0.5)
