@@ -181,7 +181,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     pub(crate) fn check_tensor_result_with_loc(
         &self,
         call_site_value: inkwell::values::CallSiteValue<'ctx>,
-        _context_msg: &str,
+        context_msg: &str,
         file: Option<&str>,
         line: u32,
         col: u32,
@@ -196,6 +196,30 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         let ptr_val = basic_value.into_pointer_value();
+
+        // LOG ALLOC (Trace all tensor results from runtime)
+        let f_name = "tl_log_alloc";
+        if let Some(f) = self.module.get_function(f_name) {
+             let size_val = self.context.i64_type().const_int(0, false); // Unknown size from return val
+             
+             // Use file if available, otherwise context_msg (function name)
+             let file_str = if let Some(f) = file {
+                 f
+             } else {
+                 context_msg
+             };
+             
+             // Note: build_global_string_ptr might create duplicates, but LLVM merges constants usually.
+             if let Ok(file_ptr_val) = self.builder.build_global_string_ptr(file_str, "log_file") {
+                 let file_ptr = file_ptr_val.as_pointer_value();
+                 let i32_type = self.context.i32_type();
+                 let line_val = i32_type.const_int(line as u64, false);
+                 
+                 let cast_ptr = self.builder.build_pointer_cast(ptr_val, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_log").unwrap();
+    
+                 self.builder.build_call(f, &[cast_ptr.into(), size_val.into(), file_ptr.into(), line_val.into()], "").ok();
+             }
+        }
 
         let current_bb = self.builder.get_insert_block().unwrap();
         let function = current_bb.get_parent().unwrap();
@@ -490,6 +514,113 @@ impl<'ctx> CodeGenerator<'ctx> {
                 "",
             )
             .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub(crate) fn emit_log_alloc(&self, ptr: inkwell::values::BasicValueEnum<'ctx>, size: inkwell::values::IntValue<'ctx>) -> Result<(), String> {
+        // tl_log_alloc(ptr, size, file, line)
+        let f_name = "tl_log_alloc";
+        let f = if let Some(f) = self.module.get_function(f_name) {
+             f
+        } else {
+             let void_ty = self.context.void_type();
+             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+             let i64_ty = self.context.i64_type();
+             let i32_ty = self.context.i32_type();
+             // ptr, size, file, line
+             let ft = void_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), ptr_ty.into(), i32_ty.into()], false);
+             self.module.add_function(f_name, ft, None)
+        };
+
+        let (file, line, _) = if let Some(span) = &self.current_span {
+            (
+                span.file.as_deref().unwrap_or("unknown"),
+                span.line as u32,
+                span.column as u32,
+            )
+        } else {
+            ("unknown", 0, 0)
+        };
+        
+        let file_ptr = self
+            .builder
+            .build_global_string_ptr(file, "log_file")
+            .map_err(|e| e.to_string())?
+            .as_pointer_value();
+        
+        let i32_type = self.context.i32_type();
+        let ptr_val = if ptr.is_pointer_value() {
+            ptr.into_pointer_value()
+        } else {
+             // Cast to void*? Or error? Just assume correct usage.
+             // If not pointer, maybe cast int to ptr? No, memory alloc always returns ptr.
+             return Err("emit_log_alloc expects pointer".into());
+        };
+        
+        let cast_ptr = self.builder.build_pointer_cast(ptr_val, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_log").unwrap();
+
+        self.builder.build_call(
+            f,
+            &[
+                cast_ptr.into(),
+                size.into(),
+                file_ptr.into(),
+                i32_type.const_int(line as u64, false).into(),
+            ],
+            ""
+        ).map_err(|e| e.to_string())?;
+        
+        Ok(())
+    }
+
+    pub(crate) fn emit_log_free(&self, ptr: inkwell::values::BasicValueEnum<'ctx>) -> Result<(), String> {
+        // tl_log_free(ptr, file, line)
+        let f_name = "tl_log_free";
+        let f = if let Some(f) = self.module.get_function(f_name) {
+             f
+        } else {
+             let void_ty = self.context.void_type();
+             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+             let i32_ty = self.context.i32_type();
+             // ptr, file, line
+             let ft = void_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i32_ty.into()], false);
+             self.module.add_function(f_name, ft, None)
+        };
+
+        let (file, line, _) = if let Some(span) = &self.current_span {
+            (
+                span.file.as_deref().unwrap_or("unknown"),
+                span.line as u32,
+                span.column as u32,
+            )
+        } else {
+            ("unknown", 0, 0)
+        };
+        
+        let file_ptr = self
+            .builder
+            .build_global_string_ptr(file, "log_file")
+            .map_err(|e| e.to_string())?
+            .as_pointer_value();
+        
+        let i32_type = self.context.i32_type();
+        let ptr_val = if ptr.is_pointer_value() {
+            ptr.into_pointer_value()
+        } else {
+             return Err("emit_log_free expects pointer".into());
+        };
+        let cast_ptr = self.builder.build_pointer_cast(ptr_val, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_log").unwrap();
+
+        self.builder.build_call(
+            f,
+            &[
+                cast_ptr.into(),
+                file_ptr.into(),
+                i32_type.const_int(line as u64, false).into(),
+            ],
+            ""
+        ).map_err(|e| e.to_string())?;
+        
         Ok(())
     }
 

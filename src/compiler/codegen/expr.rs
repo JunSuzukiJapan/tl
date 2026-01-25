@@ -7611,8 +7611,11 @@ fn compile_tensor_pow<'ctx>(
 
         let res =
             codegen.check_tensor_result(call.map_err(|e| e.to_string())?, "pow_scalar_error")?;
-        codegen.emit_register_tensor(res, &obj_ty)?;
-        Ok((res, obj_ty))
+        
+        // Fix: Result is always a Tensor (Rank 0), even if invoked on Scalar
+        let res_ty = Type::Tensor(Box::new(Type::F32), 0);
+        codegen.emit_register_tensor(res, &res_ty)?;
+        Ok((res, res_ty))
     }
 }
 

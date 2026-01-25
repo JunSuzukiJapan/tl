@@ -431,6 +431,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .module
                         .get_function("tl_tensor_release")
                         .ok_or("tl_tensor_release not found")?;
+
+                    // LOG FREE
+                    self.emit_log_free(val)?;
+
                     self.builder
                         .build_call(free_fn, &[val.into()], "")
                         .map_err(|e| e.to_string())?;

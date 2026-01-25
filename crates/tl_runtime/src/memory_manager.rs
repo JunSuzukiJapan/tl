@@ -465,15 +465,21 @@ impl MemoryManager {
 
     /// Enter a function frame with N slots
     pub fn function_enter(&mut self, num_slots: usize) {
-        // Initialize slots with None (no allocation yet)
-        self.call_stack_slots.push(vec![None; num_slots]);
+        // Create new scope for automatic cleanup of registered tensors
+        self.enter_scope();
+        
+        let frame = vec![None; num_slots];
+        self.call_stack_slots.push(frame);
         if crate::mem_log_enabled() {
-             eprintln!("[TL_MEM] function_enter slots={}", num_slots);
+             eprintln!("[TL_MEM] function_enter slots={} depth={}", num_slots, self.scopes.len());
         }
     }
 
     /// Exit function frame and free all slot buffers
     pub fn function_exit(&mut self) {
+        // Free registered tensors in this scope
+        self.exit_scope();
+
         if let Some(frame) = self.call_stack_slots.pop() {
             for (i, slot) in frame.into_iter().enumerate() {
                 if let Some((ptr, size)) = slot {

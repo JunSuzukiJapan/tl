@@ -885,6 +885,34 @@ pub extern "C" fn tl_metal_sync() {
 }
 
 #[no_mangle]
+pub extern "C" fn tl_log_alloc(
+    ptr: *const std::ffi::c_void,
+    size: i64,
+    file: *const std::os::raw::c_char,
+    line: i32,
+) {
+    let file_str = if !file.is_null() {
+        unsafe { std::ffi::CStr::from_ptr(file).to_string_lossy().into_owned() }
+    } else {
+        "unknown".to_string()
+    };
+    eprintln!("[ALLOC] File: {}, Line: {}, Size: {}, Ptr: {:p}", file_str, line, size, ptr);
+}
+
+#[no_mangle]
+pub extern "C" fn tl_log_free(
+    ptr: *const std::ffi::c_void,
+    file: *const std::os::raw::c_char,
+    line: i32,
+) {
+    let file_str = if !file.is_null() {
+        unsafe { std::ffi::CStr::from_ptr(file).to_string_lossy().into_owned() }
+    } else {
+        "unknown".to_string()
+    };
+    eprintln!("[FREE] File: {}, Line: {}, Ptr: {:p}", file_str, line, ptr);
+}
+#[no_mangle]
 pub extern "C" fn tl_trace_mem(
     file: *const std::os::raw::c_char,
     line: u32,

@@ -799,6 +799,36 @@ pub fn declare_runtime_functions<'ctx>(
     let get_buffer_type = void_ptr.fn_type(&[i64_type.into(), i64_type.into()], false);
     add_fn("tl_mem_get_buffer", get_buffer_type);
     
+    // tl_log_alloc(ptr, size, file, line)
+    let log_alloc_type = void_type.fn_type(&[void_ptr.into(), i64_type.into(), i8_ptr.into(), i32_type.into()], false);
+    add_fn("tl_log_alloc", log_alloc_type);
+
+    // tl_log_free(ptr, file, line)
+    let log_free_type = void_type.fn_type(&[void_ptr.into(), i8_ptr.into(), i32_type.into()], false);
+    add_fn("tl_log_free", log_free_type);
+    
+    // tl_trace_mem(file, line, col, tag)
+    let trace_mem_type = void_type.fn_type(
+        &[
+             i8_ptr.into(),
+             i32_type.into(),
+             i32_type.into(),
+             i8_ptr.into(),
+        ],
+        false
+    );
+    add_fn("tl_trace_mem", trace_mem_type);
+
+    if let Some(f) = module.get_function("tl_log_alloc") {
+        execution_engine.add_global_mapping(&f, runtime::tl_log_alloc as usize);
+    }
+    if let Some(f) = module.get_function("tl_log_free") {
+        execution_engine.add_global_mapping(&f, runtime::tl_log_free as usize);
+    }
+    if let Some(f) = module.get_function("tl_trace_mem") {
+        execution_engine.add_global_mapping(&f, runtime::tl_trace_mem as usize);
+    }
+    
     if let Some(f) = module.get_function("tl_mem_get_buffer") {
         execution_engine.add_global_mapping(&f, runtime::tl_mem_get_buffer as usize);
     }
