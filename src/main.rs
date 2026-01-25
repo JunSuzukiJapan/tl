@@ -60,6 +60,8 @@ fn main() -> Result<()> {
     let mut builder = env_logger::Builder::new();
     // Default level: WARN
     builder.filter_level(log::LevelFilter::Warn);
+    // Suppress tokenizers crate warnings (ID mismatch etc)
+    builder.filter_module("tokenizers", log::LevelFilter::Error);
     
     // Override with CLI verbose level
     match cli.verbose {
