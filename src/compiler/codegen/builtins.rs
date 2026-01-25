@@ -1322,6 +1322,29 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_div") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_div as usize);
     }
+    if let Some(f) = module.get_function("tl_tensor_rem") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_rem as usize);
+    }
+    // Comparisons
+    if let Some(f) = module.get_function("tl_tensor_eq") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_eq as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_neq") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_neq as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_gt") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_gt as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_lt") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_lt as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_ge") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_ge as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_le") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_le as usize);
+    }
+
     if let Some(f) = module.get_function("tl_tensor_pow") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_pow as usize);
     }
@@ -1347,6 +1370,10 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_div_assign_scalar_f32") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_div_assign_scalar_f32 as usize);
     }
+    if let Some(f) = module.get_function("tl_tensor_mod_assign_scalar_f32") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_mod_assign_scalar_f32 as usize);
+    }
+
     if let Some(f) = module.get_function("tl_kb_add_entity") {
         execution_engine.add_global_mapping(&f, runtime::knowledge_base::tl_kb_add_entity as usize);
     }
