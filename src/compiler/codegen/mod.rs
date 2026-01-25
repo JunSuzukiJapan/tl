@@ -1000,8 +1000,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Check if this function returns a struct (requires sret)
         // Check if this function returns a struct (requires sret)
-        let uses_sret = false; // Tensors are pointers, Structs should use SRET but currently disabled or handled differently?
-        // Wait, do actual Structs use SRET?
+        // Check if this function returns a struct (requires sret)
         // matches!(func.return_type, Type::Struct(_, _) | Type::UserDefined(_, _))
         // Let's assume Structs needs SRET, but Tensors do NOT.
         let uses_sret = matches!(func.return_type, Type::Struct(_, _) | Type::UserDefined(_, _));

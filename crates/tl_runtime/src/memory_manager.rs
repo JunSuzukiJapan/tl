@@ -248,6 +248,7 @@ impl MemoryManager {
     }
 
     /// Check if pointer is already registered in ANY scope
+    #[allow(dead_code)]
     fn is_registered(&self, ptr: *mut c_void) -> bool {
         for scope in &self.scopes {
             if scope.iter().any(|r| r.ptr == ptr) {
@@ -378,8 +379,8 @@ impl MemoryManager {
                              unsafe { libc::free(ptr); }
                         }
                         AllocationType::Tensor => {
-                            let meta = self.tensor_meta.remove(&ptr);
-                            let outcome = unsafe { super::free_tensor_resources(ptr as *mut OpaqueTensor) };
+                            let _meta = self.tensor_meta.remove(&ptr);
+                            let outcome = super::free_tensor_resources(ptr as *mut OpaqueTensor);
                              if crate::mem_log_enabled() {
                                  let outcome_str = match outcome {
                                      crate::FreeOutcome::ArenaDrop => "arena_drop",
