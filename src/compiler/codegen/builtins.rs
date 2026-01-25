@@ -485,8 +485,21 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_div(a: *mut, b: *mut) -> *mut
     add_fn("tl_tensor_div", bin_type);
 
+    // Comparisons
+    add_fn("tl_tensor_eq", bin_type);
+    add_fn("tl_tensor_neq", bin_type);
+    add_fn("tl_tensor_gt", bin_type);
+    add_fn("tl_tensor_lt", bin_type);
+    add_fn("tl_tensor_ge", bin_type);
+    add_fn("tl_tensor_le", bin_type);
+
+
     // tl_tensor_matmul(a: *mut, b: *mut) -> *mut
     add_fn("tl_tensor_matmul", bin_type);
+
+    // tl_tensor_rem(a: *mut, b: *mut) -> *mut
+    add_fn("tl_tensor_rem", bin_type);
+
 
     // Unary ops: exp, log
     add_fn("tl_tensor_exp", unary_res_type);

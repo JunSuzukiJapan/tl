@@ -941,8 +941,59 @@ pub extern "C" fn tl_trace_mem(
     );
 }
 
+
+// Comparison Ops returning Mask (Tensor of 0.0/1.0)
+macro_rules! impl_cmp_op {
+    ($name:ident, $op:ident) => {
+        #[no_mangle]
+        pub extern "C" fn $name(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+            use crate::error::RuntimeError;
+            unsafe {
+                let t_a = &(*a).0;
+                let t_b = &(*b).0;
+                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    // Candle binary ops support broadcasting
+                    let result = t_a
+                        .$op(t_b)
+                        .map_err(|e| RuntimeError::InternalError(e.to_string()))?
+                        .to_dtype(candle_core::DType::F32) // Convert bool/u8 to f32
+                        .map_err(|e| RuntimeError::InternalError(e.to_string()))?;
+                    Ok(make_tensor(result))
+                }));
+                return_ptr_or_null(res)
+            }
+        }
+    };
+}
+
+impl_cmp_op!(tl_tensor_eq, eq);
+impl_cmp_op!(tl_tensor_neq, ne);
+impl_cmp_op!(tl_tensor_gt, gt);
+impl_cmp_op!(tl_tensor_ge, ge);
+impl_cmp_op!(tl_tensor_lt, lt);
+impl_cmp_op!(tl_tensor_le, le);
+
+// Remainder (Mod)
+#[no_mangle]
+pub extern "C" fn tl_tensor_rem(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    use crate::error::RuntimeError;
+    unsafe {
+        let t_a = &(*a).0;
+        let t_b = &(*b).0;
+        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+             let div = (t_a / t_b).map_err(|e| RuntimeError::InternalError(e.to_string()))?;
+             let floor = div.floor().map_err(|e| RuntimeError::InternalError(e.to_string()))?;
+             let mul = (floor * t_b).map_err(|e| RuntimeError::InternalError(e.to_string()))?;
+             let res = (t_a - mul).map_err(|e| RuntimeError::InternalError(e.to_string()))?;
+             Ok(make_tensor(res))
+        }));
+        return_ptr_or_null(res)
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn tl_tensor_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+
     use crate::error::RuntimeError;
     unsafe {
         let t_a = &(*a).0;
@@ -2406,14 +2457,28 @@ pub extern "C" fn tl_tensor_mod_assign(ref_t: *mut OpaqueTensor, val_t: *mut Opa
 
 #[no_mangle]
 pub extern "C" fn tl_tensor_mod_assign_scalar_f32(ref_t: *mut OpaqueTensor, scalar: f32) {
+    use crate::error::RuntimeError;
     unsafe {
         let t_dst = &(*ref_t).0;
-        // Compute modulo: a % b = a - b * floor(a/b)
-        let div_result = (t_dst / scalar as f64).unwrap();
-        let floor_result = div_result.floor().unwrap();
-        let mul_back = (floor_result * scalar as f64).unwrap();
-        let result = (t_dst - &mul_back).unwrap();
-        (*ref_t).0 = result;
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+             // Ensure scalar matches tensor dtype to avoid mismatch errors
+             let dtype = t_dst.dtype();
+             let scalar_tensor = Tensor::new(scalar, t_dst.device())
+                 .and_then(|t| t.to_dtype(dtype))
+                 .map_err(|e| RuntimeError::InternalError(e.to_string()))?;
+
+             // a % b = a - b * floor(a/b)
+             // Use broadcasting with scalar tensor
+             let div_result = t_dst.broadcast_div(&scalar_tensor).map_err(|e| RuntimeError::InternalError(e.to_string()))?;
+             let floor_result = div_result.floor().map_err(|e| RuntimeError::InternalError(e.to_string()))?;
+             let mul_back = floor_result.broadcast_mul(&scalar_tensor).map_err(|e| RuntimeError::InternalError(e.to_string()))?;
+             let result = t_dst.broadcast_sub(&mul_back).map_err(|e| RuntimeError::InternalError(e.to_string()))?;
+             
+             (*ref_t).0 = result;
+             Ok::<(), RuntimeError>(())
+        })).map_err(|_| {
+             eprintln!("Panic in tl_tensor_mod_assign_scalar_f32");
+        });
     }
 }
 

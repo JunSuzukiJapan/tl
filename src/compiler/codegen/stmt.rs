@@ -1877,6 +1877,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                     AssignOp::ModAssign => {
                         if let Type::Tensor(_, _) = var_type {
+
+
                             let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                             let current_val = self
                                 .builder
@@ -1939,9 +1941,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 _ => return Err(format!("Unsupported type for ModAssign: {:?}", var_type)),
                             };
                             let current_val = self.builder.build_load(load_type, var_ptr.into_pointer_value(), "curr").unwrap();
+
                             let (op_res, _) = self.compile_bin_op(current_val, var_type.clone(), val, val_type, BinOp::Mod)?;
                             op_res
+
                         }
+
                     }
                     _ => return Err(format!("Unsupported assignment op: {:?}", op)),
                 };
@@ -2571,6 +2576,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .builder
                         .build_float_div(l, r, "fdivtmp")
                         .map(|v| v.into()),
+                    BinOp::Mod => self
+                        .builder
+                        .build_float_rem(l, r, "fmodtmp")
+                        .map(|v| v.into()),
+
                     BinOp::Eq => self
                         .builder
                         .build_float_compare(inkwell::FloatPredicate::OEQ, l, r, "feqtmp")
@@ -2687,8 +2697,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                     BinOp::Mul => "tl_tensor_mul",
                     BinOp::Div => "tl_tensor_div",
                     BinOp::Sub => "tl_tensor_sub",
+                    BinOp::Mod => "tl_tensor_rem",
+                    BinOp::Eq => "tl_tensor_eq",
+                    BinOp::Neq => "tl_tensor_neq",
+                    BinOp::Lt => "tl_tensor_lt",
+                    BinOp::Gt => "tl_tensor_gt",
+                    BinOp::Le => "tl_tensor_le",
+                    BinOp::Ge => "tl_tensor_ge",
                     _ => return Err("Unsupported tensor op".into()),
                 };
+
 
                 let fn_val = self
                     .module
@@ -2771,8 +2789,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                     BinOp::Mul => "tl_tensor_mul",
                     BinOp::Div => "tl_tensor_div",
                     BinOp::Sub => "tl_tensor_sub",
+                    BinOp::Mod => "tl_tensor_rem",
+                    BinOp::Eq => "tl_tensor_eq",
+                    BinOp::Neq => "tl_tensor_neq",
+                    BinOp::Lt => "tl_tensor_lt",
+                    BinOp::Gt => "tl_tensor_gt",
+                    BinOp::Le => "tl_tensor_le",
+                    BinOp::Ge => "tl_tensor_ge",
                     _ => return Err("Unsupported tensor op".into()),
                 };
+
                 let fn_val = self
                     .module
                     .get_function(fn_name)
@@ -2832,7 +2858,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                     BinOp::Mul => "tl_tensor_mul",
                     BinOp::Div => "tl_tensor_div",
                     BinOp::Sub => "tl_tensor_sub",
+                    BinOp::Mod => "tl_tensor_rem",
+                    BinOp::Eq => "tl_tensor_eq",
+                    BinOp::Neq => "tl_tensor_neq",
+                    BinOp::Lt => "tl_tensor_lt",
+                    BinOp::Gt => "tl_tensor_gt",
+                    BinOp::Le => "tl_tensor_le",
+                    BinOp::Ge => "tl_tensor_ge",
                     _ => return Err("Unsupported tensor op".into()),
+
+
+
                 };
                 let fn_val = self
                     .module
@@ -2908,7 +2944,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     BinOp::Mul => "tl_tensor_mul",
                     BinOp::Div => "tl_tensor_div",
                     BinOp::Sub => "tl_tensor_sub",
+                    BinOp::Mod => "tl_tensor_rem",
                     _ => return Err("Unsupported ScalarArray op".into()),
+
                 };
 
                 let fn_val = self

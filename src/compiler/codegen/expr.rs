@@ -2537,15 +2537,36 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .get_parent()
                     .unwrap();
 
-                let (cond_val, _) = self.compile_expr(cond)?;
-                let cond_int = self
+                let (cond_val, cond_ty) = self.compile_expr(cond)?;
+                
+                let cond_int = if let Type::Tensor(_, _) = cond_ty {
+                    // Implicit conversion: Tensor -> Bool
+                    // Assuming scalar tensor (0-dim or 1-element). extract item as int/bool.
+                    // We can use `tl_tensor_item_i64` and cast to bool?
+                    let item_fn = self.module.get_function("tl_tensor_item_i64").unwrap();
+                    let call = self.builder.build_call(item_fn, &[cond_val.into()], "cond_item").map_err(|e| e.to_string())?;
+                    let item_val = match call.try_as_basic_value() {
+                         inkwell::values::ValueKind::Basic(v) => v,
+                         _ => return Err("Expected basic value from tl_tensor_item_i64".into()),
+                    };
+                    
+                    self.builder.build_int_compare(
+                        inkwell::IntPredicate::NE,
+                        item_val.into_int_value(),
+                        self.context.i64_type().const_int(0, false),
+                        "cond_bool"
+                    ).map_err(|e| e.to_string())?
+                } else {
+                     self
                     .builder
                     .build_int_cast(
                         cond_val.into_int_value(),
                         self.context.bool_type(),
                         "boolcast",
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| e.to_string())?
+                };
+
 
                 let then_bb = self.context.append_basic_block(parent, "if_then");
                 let else_bb = self.context.append_basic_block(parent, "if_else");
@@ -3723,8 +3744,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                     let res = func(self, compiled_args);
 
-                    }
                     return res;
+
 
                 }
                 StaticMethod::Unevaluated(func) => {
@@ -3851,7 +3872,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             .build_call(func, &compiled_args, "static_call")
             .map_err(|e| e.to_string())?;
 
-        }
+
+
 
         match call.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(_) => {
@@ -5005,7 +5027,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Call function
                     let res_result = func(self, obj_val, obj_ty.clone(), compiled_args);
 
-                    }
+
 
                     return res_result;
 
