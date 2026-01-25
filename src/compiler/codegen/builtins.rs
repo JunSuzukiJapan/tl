@@ -335,6 +335,58 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_vec_void_free(ptr: *mut) -> void
     add_fn("tl_vec_void_free", free_type);
 
+    // Specialized Vec functions
+    // tl_vec_*_new() -> *mut Vec
+    let vec_new_type = void_ptr.fn_type(&[], false);
+    add_fn("tl_vec_ptr_new", vec_new_type);
+    add_fn("tl_vec_u8_new", vec_new_type);
+    add_fn("tl_vec_i64_new", vec_new_type);
+    add_fn("tl_vec_f32_new", vec_new_type);
+    add_fn("tl_vec_string_new", vec_new_type);
+
+    // tl_vec_*_push(vec, val)
+    let push_ptr_type = void_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_vec_ptr_push", push_ptr_type);
+    add_fn("tl_vec_string_push", push_ptr_type); // String handles strings as ptrs
+    
+    let push_i64_type = void_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_vec_i64_push", push_i64_type);
+    add_fn("tl_vec_u8_push", push_i64_type); // U8 passed as i64 usually? Or i8?
+
+    let push_f32_type = void_type.fn_type(&[void_ptr.into(), f32_type.into()], false);
+    add_fn("tl_vec_f32_push", push_f32_type);
+
+    // tl_vec_*_get(vec, idx) -> val
+    let get_ptr_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_vec_ptr_get", get_ptr_type);
+    add_fn("tl_vec_string_get", get_ptr_type);
+
+    let get_i64_type = i64_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_vec_i64_get", get_i64_type);
+    
+    // u8 get returns i64? or i8?
+    // In expr.rs, we cast the result if needed. 
+    // If runtime returns i64 for u8, we are good.
+    add_fn("tl_vec_u8_get", get_i64_type);
+
+    let get_f32_type = f32_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_vec_f32_get", get_f32_type);
+
+    // tl_vec_*_len(vec) -> i64
+    let len_type = i64_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_vec_ptr_len", len_type);
+    add_fn("tl_vec_string_len", len_type);
+    add_fn("tl_vec_i64_len", len_type);
+    add_fn("tl_vec_f32_len", len_type);
+    add_fn("tl_vec_u8_len", len_type);
+    
+    // tl_vec_*_free(vec)
+    add_fn("tl_vec_ptr_free", free_type);
+    add_fn("tl_vec_string_free", free_type);
+    add_fn("tl_vec_i64_free", free_type);
+    add_fn("tl_vec_f32_free", free_type);
+    add_fn("tl_vec_u8_free", free_type);
+
     // tl_tensor_add(a: *mut, b: *mut) -> *mut OpaqueTensor
     let bin_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_tensor_add", bin_type);
@@ -1242,6 +1294,37 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_vec_void_free") {
         execution_engine.add_global_mapping(&f, runtime::tl_vec_void_free as usize);
     }
+    // Specialized Vec Mappings (New)
+    if let Some(f) = module.get_function("tl_vec_ptr_new") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_new as usize); }
+    if let Some(f) = module.get_function("tl_vec_ptr_push") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_push as usize); }
+    if let Some(f) = module.get_function("tl_vec_ptr_get") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_get as usize); }
+    if let Some(f) = module.get_function("tl_vec_ptr_len") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_len as usize); }
+    if let Some(f) = module.get_function("tl_vec_ptr_free") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_free as usize); }
+
+    if let Some(f) = module.get_function("tl_vec_i64_new") { execution_engine.add_global_mapping(&f, runtime::tl_vec_i64_new as usize); }
+    if let Some(f) = module.get_function("tl_vec_i64_push") { execution_engine.add_global_mapping(&f, runtime::tl_vec_i64_push as usize); }
+    if let Some(f) = module.get_function("tl_vec_i64_get") { execution_engine.add_global_mapping(&f, runtime::tl_vec_i64_get as usize); }
+    if let Some(f) = module.get_function("tl_vec_i64_len") { execution_engine.add_global_mapping(&f, runtime::tl_vec_i64_len as usize); }
+    if let Some(f) = module.get_function("tl_vec_i64_free") { execution_engine.add_global_mapping(&f, runtime::tl_vec_i64_free as usize); }
+
+    if let Some(f) = module.get_function("tl_vec_f32_new") { execution_engine.add_global_mapping(&f, runtime::tl_vec_f32_new as usize); }
+    if let Some(f) = module.get_function("tl_vec_f32_push") { execution_engine.add_global_mapping(&f, runtime::tl_vec_f32_push as usize); }
+    if let Some(f) = module.get_function("tl_vec_f32_get") { execution_engine.add_global_mapping(&f, runtime::tl_vec_f32_get as usize); }
+    if let Some(f) = module.get_function("tl_vec_f32_len") { execution_engine.add_global_mapping(&f, runtime::tl_vec_f32_len as usize); }
+    if let Some(f) = module.get_function("tl_vec_f32_free") { execution_engine.add_global_mapping(&f, runtime::tl_vec_f32_free as usize); }
+
+    if let Some(f) = module.get_function("tl_vec_u8_new") { execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_new as usize); }
+    if let Some(f) = module.get_function("tl_vec_u8_push") { execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_push as usize); }
+    if let Some(f) = module.get_function("tl_vec_u8_get") { execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_get as usize); }
+    if let Some(f) = module.get_function("tl_vec_u8_len") { execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_len as usize); }
+    if let Some(f) = module.get_function("tl_vec_u8_free") { execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_free as usize); }
+
+    // Aliases for String -> Ptr
+    if let Some(f) = module.get_function("tl_vec_string_new") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_new as usize); }
+    if let Some(f) = module.get_function("tl_vec_string_push") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_push as usize); }
+    if let Some(f) = module.get_function("tl_vec_string_get") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_get as usize); }
+    if let Some(f) = module.get_function("tl_vec_string_len") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_len as usize); }
+    if let Some(f) = module.get_function("tl_vec_string_free") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_free as usize); }
     if let Some(f) = module.get_function("tl_tensor_dim") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_dim as usize);
     }

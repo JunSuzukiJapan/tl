@@ -43,6 +43,8 @@ pub enum ParamType {
     Bool,
     /// Any tensor or numeric type
     AnyTensorOrNumeric,
+    /// Generic type parameter (e.g. "T")
+    Generic(String),
 }
 
 /// Return type specification
@@ -64,6 +66,8 @@ pub enum ReturnType {
     TensorRankIncr,
     /// Void (no return value)
     Void,
+    /// Generic type (e.g. "T")
+    Generic(String),
 }
 
 /// Type registry that manages types and their method signatures
@@ -1013,6 +1017,7 @@ impl TypeRegistry {
 
     /// Register Vec methods
     fn register_vec_methods(&mut self) {
+        // Special Vec<U8> methods (legacy/specific)
         let mut vec_u8_methods = HashMap::new();
         vec_u8_methods.insert(
             "len".to_string(),
@@ -1045,6 +1050,83 @@ impl TypeRegistry {
             },
         );
         self.methods.insert("Vec<U8>".to_string(), vec_u8_methods);
+
+        // Generic Vec methods (registered under "Vec")
+        // These are fallbacks if specific Vec<T> methods aren't found
+        let mut vec_generic_methods = HashMap::new();
+        
+        // new(capacity) -> Vec<T> (Static method? No, usually Vec::new())
+        // But here we register instance methods. 
+        // Static methods are handled differently (StaticMethodCall).
+        // Let's assume we implement instance methods for now.
+        
+        // push(val: T)
+        vec_generic_methods.insert(
+            "push".to_string(),
+            MethodSignature {
+                name: "push".to_string(),
+                params: vec![ParamType::Generic("T".to_string())],
+                return_type: ReturnType::Void,
+                is_varargs: false,
+                min_args: 1,
+            }
+        );
+
+        // pop() -> T
+        // Note: We don't have ReturnType::Generic("T") yet.
+        // ReturnType has `SameAsReceiver`. But we need `T`.
+        // Or we can use `Exact(Type::UserDefined("T"))` and apply bindings?
+        // `codegen` uses `MethodSignature` to check types.
+        // `semantics.rs` uses `get_method` to validate args.
+        // Return type resolution: `semantics.rs` needs to substitute `T` with concrete type.
+        // We need to check how `semantics.rs` handles return types.
+        // `semantics.rs` blindly recursively resolves UserType?
+        // Let's check `semantics.rs`. If I return `Type::UserDefined("T", [])`, will it be substituted?
+        // Probably not automatically unless `semantics.rs` does it.
+        // But for `push`, `ParamType::Generic` is used in `matches_param_type` (which I just updated).
+        // For return type, we might need `ReturnType::Generic`.
+        // Let's add `ReturnType::Generic("T")` too?
+        // For now, let's stick to `push` and `len` and `get` which are most important.
+        // `get(i) -> T`. We need `ReturnType::Generic`.
+        
+        vec_generic_methods.insert(
+             "len".to_string(),
+             MethodSignature {
+                 name: "len".to_string(),
+                 params: vec![],
+                 return_type: ReturnType::Exact(Type::I64),
+                 is_varargs: false,
+                 min_args: 0,
+             }
+        );
+
+        vec_generic_methods.insert(
+             "get".to_string(),
+             MethodSignature {
+                 name: "get".to_string(),
+                 params: vec![ParamType::AnyInt],
+                 return_type: ReturnType::Generic("T".to_string()),
+                 is_varargs: false,
+                 min_args: 1,
+             }
+        );
+        
+        // get(index) -> T
+        // Need to update ReturnType enum first? 
+        // Yes, likely.
+        
+        vec_generic_methods.insert(
+            "free".to_string(),
+            MethodSignature {
+                name: "free".to_string(),
+                params: vec![],
+                return_type: ReturnType::Void,
+                is_varargs: false,
+                min_args: 0,
+            }
+        );
+
+        self.methods.insert("Vec".to_string(), vec_generic_methods);
     }
 
     /// Register ML-related special types (Tokenizer, KVCache, Map)
@@ -1207,9 +1289,24 @@ impl TypeRegistry {
 
     /// Get method signature for a given type and method name
     pub fn get_method(&self, type_name: &str, method_name: &str) -> Option<&MethodSignature> {
-        self.methods
-            .get(type_name)
-            .and_then(|methods| methods.get(method_name))
+        if let Some(methods) = self.methods.get(type_name) {
+             if let Some(sig) = methods.get(method_name) {
+                 return Some(sig);
+             }
+        }
+        
+        // Fallback: If type_name is generic like "Vec<I64>" or "Map<String, Tensor>",
+        // try to find base type "Vec" or "Map".
+        // Simple heuristic: split by '<'
+        if let Some((base, _)) = type_name.split_once('<') {
+            if let Some(methods) = self.methods.get(base) {
+                if let Some(sig) = methods.get(method_name) {
+                    return Some(sig);
+                }
+            }
+        }
+        
+        None
     }
 
     /// Convert Type to registry key string
@@ -1269,11 +1366,66 @@ impl TypeRegistry {
                         | Type::I32
                 )
             }
+            ParamType::Generic(name) => {
+                // Infer bindings from receiver type.
+                // Assuming receiver is capable of having generics (UserDefined, Struct, Vec, Map, etc.)
+                // For Vec<T>, if receiver is Vec<I64>, then T=I64.
+                // We need the "Generic Type Definition" of receiver to resolve against.
+                // This is slightly tricky here because we don't pass the "Generic Definition" of the receiver class easily.
+                // However, we can TRY to guess. if receiver is Vec<Concrete>, and we know Vec def is Vec<T>.
+                // For now, simpler support for Vec<T> and Map<K,V>:
+                
+                // Construct a hypothetical generic definition for known builtin generics?
+                // Or just use GenericResolver if we construct the generic pattern on the fly.
+                
+                // HARDCODED support for standard builtins for now (Vec/Map)
+                let generic_structure = match receiver {
+                    Type::Vec(_) => Type::Vec(Box::new(Type::UserDefined("T".into(), vec![]))),
+                    Type::UserDefined(n, args) if n == "Vec" && args.len() == 1 => {
+                        Type::UserDefined("Vec".into(), vec![Type::UserDefined("T".into(), vec![])])
+                    }
+                    // Map is a Struct "Map" with 2 generics? 
+                    // Actually Map isn't explicitly defined as a Type variant, it's a struct in stdlib.
+                    // But if it's treated as UserDefined("Map", [K, V])...
+                    Type::UserDefined(n, args) if n == "Map" && args.len() == 2 => {
+                        Type::Struct("Map".into(), vec![
+                            Type::UserDefined("K".into(), vec![]),
+                            Type::UserDefined("V".into(), vec![])
+                        ])
+                    }
+                    // For unknown user structs, we'd need to look up struct def. 
+                    // But here we only check builtins usually registered in this file.
+                    // If the user defines methods on Generic struct, we need to know the struct def.
+                    // Currently we are only fixing "Vec" methods.
+                    _ => return false, // Lookup failed or not supported yet
+                };
+                
+                let bindings = match crate::compiler::generics::GenericResolver::resolve_bindings(&generic_structure, receiver) {
+                    Ok(b) => b,
+                    Err(_) => return false,
+                };
+                
+                if let Some(concrete) = bindings.get(name) {
+                    Self::types_compatible(actual, concrete)
+                } else {
+                    false // Generic param not found
+                }
+            }
         }
     }
 
     /// Check if two types are compatible
     fn types_compatible(a: &Type, b: &Type) -> bool {
+        // Special case for generic Vec::new() (Vec<Void>)
+        if let (Type::UserDefined(n1, args1), Type::UserDefined(n2, args2)) = (a, b) {
+            if n1 == "Vec" && n2 == "Vec" && args1.len() == 1 && args2.len() == 1 {
+                 if args1[0] == Type::Void || args2[0] == Type::Void {
+                     return true;
+                 }
+                 return Self::types_compatible(&args1[0], &args2[0]);
+            }
+        }
+
         match (a, b) {
             (Type::Tensor(_, _), Type::Tensor(_, _)) => true,
             (Type::TensorShaped(_, _), Type::Tensor(_, _)) => true,

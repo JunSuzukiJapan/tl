@@ -2136,9 +2136,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             ExprKind::StructInit(name, _, fields) => self.compile_struct_init(name, fields),
             ExprKind::StaticMethodCall(type_ty, method_name, args) => {
-                // Resolve type name from Type
-                let type_name = crate::compiler::type_registry::TypeRegistry::type_to_key(&type_ty);
-                self.compile_static_method_call(&type_name, method_name, args)
+                self.compile_static_method_call(type_ty, method_name, args)
             }
             ExprKind::BinOp(lhs, op, rhs) => {
                 let left = self.compile_expr(lhs)?;
@@ -3223,10 +3221,50 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     fn compile_static_method_call(
         &mut self,
-        type_name: &str,
+        ty: &Type,
         method_name: &str,
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        let type_name = crate::compiler::type_registry::TypeRegistry::type_to_key(ty);
+
+        // Handle Vec<T>::new()
+        let inner_opt = match ty {
+            Type::Vec(inner) => Some(inner.clone()),
+            Type::UserDefined(n, args) if n == "Vec" => {
+                if args.is_empty() {
+                    Some(Box::new(Type::Void))
+                } else if args.len() == 1 {
+                    Some(Box::new(args[0].clone()))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        if let Some(inner) = inner_opt {
+            if method_name == "new" {
+                 let fn_name = match inner.as_ref() {
+                     Type::U8 => "tl_vec_u8_new",
+                     Type::I64 => "tl_vec_i64_new",
+                     Type::F32 => "tl_vec_f32_new",
+                     _ => "tl_vec_ptr_new",
+                 };
+                 let fn_val = self.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
+                 let call = self.builder.build_call(fn_val, &[], "vec_new").map_err(|e| e.to_string())?;
+                 let res = match call.try_as_basic_value() {
+                     inkwell::values::ValueKind::Basic(v) => v,
+                     _ => return Err("Invalid return from vec.new()".into()),
+                 };
+                 // For ptr, no cast needed as it returns void* equivalent (or Vec<void*> ptr) which is opaque ptr?
+                 // But wait, tl_vec_ptr_new returns *mut Vec<*mut c_void>.
+                 // LLVM sees it as pointer.
+                 // We might need to pointer cast if strict typing is used.
+                 // But in TL runtime, all objects are pointers.
+                 return Ok((res, ty.clone()));
+            }
+        }
+
         if type_name == "Tokenizer" && method_name == "new" {
             if args.len() != 1 {
                 return Err("Tokenizer::new requires 1 argument".into());
@@ -3722,7 +3760,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // 1. StaticMethodManager Lookup
         let method_opt = self
             .static_methods
-            .get(type_name)
+            .get(&type_name)
             .and_then(|m| m.get(method_name))
             .copied();
         if let Some(method) = method_opt {
@@ -3758,7 +3796,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let simple_type_name = if type_name.contains("::") {
             type_name.split("::").last().unwrap()
         } else {
-            type_name
+            &type_name
         };
         let mangled_name = format!("tl_{}_{}", simple_type_name, method_name);
         let stdlib_name = format!("tl_{}_{}", simple_type_name.to_lowercase(), method_name);
@@ -3772,14 +3810,14 @@ impl<'ctx> CodeGenerator<'ctx> {
             (f, method_name.to_string())
         } else {
              // Fallback: Check if it is an Enum Variant initialization
-             if let Some(enum_def) = self.enum_defs.get(type_name).cloned() {
+             if let Some(enum_def) = self.enum_defs.get(&type_name).cloned() {
                  if let Some(variant_idx) = enum_def.variants.iter().position(|v| v.name == method_name) {
                      let variant_def = &enum_def.variants[variant_idx];
                      if args.len() != variant_def.fields.len() {
                          return Err(format!("Enum variant {}::{} expects {} args, got {}", type_name, method_name, variant_def.fields.len(), args.len()));
                      }
                      
-                     let enum_ty = *self.enum_types.get(type_name).ok_or(format!("Enum type {} not found", type_name))?;
+                     let enum_ty = *self.enum_types.get(&type_name).ok_or(format!("Enum type {} not found", type_name))?;
                      
                      // Allocate
                      let alloca = self.builder.build_malloc(enum_ty, &format!("enum_{}", type_name)).map_err(|e| e.to_string())?;
@@ -4934,26 +4972,200 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         let (obj_val, obj_ty) = self.compile_expr(obj)?;
 
-        if let Type::Vec(inner) = &obj_ty {
-            if matches!(inner.as_ref(), Type::U8) {
-                match method {
-                    "len" => {
-                        let fn_val = self
-                            .module
-                            .get_function("tl_vec_u8_len")
-                            .ok_or("tl_vec_u8_len not found")?;
-                        let call = self
-                            .builder
-                            .build_call(fn_val, &[obj_val.into()], "vec_len")
-                            .map_err(|e| e.to_string())?;
-                        let res = match call.try_as_basic_value() {
-                            inkwell::values::ValueKind::Basic(v) => v,
-                            _ => return Err("Invalid return from vec.len()".into()),
-                        };
-                        return Ok((res, Type::I64));
+        // Check for Vec (either Type::Vec or UserDefined("Vec"))
+        let inner_opt = match &obj_ty {
+            Type::Vec(inner) => Some(inner.clone()),
+            Type::UserDefined(n, args) => {
+                 if n == "Vec" {
+                     if args.is_empty() {
+                        Some(Box::new(Type::Void))
+                     } else if args.len() == 1 {
+                        Some(Box::new(args[0].clone()))
+                     } else {
+                        None
+                     }
+                 } else if n.starts_with("Vec_") {
+                     let suffix = &n[4..];
+                     match suffix {
+                         "i64" => Some(Box::new(Type::I64)),
+                         "f32" => Some(Box::new(Type::F32)),
+                         "u8" => Some(Box::new(Type::U8)),
+                         "String" => Some(Box::new(Type::UserDefined(String::from("String"), vec![]))),
+                         _ => Some(Box::new(Type::Void)), // Default fallback
+                     }
+                 } else {
+                     None
+                 }
+            }
+            _ => None,
+        };
+        
+        if let Some(inner) = inner_opt {
+            match method {
+                "len" => {
+                    let fn_name = match inner.as_ref() {
+                        Type::U8 => "tl_vec_u8_len",
+                        Type::I64 => "tl_vec_i64_len",
+                        Type::F32 => "tl_vec_f32_len",
+                        _ => "tl_vec_ptr_len",
+                    };
+                    let fn_val = self
+                        .module
+                        .get_function(fn_name)
+                        .ok_or(format!("{} not found", fn_name))?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into()], "vec_len")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from vec.len()".into()),
+                    };
+                    return Ok((res, Type::I64));
+                }
+                "push" => {
+                    if args.len() != 1 {
+                        return Err("push requires 1 argument".into());
                     }
-                    "read_i32_be" => {
-                        if args.len() != 1 {
+                    let (arg_val, _) = self.compile_expr(&args[0])?;
+                    let fn_name = match inner.as_ref() {
+                        Type::U8 => "tl_vec_u8_push",
+                        Type::I64 => "tl_vec_i64_push",
+                        Type::F32 => "tl_vec_f32_push",
+                        _ => "tl_vec_ptr_push",
+                    };
+                    
+                    let arg_casted = if fn_name == "tl_vec_ptr_push" {
+                         // Build pointer cast to i8* (void*)
+                         let ptr = arg_val.into_pointer_value();
+                         self.builder.build_pointer_cast(
+                             ptr, 
+                             self.context.i8_type().ptr_type(inkwell::AddressSpace::default()),
+                             "void_ptr"
+                         ).unwrap().into()
+                    } else if fn_name == "tl_vec_u8_push" {
+                         // arg is usually I64/I32, truncate to u8?
+                         // Assuming arg is passed as i64 or i32. 
+                         // tl_vec_u8_push takes u8.
+                         // But compile_expr returns BasicValueEnum.
+                         // If we are pushing 1, it's I64 const.
+                         // We need to cast.
+                         // For now, let's allow implicit cast or trust the runtime signature?
+                         // C function takes `uint8_t`. We should pass `i8`.
+                         if arg_val.is_int_value() {
+                             self.builder.build_int_cast(
+                                 arg_val.into_int_value(), 
+                                 self.context.i8_type(), 
+                                 "to_u8"
+                             ).unwrap().into()
+                         } else {
+                             arg_val
+                         }
+                    } else {
+                        arg_val
+                    };
+
+                    let fn_val = self
+                        .module
+                        .get_function(fn_name)
+                        .ok_or(format!("{} not found", fn_name))?;
+                    self.builder
+                        .build_call(fn_val, &[obj_val.into(), arg_casted.into()], "")
+                        .map_err(|e| e.to_string())?;
+                    return Ok((
+                        self.context.i64_type().const_int(0, false).into(),
+                        Type::Void,
+                    ));
+                }
+                "get" => {
+                    if args.len() != 1 {
+                        return Err("get requires 1 argument".into());
+                    }
+                    let (idx_val, _) = self.compile_expr(&args[0])?;
+                    // Ensure index is i64
+                    let idx_i64 = if idx_val.is_int_value() {
+                        let int_val = idx_val.into_int_value();
+                        if int_val.get_type().get_bit_width() == 32 {
+                            self.builder.build_int_z_extend(int_val, self.context.i64_type(), "idx_ext").unwrap()
+                        } else {
+                            int_val
+                        }
+                    } else {
+                         return Err("Index must be integer".into());
+                    };
+
+                    let fn_name = match inner.as_ref() {
+                        Type::U8 => "tl_vec_u8_get",
+                        Type::I64 => "tl_vec_i64_get",
+                        Type::F32 => "tl_vec_f32_get",
+                        _ => "tl_vec_ptr_get",
+                    };
+                    
+                    let fn_val = self
+                        .module
+                        .get_function(fn_name)
+                        .ok_or(format!("{} not found", fn_name))?;
+                        
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into(), idx_i64.into()], "vec_get")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from vec.get()".into()),
+                    };
+                    
+                    // Cast back if needed
+                    let final_res = if fn_name == "tl_vec_ptr_get" {
+                        let inner_llvm_ty = self.get_llvm_type(&inner)?;
+                        let ptr_ty = match inner_llvm_ty {
+                            inkwell::types::BasicTypeEnum::PointerType(p) => p,
+                            _ => return Err("Expected pointer type for Vec inner element".into()), 
+                            // If inner is struct, get_llvm_type returns pointer.
+                        };
+                        self.builder.build_pointer_cast(
+                            res.into_pointer_value(),
+                            ptr_ty,
+                            "cast_back"
+                        ).unwrap().into()
+                    } else if fn_name == "tl_vec_u8_get" {
+                        // Returns u8 (i8). Extend to i64 for consistency?
+                        // Type system expects U8 (which is likely i64/i32 or u8).
+                        // Type::U8 usually treated as integer.
+                        // If we return i8, but system expects i64...
+                        // Let's zext to i64.
+                         self.builder.build_int_z_extend(
+                             res.into_int_value(),
+                             self.context.i64_type(),
+                             "u8_to_i64"
+                         ).unwrap().into()
+                    } else {
+                        res
+                    };
+                    
+                    return Ok((final_res, *inner.clone()));
+                }
+                "free" => {
+                     let fn_name = match inner.as_ref() {
+                        Type::U8 => "tl_vec_u8_free",
+                        Type::I64 => "tl_vec_i64_free", // Impl needed
+                        Type::F32 => "tl_vec_f32_free", // Impl needed
+                        _ => "tl_vec_ptr_free",         // Impl needed
+                    };
+                    let fn_val = self
+                            .module
+                            .get_function(fn_name)
+                            .ok_or(format!("{} not found", fn_name))?;
+                        self.builder
+                            .build_call(fn_val, &[obj_val.into()], "vec_free")
+                            .map_err(|e| e.to_string())?;
+                        return Ok((
+                            self.context.i64_type().const_int(0, false).into(),
+                            Type::Void,
+                        ));
+                }
+                "read_i32_be" if matches!(inner.as_ref(), Type::U8) => {
+                     if args.len() != 1 {
                             return Err("read_i32_be requires 1 argument".into());
                         }
                         let (idx_val, _) = self.compile_expr(&args[0])?;
@@ -4970,22 +5182,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                             _ => return Err("Invalid return from vec.read_i32_be()".into()),
                         };
                         return Ok((res, Type::I64));
-                    }
-                    "free" => {
-                        let fn_val = self
-                            .module
-                            .get_function("tl_vec_u8_free")
-                            .ok_or("tl_vec_u8_free not found")?;
-                        self.builder
-                            .build_call(fn_val, &[obj_val.into()], "vec_free")
-                            .map_err(|e| e.to_string())?;
-                        return Ok((
-                            self.context.i64_type().const_int(0, false).into(),
-                            Type::Void,
-                        ));
-                    }
-                    _ => {}
                 }
+                _ => {}
             }
         }
 

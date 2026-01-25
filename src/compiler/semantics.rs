@@ -1797,6 +1797,7 @@ impl SemanticAnalyzer {
                         ParamType::SameAsReceiver => receiver_type.clone(),
                         ParamType::TensorOf(inner) => Type::Tensor(inner.clone(), 0),
                         ParamType::AnyTensorOrNumeric => Type::Tensor(Box::new(Type::F32), 0),
+                        ParamType::Generic(name) => Type::UserDefined(name.clone(), vec![]),
                     };
                     return self.err(
                         SemanticError::TypeMismatch {
@@ -1877,6 +1878,40 @@ impl SemanticAnalyzer {
                 }
             }
             ReturnType::Void => Type::Void,
+            ReturnType::Generic(name) => {
+                 // Resolve generic return type
+                 // E.g. Vec<T> -> get -> T
+                 // receiver_type: Vec<I64> -> T = I64
+                 // We need to resolve bindings again.
+                 
+                 // Reuse logic from matches_param_type?
+                 // Or just implement simplified version here.
+                 // receiver_type is the concrete type.
+                 // We need hypothetical generic definition.
+                 let generic_structure = match receiver_type {
+                    Type::Vec(_) => Type::Vec(Box::new(Type::UserDefined("T".into(), vec![]))),
+                    Type::UserDefined(n, args) if n == "Vec" && args.len() == 1 => {
+                        Type::UserDefined("Vec".into(), vec![Type::UserDefined("T".into(), vec![])])
+                    }
+                    Type::UserDefined(n, args) if n == "Map" && args.len() == 2 => {
+                         Type::Struct("Map".into(), vec![
+                            Type::UserDefined("K".into(), vec![]),
+                            Type::UserDefined("V".into(), vec![])
+                        ])
+                    }
+                    _ => return Type::UserDefined(name.clone(), vec![]), // Fallback if unknown generic struct
+                 };
+                 
+                 let bindings = match crate::compiler::generics::GenericResolver::resolve_bindings(&generic_structure, receiver_type) {
+                     Ok(b) => b,
+                     Err(_) => return Type::UserDefined(name.clone(), vec![]),
+                 };
+                 
+                 match bindings.get(name) {
+                     Some(ty) => ty.clone(),
+                     None => Type::UserDefined(name.clone(), vec![]),
+                 }
+            }
         }
     }
 
@@ -4283,6 +4318,18 @@ impl SemanticAnalyzer {
                     *type_node = resolved_type.clone();
                 }
                 let type_name = type_node; // Alias for following code (which expects &Type now)
+
+                // Handle Vec::new() -> Vec<Void> (treated as polymorphic empty vec)
+                let is_vec = match type_name {
+                    Type::Vec(_) => true,
+                    Type::UserDefined(n, _) if n == "Vec" => true,
+                    _ => false,
+                };
+                
+                if is_vec && method_name == "new" {
+                    // Return UserDefined("Vec", [Void])
+                    return Ok(Type::UserDefined("Vec".into(), vec![Type::Void]));
+                }
 
                 // Special handling for Param::checkpoint to allow method references
                 let type_name_key = TypeRegistry::type_to_key(type_name);

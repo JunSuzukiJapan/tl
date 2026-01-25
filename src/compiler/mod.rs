@@ -6,6 +6,7 @@ pub mod inference;
 pub mod monomorphize;
 pub mod parser;
 pub mod type_infer;
+pub mod generics;
 pub mod type_registry;
 
 pub mod semantics;

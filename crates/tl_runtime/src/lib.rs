@@ -3766,3 +3766,91 @@ pub extern "C" fn tl_write_file(path: *const std::os::raw::c_char, content: *con
         0
     }
 }
+
+// --- Specialized Vec Support ---
+
+// I64
+#[no_mangle]
+pub extern "C" fn tl_vec_i64_len(ptr: *mut Vec<i64>) -> usize {
+    if ptr.is_null() { return 0; }
+    unsafe { (*ptr).len() }
+}
+#[no_mangle]
+pub extern "C" fn tl_vec_i64_push(ptr: *mut Vec<i64>, val: i64) {
+    if ptr.is_null() { return; }
+    unsafe { (*ptr).push(val); }
+}
+#[no_mangle]
+pub extern "C" fn tl_vec_i64_get(ptr: *mut Vec<i64>, idx: usize) -> i64 {
+    if ptr.is_null() { return 0; }
+    unsafe {
+        let vec = &*ptr;
+        if idx < vec.len() { vec[idx] } else { 0 }
+    }
+}
+#[no_mangle]
+pub extern "C" fn tl_vec_i64_free(ptr: *mut Vec<i64>) {
+    if !ptr.is_null() { unsafe { let _ = Box::from_raw(ptr); } }
+}
+
+// F32
+#[no_mangle]
+pub extern "C" fn tl_vec_f32_len(ptr: *mut Vec<f32>) -> usize {
+    if ptr.is_null() { return 0; }
+    unsafe { (*ptr).len() }
+}
+#[no_mangle]
+pub extern "C" fn tl_vec_f32_push(ptr: *mut Vec<f32>, val: f32) {
+    if ptr.is_null() { return; }
+    unsafe { (*ptr).push(val); }
+}
+#[no_mangle]
+pub extern "C" fn tl_vec_f32_get(ptr: *mut Vec<f32>, idx: usize) -> f32 {
+    if ptr.is_null() { return 0.0; }
+    unsafe {
+        let vec = &*ptr;
+        if idx < vec.len() { vec[idx] } else { 0.0 }
+    }
+}
+#[no_mangle]
+pub extern "C" fn tl_vec_f32_free(ptr: *mut Vec<f32>) {
+    if !ptr.is_null() { unsafe { let _ = Box::from_raw(ptr); } }
+}
+
+// Ptr (for Structs, Tensors, Strings etc.)
+#[no_mangle]
+pub extern "C" fn tl_vec_ptr_len(ptr: *mut Vec<*mut std::ffi::c_void>) -> usize {
+    if ptr.is_null() { return 0; }
+    unsafe { (*ptr).len() }
+}
+#[no_mangle]
+pub extern "C" fn tl_vec_ptr_push(ptr: *mut Vec<*mut std::ffi::c_void>, val: *mut std::ffi::c_void) {
+    if ptr.is_null() { return; }
+    unsafe { (*ptr).push(val); }
+}
+#[no_mangle]
+pub extern "C" fn tl_vec_ptr_get(ptr: *mut Vec<*mut std::ffi::c_void>, idx: usize) -> *mut std::ffi::c_void {
+    if ptr.is_null() { return std::ptr::null_mut(); }
+    unsafe {
+        let vec = &*ptr;
+        if idx < vec.len() { vec[idx] } else { std::ptr::null_mut() }
+    }
+}
+#[no_mangle]
+pub extern "C" fn tl_vec_ptr_free(ptr: *mut Vec<*mut std::ffi::c_void>) {
+    if !ptr.is_null() { unsafe { let _ = Box::from_raw(ptr); } }
+}
+
+// Constructors
+#[no_mangle]
+pub extern "C" fn tl_vec_i64_new() -> *mut Vec<i64> {
+    Box::into_raw(Box::new(Vec::new()))
+}
+#[no_mangle]
+pub extern "C" fn tl_vec_f32_new() -> *mut Vec<f32> {
+    Box::into_raw(Box::new(Vec::new()))
+}
+#[no_mangle]
+pub extern "C" fn tl_vec_ptr_new() -> *mut Vec<*mut std::ffi::c_void> {
+    Box::into_raw(Box::new(Vec::new()))
+}
