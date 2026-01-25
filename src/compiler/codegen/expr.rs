@@ -6298,23 +6298,41 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 _ => {
                   // Generic method dispatch for UserDefined types and Tensor
-                  let type_name = match &obj_ty {
-                      Type::UserDefined(name, _) => name.clone(),
+                  let mut type_name = match &obj_ty {
+                      Type::UserDefined(name, _) | Type::Struct(name, _) | Type::Enum(name, _) => {
+                          if name.contains("::") { name.split("::").last().unwrap().to_string() } else { name.clone() }
+                      },
                       Type::Tensor(_, _) => "Tensor".to_string(),
+                      Type::I64 => "i64".to_string(),
+                      Type::F32 => "f32".to_string(),
                       _ => {
                           return Err(format!("Unknown method: {} on type {:?}", method, obj_ty))
                       }
                   };
 
-                  {
-                      let method_name = method; // e.g. read_string
-                      let runtime_fn_name =
-                          format!("tl_{}_{}", type_name.to_lowercase(), method_name);
+                  let mut runtime_fn_name = format!("tl_{}_{}", type_name.to_lowercase(), method);
+                  
+                  // Generic Monomorphization Trigger
+                  if let Type::Struct(name, args) | Type::UserDefined(name, args) = &obj_ty {
+                       if !args.is_empty() {
+                           // Check if it's a generic method in registry (via mono)
+                           let simple_name = if name.contains("::") { name.split("::").last().unwrap() } else { name };
+                           
+                           match self.monomorphize_method(simple_name, method, args) {
+                               Ok(mangled) => {
+                                   runtime_fn_name = mangled;
+                               },
+                               Err(_) => {
+                                   // Keep standard name if not found in generic impls (e.g. might be manually defined runtime fn)
+                               }
+                           }
+                       }
+                  }
 
-                      let fn_val = self.module.get_function(&runtime_fn_name).ok_or(format!(
-                          "Method {} not found on type {} (checked {})",
-                          method, type_name, runtime_fn_name
-                      ))?;
+                  let fn_val = self.module.get_function(&runtime_fn_name).ok_or(format!(
+                      "Method {} not found on type {} (checked {})",
+                      method, type_name, runtime_fn_name
+                  ))?;
 
                       // Prepend object to args
                       let mut compiled_args_vals = Vec::with_capacity(args.len() + 1);

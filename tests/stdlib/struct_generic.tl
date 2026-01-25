@@ -6,6 +6,12 @@ struct Rect<T> {
     h: T,
 }
 
+impl<T> Rect<T> {
+    fn area(self) -> T {
+        return self.w * self.h;
+    }
+}
+
 fn main() {
     test_rect_i64();
     test_rect_f32();

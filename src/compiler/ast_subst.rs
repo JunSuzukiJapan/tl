@@ -2,20 +2,20 @@ use crate::compiler::ast::*;
 use std::collections::HashMap;
 
 pub struct TypeSubstitutor {
-    mapping: HashMap<String, Type>,
+    pub subst: HashMap<String, Type>,
 }
 
 impl TypeSubstitutor {
-    pub fn new(mapping: HashMap<String, Type>) -> Self {
-        Self { mapping }
+    pub fn new(subst: HashMap<String, Type>) -> Self {
+        Self { subst }
     }
 
     pub fn substitute_type(&self, ty: &Type) -> Type {
         match ty {
             Type::UserDefined(name, args) => {
-                if let Some(subst) = self.mapping.get(name) {
+                if let Some(s) = self.subst.get(name) {
                     if args.is_empty() {
-                        return subst.clone();
+                        return s.clone();
                     }
                     // If name is T and we have args? T<U> is invalid for simple generics usually,
                     // unless T is a higher-kinded type which we probably don't support yet.

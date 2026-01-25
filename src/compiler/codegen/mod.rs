@@ -30,6 +30,7 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) enum_types: HashMap<String, StructType<'ctx>>,
     pub(crate) enum_defs: HashMap<String, EnumDef>,
     pub(crate) generic_fn_defs: HashMap<String, FunctionDef>,
+    pub(crate) generic_impls: HashMap<String, Vec<ImplBlock>>,
     pub(crate) fn_entry_scope_depth: usize,
     pub(crate) builtin_manager: expr::BuiltinManager,
     pub(crate) instance_methods: HashMap<String, expr::InstanceMethodManager>,
@@ -64,6 +65,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             enum_types: HashMap::new(),
             enum_defs: HashMap::new(),
             generic_fn_defs: HashMap::new(),
+            generic_impls: HashMap::new(),
             fn_entry_scope_depth: 0,
             builtin_manager: expr::BuiltinManager::new(),
             instance_methods: HashMap::new(),
@@ -653,7 +655,18 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     fn compile_impl_blocks(&mut self, impls: &[ImplBlock]) -> Result<(), String> {
         // Pass 1: Declare all methods (Prototypes) and register return types
+        // Pass 1: Declare all methods (Prototypes) and register return types
         for imp in impls {
+            // Check if generic impl
+            if !imp.generics.is_empty() {
+                let target_name = match &imp.target_type {
+                    Type::Struct(n, _) | Type::UserDefined(n, _) | Type::Enum(n, _) => n.clone(),
+                    _ => return Err("Invalid impl target type".to_string()),
+                };
+                self.generic_impls.entry(target_name).or_default().push(imp.clone());
+                continue;
+            }
+
             for method in &imp.methods {
                 let target_name = match &imp.target_type {
                     Type::Struct(n, _) | Type::UserDefined(n, _) | Type::Enum(n, _) => n,
@@ -698,7 +711,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                     let ty: BasicMetadataTypeEnum = match &resolved_ty {
                         Type::F32 => self.context.f32_type().into(),
-                        Type::I64 | Type::Entity => self.context.i64_type().into(),
+                        Type::I64 | Type::Entity | Type::Usize => self.context.i64_type().into(),
                         Type::Bool => self.context.bool_type().into(),
                         Type::Tensor(_, _) => self
                             .context
@@ -722,7 +735,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 } else {
                     match &method.return_type {
                         Type::F32 => self.context.f32_type().fn_type(&param_types, false),
-                        Type::I64 | Type::Entity => {
+                        Type::I64 | Type::Entity | Type::Usize => {
                             self.context.i64_type().fn_type(&param_types, false)
                         }
                         Type::Bool => self.context.bool_type().fn_type(&param_types, false),
@@ -746,7 +759,11 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // Pass 2: Compile Bodies
+        // Pass 2: Compile Bodies
         for imp in impls {
+            if !imp.generics.is_empty() {
+                continue;
+            }
             for method in &imp.methods {
                 let target_name = match &imp.target_type {
                     Type::Struct(n, _) | Type::UserDefined(n, _) | Type::Enum(n, _) => n,
@@ -995,7 +1012,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Add regular arguments
         for (_, val) in &func.args {
             let arg_ty: inkwell::types::BasicMetadataTypeEnum = match val {
-                Type::I64 | Type::Entity => self.context.i64_type().into(),
+                Type::I64 | Type::Entity | Type::Usize => self.context.i64_type().into(),
                 Type::F32 => self.context.f32_type().into(),
                 Type::Bool => self.context.bool_type().into(),
                 Type::Tensor(_, _) => self
@@ -1018,7 +1035,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         } else {
             let ret_type: Option<inkwell::types::BasicTypeEnum> = match &func.return_type {
                 Type::Void => None,
-                Type::I64 => Some(self.context.i64_type().into()),
+                Type::I64 | Type::Entity | Type::Usize => Some(self.context.i64_type().into()),
                 Type::F32 => Some(self.context.f32_type().into()),
                 Type::Bool => Some(self.context.bool_type().into()),
                 Type::Tensor(_, _) => Some(

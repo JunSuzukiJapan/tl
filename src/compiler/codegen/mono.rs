@@ -6,6 +6,101 @@ use inkwell::AddressSpace;
 use std::collections::HashMap;
 
 impl<'ctx> CodeGenerator<'ctx> {
+    /// On-demand monomorphization of a method for a generic struct.
+    pub fn monomorphize_method(
+        &mut self,
+        struct_name: &str,
+        method_name: &str,
+        generic_args: &[Type],
+    ) -> Result<String, String> {
+        let impls = self.generic_impls.get(struct_name)
+             .ok_or_else(|| format!("No generic impls found for struct {}", struct_name))?;
+
+        // Find method in impls
+        let mut target_method = None;
+        let mut target_impl = None;
+        
+        for imp in impls {
+            for method in &imp.methods {
+                 if method.name == method_name {
+                     target_method = Some(method);
+                     target_impl = Some(imp);
+                     break;
+                 }
+            }
+            if target_method.is_some() { break; }
+        }
+        
+        let method = target_method.ok_or_else(|| format!("Method {} not found in generic impls of {}", method_name, struct_name))?;
+        let imp = target_impl.unwrap();
+
+        // Check generic count
+        if imp.generics.len() != generic_args.len() {
+             return Err(format!("Generic arg count mismatch for impl {}: expected {}, got {}", 
+                 struct_name, imp.generics.len(), generic_args.len()));
+        }
+
+        // Build substitution map
+        let mut subst_map = HashMap::new();
+        for (param, arg) in imp.generics.iter().zip(generic_args) {
+             subst_map.insert(param.clone(), arg.clone());
+        }
+
+        // Mangle name
+        // tl_Rect_i64_area
+        let suffix = generic_args.iter().map(|t| self.type_to_suffix(t)).collect::<Vec<_>>().join("_");
+        let mangled_name = format!("tl_{}_{}_{}", struct_name, suffix, method_name);
+        
+        if self.module.get_function(&mangled_name).is_some() || self.fn_return_types.contains_key(&mangled_name) {
+             return Ok(mangled_name);
+        }
+
+        // Instantiate
+        let substitutor = TypeSubstitutor::new(subst_map);
+        let mut new_method = method.clone();
+        new_method.name = mangled_name.clone(); 
+        new_method.generics = vec![]; // Concrete
+        
+        // Fix "Self" usage and Substitute
+        // The return type, args, and body might use T or Self.
+        // Self -> Struct<Args> (UserDefined)
+        // Wait, ASTSubstitutor handles explicit Type mapping.
+        // But Self is implicit in some contexts?
+        // In valid TL AST, Self is usually pre-resolved or UserDefined("Self", [])?
+        // Let's assume UserDefined("Self") is handled by substitution if we map "Self" -> ConcreteType.
+        
+        let concrete_self = Type::UserDefined(struct_name.to_string(), generic_args.to_vec());
+        // Add Self to substitution map if not already present
+        // Actually TypeSubstitutor might need special handling for Self?
+        // Or we just add it to the map.
+        // Let's create a new substitutor with Self included.
+        let mut full_map = substitutor.subst.clone();
+        full_map.insert("Self".to_string(), concrete_self);
+        let full_substitutor = TypeSubstitutor::new(full_map);
+
+        // Substitute
+        for (_, ty) in &mut new_method.args {
+            *ty = full_substitutor.substitute_type(ty);
+        }
+        new_method.return_type = full_substitutor.substitute_type(&new_method.return_type);
+        new_method.body = new_method.body.iter().map(|s| full_substitutor.substitute_stmt(s)).collect();
+        
+        // Compile
+        self.fn_return_types.insert(mangled_name.clone(), new_method.return_type.clone());
+        // eprintln!("DEBUG: Monomorphizing {}, return type: {:?}", mangled_name, new_method.return_type);
+        
+        // Add to module
+        // We need to compile it as a function.
+        // Note: compile_impl_blocks usually handles name mangling "tl_Struct_method".
+        // Here we pre-mangled it to "tl_Struct_Args_method", so we can just use compile_fn?
+        // Yes, as long as compile_fn uses the name in function def.
+        
+        self.compile_fn_proto(&new_method)?;
+        self.compile_fn(&new_method, &[])?;
+        
+        Ok(mangled_name)
+    }
+
     /// On-demand monomorphization of a user-defined generic function.
     pub fn monomorphize_generic_function(
         &mut self,

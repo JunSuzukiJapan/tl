@@ -1142,6 +1142,11 @@ impl SemanticAnalyzer {
         }
 
         // 2. Check function bodies
+        // Skip body check for generic impls as types are unknown until monomorphization
+        if !impl_block.generics.is_empty() {
+             return Ok(());
+        }
+
         for method in &mut impl_block.methods {
             self.check_function(
                 method,
