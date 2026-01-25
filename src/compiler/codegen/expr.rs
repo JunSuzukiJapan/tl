@@ -6727,7 +6727,11 @@ impl<'ctx> CodeGenerator<'ctx> {
         // DPS: If return type is Struct (and SRET enabled), handle hidden dest argument
         // Tensors are returned by pointer directly, so exclude them.
         let mut dest_val = None;
-        if matches!(ret_type, Type::Struct(_, _) | Type::UserDefined(_, _)) {
+        if match ret_type {
+             Type::Struct(_, _) => true,
+             Type::UserDefined(ref name, _) if name != "String" => true,
+             _ => false 
+        } {
              if let Some(d) = dest {
                  dest_val = Some(d);
              } else {

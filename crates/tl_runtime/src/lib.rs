@@ -3,7 +3,10 @@ pub mod args;
 pub mod device;
 pub mod error;
 pub mod memory_manager; // Arena allocator for tensor memory optimization
-pub use memory_manager::{tl_get_pool_count, tl_get_refcount_count, tl_get_scope_depth, tl_mem_get_buffer};
+pub use memory_manager::{
+    tl_get_pool_count, tl_get_refcount_count, tl_get_scope_depth, tl_mem_function_enter,
+    tl_mem_function_exit, tl_mem_get_buffer,
+};
 
 pub mod checkpoint;
 pub mod context;

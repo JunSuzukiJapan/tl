@@ -802,6 +802,19 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_mem_get_buffer") {
         execution_engine.add_global_mapping(&f, runtime::tl_mem_get_buffer as usize);
     }
+
+    // Function Frames
+    let fn_enter_type = void_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_mem_function_enter", fn_enter_type);
+    let fn_exit_type = void_type.fn_type(&[], false);
+    add_fn("tl_mem_function_exit", fn_exit_type);
+
+    if let Some(f) = module.get_function("tl_mem_function_enter") {
+        execution_engine.add_global_mapping(&f, runtime::tl_mem_function_enter as usize);
+    }
+    if let Some(f) = module.get_function("tl_mem_function_exit") {
+        execution_engine.add_global_mapping(&f, runtime::tl_mem_function_exit as usize);
+    }
     
     let path_to_str_type = i8_ptr.fn_type(&[void_ptr.into()], false);
     add_fn("tl_path_to_string", path_to_str_type);

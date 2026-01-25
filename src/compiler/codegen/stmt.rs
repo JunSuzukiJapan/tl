@@ -80,7 +80,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .ok_or("tl_mem_unregister not found")?;
 
         match ty {
-            Type::UserDefined(name, _) if name == "String" => {} // Skip String
+            // Type::UserDefined(name, _) if name == "String" => {} // DO NOT Skip String. It must be unregistered.
             Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _) => {
                 self.builder
                     .build_call(unreg_fn, &[val.into()], "")

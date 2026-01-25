@@ -1000,10 +1000,14 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Check if this function returns a struct (requires sret)
         // Check if this function returns a struct (requires sret)
-        // Check if this function returns a struct (requires sret)
-        // matches!(func.return_type, Type::Struct(_, _) | Type::UserDefined(_, _))
+        // Check if this function        // matches!(func.return_type, Type::Struct(_, _) | Type::UserDefined(_, _))
         // Let's assume Structs needs SRET, but Tensors do NOT.
-        let uses_sret = matches!(func.return_type, Type::Struct(_, _) | Type::UserDefined(_, _));
+        // String is a pointer, so exclusion is needed.
+        let uses_sret = match &func.return_type {
+            Type::Struct(_, _) => true,
+            Type::UserDefined(name, _) if name != "String" => true,
+            _ => false,
+        };
 
         let mut args_types = Vec::new();
 
@@ -1122,7 +1126,11 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
         // Check if this function uses sret
-        let uses_sret = matches!(func.return_type, Type::Struct(_, _) | Type::UserDefined(_, _));
+        let uses_sret = match &func.return_type {
+             Type::Struct(_, _) => true,
+             Type::UserDefined(name, _) if name != "String" => true,
+             _ => false,
+        };
         let param_offset = if uses_sret { 1 } else { 0 };
 
         if uses_sret {
