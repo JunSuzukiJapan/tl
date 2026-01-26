@@ -417,35 +417,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 _ => {
                                     // Pass cleanup_mode to recursive free
                                     let _ = self.emit_recursive_free(obj_val, ty, *cleanup_mode);
-                                    
-                                    // Only free container if FULL cleanup
-                                    if *cleanup_mode == CLEANUP_FULL {
-                                        if let Some(unreg_fn) =
-                                            self.module.get_function("tl_mem_unregister")
-                                        {
-                                            let _ = self.builder.build_call(
-                                                unreg_fn,
-                                                &[obj_val.into()],
-                                                "",
-                                            );
-                                        }
-                                        if let Some(free_fn) = self.module.get_function("free") {
-                                            let void_ptr = self
-                                                .builder
-                                                .build_pointer_cast(
-                                                    obj_val.into_pointer_value(),
-                                                    self.context
-                                                        .ptr_type(inkwell::AddressSpace::default()),
-                                                    "void_ptr",
-                                                )
-                                                .unwrap();
-                                            let _ = self.builder.build_call(
-                                                free_fn,
-                                                &[void_ptr.into()],
-                                                "",
-                                            );
-                                        }
-                                    }
                                 }
                             }
                         }
@@ -457,36 +428,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         if let Ok(struct_val) =
                             self.builder.build_load(load_type, ptr, "struct_to_free")
                         {
-                            // Recursive free handles null check
+                            // Recursive free handles null check and freeing the container itself
                             let _ = self.emit_recursive_free(struct_val, ty, *cleanup_mode);
-
-                            if *cleanup_mode == CLEANUP_FULL {
-                                if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
-                                    let _ = self.builder.build_call(unreg_fn, &[struct_val.into()], "");
-                                }
-
-                                // Free container
-                                if let Some(free_fn) = self.module.get_function("free") {
-                                    let void_ptr = self
-                                        .builder
-                                        .build_pointer_cast(
-                                            struct_val.into_pointer_value(),
-                                            self.context.ptr_type(inkwell::AddressSpace::default()),
-                                            "void_ptr",
-                                        )
-                                        .unwrap();
-                                    let _ = self.builder.build_call(free_fn, &[void_ptr.into()], "");
-                                } else {
-                                     // Declare free
-                                     let free_type = self.context.void_type().fn_type(
-                                         &[self.context.ptr_type(inkwell::AddressSpace::default()).into()],
-                                         false
-                                     );
-                                     let free_fn = self.module.add_function("free", free_type, None);
-                                     let void_ptr = self.builder.build_pointer_cast(struct_val.into_pointer_value(), self.context.ptr_type(inkwell::AddressSpace::default()), "void_ptr").unwrap();
-                                     let _ = self.builder.build_call(free_fn, &[void_ptr.into()], "");
-                                }
-                            }
                         }
                     } else if matches!(ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Tuple(_) | Type::Vec(_)) {
                          // Tuple and Vec also need loading from Alloca

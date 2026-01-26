@@ -5,7 +5,7 @@ struct KVCache { _h: i64 }
 struct File {} 
 // struct Map { _d: i64 }
 // Dummy struct to act as namespace for Tensor operations
-struct Tensor {}
+// struct Tensor {}
 
 struct Linear { w: i64 }
 struct RMSNorm { w: Tensor<f32, 1>, e: f32 }
@@ -249,6 +249,6 @@ fn main() {
             gen_idx = gen_idx + 1;
         }
         println("");
-        cache.free();
+        // cache.free(); // Automatic cleanup handles this
     }
 }
