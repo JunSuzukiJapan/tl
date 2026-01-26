@@ -1,6 +1,8 @@
 // CPU is faster than GPU for this task.
 // To run on CPU, use the following command:
+// ```bash
 // cargo run --release -- --device=cpu examples/readme_n_queens.tl
+// ```
 
 fn main() {
     let N = 8;
