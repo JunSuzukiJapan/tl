@@ -1,3 +1,7 @@
+// このタスクではGPUよりもCPUの方が高速です。
+// CPUで実行するには以下のコマンドを使用してください:
+// cargo run --release -- --device=cpu examples/readme_n_queens.tl
+
 fn main() {
     let N = 8;
     let solutions_to_find = 5;
