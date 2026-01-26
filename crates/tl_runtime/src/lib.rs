@@ -1276,7 +1276,7 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) -> FreeOutcome {
         if arena::tl_arena_contains(t as *mut std::ffi::c_void) {
             // Arena-allocated tensors MUST be dropped to release Candle resources (GPU memory, etc)
             // The memory for OpaqueTensor itself is reclaimed by arena reset, but the inner content needs Drop.
-            // println!("DEBUG: Drop arena tensor {:p}", t);
+            println!("DEBUG: Drop arena tensor {:p}", t);
             std::ptr::drop_in_place(t);
             return FreeOutcome::ArenaDrop;
         }
@@ -1296,7 +1296,7 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) -> FreeOutcome {
         }
 
         // Pool is full or lock failed, actually free
-        // println!("DEBUG: Actually free tensor {:p}", t);
+        println!("DEBUG: Actually free tensor {:p}", t);
         let _ = Box::from_raw(t);
         FreeOutcome::Freed
     }
@@ -2540,7 +2540,7 @@ pub extern "C" fn tl_tensor_reshape_new(
     shape_tensor: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
     unsafe {
-        // println!("DEBUG: Inside tl_tensor_reshape_new");
+        println!("DEBUG: Inside tl_tensor_reshape_new");
         let tensor = &(*t).0;
         let shape_t = &(*shape_tensor).0;
 
@@ -2560,7 +2560,7 @@ pub extern "C" fn tl_tensor_reshape_new(
             }
         };
 
-        // println!("DEBUG: Calculated new shape: {:?}", new_shape);
+        println!("DEBUG: Calculated new shape: {:?}", new_shape);
 
         match tensor.reshape(new_shape) {
             Ok(result) => make_tensor(result),
@@ -2579,7 +2579,7 @@ pub extern "C" fn tl_tensor_reshape_dims(
     num_dims: i64,
 ) -> *mut OpaqueTensor {
     unsafe {
-        // println!("DEBUG: Inside tl_tensor_reshape_dims");
+        println!("DEBUG: Inside tl_tensor_reshape_dims");
         if t.is_null() || dims_ptr.is_null() {
             crate::error::set_last_error(format!("Null pointer passed to reshape_dims: t={:?}, dims={:?}", t, dims_ptr), crate::error::RuntimeErrorCode::NullPointerError);
             return std::ptr::null_mut();

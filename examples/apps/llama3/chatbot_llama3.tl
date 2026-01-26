@@ -225,6 +225,7 @@ fn main() {
             let mut x = xi;
             let mut l = 0;
             while l < 32 {
+                // if (l == 0 && gen_idx < 2) { println("  Block 0"); }
                 let blk = Block::from_map(weights, l);
                 x = blk.forward(x, cos, sin, batch_len, cache, l, start_pos);
                 l = l + 1;

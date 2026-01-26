@@ -414,6 +414,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 "String" => {}
                                 "File" | "Path" => {}
                                 "Env" | "Http" => {}
+                                "Map" | "Tokenizer" => {}
                                 _ => {
                                     // Pass cleanup_mode to recursive free
                                     let _ = self.emit_recursive_free(obj_val, ty, *cleanup_mode);
