@@ -2941,6 +2941,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .ok_or(format!("Field {} not found in struct {}", field_name, name))?;
 
             let (val, _ty) = self.compile_expr(field_expr)?;
+            
+            // Move Semantics: 
+            // If the field value is in the cleanup list (temporary), removing it transfers ownership to the struct.
+            // Combined with disabled Struct Cleanup (Reference Semantics), this allows the value to survive.
+            if let Some(temps) = self.temporaries.last_mut() {
+                if let Some(idx) = temps.iter().position(|(v, _, _)| *v == val) {
+                    temps.remove(idx);
+                }
+            }
 
             let field_ptr = self
                 .builder
