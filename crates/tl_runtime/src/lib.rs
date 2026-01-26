@@ -249,10 +249,9 @@ pub(crate) fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
 
     if let Some(ptr) = pooled_ptr {
         unsafe {
-            // Reuse the OpaqueTensor, replace inner Tensor
-            (*ptr).0 = t;
-            (*ptr).1 = None; // Clear Var reference
-            (*ptr).2 = None; // Clear grad reference
+            // Reuse the OpaqueTensor, replace inner Tensor without dropping old (already dropped) content
+            // (*ptr).0 = t; // This would drop the old content!
+            std::ptr::write(ptr, OpaqueTensor(t, None, None));
         }
         memory_manager::register_tensor_global(ptr);
         record_tensor_alloc("make_tensor", ptr, unsafe { &(*ptr).0 }, true);
@@ -1289,13 +1288,10 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) -> FreeOutcome {
         let device_id = device_to_id(tensor.device());
 
         if let Ok(mut pool) = memory_manager::TENSOR_POOL.lock() {
-            if pool.release(t, num_elements, dtype_id, device_id) {
-                // Successfully added to pool, do NOT free
-                // println!(
-                //     "DEBUG: Pooled tensor {:p} (elem={}, dtype={}, dev={})",
-                //     t, num_elements, dtype_id, device_id
-                // );
-                return FreeOutcome::Pooled;
+            match pool.release(t, num_elements, dtype_id, device_id) {
+                memory_manager::PoolOutcome::Pooled => return FreeOutcome::Pooled,
+                memory_manager::PoolOutcome::Duplicate => return FreeOutcome::Pooled,
+                memory_manager::PoolOutcome::Full => { /* Fallthrough to free */ }
             }
         }
 

@@ -2758,6 +2758,16 @@ pub fn declare_runtime_functions<'ctx>(
     module.add_function("tl_mem_unregister", mem_unregister_type, None);
     fn_return_types.insert("tl_mem_unregister".to_string(), Type::Void);
 
+    // tl_mem_register_struct_named(ptr, name) -> void
+    let reg_struct_named_type = void_type.fn_type(&[ptr_type.into(), ptr_type.into()], false);
+    module.add_function("tl_mem_register_struct_named", reg_struct_named_type, None);
+    fn_return_types.insert("tl_mem_register_struct_named".to_string(), Type::Void);
+
+    // tl_ptr_acquire(ptr) -> void
+    let ptr_acquire_type = void_type.fn_type(&[ptr_type.into()], false);
+    module.add_function("tl_ptr_acquire", ptr_acquire_type, None);
+    fn_return_types.insert("tl_ptr_acquire".to_string(), Type::Void);
+
     // tl_pool_acquire(usize) -> ptr
     let pool_acquire_type = ptr_type.fn_type(&[i64_type.into()], false);
     module.add_function("tl_pool_acquire", pool_acquire_type, None);

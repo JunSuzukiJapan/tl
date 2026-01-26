@@ -3225,6 +3225,35 @@ impl<'ctx> CodeGenerator<'ctx> {
                     return Ok(val);
                 }
 
+                // Reference Semantics for Structs (Shared Ownership)
+                // Instead of deep copying (malloc + loop), we treat structs like RefCounted objects (like Tensors).
+                // We acquire a reference and return the same pointer.
+                
+                // 1. Acquire reference
+                let acquire_fn = self
+                    .module
+                    .get_function("tl_ptr_acquire")
+                    .ok_or("tl_ptr_acquire not found")?;
+
+                let ptr = val.into_pointer_value();
+                let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                let cast_ptr = self
+                    .builder
+                    .build_pointer_cast(ptr, void_ptr_type, "cast_struct_ptr")
+                    .unwrap();
+
+                 self.builder
+                    .build_call(acquire_fn, &[cast_ptr.into()], "")
+                    .map_err(|e| e.to_string())?;
+
+                // 2. Return SAME pointer
+                return Ok(val);
+
+                /* 
+                 * DEPRECATED: Deep Copy Logic (removed)
+                 * This caused massive leaks & trace traps because copies were unregistered.
+                 */
+                #[allow(unreachable_code)]
                 let simple_name = if name.contains("::") {
                     name.split("::").last().unwrap()
                 } else {
@@ -3407,6 +3436,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
 
                 Ok(tuple_ptr.into())
+            }
+            Type::Vec(_) => {
+                // Reference Semantics for Vec (Shared Ownership)
+                // Similar to Structs/Tensors, we acquire and return same pointer.
+                let acquire_fn = self
+                    .module
+                    .get_function("tl_ptr_acquire")
+                    .ok_or("tl_ptr_acquire not found")?;
+
+                let ptr = val.into_pointer_value();
+                let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                let cast_ptr = self
+                    .builder
+                    .build_pointer_cast(ptr, void_ptr_type, "cast_vec_ptr")
+                    .unwrap();
+
+                 self.builder
+                    .build_call(acquire_fn, &[cast_ptr.into()], "")
+                    .map_err(|e| e.to_string())?;
+
+                Ok(val)
             }
             _ => Ok(val), // Primitives copy by value
         }

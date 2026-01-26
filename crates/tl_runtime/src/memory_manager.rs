@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::os::raw::c_char;
 
 use super::OpaqueTensor;
 
@@ -29,6 +30,13 @@ pub struct TensorPool {
 // from C code in a single-threaded context (LLVM JIT execution)
 unsafe impl Send for TensorPool {}
 unsafe impl Sync for TensorPool {}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum PoolOutcome {
+    Pooled,
+    Full,
+    Duplicate,
+}
 
 impl TensorPool {
     pub fn new() -> Self {
@@ -71,14 +79,14 @@ impl TensorPool {
     }
 
     /// Release a tensor to the pool
-    /// Returns true if the tensor was added to the pool, false if pool is full or already present
+    /// Returns PoolOutcome to indicate status
     pub fn release(
         &mut self,
         ptr: *mut OpaqueTensor,
         num_elements: usize,
         dtype_id: u8,
         device_id: u8,
-    ) -> bool {
+    ) -> PoolOutcome {
         // Calculate effective max before borrowing free_list mutably
         let effective_max = self.effective_max_per_size();
 
@@ -90,15 +98,15 @@ impl TensorPool {
         // due to address reuse or reference counting bugs
         if list.contains(&ptr) {
             // println!("WARNING: Attempted to pool duplicate pointer {:p}, ignoring", ptr);
-            return false;
+            return PoolOutcome::Duplicate;
         }
 
         if list.len() < effective_max {
             list.push(ptr);
-            true
+            PoolOutcome::Pooled
         } else {
             // Pool is full, tensor should be freed
-            false
+            PoolOutcome::Full
         }
     }
 
@@ -258,34 +266,42 @@ impl MemoryManager {
         return false;
     }
 
-    /// Register a struct allocation in the current scope
-    pub fn register_struct(&mut self, ptr: *mut c_void) {
+    pub fn register_struct_named(&mut self, ptr: *mut c_void, name: *const c_char) {
         if ptr.is_null() { return; }
         
-        // Track type (only if new)
+        let name_str = if !name.is_null() {
+            unsafe { std::ffi::CStr::from_ptr(name).to_string_lossy().to_string() }
+        } else {
+            "struct".to_string()
+        };
+
         self.ptr_types.entry(ptr).or_insert(AllocationType::Struct);
 
         if let Some(scope) = self.scopes.last_mut() {
-             // RefCount Logic (same as Tensor)
              let count = self.refcounts.entry(ptr).or_insert(0);
-             let is_new = *count == 0;
-             if is_new {
+             if *count == 0 {
                  *count = 1;
-                 scope.push(AllocationRecord {
-                     ptr,
-                     alloc_type: AllocationType::Struct,
-                 });
              } else {
                  *count += 1;
              }
+             scope.push(AllocationRecord {
+                 ptr,
+                 alloc_type: AllocationType::Struct,
+             });
         }
         if crate::mem_log_enabled() {
             eprintln!(
-                "[TL_MEM] register_struct ptr={:p} depth={}",
+                "[TL_MEM] register_struct name={} ptr={:p} depth={}",
+                name_str,
                 ptr,
                 self.scopes.len()
             );
         }
+    }
+
+    /// Register a struct allocation in the current scope
+    pub fn register_struct(&mut self, ptr: *mut c_void) {
+        self.register_struct_named(ptr, std::ptr::null());
     }
 
     /// Register a tensor allocation in the current scope
@@ -296,35 +312,24 @@ impl MemoryManager {
         if let Some(scope) = self.scopes.last_mut() {
             // Initial refcount = 1 (owned by scope)
             let count = self.refcounts.entry(ptr_c).or_insert(0);
-            let is_new = *count == 0;
-            if is_new {
+            if *count == 0 {
                 *count = 1;
-                // CRITICAL FIX: Only add to scope for NEW allocations.
-                // Existing tensors already have scope entries.
-                scope.push(AllocationRecord {
-                    ptr: ptr_c,
-                    alloc_type: AllocationType::Tensor,
-                });
-                if crate::mem_log_enabled() {
-                    eprintln!(
-                        "[TL_MEM] register_tensor ptr={:p} refcount={} depth={}",
-                        ptr,
-                        *count,
-                        self.scopes.len()
-                    );
-                }
             } else {
-                // Tensor already registered and has refcount.
-                // Acquire increases the refcount to account for the new reference.
                 *count += 1;
-                if crate::mem_log_enabled() {
-                    eprintln!(
-                        "[TL_MEM] register_tensor_acquire ptr={:p} refcount={} depth={}",
-                        ptr,
-                        *count,
-                        self.scopes.len()
-                    );
-                }
+            }
+            // ALWAYS add to scope
+            scope.push(AllocationRecord {
+                ptr: ptr_c,
+                alloc_type: AllocationType::Tensor,
+            });
+            
+            if crate::mem_log_enabled() {
+                eprintln!(
+                    "[TL_MEM] register_tensor ptr={:p} refcount={} depth={}",
+                    ptr,
+                    *count,
+                    self.scopes.len()
+                );
             }
         } else {
             // No active scope, this should ideally not happen if scopes are managed correctly
@@ -435,10 +440,10 @@ impl MemoryManager {
              let count = self.refcounts.entry(ptr).or_insert(0);
              if *count == 0 {
                   *count = 1;
-                  scope.push(AllocationRecord { ptr, alloc_type: AllocationType::VecPtr });
              } else {
                   *count += 1;
              }
+             scope.push(AllocationRecord { ptr, alloc_type: AllocationType::VecPtr });
         }
     }
 
@@ -456,10 +461,10 @@ impl MemoryManager {
              let count = self.refcounts.entry(ptr).or_insert(0);
              if *count == 0 {
                   *count = 1;
-                  scope.push(AllocationRecord { ptr, alloc_type });
              } else {
                   *count += 1;
              }
+             scope.push(AllocationRecord { ptr, alloc_type });
         }
     }
 
@@ -585,6 +590,14 @@ pub extern "C" fn tl_mem_register_struct(ptr: *mut c_void) {
     if !ptr.is_null() {
         let mut mgr = MEMORY_MANAGER.lock().unwrap();
         mgr.register_struct(ptr);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_mem_register_struct_named(ptr: *mut c_void, name: *const std::os::raw::c_char) {
+    if !ptr.is_null() {
+        let mut mgr = MEMORY_MANAGER.lock().unwrap();
+        mgr.register_struct_named(ptr, name);
     }
 }
 
