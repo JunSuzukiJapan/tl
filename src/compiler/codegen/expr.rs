@@ -319,7 +319,7 @@ fn compile_tensor_detach<'ctx>(
 
     let res = codegen.check_tensor_result(call, "detach_error")?;
 
-    codegen.emit_register_tensor(res, &obj_ty)?;
+    // codegen.emit_register_tensor(res, &obj_ty)?;
     Ok((res, obj_ty))
 }
 
@@ -337,7 +337,7 @@ fn compile_tensor_grad<'ctx>(
 
     let res = codegen.check_tensor_result(call, "grad_error")?;
 
-    codegen.emit_register_tensor(res, &obj_ty)?;
+    // codegen.emit_register_tensor(res, &obj_ty)?;
     Ok((res, obj_ty))
 }
 
@@ -834,7 +834,7 @@ fn compile_tensor_zeros<'ctx>(
 
         let v = codegen.check_tensor_result(call, "zeros_error")?;
         let result_ty = Type::Tensor(Box::new(Type::F32), rank);
-        codegen.emit_register_tensor(v, &result_ty)?;
+        // codegen.emit_register_tensor(v, &result_ty)?;
         return Ok((v, result_ty));
     }
 
