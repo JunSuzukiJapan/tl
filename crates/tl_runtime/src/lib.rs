@@ -37,12 +37,10 @@ thread_local! {
 }
 
 pub(crate) fn mem_log_enabled() -> bool {
-    static MEM_LOG_ENABLED: OnceLock<bool> = OnceLock::new();
-    *MEM_LOG_ENABLED.get_or_init(|| {
-        std::env::var("TL_MEM_LOG")
-            .map(|v| v != "0" && v.to_lowercase() != "false")
-            .unwrap_or(false)
-    })
+    // Check every time to allow runtime enablement via set_var
+    std::env::var("TL_MEM_LOG")
+        .map(|v| v != "0" && v.to_lowercase() != "false")
+        .unwrap_or(false)
 }
 
 fn mem_trace_enabled() -> bool {
@@ -891,6 +889,9 @@ pub extern "C" fn tl_log_alloc(
     file: *const std::os::raw::c_char,
     line: i32,
 ) {
+    if !mem_log_enabled() {
+        return;
+    }
     let file_str = if !file.is_null() {
         unsafe { std::ffi::CStr::from_ptr(file).to_string_lossy().into_owned() }
     } else {
@@ -905,6 +906,9 @@ pub extern "C" fn tl_log_free(
     file: *const std::os::raw::c_char,
     line: i32,
 ) {
+    if !mem_log_enabled() {
+        return;
+    }
     let file_str = if !file.is_null() {
         unsafe { std::ffi::CStr::from_ptr(file).to_string_lossy().into_owned() }
     } else {
