@@ -34,6 +34,10 @@ struct Cli {
     #[arg(short = 'S', long)]
     save_asm: bool,
 
+    /// Emit LLVM IR
+    #[arg(long = "emit-llvm")]
+    emit_llvm: bool,
+
     /// Device (cpu, metal, cuda, auto)
     #[arg(short, long, default_value = "auto")]
     device: String,
@@ -106,7 +110,7 @@ fn main() -> Result<()> {
     }
 
     // Determine mode
-    let is_compile_mode = cli.compile || cli.output.is_some() || cli.save_asm;
+    let is_compile_mode = cli.compile || cli.output.is_some() || cli.save_asm || cli.emit_llvm;
 
     if is_compile_mode {
         // Compile Mode
@@ -175,6 +179,15 @@ fn main() -> Result<()> {
                 codegen.dump_ir();
             }
 
+            if cli.emit_llvm {
+                let ll_path = file.with_extension("ll");
+                if let Err(e) = codegen.emit_llvm_file(&ll_path) {
+                    log::error!("Failed to emit LLVM IR for {:?}: {}", file, e);
+                    std::process::exit(1);
+                }
+                log::info!("Generated LLVM IR: {:?}", ll_path);
+            }
+
             if cli.save_asm {
                 let asm_path = file.with_extension("s");
                 if let Err(e) = codegen.emit_assembly_file(&asm_path) {
@@ -182,7 +195,7 @@ fn main() -> Result<()> {
                     std::process::exit(1);
                 }
                 log::info!("Generated assembly: {:?}", asm_path);
-            } else {
+            } else if !cli.emit_llvm {
 
                 let obj_path = file.with_extension("o");
                 if let Err(e) = codegen.emit_object_file(&obj_path) {
@@ -201,7 +214,7 @@ fn main() -> Result<()> {
             .unwrap_or(false);
 
         // Link Step (only if compiling and not just saving asm, and not explicitly outputting object)
-        if (cli.compile || cli.output.is_some()) && !cli.save_asm && !output_is_object {
+        if (cli.compile || cli.output.is_some()) && !cli.save_asm && !cli.emit_llvm && !output_is_object {
             let mut link_args = Vec::new();
             link_args.extend(
                 generated_objects

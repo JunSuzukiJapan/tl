@@ -888,6 +888,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 self.builder.build_store(field_ptr, final_val).map_err(|e| e.to_string())?;
 
+                // Prevent compiler from freeing the temporary now that it's stored in a field
+                self.mark_temp_no_cleanup(val);
+
                 // Ownership transfer
                 if let Some(f) = self.module.get_function("tl_mem_unregister") {
                     let should_unregister = match &field_type {
@@ -1188,7 +1191,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
 
                 // Keep ownership in the variable (if val_ir was a temporary)
-                self.consume_temp(val_ir);
+                self.mark_temp_no_cleanup(val_ir);
 
                 self.variables
                     .last_mut()
@@ -1234,16 +1237,33 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             StmtKind::Return(expr_opt) => {
                 if let Some(expr) = expr_opt {
+                    let (val, ty) = self.compile_expr(expr)?;
+
                     // If returning a variable, mark it as moved (should_free = false)
                     if let ExprKind::Variable(name) = &expr.inner {
                         for scope in self.variables.iter_mut().rev() {
                             if let Some(entry) = scope.get_mut(name) {
                                 entry.2 = super::CLEANUP_NONE;
-                                break;
                             }
                         }
                     }
-                    let (val, ty) = self.compile_expr(expr)?;
+                    // FIX: Ensure the returned value is NOT cleaned up by emit_all_scopes_cleanup.
+                    // This is handled for Variables above, but temporaries (like StructInit result)
+                    // might be in self.temporaries (via add_temp or implicit) and need to be marked.
+                    // We consume it from the temporary list so cleanup logic skips it.
+                    self.mark_temp_no_cleanup(val);
+
+                    if val.is_pointer_value() {
+                        let ptr = val.into_pointer_value();
+                        for scope in self.variables.iter_mut().rev() {
+                            // Find precise match for pointer value
+                            for (_, (v, _, cleanup)) in scope.iter_mut() {
+                                if v.is_pointer_value() && v.into_pointer_value() == ptr {
+                                    *cleanup = super::CLEANUP_NONE;
+                                }
+                            }
+                        }
+                    }
 
                     // Check if this is a struct return (uses sret)
                     let uses_sret = self.current_sret_dest.is_some();
@@ -1635,7 +1655,8 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // If val_base (RHS) was a temporary, we take ownership (Move).
                 // If it was L-value, compile_expr returns non-temp, consume_temp does nothing.
-                self.consume_temp(val_base);
+                // If val_base (RHS) was a temporary, we keep ownership in the variable.
+                self.mark_temp_no_cleanup(val_base);
 
                 if let Some(idxs) = indices {
                     if !idxs.is_empty() {
@@ -3219,10 +3240,30 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .get(simple_name)
                     .ok_or("LLVM Struct type not found")?;
 
-                let new_struct_ptr = self
-                    .builder
-                    .build_malloc(st_llvm_ty, &format!("copy_{}", name))
+                // Calculate size manually for correct alignment/type (i64)
+                let size_ptr = unsafe {
+                    self.builder.build_gep(
+                        st_llvm_ty,
+                        self.context.ptr_type(inkwell::AddressSpace::default()).const_null(),
+                        &[self.context.i64_type().const_int(1, false)],
+                        "size_ptr",
+                    ).map_err(|e| e.to_string())?
+                };
+                let size = self.builder
+                    .build_ptr_to_int(size_ptr, self.context.i64_type(), "size")
                     .map_err(|e| e.to_string())?;
+
+                let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
+                let new_struct_ptr_val = match self.builder
+                    .build_call(malloc_fn, &[size.into()], &format!("copy_{}", name))
+                    .map_err(|e| e.to_string())?
+                    .try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                        _ => return Err("malloc returned void".into()),
+                    };
+
+                // Cast if necessary (malloc returns i8* usually/void* so cast to struct*)
+                let new_struct_ptr = new_struct_ptr_val; // Inkwell pointer is typed/untyped depending on version but GEP needs type
 
                 // Register with MemoryManager (important for nested structs which are not Variables)
                 // Actually, if it's a field, it's owned by the parent struct.
@@ -3307,15 +3348,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let size = tuple_struct_type
                     .size_of()
                     .ok_or("Cannot get size of tuple")?;
+                // Ensure size is i64
+                let size = if size.get_type() == self.context.i32_type() {
+                    self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").unwrap()
+                } else {
+                    size
+                };
+
                 let malloc_fn = self
                     .module
                     .get_function("malloc")
                     .ok_or("malloc not found")?;
-                let call = self
+                let new_tuple_ptr_val = self
                     .builder
                     .build_call(malloc_fn, &[size.into()], "tuple_malloc")
                     .map_err(|e| e.to_string())?;
-                let raw_ptr = match call.try_as_basic_value() {
+                let raw_ptr = match new_tuple_ptr_val.try_as_basic_value() {
                     inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
                     _ => return Err("malloc returned invalid value".into()),
                 };
@@ -3378,10 +3426,27 @@ impl<'ctx> CodeGenerator<'ctx> {
         let src_ptr = val.into_pointer_value();
 
         // 1. Allocate new enum instance
-        let new_ptr = self
-            .builder
-            .build_malloc(enum_ty, &format!("copy_{}", name))
-            .map_err(|e| e.to_string())?;
+            // Manual malloc(i64)
+            let size_ptr = unsafe {
+                self.builder.build_gep(
+                    enum_ty,
+                    self.context.ptr_type(inkwell::AddressSpace::default()).const_null(),
+                    &[self.context.i64_type().const_int(1, false)],
+                    "size_ptr",
+                ).map_err(|e| e.to_string())?
+            };
+            let size = self.builder
+                .build_ptr_to_int(size_ptr, self.context.i64_type(), "size")
+                .map_err(|e| e.to_string())?;
+
+            let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
+            let new_ptr = match self.builder
+                .build_call(malloc_fn, &[size.into()], &format!("copy_{}", name))
+                .map_err(|e| e.to_string())?
+                .try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                    _ => return Err("malloc returned void".into()),
+                };
 
         // 2. Load Tag
         let tag_ptr = self

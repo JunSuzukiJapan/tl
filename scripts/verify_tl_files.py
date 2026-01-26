@@ -327,6 +327,9 @@ def main():
     # TL バイナリのパス
     tl_binary = project_root / "target" / "debug" / "tl"
     if not tl_binary.exists():
+        tl_binary = project_root / "target" / "release" / "tl"
+    
+    if not tl_binary.exists():
         print("❌ TL バイナリが見つかりません。先に 'cargo build' を実行してください。")
         sys.exit(1)
     

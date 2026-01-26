@@ -1665,10 +1665,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .ok_or(format!("Enum type {} not found", enum_name))?;
 
                 // 1. Allocate Enum
-                let alloca = self
-                    .builder
-                    .build_malloc(enum_ty, &format!("enum_{}", enum_name))
+                // Manual malloc(i64)
+                let size_ptr = unsafe {
+                    self.builder.build_gep(
+                        enum_ty,
+                        self.context.ptr_type(inkwell::AddressSpace::default()).const_null(),
+                        &[self.context.i64_type().const_int(1, false)],
+                        "size_ptr",
+                    ).map_err(|e| e.to_string())?
+                };
+                let size = self.builder
+                    .build_ptr_to_int(size_ptr, self.context.i64_type(), "size")
                     .map_err(|e| e.to_string())?;
+
+                let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
+                let alloca = match self.builder
+                    .build_call(malloc_fn, &[size.into()], &format!("enum_{}", enum_name))
+                    .map_err(|e| e.to_string())?
+                    .try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                        _ => return Err("malloc returned void".into()),
+                    };
                 // alloca is *EnumStruct
 
                 // 2. Store Tag
@@ -2864,9 +2881,17 @@ impl<'ctx> CodeGenerator<'ctx> {
             .module
             .get_function("malloc")
             .ok_or("malloc not found (declare in builtins)")?;
+        
+        let size_int = size;
+        let size_i64 = if size_int.get_type() == self.context.i32_type() {
+             self.builder.build_int_z_extend(size_int, self.context.i64_type(), "size_i64").unwrap()
+        } else {
+             size_int
+        };
+
         let call = self
             .builder
-            .build_call(malloc_fn, &[size.into()], "struct_malloc")
+            .build_call(malloc_fn, &[size_i64.into()], "struct_malloc")
             .map_err(|e| e.to_string())?;
         let raw_ptr = match call.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
@@ -2987,13 +3012,21 @@ impl<'ctx> CodeGenerator<'ctx> {
         let size = tuple_struct_type
             .size_of()
             .ok_or("Cannot get size of tuple")?;
+        
+        let size_int = size;
+        let size_i64 = if size_int.get_type() == self.context.i32_type() {
+             self.builder.build_int_z_extend(size_int, self.context.i64_type(), "size_i64").unwrap()
+        } else {
+             size_int
+        };
+
         let malloc_fn = self
             .module
             .get_function("malloc")
             .ok_or("malloc not found")?;
         let call = self
             .builder
-            .build_call(malloc_fn, &[size.into()], "tuple_malloc")
+            .build_call(malloc_fn, &[size_i64.into()], "tuple_malloc")
             .map_err(|e| e.to_string())?;
         let raw_ptr = match call.try_as_basic_value() {
             ValueKind::Basic(v) => v.into_pointer_value(),
@@ -3165,9 +3198,17 @@ impl<'ctx> CodeGenerator<'ctx> {
         let size = struct_type
             .size_of()
             .ok_or(format!("Cannot determine size of struct {}", name))?;
+            
+        let size_int = size;
+        let size_i64 = if size_int.get_type() == self.context.i32_type() {
+             self.builder.build_int_z_extend(size_int, self.context.i64_type(), "size_i64").unwrap()
+        } else {
+             size_int
+        };
+
         let call = self
             .builder
-            .build_call(malloc_fn, &[size.into()], "struct_malloc")
+            .build_call(malloc_fn, &[size_i64.into()], "struct_malloc")
             .map_err(|e| e.to_string())?;
         let raw_ptr = match call.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
@@ -3308,13 +3349,21 @@ impl<'ctx> CodeGenerator<'ctx> {
             let size = struct_type
                 .size_of()
                 .ok_or("Cannot determine size of Tokenizer")?;
+            
+            let size_int = size;
+            let size_i64 = if size_int.get_type() == self.context.i32_type() {
+                self.builder.build_int_z_extend(size_int, self.context.i64_type(), "size_i64").unwrap()
+            } else {
+                size_int
+            };
+
             let malloc_fn = self
                 .module
                 .get_function("malloc")
                 .ok_or("malloc not found (declare in builtins)")?;
             let call = self
                 .builder
-                .build_call(malloc_fn, &[size.into()], "tokenizer_malloc")
+                .build_call(malloc_fn, &[size_i64.into()], "tokenizer_malloc")
                 .map_err(|e| e.to_string())?;
             let raw_ptr = match call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
@@ -3385,13 +3434,21 @@ impl<'ctx> CodeGenerator<'ctx> {
             let size = struct_type
                 .size_of()
                 .ok_or("Cannot determine size of KVCache")?;
+            
+            let size_int = size;
+            let size_i64 = if size_int.get_type() == self.context.i32_type() {
+                self.builder.build_int_z_extend(size_int, self.context.i64_type(), "size_i64").unwrap()
+            } else {
+                size_int
+            };
+
             let malloc_fn = self
                 .module
                 .get_function("malloc")
                 .ok_or("malloc not found (declare in builtins)")?;
             let call = self
                 .builder
-                .build_call(malloc_fn, &[size.into()], "kvcache_malloc")
+                .build_call(malloc_fn, &[size_i64.into()], "kvcache_malloc")
                 .map_err(|e| e.to_string())?;
             let raw_ptr = match call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
@@ -3834,7 +3891,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                      let enum_ty = *self.enum_types.get(&type_name).ok_or(format!("Enum type {} not found", type_name))?;
                      
                      // Allocate
-                     let alloca = self.builder.build_malloc(enum_ty, &format!("enum_{}", type_name)).map_err(|e| e.to_string())?;
+                     // Manual malloc(i64)
+                     let size_ptr = unsafe {
+                        self.builder.build_gep(
+                            enum_ty,
+                            self.context.ptr_type(inkwell::AddressSpace::default()).const_null(),
+                            &[self.context.i64_type().const_int(1, false)],
+                            "size_ptr",
+                        ).map_err(|e| e.to_string())?
+                    };
+                    let size = self.builder
+                        .build_ptr_to_int(size_ptr, self.context.i64_type(), "size")
+                        .map_err(|e| e.to_string())?;
+
+                    let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
+                    let alloca = match self.builder
+                        .build_call(malloc_fn, &[size.into()], &format!("enum_{}", type_name))
+                        .map_err(|e| e.to_string())?
+                        .try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                            _ => return Err("malloc returned void".into()),
+                        };
                      
                      // Store Tag
                      let tag_ptr = self.builder.build_struct_gep(enum_ty, alloca, 0, "tag_ptr").map_err(|e| e.to_string())?;
