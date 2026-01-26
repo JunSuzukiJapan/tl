@@ -80,10 +80,10 @@ fn main() -> Result<()> {
 
     // Set device environment variable
     if std::env::var("TL_DEVICE").is_err() {
-        std::env::set_var("TL_DEVICE", &cli.device);
+        unsafe { std::env::set_var("TL_DEVICE", &cli.device); }
     }
     if cli.mem_log {
-        std::env::set_var("TL_MEM_LOG", "1");
+        unsafe { std::env::set_var("TL_MEM_LOG", "1"); }
     }
 
     let mut source_files = Vec::new();

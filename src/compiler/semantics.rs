@@ -1128,7 +1128,7 @@ impl SemanticAnalyzer {
                     let mut m = method.clone();
                     // Resolve 'Self' in args to target_type
                     for (_, arg_ty) in &mut m.args {
-                        if let Type::UserDefined(ref n, _) = arg_ty {
+                        if let &mut Type::UserDefined(ref n, _) = arg_ty {
                             if n == "Self" {
                                 *arg_ty = impl_block.target_type.clone();
                             }
@@ -1166,7 +1166,7 @@ impl SemanticAnalyzer {
 
         // Register arguments
         for (name, ty) in &mut func.args {
-            let actual_ty = if let Type::UserDefined(ref type_name, _) = ty {
+            let actual_ty = if let &mut Type::UserDefined(ref type_name, _) = ty {
                 if type_name == "Self" {
                     // Resolve Self -> Actual Type
                     self_type.clone().ok_or_else(|| {

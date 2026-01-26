@@ -33,10 +33,18 @@ impl RMSNorm {
 
 impl MLP {
     fn from_map(m: Map, p: String) -> MLP {
+        // Detailed logging prevents Trace Trap (Stack Alignment Workaround)
+        println("   MLP: G");
+        let g = Linear::from_map(m, string_concat(p, "_gate.weight"));
+        println("   MLP: U");
+        let u = Linear::from_map(m, string_concat(p, "_up.weight"));
+        println("   MLP: D");
+        let d = Linear::from_map(m, string_concat(p, "_down.weight"));
+        println("   MLP: Done");
         return MLP {
-            g: Linear::from_map(m, string_concat(p, "_gate.weight")),
-            u: Linear::from_map(m, string_concat(p, "_up.weight")),
-            d: Linear::from_map(m, string_concat(p, "_down.weight"))
+            g: g,
+            u: u,
+            d: d
         };
     }
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
@@ -50,12 +58,16 @@ impl MLP {
 
 impl Attention {
     fn from_map(m: Map, p: String) -> Attention {
-        return Attention {
-            q: Linear::from_map(m, string_concat(p, "_q.weight")),
-            k: Linear::from_map(m, string_concat(p, "_k.weight")),
-            v: Linear::from_map(m, string_concat(p, "_v.weight")),
-            o: Linear::from_map(m, string_concat(p, "_output.weight"))
-        };
+        println("  Attn: Q");
+        let q = Linear::from_map(m, string_concat(p, "_q.weight"));
+        println("  Attn: K");
+        let k = Linear::from_map(m, string_concat(p, "_k.weight"));
+        println("  Attn: V");
+        let v = Linear::from_map(m, string_concat(p, "_v.weight"));
+        println("  Attn: O");
+        let o = Linear::from_map(m, string_concat(p, "_output.weight"));
+        println("  Attn: Done");
+        return Attention { q: q, k: k, v: v, o: o };
     }
     fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, sl: i64, ch: KVCache, li: i64, sp: i64) -> Tensor<f32, 2> {
         // ....reshape([1) -> .reshape(...)
@@ -102,12 +114,22 @@ impl Attention {
 
 impl Block {
     fn from_map(m: Map, li: i64) -> Block {
+        println(string_concat("Loading block ", string_from_int(li)));
         let p = string_concat("blk.", string_from_int(li));
+        println(" Blk: AN");
+        let an = RMSNorm::new(m, string_concat(p, ".attn_norm.weight"));
+        println(" Blk: FFN_N");
+        let ffn = RMSNorm::new(m, string_concat(p, ".ffn_norm.weight"));
+        println(" Blk: Attn");
+        let at = Attention::from_map(m, string_concat(p, ".attn"));
+        println(" Blk: MLP");
+        let mlp = MLP::from_map(m, string_concat(p, ".ffn"));
+        println(" Blk: Done");
         return Block {
-            an: RMSNorm::new(m, string_concat(p, ".attn_norm.weight")),
-            ffn: RMSNorm::new(m, string_concat(p, ".ffn_norm.weight")),
-            at: Attention::from_map(m, string_concat(p, ".attn")),
-            mlp: MLP::from_map(m, string_concat(p, ".ffn"))
+            an: an,
+            ffn: ffn,
+            at: at,
+            mlp: mlp
         };
     }
     fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, sl: i64, ch: KVCache, li: i64, sp: i64) -> Tensor<f32, 2> {

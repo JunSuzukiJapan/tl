@@ -124,7 +124,7 @@ impl CustomOp1 for TlCheckpointOp {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_checkpoint(
     ctx: *mut c_void,
     func: extern "C" fn(*mut c_void, *mut OpaqueTensor) -> *mut OpaqueTensor,

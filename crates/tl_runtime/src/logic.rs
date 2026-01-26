@@ -4,7 +4,7 @@ use candle_core::Tensor;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_query(
     name: *const c_char,
     mask: i64,

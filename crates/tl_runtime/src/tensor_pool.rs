@@ -118,13 +118,13 @@ pub fn pool_release(ptr: *mut OpaqueTensor, element_count: usize) {
 // C-ABI exports for LLVM codegen
 
 /// Try to acquire a pooled tensor (C API)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_pool_acquire(element_count: usize) -> *mut OpaqueTensor {
     pool_acquire(element_count).unwrap_or(std::ptr::null_mut())
 }
 
 /// Release a tensor back to the pool (C API)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_pool_release(ptr: *mut OpaqueTensor, element_count: usize) {
     if !ptr.is_null() {
         pool_release(ptr, element_count);

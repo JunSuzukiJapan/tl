@@ -1108,7 +1108,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         && matches!(val_ty, Type::ScalarArray(_, _))
                     {
                         let (_v, _t) = self.ensure_tensor_v2(value, 0)?;
-                    } else if let Type::UserDefined(ref n, _) = target_ty {
+                    } else if let Type::UserDefined(n, _) = target_ty {
                          if n.starts_with("Vec") {
                              // Fix for Vec::new() -> Vec<Void> being assigned to Vec<T> (or Vec_T)
                              if matches!(val_ty, Type::Vec(_)) || matches!(val_ty, Type::UserDefined(ref vn, _) if vn == "Vec") {

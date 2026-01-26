@@ -578,7 +578,7 @@ pub enum Arg {
 
 // --- C ABI ---
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_add_entity(name: *const c_char) -> i64 {
     let c_str = unsafe { CStr::from_ptr(name) };
     let r_str = c_str.to_str().unwrap();
@@ -588,39 +588,39 @@ pub extern "C" fn tl_kb_add_entity(name: *const c_char) -> i64 {
 // Serialization state for fact construction
 static GLOBAL_FACT_ARGS: Lazy<Mutex<Vec<Constant>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_fact_args_clear() {
     GLOBAL_FACT_ARGS.lock().unwrap().clear();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_fact_args_add_int(val: i64) {
     GLOBAL_FACT_ARGS.lock().unwrap().push(Constant::Int(val));
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_fact_args_add_float(val: f64) {
     GLOBAL_FACT_ARGS.lock().unwrap().push(Constant::Float(val));
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_fact_args_add_bool(val: bool) {
     GLOBAL_FACT_ARGS.lock().unwrap().push(Constant::Bool(val));
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_fact_args_add_entity(id: i64) {
     GLOBAL_FACT_ARGS.lock().unwrap().push(Constant::Entity(id));
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_fact_args_add_string(ptr: *const c_char) {
     let c_str = unsafe { CStr::from_ptr(ptr) };
     let r_str = c_str.to_str().unwrap().to_string();
     GLOBAL_FACT_ARGS.lock().unwrap().push(Constant::String(r_str));
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_add_fact_serialized(relation: *const c_char) {
     let c_str = unsafe { CStr::from_ptr(relation) };
     let rel_name = c_str.to_str().unwrap();
@@ -630,7 +630,7 @@ pub extern "C" fn tl_kb_add_fact_serialized(relation: *const c_char) {
 }
 
 // Keep old API for compatibility if needed, but it only supports i64 (Entities/Ints)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_add_fact(relation: *const c_char, args: *const i64, arity: i64) {
     let c_str = unsafe { CStr::from_ptr(relation) };
     let rel_name = c_str.to_str().unwrap();
@@ -640,7 +640,7 @@ pub extern "C" fn tl_kb_add_fact(relation: *const c_char, args: *const i64, arit
     GLOBAL_KB.lock().unwrap().add_fact(rel_name, args_vec);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_get_entity_name(id: i64) -> *const c_char {
     let kb = GLOBAL_KB.lock().unwrap();
     if let Some(name) = kb.get_entity_name(id) {
@@ -650,7 +650,7 @@ pub extern "C" fn tl_kb_get_entity_name(id: i64) -> *const c_char {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_infer() {
     GLOBAL_KB.lock().unwrap().infer();
 }
@@ -668,7 +668,7 @@ struct RuleBuilder {
 
 static GLOBAL_RULE_BUILDER: Lazy<Mutex<Option<RuleBuilder>>> = Lazy::new(|| Mutex::new(None));
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_rule_start(head_rel: *const c_char) {
     let c_str = unsafe { CStr::from_ptr(head_rel) };
     let r_str = c_str.to_str().unwrap().to_string();
@@ -684,7 +684,7 @@ pub extern "C" fn tl_kb_rule_start(head_rel: *const c_char) {
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_rule_add_head_arg_var(index: i64) {
     let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
     if let Some(builder) = builder_lock.as_mut() {
@@ -692,7 +692,7 @@ pub extern "C" fn tl_kb_rule_add_head_arg_var(index: i64) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_rule_add_head_arg_const_int(val: i64) {
     let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
     if let Some(builder) = builder_lock.as_mut() {
@@ -700,7 +700,7 @@ pub extern "C" fn tl_kb_rule_add_head_arg_const_int(val: i64) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_rule_add_head_arg_const_float(val: f64) {
     let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
     if let Some(builder) = builder_lock.as_mut() {
@@ -708,7 +708,7 @@ pub extern "C" fn tl_kb_rule_add_head_arg_const_float(val: f64) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_rule_add_head_arg_const_entity(id: i64) {
     let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
     if let Some(builder) = builder_lock.as_mut() {
@@ -716,7 +716,7 @@ pub extern "C" fn tl_kb_rule_add_head_arg_const_entity(id: i64) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_rule_add_body_atom(rel: *const c_char) {
     let c_str = unsafe { CStr::from_ptr(rel) };
     let r_str = c_str.to_str().unwrap().to_string();
@@ -736,7 +736,7 @@ pub extern "C" fn tl_kb_rule_add_body_atom(rel: *const c_char) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_rule_add_body_atom_neg(rel: *const c_char) {
     let c_str = unsafe { CStr::from_ptr(rel) };
     let r_str = c_str.to_str().unwrap().to_string();
@@ -756,7 +756,7 @@ pub extern "C" fn tl_kb_rule_add_body_atom_neg(rel: *const c_char) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_rule_add_body_arg_var(index: i64) {
     let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
     if let Some(builder) = builder_lock.as_mut() {
@@ -764,7 +764,7 @@ pub extern "C" fn tl_kb_rule_add_body_arg_var(index: i64) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_rule_add_body_arg_const_int(val: i64) {
     let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
     if let Some(builder) = builder_lock.as_mut() {
@@ -772,7 +772,7 @@ pub extern "C" fn tl_kb_rule_add_body_arg_const_int(val: i64) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_rule_add_body_arg_const_float(val: f64) {
     let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
     if let Some(builder) = builder_lock.as_mut() {
@@ -780,7 +780,7 @@ pub extern "C" fn tl_kb_rule_add_body_arg_const_float(val: f64) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_rule_add_body_arg_const_entity(id: i64) {
     let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
     if let Some(builder) = builder_lock.as_mut() {
@@ -788,7 +788,7 @@ pub extern "C" fn tl_kb_rule_add_body_arg_const_entity(id: i64) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kb_rule_finish() {
     let mut builder_lock = GLOBAL_RULE_BUILDER.lock().unwrap();
     if let Some(mut builder) = builder_lock.take() {

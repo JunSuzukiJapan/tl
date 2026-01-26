@@ -25,7 +25,7 @@ pub fn get_global_context() -> TensorContext {
 
 /// Register a tensor from JIT code.
 /// This function is called by the compiled code for every 'let' statement.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_register_tensor(name_ptr: *const c_char, tensor: *mut OpaqueTensor) {
     unsafe {
         if name_ptr.is_null() || tensor.is_null() {

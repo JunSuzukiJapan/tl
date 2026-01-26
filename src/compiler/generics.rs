@@ -26,11 +26,11 @@ impl GenericResolver {
     }
 
     fn resolve_recursive(
-        gen: &Type,
+        generic_ty: &Type,
         conc: &Type,
         bindings: &mut HashMap<String, Type>,
     ) -> Result<(), String> {
-        match (gen, conc) {
+        match (generic_ty, conc) {
             // Case 1: Generic parameter (e.g. T) matching any concrete type
             // This handles UserDefined("T", []) matching Struct("Point", []), I64, etc.
             (Type::UserDefined(name, args), conc_ty) if args.is_empty() && Self::is_likely_generic_param(name) => {
@@ -72,13 +72,20 @@ impl GenericResolver {
                  Self::resolve_recursive(inner1, inner2, bindings)
              }
              
+             (Type::ScalarArray(t1, l1), Type::ScalarArray(t2, l2)) => {
+                 if l1 != l2 {
+                      return Err(format!("Array length mismatch: {} vs {}", l1, l2));
+                 }
+                 Self::resolve_recursive(t1, t2, bindings)
+             }
+
              // Base cases: Primitives must match exactly
              (Type::I64, Type::I64) => Ok(()),
              (Type::F32, Type::F32) => Ok(()),
              (Type::Bool, Type::Bool) => Ok(()),
              
              // Mismatch
-             _ => Err(format!("Structure mismatch or unsupported type comparison: {:?} vs {:?}", gen, conc)),
+             _ => Err(format!("Structure mismatch or unsupported type comparison: {:?} vs {:?}", generic_ty, conc)),
         }
     }
 
@@ -175,10 +182,10 @@ mod tests {
     #[test]
     fn test_resolve_simple_vec() {
         // Vec<T> vs Vec<i64>
-        let gen = t_vec(t_param("T"));
+        let generic_ty = t_vec(t_param("T"));
         let conc = t_vec(t_i64());
         
-        let bindings = GenericResolver::resolve_bindings(&gen, &conc).unwrap();
+        let bindings = GenericResolver::resolve_bindings(&generic_ty, &conc).unwrap();
         assert_eq!(bindings.get("T"), Some(&t_i64()));
     }
 
@@ -186,13 +193,13 @@ mod tests {
     fn test_resolve_map() {
         // Map<K, V> vs Map<String, Tensor<f32, 2>>
         // Represent Map as Struct("Map", [K, V])
-        let gen = t_struct("Map", vec![t_param("K"), t_param("V")]);
+        let generic_ty = t_struct("Map", vec![t_param("K"), t_param("V")]);
         
         let tensor_conc = t_tensor(t_f32(), 2);
         let string_conc = Type::UserDefined("String".into(), vec![]);
         let conc = t_struct("Map", vec![string_conc.clone(), tensor_conc.clone()]);
         
-        let bindings = GenericResolver::resolve_bindings(&gen, &conc).unwrap();
+        let bindings = GenericResolver::resolve_bindings(&generic_ty, &conc).unwrap();
         assert_eq!(bindings.get("K"), Some(&string_conc));
         assert_eq!(bindings.get("V"), Some(&tensor_conc));
     }
@@ -200,10 +207,10 @@ mod tests {
     #[test]
     fn test_resolve_nested_generic() {
         // Vec<Vec<T>> vs Vec<Vec<f32>>
-        let gen = t_vec(t_vec(t_param("T")));
+        let generic_ty = t_vec(t_vec(t_param("T")));
         let conc = t_vec(t_vec(t_f32()));
         
-        let bindings = GenericResolver::resolve_bindings(&gen, &conc).unwrap();
+        let bindings = GenericResolver::resolve_bindings(&generic_ty, &conc).unwrap();
         assert_eq!(bindings.get("T"), Some(&t_f32()));
     }
 
@@ -211,20 +218,20 @@ mod tests {
     fn test_resolve_nested_struct() {
         // Struct Box<T> { x: T }
         // Type::Struct("Box", [T])
-        let gen = t_struct("Box", vec![t_param("T")]);
+        let generic_ty = t_struct("Box", vec![t_param("T")]);
         let conc = t_struct("Box", vec![t_i64()]);
         
-        let bindings = GenericResolver::resolve_bindings(&gen, &conc).unwrap();
+        let bindings = GenericResolver::resolve_bindings(&generic_ty, &conc).unwrap();
         assert_eq!(bindings.get("T"), Some(&t_i64()));
     }
 
     #[test]
     fn test_resolve_conflict() {
         // Pair<T, T> vs Pair<i64, f32> -> Check conflict
-        let gen = t_struct("Pair", vec![t_param("T"), t_param("T")]);
+        let generic_ty = t_struct("Pair", vec![t_param("T"), t_param("T")]);
         let conc = t_struct("Pair", vec![t_i64(), t_f32()]);
         
-        let res = GenericResolver::resolve_bindings(&gen, &conc);
+        let res = GenericResolver::resolve_bindings(&generic_ty, &conc);
         assert!(res.is_err());
         assert!(res.unwrap_err().contains("mismatched types"));
     }
@@ -234,8 +241,8 @@ mod tests {
         let mut bindings = HashMap::new();
         bindings.insert("T".into(), t_i64());
         
-        let gen = t_vec(t_param("T"));
-        let resolved = GenericResolver::apply_bindings(&gen, &bindings);
+        let generic_ty = t_vec(t_param("T"));
+        let resolved = GenericResolver::apply_bindings(&generic_ty, &bindings);
         
         assert_eq!(resolved, t_vec(t_i64()));
     }
@@ -244,8 +251,8 @@ mod tests {
     fn test_apply_bindings_missing_leaves_as_is() {
         // If T is not in bindings, stays as T (UserDefined)
         let bindings = HashMap::new();
-        let gen = t_param("T");
-        let resolved = GenericResolver::apply_bindings(&gen, &bindings);
-        assert_eq!(resolved, gen);
+        let generic_ty = t_param("T");
+        let resolved = GenericResolver::apply_bindings(&generic_ty, &bindings);
+        assert_eq!(resolved, generic_ty);
     }
 }

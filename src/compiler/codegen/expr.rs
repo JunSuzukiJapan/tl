@@ -7150,7 +7150,7 @@ fn compile_print_common<'ctx>(
                 return Err(format!("{} not found (add to init)", fn_name).into());
             }
         }
-        Type::ScalarArray(ref elem_type, len) => {
+        Type::ScalarArray(elem_type, len) => {
             let i64_type = codegen.context.i64_type();
             let i32_type = codegen.context.i32_type();
             let f32_type = codegen.context.f32_type();

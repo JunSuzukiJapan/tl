@@ -566,21 +566,21 @@ lazy_static::lazy_static! {
 // C-ABI functions for LLVM codegen
 
 /// Enter a new memory scope
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_enter_scope() {
     let mut mgr = MEMORY_MANAGER.lock().unwrap();
     mgr.enter_scope();
 }
 
 /// Exit current scope and free all allocations in it
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_exit_scope() {
     let mut mgr = MEMORY_MANAGER.lock().unwrap();
     mgr.exit_scope();
 }
 
 /// Register a struct allocation
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_register_struct(ptr: *mut c_void) {
     if !ptr.is_null() {
         let mut mgr = MEMORY_MANAGER.lock().unwrap();
@@ -605,7 +605,7 @@ pub fn register_tensor_global(ptr: *mut OpaqueTensor) {
 
 /// Generic register for any pointer (looks up type or assumes struct if new?)
 /// Actually we need this for Vec::get. 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_register_ptr(ptr: *mut c_void) {
     if !ptr.is_null() {
         let mut mgr = MEMORY_MANAGER.lock().unwrap();
@@ -613,7 +613,7 @@ pub extern "C" fn tl_mem_register_ptr(ptr: *mut c_void) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_register_vec_ptr(ptr: *mut c_void) {
     if !ptr.is_null() {
         let mut mgr = MEMORY_MANAGER.lock().unwrap();
@@ -631,13 +631,13 @@ pub fn register_tensor_meta_global(ptr: *mut OpaqueTensor, meta: AllocationMeta)
 }
 
 /// Register a tensor allocation (C API)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_register_tensor(ptr: *mut OpaqueTensor) {
     register_tensor_global(ptr);
 }
 
 /// Unregister a pointer (e.g. from reassignment or return)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_unregister(ptr: *mut c_void) {
     if !ptr.is_null() {
         // println!("DEBUG: Unregister {:p}", ptr);
@@ -647,7 +647,7 @@ pub extern "C" fn tl_mem_unregister(ptr: *mut c_void) {
 }
 
 /// Increase tensor reference count
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_acquire(ptr: *mut OpaqueTensor) {
     if !ptr.is_null() {
         let mut mgr = MEMORY_MANAGER.lock().unwrap();
@@ -656,7 +656,7 @@ pub extern "C" fn tl_tensor_acquire(ptr: *mut OpaqueTensor) {
 }
 
 /// Increase reference count (Generic)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_ptr_acquire(ptr: *mut c_void) {
     if !ptr.is_null() {
         let mut mgr = MEMORY_MANAGER.lock().unwrap();
@@ -666,7 +666,7 @@ pub extern "C" fn tl_ptr_acquire(ptr: *mut c_void) {
 
 /// Decrement refcount and return true if it should be freed (Ref==0)
 /// Removes from refcounts if 0 to prepare for free.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_ptr_dec_ref(ptr: *mut c_void) -> i32 {
     if ptr.is_null() {
         return 0; // False
@@ -701,7 +701,7 @@ pub extern "C" fn tl_ptr_dec_ref(ptr: *mut c_void) -> i32 {
 }
 
 /// Decrease reference count (Generic) - Returns bool
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_ptr_release_bool(ptr: *mut c_void) -> bool {
     if !ptr.is_null() {
         let mut mgr = MEMORY_MANAGER.lock().unwrap();
@@ -712,7 +712,7 @@ pub extern "C" fn tl_ptr_release_bool(ptr: *mut c_void) -> bool {
 }
 
 /// Decrease reference count (Generic)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_ptr_release(ptr: *mut c_void) {
     if !ptr.is_null() {
         let mut mgr = MEMORY_MANAGER.lock().unwrap();
@@ -721,13 +721,13 @@ pub extern "C" fn tl_ptr_release(ptr: *mut c_void) {
 }
 
 /// Decrease tensor reference count
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_release(ptr: *mut OpaqueTensor) {
     tl_ptr_release(ptr as *mut c_void);
 }
 
 /// Get number of tensors currently stored in the pool
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_get_pool_count() -> i64 {
     if let Ok(pool) = TENSOR_POOL.lock() {
         pool.total_count() as i64
@@ -737,32 +737,32 @@ pub extern "C" fn tl_get_pool_count() -> i64 {
 }
 
 /// Get number of live tensor refcount entries
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_get_refcount_count() -> i64 {
     let mgr = MEMORY_MANAGER.lock().unwrap();
     mgr.refcounts.len() as i64
 }
 
 /// Get current scope depth (including global scope)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_get_scope_depth() -> i64 {
     let mgr = MEMORY_MANAGER.lock().unwrap();
     mgr.scopes.len() as i64
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_function_enter(num_slots: i64) {
     let mut mgr = MEMORY_MANAGER.lock().unwrap();
     mgr.function_enter(num_slots as usize);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_function_exit() {
     let mut mgr = MEMORY_MANAGER.lock().unwrap();
     mgr.function_exit();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_get_buffer(slot_id: i64, min_size: i64) -> *mut c_void {
     let mut mgr = MEMORY_MANAGER.lock().unwrap();
     mgr.get_buffer(slot_id as usize, min_size as usize)

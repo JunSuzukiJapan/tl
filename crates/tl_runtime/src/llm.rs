@@ -11,7 +11,7 @@ use tokenizers::Tokenizer;
 // Opaque wrapper for Tokenizer
 pub struct OpaqueTokenizer(pub Tokenizer);
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tokenizer_new(path: *const c_char) -> i64 {
     unsafe {
         let path_str = CStr::from_ptr(path).to_str().unwrap();
@@ -29,7 +29,7 @@ pub extern "C" fn tl_tokenizer_new(path: *const c_char) -> i64 {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tokenizer_encode(tokenizer: i64, prompt: *const c_char) -> *mut OpaqueTensor {
     unsafe {
         let tokenizer_ptr = tokenizer as *mut OpaqueTokenizer;
@@ -56,7 +56,7 @@ pub extern "C" fn tl_tokenizer_encode(tokenizer: i64, prompt: *const c_char) -> 
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tokenizer_decode(tokenizer: i64, ids: *mut OpaqueTensor) -> *mut c_char {
     unsafe {
         let t = &(*(tokenizer as *mut OpaqueTokenizer)).0;
@@ -113,7 +113,7 @@ pub extern "C" fn tl_tokenizer_decode(tokenizer: i64, ids: *mut OpaqueTensor) ->
 // --- GGUF Handling ---
 use crate::OpaqueTensorMap;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_gguf_load(path: *const c_char) -> *mut OpaqueTensorMap {
     unsafe {
         let path_str = CStr::from_ptr(path).to_str().unwrap();
@@ -159,7 +159,7 @@ pub extern "C" fn tl_gguf_load(path: *const c_char) -> *mut OpaqueTensorMap {
 
 // --- Missing Ops ---
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_cat(
     tensors: *mut Vec<*mut OpaqueTensor>,
     dim: i64,
@@ -176,7 +176,7 @@ pub extern "C" fn tl_tensor_cat(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_silu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
         let tensor = &(*t).0;
@@ -185,7 +185,7 @@ pub extern "C" fn tl_tensor_silu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_rms_norm(
     x: *mut OpaqueTensor,
     w: *mut OpaqueTensor,
@@ -224,7 +224,7 @@ pub extern "C" fn tl_tensor_rms_norm(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_cat2(
     a: *mut OpaqueTensor,
     b: *mut OpaqueTensor,
@@ -240,7 +240,7 @@ pub extern "C" fn tl_tensor_cat2(
 
 /// Concatenate two 4D tensors along a given dimension
 /// This is an alias for tl_tensor_cat2 for type-safety in TL code
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_cat_4d(
     a: *mut OpaqueTensor,
     b: *mut OpaqueTensor,
@@ -263,7 +263,7 @@ pub extern "C" fn tl_tensor_cat_4d(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_apply_rope(
     x: *mut OpaqueTensor,
     cos: *mut OpaqueTensor,
@@ -316,12 +316,12 @@ pub extern "C" fn tl_tensor_apply_rope(
 }
 
 // Helper to get raw pointer from String for FFI
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_string_as_ptr(s: *const c_char) -> *const c_char {
     s
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_rope_new_cos(dim: i64, len: i64, theta: f32) -> *mut OpaqueTensor {
     let dim = dim as usize;
     let len = len as usize;
@@ -343,7 +343,7 @@ pub extern "C" fn tl_tensor_rope_new_cos(dim: i64, len: i64, theta: f32) -> *mut
     make_tensor(cos)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_rope_new_sin(dim: i64, len: i64, theta: f32) -> *mut OpaqueTensor {
     let dim = dim as usize;
     let len = len as usize;
@@ -455,27 +455,27 @@ impl KVCacheManager {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kv_cache_new(layers: i64) -> i64 {
     let count = layers as usize;
     let mut mgr = KV_CACHE_MANAGER.lock().unwrap();
     mgr.create(count)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kv_cache_free(id: i64) {
     let mut mgr = KV_CACHE_MANAGER.lock().unwrap();
     mgr.free(id);
 }
 
 /// Clear all KV caches - call this at program exit or when resetting
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kv_cache_clear_all() {
     let mut mgr = KV_CACHE_MANAGER.lock().unwrap();
     mgr.clear_all();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kv_cache_get_k(cache_id: i64, layer_idx: i64) -> *mut OpaqueTensor {
     let mgr = KV_CACHE_MANAGER.lock().unwrap();
     let idx = layer_idx as usize;
@@ -492,7 +492,7 @@ pub extern "C" fn tl_kv_cache_get_k(cache_id: i64, layer_idx: i64) -> *mut Opaqu
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kv_cache_get_v(cache_id: i64, layer_idx: i64) -> *mut OpaqueTensor {
     let mgr = KV_CACHE_MANAGER.lock().unwrap();
     let idx = layer_idx as usize;
@@ -509,7 +509,7 @@ pub extern "C" fn tl_kv_cache_get_v(cache_id: i64, layer_idx: i64) -> *mut Opaqu
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kv_cache_update(
     cache_id: i64,
     layer_idx: i64,
@@ -557,13 +557,13 @@ pub extern "C" fn tl_kv_cache_update(
 }
 
 /// Get total KV Cache memory usage in bytes (FFI)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kv_cache_get_memory_usage() -> i64 {
     let mgr = KV_CACHE_MANAGER.lock().unwrap();
     mgr.memory_usage() as i64
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_sample(
     logits: *mut OpaqueTensor,
     temp: f32,

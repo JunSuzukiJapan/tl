@@ -134,7 +134,7 @@ pub struct OpaqueTensor(
 
 // Helper to report runtime errors from JIT code
 // Replaced by tl_handle_runtime_error, kept for compatibility if needed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_report_runtime_error(_msg: *const std::os::raw::c_char) {
     // Deprecated
 }
@@ -158,7 +158,7 @@ fn handle_runtime_error_internal(
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_handle_runtime_error(
     code: u32,
     msg: *const std::os::raw::c_char,
@@ -185,7 +185,7 @@ pub extern "C" fn tl_handle_runtime_error(
     handle_runtime_error_internal(code, message, Some(filename), line, col);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_amend_error_loc(file: *const std::os::raw::c_char, line: u32, col: u32) {
     let filename = if !file.is_null() {
         unsafe {
@@ -320,7 +320,7 @@ pub(crate) fn expand_tilde(path: &str) -> String {
 
 // --- File I/O ---
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_new(
     data: *const f32,
     rank: usize,
@@ -352,7 +352,7 @@ pub extern "C" fn tl_tensor_new(
     return_ptr_or_null(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_new_i64(
     data: *const i64,
     rank: usize,
@@ -386,7 +386,7 @@ pub extern "C" fn tl_tensor_new_i64(
 }
 
 // tl_tensor_argmax(t: *mut, dim: i64, keep_dim: bool) -> *mut
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_argmax(
     t: *mut OpaqueTensor,
     dim: i64,
@@ -428,7 +428,7 @@ pub extern "C" fn tl_tensor_argmax(
 
 // tl_tensor_item_i64(t: *mut) -> i64
 // Extract single scalar value from a 0-D or 1-element tensor
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_item_i64(t: *mut OpaqueTensor) -> i64 {
     unsafe {
         let ten = &(*t).0;
@@ -479,7 +479,7 @@ pub extern "C" fn tl_tensor_item_i64(t: *mut OpaqueTensor) -> i64 {
 // In Candle, `Var` is for trainable weights.
 // Let's explicitly add a helper for creating vars.
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_randn_debug(
     rank: usize,
     shape: *const usize,
@@ -521,7 +521,7 @@ pub extern "C" fn tl_tensor_randn_debug(
     return_ptr_or_null(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_zeros(
     rank: usize,
     shape: *const usize,
@@ -568,7 +568,7 @@ pub extern "C" fn tl_tensor_zeros(
 
 /// Create a 1D Tensor from an i64 array (for reshape shape arguments)
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_from_i64_array(data: *const i64, len: usize) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
 
@@ -593,7 +593,7 @@ pub extern "C" fn tl_tensor_from_i64_array(data: *const i64, len: usize) -> *mut
 /// Create or retrieve a parameter from the global VarMap
 /// This is the key to proper gradient tracking - all trainable parameters
 /// must be created through this function to ensure they are registered in VarMap
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_varbuilder_get_from_tensor(
     name_ptr: *const std::os::raw::c_char,
     shape_tensor: *mut OpaqueTensor,
@@ -690,7 +690,7 @@ fn tl_varbuilder_get_common(
     Ok(ptr)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_varbuilder_get(
     name: *const std::os::raw::c_char,
     rank: usize,
@@ -708,7 +708,7 @@ pub extern "C" fn tl_varbuilder_get(
 }
 
 /// Update all parameters in VarMap using SGD
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_update_all_params(learning_rate: f32) {
     let varmap = GLOBAL_VAR_MAP.lock().unwrap();
     let data = varmap.data();
@@ -734,7 +734,7 @@ pub extern "C" fn tl_update_all_params(learning_rate: f32) {
 }
 
 /// Get gradient for a specific parameter by name
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_varbuilder_grad(name: *const std::os::raw::c_char) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     use std::ffi::CStr;
@@ -770,7 +770,7 @@ pub extern "C" fn tl_varbuilder_grad(name: *const std::os::raw::c_char) -> *mut 
 
 /// Get current process memory usage in MB
 /// Returns RSS (Resident Set Size) memory in megabytes
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_get_memory_mb() -> i64 {
     #[cfg(target_os = "macos")]
     {
@@ -809,7 +809,7 @@ pub extern "C" fn tl_get_memory_mb() -> i64 {
             suspend_count: integer_t,
         }
 
-        extern "C" {
+        unsafe extern "C" {
             fn mach_task_self() -> mach_port_t;
             fn task_info(
                 target_task: mach_port_t,
@@ -860,29 +860,29 @@ pub extern "C" fn tl_get_memory_mb() -> i64 {
     -1
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_get_metal_pool_bytes() -> i64 {
     0
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_get_metal_pool_mb() -> i64 {
     0
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_get_metal_pool_count() -> i64 {
     0
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_metal_sync() {
     if let candle_core::Device::Metal(metal) = get_device() {
         let _ = metal.wait_until_completed();
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_log_alloc(
     ptr: *const std::ffi::c_void,
     size: i64,
@@ -901,7 +901,7 @@ pub extern "C" fn tl_log_alloc(
     eprintln!("[ALLOC] File: {}, Line: {}, Size: {}, Ptr: {:p}", file_str, line, size, ptr);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_log_free(
     ptr: *const std::ffi::c_void,
     file: *const std::os::raw::c_char,
@@ -918,7 +918,7 @@ pub extern "C" fn tl_log_free(
     let file_str = "non_tensor";
     eprintln!("[FREE] File: {}, Line: {}, Ptr: {:p}", file_str, line, ptr);
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_trace_mem(
     file: *const std::os::raw::c_char,
     line: u32,
@@ -959,7 +959,7 @@ pub extern "C" fn tl_trace_mem(
 // Comparison Ops returning Mask (Tensor of 0.0/1.0)
 macro_rules! impl_cmp_op {
     ($name:ident, $op:ident) => {
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub extern "C" fn $name(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
             use crate::error::RuntimeError;
             unsafe {
@@ -988,7 +988,7 @@ impl_cmp_op!(tl_tensor_lt, lt);
 impl_cmp_op!(tl_tensor_le, le);
 
 // Remainder (Mod)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_rem(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
@@ -1005,7 +1005,7 @@ pub extern "C" fn tl_tensor_rem(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
 
     use crate::error::RuntimeError;
@@ -1023,7 +1023,7 @@ pub extern "C" fn tl_tensor_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
@@ -1040,7 +1040,7 @@ pub extern "C" fn tl_tensor_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
@@ -1057,7 +1057,7 @@ pub extern "C" fn tl_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_softmax(tensor: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
@@ -1072,7 +1072,7 @@ pub extern "C" fn tl_tensor_softmax(tensor: *mut OpaqueTensor, dim: i64) -> *mut
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_cross_entropy(
     logits: *mut OpaqueTensor,
     targets: *mut OpaqueTensor,
@@ -1112,7 +1112,7 @@ pub extern "C" fn tl_tensor_cross_entropy(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_detach(t: *mut OpaqueTensor, req_grad: bool) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
@@ -1142,7 +1142,7 @@ pub extern "C" fn tl_tensor_detach(t: *mut OpaqueTensor, req_grad: bool) -> *mut
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_enable_grad(t: *mut OpaqueTensor) {
     unsafe {
         let tensor_wrapper = &mut *t;
@@ -1158,7 +1158,7 @@ pub extern "C" fn tl_tensor_enable_grad(t: *mut OpaqueTensor) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_print(t: *const OpaqueTensor) {
     if t.is_null() {
         println!("Tensor(NULL)");
@@ -1169,7 +1169,7 @@ pub extern "C" fn tl_tensor_print(t: *const OpaqueTensor) {
         // Logic Integration: Check if tensor is i64 and contains entities
         if tensor.dtype() == candle_core::DType::I64 {
             // Import helper from knowledge_base (assumed linked)
-            extern "C" {
+            unsafe extern "C" {
                 fn tl_kb_get_entity_name(id: i64) -> *const std::os::raw::c_char;
             }
 
@@ -1200,7 +1200,7 @@ pub extern "C" fn tl_tensor_print(t: *const OpaqueTensor) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_display(t: *const OpaqueTensor) {
     use std::io::Write;
     if t.is_null() {
@@ -1209,7 +1209,7 @@ pub extern "C" fn tl_tensor_display(t: *const OpaqueTensor) {
         let tensor = unsafe { &(*t).0 };
         // Logic Integration: Check if tensor is i64 and contains entities
         if tensor.dtype() == candle_core::DType::I64 {
-            extern "C" {
+            unsafe extern "C" {
                 fn tl_kb_get_entity_name(id: i64) -> *const std::os::raw::c_char;
             }
 
@@ -1240,7 +1240,7 @@ pub extern "C" fn tl_tensor_display(t: *const OpaqueTensor) {
     let _ = std::io::stdout().flush();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_device_id(t: *const OpaqueTensor) -> i64 {
     if t.is_null() {
         return -1;
@@ -1251,17 +1251,17 @@ pub extern "C" fn tl_tensor_device_id(t: *const OpaqueTensor) -> i64 {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_print_2(t: *const OpaqueTensor) {
     tl_tensor_print(t);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_print_1(t: *const OpaqueTensor) {
     tl_tensor_print(t);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_print_3(t: *const OpaqueTensor) {
     tl_tensor_print(t);
 }
@@ -1306,7 +1306,7 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) -> FreeOutcome {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
     if !t.is_null() {
         memory_manager::tl_tensor_release(t);
@@ -1315,7 +1315,7 @@ pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
 
 /// Finalize a tensor (drop content) without freeing the struct memory
 /// Used for Slot-backed tensors where the container is managed by the slot/stack
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_finalize(t: *mut OpaqueTensor) {
     if !t.is_null() {
          unsafe {
@@ -1325,7 +1325,7 @@ pub extern "C" fn tl_tensor_finalize(t: *mut OpaqueTensor) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
     // use crate::error::RuntimeError;
     unsafe {
@@ -1360,7 +1360,7 @@ pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_neg(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
         let tensor = &(*t).0;
@@ -1369,7 +1369,7 @@ pub extern "C" fn tl_tensor_neg(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_len(t: *mut OpaqueTensor) -> i64 {
     unsafe {
         let tensor = &(*t).0;
@@ -1383,7 +1383,7 @@ pub extern "C" fn tl_tensor_len(t: *mut OpaqueTensor) -> i64 {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_u8_read_i32_be(ptr: *mut Vec<u8>, idx: i64) -> i64 {
     unsafe {
         let vec = &*ptr;
@@ -1397,7 +1397,7 @@ pub extern "C" fn tl_vec_u8_read_i32_be(ptr: *mut Vec<u8>, idx: i64) -> i64 {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_from_vec_u8(
     ptr: *mut Vec<u8>,
     offset: i64,
@@ -1441,7 +1441,7 @@ pub extern "C" fn tl_tensor_from_vec_u8(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_from_u8_labels(
     ptr: *mut Vec<u8>,
     offset: i64,
@@ -1476,7 +1476,7 @@ pub extern "C" fn tl_tensor_from_u8_labels(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_get(t: *mut OpaqueTensor, idx: i64) -> c_float {
     unsafe {
         if t.is_null() {
@@ -1500,12 +1500,12 @@ pub extern "C" fn tl_tensor_get(t: *mut OpaqueTensor, idx: i64) -> c_float {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_item(t: *mut OpaqueTensor) -> c_float {
     tl_tensor_get(t, 0)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_set_f32_md(
     t: *mut OpaqueTensor,
     indices: *const i64,
@@ -1548,7 +1548,7 @@ pub extern "C" fn tl_tensor_set_f32_md(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_slice(t: *mut OpaqueTensor, start: i64, len: i64) -> *mut OpaqueTensor {
     unsafe {
         let tensor = &(*t).0;
@@ -1558,56 +1558,56 @@ pub extern "C" fn tl_tensor_slice(t: *mut OpaqueTensor, start: i64, len: i64) ->
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_print_i64(v: i64) {
     println!("{}", v);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_display_i64(v: i64) {
     print!("{}", v);
     let _ = std::io::stdout().flush();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_print_i32(v: i32) {
     println!("{}", v);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_display_i32(v: i32) {
     print!("{}", v);
     let _ = std::io::stdout().flush();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_print_ptr(_ptr: *const std::ffi::c_void) {
     // Debug function - no output in production
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_print_f32(v: c_float) {
     println!("{}", v);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_display_f32(v: c_float) {
     print!("{}", v);
     let _ = std::io::stdout().flush();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_print_f64(v: f64) {
     println!("{}", v);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_display_f64(v: f64) {
     print!("{}", v);
     let _ = std::io::stdout().flush();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_print_bool(v: bool) {
     if v {
         println!("true");
@@ -1616,7 +1616,7 @@ pub extern "C" fn tl_print_bool(v: bool) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_display_bool(v: bool) {
     if v {
         print!("true");
@@ -1626,447 +1626,447 @@ pub extern "C" fn tl_display_bool(v: bool) {
     let _ = std::io::stdout().flush();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_abs(v: c_float) -> c_float {
     v.abs()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_acos(v: c_float) -> c_float {
     v.acos()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_acosh(v: c_float) -> c_float {
     v.acosh()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_asin(v: c_float) -> c_float {
     v.asin()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_asinh(v: c_float) -> c_float {
     v.asinh()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_atan(v: c_float) -> c_float {
     v.atan()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_atan2(v: c_float, other: c_float) -> c_float {
     v.atan2(other)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_atanh(v: c_float) -> c_float {
     v.atanh()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_cbrt(v: c_float) -> c_float {
     v.cbrt()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_ceil(v: c_float) -> c_float {
     v.ceil()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_copysign(v: c_float, sign: c_float) -> c_float {
     v.copysign(sign)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_cos(v: c_float) -> c_float {
     v.cos()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_cosh(v: c_float) -> c_float {
     v.cosh()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_exp(v: c_float) -> c_float {
     v.exp()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_exp2(v: c_float) -> c_float {
     v.exp2()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_exp_m1(v: c_float) -> c_float {
     v.exp_m1()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_floor(v: c_float) -> c_float {
     v.floor()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_fract(v: c_float) -> c_float {
     v.fract()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_hypot(v: c_float, other: c_float) -> c_float {
     v.hypot(other)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_ln(v: c_float) -> c_float {
     v.ln()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_ln_1p(v: c_float) -> c_float {
     v.ln_1p()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_log(v: c_float, base: c_float) -> c_float {
     v.log(base)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_log10(v: c_float) -> c_float {
     v.log10()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_log2(v: c_float) -> c_float {
     v.log2()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_powf(v: c_float, exp: c_float) -> c_float {
     v.powf(exp)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_powi(v: c_float, exp: i64) -> c_float {
     v.powi(exp as i32)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_recip(v: c_float) -> c_float {
     v.recip()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_round(v: c_float) -> c_float {
     v.round()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_signum(v: c_float) -> c_float {
     v.signum()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_sin(v: c_float) -> c_float {
     v.sin()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_sinh(v: c_float) -> c_float {
     v.sinh()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_sqrt(v: c_float) -> c_float {
     v.sqrt()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_tan(v: c_float) -> c_float {
     v.tan()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_tanh(v: c_float) -> c_float {
     v.tanh()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_to_degrees(v: c_float) -> c_float {
     v.to_degrees()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_to_radians(v: c_float) -> c_float {
     v.to_radians()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f32_trunc(v: c_float) -> c_float {
     v.trunc()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_abs(v: f64) -> f64 {
     v.abs()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_acos(v: f64) -> f64 {
     v.acos()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_acosh(v: f64) -> f64 {
     v.acosh()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_asin(v: f64) -> f64 {
     v.asin()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_asinh(v: f64) -> f64 {
     v.asinh()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_atan(v: f64) -> f64 {
     v.atan()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_atan2(v: f64, other: f64) -> f64 {
     v.atan2(other)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_atanh(v: f64) -> f64 {
     v.atanh()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_cbrt(v: f64) -> f64 {
     v.cbrt()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_ceil(v: f64) -> f64 {
     v.ceil()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_copysign(v: f64, sign: f64) -> f64 {
     v.copysign(sign)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_cos(v: f64) -> f64 {
     v.cos()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_cosh(v: f64) -> f64 {
     v.cosh()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_exp(v: f64) -> f64 {
     v.exp()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_exp2(v: f64) -> f64 {
     v.exp2()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_exp_m1(v: f64) -> f64 {
     v.exp_m1()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_floor(v: f64) -> f64 {
     v.floor()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_fract(v: f64) -> f64 {
     v.fract()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_hypot(v: f64, other: f64) -> f64 {
     v.hypot(other)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_ln(v: f64) -> f64 {
     v.ln()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_ln_1p(v: f64) -> f64 {
     v.ln_1p()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_log(v: f64, base: f64) -> f64 {
     v.log(base)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_log10(v: f64) -> f64 {
     v.log10()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_log2(v: f64) -> f64 {
     v.log2()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_powf(v: f64, exp: f64) -> f64 {
     v.powf(exp)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_powi(v: f64, exp: i64) -> f64 {
     v.powi(exp as i32)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_recip(v: f64) -> f64 {
     v.recip()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_round(v: f64) -> f64 {
     v.round()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_signum(v: f64) -> f64 {
     v.signum()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_sin(v: f64) -> f64 {
     v.sin()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_sinh(v: f64) -> f64 {
     v.sinh()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_sqrt(v: f64) -> f64 {
     v.sqrt()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_tan(v: f64) -> f64 {
     v.tan()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_tanh(v: f64) -> f64 {
     v.tanh()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_to_degrees(v: f64) -> f64 {
     v.to_degrees()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_to_radians(v: f64) -> f64 {
     v.to_radians()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_trunc(v: f64) -> f64 {
     v.trunc()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_i64_abs(v: i64) -> i64 {
     v.abs()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_i64_signum(v: i64) -> i64 {
     v.signum()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_i64_pow(v: i64, exp: i64) -> i64 {
     v.pow(exp as u32)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_i64_div_euclid(v: i64, rhs: i64) -> i64 {
     v.div_euclid(rhs)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_i64_rem_euclid(v: i64, rhs: i64) -> i64 {
     v.rem_euclid(rhs)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_i64_is_positive(v: i64) -> bool {
     v.is_positive()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_i64_is_negative(v: i64) -> bool {
     v.is_negative()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_i32_abs(v: i32) -> i32 {
     v.abs()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_i32_signum(v: i32) -> i32 {
     v.signum()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_i32_pow(v: i32, exp: i32) -> i32 {
     v.pow(exp as u32)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_i32_div_euclid(v: i32, rhs: i32) -> i32 {
     v.div_euclid(rhs)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_i32_rem_euclid(v: i32, rhs: i32) -> i32 {
     v.rem_euclid(rhs)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_i32_is_positive(v: i32) -> bool {
     v.is_positive()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_i32_is_negative(v: i32) -> bool {
     v.is_negative()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_print_string(s: *const std::os::raw::c_char) {
     if s.is_null() {
         return;
@@ -2079,7 +2079,7 @@ pub extern "C" fn tl_print_string(s: *const std::os::raw::c_char) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_display_string(s: *const std::os::raw::c_char) {
     if s.is_null() {
         return;
@@ -2092,7 +2092,7 @@ pub extern "C" fn tl_display_string(s: *const std::os::raw::c_char) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_set_device(device_ptr: *const std::ffi::c_void) {
     if device_ptr.is_null() {
         return;
@@ -2119,7 +2119,7 @@ pub extern "C" fn tl_set_device(device_ptr: *const std::ffi::c_void) {
         .set_device(device_str);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_to_device(
     tensor: *mut OpaqueTensor,
     device_name: *const i8,
@@ -2189,7 +2189,7 @@ pub fn force_link() {
     std::hint::black_box(crate::stdlib::tl_string_len as *const ());
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_dim(t: *mut OpaqueTensor, dim_idx: usize) -> i64 {
     unsafe {
         let tensor = &(*t).0;
@@ -2201,7 +2201,7 @@ pub extern "C" fn tl_tensor_dim(t: *mut OpaqueTensor, dim_idx: usize) -> i64 {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_get_f32_md(
     t: *mut OpaqueTensor,
     indices: *const i64,
@@ -2235,7 +2235,7 @@ pub extern "C" fn tl_tensor_get_f32_md(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_get_i64_md(
     t: *mut OpaqueTensor,
     indices: *const i64,
@@ -2269,7 +2269,7 @@ pub extern "C" fn tl_tensor_get_i64_md(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_transpose(
     t: *mut OpaqueTensor,
     dim0: usize,
@@ -2287,7 +2287,7 @@ pub extern "C" fn tl_tensor_transpose(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_backward(t: *mut OpaqueTensor) {
     unsafe {
         if t.is_null() {
@@ -2316,13 +2316,13 @@ pub extern "C" fn tl_tensor_backward(t: *mut OpaqueTensor) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_clear_grads() {
     LATEST_GRADS.with(|g| {
         *g.borrow_mut() = None;
     });
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
         if t.is_null() {
@@ -2357,7 +2357,7 @@ pub extern "C" fn tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_sum(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
@@ -2372,7 +2372,7 @@ pub extern "C" fn tl_tensor_sum(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_sub_assign(ref_t: *mut OpaqueTensor, val_t: *mut OpaqueTensor) {
     // In-place subtraction: ref_t -= val_t
     // Note: Candle Tensors are immutable, but Vars are mutable.
@@ -2405,7 +2405,7 @@ pub extern "C" fn tl_tensor_sub_assign(ref_t: *mut OpaqueTensor, val_t: *mut Opa
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_mul_assign(ref_t: *mut OpaqueTensor, val_t: *mut OpaqueTensor) {
     unsafe {
         let t_dst = &(*ref_t).0;
@@ -2417,7 +2417,7 @@ pub extern "C" fn tl_tensor_mul_assign(ref_t: *mut OpaqueTensor, val_t: *mut Opa
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_div_assign(ref_t: *mut OpaqueTensor, val_t: *mut OpaqueTensor) {
     unsafe {
         let t_dst = &(*ref_t).0;
@@ -2429,7 +2429,7 @@ pub extern "C" fn tl_tensor_div_assign(ref_t: *mut OpaqueTensor, val_t: *mut Opa
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_add_assign(ref_t: *mut OpaqueTensor, val_t: *mut OpaqueTensor) {
     unsafe {
         let t_dst = &(*ref_t).0;
@@ -2442,7 +2442,7 @@ pub extern "C" fn tl_tensor_add_assign(ref_t: *mut OpaqueTensor, val_t: *mut Opa
 }
 
 // Scalar variants for compound assignment operators
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_mul_assign_scalar_f32(ref_t: *mut OpaqueTensor, scalar: f32) {
     unsafe {
         let t_dst = &(*ref_t).0;
@@ -2451,7 +2451,7 @@ pub extern "C" fn tl_tensor_mul_assign_scalar_f32(ref_t: *mut OpaqueTensor, scal
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_div_assign_scalar_f32(ref_t: *mut OpaqueTensor, scalar: f32) {
     unsafe {
         let t_dst = &(*ref_t).0;
@@ -2460,7 +2460,7 @@ pub extern "C" fn tl_tensor_div_assign_scalar_f32(ref_t: *mut OpaqueTensor, scal
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_add_assign_scalar_f32(ref_t: *mut OpaqueTensor, scalar: f32) {
     unsafe {
         let t_dst = &(*ref_t).0;
@@ -2469,7 +2469,7 @@ pub extern "C" fn tl_tensor_add_assign_scalar_f32(ref_t: *mut OpaqueTensor, scal
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_sub_assign_scalar_f32(ref_t: *mut OpaqueTensor, scalar: f32) {
     unsafe {
         let t_dst = &(*ref_t).0;
@@ -2478,7 +2478,7 @@ pub extern "C" fn tl_tensor_sub_assign_scalar_f32(ref_t: *mut OpaqueTensor, scal
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_mod_assign(ref_t: *mut OpaqueTensor, val_t: *mut OpaqueTensor) {
     unsafe {
         let t_dst = &(*ref_t).0;
@@ -2492,7 +2492,7 @@ pub extern "C" fn tl_tensor_mod_assign(ref_t: *mut OpaqueTensor, val_t: *mut Opa
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_mod_assign_scalar_f32(ref_t: *mut OpaqueTensor, scalar: f32) {
     use crate::error::RuntimeError;
     unsafe {
@@ -2519,7 +2519,7 @@ pub extern "C" fn tl_tensor_mod_assign_scalar_f32(ref_t: *mut OpaqueTensor, scal
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_reshape_new(
     t: *mut OpaqueTensor,
     shape_tensor: *mut OpaqueTensor,
@@ -2557,7 +2557,7 @@ pub extern "C" fn tl_tensor_reshape_new(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_reshape_dims(
     t: *mut OpaqueTensor,
     dims_ptr: *const i64,
@@ -2583,7 +2583,7 @@ pub extern "C" fn tl_tensor_reshape_dims(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_div(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
@@ -2600,7 +2600,7 @@ pub extern "C" fn tl_tensor_div(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_exp(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
@@ -2615,7 +2615,7 @@ pub extern "C" fn tl_tensor_exp(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_pow(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
@@ -2643,7 +2643,7 @@ pub extern "C" fn tl_tensor_pow(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
 }
 
 /// Scalar exponent version of pow - more common use case
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_pow_scalar(a: *mut OpaqueTensor, exp: c_float) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
@@ -2669,7 +2669,7 @@ pub extern "C" fn tl_tensor_pow_scalar(a: *mut OpaqueTensor, exp: c_float) -> *m
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_log(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
@@ -2688,7 +2688,7 @@ pub extern "C" fn tl_tensor_log(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 
 // Narrow/Slice: Extract a slice along a dimension
 // (t, dim, start, length) -> t[..., start:start+length, ...]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_narrow(
     t: *mut OpaqueTensor,
     dim: i64,
@@ -2705,7 +2705,7 @@ pub extern "C" fn tl_tensor_narrow(
 // Repeat interleave: Repeat elements along a dimension
 // Used for GQA to expand K/V heads to match Q heads
 // (t, repeats, dim) -> expanded tensor
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_repeat_interleave(
     t: *mut OpaqueTensor,
     repeats: i64,
@@ -2734,14 +2734,14 @@ pub extern "C" fn tl_tensor_repeat_interleave(
     make_tensor(result)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_sin(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     let res = t.sin().unwrap();
     make_tensor(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_scale(t: *mut OpaqueTensor, scale: f32) -> *mut OpaqueTensor {
     unsafe {
         let tensor = &(*t).0;
@@ -2750,21 +2750,21 @@ pub extern "C" fn tl_tensor_scale(t: *mut OpaqueTensor, scale: f32) -> *mut Opaq
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_cos(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     let res = t.cos().unwrap();
     make_tensor(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_relu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     let res = t.relu().unwrap();
     make_tensor(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_gelu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     let res = t.gelu().unwrap();
@@ -2772,7 +2772,7 @@ pub extern "C" fn tl_tensor_gelu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 }
 
 // Lower triangular mask (diagonal=0 includes the diagonal)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_tril(t: *mut OpaqueTensor, diagonal: i32) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     let dims = t.dims();
@@ -2817,7 +2817,7 @@ pub extern "C" fn tl_tensor_tril(t: *mut OpaqueTensor, diagonal: i32) -> *mut Op
     make_tensor(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_sum_dim(
     t: *mut OpaqueTensor,
     dim: usize,
@@ -2843,7 +2843,7 @@ pub extern "C" fn tl_tensor_sum_dim(
 }
 
 // Embedding: indices [B, S], weights [V, D] -> [B, S, D]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_embedding(
     indices: *mut OpaqueTensor,
     weights: *mut OpaqueTensor,
@@ -2874,7 +2874,7 @@ pub extern "C" fn tl_tensor_embedding(
     make_tensor(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_sqrt(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
         let tensor = &(*t).0;
@@ -2883,7 +2883,7 @@ pub extern "C" fn tl_tensor_sqrt(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_matmul(
     a: *mut OpaqueTensor,
     b: *mut OpaqueTensor,
@@ -2924,7 +2924,7 @@ pub extern "C" fn tl_tensor_matmul(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_contiguous(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
         let tensor = &(*t).0;
@@ -2934,7 +2934,7 @@ pub extern "C" fn tl_tensor_contiguous(t: *mut OpaqueTensor) -> *mut OpaqueTenso
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_save(t: *mut OpaqueTensor, path: *const std::os::raw::c_char) {
     use std::ffi::CStr;
     unsafe {
@@ -2947,7 +2947,7 @@ pub extern "C" fn tl_tensor_save(t: *mut OpaqueTensor, path: *const std::os::raw
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_load(path: *const std::os::raw::c_char) -> *mut OpaqueTensor {
     use std::ffi::CStr;
     unsafe {
@@ -2974,13 +2974,13 @@ pub enum LoadedTensor {
 #[repr(C)]
 pub struct OpaqueTensorMap(pub std::collections::HashMap<String, LoadedTensor>);
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_new() -> *mut OpaqueTensorMap {
     let map = OpaqueTensorMap(std::collections::HashMap::new());
     Box::into_raw(Box::new(map))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_insert(
     map: *mut OpaqueTensorMap,
     name: *const std::os::raw::c_char,
@@ -3000,7 +3000,7 @@ pub extern "C" fn tl_tensor_map_insert(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *const std::os::raw::c_char) {
     unsafe {
         let map_ref = &(*map).0;
@@ -3016,7 +3016,7 @@ pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *const std
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_load(path: *const std::os::raw::c_char) -> *mut OpaqueTensorMap {
     unsafe {
         let p_str = std::ffi::CStr::from_ptr(path).to_str().unwrap();
@@ -3034,7 +3034,7 @@ pub extern "C" fn tl_tensor_map_load(path: *const std::os::raw::c_char) -> *mut 
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_new_causal_mask(dim: i64) -> *mut OpaqueTensor {
     // Return [dim, dim] matrix.
     // Tril (inc diag) = 0.0
@@ -3060,7 +3060,7 @@ pub extern "C" fn tl_tensor_new_causal_mask(dim: i64) -> *mut OpaqueTensor {
     make_tensor(mask)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_cat_i64(
     a: *mut OpaqueTensor,
     b: *mut OpaqueTensor,
@@ -3074,7 +3074,7 @@ pub extern "C" fn tl_tensor_cat_i64(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_get(
     map: *mut OpaqueTensorMap,
     name: *const std::os::raw::c_char,
@@ -3115,13 +3115,13 @@ pub extern "C" fn tl_tensor_map_get(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_free(map: *mut OpaqueTensorMap) {
     unsafe {
         let _ = Box::from_raw(map); // Drop
     }
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_save_all_params(path: *const std::os::raw::c_char) {
     use std::ffi::CStr;
     unsafe {
@@ -3141,7 +3141,7 @@ pub extern "C" fn tl_save_all_params(path: *const std::os::raw::c_char) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_load_all_params(path: *const std::os::raw::c_char) {
     use std::ffi::CStr;
     unsafe {
@@ -3176,7 +3176,7 @@ pub extern "C" fn tl_load_all_params(path: *const std::os::raw::c_char) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_add_parameter(name: *const std::os::raw::c_char, t: *mut OpaqueTensor) {
     use std::ffi::CStr;
     unsafe {
@@ -3208,7 +3208,7 @@ pub extern "C" fn tl_add_parameter(name: *const std::os::raw::c_char, t: *mut Op
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_register_parameter(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use std::sync::atomic::Ordering;
     unsafe {
@@ -3242,7 +3242,7 @@ pub extern "C" fn tl_register_parameter(t: *mut OpaqueTensor) -> *mut OpaqueTens
     }
 }
 /// Allocate a temporary buffer, using the Arena if it's active and the size is "large"
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_alloc_tmp(size: i64) -> *mut c_void {
     if size <= 0 {
         return std::ptr::null_mut();
@@ -3261,7 +3261,7 @@ pub extern "C" fn tl_alloc_tmp(size: i64) -> *mut c_void {
 }
 
 /// Free a temporary buffer allocated with tl_alloc_tmp
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_free_tmp(ptr: *mut c_void) {
     if ptr.is_null() {
         return;
@@ -3279,21 +3279,21 @@ pub extern "C" fn tl_free_tmp(ptr: *mut c_void) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_to_f32(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     let res = t.to_dtype(candle_core::DType::F32).unwrap();
     make_tensor(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_to_i64(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     let res = t.to_dtype(candle_core::DType::I64).unwrap();
     make_tensor(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_get_shape(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
         let t = &(*t).0;
@@ -3310,7 +3310,7 @@ pub extern "C" fn tl_tensor_get_shape(t: *mut OpaqueTensor) -> *mut OpaqueTensor
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_void_len(ptr: *mut std::ffi::c_void) -> usize {
     if ptr.is_null() {
         return 0;
@@ -3321,7 +3321,7 @@ pub extern "C" fn tl_vec_void_len(ptr: *mut std::ffi::c_void) -> usize {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_void_get(ptr: *mut std::ffi::c_void, idx: usize) -> *mut std::ffi::c_void {
     if ptr.is_null() {
         return std::ptr::null_mut();
@@ -3336,7 +3336,7 @@ pub extern "C" fn tl_vec_void_get(ptr: *mut std::ffi::c_void, idx: usize) -> *mu
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_void_free(ptr: *mut std::ffi::c_void) {
     if !ptr.is_null() {
         tl_log_free(
@@ -3354,7 +3354,7 @@ pub extern "C" fn tl_vec_void_free(ptr: *mut std::ffi::c_void) {
 
 // --- Vec<u8> support for binary data ---
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_u8_new() -> *mut Vec<u8> {
     let ptr = Box::into_raw(Box::new(Vec::<u8>::new()));
     tl_log_alloc(
@@ -3366,7 +3366,7 @@ pub extern "C" fn tl_vec_u8_new() -> *mut Vec<u8> {
     ptr
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_u8_with_capacity(cap: usize) -> *mut Vec<u8> {
     let ptr = Box::into_raw(Box::new(Vec::<u8>::with_capacity(cap)));
     tl_log_alloc(
@@ -3378,7 +3378,7 @@ pub extern "C" fn tl_vec_u8_with_capacity(cap: usize) -> *mut Vec<u8> {
     ptr
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_u8_len(ptr: *mut Vec<u8>) -> usize {
     if ptr.is_null() {
         return 0;
@@ -3386,7 +3386,7 @@ pub extern "C" fn tl_vec_u8_len(ptr: *mut Vec<u8>) -> usize {
     unsafe { (*ptr).len() }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_u8_get(ptr: *mut Vec<u8>, idx: usize) -> u8 {
     if ptr.is_null() {
         return 0;
@@ -3401,7 +3401,7 @@ pub extern "C" fn tl_vec_u8_get(ptr: *mut Vec<u8>, idx: usize) -> u8 {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_u8_set(ptr: *mut Vec<u8>, idx: usize, val: u8) {
     if ptr.is_null() {
         return;
@@ -3414,7 +3414,7 @@ pub extern "C" fn tl_vec_u8_set(ptr: *mut Vec<u8>, idx: usize, val: u8) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_u8_push(ptr: *mut Vec<u8>, val: u8) {
     if ptr.is_null() {
         return;
@@ -3424,7 +3424,7 @@ pub extern "C" fn tl_vec_u8_push(ptr: *mut Vec<u8>, val: u8) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_u8_free(ptr: *mut Vec<u8>) {
     if !ptr.is_null() {
         unsafe {
@@ -3434,7 +3434,7 @@ pub extern "C" fn tl_vec_u8_free(ptr: *mut Vec<u8>) {
 }
 
 // String helper
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_string_new(s: *const std::os::raw::c_char) -> *mut std::os::raw::c_char {
     // println!("tl_string_new via mod.rs: {:p}", s);
     if s.is_null() {
@@ -3454,7 +3454,7 @@ pub extern "C" fn tl_string_new(s: *const std::os::raw::c_char) -> *mut std::os:
 
 pub struct OpaqueQTensor(pub Arc<candle_core::quantized::QTensor>);
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_get_quantized(
     map: i64,
     name: *const std::os::raw::c_char,
@@ -3488,7 +3488,7 @@ pub extern "C" fn tl_tensor_map_get_quantized(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_qtensor_free(ptr: usize) {
     if ptr != 0 {
         unsafe {
@@ -3497,7 +3497,7 @@ pub extern "C" fn tl_qtensor_free(ptr: usize) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_qtensor_matmul(input: *mut OpaqueTensor, weight: usize) -> *mut OpaqueTensor {
     unsafe {
         let x_t = &(*input).0;
@@ -3533,7 +3533,7 @@ mod tests {
 
 // Added for Tensor Refactor (Global -> Instance)
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_tan(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     // tan(x) = sin(x) / cos(x)
@@ -3543,14 +3543,14 @@ pub extern "C" fn tl_tensor_tan(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     make_tensor(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_abs(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     let res = t.abs().unwrap();
     make_tensor(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_sigmoid(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     // sigmoid = 1 / (1 + exp(-x))
@@ -3563,7 +3563,7 @@ pub extern "C" fn tl_tensor_sigmoid(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     make_tensor(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_tanh(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     let res = t.tanh().unwrap();
@@ -3572,14 +3572,14 @@ pub extern "C" fn tl_tensor_tanh(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 
 // Reductions
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_max(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     let res = t.flatten_all().unwrap().max(0).unwrap(); // dim 0 of flat
     make_tensor(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_max_dim(
     t: *mut OpaqueTensor,
     dim: usize,
@@ -3594,14 +3594,14 @@ pub extern "C" fn tl_tensor_max_dim(
     make_tensor(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_min(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     let res = t.flatten_all().unwrap().min(0).unwrap();
     make_tensor(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_min_dim(
     t: *mut OpaqueTensor,
     dim: usize,
@@ -3616,14 +3616,14 @@ pub extern "C" fn tl_tensor_min_dim(
     make_tensor(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_mean(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unsafe { &(*t).0 };
     let res = t.flatten_all().unwrap().mean(0).unwrap();
     make_tensor(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_mean_dim(
     t: *mut OpaqueTensor,
     dim: usize,
@@ -3638,7 +3638,7 @@ pub extern "C" fn tl_tensor_mean_dim(
     make_tensor(res)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_argmin(
     t: *mut OpaqueTensor,
     dim: usize,
@@ -3654,7 +3654,7 @@ pub extern "C" fn tl_tensor_argmin(
     let res_i64 = res.to_dtype(candle_core::DType::I64).unwrap_or(res);
     make_tensor(res_i64)
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_conv2d(
     input: *mut OpaqueTensor,
     weight: *mut OpaqueTensor,
@@ -3681,7 +3681,7 @@ pub extern "C" fn tl_tensor_conv2d(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_clamp(
     t: *mut OpaqueTensor,
     min_val: f32,
@@ -3695,7 +3695,7 @@ pub extern "C" fn tl_tensor_clamp(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_ones(
     rank: usize,
     shape: *const usize,
@@ -3717,7 +3717,7 @@ pub extern "C" fn tl_tensor_ones(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_file_exists(path: *const std::os::raw::c_char) -> bool {
     if path.is_null() {
         return false;
@@ -3740,7 +3740,7 @@ pub extern "C" fn tl_file_exists(path: *const std::os::raw::c_char) -> bool {
     path_buf.exists()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_file_exists_i64(path: *const std::os::raw::c_char) -> i64 {
     if tl_file_exists(path) {
         1
@@ -3749,7 +3749,7 @@ pub extern "C" fn tl_file_exists_i64(path: *const std::os::raw::c_char) -> i64 {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_download_file(
     url: *const std::os::raw::c_char,
     path: *const std::os::raw::c_char,
@@ -3815,7 +3815,7 @@ pub extern "C" fn tl_download_file(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_read_file(path: *const std::os::raw::c_char) -> *const std::os::raw::c_char {
     let path_str = unsafe { std::ffi::CStr::from_ptr(path).to_string_lossy() };
     if let Ok(content) = std::fs::read_to_string(path_str.as_ref()) {
@@ -3826,7 +3826,7 @@ pub extern "C" fn tl_read_file(path: *const std::os::raw::c_char) -> *const std:
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_write_file(path: *const std::os::raw::c_char, content: *const std::os::raw::c_char) -> i64 {
     let path_str = unsafe { std::ffi::CStr::from_ptr(path).to_string_lossy() };
     let content_str = unsafe { std::ffi::CStr::from_ptr(content).to_string_lossy() };
@@ -3841,17 +3841,17 @@ pub extern "C" fn tl_write_file(path: *const std::os::raw::c_char, content: *con
 // --- Specialized Vec Support ---
 
 // I64
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_i64_len(ptr: *mut Vec<i64>) -> usize {
     if ptr.is_null() { return 0; }
     unsafe { (*ptr).len() }
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_i64_push(ptr: *mut Vec<i64>, val: i64) {
     if ptr.is_null() { return; }
     unsafe { (*ptr).push(val); }
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_i64_get(ptr: *mut Vec<i64>, idx: usize) -> i64 {
     if ptr.is_null() { return 0; }
     unsafe {
@@ -3859,7 +3859,7 @@ pub extern "C" fn tl_vec_i64_get(ptr: *mut Vec<i64>, idx: usize) -> i64 {
         if idx < vec.len() { vec[idx] } else { 0 }
     }
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_i64_free(ptr: *mut Vec<i64>) {
     if !ptr.is_null() { 
         tl_log_free(
@@ -3872,17 +3872,17 @@ pub extern "C" fn tl_vec_i64_free(ptr: *mut Vec<i64>) {
 }
 
 // F32
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_f32_len(ptr: *mut Vec<f32>) -> usize {
     if ptr.is_null() { return 0; }
     unsafe { (*ptr).len() }
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_f32_push(ptr: *mut Vec<f32>, val: f32) {
     if ptr.is_null() { return; }
     unsafe { (*ptr).push(val); }
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_f32_get(ptr: *mut Vec<f32>, idx: usize) -> f32 {
     if ptr.is_null() { return 0.0; }
     unsafe {
@@ -3890,7 +3890,7 @@ pub extern "C" fn tl_vec_f32_get(ptr: *mut Vec<f32>, idx: usize) -> f32 {
         if idx < vec.len() { vec[idx] } else { 0.0 }
     }
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_f32_free(ptr: *mut Vec<f32>) {
     if !ptr.is_null() { 
         tl_log_free(
@@ -3903,12 +3903,12 @@ pub extern "C" fn tl_vec_f32_free(ptr: *mut Vec<f32>) {
 }
 
 // Ptr (for Structs, Tensors, Strings etc.)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_ptr_len(ptr: *mut Vec<*mut std::ffi::c_void>) -> usize {
     if ptr.is_null() { return 0; }
     unsafe { (*ptr).len() }
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_ptr_push(ptr: *mut Vec<*mut std::ffi::c_void>, val: *mut std::ffi::c_void) {
     if ptr.is_null() { return; }
     unsafe { 
@@ -3917,7 +3917,7 @@ pub extern "C" fn tl_vec_ptr_push(ptr: *mut Vec<*mut std::ffi::c_void>, val: *mu
         memory_manager::tl_ptr_acquire(val);
     }
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_ptr_get(ptr: *mut Vec<*mut std::ffi::c_void>, idx: usize) -> *mut std::ffi::c_void {
     if ptr.is_null() { return std::ptr::null_mut(); }
     unsafe {
@@ -3933,7 +3933,7 @@ pub extern "C" fn tl_vec_ptr_get(ptr: *mut Vec<*mut std::ffi::c_void>, idx: usiz
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_ptr_free(ptr: *mut Vec<*mut std::ffi::c_void>) {
     if !ptr.is_null() { 
         tl_log_free(
@@ -3958,7 +3958,7 @@ pub extern "C" fn tl_vec_ptr_free(ptr: *mut Vec<*mut std::ffi::c_void>) {
 }
 
 // Constructors
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_i64_new() -> *mut Vec<i64> {
    let ptr = Box::into_raw(Box::new(Vec::new()));
    tl_log_alloc(
@@ -3969,7 +3969,7 @@ pub extern "C" fn tl_vec_i64_new() -> *mut Vec<i64> {
    );
    ptr
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_f32_new() -> *mut Vec<f32> {
    let ptr = Box::into_raw(Box::new(Vec::new()));
    tl_log_alloc(
@@ -3980,7 +3980,7 @@ pub extern "C" fn tl_vec_f32_new() -> *mut Vec<f32> {
    );
    ptr
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_ptr_new() -> *mut Vec<*mut std::ffi::c_void> {
    let ptr = Box::into_raw(Box::new(Vec::new()));
    tl_log_alloc(

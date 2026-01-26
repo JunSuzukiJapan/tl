@@ -16,7 +16,7 @@ use candle_core::cuda_backend::cudarc::driver::sys::CUstream;
 
 /// Applies sigmoid using custom CUDA kernel
 /// Returns new OpaqueTensor
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(unused_variables)]
 pub extern "C" fn tl_cuda_sigmoid(t: *const OpaqueTensor) -> *mut OpaqueTensor {
     #[cfg(feature = "cuda")]

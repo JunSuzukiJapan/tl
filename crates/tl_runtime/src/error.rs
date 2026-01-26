@@ -144,7 +144,7 @@ pub fn set_last_error<S: Into<String>>(msg: S, code: RuntimeErrorCode) {
 }
 
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_get_last_error() -> CTensorResult {
     LAST_ERROR.with(|e| {
         if let Some(err) = e.borrow().as_ref() {

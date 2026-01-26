@@ -198,8 +198,8 @@ pub fn get_device() -> Device {
         let mut cache_ref = cache.borrow_mut();
         let global_gen = GLOBAL_DEVICE_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
 
-        let needs_update = if let Some((_, gen)) = *cache_ref {
-            gen != global_gen
+        let needs_update = if let Some((_, generation)) = *cache_ref {
+            generation != global_gen
         } else {
             true
         };

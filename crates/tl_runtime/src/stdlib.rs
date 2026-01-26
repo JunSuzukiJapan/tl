@@ -5,7 +5,7 @@ use std::os::raw::c_char;
 // use std::path::Path;
 // --- Strings ---
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_prompt(prompt: *const c_char) -> *mut c_char {
     // Print prompt
     if !prompt.is_null() {
@@ -33,12 +33,12 @@ pub extern "C" fn tl_prompt(prompt: *const c_char) -> *mut c_char {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_read_line(prompt: *const c_char) -> *mut c_char {
     tl_prompt(prompt)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_string_concat(s1: *const c_char, s2: *const c_char) -> *mut c_char {
     if s1.is_null() || s2.is_null() {
         return std::ptr::null_mut();
@@ -56,7 +56,7 @@ pub extern "C" fn tl_string_concat(s1: *const c_char, s2: *const c_char) -> *mut
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_string_to_i64(s: *const c_char) -> i64 {
     if s.is_null() {
         return 0;
@@ -65,7 +65,7 @@ pub extern "C" fn tl_string_to_i64(s: *const c_char) -> i64 {
     s_str.parse::<i64>().unwrap_or(0)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_string_from_int(val: i64) -> *mut c_char {
     let s = val.to_string();
     match CString::new(s) {
@@ -78,7 +78,7 @@ pub extern "C" fn tl_string_from_int(val: i64) -> *mut c_char {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_string_contains(haystack: *const c_char, needle: *const c_char) -> bool {
     if haystack.is_null() || needle.is_null() {
         return false;
@@ -89,7 +89,7 @@ pub extern "C" fn tl_string_contains(haystack: *const c_char, needle: *const c_c
 }
 
 /// Get character at index from string (returns ASCII code, or 0 if out of bounds)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_string_char_at(s: *const c_char, index: i64) -> *mut c_char {
     eprintln!("DEBUG: tl_string_char_at s={:p} index={}", s, index);
     if s.is_null() || index < 0 {
@@ -114,7 +114,7 @@ pub extern "C" fn tl_string_char_at(s: *const c_char, index: i64) -> *mut c_char
 }
 
 /// Get length of a string
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_string_len(s: *const c_char) -> i64 {
     if s.is_null() {
         return 0;
@@ -125,7 +125,7 @@ pub extern "C" fn tl_string_len(s: *const c_char) -> i64 {
 
 // --- File I/O ---
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_file_open(path: *const c_char, mode: *const c_char) -> *mut File {
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
     let expanded_path = crate::expand_tilde(&path_str);
@@ -147,7 +147,7 @@ pub extern "C" fn tl_file_open(path: *const c_char, mode: *const c_char) -> *mut
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_file_read_string(file: *mut File) -> *mut c_char {
     if file.is_null() {
         return std::ptr::null_mut();
@@ -169,7 +169,7 @@ pub extern "C" fn tl_file_read_string(file: *mut File) -> *mut c_char {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_file_write_string(file: *mut File, content: *const c_char) {
     if file.is_null() || content.is_null() {
         return;
@@ -181,7 +181,7 @@ pub extern "C" fn tl_file_write_string(file: *mut File, content: *const c_char) 
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_file_close(file: *mut File) {
     if !file.is_null() {
         crate::tl_log_free(file as *const c_void, std::ptr::null(), 0);
@@ -193,7 +193,7 @@ pub extern "C" fn tl_file_close(file: *mut File) {
 
 // --- Binary File I/O ---
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_file_read_binary(path: *const c_char) -> *mut Vec<u8> {
     if path.is_null() {
         return std::ptr::null_mut();
@@ -214,7 +214,7 @@ pub extern "C" fn tl_file_read_binary(path: *const c_char) -> *mut Vec<u8> {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_file_write_binary(path: *const c_char, data: *mut Vec<u8>) -> bool {
     if path.is_null() || data.is_null() {
         return false;
@@ -234,7 +234,7 @@ pub extern "C" fn tl_file_write_binary(path: *const c_char, data: *mut Vec<u8>) 
 
 // --- Image Loading ---
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_image_load_grayscale(path: *const c_char) -> *mut Vec<u8> {
     if path.is_null() {
         return std::ptr::null_mut();
@@ -258,7 +258,7 @@ pub extern "C" fn tl_image_load_grayscale(path: *const c_char) -> *mut Vec<u8> {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_image_width(path: *const c_char) -> i64 {
     if path.is_null() {
         return 0;
@@ -272,7 +272,7 @@ pub extern "C" fn tl_image_width(path: *const c_char) -> i64 {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_image_height(path: *const c_char) -> i64 {
     if path.is_null() {
         return 0;
@@ -290,7 +290,7 @@ pub extern "C" fn tl_image_height(path: *const c_char) -> i64 {
 
 use std::path::PathBuf;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_path_new(path: *const c_char) -> *mut PathBuf {
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
     let expanded_path = crate::expand_tilde(&path_str);
@@ -299,7 +299,7 @@ pub extern "C" fn tl_path_new(path: *const c_char) -> *mut PathBuf {
     ptr
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_path_join(base: *mut PathBuf, part: *const c_char) -> *mut PathBuf {
     if base.is_null() {
         return std::ptr::null_mut();
@@ -311,7 +311,7 @@ pub extern "C" fn tl_path_join(base: *mut PathBuf, part: *const c_char) -> *mut 
     ptr
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_path_exists(path: *mut PathBuf) -> bool {
     if path.is_null() {
         return false;
@@ -320,7 +320,7 @@ pub extern "C" fn tl_path_exists(path: *mut PathBuf) -> bool {
     path.exists()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_path_is_dir(path: *mut PathBuf) -> bool {
     if path.is_null() {
         return false;
@@ -329,7 +329,7 @@ pub extern "C" fn tl_path_is_dir(path: *mut PathBuf) -> bool {
     path.is_dir()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_path_is_file(path: *mut PathBuf) -> bool {
     if path.is_null() {
         return false;
@@ -338,7 +338,7 @@ pub extern "C" fn tl_path_is_file(path: *mut PathBuf) -> bool {
     path.is_file()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_path_to_string(path: *mut PathBuf) -> *mut c_char {
     if path.is_null() {
         return std::ptr::null_mut();
@@ -351,7 +351,7 @@ pub extern "C" fn tl_path_to_string(path: *mut PathBuf) -> *mut c_char {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_path_free(path: *mut PathBuf) {
     if !path.is_null() {
         unsafe {
@@ -362,7 +362,7 @@ pub extern "C" fn tl_path_free(path: *mut PathBuf) {
 
 // --- Http ---
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_http_download(url: *const c_char, dest: *const c_char) -> bool {
     let url_str = unsafe { CStr::from_ptr(url).to_string_lossy() };
     let dest_str = unsafe { CStr::from_ptr(dest).to_string_lossy() };
@@ -421,7 +421,7 @@ pub extern "C" fn tl_http_download(url: *const c_char, dest: *const c_char) -> b
     true
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_http_get(url: *const c_char) -> *mut c_char {
     let url_str = unsafe { CStr::from_ptr(url).to_string_lossy() };
     if let Ok(response) = reqwest::blocking::get(url_str.as_ref()) {
@@ -437,7 +437,7 @@ pub extern "C" fn tl_http_get(url: *const c_char) -> *mut c_char {
 
 // --- Env ---
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_env_get(key: *const c_char) -> *mut c_char {
     let key_str = unsafe { CStr::from_ptr(key).to_string_lossy() };
     match std::env::var(key_str.as_ref()) {
@@ -448,11 +448,13 @@ pub extern "C" fn tl_env_get(key: *const c_char) -> *mut c_char {
         Err(_) => std::ptr::null_mut(),
     }
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_env_set(key: *const c_char, value: *const c_char) {
     let key_str = unsafe { CStr::from_ptr(key).to_string_lossy() };
     let value_str = unsafe { CStr::from_ptr(value).to_string_lossy() };
-    std::env::set_var(key_str.as_ref(), value_str.as_ref());
+    unsafe {
+        std::env::set_var(key_str.as_ref(), value_str.as_ref());
+    }
 }
 
 // --- System ---
@@ -461,12 +463,12 @@ lazy_static::lazy_static! {
     static ref START_TIME: std::time::Instant = std::time::Instant::now();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_system_time() -> f32 {
     START_TIME.elapsed().as_secs_f32()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_system_sleep(seconds: f32) {
     std::thread::sleep(std::time::Duration::from_secs_f32(seconds));
 }
