@@ -1083,13 +1083,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     pub fn compile_module(&mut self, ast_module: &Module, module_name: &str) -> Result<(), String> {
-        // 0. Declare runtime functions
-        builtins::declare_runtime_functions(
-            self.context,
-            &self.module,
-            &self.execution_engine,
-            &mut self.fn_return_types,
-        );
+
 
         // Generate Logic KB initialization function
         self.compile_kb_init_function(ast_module, module_name)?;

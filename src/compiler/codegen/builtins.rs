@@ -864,9 +864,7 @@ pub fn declare_runtime_functions<'ctx>(
     // Explicitly map tl_arena_init
     let arena_init_type = void_type.fn_type(&[i64_type.into()], false);
     add_fn("tl_arena_init", arena_init_type);
-    if let Some(f) = module.get_function("tl_arena_init") {
-        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_init as usize);
-    }
+    // Duplicate mapping removed (handled at 1835)
 
     let path_free_type = void_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_path_free", path_free_type);
@@ -2893,34 +2891,7 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_update as usize);
     }
 
-    // Arena Allocator Functions
-    // tl_arena_init(capacity: i64) -> void
-    let arena_init_type = void_type.fn_type(&[i64_type.into()], false);
-    module.add_function("tl_arena_init", arena_init_type, None);
-    fn_return_types.insert("tl_arena_init".to_string(), Type::Void);
 
-    // tl_arena_alloc(size) -> i64 (address)
-    let arena_alloc_type = i64_type.fn_type(&[i64_type.into()], false);
-    module.add_function("tl_arena_alloc", arena_alloc_type, None);
-    // fn_return_types.insert("tl_arena_alloc".to_string(), Type::I64); // Already inserted at line 786
-
-    // tl_arena_malloc(size) -> void*
-    let arena_malloc_type = ptr_type.fn_type(&[i64_type.into()], false);
-    module.add_function("tl_arena_malloc", arena_malloc_type, None);
-    fn_return_types.insert(
-        "tl_arena_malloc".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    );
-
-    // tl_arena_is_active() -> bool
-    let arena_is_active_type = context.bool_type().fn_type(&[], false);
-    module.add_function("tl_arena_is_active", arena_is_active_type, None);
-    fn_return_types.insert("tl_arena_is_active".to_string(), Type::Bool);
-
-    // tl_arena_free() -> void
-    let arena_free_type = void_type.fn_type(&[], false);
-    module.add_function("tl_arena_free", arena_free_type, None);
-    fn_return_types.insert("tl_arena_free".to_string(), Type::Void);
 
     // tl_alloc_tmp(size) -> void*
     let alloc_tmp_type = ptr_type.fn_type(&[i64_type.into()], false);

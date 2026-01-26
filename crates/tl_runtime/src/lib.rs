@@ -2177,6 +2177,12 @@ pub fn force_link() {
     std::hint::black_box(memory_manager::tl_mem_function_exit as *const ());
     std::hint::black_box(memory_manager::tl_mem_get_buffer as *const ());
     std::hint::black_box(crate::arena::tl_arena_init as *const ());
+    std::hint::black_box(crate::arena::tl_arena_is_active as *const ());
+    std::hint::black_box(crate::arena::tl_arena_alloc as *const ());
+    std::hint::black_box(crate::arena::tl_arena_reset as *const ());
+    std::hint::black_box(crate::arena::tl_arena_free as *const ());
+    std::hint::black_box(crate::arena::tl_arena_get_offset as *const ());
+    std::hint::black_box(crate::arena::tl_arena_get_capacity as *const ());
     std::hint::black_box(tl_tensor_reshape_dims as *const ());
     std::hint::black_box(crate::stdlib::tl_prompt as *const ());
     std::hint::black_box(crate::stdlib::tl_string_contains as *const ());
