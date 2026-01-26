@@ -950,6 +950,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .build_store(ptr, val_ir)
                             .map_err(|e| e.to_string())?;
 
+                        // Consumed by variable
+                        self.consume_temp(val_ir);
+
                         self.variables
                             .last_mut()
                             .unwrap()
@@ -1183,6 +1186,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder
                     .build_store(alloca, val_ir)
                     .map_err(|e| e.to_string())?;
+
+                // Keep ownership in the variable (if val_ir was a temporary)
+                self.consume_temp(val_ir);
 
                 self.variables
                     .last_mut()
@@ -1627,27 +1633,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let var_ptr = found_var_ptr.ok_or(format!("Variable {} not found", name))?;
                 let var_type = found_var_type.ok_or(format!("Variable {} not found", name))?;
 
-                // Fix: Ownership Transfer (Runtime -> Compiler)
-                // Unregister the new value (RHS) to take ownership.
-                match val_type {
-                    Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Tensor(_, _) => {
-                        if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
-                            let ptr = val.into_pointer_value();
-                            let cast_ptr = self
-                                .builder
-                                .build_pointer_cast(
-                                    ptr,
-                                    self.context.ptr_type(inkwell::AddressSpace::default()),
-                                    "cast_unreg_assign",
-                                )
-                                .unwrap();
-                            self.builder
-                                .build_call(unreg_fn, &[cast_ptr.into()], "")
-                                .unwrap();
-                        }
-                    }
-                    _ => {}
-                }
+                // If val_base (RHS) was a temporary, we take ownership (Move).
+                // If it was L-value, compile_expr returns non-temp, consume_temp does nothing.
+                self.consume_temp(val_base);
 
                 if let Some(idxs) = indices {
                     if !idxs.is_empty() {

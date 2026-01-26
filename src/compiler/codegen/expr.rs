@@ -293,7 +293,7 @@ fn compile_tensor_clone<'ctx>(
 
     let res = codegen.check_tensor_result(call, "clone_error")?;
 
-    codegen.emit_register_tensor(res, &obj_ty)?;
+    // Runtime already registers the tensor (Ref=1). We just track it as a temporary.
     Ok((res, obj_ty))
 }
 
@@ -2155,6 +2155,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 )?;
 
                 // Register intermediate tensor result
+                self.add_temp(res.0, res.1.clone());
                 Ok(res)
             }
 
@@ -2405,7 +2406,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 ValueKind::Basic(v) => v,
                                 _ => return Err("Failed neg".into()),
                             };
-
+                            self.add_temp(res, ty.clone());
 
                             Ok((res, ty.clone()))
 
@@ -2515,7 +2516,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                             // Register result
                             let res_ty = Type::Tensor(Box::new(Type::F32), 0);
-
+                            self.add_temp(res, res_ty.clone());
 
                             Ok((res, res_ty))
                         } else {
@@ -4944,6 +4945,17 @@ impl<'ctx> CodeGenerator<'ctx> {
         method: &str,
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        let (val, ty) = self.compile_method_call_inner(obj, method, args)?;
+        self.add_temp(val, ty.clone());
+        Ok((val, ty))
+    }
+
+    fn compile_method_call_inner(
+        &mut self,
+        obj: &Expr,
+        method: &str,
+        args: &[Expr],
+    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         let (obj_val, obj_ty) = self.compile_expr(obj)?;
 
         // Check for Vec (either Type::Vec or UserDefined("Vec"))
@@ -6596,7 +6608,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         name: &str,
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        self.compile_fn_call_dps(name, args, None)
+        let (val, ty) = self.compile_fn_call_dps(name, args, None)?;
+        self.add_temp(val, ty.clone());
+        Ok((val, ty))
     }
 
     pub(crate) fn compile_fn_call_dps(

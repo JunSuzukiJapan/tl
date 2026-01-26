@@ -48,6 +48,7 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) current_span: Option<crate::compiler::error::Span>,
     pub(crate) function_analysis: Option<crate::compiler::liveness::FunctionAnalysis>,
     pub(crate) current_sret_dest: Option<inkwell::values::PointerValue<'ctx>>,
+    pub(crate) temporaries: Vec<Vec<(BasicValueEnum<'ctx>, Type)>>,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -81,6 +82,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             current_span: None,
             function_analysis: None,
             current_sret_dest: None,
+            temporaries: vec![Vec::new()],
         };
 
         // Register all methods (instance and static)
@@ -144,7 +146,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
         };
 
-        Target::initialize_native(&InitializationConfig::default()).map_err(|e| e.to_string())?;
+    Target::initialize_native(&InitializationConfig::default()).map_err(|e| e.to_string())?;
 
         let triple = TargetMachine::get_default_triple();
         let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
@@ -163,6 +165,44 @@ impl<'ctx> CodeGenerator<'ctx> {
         target_machine
             .write_to_file(&self.module, FileType::Assembly, path)
             .map_err(|e| e.to_string())
+    }
+
+    pub(crate) fn push_temp_scope(&mut self) {
+        self.temporaries.push(Vec::new());
+    }
+
+    pub(crate) fn pop_temp_scope(&mut self) -> Result<(), String> {
+        let temps = self.temporaries.pop().expect("Temporary stack underflow");
+        for (val, ty) in temps {
+            self.emit_recursive_free(val, &ty, CLEANUP_FULL)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn add_temp(&mut self, val: BasicValueEnum<'ctx>, ty: Type) {
+        // Only track types that need freeing
+        match &ty {
+            Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Vec(_) | Type::Tuple(_) | Type::Enum(_, _) => {
+                 self.temporaries.last_mut().expect("No temporary context").push((val, ty));
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn consume_temp(&mut self, val: BasicValueEnum<'ctx>) {
+         let ptr = if val.is_pointer_value() {
+             val.into_pointer_value()
+         } else {
+             return; 
+         };
+
+         // Search from innermost scope to outermost
+         for scope in self.temporaries.iter_mut().rev() {
+             if let Some(pos) = scope.iter().position(|(v, _)| v.is_pointer_value() && v.into_pointer_value() == ptr) {
+                 scope.remove(pos);
+                 return;
+             }
+         }
     }
 
     pub(crate) fn check_tensor_result(
@@ -326,6 +366,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     // Enter a new scope
     fn enter_scope(&mut self) {
         self.variables.push(std::collections::HashMap::new());
+        self.push_temp_scope(); // Track temporaries for this scope
         if let Some(f) = self.module.get_function("tl_mem_enter_scope") {
             self.builder.build_call(f, &[], "").unwrap();
         }
@@ -430,6 +471,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                     }
                 }
+            }
+        }
+
+        // Cleanup temporaries in this scope
+        if let Some(temps) = self.temporaries.get(scope_idx) {
+            for (val, ty) in temps {
+                // Temporaries are always owned (CLEANUP_FULL).
+                // They are values (pointers), not allocas.
+                let _ = self.emit_recursive_free(*val, ty, CLEANUP_FULL);
             }
         }
     }
@@ -639,6 +689,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.emit_top_scope_cleanup();
         }
         self.variables.pop();
+        // Just pop the temporaries stack (cleanup code was emitted by emit_top_scope_cleanup if needed)
+        self.temporaries.pop();
     }
 
     /// Null out a variable (Move Semantics) so it won't be double-freed

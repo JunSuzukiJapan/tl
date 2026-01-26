@@ -892,11 +892,12 @@ pub extern "C" fn tl_log_alloc(
     if !mem_log_enabled() {
         return;
     }
-    let file_str = if !file.is_null() {
-        unsafe { std::ffi::CStr::from_ptr(file).to_string_lossy().into_owned() }
-    } else {
-        "unknown".to_string()
-    };
+    // Filter: Only print if file is NULL (Non-Tensor allocations like Vec, String)
+    if !file.is_null() {
+        return;
+    }
+
+    let file_str = "non_tensor"; 
     eprintln!("[ALLOC] File: {}, Line: {}, Size: {}, Ptr: {:p}", file_str, line, size, ptr);
 }
 
@@ -909,11 +910,12 @@ pub extern "C" fn tl_log_free(
     if !mem_log_enabled() {
         return;
     }
-    let file_str = if !file.is_null() {
-        unsafe { std::ffi::CStr::from_ptr(file).to_string_lossy().into_owned() }
-    } else {
-        "unknown".to_string()
-    };
+    // Filter: Only print if file is NULL
+    if !file.is_null() {
+        return;
+    }
+
+    let file_str = "non_tensor";
     eprintln!("[FREE] File: {}, Line: {}, Ptr: {:p}", file_str, line, ptr);
 }
 #[no_mangle]
@@ -3337,6 +3339,11 @@ pub extern "C" fn tl_vec_void_get(ptr: *mut std::ffi::c_void, idx: usize) -> *mu
 #[no_mangle]
 pub extern "C" fn tl_vec_void_free(ptr: *mut std::ffi::c_void) {
     if !ptr.is_null() {
+        tl_log_free(
+            ptr,
+            std::ptr::null(),
+            0
+        );
         unsafe {
             // Reconstruct Vec from raw pointer to drop the container
             // This frees the Vec struct logic (cap/len/buffer pointer)
@@ -3349,12 +3356,26 @@ pub extern "C" fn tl_vec_void_free(ptr: *mut std::ffi::c_void) {
 
 #[no_mangle]
 pub extern "C" fn tl_vec_u8_new() -> *mut Vec<u8> {
-    Box::into_raw(Box::new(Vec::<u8>::new()))
+    let ptr = Box::into_raw(Box::new(Vec::<u8>::new()));
+    tl_log_alloc(
+        ptr as *const c_void,
+        0, // size 0 initially
+        std::ptr::null(), // unknown file
+        0
+    );
+    ptr
 }
 
 #[no_mangle]
 pub extern "C" fn tl_vec_u8_with_capacity(cap: usize) -> *mut Vec<u8> {
-    Box::into_raw(Box::new(Vec::<u8>::with_capacity(cap)))
+    let ptr = Box::into_raw(Box::new(Vec::<u8>::with_capacity(cap)));
+    tl_log_alloc(
+        ptr as *const c_void,
+        cap as i64, 
+        std::ptr::null(),
+        0
+    );
+    ptr
 }
 
 #[no_mangle]
@@ -3840,7 +3861,14 @@ pub extern "C" fn tl_vec_i64_get(ptr: *mut Vec<i64>, idx: usize) -> i64 {
 }
 #[no_mangle]
 pub extern "C" fn tl_vec_i64_free(ptr: *mut Vec<i64>) {
-    if !ptr.is_null() { unsafe { let _ = Box::from_raw(ptr); } }
+    if !ptr.is_null() { 
+        tl_log_free(
+            ptr as *const std::ffi::c_void,
+            std::ptr::null(),
+            0
+        );
+        unsafe { let _ = Box::from_raw(ptr); } 
+    }
 }
 
 // F32
@@ -3864,7 +3892,14 @@ pub extern "C" fn tl_vec_f32_get(ptr: *mut Vec<f32>, idx: usize) -> f32 {
 }
 #[no_mangle]
 pub extern "C" fn tl_vec_f32_free(ptr: *mut Vec<f32>) {
-    if !ptr.is_null() { unsafe { let _ = Box::from_raw(ptr); } }
+    if !ptr.is_null() { 
+        tl_log_free(
+            ptr as *const std::ffi::c_void,
+            std::ptr::null(),
+            0
+        );
+        unsafe { let _ = Box::from_raw(ptr); } 
+    }
 }
 
 // Ptr (for Structs, Tensors, Strings etc.)
@@ -3901,6 +3936,11 @@ pub extern "C" fn tl_vec_ptr_get(ptr: *mut Vec<*mut std::ffi::c_void>, idx: usiz
 #[no_mangle]
 pub extern "C" fn tl_vec_ptr_free(ptr: *mut Vec<*mut std::ffi::c_void>) {
     if !ptr.is_null() { 
+        tl_log_free(
+            ptr as *const std::ffi::c_void,
+            std::ptr::null(),
+            0
+        );
         // Try release via Manager
         let processed = memory_manager::tl_ptr_release_bool(ptr as *mut std::ffi::c_void);
         if !processed {
@@ -3920,24 +3960,34 @@ pub extern "C" fn tl_vec_ptr_free(ptr: *mut Vec<*mut std::ffi::c_void>) {
 // Constructors
 #[no_mangle]
 pub extern "C" fn tl_vec_i64_new() -> *mut Vec<i64> {
-    Box::into_raw(Box::new(Vec::new()))
+   let ptr = Box::into_raw(Box::new(Vec::new()));
+   tl_log_alloc(
+        ptr as *const std::ffi::c_void,
+        0, 
+        std::ptr::null(),
+        0
+   );
+   ptr
 }
 #[no_mangle]
 pub extern "C" fn tl_vec_f32_new() -> *mut Vec<f32> {
-    Box::into_raw(Box::new(Vec::new()))
+   let ptr = Box::into_raw(Box::new(Vec::new()));
+   tl_log_alloc(
+        ptr as *const std::ffi::c_void,
+        0, 
+        std::ptr::null(),
+        0
+   );
+   ptr
 }
 #[no_mangle]
 pub extern "C" fn tl_vec_ptr_new() -> *mut Vec<*mut std::ffi::c_void> {
-    unsafe {
-        // Allocate container via malloc matchin AllocType::Struct/VecPtr deletion expectations
-        let ptr = libc::malloc(std::mem::size_of::<Vec<*mut std::ffi::c_void>>()) as *mut Vec<*mut std::ffi::c_void>;
-        if ptr.is_null() { return std::ptr::null_mut(); }
-        // Initialize
-        std::ptr::write(ptr, Vec::new());
-        
-        // DO NOT Register. CodeGenerator manages variable lifetime.
-        // We only register if explicit ownership transfer occurs (e.g. into Struct? handled by StructInit).
-        
-        ptr
-    }
+   let ptr = Box::into_raw(Box::new(Vec::new()));
+   tl_log_alloc(
+        ptr as *const std::ffi::c_void,
+        0, 
+        std::ptr::null(),
+        0
+   );
+   ptr
 }

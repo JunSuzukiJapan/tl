@@ -1,4 +1,4 @@
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, c_void};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::raw::c_char;
@@ -21,7 +21,11 @@ pub extern "C" fn tl_prompt(prompt: *const c_char) -> *mut c_char {
             // Remove trailing newline
             let trimmed = buffer.trim_end().to_string();
             match CString::new(trimmed) {
-                Ok(c_str) => c_str.into_raw(),
+                Ok(c_str) => {
+                    let ptr = c_str.into_raw();
+                    crate::tl_log_alloc(ptr as *const c_void, 0, std::ptr::null(), 0);
+                    ptr
+                },
                 Err(_) => std::ptr::null_mut(),
             }
         }
@@ -45,6 +49,7 @@ pub extern "C" fn tl_string_concat(s1: *const c_char, s2: *const c_char) -> *mut
     match CString::new(joined) {
         Ok(c_str) => {
             let ptr = c_str.into_raw();
+            crate::tl_log_alloc(ptr as *const c_void, 0, std::ptr::null(), 0);
             ptr
         }
         Err(_) => std::ptr::null_mut(),
@@ -64,7 +69,11 @@ pub extern "C" fn tl_string_to_i64(s: *const c_char) -> i64 {
 pub extern "C" fn tl_string_from_int(val: i64) -> *mut c_char {
     let s = val.to_string();
     match CString::new(s) {
-        Ok(c_str) => c_str.into_raw(),
+        Ok(c_str) => {
+            let ptr = c_str.into_raw();
+            crate::tl_log_alloc(ptr as *const c_void, 0, std::ptr::null(), 0);
+            ptr
+        }
         Err(_) => std::ptr::null_mut(),
     }
 }
@@ -96,7 +105,9 @@ pub extern "C" fn tl_string_char_at(s: *const c_char, index: i64) -> *mut c_char
     // Using chars().nth() handles UTF-8 correctly but is O(N)
     if let Some(c) = s_str.chars().nth(idx) {
         let char_str = c.to_string();
-        std::ffi::CString::new(char_str).unwrap().into_raw()
+        let ptr = std::ffi::CString::new(char_str).unwrap().into_raw();
+        crate::tl_log_alloc(ptr as *const c_void, 0, std::ptr::null(), 0);
+        ptr
     } else {
         std::ptr::null_mut()
     }
@@ -127,7 +138,11 @@ pub extern "C" fn tl_file_open(path: *const c_char, mode: *const c_char) -> *mut
     };
 
     match f {
-        Ok(file) => Box::into_raw(Box::new(file)),
+        Ok(file) => {
+            let ptr = Box::into_raw(Box::new(file));
+            crate::tl_log_alloc(ptr as *const c_void, 0, std::ptr::null(), 0);
+            ptr
+        },
         Err(_) => std::ptr::null_mut(),
     }
 }
@@ -142,7 +157,11 @@ pub extern "C" fn tl_file_read_string(file: *mut File) -> *mut c_char {
     // Seek to start? usually implicit for linear read
     if file.read_to_string(&mut content).is_ok() {
         match CString::new(content) {
-            Ok(c_str) => c_str.into_raw(),
+            Ok(c_str) => {
+                let ptr = c_str.into_raw();
+                 crate::tl_log_alloc(ptr as *const c_void, 0, std::ptr::null(), 0);
+                 ptr
+            },
             Err(_) => std::ptr::null_mut(),
         }
     } else {
@@ -165,6 +184,7 @@ pub extern "C" fn tl_file_write_string(file: *mut File, content: *const c_char) 
 #[no_mangle]
 pub extern "C" fn tl_file_close(file: *mut File) {
     if !file.is_null() {
+        crate::tl_log_free(file as *const c_void, std::ptr::null(), 0);
         unsafe {
             let _ = Box::from_raw(file); // Dropping closes the file
         }
@@ -182,7 +202,11 @@ pub extern "C" fn tl_file_read_binary(path: *const c_char) -> *mut Vec<u8> {
     let expanded_path = crate::expand_tilde(&path_str);
 
     match std::fs::read(&expanded_path) {
-        Ok(data) => Box::into_raw(Box::new(data)),
+        Ok(data) => {
+            let ptr = Box::into_raw(Box::new(data));
+             crate::tl_log_alloc(ptr as *const c_void, 0, std::ptr::null(), 0);
+             ptr
+        },
         Err(e) => {
             eprintln!("tl_file_read_binary error: {}", e);
             std::ptr::null_mut()
@@ -223,7 +247,9 @@ pub extern "C" fn tl_image_load_grayscale(path: *const c_char) -> *mut Vec<u8> {
             // Convert to grayscale and get raw pixels
             let gray = img.to_luma8();
             let pixels: Vec<u8> = gray.into_raw();
-            Box::into_raw(Box::new(pixels))
+            let ptr = Box::into_raw(Box::new(pixels));
+            crate::tl_log_alloc(ptr as *const c_void, 0, std::ptr::null(), 0);
+            ptr
         }
         Err(e) => {
             eprintln!("tl_image_load_grayscale error: {}", e);
@@ -268,7 +294,9 @@ use std::path::PathBuf;
 pub extern "C" fn tl_path_new(path: *const c_char) -> *mut PathBuf {
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
     let expanded_path = crate::expand_tilde(&path_str);
-    Box::into_raw(Box::new(std::path::PathBuf::from(expanded_path)))
+    let ptr = Box::into_raw(Box::new(std::path::PathBuf::from(expanded_path)));
+    crate::tl_log_alloc(ptr as *const c_void, 0, std::ptr::null(), 0);
+    ptr
 }
 
 #[no_mangle]
@@ -278,7 +306,9 @@ pub extern "C" fn tl_path_join(base: *mut PathBuf, part: *const c_char) -> *mut 
     }
     let base = unsafe { &*base };
     let part_str = unsafe { CStr::from_ptr(part).to_string_lossy() };
-    Box::into_raw(Box::new(base.join(part_str.as_ref())))
+    let ptr = Box::into_raw(Box::new(base.join(part_str.as_ref())));
+    crate::tl_log_alloc(ptr as *const c_void, 0, std::ptr::null(), 0);
+    ptr
 }
 
 #[no_mangle]
