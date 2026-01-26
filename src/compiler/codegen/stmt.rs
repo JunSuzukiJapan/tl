@@ -83,7 +83,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             // Type::UserDefined(name, _) if name == "String" => {} // DO NOT Skip String. It must be unregistered.
             Type::Struct(name, _) | Type::UserDefined(name, _) => {
                  if name != "String" {
-                     eprintln!("DEBUG: Top Level Unregister generation for {}", name);
+                     // eprintln!("DEBUG: Top Level Unregister generation for {}", name);
                  }
                  let cast_ptr = self.builder.build_pointer_cast(val.into_pointer_value(), self.context.ptr_type(inkwell::AddressSpace::default()), "cast_unreg_simul").unwrap();
                  

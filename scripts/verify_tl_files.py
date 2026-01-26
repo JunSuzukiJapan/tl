@@ -103,7 +103,7 @@ def should_skip(filepath: Path) -> Tuple[bool, str]:
         return True, "main 関数なし"
     return False, ""
 
-def run_tl_file(filepath: Path, tl_binary: Path, timeout: int) -> TestResult:
+def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = False) -> TestResult:
     """TL ファイルを実行して結果を返す"""
     start_time = time.time()
     
@@ -175,13 +175,28 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int) -> TestResult:
              )
         else:
             # JIT Execution (Default)
-            result = subprocess.run(
-                [str(tl_binary), str(filepath)],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                cwd=filepath.parent
-            )
+            # FIX: Must pass filename only (or absolute path) since we changed CWD to parent
+            if verbose:
+                 print(f"DEBUG: Running {tl_binary} {filepath.name} in {filepath.parent}")
+                 # Stream output directly to console in verbose mode to avoid buffer issues/aborts
+                 result = subprocess.run(
+                    [str(tl_binary), filepath.name],
+                    capture_output=False,
+                    text=True,
+                    timeout=timeout,
+                    cwd=filepath.parent
+                 )
+                 # Mock stdout/stderr since we can't capture it easily without piping
+                 result.stdout = "(Streamed to console)"
+                 result.stderr = ""
+            else:
+                 result = subprocess.run(
+                    [str(tl_binary), filepath.name],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    cwd=filepath.parent
+                 )
 
 
         duration = time.time() - start_time
@@ -325,9 +340,9 @@ def main():
     project_root = script_dir.parent
     
     # TL バイナリのパス
-    tl_binary = project_root / "target" / "debug" / "tl"
+    tl_binary = project_root / "target" / "release" / "tl"
     if not tl_binary.exists():
-        tl_binary = project_root / "target" / "release" / "tl"
+        tl_binary = project_root / "target" / "debug" / "tl"
     
     if not tl_binary.exists():
         print("❌ TL バイナリが見つかりません。先に 'cargo build' を実行してください。")
@@ -358,7 +373,7 @@ def main():
         print(f"🚀 {args.parallel} 並列で実行中...")
         with ThreadPoolExecutor(max_workers=args.parallel) as executor:
             future_to_file = {
-                executor.submit(run_tl_file, f, tl_binary, args.timeout): f 
+                executor.submit(run_tl_file, f, tl_binary, args.timeout, args.verbose): f 
                 for f in tl_files
             }
             
@@ -382,7 +397,7 @@ def main():
             rel_path = tl_file.relative_to(project_root)
             print(f"[{i}/{len(tl_files)}] {rel_path} ... ", end="", flush=True)
             
-            result = run_tl_file(tl_file, tl_binary, args.timeout)
+            result = run_tl_file(tl_file, tl_binary, args.timeout, args.verbose)
             results.append(result)
             
             print(f"{result.status.value} ({result.duration:.1f}s)")
