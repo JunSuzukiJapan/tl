@@ -58,6 +58,7 @@ impl MLP {
 
 impl Attention {
     fn from_map(m: Map, p: String) -> Attention {
+        // Detailed logging prevents Trace Trap (Stack Alignment Workaround)
         println("  Attn: Q");
         let q = Linear::from_map(m, string_concat(p, "_q.weight"));
         println("  Attn: K");
@@ -114,6 +115,7 @@ impl Attention {
 
 impl Block {
     fn from_map(m: Map, li: i64) -> Block {
+        // Detailed logging prevents Trace Trap (Stack Alignment Workaround)
         println(string_concat("Loading block ", string_from_int(li)));
         let p = string_concat("blk.", string_from_int(li));
         println(" Blk: AN");
