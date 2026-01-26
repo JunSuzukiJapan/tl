@@ -1296,7 +1296,7 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) -> FreeOutcome {
         }
 
         // Pool is full or lock failed, actually free
-        println!("DEBUG: Actually free tensor {:p}", t);
+        // println!("DEBUG: Actually free tensor {:p}", t);
         let _ = Box::from_raw(t);
         FreeOutcome::Freed
     }
@@ -2540,7 +2540,7 @@ pub extern "C" fn tl_tensor_reshape_new(
     shape_tensor: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
     unsafe {
-        println!("DEBUG: Inside tl_tensor_reshape_new");
+
         let tensor = &(*t).0;
         let shape_t = &(*shape_tensor).0;
 
@@ -2560,7 +2560,7 @@ pub extern "C" fn tl_tensor_reshape_new(
             }
         };
 
-        println!("DEBUG: Calculated new shape: {:?}", new_shape);
+
 
         match tensor.reshape(new_shape) {
             Ok(result) => make_tensor(result),

@@ -8,7 +8,7 @@ struct File {}
 // struct Tensor {}
 
 struct Linear { w: i64 }
-struct RMSNorm { w: Tensor<f32, 1>, e: f32 }
+struct RMSNorm { k: String, e: f32 }
 struct MLP { g: Linear, u: Linear, d: Linear }
 struct Attention { q: Linear, k: Linear, v: Linear, o: Linear }
 struct Block { an: RMSNorm, ffn: RMSNorm, at: Attention, mlp: MLP }
@@ -28,9 +28,14 @@ impl Linear {
 }
 
 impl RMSNorm {
-    fn new(m: Map, k: String) -> RMSNorm { return RMSNorm { w: m.get_1d(k), e: 0.00001 }; }
+    fn new(m: Map, k: String) -> RMSNorm { 
+        return RMSNorm { k: k, e: 0.00001 }; 
+    }
     // Tensor::rms_norm
-    fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { return x.rms_norm(self.w, self.e); }
+    fn forward(self, x: Tensor<f32, 2>, m: Map) -> Tensor<f32, 2> { 
+        let w = m.get_1d(self.k);
+        return x.rms_norm(w, self.e);
+    }
 }
 
 impl MLP {
@@ -114,10 +119,10 @@ impl Block {
             mlp: MLP::from_map(m, string_concat(p, ".ffn"))
         };
     }
-    fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, batch_len: i64, ch: KVCache, li: i64, sp: i64) -> Tensor<f32, 2> {
-        let attn_out = self.at.forward(self.an.forward(x.clone()), cos, sin, batch_len, ch, li, sp);
+    fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, batch_len: i64, ch: KVCache, li: i64, sp: i64, weights: Map) -> Tensor<f32, 2> {
+        let attn_out = self.at.forward(self.an.forward(x.clone(), weights), cos, sin, batch_len, ch, li, sp);
         let h = x.clone().add(attn_out);
-        let ffn_out = self.mlp.forward(self.ffn.forward(h.clone()));
+        let ffn_out = self.mlp.forward(self.ffn.forward(h.clone(), weights));
         return h.add(ffn_out);
     }
 }
@@ -227,10 +232,10 @@ fn main() {
             while l < 32 {
                 // if (l == 0 && gen_idx < 2) { println("  Block 0"); }
                 let blk = Block::from_map(weights, l);
-                x = blk.forward(x, cos, sin, batch_len, cache, l, start_pos);
+                x = blk.forward(x, cos.clone(), sin.clone(), batch_len, cache, l, start_pos, weights);
                 l = l + 1;
             }
-            let lo = oh.forward(on.forward(x));
+            let lo = oh.forward(on.forward(x, weights));
             
             let nxt = lo.narrow(0, batch_len - 1, 1).sample(0.7, 0.9);
             

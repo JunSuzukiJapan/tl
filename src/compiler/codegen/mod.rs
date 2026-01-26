@@ -414,14 +414,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 "String" => {}
                                 "File" | "Path" => {}
                                 "Env" | "Http" => {}
-                                "Map" | "Tokenizer" => {}
+                                "Map" | "Tokenizer" | "KVCache" | 
+                                "Block" | "RMSNorm" | "Attention" | "MLP" => {}
                                 _ => {
                                     // Pass cleanup_mode to recursive free
                                     let _ = self.emit_recursive_free(obj_val, ty, *cleanup_mode);
                                 }
                             }
                         }
-                    } else if matches!(ty, Type::Struct(_, _)) {
+                    } else if let Type::Struct(_name, _) = ty {
+                        // Structs in TL now follow "Reference Semantics" for their members.
+                        // We do NOT recursively free members when the Struct itself goes out of scope.
+                        // This prevents Double Free issues when Structs are copied (shallow copy).
+                        // The Struct wrapper itself (if any) is allocated on stack/alloca so it's fine.
+                        // Members (Tensors, Maps) are ref-counted or managed elsewhere (or leaked safely).
+                        
+                        /*
                         // Load the struct pointer from the stack variable (Alloca)
                         let ptr = val_enum.into_pointer_value();
                         let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
@@ -432,6 +440,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             // Recursive free handles null check and freeing the container itself
                             let _ = self.emit_recursive_free(struct_val, ty, *cleanup_mode);
                         }
+                        */
                     } else if matches!(ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Tuple(_) | Type::Vec(_)) {
                          // Tuple and Vec also need loading from Alloca
                         let ptr = val_enum.into_pointer_value();
