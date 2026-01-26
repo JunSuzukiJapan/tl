@@ -1,5 +1,5 @@
-// このタスクではGPUよりもCPUの方が高速です。
-// CPUで実行するには以下のコマンドを使用してください:
+// CPU is faster than GPU for this task.
+// To run on CPU, use the following command:
 // cargo run --release -- --device=cpu examples/readme_n_queens.tl
 
 fn main() {
