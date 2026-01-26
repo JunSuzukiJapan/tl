@@ -651,11 +651,16 @@ pub extern "C" fn tl_mem_register_tensor(ptr: *mut OpaqueTensor) {
 
 /// Unregister a pointer (e.g. from reassignment or return)
 #[unsafe(no_mangle)]
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_unregister(ptr: *mut c_void) {
     if !ptr.is_null() {
-        // println!("DEBUG: Unregister {:p}", ptr);
+        if crate::mem_log_enabled() {
+             eprintln!("[TL_MEM] tl_mem_unregister called for ptr={:p}", ptr);
+        }
         let mut mgr = MEMORY_MANAGER.lock().unwrap();
         mgr.unregister(ptr);
+    } else {
+        // ...
     }
 }
 

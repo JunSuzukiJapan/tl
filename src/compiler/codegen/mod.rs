@@ -1008,6 +1008,30 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Compile Body
                 let entry = self.context.append_basic_block(function, "entry");
                 self.builder.position_at_end(entry);
+
+                // FIX: Must setup function frame for methods too!
+                // Liveness Analysis
+                self.function_analysis = Some(crate::compiler::liveness::LivenessAnalyzer::analyze(method));
+                let num_slots = self.function_analysis.as_ref().map(|a| a.num_slots).unwrap_or(0);
+                
+                if let Some(enter_fn) = self.module.get_function("tl_mem_function_enter") {
+                     self.builder.build_call(
+                         enter_fn,
+                         &[self.context.i64_type().const_int(num_slots as u64, false).into()],
+                         ""
+                     ).unwrap();
+                } else {
+                    // Declare it if missing
+                    let i64_type = self.context.i64_type();
+                    let fn_type = self.context.void_type().fn_type(&[i64_type.into()], false);
+                    let enter_fn = self.module.add_function("tl_mem_function_enter", fn_type, None);
+                    self.builder.build_call(
+                         enter_fn,
+                         &[self.context.i64_type().const_int(num_slots as u64, false).into()],
+                         ""
+                     ).unwrap();
+                }
+
                 self.fn_entry_scope_depth = self.variables.len();
                 self.enter_scope();
 
@@ -1141,6 +1165,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.compile_fn_proto(func)?;
         }
         if let Some(func) = &synthetic_main {
+            eprintln!("DEBUG: Compiling synthetic main proto");
             self.compile_fn_proto(func)?;
         }
 
@@ -1212,8 +1237,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Let's assume Structs needs SRET, but Tensors do NOT.
         // String is a pointer, so exclusion is needed.
         let uses_sret = match &func.return_type {
-            Type::Struct(_, _) => true,
-            Type::UserDefined(name, _) if name != "String" => true,
+            // CRITICAL FIX: Disable SRET for Structs. Use Reference Semantics (Pointer Return).
+            // This prevents "Copy to Unregistered Buffer" issues and ensures valid RefCounting.
+            Type::Struct(_, _) => false,
+            Type::UserDefined(name, _) if name != "String" => false, 
             _ => false,
         };
 
@@ -1296,6 +1323,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     pub(crate) fn compile_fn(&mut self, func: &FunctionDef, extra_stmts: &[Stmt]) -> Result<(), String> {
+        eprintln!("DEBUG: compile_fn {} with {} extra stmts", func.name, extra_stmts.len());
         let function = self
             .module
             .get_function(&func.name)
@@ -1310,6 +1338,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // SETUP FUNCTION FRAME (SLOTS)
         let num_slots = self.function_analysis.as_ref().map(|a| a.num_slots).unwrap_or(0);
+        
         if let Some(enter_fn) = self.module.get_function("tl_mem_function_enter") {
              self.builder.build_call(
                  enter_fn,

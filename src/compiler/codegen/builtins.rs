@@ -328,6 +328,9 @@ pub fn declare_runtime_functions<'ctx>(
     let dec_ref_type = i32_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_ptr_dec_ref", dec_ref_type);
 
+    // tl_mem_free(ptr: *mut) -> void
+    add_fn("tl_mem_free", free_type);
+
     // tl_vec_void_len(ptr: *mut) -> usize
     let len_type = i64_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_vec_void_len", len_type);
@@ -1819,6 +1822,12 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine
             .add_global_mapping(&f, runtime::memory_manager::tl_mem_register_struct as usize);
     }
+    if let Some(f) = module.get_function("tl_mem_register_struct_named") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::memory_manager::tl_mem_register_struct_named as usize,
+        );
+    }
     if let Some(f) = module.get_function("tl_mem_register_tensor") {
         execution_engine
             .add_global_mapping(&f, runtime::memory_manager::tl_mem_register_tensor as usize);
@@ -1826,6 +1835,15 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_mem_unregister") {
         execution_engine
             .add_global_mapping(&f, runtime::memory_manager::tl_mem_unregister as usize);
+    }
+    if let Some(f) = module.get_function("tl_ptr_dec_ref") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::memory_manager::tl_ptr_dec_ref as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_mem_free") {
+        execution_engine.add_global_mapping(&f, runtime::tl_mem_free as usize);
     }
 
     // Arena Allocator mappings

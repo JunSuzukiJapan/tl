@@ -81,9 +81,24 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         match ty {
             // Type::UserDefined(name, _) if name == "String" => {} // DO NOT Skip String. It must be unregistered.
-            Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _) => {
-                self.builder
-                    .build_call(unreg_fn, &[val.into()], "")
+            Type::Struct(name, _) | Type::UserDefined(name, _) => {
+                 if name != "String" {
+                     eprintln!("DEBUG: Top Level Unregister generation for {}", name);
+                 }
+                 let cast_ptr = self.builder.build_pointer_cast(val.into_pointer_value(), self.context.ptr_type(inkwell::AddressSpace::default()), "cast_unreg_simul").unwrap();
+                 
+                 // Debug trace: unregister
+                 let size_val = self.context.i64_type().const_int(0, false);
+                 self.emit_log_alloc(cast_ptr.into(), size_val).ok();
+
+                 self.builder
+                    .build_call(unreg_fn, &[cast_ptr.into()], "")
+                    .map_err(|e| e.to_string())?;
+            }
+            Type::Tensor(_, _) => {
+                 let cast_ptr = self.builder.build_pointer_cast(val.into_pointer_value(), self.context.ptr_type(inkwell::AddressSpace::default()), "cast_unreg_tensor").unwrap();
+                 self.builder
+                    .build_call(unreg_fn, &[cast_ptr.into()], "")
                     .map_err(|e| e.to_string())?;
             }
             _ => {}
@@ -122,15 +137,15 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                             // Load
                             let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                            let field_val = self
-                                .builder
-                                .build_load(load_type, field_ptr, "field_val")
-                                .map_err(|e| e.to_string())?;
-
+                            
                             // Recurse
-                            self.emit_recursive_unregister(field_val, field_type)?;
+                            // CRITICAL FIX: Shallow Unregister only.
+                            // Do not recurse. Exit Scope handles fields.
+                            // self.emit_recursive_unregister(field_val, field_type)?;
                         }
                     }
+                } else {
+                     eprintln!("DEBUG: emit_recursive_unregister struct {} NOT FOUND in struct_defs", name);
                 }
             }
             _ => {}
@@ -501,13 +516,59 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 self.builder.position_at_end(free_block);
 
-
-
-                // We need to ensure proper control flow when recursively freeing fields.
-                // Each recursive call to emit_recursive_free may create new blocks and change
-                // the builder's insert position. We must branch to merge_block from wherever
-                // the builder ends up after all field cleanup.
+                // --- FIX: Unregister from Scope to prevent double-free by tl_mem_exit_scope ---
+                // We are manually handling the cleanup here.
+                let unreg_fn = self.module.get_function("tl_mem_unregister")
+                    .ok_or("tl_mem_unregister not found")?;
                 
+                let cast_void_unreg = self.builder.build_pointer_cast(
+                    ptr, 
+                    self.context.ptr_type(inkwell::AddressSpace::default()), 
+                    "cast_void_unreg"
+                ).unwrap();
+
+                self.builder.build_call(unreg_fn, &[cast_void_unreg.into()], "")
+                    .map_err(|e| e.to_string())?;
+
+                // --- FIX: Check RefCount before recursing ---
+                let recurse_block = self.context.append_basic_block(func, "recurse_free");
+                
+                // Call tl_ptr_dec_ref(ptr) -> i32 (1=True/Free, 0=False/Keep)
+                let dec_ref_fn = self
+                    .module
+                    .get_function("tl_ptr_dec_ref")
+                    .ok_or("tl_ptr_dec_ref not found")?;
+                    
+                let cast_void = self.builder.build_pointer_cast(
+                    ptr, 
+                    self.context.ptr_type(inkwell::AddressSpace::default()), 
+                    "cast_void"
+                ).unwrap();
+
+                let call = self
+                    .builder
+                    .build_call(dec_ref_fn, &[cast_void.into()], "should_free")
+                    .map_err(|e| e.to_string())?;
+
+                let should_free_val = match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                    _ => return Err("tl_ptr_dec_ref returned void/invalid".to_string()),
+                };
+                    
+                let should_free = self.builder.build_int_compare(
+                    inkwell::IntPredicate::NE,
+                    should_free_val,
+                    self.context.i32_type().const_int(0, false),
+                    "should_free_bool"
+                ).map_err(|e| e.to_string())?;
+                
+                self.builder.build_conditional_branch(should_free, recurse_block, merge_block)
+                    .map_err(|e| e.to_string())?;
+
+                // --- Recurse Block ---
+                self.builder.position_at_end(recurse_block);
+
+                // Recurse fields
                 for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
                     match f_ty {
                         Type::Tensor(_, _)
@@ -535,17 +596,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => {}
                     }
                 }
-
-                // After all recursive calls, builder is at some merge block.
-                // We need to branch from HERE (current position) to our merge_block.
-                // Check if current block already has a terminator
-                if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-                    self.builder
-                        .build_unconditional_branch(merge_block)
-                        .map_err(|e| e.to_string())?;
-                }
                 
+                // --- FIX: Free the Struct itself ---
+                // Only if refcount dropped to 0 (which it did if we are here)
+                let mem_free_fn = self.module.get_function("tl_mem_free")
+                     .ok_or("tl_mem_free not found")?;
+                
+                // Trace Free
+                self.emit_log_free(val)?;
 
+                self.builder.build_call(mem_free_fn, &[cast_void.into()], "")
+                    .map_err(|e| e.to_string())?;
+
+                self.builder
+                     .build_unconditional_branch(merge_block)
+                     .map_err(|e| e.to_string())?;
                 
                 self.builder.position_at_end(merge_block);
             }
@@ -1208,6 +1273,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                             },
                         ),
                     ); // Store pointer and type
+
+                // DEBUG TRACE: Log assignment to variable
+                match &val_ty {
+                    Type::Struct(sname, _) | Type::UserDefined(sname, _) => {
+                         if sname.contains("GPT") {
+                             let size_val = self.context.i64_type().const_int(0, false);
+                             self.emit_log_alloc(val_ir, size_val).ok();
+                         }
+                    }
+                    _ => {}
+                }
                                                                                   /*
                                                                                   match &val_ty {
                                                                                       Type::Tensor(_, _) => {
@@ -1299,6 +1375,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 // Without this, exit_scope will free the struct before the caller can use it.
                                 // CRITICAL FIX: recursively unregister struct fields (like Tensors)
                                 // so they are not freed by exit_scope.
+                                
+                                // DEBUG: Enabling unregister again.
                                 self.emit_recursive_unregister(val, &ty)?;
                             }
                             _ => {}

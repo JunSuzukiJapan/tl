@@ -2899,19 +2899,29 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         // 2. Register with MemoryManager
-        if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
-            let cast_ptr = self
-                .builder
-                .build_pointer_cast(
-                    raw_ptr,
-                    self.context.ptr_type(inkwell::AddressSpace::default()),
-                    "cast_ptr",
-                )
-                .unwrap();
-            self.builder
-                .build_call(register_fn, &[cast_ptr.into()], "")
-                .map_err(|e| e.to_string())?;
-        }
+        // Force named registration
+        let register_fn = self
+            .module
+            .get_function("tl_mem_register_struct_named")
+            .expect("tl_mem_register_struct_named not found in module");
+
+        let cast_ptr = self
+            .builder
+            .build_pointer_cast(
+                raw_ptr,
+                self.context.ptr_type(inkwell::AddressSpace::default()),
+                "cast_ptr",
+            )
+            .unwrap();
+
+        let name_global = self
+            .builder
+            .build_global_string_ptr(name, "struct_name")
+            .map_err(|e| e.to_string())?;
+
+        self.builder
+            .build_call(register_fn, &[cast_ptr.into(), name_global.as_pointer_value().into()], "")
+            .map_err(|e| e.to_string())?;
 
         // Cast to Struct Pointer (opaque pointer in modern LLVM, but typed for GEP)
         let struct_ptr = self
@@ -3216,18 +3226,35 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         // 2. Register
-        if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
-            let cast_ptr = self
-                .builder
-                .build_pointer_cast(
-                    raw_ptr,
-                    self.context.ptr_type(inkwell::AddressSpace::default()),
-                    "cast_ptr",
-                )
-                .unwrap();
-            self.builder
-                .build_call(register_fn, &[cast_ptr.into()], "")
-                .map_err(|e| e.to_string())?;
+        // 2. Register
+        // Force named registration
+        let register_fn = self
+            .module
+            .get_function("tl_mem_register_struct_named")
+            .expect("tl_mem_register_struct_named not found in module");
+
+        let cast_ptr = self
+            .builder
+            .build_pointer_cast(
+                raw_ptr,
+                self.context.ptr_type(inkwell::AddressSpace::default()),
+                "cast_ptr",
+            )
+            .unwrap();
+
+        let name_global = self
+            .builder
+            .build_global_string_ptr(name, "struct_name")
+            .map_err(|e| e.to_string())?;
+
+        self.builder
+            .build_call(register_fn, &[cast_ptr.into(), name_global.as_pointer_value().into()], "")
+            .map_err(|e| e.to_string())?;
+
+        // Debug trace
+        if name.contains("GPT") {
+            let size_val = self.context.i64_type().const_int(0, false);
+            self.emit_log_alloc(cast_ptr.into(), size_val).ok();
         }
 
         let struct_ptr = self
@@ -3271,6 +3298,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Return the pointer directly (no load)
         // Struct remains registered in scope; caller (StmtKind::Let) will deep_clone it
+        // Return the pointer directly (no load)
+        // Struct remains registered in scope; caller (StmtKind::Let) will deep_clone it
+        
         Ok((struct_ptr.into(), Type::Struct(name.to_string(), vec![])))
     }
 
@@ -6822,8 +6852,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Tensors are returned by pointer directly, so exclude them.
         let mut dest_val = None;
         if match ret_type {
-             Type::Struct(_, _) => true,
-             Type::UserDefined(ref name, _) if name != "String" => true,
+             // CRITICAL FIX: Disable SRET for Structs (Pointer Return)
+             Type::Struct(_, _) => false,
+             Type::UserDefined(ref name, _) if name != "String" => false,
              _ => false 
         } {
              if let Some(d) = dest {
