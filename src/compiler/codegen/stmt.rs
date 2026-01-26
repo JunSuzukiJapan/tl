@@ -125,7 +125,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 | Type::Tuple(_)
                         ) {
                             // GEP
-                            let field_ptr = self
+                            let _field_ptr = self
                                 .builder
                                 .build_struct_gep(
                                     st_llvm_ty,
@@ -136,7 +136,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .map_err(|e| e.to_string())?;
 
                             // Load
-                            let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                            let _load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                             
                             // Recurse
                             // CRITICAL FIX: Shallow Unregister only.

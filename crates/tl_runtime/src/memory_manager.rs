@@ -275,6 +275,15 @@ impl MemoryManager {
             "struct".to_string()
         };
 
+        if crate::mem_log_enabled() {
+             eprintln!("[TL_MEM] register_struct_named ptr={:p} name='{}'", ptr, name_str);
+        }
+
+        // DEBUG: Check if we are registering an Arena pointer as a Struct
+        if super::arena::tl_arena_contains(ptr) {
+            eprintln!("[TL_MEM] WARNING: Registering Arena Pointer {:p} (name='{}') as Struct! This will cause Double Free/Bad Free.", ptr, name_str);
+        }
+
         self.ptr_types.entry(ptr).or_insert(AllocationType::Struct);
 
         if let Some(scope) = self.scopes.last_mut() {
@@ -381,7 +390,13 @@ impl MemoryManager {
                 if let Some(alloc_type) = self.ptr_types.remove(&ptr) {
                     match alloc_type {
                         AllocationType::Struct => {
-                             unsafe { libc::free(ptr); }
+                             if crate::mem_log_enabled() {
+                                 eprintln!("[TL_MEM] free_struct ptr={:p} in_arena={}", ptr, super::arena::tl_arena_contains(ptr));
+                             }
+                             // CRITICAL FIX: Ensure we don't free Arena pointers treated as Structs
+                             if !super::arena::tl_arena_contains(ptr) {
+                                 unsafe { libc::free(ptr); }
+                             }
                         }
                         AllocationType::Tensor => {
                             let _meta = self.tensor_meta.remove(&ptr);
@@ -650,7 +665,6 @@ pub extern "C" fn tl_mem_register_tensor(ptr: *mut OpaqueTensor) {
 }
 
 /// Unregister a pointer (e.g. from reassignment or return)
-#[unsafe(no_mangle)]
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_unregister(ptr: *mut c_void) {
     if !ptr.is_null() {
