@@ -1678,6 +1678,15 @@ pub extern "C" fn tl_f32_copysign(v: c_float, sign: c_float) -> c_float {
 }
 
 #[unsafe(no_mangle)]
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_mem_free(ptr: *mut c_void) {
+    if !ptr.is_null() {
+        if mem_log_enabled() {
+             eprintln!("[TL_MEM] tl_mem_free ptr={:p}", ptr);
+        }
+        unsafe { libc::free(ptr) }
+    }
+}
 pub extern "C" fn tl_f32_cos(v: c_float) -> c_float {
     v.cos()
 }

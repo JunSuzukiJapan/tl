@@ -1323,7 +1323,6 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     pub(crate) fn compile_fn(&mut self, func: &FunctionDef, extra_stmts: &[Stmt]) -> Result<(), String> {
-        eprintln!("DEBUG: compile_fn {} with {} extra stmts", func.name, extra_stmts.len());
         let function = self
             .module
             .get_function(&func.name)
