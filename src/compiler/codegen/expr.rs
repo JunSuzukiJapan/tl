@@ -5255,10 +5255,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .build_call(fn_val, &[handle.into(), prompt_val.into()], "tok_encode")
                         .map_err(|e| e.to_string())?;
                     let res = self.check_tensor_result(call, "tok_encode_error")?;
-                    let ret_ty = Type::Tensor(Box::new(Type::I64), 0);
-                    let ret_ty = Type::Tensor(Box::new(Type::I64), 0);
-
-                    return Ok((res, ret_ty));
+                    return Ok((res, Type::Tensor(Box::new(Type::I64), 0)));
                 }
                 "decode" => {
                     if args.len() != 1 {
@@ -5318,10 +5315,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .build_call(fn_val, &[handle.into(), layer_val.into()], "kv_get")
                         .map_err(|e| e.to_string())?;
                     let res = self.check_tensor_result(call, "kv_get_error")?;
-                    let ret_ty = Type::Tensor(Box::new(Type::F32), 0);
-                    let ret_ty = Type::Tensor(Box::new(Type::F32), 0);
+                    let _ret_ty = Type::Tensor(Box::new(Type::F32), 0);
+                    let _ret_ty = Type::Tensor(Box::new(Type::F32), 0);
 
-                    return Ok((res, ret_ty));
+                    return Ok((res, Type::Tensor(Box::new(Type::F32), 0)));
                 }
                 "update" => {
                     if args.len() != 3 {
@@ -5378,10 +5375,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if method == "get_quantized" {
                         return Ok((res, Type::I64));
                     }
-                    let ret_ty = Type::Tensor(Box::new(Type::F32), 0);
-                    let ret_ty = Type::Tensor(Box::new(Type::F32), 0);
+                    let _ret_ty = Type::Tensor(Box::new(Type::F32), 0);
+                    let _ret_ty = Type::Tensor(Box::new(Type::F32), 0);
 
-                    return Ok((res, ret_ty));
+                    return Ok((res, Type::Tensor(Box::new(Type::F32), 0)));
                 }
                 _ => {}
             }
@@ -5471,10 +5468,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         inkwell::values::ValueKind::Basic(v) => v,
                         _ => return Err("Invalid return from Tensor::to_i64".into()),
                     };
-                    let ret_ty = Type::Tensor(Box::new(Type::I64), 0);
-                    let ret_ty = Type::Tensor(Box::new(Type::I64), 0);
-
-                    return Ok((res, ret_ty));
+                    return Ok((res, Type::Tensor(Box::new(Type::I64), 0)));
                 }
                 "cuda" => {
                     let fn_val = self

@@ -171,6 +171,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.temporaries.push(Vec::new());
     }
 
+    #[allow(dead_code)]
     pub(crate) fn pop_temp_scope(&mut self) -> Result<(), String> {
         let temps = self.temporaries.pop().expect("Temporary stack underflow");
         for (val, ty) in temps {
@@ -567,6 +568,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn emit_log_alloc(&self, ptr: inkwell::values::BasicValueEnum<'ctx>, size: inkwell::values::IntValue<'ctx>) -> Result<(), String> {
         // tl_log_alloc(ptr, size, file, line)
         let f_name = "tl_log_alloc";
