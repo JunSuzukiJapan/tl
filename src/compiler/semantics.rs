@@ -1076,28 +1076,21 @@ impl SemanticAnalyzer {
     }
 
     fn check_impl_block(&mut self, impl_block: &mut ImplBlock) -> Result<(), TlError> {
-        // Extract name from target_type
-        let target_name = match &impl_block.target_type {
+        // Resolve the target type using resolve_user_type to convert UserDefined -> Struct/Enum
+        let resolved_target = self.resolve_user_type(&impl_block.target_type);
+        
+        // Update impl_block.target_type if resolved to a different type
+        if impl_block.target_type != resolved_target {
+            impl_block.target_type = resolved_target.clone();
+        }
+        
+        // Extract name from resolved target_type
+        let final_target_name = match &impl_block.target_type {
             Type::UserDefined(name, _) => name.clone(),
             Type::Struct(name, _) => name.clone(),
             Type::Enum(name, _) => name.clone(),
             _ => return self.err(SemanticError::TypeMismatch { expected: Type::UserDefined("StructOrEnum".into(), vec![]), found: impl_block.target_type.clone() }, None),
         };
-
-        // Resolve target struct name
-        let resolved_name = self.resolve_symbol_name(&target_name);
-        
-        // Update target_type name if resolved
-        if resolved_name != target_name {
-            match &mut impl_block.target_type {
-                Type::UserDefined(n, _) => *n = resolved_name.clone(),
-                Type::Struct(n, _) => *n = resolved_name.clone(),
-                Type::Enum(n, _) => *n = resolved_name.clone(),
-                _ => {}
-            }
-        }
-        
-        let final_target_name = resolved_name;
 
         // Check if target struct/enum exists
         if !self.structs.contains_key(&final_target_name) && !self.enums.contains_key(&final_target_name) {
@@ -1107,37 +1100,57 @@ impl SemanticAnalyzer {
             );
         }
 
+
         // Check methods
         // 1. Register methods
+        // First, pre-resolve all method signatures to avoid borrow checker issues
+        let mut resolved_methods: Vec<(String, FunctionDef)> = Vec::new();
+        for method in &impl_block.methods {
+            let mut m = method.clone();
+            // Resolve 'Self' in args to target_type, and resolve other types
+            for (_, arg_ty) in &mut m.args {
+                if let &mut Type::UserDefined(ref n, _) = arg_ty {
+                    if n == "Self" {
+                        *arg_ty = impl_block.target_type.clone();
+                        continue;
+                    }
+                }
+                // Resolve other user-defined types in arguments
+                *arg_ty = self.resolve_user_type(arg_ty);
+            }
+            // Resolve return type as well
+            if let Type::UserDefined(ref n, _) = m.return_type {
+                if n == "Self" {
+                    m.return_type = impl_block.target_type.clone();
+                } else {
+                    m.return_type = self.resolve_user_type(&m.return_type);
+                }
+            } else {
+                m.return_type = self.resolve_user_type(&m.return_type);
+            }
+            resolved_methods.push((method.name.clone(), m));
+        }
+        
+        // Now insert into methods map
         {
             let struct_methods = self
                 .methods
                 .entry(final_target_name.clone())
                 .or_default();
-            for method in &impl_block.methods {
-                if struct_methods.contains_key(&method.name) {
+            for (name, resolved_method) in resolved_methods {
+                if struct_methods.contains_key(&name) {
                     return self.err(
                         SemanticError::DuplicateDefinition(format!(
                             "{}::{}",
-                            final_target_name, method.name
+                            final_target_name, name
                         )),
                         None,
                     );
                 }
-                struct_methods.insert(method.name.clone(), {
-                    let mut m = method.clone();
-                    // Resolve 'Self' in args to target_type
-                    for (_, arg_ty) in &mut m.args {
-                        if let &mut Type::UserDefined(ref n, _) = arg_ty {
-                            if n == "Self" {
-                                *arg_ty = impl_block.target_type.clone();
-                            }
-                        }
-                    }
-                    m
-                });
+                struct_methods.insert(name, resolved_method);
             }
         }
+
 
         // 2. Check function bodies
         // Skip body check for generic impls as types are unknown until monomorphization
@@ -1161,8 +1174,19 @@ impl SemanticAnalyzer {
     ) -> Result<(), TlError> {
         self.enter_scope();
 
-        // Set expected return type for this function
-        self.current_return_type = Some(func.return_type.clone());
+        // Set expected return type for this function (resolve first)
+        let resolved_return_type = if let Type::UserDefined(ref n, _) = func.return_type {
+            if n == "Self" && self_type.is_some() {
+                self_type.clone().unwrap()
+            } else {
+                self.resolve_user_type(&func.return_type)
+            }
+        } else {
+            self.resolve_user_type(&func.return_type)
+        };
+        func.return_type = resolved_return_type.clone();
+        self.current_return_type = Some(resolved_return_type);
+
 
         // Register arguments
         for (name, ty) in &mut func.args {
@@ -4309,22 +4333,20 @@ impl SemanticAnalyzer {
                 }
             }
             ExprKind::StaticMethodCall(type_node, method_name, args) => {
-                let resolved_type = match type_node {
-                    Type::UserDefined(name, generics) => {
-                         let resolved_name = self.resolve_symbol_name(name);
-                         Type::UserDefined(resolved_name, generics.clone())
-                    }
-                    _ => type_node.clone(),
-                };
+                // Resolve the type using resolve_user_type to convert UserDefined -> Struct/Enum
+                let resolved_type = self.resolve_user_type(type_node);
                 if *type_node != resolved_type {
                     *type_node = resolved_type.clone();
                 }
                 let type_name = type_node; // Alias for following code (which expects &Type now)
 
+
+
                 // Handle Vec::new() -> Vec<Void> (treated as polymorphic empty vec)
                 let is_vec = match type_name {
                     Type::Vec(_) => true,
                     Type::UserDefined(n, _) if n == "Vec" => true,
+                    Type::Struct(n, _) if n == "Vec" => true,
                     _ => false,
                 };
                 

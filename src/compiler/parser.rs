@@ -171,7 +171,7 @@ pub fn parse_type(input: Input) -> IResult<Input, Type, ParserError> {
             ),
             Type::Tuple,
         ),
-        // User defined: identifier <generics?>
+        // User defined: identifier<generics?>
         map(
             tuple((
                 identifier,
@@ -185,6 +185,7 @@ pub fn parse_type(input: Input) -> IResult<Input, Type, ParserError> {
         ),
     ))(input)
 }
+
 
 // --- Literals ---
 pub fn parse_literal(input: Input) -> IResult<Input, Expr, ParserError> {
@@ -334,59 +335,111 @@ fn parse_block(input: Input) -> IResult<Input, Expr, ParserError> {
 
 
 fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
-    let (rest, ty) = parse_type(input)?;
+    // Parse a path: identifier<generics>? (:: identifier<generics>?)*
+    // Then determine what it is based on what follows:
+    // - :: method ( ... )  -> Static method call on preceding type
+    // - { ... }            -> Struct/Enum init
+    // - other              -> Error (not a valid path-based atom)
     
-    if let Ok((rest2, _)) = expect_token(Token::DoubleColon)(rest) {
-        let (rest3, method) = identifier(rest2)?;
-        
-        if let Ok((rest4, _)) = expect_token(Token::LBrace)(rest3) {
-            // Enum Init: Type :: Variant { ... }
-            if let Type::UserDefined(name, _generics) = ty {
-                 let (rest5, fields) = separated_list0(
-                    expect_token(Token::Comma),
-                    map(
-                        tuple((identifier, expect_token(Token::Colon), parse_expr)),
-                        |(id, _, e)| (id, e)
-                    )
-                )(rest4)?;
-                let (rest5, _) = opt(expect_token(Token::Comma))(rest5)?;
-                let (rest5, _) = expect_token(Token::RBrace)(rest5)?;
-                return Ok((rest5, Spanned::new(ExprKind::EnumInit { enum_name: name, variant_name: method, fields }, crate::compiler::error::Span::default())));
-            } else {
-                 return Err(nom::Err::Error(ParserError { input: rest3, kind: ParseErrorKind::UnexpectedToken("Enum init requires UserDefined type".to_string()) }));
-            }
-        }
-        
-        // Static Call or Tuple Variant
-        let (rest4, args) = if let Ok((r, _)) = expect_token(Token::LParen)(rest3) {
-            let (r, args) = separated_list0(expect_token(Token::Comma), parse_expr)(r)?;
-            let (r, _) = expect_token(Token::RParen)(r)?;
-            (r, args)
-        } else {
-            (rest3, vec![])
-        };
-        Ok((rest4, Spanned::new(ExprKind::StaticMethodCall(ty, method, args), crate::compiler::error::Span::default())))
-
-    } else if let Ok((rest2, _)) = expect_token(Token::LBrace)(rest) {
-        // Struct Init
-        if let Type::UserDefined(name, generics) = ty {
-             let (rest3, fields) = separated_list0(
-                expect_token(Token::Comma),
-                map(
-                    tuple((identifier, expect_token(Token::Colon), parse_expr)),
-                    |(id, _, e)| (id, e)
-                )
-            )(rest2)?;
-            let (rest3, _) = opt(expect_token(Token::Comma))(rest3)?;
-            let (rest4, _) = expect_token(Token::RBrace)(rest3)?;
-            Ok((rest4, Spanned::new(ExprKind::StructInit(name, generics, fields), crate::compiler::error::Span::default())))
-        } else {
-            Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Struct init requires UserDefined type".to_string()) }))
-        }
-    } else {
-        Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Not a path atom".to_string()) }))
+    // Parse first identifier
+    let (mut rest, first) = identifier(input)?;
+    let mut path_segments = vec![first.clone()];
+    let mut generics: Vec<Type> = vec![];
+    
+    // Check for generics after first identifier: Type<T, U>
+    if let Ok((rest2, _)) = expect_token(Token::Lt)(rest) {
+        // Parse generics
+        let (rest3, generic_args) = separated_list1(expect_token(Token::Comma), parse_type)(rest2)?;
+        let (rest4, _) = expect_token(Token::Gt)(rest3)?;
+        generics = generic_args;
+        rest = rest4;
     }
+    
+    // Collect :: identifier<generics>? segments
+    loop {
+        if let Ok((rest2, _)) = expect_token(Token::DoubleColon)(rest) {
+            if let Ok((rest3, seg)) = identifier(rest2) {
+                path_segments.push(seg);
+                rest = rest3;
+                // Check for generics after this segment
+                if let Ok((rest4, _)) = expect_token(Token::Lt)(rest) {
+                    if let Ok((rest5, generic_args)) = separated_list1(expect_token(Token::Comma), parse_type)(rest4) {
+                        if let Ok((rest6, _)) = expect_token(Token::Gt)(rest5) {
+                            generics = generic_args;
+                            rest = rest6;
+                        }
+                    }
+                }
+            } else {
+                // :: but no identifier - syntax error or end of path
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    
+    // Now path_segments contains the full path
+    // Determine the pattern:
+    // - If followed by ( args ) and path has >= 2 segments:
+    //   -> Last is method, rest is type path: mod::Type::method()
+    // - If followed by ( args ) and path has 1 segment with generics:
+    //   -> This is Type<T>::method() form, but we need to handle it
+    // - If followed by { ... } and path has >= 1 segment:
+    //   -> Struct/Enum init
+    
+    if let Ok((rest2, _)) = expect_token(Token::LParen)(rest) {
+        // Function/Static method call
+        let (rest3, args) = separated_list0(expect_token(Token::Comma), parse_expr)(rest2)?;
+        let (rest4, _) = expect_token(Token::RParen)(rest3)?;
+        
+        if path_segments.len() >= 2 {
+            // Static method call: Type::method() or mod::Type::method()
+            let method = path_segments.pop().unwrap();
+            let type_name = path_segments.join("::");
+            let ty = Type::UserDefined(type_name, generics);
+            return Ok((rest4, Spanned::new(ExprKind::StaticMethodCall(ty, method, args), crate::compiler::error::Span::default())));
+        } else {
+            // Single identifier + () - not a path-based atom, it's a fn call
+            // This should be handled by parse_variable + postfix
+            return Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Not a path atom (single fn call)".to_string()) }));
+        }
+    }
+    
+    if let Ok((rest2, _)) = expect_token(Token::LBrace)(rest) {
+        // Struct or Enum init
+        let type_name = path_segments.join("::");
+        
+        let (rest3, fields) = separated_list0(
+            expect_token(Token::Comma),
+            map(
+                tuple((identifier, expect_token(Token::Colon), parse_expr)),
+                |(id, _, e)| (id, e)
+            )
+        )(rest2)?;
+        let (rest3, _) = opt(expect_token(Token::Comma))(rest3)?;
+        let (rest4, _) = expect_token(Token::RBrace)(rest3)?;
+        return Ok((rest4, Spanned::new(ExprKind::StructInit(type_name, generics, fields), crate::compiler::error::Span::default())));
+    }
+    
+    // Check for :: followed by identifier (but no () after) - this is an enum variant
+    // Pattern: Type::Variant (tuple variant with no args) or Type::Variant { ... } (struct variant)
+    // Actually we already consumed all :: segments above.
+    // If we get here with multiple segments and no () or {}, it might be an enum tuple variant without args
+    if path_segments.len() >= 2 {
+        // This could be Type::Variant with no args (unit or tuple-variant with 0 args)
+        let variant = path_segments.pop().unwrap();
+        let type_name = path_segments.join("::");
+        let ty = Type::UserDefined(type_name, generics);
+        // Emit as static method call with empty args (for tuple variant)
+        // Note: This may need adjustment based on how enum variants are handled elsewhere
+        return Ok((rest, Spanned::new(ExprKind::StaticMethodCall(ty, variant, vec![]), crate::compiler::error::Span::default())));
+    }
+    
+    // Single identifier without () or {} - not a path-based atom
+    Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Not a path atom".to_string()) }))
 }
+
 
 fn parse_variable(input: Input) -> IResult<Input, Expr, ParserError> {
     let (input, name) = identifier(input)?;

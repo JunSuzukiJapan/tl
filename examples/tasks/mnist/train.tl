@@ -1,18 +1,15 @@
 // MNIST Training
 mod mnist_common;
 
-use mnist_common::Linear;
-use mnist_common::load_mnist_images;
-use mnist_common::load_mnist_labels;
-
 fn main() {
     print("=== MNIST Training ===");
     Param::set_device(Device::Auto);
     
-    let train_x = load_mnist_images("examples/tasks/mnist/data/train-images-idx3-ubyte");
-    let train_y = load_mnist_labels("examples/tasks/mnist/data/train-labels-idx1-ubyte");
+    let train_x = mnist_common::load_mnist_images("examples/tasks/mnist/data/train-images-idx3-ubyte");
+    let train_y = mnist_common::load_mnist_labels("examples/tasks/mnist/data/train-labels-idx1-ubyte");
     
-    let mut model = Linear::new(784, 10);
+    // Use fully qualified name
+    let mut model = mnist_common::Linear::new(784, 10);
     // let lr = 0.1;
     let lr = 0.05; // Slightly reduced for stability with more updates
     let batch_size = 64;

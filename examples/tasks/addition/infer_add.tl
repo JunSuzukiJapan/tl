@@ -1,6 +1,8 @@
 // 2桁足し算タスク推論 - 組み込み関数を最小限に抑えた実装
 // 自己回帰生成による推論
 
+struct File {}
+
 // ---------------
 // Helper Functions
 // ---------------
@@ -158,13 +160,22 @@ impl GPT {
 // ---------------
 
 fn main() {
+    let model_path = "model_add.safetensors";
+    
+    // モデルファイルの存在確認
+    if !File::exists(model_path) {
+        println("Error: Model file not found: {}", model_path);
+        println("Please run train_add.tl first to create the model.");
+        return;
+    }
+    
     let vocab_size = 13;
     let d_model = 128; 
     
     print("Model Inference - Autoregressive (Explicit Implementation)");
     let model = GPT::new(vocab_size, d_model);
     
-    Param::load_all("model_add.safetensors");
+    Param::load_all(model_path);
     print("Parameters Loaded.");
     
     // Test 12 + 34 = 46

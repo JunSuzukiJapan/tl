@@ -55,6 +55,7 @@ SKIP_FILES = {
     "download.tl",
     "infer.tl",  # MNIST
     "train.tl",  # MNIST
+    "infer_add.tl",  # 学習済みモデルが必要
     # 非常に長時間実行されるファイル
     "train_heavy.tl",
     "infer_heavy.tl",
