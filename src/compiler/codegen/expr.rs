@@ -2658,11 +2658,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     } else {
                         // R-Value (Temporary in this scope):
                         // We MUST prevent exit_scope from freeing it.
-                        // Since we can't identify it by name to remove, we call runtime UNREGISTER.
-                        // Runtime unregister stops `tl_tensor_free` from working?
-                        // If `tl_tensor_free` checks if ptr is valid?
-                        // If so, `unregister` works.
-
+                        // FIX: Mark the temporary as CLEANUP_NONE in the compiler's temporaries list.
+                        // This prevents emit_cleanup_vars_in_scope from calling emit_recursive_free.
+                        self.mark_temp_no_cleanup(then_final_val);
+                        
+                        // Also call runtime UNREGISTER to remove from memory manager.
                         if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
                             let ptr = then_final_val.into_pointer_value();
                             let cast_ptr = self
@@ -2741,6 +2741,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if is_lvalue {
                         else_final_val = self.emit_deep_clone(else_final_val, &else_result.1)?;
                     } else {
+                        // FIX: Mark the temporary as CLEANUP_NONE in the compiler's temporaries list.
+                        self.mark_temp_no_cleanup(else_final_val);
+                        
                         if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
                             let ptr = else_final_val.into_pointer_value();
                             let cast_ptr = self
@@ -5551,7 +5554,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => return Err("Invalid return from Map::get".into()),
                     };
                     if method == "get_quantized" {
-                        return Ok((res, Type::I64));
+                        // Return Tensor type so that ownership is tracked correctly
+                        return Ok((res, Type::Tensor(Box::new(Type::I8), 2)));
                     }
                     let _ret_ty = Type::Tensor(Box::new(Type::F32), 0);
                     let _ret_ty = Type::Tensor(Box::new(Type::F32), 0);

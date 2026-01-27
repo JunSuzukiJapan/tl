@@ -39,7 +39,7 @@ pub extern "C" fn tl_register_tensor(name_ptr: *const c_char, tensor: *mut Opaqu
         };
 
         let t_opaque = &*tensor;
-        let t_candle = &t_opaque.0;
+
 
         // Convert Candle tensor to TensorValue (Vec<f64>)
         // Flatten and to_vec1

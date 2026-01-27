@@ -126,12 +126,6 @@ pub extern "C" fn tl_gguf_load(path: *const c_char) -> *mut OpaqueTensorMap {
         let map_ptr = Box::into_raw(Box::new(OpaqueTensorMap(std::collections::HashMap::new())));
         {
             let map = &mut *map_ptr;
-
-            // Print keys to debug
-            // for tensor_name in content.tensor_infos.keys() {
-            //    println!("GGUF Tensor: {}", tensor_name);
-            // }
-
             let device = get_device(); // Device used for QTensor loading
             for (tensor_name, qtensor_info) in content.tensor_infos.iter() {
                 let qtensor = match qtensor_info
@@ -152,7 +146,6 @@ pub extern "C" fn tl_gguf_load(path: *const c_char) -> *mut OpaqueTensorMap {
                 );
             }
         }
-
         map_ptr // Return pointer directly
     }
 }
@@ -816,8 +809,8 @@ mod tests {
         let k_tensor = Tensor::zeros((1, 4, 10, 64), DType::F32, &Device::Cpu).unwrap();
         let v_tensor = Tensor::zeros((1, 4, 10, 64), DType::F32, &Device::Cpu).unwrap();
 
-        let k_opaque = Box::into_raw(Box::new(OpaqueTensor(k_tensor, None, None)));
-        let v_opaque = Box::into_raw(Box::new(OpaqueTensor(v_tensor, None, None)));
+        let k_opaque = Box::into_raw(Box::new(OpaqueTensor(crate::TensorVariant::Standard(k_tensor, None, None))));
+        let v_opaque = Box::into_raw(Box::new(OpaqueTensor(crate::TensorVariant::Standard(v_tensor, None, None))));
 
         // Update
         tl_kv_cache_update(id, 0, k_opaque, v_opaque);
