@@ -7,7 +7,7 @@ struct File {}
 // Dummy struct to act as namespace for Tensor operations
 // struct Tensor {}
 
-struct Linear { w: i64 }
+struct Linear { w: Tensor<i8, 2> }
 struct RMSNorm { w: Tensor<f32, 1>, e: f32 }
 struct MLP { g: Linear, u: Linear, d: Linear }
 struct Attention { q: Linear, k: Linear, v: Linear, o: Linear }

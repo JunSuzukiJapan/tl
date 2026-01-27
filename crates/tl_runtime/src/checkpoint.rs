@@ -53,7 +53,7 @@ impl CustomOp1 for TlCheckpointOp {
         }
 
         let out_opaque = unsafe { &*out_ptr };
-        let out_tensor = &out_opaque.0;
+        let out_tensor = out_opaque.as_tensor().map_err(|e| candle_core::Error::Msg(e.into()))?;
         let out_cpu = out_tensor.to_device(&candle_core::Device::Cpu)?;
         let (storage, out_layout) = out_cpu.storage_and_layout();
 
@@ -106,7 +106,7 @@ impl CustomOp1 for TlCheckpointOp {
         }
 
         let out_opaque = unsafe { &*out_ptr };
-        let out_tensor = &out_opaque.0;
+        let out_tensor = out_opaque.as_tensor().map_err(|e| candle_core::Error::Msg(e.into()))?;
 
         let out_grad = out_grad.to_device(out_tensor.device())?;
 
@@ -131,7 +131,13 @@ pub extern "C" fn tl_checkpoint(
     input: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
     unsafe {
-        let input_tensor = &(*input).0;
+        let input_tensor = match (*input).as_tensor() {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("Checkpoint input error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
         let op = TlCheckpointOp {
             ctx: ContextPtr(ctx),
             func: FunctionPtr(func),

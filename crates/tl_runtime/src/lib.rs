@@ -52,6 +52,43 @@ fn mem_trace_enabled() -> bool {
     })
 }
 
+// Helper macro for C-ABI functions to unwrap tensor or return null
+macro_rules! unwrap_tensor_ptr {
+    ($ptr:expr) => {
+        match unsafe { (*$ptr).as_tensor() } {
+            Ok(t) => t,
+            Err(e) => {
+                crate::error::set_last_error(e, crate::error::RuntimeErrorCode::TypeMismatch);
+                return std::ptr::null_mut();
+            }
+        }
+    }
+}
+
+macro_rules! unwrap_tensor_void {
+    ($ptr:expr) => {
+        match unsafe { (*$ptr).as_tensor() } {
+            Ok(t) => t,
+            Err(e) => {
+                crate::error::set_last_error(e, crate::error::RuntimeErrorCode::TypeMismatch);
+                return;
+            }
+        }
+    }
+}
+
+macro_rules! unwrap_tensor_val {
+    ($ptr:expr, $ret:expr) => {
+        match unsafe { (*$ptr).as_tensor() } {
+            Ok(t) => t,
+            Err(e) => {
+                crate::error::set_last_error(e, crate::error::RuntimeErrorCode::TypeMismatch);
+                return $ret;
+            }
+        }
+    }
+}
+
 #[derive(Copy, Clone)]
 pub(crate) enum FreeOutcome {
     ArenaDrop,
@@ -71,45 +108,23 @@ fn dtype_size_bytes(dtype: candle_core::DType) -> usize {
     }
 }
 
-#[track_caller]
-fn record_tensor_alloc(ctx: &str, ptr: *mut OpaqueTensor, t: &Tensor, pooled: bool) {
-    if !mem_log_enabled() {
-        return;
-    }
-    let elem_count = t.elem_count();
-    let dtype = t.dtype();
-    let bytes = elem_count.saturating_mul(dtype_size_bytes(dtype));
-    let shape = t.dims().iter().map(|d| d.to_string()).collect::<Vec<_>>().join("x");
-    let device = match t.device() {
-        candle_core::Device::Cpu => "cpu",
-        candle_core::Device::Cuda(_) => "cuda",
-        candle_core::Device::Metal(_) => "metal",
-    };
-    let loc = std::panic::Location::caller();
-    let meta = memory_manager::AllocationMeta {
+
+fn record_tensor_alloc(ctx: &str, ptr: *mut OpaqueTensor, tensor: &Tensor, pooled: bool) {
+    use crate::memory_manager::AllocationMeta; // Added this use statement to bring AllocationMeta into scope
+    let meta = AllocationMeta {
         ctx: ctx.to_string(),
-        bytes,
-        dtype: format!("{:?}", dtype),
-        elems: elem_count,
-        shape: shape.clone(),
-        device: device.to_string(),
-        loc_file: loc.file().to_string(),
-        loc_line: loc.line(),
+        bytes: tensor.elem_count() * tensor.dtype().size_in_bytes(),
+        dtype: format!("{:?}", tensor.dtype()),
+        elems: tensor.elem_count(),
+        shape: format!("{:?}", tensor.shape()),
+        device: format!("{:?}", tensor.device()),
+        loc_file: "unknown".to_string(),
+        loc_line: 0,
         pooled,
     };
     memory_manager::register_tensor_meta_global(ptr, meta);
     if !pooled {
-        eprintln!(
-            "[TL_MEM] alloc_non_pool ctx={} bytes={} dtype={:?} elems={} shape=[{}] device={} loc={}:{}",
-            ctx,
-            bytes,
-            dtype,
-            elem_count,
-            shape,
-            device,
-            loc.file(),
-            loc.line()
-        );
+        // ... Log if needed
     }
 }
 
@@ -123,11 +138,24 @@ lazy_static::lazy_static! {
 /// The Var is stored as Arc to allow sharing across clones while keeping the same variable alive
 /// The name is used to register the Var in the global// Opaque wrapper for Candle Tensor
 #[repr(C)]
-pub struct OpaqueTensor(
-    pub Tensor,
-    pub Option<Arc<candle_core::Var>>,
-    pub Option<String>,
-);
+// Enum to hold either Standard or Quantized tensor
+pub enum TensorVariant {
+    Standard(Tensor, Option<Arc<candle_core::Var>>, Option<String>),
+    Quantized(Arc<candle_core::quantized::QTensor>),
+}
+
+// Opaque wrapper for Candle Tensor
+#[repr(C)]
+pub struct OpaqueTensor(pub TensorVariant);
+
+impl OpaqueTensor {
+    pub fn as_tensor(&self) -> Result<&Tensor, String> {
+        match &self.0 {
+            TensorVariant::Standard(t, _, _) => Ok(t),
+            TensorVariant::Quantized(_) => Err("Operation not supported on Quantized Tensor".to_string()),
+        }
+    }
+}
 
 // Drop implementation removed as memory is managed by memory_manager::free explicitly.
 // OpaqueTensor pointers are raw pointers in C-ABI and should be freed via tl_mem_exit_scope.
@@ -146,7 +174,17 @@ fn handle_runtime_error_internal(
     line: u32,
     col: u32,
 ) {
-    let error_code = unsafe { std::mem::transmute(code) };
+    let error_code: crate::error::RuntimeErrorCode = unsafe { std::mem::transmute(code) };
+    
+    // Print to stderr immediately so we can see the crash reason
+    eprintln!("\n[Runtime Error] Code: {:?} ({})", error_code, code);
+    eprintln!("  Message: {}", msg);
+    if let Some(f) = &file {
+        eprintln!("  Location: {}:{}:{}", f, line, col);
+    } else {
+        eprintln!("  Location: unknown:{}:{}", line, col);
+    }
+    
     crate::error::LAST_ERROR.with(|e| {
         *e.borrow_mut() = Some(crate::error::LastError {
             code: error_code,
@@ -235,6 +273,8 @@ fn return_ptr_or_null(
 // even if the tensor is returned and stored in a struct.
 // even if the tensor is returned and stored in a struct.
 #[track_caller]
+// Helper to create and register an OpaqueTensor from a Candle Tensor
+#[track_caller]
 pub(crate) fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
     let num_elements = t.elem_count();
     let dtype_id = dtype_to_id(t.dtype());
@@ -249,20 +289,31 @@ pub(crate) fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
 
     if let Some(ptr) = pooled_ptr {
         unsafe {
-            // Reuse the OpaqueTensor, replace inner Tensor without dropping old (already dropped) content
-            // (*ptr).0 = t; // This would drop the old content!
-            std::ptr::write(ptr, OpaqueTensor(t, None, None));
+            // Reuse the OpaqueTensor
+            std::ptr::write(ptr, OpaqueTensor(TensorVariant::Standard(t, None, None)));
         }
         memory_manager::register_tensor_global(ptr);
-        record_tensor_alloc("make_tensor", ptr, unsafe { &(*ptr).0 }, true);
+        let t_ref = unsafe { (*ptr).as_tensor().unwrap() };
+        record_tensor_alloc("make_tensor", ptr, t_ref, true);
         return ptr;
     }
 
     // No pooled tensor available, allocate new
-    let boxed = Box::new(OpaqueTensor(t, None, None));
+    let boxed = Box::new(OpaqueTensor(TensorVariant::Standard(t, None, None)));
     let ptr = Box::into_raw(boxed);
     memory_manager::register_tensor_global(ptr);
-    record_tensor_alloc("make_tensor", ptr, unsafe { &(*ptr).0 }, false);
+    let t_ref = unsafe { (*ptr).as_tensor().unwrap() };
+    record_tensor_alloc("make_tensor", ptr, t_ref, false);
+    ptr
+}
+
+#[track_caller]
+pub(crate) fn make_qtensor(qt: Arc<candle_core::quantized::QTensor>) -> *mut OpaqueTensor {
+    // Quantized tensors are not pooled currently (simplification)
+    let boxed = Box::new(OpaqueTensor(TensorVariant::Quantized(qt)));
+    let ptr = Box::into_raw(boxed);
+    memory_manager::register_tensor_global(ptr);
+    // record_alloc? Skip shape logging for qtensor for now
     ptr
 }
 
@@ -294,12 +345,14 @@ pub(crate) fn make_var(v: candle_core::Var) -> *mut OpaqueTensor {
     let t_ref = v.as_tensor().clone();
     let var_arc = Arc::new(v);
 
-    let boxed = Box::new(OpaqueTensor(t_ref, Some(var_arc), None));
+    let boxed = Box::new(OpaqueTensor(TensorVariant::Standard(t_ref, Some(var_arc), None)));
     let ptr = Box::into_raw(boxed);
 
     // NOTE: Caller is responsible for lifetime management.
     memory_manager::register_tensor_global(ptr);
-    record_tensor_alloc("make_var", ptr, unsafe { &(*ptr).0 }, false);
+    if let Ok(t) = unsafe { (*ptr).as_tensor() } {
+        record_tensor_alloc("make_var", ptr, t, false);
+    }
     ptr
 }
 
@@ -403,7 +456,7 @@ pub extern "C" fn tl_tensor_argmax(
             );
             return std::ptr::null_mut();
         }
-        let ten = &(*t).0;
+        let ten = unwrap_tensor_ptr!(t);
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let res = ten
                 .argmax_keepdim(dim as usize)
@@ -430,7 +483,7 @@ pub extern "C" fn tl_tensor_argmax(
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_item_i64(t: *mut OpaqueTensor) -> i64 {
     unsafe {
-        let ten = &(*t).0;
+        let ten = unwrap_tensor_val!(t, 0);
         // Try to get as scalar i64 directly
         match ten.to_scalar::<i64>() {
             Ok(v) => v,
@@ -615,7 +668,10 @@ pub extern "C" fn tl_varbuilder_get_from_tensor(
             let name_str = CStr::from_ptr(name_ptr).to_string_lossy().into_owned();
 
             // Extract shape from tensor
-            let t = &(*shape_tensor).0;
+            let t = match unsafe { (*shape_tensor).as_tensor() } {
+                Ok(t) => t,
+                Err(e) => return Err(RuntimeError::TypeMismatch(e.into())),
+            };
             let shape_data = t
                 .flatten_all()
                 .map_err(|e| RuntimeError::InternalError(e.to_string()))?
@@ -634,6 +690,10 @@ pub extern "C" fn tl_varbuilder_get_from_tensor(
     }
 }
 
+
+
+
+// Convert Result to *mut OpaqueTensor or null (with error logging)
 fn tl_varbuilder_get_common(
     name_str: String,
     shape_slice: &[usize],
@@ -667,7 +727,7 @@ fn tl_varbuilder_get_common(
 
     let tensor = var.as_tensor().clone();
     let var_arc = Arc::new(var);
-    let boxed = Box::new(OpaqueTensor(tensor, Some(var_arc), Some(name_str)));
+    let boxed = Box::new(OpaqueTensor(TensorVariant::Standard(tensor, Some(var_arc), Some(name_str))));
 
     let ptr = if arena::tl_arena_is_active() {
         let size = std::mem::size_of::<OpaqueTensor>() as i64;
@@ -685,7 +745,9 @@ fn tl_varbuilder_get_common(
     };
 
     memory_manager::register_tensor_global(ptr);
-    record_tensor_alloc("varbuilder_get", ptr, unsafe { &(*ptr).0 }, false);
+    if let Ok(t) = unsafe { (*ptr).as_tensor() } {
+        record_tensor_alloc("varbuilder_get", ptr, t, false);
+    }
     Ok(ptr)
 }
 
@@ -962,8 +1024,8 @@ macro_rules! impl_cmp_op {
         pub extern "C" fn $name(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
             use crate::error::RuntimeError;
             unsafe {
-                let t_a = &(*a).0;
-                let t_b = &(*b).0;
+                let t_a = unwrap_tensor_ptr!(a);
+                let t_b = unwrap_tensor_ptr!(b);
                 let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     // Candle binary ops support broadcasting
                     let result = t_a
@@ -991,8 +1053,8 @@ impl_cmp_op!(tl_tensor_le, le);
 pub extern "C" fn tl_tensor_rem(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
-        let t_a = &(*a).0;
-        let t_b = &(*b).0;
+        let t_a = unwrap_tensor_ptr!(a);
+        let t_b = unwrap_tensor_ptr!(b);
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
              let div = (t_a / t_b).map_err(|e| RuntimeError::InternalError(e.to_string()))?;
              let floor = div.floor().map_err(|e| RuntimeError::InternalError(e.to_string()))?;
@@ -1009,8 +1071,8 @@ pub extern "C" fn tl_tensor_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
 
     use crate::error::RuntimeError;
     unsafe {
-        let t_a = &(*a).0;
-        let t_b = &(*b).0;
+        let t_a = unwrap_tensor_ptr!(a);
+        let t_b = unwrap_tensor_ptr!(b);
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let result = t_a
                 .broadcast_add(t_b)
@@ -1026,8 +1088,8 @@ pub extern "C" fn tl_tensor_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
 pub extern "C" fn tl_tensor_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
-        let t_a = &(*a).0;
-        let t_b = &(*b).0;
+        let t_a = unwrap_tensor_ptr!(a);
+        let t_b = unwrap_tensor_ptr!(b);
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let result = t_a
                 .broadcast_sub(t_b)
@@ -1043,8 +1105,8 @@ pub extern "C" fn tl_tensor_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
 pub extern "C" fn tl_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
-        let t_a = &(*a).0;
-        let t_b = &(*b).0;
+        let t_a = unwrap_tensor_ptr!(a);
+        let t_b = unwrap_tensor_ptr!(b);
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let result = t_a
                 .broadcast_mul(t_b)
@@ -1060,7 +1122,7 @@ pub extern "C" fn tl_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
 pub extern "C" fn tl_tensor_softmax(tensor: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
-        let t = &(*tensor).0;
+        let t = unwrap_tensor_ptr!(tensor);
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let d = dim as usize;
             let result = candle_nn::ops::softmax(t, d)
@@ -1088,17 +1150,17 @@ pub extern "C" fn tl_tensor_cross_entropy(
             );
             return std::ptr::null_mut();
         }
-        let l = &(*logits).0;
-        let t = &(*targets).0;
+        let t_logits = unwrap_tensor_ptr!(logits);
+        let t_targets = unwrap_tensor_ptr!(targets);
 
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             // Expect targets to be F32 (0.0, 1.0, 2.0...) -> Cast to U32 for indices
-            let t_u32 = t
+            let t_u32 = t_targets
                 .to_dtype(candle_core::DType::U32)
                 .map_err(|e| RuntimeError::InternalError(e.to_string()))?;
 
             // Log Softmax on last dim (-1)
-            let log_sm = candle_nn::ops::log_softmax(l, candle_core::D::Minus1)
+            let log_sm = candle_nn::ops::log_softmax(t_logits, candle_core::D::Minus1)
                 .map_err(|e| RuntimeError::InternalError(e.to_string()))?;
 
             // NLL
@@ -1125,7 +1187,7 @@ pub extern "C" fn tl_tensor_detach(t: *mut OpaqueTensor, req_grad: bool) -> *mut
             );
             return std::ptr::null_mut();
         }
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_ptr!(t);
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let detached = tensor.detach();
             let ptr = if req_grad {
@@ -1145,15 +1207,15 @@ pub extern "C" fn tl_tensor_detach(t: *mut OpaqueTensor, req_grad: bool) -> *mut
 pub extern "C" fn tl_tensor_enable_grad(t: *mut OpaqueTensor) {
     unsafe {
         let tensor_wrapper = &mut *t;
-        if tensor_wrapper.1.is_none() {
-            // Determine if we can create a Var.
-            // Var::from_tensor requires contiguous layout usually, which wrapper.0 likely is.
-            let v = candle_core::Var::from_tensor(&tensor_wrapper.0).unwrap();
-            let arc = Arc::new(v);
-            tensor_wrapper.1 = Some(arc.clone());
-            // Update the inner tensor to match the Var's tensor
-            tensor_wrapper.0 = arc.as_tensor().clone();
-        }
+        let new_variant = match &tensor_wrapper.0 {
+            TensorVariant::Standard(t, None, name) => {
+                 let v = candle_core::Var::from_tensor(t).unwrap();
+                 let arc = Arc::new(v);
+                 TensorVariant::Standard(arc.as_tensor().clone(), Some(arc), name.clone())
+            }
+            _ => return, 
+        };
+        tensor_wrapper.0 = new_variant;
     }
 }
 
@@ -1164,7 +1226,7 @@ pub extern "C" fn tl_tensor_print(t: *const OpaqueTensor) {
         return;
     }
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_void!(t);
         // Logic Integration: Check if tensor is i64 and contains entities
         if tensor.dtype() == candle_core::DType::I64 {
             // Import helper from knowledge_base (assumed linked)
@@ -1205,7 +1267,7 @@ pub extern "C" fn tl_tensor_display(t: *const OpaqueTensor) {
     if t.is_null() {
         print!("Tensor(NULL)");
     } else {
-        let tensor = unsafe { &(*t).0 };
+        let tensor = unwrap_tensor_void!(t);
         // Logic Integration: Check if tensor is i64 and contains entities
         if tensor.dtype() == candle_core::DType::I64 {
             unsafe extern "C" {
@@ -1245,7 +1307,7 @@ pub extern "C" fn tl_tensor_device_id(t: *const OpaqueTensor) -> i64 {
         return -1;
     }
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_val!(t, 0);
         device_to_id(tensor.device()) as i64
     }
 }
@@ -1282,10 +1344,15 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) -> FreeOutcome {
         }
 
         // Try to release to pool (heap-allocated tensors only)
-        let tensor = &(*t).0;
-        let num_elements = tensor.elem_count();
-        let dtype_id = dtype_to_id(tensor.dtype());
-        let device_id = device_to_id(tensor.device());
+        // Check if Standard
+        let (num_elements, dtype_id, device_id) = match (*t).as_tensor() {
+             Ok(tensor) => (tensor.elem_count(), dtype_to_id(tensor.dtype()), device_to_id(tensor.device())),
+             Err(_) => {
+                // Quantized tensors are currently not pooled. Just drop.
+                 let _ = Box::from_raw(t);
+                 return FreeOutcome::Freed;
+             }
+        };
 
         if let Ok(mut pool) = memory_manager::TENSOR_POOL.lock() {
             match pool.release(t, num_elements, dtype_id, device_id) {
@@ -1299,7 +1366,6 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) -> FreeOutcome {
         }
 
         // Pool is full or lock failed, actually free
-        // println!("DEBUG: Actually free tensor {:p}", t);
         let _ = Box::from_raw(t);
         FreeOutcome::Freed
     }
@@ -1338,31 +1404,34 @@ pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
             );
             return std::ptr::null_mut();
         }
-        let tensor = &(*t).0;
-        let var_ref = &(*t).1;
 
-        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let cloned = tensor.clone();
+        // Clone Variant
+        let variant = match &(*t).0 {
+            TensorVariant::Standard(tensor, var, name) => {
+                 let cloned = tensor.clone();
+                 let cloned_var = var.as_ref().map(Arc::clone);
+                 let cloned_name = name.clone();
+                 TensorVariant::Standard(cloned, cloned_var, cloned_name)
+            },
+            TensorVariant::Quantized(qt) => TensorVariant::Quantized(qt.clone()),
+        };
 
-            // Clone the Arc<Var> if it exists to maintain gradient tracking
-            let cloned_var = var_ref.as_ref().map(Arc::clone);
-            let boxed = Box::new(OpaqueTensor(cloned, cloned_var, None));
-
-            let ptr = Box::into_raw(boxed);
-            memory_manager::register_tensor_global(ptr);
-            record_tensor_alloc("tensor_clone", ptr, &(*ptr).0, false);
-
-            Ok(ptr)
-        }));
-
-        return_ptr_or_null(res)
+        let boxed = Box::new(OpaqueTensor(variant));
+        let ptr = Box::into_raw(boxed);
+        memory_manager::register_tensor_global(ptr);
+        
+        if let Ok(t_ref) = (*ptr).as_tensor() {
+             record_tensor_alloc("tensor_clone", ptr, t_ref, false);
+        }
+        
+        return ptr;
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_neg(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_ptr!(t);
         let result = tensor.neg().unwrap();
         make_tensor(result)
     }
@@ -1371,7 +1440,7 @@ pub extern "C" fn tl_tensor_neg(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_len(t: *mut OpaqueTensor) -> i64 {
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_val!(t, 0);
         // Return size of the first dimension, or total elements?
         // For 1D loop, dims[0] is appropriate.
         if tensor.rank() > 0 {
@@ -1434,7 +1503,7 @@ pub extern "C" fn tl_tensor_from_vec_u8(
             t_cpu
         };
 
-        let tensor_with_grad = OpaqueTensor(tensor, None, None);
+        let tensor_with_grad = OpaqueTensor(TensorVariant::Standard(tensor, None, None));
 
         Box::into_raw(Box::new(tensor_with_grad))
     }
@@ -1469,7 +1538,7 @@ pub extern "C" fn tl_tensor_from_u8_labels(
             t_cpu
         };
 
-        let tensor_with_grad = OpaqueTensor(tensor, None, None);
+        let tensor_with_grad = OpaqueTensor(TensorVariant::Standard(tensor, None, None));
 
         Box::into_raw(Box::new(tensor_with_grad))
     }
@@ -1482,7 +1551,7 @@ pub extern "C" fn tl_tensor_get(t: *mut OpaqueTensor, idx: i64) -> c_float {
             println!("FATAL: tl_tensor_get received NULL pointer");
             return 0.0;
         }
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_val!(t, 0.0);
         let i = idx as usize;
 
         // Generic scalar extraction
@@ -1512,7 +1581,7 @@ pub extern "C" fn tl_tensor_set_f32_md(
     val: c_float,
 ) -> *mut OpaqueTensor {
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_ptr!(t);
         let idxs = slice::from_raw_parts(indices, rank);
         let idxs_usize: Vec<usize> = idxs.iter().map(|&x| x as usize).collect();
 
@@ -1541,7 +1610,7 @@ pub extern "C" fn tl_tensor_set_f32_md(
 
         let new_tensor = Tensor::from_vec(data, tensor.shape(), tensor.device()).unwrap();
         // Mutate the existing OpaqueTensor in-place
-        (*t).0 = new_tensor;
+(*t).0 = TensorVariant::Standard(new_tensor, None, None);
         // Return original pointer
         t
     }
@@ -1550,7 +1619,7 @@ pub extern "C" fn tl_tensor_set_f32_md(
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_slice(t: *mut OpaqueTensor, start: i64, len: i64) -> *mut OpaqueTensor {
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_ptr!(t);
         // Slice along first dimension
         let result = tensor.narrow(0, start as usize, len as usize).unwrap();
         make_tensor(result)
@@ -2165,7 +2234,7 @@ pub extern "C" fn tl_tensor_to_device(
         _ => return tensor,
     };
 
-    let t = unsafe { &(*tensor).0 };
+    let t = unwrap_tensor_ptr!(tensor);
     match t.to_device(&target_device) {
         Ok(new_t) => make_tensor(new_t),
         Err(_e) => {
@@ -2210,7 +2279,7 @@ pub fn force_link() {
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_dim(t: *mut OpaqueTensor, dim_idx: usize) -> i64 {
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_val!(t, 0);
         if dim_idx >= tensor.rank() {
             0
         } else {
@@ -2226,7 +2295,7 @@ pub extern "C" fn tl_tensor_get_f32_md(
     rank: usize,
 ) -> c_float {
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_val!(t, 0.0);
         let idxs = slice::from_raw_parts(indices, rank);
         let idxs_usize: Vec<usize> = idxs.iter().map(|&x| x as usize).collect();
 
@@ -2260,7 +2329,7 @@ pub extern "C" fn tl_tensor_get_i64_md(
     rank: usize,
 ) -> i64 {
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_val!(t, 0);
         let idxs = slice::from_raw_parts(indices, rank);
         let idxs_usize: Vec<usize> = idxs.iter().map(|&x| x as usize).collect();
 
@@ -2298,7 +2367,7 @@ pub extern "C" fn tl_tensor_transpose(
         std::process::abort();
     }
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_ptr!(t);
         let result = tensor.transpose(dim0, dim1).unwrap();
         let ptr = make_tensor(result);
         ptr
@@ -2314,7 +2383,7 @@ pub extern "C" fn tl_tensor_backward(t: *mut OpaqueTensor) {
             return;
         }
 
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_void!(t);
 
         // Perform backpropagation
 
@@ -2346,7 +2415,7 @@ pub extern "C" fn tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
         if t.is_null() {
             return std::ptr::null_mut();
         }
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_ptr!(t);
 
         // If this tensor has an associated Var, get the gradient from it directly
         // (Known limitation: Candle Var doesn't expose grad directly easily here)
@@ -2379,7 +2448,7 @@ pub extern "C" fn tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 pub extern "C" fn tl_tensor_sum(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_ptr!(t);
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let result = tensor
                 .sum_all()
@@ -2400,62 +2469,69 @@ pub extern "C" fn tl_tensor_sub_assign(ref_t: *mut OpaqueTensor, val_t: *mut Opa
     // we can update the content of OpaqueTensor to point to a new Tensor.
     // This effectively effectively mutates the variable from the perspective of the JIT.
     unsafe {
-        let t_dst = &(*ref_t).0;
-        let t_src = &(*val_t).0;
+        let (t_dst, name_opt) = match &(*ref_t).0 {
+            TensorVariant::Standard(t, _, n) => (t, n.clone()),
+            TensorVariant::Quantized(_) => { return; }
+        };
+        let t_src = unwrap_tensor_void!(val_t);
 
         // Compute new value: dst - src
-        // Using broadcast_sub to be safe
         let result = t_dst
             .broadcast_sub(t_src)
             .unwrap_or_else(|_| t_dst.sub(t_src).unwrap());
 
-        // Update the OpaqueTensor to hold the new tensor
-        // IMPORTANT: We must re-create a Var from the detached result to ensure
-        // that gradients are tracked for the NEXT iteration.
-        // If we just use result.detach(), it returns a tensor with no history and usually no requires_grad.
+        // Update the OpaqueTensor logic from original code
         let detached = result.detach();
         let var = candle_core::Var::from_tensor(&detached).unwrap();
         let t_var = var.as_tensor().clone();
         let var_arc = Arc::new(var);
 
-        (*ref_t).0 = t_var;
-        (*ref_t).1 = Some(var_arc);
+        (*ref_t).0 = TensorVariant::Standard(t_var, Some(var_arc), name_opt);
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_mul_assign(ref_t: *mut OpaqueTensor, val_t: *mut OpaqueTensor) {
     unsafe {
-        let t_dst = &(*ref_t).0;
-        let t_src = &(*val_t).0;
+        let (t_dst, var_opt, name_opt) = match &(*ref_t).0 {
+            TensorVariant::Standard(t, v, n) => (t, v.clone(), n.clone()),
+            TensorVariant::Quantized(_) => { return; }
+        };
+        let t_src = unwrap_tensor_void!(val_t);
         let result = t_dst
             .broadcast_mul(t_src)
             .unwrap_or_else(|_| t_dst.mul(t_src).unwrap());
-        (*ref_t).0 = result;
+        (*ref_t).0 = TensorVariant::Standard(result, var_opt, name_opt);
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_div_assign(ref_t: *mut OpaqueTensor, val_t: *mut OpaqueTensor) {
     unsafe {
-        let t_dst = &(*ref_t).0;
-        let t_src = &(*val_t).0;
+        let (t_dst, var_opt, name_opt) = match &(*ref_t).0 {
+             TensorVariant::Standard(t, v, n) => (t, v.clone(), n.clone()),
+             TensorVariant::Quantized(_) => { return; }
+        };
+        let t_src = unwrap_tensor_void!(val_t);
         let result = t_dst
             .broadcast_div(t_src)
             .unwrap_or_else(|_| t_dst.div(t_src).unwrap());
-        (*ref_t).0 = result;
+        (*ref_t).0 = TensorVariant::Standard(result, var_opt, name_opt);
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_add_assign(ref_t: *mut OpaqueTensor, val_t: *mut OpaqueTensor) {
     unsafe {
-        let t_dst = &(*ref_t).0;
-        let t_src = &(*val_t).0;
+        let (t_dst, var_opt, name_opt) = match &(*ref_t).0 {
+             TensorVariant::Standard(t, v, n) => (t, v.clone(), n.clone()),
+             TensorVariant::Quantized(_) => { return; }
+        };
+        let t_src = unwrap_tensor_void!(val_t);
         let result = t_dst
             .broadcast_add(t_src)
             .unwrap_or_else(|_| t_dst.add(t_src).unwrap());
-        (*ref_t).0 = result;
+        (*ref_t).0 = TensorVariant::Standard(result, var_opt, name_opt);
     }
 }
 
@@ -2463,50 +2539,59 @@ pub extern "C" fn tl_tensor_add_assign(ref_t: *mut OpaqueTensor, val_t: *mut Opa
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_mul_assign_scalar_f32(ref_t: *mut OpaqueTensor, scalar: f32) {
     unsafe {
-        let t_dst = &(*ref_t).0;
+        let (t_dst, var_opt, name_opt) = match &(*ref_t).0 {
+             TensorVariant::Standard(t, v, n) => (t, v.clone(), n.clone()),
+             TensorVariant::Quantized(_) => { return; }
+        };
         let result = (t_dst * scalar as f64).unwrap();
-        (*ref_t).0 = result;
+        (*ref_t).0 = TensorVariant::Standard(result, var_opt, name_opt);
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_div_assign_scalar_f32(ref_t: *mut OpaqueTensor, scalar: f32) {
     unsafe {
-        let t_dst = &(*ref_t).0;
+        let (t_dst, var_opt, name_opt) = match &(*ref_t).0 {
+             TensorVariant::Standard(t, v, n) => (t, v.clone(), n.clone()),
+             TensorVariant::Quantized(_) => { return; }
+        };
         let result = (t_dst / scalar as f64).unwrap();
-        (*ref_t).0 = result;
+        (*ref_t).0 = TensorVariant::Standard(result, var_opt, name_opt);
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_add_assign_scalar_f32(ref_t: *mut OpaqueTensor, scalar: f32) {
     unsafe {
-        let t_dst = &(*ref_t).0;
+        let (t_dst, var_opt, name_opt) = match &(*ref_t).0 {
+             TensorVariant::Standard(t, v, n) => (t, v.clone(), n.clone()),
+             TensorVariant::Quantized(_) => { return; }
+        };
         let result = (t_dst + scalar as f64).unwrap();
-        (*ref_t).0 = result;
+        (*ref_t).0 = TensorVariant::Standard(result, var_opt, name_opt);
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_sub_assign_scalar_f32(ref_t: *mut OpaqueTensor, scalar: f32) {
     unsafe {
-        let t_dst = &(*ref_t).0;
+        let t_dst = unwrap_tensor_void!(ref_t);
         let result = (t_dst - scalar as f64).unwrap();
-        (*ref_t).0 = result;
+(*ref_t).0 = TensorVariant::Standard(result, None, None);
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_mod_assign(ref_t: *mut OpaqueTensor, val_t: *mut OpaqueTensor) {
     unsafe {
-        let t_dst = &(*ref_t).0;
-        let t_src = &(*val_t).0;
+        let t_dst = unwrap_tensor_void!(ref_t);
+        let t_src = unwrap_tensor_void!(val_t);
         // Compute modulo: a % b = a - b * floor(a/b)
         let div_result = t_dst.broadcast_div(t_src).unwrap();
         let floor_result = div_result.floor().unwrap();
         let mul_back = floor_result.broadcast_mul(t_src).unwrap();
         let result = t_dst.broadcast_sub(&mul_back).unwrap();
-        (*ref_t).0 = result;
+(*ref_t).0 = TensorVariant::Standard(result, None, None);
     }
 }
 
@@ -2514,7 +2599,7 @@ pub extern "C" fn tl_tensor_mod_assign(ref_t: *mut OpaqueTensor, val_t: *mut Opa
 pub extern "C" fn tl_tensor_mod_assign_scalar_f32(ref_t: *mut OpaqueTensor, scalar: f32) {
     use crate::error::RuntimeError;
     unsafe {
-        let t_dst = &(*ref_t).0;
+        let t_dst = unwrap_tensor_void!(ref_t);
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
              // Ensure scalar matches tensor dtype to avoid mismatch errors
              let dtype = t_dst.dtype();
@@ -2529,7 +2614,7 @@ pub extern "C" fn tl_tensor_mod_assign_scalar_f32(ref_t: *mut OpaqueTensor, scal
              let mul_back = floor_result.broadcast_mul(&scalar_tensor).map_err(|e| RuntimeError::InternalError(e.to_string()))?;
              let result = t_dst.broadcast_sub(&mul_back).map_err(|e| RuntimeError::InternalError(e.to_string()))?;
              
-             (*ref_t).0 = result;
+(*ref_t).0 = TensorVariant::Standard(result, None, None);
              Ok::<(), RuntimeError>(())
         })).map_err(|_| {
              eprintln!("Panic in tl_tensor_mod_assign_scalar_f32");
@@ -2544,8 +2629,8 @@ pub extern "C" fn tl_tensor_reshape_new(
 ) -> *mut OpaqueTensor {
     unsafe {
 
-        let tensor = &(*t).0;
-        let shape_t = &(*shape_tensor).0;
+        let tensor = unwrap_tensor_ptr!(t);
+        let shape_t = unwrap_tensor_ptr!(shape_tensor);
 
         // Support both I64 and F32 shape tensors
         let new_shape: Vec<usize> = match shape_t.dtype() {
@@ -2587,7 +2672,7 @@ pub extern "C" fn tl_tensor_reshape_dims(
             crate::error::set_last_error(format!("Null pointer passed to reshape_dims: t={:?}, dims={:?}", t, dims_ptr), crate::error::RuntimeErrorCode::NullPointerError);
             return std::ptr::null_mut();
         }
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_ptr!(t);
         let dims_slice = std::slice::from_raw_parts(dims_ptr, num_dims as usize);
         let new_shape: Vec<usize> = dims_slice.iter().map(|&x| x as usize).collect();
 
@@ -2605,8 +2690,8 @@ pub extern "C" fn tl_tensor_reshape_dims(
 pub extern "C" fn tl_tensor_div(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
-        let t_a = &(*a).0;
-        let t_b = &(*b).0;
+        let t_a = unwrap_tensor_ptr!(a);
+        let t_b = unwrap_tensor_ptr!(b);
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let result = t_a
                 .broadcast_div(t_b)
@@ -2622,7 +2707,7 @@ pub extern "C" fn tl_tensor_div(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
 pub extern "C" fn tl_tensor_exp(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_ptr!(t);
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let result = tensor
                 .exp()
@@ -2647,8 +2732,8 @@ pub extern "C" fn tl_tensor_pow(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
             );
             return std::ptr::null_mut();
         }
-        let t_a = &(*a).0;
-        let t_b = &(*b).0;
+        let t_a = unwrap_tensor_ptr!(a);
+        let t_b = unwrap_tensor_ptr!(b);
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let result = t_a
                 .broadcast_pow(t_b)
@@ -2675,7 +2760,7 @@ pub extern "C" fn tl_tensor_pow_scalar(a: *mut OpaqueTensor, exp: c_float) -> *m
             );
             return std::ptr::null_mut();
         }
-        let t_a = &(*a).0;
+        let t_a = unwrap_tensor_ptr!(a);
         let exp_f64 = exp as f64;
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let result = t_a
@@ -2691,7 +2776,7 @@ pub extern "C" fn tl_tensor_pow_scalar(a: *mut OpaqueTensor, exp: c_float) -> *m
 pub extern "C" fn tl_tensor_log(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_ptr!(t);
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let result = tensor
                 .log()
@@ -2713,7 +2798,7 @@ pub extern "C" fn tl_tensor_narrow(
     start: i64,
     length: i64,
 ) -> *mut OpaqueTensor {
-    let tensor = unsafe { &(*t).0 };
+    let tensor = unwrap_tensor_ptr!(t);
     let result = tensor
         .narrow(dim as usize, start as usize, length as usize)
         .unwrap();
@@ -2729,7 +2814,7 @@ pub extern "C" fn tl_tensor_repeat_interleave(
     repeats: i64,
     dim: i64,
 ) -> *mut OpaqueTensor {
-    let tensor = unsafe { &(*t).0 };
+    let tensor = unwrap_tensor_ptr!(t);
     let dim = dim as usize;
     let repeats = repeats as usize;
 
@@ -2754,7 +2839,7 @@ pub extern "C" fn tl_tensor_repeat_interleave(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_sin(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     let res = t.sin().unwrap();
     make_tensor(res)
 }
@@ -2762,7 +2847,7 @@ pub extern "C" fn tl_tensor_sin(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_scale(t: *mut OpaqueTensor, scale: f32) -> *mut OpaqueTensor {
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_ptr!(t);
         let result = (tensor * (scale as f64)).unwrap();
         make_tensor(result)
     }
@@ -2770,21 +2855,21 @@ pub extern "C" fn tl_tensor_scale(t: *mut OpaqueTensor, scale: f32) -> *mut Opaq
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_cos(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     let res = t.cos().unwrap();
     make_tensor(res)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_relu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     let res = t.relu().unwrap();
     make_tensor(res)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_gelu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     let res = t.gelu().unwrap();
     make_tensor(res)
 }
@@ -2792,7 +2877,7 @@ pub extern "C" fn tl_tensor_gelu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 // Lower triangular mask (diagonal=0 includes the diagonal)
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_tril(t: *mut OpaqueTensor, diagonal: i32) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     let dims = t.dims();
     let len = dims.len();
     if len < 2 {
@@ -2843,7 +2928,7 @@ pub extern "C" fn tl_tensor_sum_dim(
 ) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     unsafe {
-        let t_ref = &(*t).0;
+        let t_ref = unwrap_tensor_ptr!(t);
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let result = if keep_dim {
                 t_ref
@@ -2866,8 +2951,8 @@ pub extern "C" fn tl_tensor_embedding(
     indices: *mut OpaqueTensor,
     weights: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
-    let indices_tensor = unsafe { &(*indices).0 };
-    let weights_tensor = unsafe { &(*weights).0 };
+    let indices_tensor = unwrap_tensor_ptr!(indices);
+    let weights_tensor = unwrap_tensor_ptr!(weights);
     let w_dims = weights_tensor.dims();
 
     if w_dims.len() != 2 {
@@ -2895,7 +2980,7 @@ pub extern "C" fn tl_tensor_embedding(
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_sqrt(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_ptr!(t);
         let result = tensor.sqrt().unwrap();
         make_tensor(result)
     }
@@ -2919,8 +3004,8 @@ pub extern "C" fn tl_tensor_matmul(
             return std::ptr::null_mut();
         }
 
-        let t_a = &(*a).0;
-        let t_b = &(*b).0;
+        let t_a = unwrap_tensor_ptr!(a);
+        let t_b = unwrap_tensor_ptr!(b);
 
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             // Make tensors contiguous before matmul to avoid striding issues
@@ -2945,7 +3030,7 @@ pub extern "C" fn tl_tensor_matmul(
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_contiguous(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_ptr!(t);
         // Candleのcontiguous()を使用してメモリレイアウトを連続化
         let result = tensor.contiguous().unwrap();
         make_tensor(result)
@@ -2957,7 +3042,7 @@ pub extern "C" fn tl_tensor_save(t: *mut OpaqueTensor, path: *const std::os::raw
     use std::ffi::CStr;
     unsafe {
         let path_str = CStr::from_ptr(path).to_str().unwrap();
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_void!(t);
         let mut tensors = std::collections::HashMap::new();
         tensors.insert("tensor".to_string(), tensor.clone());
         candle_core::safetensors::save(&tensors, path_str).unwrap();
@@ -3013,7 +3098,7 @@ pub extern "C" fn tl_tensor_map_insert(
         let c_str = std::ffi::CStr::from_ptr(name);
         let key = c_str.to_string_lossy().into_owned();
 
-        let t_ref = &(*tensor).0;
+        let t_ref = unwrap_tensor_void!(tensor);
         map_ref.insert(key, LoadedTensor::Standard(t_ref.clone()));
     }
 }
@@ -3085,8 +3170,8 @@ pub extern "C" fn tl_tensor_cat_i64(
     dim: i64,
 ) -> *mut OpaqueTensor {
     unsafe {
-        let t_a = &(*a).0;
-        let t_b = &(*b).0;
+        let t_a = unwrap_tensor_ptr!(a);
+        let t_b = unwrap_tensor_ptr!(b);
         let result = Tensor::cat(&[t_a, t_b], dim as usize).unwrap();
         make_tensor(result)
     }
@@ -3211,11 +3296,12 @@ pub extern "C" fn tl_add_parameter(name: *const std::os::raw::c_char, t: *mut Op
         let tensor_wrapper = &*t;
 
         // Check if OpaqueTensor already has a Var associated
-        let var = if let Some(ref v) = tensor_wrapper.1 {
-            v.as_ref().clone()
-        } else {
-            // If not, create a new Var from the inner tensor
-            candle_core::Var::from_tensor(&tensor_wrapper.0).unwrap()
+        let var = match &tensor_wrapper.0 {
+            TensorVariant::Standard(_, Some(v), _) => v.as_ref().clone(),
+            TensorVariant::Standard(t_inner, None, _) => {
+                 candle_core::Var::from_tensor(t_inner).unwrap()
+            },
+            _ => return,
         };
 
         let varmap = GLOBAL_VAR_MAP.lock().unwrap();
@@ -3232,16 +3318,22 @@ pub extern "C" fn tl_register_parameter(t: *mut OpaqueTensor) -> *mut OpaqueTens
     unsafe {
         let tensor_wrapper = &mut *t;
         // Ensure we have a Var
-        let var_arc = if let Some(ref v) = tensor_wrapper.1 {
-            v.clone()
-        } else {
-            // Create Var if not present
-            let v = candle_core::Var::from_tensor(&tensor_wrapper.0).unwrap();
-            let arc = Arc::new(v);
-            tensor_wrapper.1 = Some(arc.clone());
-            tensor_wrapper.0 = arc.as_tensor().clone();
-            arc
+        // Ensure we have a Var
+        let (var_arc, new_variant) = match &tensor_wrapper.0 {
+            TensorVariant::Standard(_, Some(v), _) => (v.clone(), None),
+            TensorVariant::Standard(t_inner, None, name) => {
+                 let v = candle_core::Var::from_tensor(t_inner).unwrap();
+                 let arc = Arc::new(v);
+                 let new_v = TensorVariant::Standard(arc.as_tensor().clone(), Some(arc.clone()), name.clone());
+                 (arc, Some(new_v))
+            },
+            _ => return std::ptr::null_mut(),
         };
+
+        if let Some(nv) = new_variant {
+            tensor_wrapper.0 = nv;
+        }
+
 
         // Generate Name
         let id = GLOBAL_PARAM_COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -3299,14 +3391,14 @@ pub extern "C" fn tl_free_tmp(ptr: *mut c_void) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_to_f32(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     let res = t.to_dtype(candle_core::DType::F32).unwrap();
     make_tensor(res)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_to_i64(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     let res = t.to_dtype(candle_core::DType::I64).unwrap();
     make_tensor(res)
 }
@@ -3314,7 +3406,7 @@ pub extern "C" fn tl_tensor_to_i64(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_get_shape(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
-        let t = &(*t).0;
+        let t = unwrap_tensor_ptr!(t);
         let dims: Vec<i64> = t.dims().iter().map(|&d| d as i64).collect();
         let device = get_device();
         let t_cpu =
@@ -3491,8 +3583,8 @@ pub extern "C" fn tl_tensor_map_get_quantized(
         if let Some(loaded) = map_ref.get(key_str) {
             match loaded {
                 LoadedTensor::Quantized(qt) => {
-                    let arc = qt.clone();
-                    Box::into_raw(Box::new(OpaqueQTensor(arc))) as usize
+                    let ptr = make_qtensor(qt.clone());
+                    ptr as usize
                 }
                 LoadedTensor::Standard(_) => {
                     crate::error::set_last_error(format!("Requested quantized tensor '{}', but found standard tensor.", key_str), crate::error::RuntimeErrorCode::TypeMismatch);
@@ -3506,24 +3598,46 @@ pub extern "C" fn tl_tensor_map_get_quantized(
     }
 }
 
+// tl_qtensor_free is deprecated/unused if using OpaqueTensor tracking, but kept for ABI compat just in case
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_qtensor_free(ptr: usize) {
     if ptr != 0 {
-        unsafe {
-            let _ = Box::from_raw(ptr as *mut OpaqueQTensor);
-        }
+       // Since we now return OpaqueTensor*, calling this with OpaqueTensor* is valid if we cast?
+       // But compiler now calls tl_tensor_free.
+       // So this might be unused.
+       unsafe {
+           let t = ptr as *mut OpaqueTensor;
+           let _ = Box::from_raw(t);
+       }
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_qtensor_matmul(input: *mut OpaqueTensor, weight: usize) -> *mut OpaqueTensor {
     unsafe {
-        let x_t = &(*input).0;
-        let weight_ptr = weight as *mut OpaqueQTensor;
-        let w_qt = &(*weight_ptr).0;
+        if input.is_null() { return std::ptr::null_mut(); }
+        // Input must be standard
+        let x_t = match (*input).as_tensor() {
+            Ok(t) => t,
+            Err(e) => {
+                crate::error::set_last_error(e, crate::error::RuntimeErrorCode::TypeMismatch);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let weight_ptr = weight as *mut OpaqueTensor;
+        if weight_ptr.is_null() { return std::ptr::null_mut(); }
+        
+        let w_qt_arc = match &(*weight_ptr).0 {
+            TensorVariant::Quantized(q) => q,
+            _ => {
+                crate::error::set_last_error("tl_qtensor_matmul expects Quantized tensor as weight".to_string(), crate::error::RuntimeErrorCode::TypeMismatch);
+                return std::ptr::null_mut();
+            }
+        };
 
         // QMatMul::from_arc expects Arc<QTensor>
-        let qmatmul = candle_core::quantized::QMatMul::from_arc(w_qt.clone()).unwrap();
+        let qmatmul = candle_core::quantized::QMatMul::from_arc(w_qt_arc.clone()).unwrap();
         let result = qmatmul.forward(x_t).unwrap();
         make_tensor(result)
     }
@@ -3553,7 +3667,7 @@ mod tests {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_tan(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     // tan(x) = sin(x) / cos(x)
     let sin = t.sin().unwrap();
     let cos = t.cos().unwrap();
@@ -3563,14 +3677,14 @@ pub extern "C" fn tl_tensor_tan(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_abs(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     let res = t.abs().unwrap();
     make_tensor(res)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_sigmoid(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     // sigmoid = 1 / (1 + exp(-x))
     // Manual implementation for Metal compatibility
     let neg_t = t.neg().unwrap();
@@ -3583,7 +3697,7 @@ pub extern "C" fn tl_tensor_sigmoid(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_tanh(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     let res = t.tanh().unwrap();
     make_tensor(res)
 }
@@ -3592,7 +3706,7 @@ pub extern "C" fn tl_tensor_tanh(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_max(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     let res = t.flatten_all().unwrap().max(0).unwrap(); // dim 0 of flat
     make_tensor(res)
 }
@@ -3603,7 +3717,7 @@ pub extern "C" fn tl_tensor_max_dim(
     dim: usize,
     keep_dim: bool,
 ) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     let res = if keep_dim {
         t.max_keepdim(dim).unwrap()
     } else {
@@ -3614,7 +3728,7 @@ pub extern "C" fn tl_tensor_max_dim(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_min(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     let res = t.flatten_all().unwrap().min(0).unwrap();
     make_tensor(res)
 }
@@ -3625,7 +3739,7 @@ pub extern "C" fn tl_tensor_min_dim(
     dim: usize,
     keep_dim: bool,
 ) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     let res = if keep_dim {
         t.min_keepdim(dim).unwrap()
     } else {
@@ -3636,7 +3750,7 @@ pub extern "C" fn tl_tensor_min_dim(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_mean(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     let res = t.flatten_all().unwrap().mean(0).unwrap();
     make_tensor(res)
 }
@@ -3647,7 +3761,7 @@ pub extern "C" fn tl_tensor_mean_dim(
     dim: usize,
     keep_dim: bool,
 ) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     let res = if keep_dim {
         t.mean_keepdim(dim).unwrap()
     } else {
@@ -3662,7 +3776,7 @@ pub extern "C" fn tl_tensor_argmin(
     dim: usize,
     keep_dim: bool,
 ) -> *mut OpaqueTensor {
-    let t = unsafe { &(*t).0 };
+    let t = unwrap_tensor_ptr!(t);
     let res = if keep_dim {
         t.argmin_keepdim(dim).unwrap()
     } else {
@@ -3685,10 +3799,9 @@ pub extern "C" fn tl_tensor_conv2d(
         // Actually, let's use the tensor method if available, or candle_nn::conv2d (function).
 
         // Checking candle docs: tensor.conv2d(weight, padding, stride, dilation, groups)
-        let res = (*input)
-            .0
+        let res = unwrap_tensor_ptr!(input)
             .conv2d(
-                &(*weight).0,
+                unwrap_tensor_ptr!(weight),
                 padding as usize,
                 stride as usize,
                 1, // dilation
@@ -3706,7 +3819,7 @@ pub extern "C" fn tl_tensor_clamp(
     max_val: f32,
 ) -> *mut OpaqueTensor {
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = unwrap_tensor_ptr!(t);
         // clamp works element-wise
         let res = tensor.clamp(min_val, max_val).unwrap();
         make_tensor(res)

@@ -3086,15 +3086,15 @@ pub fn declare_runtime_functions<'ctx>(
     fn_return_types.insert("tl_image_height".to_string(), Type::I64);
     // --- Missing Mappings for Llama 3 ---
 
-    // tl_tensor_map_get_quantized -> usize (i64)
-    let qt_get_type = i64_type.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
+    // tl_tensor_map_get_quantized -> ptr (OpaqueQTensor*)
+    let qt_get_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
     add_fn("tl_tensor_map_get_quantized", qt_get_type);
     if let Some(f) = module.get_function("tl_tensor_map_get_quantized") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get_quantized as usize);
     }
 
-    // tl_qtensor_matmul -> i64 (handle) as 2nd arg
-    let qmatmul_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    // tl_qtensor_matmul -> ptr (handle) as 2nd arg
+    let qmatmul_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_qtensor_matmul", qmatmul_type);
     if let Some(f) = module.get_function("tl_qtensor_matmul") {
         execution_engine.add_global_mapping(&f, runtime::tl_qtensor_matmul as usize);

@@ -1256,7 +1256,9 @@ impl TypeRegistry {
             MethodSignature {
                 name: "get_quantized".to_string(),
                 params: vec![ParamType::Exact(Type::UserDefined("String".to_string(), vec![]))],
-                return_type: ReturnType::Exact(Type::I64),
+                // Return generic Tensor<I8, 2> to enable RAII. 
+                // Actual element type doesn't matter for Opaque, but I8 implies quantized.
+                return_type: ReturnType::Exact(Type::Tensor(Box::new(Type::UserDefined("i8".to_string(), vec![])), 2)),
                 is_varargs: false,
                 min_args: 1,
             },

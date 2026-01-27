@@ -44,9 +44,10 @@ pub extern "C" fn tl_register_tensor(name_ptr: *const c_char, tensor: *mut Opaqu
         // Convert Candle tensor to TensorValue (Vec<f64>)
         // Flatten and to_vec1
         // Note: converting f32 to f64 as TensorValue uses f64
-        let data_f32: Vec<f32> = t_candle.flatten_all().unwrap().to_vec1().unwrap();
+        let t = t_opaque.as_tensor().expect("Standard tensor required for registry");
+        let data_f32: Vec<f32> = t.flatten_all().unwrap().to_vec1().unwrap();
         let data_f64: Vec<f64> = data_f32.into_iter().map(|x| x as f64).collect();
-        let shape = t_candle.dims().to_vec();
+        let shape = t.dims().to_vec();
 
         let tensor_value = TensorValue {
             data: data_f64,

@@ -20,7 +20,7 @@ pub extern "C" fn tl_query(
     let mut args_vec: Vec<Constant> = Vec::new();
     if !args.is_null() && !tags.is_null() {
         unsafe {
-            let args_tensor = &(*args).0;
+            let args_tensor = (*args).as_tensor().expect("Standard tensor required for query");
             // Get actual number of arguments
             let shape = args_tensor.shape();
             let arity = if shape.rank() > 0 { shape.dims()[0] } else { 0 };

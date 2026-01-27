@@ -68,7 +68,7 @@ pub extern "C" fn tl_tokenizer_decode(tokenizer: i64, ids: *mut OpaqueTensor) ->
         let tensor_wrapper = &(*ids);
 
         // Check tensor validity if possible or just access
-        let tensor = &tensor_wrapper.0;
+        let tensor = tensor_wrapper.as_tensor().expect("Standard tensor required");
 
         // Flatten to 1D and get values
         // Expecting [1, 1] or [N] tensor of I64
@@ -168,7 +168,7 @@ pub extern "C" fn tl_tensor_cat(
         let vec = &*tensors;
         let mut candle_tensors = Vec::new();
         for &t_ptr in vec {
-            candle_tensors.push((*t_ptr).0.clone());
+            candle_tensors.push((*t_ptr).as_tensor().expect("Standard tensor required").clone());
         }
 
         let result = Tensor::cat(&candle_tensors, dim as usize).unwrap();
@@ -179,7 +179,7 @@ pub extern "C" fn tl_tensor_cat(
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_silu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
-        let tensor = &(*t).0;
+        let tensor = (*t).as_tensor().expect("Standard tensor required");
         let result = candle_nn::ops::silu(tensor).unwrap();
         make_tensor(result)
     }
@@ -192,8 +192,8 @@ pub extern "C" fn tl_tensor_rms_norm(
     eps: f32,
 ) -> *mut OpaqueTensor {
     unsafe {
-        let x_t = &(*x).0;
-        let w_t = &(*w).0;
+        let x_t = (*x).as_tensor().expect("Standard tensor required");
+        let w_t = (*w).as_tensor().expect("Standard tensor required");
 
         // RMSNorm: x * rsqrt(mean(x^2) + eps) * w
         let x_dtype = x_t.dtype();
@@ -231,8 +231,8 @@ pub extern "C" fn tl_tensor_cat2(
     dim: i64,
 ) -> *mut OpaqueTensor {
     unsafe {
-        let a_t = &(*a).0;
-        let b_t = &(*b).0;
+        let a_t = (*a).as_tensor().expect("Standard tensor required");
+        let b_t = (*b).as_tensor().expect("Standard tensor required");
         let result = Tensor::cat(&[a_t, b_t], dim as usize).unwrap();
         make_tensor(result)
     }
@@ -256,8 +256,8 @@ pub extern "C" fn tl_tensor_cat_4d(
     }
 
     unsafe {
-        let a_t = &(*a).0;
-        let b_t = &(*b).0;
+        let a_t = (*a).as_tensor().expect("Standard tensor required");
+        let b_t = (*b).as_tensor().expect("Standard tensor required");
         let result = Tensor::cat(&[a_t, b_t], dim as usize).unwrap();
         make_tensor(result)
     }
@@ -270,9 +270,9 @@ pub extern "C" fn tl_tensor_apply_rope(
     sin: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
     unsafe {
-        let x_t = &(*x).0; // [B, S, H, D]
-        let cos_t = &(*cos).0; // [S, D/2]
-        let sin_t = &(*sin).0; // [S, D/2]
+        let x_t = (*x).as_tensor().expect("Standard tensor required"); // [B, S, H, D]
+        let cos_t = (*cos).as_tensor().expect("Standard tensor required"); // [S, D/2]
+        let sin_t = (*sin).as_tensor().expect("Standard tensor required"); // [S, D/2]
 
         // x is [B, S, H, D]. We split into two halves along D.
         let d_m2 = x_t.dim(x_t.rank() - 1).unwrap();
@@ -526,8 +526,8 @@ pub extern "C" fn tl_kv_cache_update(
     }
 
     unsafe {
-        let k_tensor = &(*k).0;
-        let v_tensor = &(*v).0;
+        let k_tensor = (*k).as_tensor().expect("Standard tensor required");
+        let v_tensor = (*v).as_tensor().expect("Standard tensor required");
 
         let mut mgr = KV_CACHE_MANAGER.lock().unwrap();
         let idx = layer_idx as usize;
@@ -570,7 +570,7 @@ pub extern "C" fn tl_tensor_sample(
     top_p: f32,
 ) -> *mut OpaqueTensor {
     unsafe {
-        let t = &(*logits).0; // [B, Vocab] or [Vocab]
+        let t = (*logits).as_tensor().expect("Standard tensor required"); // [B, Vocab] or [Vocab]
                               // Ensure we are working with the last token's logits if rank > 1
         let logits_flat = t.flatten_all().unwrap();
 
