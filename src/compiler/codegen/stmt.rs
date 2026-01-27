@@ -1353,6 +1353,12 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 if should_deep_clone {
                     val_ir = self.emit_deep_clone(val_ir, &val_ty)?;
+                } else if is_rvalue {
+                    // Move Semantics:
+                    // If it's an R-value (temporary), we skip deep_clone (ownership transfer).
+                    // BUT we must remove it from the temporary list so it's not freed 
+                    // when the temporary scope ends. The variable now owns it.
+                    self.try_consume_temp(val_ir);
                 }
 
                 let current_function = self

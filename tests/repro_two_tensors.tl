@@ -7,12 +7,12 @@ struct TwoTensors {
 
 impl TwoTensors {
     fn new_tensors(x: i64, y: i64) -> TwoTensors {
-        print("Creating tensor a...");
-        let ta = Tensor::randn([x, y], false);
+        print("Creating tensor a (WITH MUL)...");
+        let ta = Tensor::randn([x, y], false) * 0.001;  // Added multiplication
         print("Tensor a created:");
         print(ta);
-        print("Creating tensor b...");
-        let tb = Tensor::randn([y, x], false);
+        print("Creating tensor b (WITH MUL)...");
+        let tb = Tensor::randn([y, x], false) * 0.002;  // Added multiplication
         print("Tensor b created:");
         print(tb);
         print("Constructing TwoTensors...");

@@ -7,12 +7,12 @@ struct Container {
 
 impl Container {
     fn create(r: i64, c: i64) -> Container {
-        print("Container::create: creating tensors without mul/detach...");
-        let t = Tensor::randn([r, c], false);
+        print("Container::create: creating tensors with mul only, no detach...");
+        let t = Tensor::randn([r, c], false) * 0.001;  // mul but no detach
         print("Container::create: t =");
         print(t);
         
-        let s = Tensor::zeros([c], false);
+        let s = Tensor::zeros([c], false);  // no operation
         print("Container::create: s =");
         print(s);
         

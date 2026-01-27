@@ -223,6 +223,21 @@ impl<'ctx> CodeGenerator<'ctx> {
          }
     }
 
+    /// Like consume_temp but returns true if a temporary was found and removed.
+    pub(crate) fn try_consume_temp(&mut self, val: BasicValueEnum<'ctx>) -> bool {
+         if !val.is_pointer_value() { return false; }
+         let ptr = val.into_pointer_value();
+
+         // Search from innermost scope to outermost
+         for scope in self.temporaries.iter_mut().rev() {
+             if let Some(pos) = scope.iter().position(|(v, _, _)| v.is_pointer_value() && v.into_pointer_value() == ptr) {
+                 scope.remove(pos);
+                 return true;
+             }
+         }
+         false
+    }
+
     pub(crate) fn mark_temp_no_cleanup(&mut self, val: BasicValueEnum<'ctx>) {
          let ptr = if val.is_pointer_value() {
              val.into_pointer_value()

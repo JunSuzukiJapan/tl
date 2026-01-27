@@ -2983,13 +2983,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             // 1. If usage is Temporary (in cleanup list): Remove from list = Move logic (ownership transfer).
             // 2. If usage is Variable/L-Value (NOT in cleanup list): It's a Copy. We MUST Increment RefCount.
             
-            let mut moved = false;
-            if let Some(temps) = self.temporaries.last_mut() {
-                if let Some(idx) = temps.iter().position(|(v, _, _)| *v == val) {
-                    temps.remove(idx);
-                    moved = true;
-                }
-            }
+            // Use try_consume_temp for proper pointer comparison (not BasicValueEnum direct comparison)
+            // This fixes the bug where BinOp results aren't found in the temps list
+            let moved = self.try_consume_temp(val);
 
             if !moved {
                 // Not a temporary -> Copy -> Share Ownership -> IncRef
