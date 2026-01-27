@@ -1523,6 +1523,17 @@ impl<'ctx> CodeGenerator<'ctx> {
             .module
             .get_function("tl_tensor_free")
             .ok_or("tl_tensor_free must be declared")?;
+        // Runtime function tl_ptr_inc_ref
+        let tl_ptr_inc_ref_fn = self
+            .module
+            .get_function("tl_ptr_inc_ref")
+            .or_else(|| {
+                let void_ty = self.context.void_type();
+                let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
+            })
+            .ok_or("tl_ptr_inc_ref decl failed")?;
 
         for rel in relations {
             let func_name = &rel.name;

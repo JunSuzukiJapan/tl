@@ -2942,12 +2942,43 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             let (val, _ty) = self.compile_expr(field_expr)?;
             
-            // Move Semantics: 
-            // If the field value is in the cleanup list (temporary), removing it transfers ownership to the struct.
-            // Combined with disabled Struct Cleanup (Reference Semantics), this allows the value to survive.
+            // Move Semantics & Copy Semantics (ARC): 
+            // 1. If usage is Temporary (in cleanup list): Remove from list = Move logic (ownership transfer).
+            // 2. If usage is Variable/L-Value (NOT in cleanup list): It's a Copy. We MUST Increment RefCount.
+            
+            let mut moved = false;
             if let Some(temps) = self.temporaries.last_mut() {
                 if let Some(idx) = temps.iter().position(|(v, _, _)| *v == val) {
                     temps.remove(idx);
+                    moved = true;
+                }
+            }
+
+            if !moved {
+                // Not a temporary -> Copy -> Share Ownership -> IncRef
+                match _ty {
+                    Type::Tensor(_, _) 
+                    | Type::Struct(_, _) 
+                    | Type::UserDefined(_, _) 
+                    | Type::Enum(_, _) 
+                    | Type::Vec(_) => {
+                        let inc_fn = self.module.get_function("tl_ptr_inc_ref")
+                            .or_else(|| {
+                                let void_ty = self.context.void_type();
+                                let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                                let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                                Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
+                            })
+                            .expect("tl_ptr_inc_ref not declared");
+                        let ptr = val.into_pointer_value();
+                        let void_ptr = self.builder.build_pointer_cast(
+                            ptr,
+                            self.context.ptr_type(inkwell::AddressSpace::default()),
+                            "void_cast_inc"
+                        ).unwrap();
+                        self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
+                    }
+                    _ => {} // Scalars don't need RefCount
                 }
             }
 

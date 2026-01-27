@@ -907,7 +907,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             _ => unreachable!(),
                         };
 
-                        let (res, _) = self.compile_bin_op(current_val, field_type.clone(), val, val_ty, bin_op)?;
+                        let (res, _) = self.compile_bin_op(current_val, field_type.clone(), val, val_ty.clone(), bin_op)?;
                         res
                     }
                 };
@@ -954,7 +954,44 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder.build_store(field_ptr, final_val).map_err(|e| e.to_string())?;
 
                 // Prevent compiler from freeing the temporary now that it's stored in a field
-                self.mark_temp_no_cleanup(val);
+                // RefCount Logic:
+                // If it was a temporary, we remove it (Move). RefCount unchanged (1->1).
+                // If it was L-Value, we must IncRef. RefCount (1->2).
+                let mut moved = false;
+                if let Some(temps) = self.temporaries.last_mut() {
+                    if let Some(idx) = temps.iter().position(|(v, _, _)| *v == val) {
+                        temps.remove(idx);
+                        moved = true;
+                    }
+                }
+                
+                if !moved {
+                     match val_ty {
+                        Type::Tensor(_, _) 
+                        | Type::Struct(_, _) 
+                        | Type::UserDefined(_, _) 
+                        | Type::Enum(_, _) 
+                        | Type::Vec(_) => {
+                            let inc_fn = self.module.get_function("tl_ptr_inc_ref")
+                                .or_else(|| {
+                                    let void_ty = self.context.void_type();
+                                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                                    let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                                    Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
+                                })
+                                .expect("tl_ptr_inc_ref decl failed");
+                                
+                            let ptr = val.into_pointer_value();
+                            let void_ptr = self.builder.build_pointer_cast(
+                                ptr,
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "void_cast_inc_fassign"
+                            ).unwrap();
+                            self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
+                        }
+                        _ => {}
+                     }
+                }
 
                 // Ownership transfer
                 if let Some(f) = self.module.get_function("tl_mem_unregister") {
@@ -992,8 +1029,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let (_var_val, _, cleanup_mode) = &self.variables.last().unwrap()[name];
 
                         if *cleanup_mode != super::CLEANUP_NONE {
-                            // Free logic removed to prevent double-free with MemoryManager.
-                            // Old value remains in scope list and will be freed at scope exit.
+                            // Restore Free Logic for RefCounting
+                            self.emit_recursive_free(*_var_val, &val_ty, *cleanup_mode)?;
                         }
 
                         let ptr = self.variables.last().unwrap()[name].0.into_pointer_value();
@@ -1256,7 +1293,45 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
 
                 // Keep ownership in the variable (if val_ir was a temporary)
-                self.mark_temp_no_cleanup(val_ir);
+                // self.mark_temp_no_cleanup(val_ir);
+                
+                // RefCount Logic: Clone on Copy
+                let mut moved = false;
+                if let Some(temps) = self.temporaries.last_mut() {
+                    if let Some(idx) = temps.iter().position(|(v, _, _)| *v == val_ir) {
+                        temps.remove(idx);
+                        moved = true;
+                    }
+                }
+                
+                if !moved {
+                     // L-Value copy -> IncRef
+                     match val_ty {
+                        Type::Tensor(_, _) 
+                        | Type::Struct(_, _) 
+                        | Type::UserDefined(_, _) 
+                        | Type::Enum(_, _) 
+                        | Type::Vec(_) => {
+                            let inc_fn = self.module.get_function("tl_ptr_inc_ref")
+                                .or_else(|| {
+                                    let void_ty = self.context.void_type();
+                                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                                    let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                                    Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
+                                })
+                                .expect("tl_ptr_inc_ref decl failed");
+
+                            let ptr = val_ir.into_pointer_value();
+                            let void_ptr = self.builder.build_pointer_cast(
+                                ptr,
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "void_cast_inc_let"
+                            ).unwrap();
+                            self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
+                        }
+                        _ => {}
+                     }
+                }
 
                 self.variables
                     .last_mut()
@@ -1733,8 +1808,44 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // If val_base (RHS) was a temporary, we take ownership (Move).
                 // If it was L-value, compile_expr returns non-temp, consume_temp does nothing.
-                // If val_base (RHS) was a temporary, we keep ownership in the variable.
-                self.mark_temp_no_cleanup(val_base);
+                // RefCount Logic: Clone on Copy
+                // Use `val` (actual value to be stored)
+                let mut moved = false;
+                if let Some(temps) = self.temporaries.last_mut() {
+                     if let Some(idx) = temps.iter().position(|(v, _, _)| *v == val) {
+                         temps.remove(idx);
+                         moved = true;
+                     }
+                }
+                
+                if !moved {
+                     // L-Value copy -> IncRef
+                     match val_type {
+                         Type::Tensor(_, _) 
+                         | Type::Struct(_, _) 
+                         | Type::UserDefined(_, _) 
+                         | Type::Enum(_, _) 
+                         | Type::Vec(_) => {
+                             let inc_fn = self.module.get_function("tl_ptr_inc_ref")
+                                .or_else(|| {
+                                    let void_ty = self.context.void_type();
+                                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                                    let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                                    Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
+                                })
+                                .expect("tl_ptr_inc_ref decl failed");
+
+                             let ptr = val.into_pointer_value();
+                             let void_ptr = self.builder.build_pointer_cast(
+                                 ptr,
+                                 self.context.ptr_type(inkwell::AddressSpace::default()),
+                                 "void_cast_inc_assign"
+                             ).unwrap();
+                             self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
+                         }
+                         _ => {}
+                     }
+                }
 
                 if let Some(idxs) = indices {
                     if !idxs.is_empty() {

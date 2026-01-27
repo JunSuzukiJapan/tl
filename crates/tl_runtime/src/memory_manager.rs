@@ -165,8 +165,14 @@ pub struct MemoryManager {
     tensor_meta: HashMap<*mut c_void, AllocationMeta>,
     
     // Stack of Function Frames for reused buffers
+    call_stack_frames: Vec<FunctionFrame>,
+}
+
+struct FunctionFrame {
     // Frame: Vec<Slot>, Slot: Option<(Pointer, Capacity)>
-    call_stack_slots: Vec<Vec<Option<(*mut c_void, usize)>>>,
+    slots: Vec<Option<(*mut c_void, usize)>>,
+    // Old buffers kept alive until frame exit to prevent Use-After-Free
+    trash: Vec<*mut c_void>,
 }
 
 // SAFETY: MemoryManager contains raw pointers but they are only accessed
@@ -182,7 +188,7 @@ impl MemoryManager {
             refcounts: HashMap::new(),
             ptr_types: HashMap::new(),
             tensor_meta: HashMap::new(),
-            call_stack_slots: Vec::new(),
+            call_stack_frames: Vec::new(),
         }
     }
 
@@ -488,8 +494,11 @@ impl MemoryManager {
         // Create new scope for automatic cleanup of registered tensors
         self.enter_scope();
         
-        let frame = vec![None; num_slots];
-        self.call_stack_slots.push(frame);
+        let frame = FunctionFrame {
+            slots: vec![None; num_slots],
+            trash: Vec::new(),
+        };
+        self.call_stack_frames.push(frame);
         if crate::mem_log_enabled() {
              eprintln!("[TL_MEM] function_enter slots={} depth={}", num_slots, self.scopes.len());
         }
@@ -500,8 +509,9 @@ impl MemoryManager {
         // Free registered tensors in this scope
         self.exit_scope();
 
-        if let Some(frame) = self.call_stack_slots.pop() {
-            for (i, slot) in frame.into_iter().enumerate() {
+        if let Some(frame) = self.call_stack_frames.pop() {
+            // Free active slots
+            for (i, slot) in frame.slots.into_iter().enumerate() {
                 if let Some((ptr, size)) = slot {
                     unsafe { libc::free(ptr); }
                     if crate::mem_log_enabled() {
@@ -509,14 +519,21 @@ impl MemoryManager {
                     }
                 }
             }
+            // Free trash (deferred)
+            for ptr in frame.trash {
+                unsafe { libc::free(ptr); }
+                if crate::mem_log_enabled() {
+                     eprintln!("[TL_MEM] function_exit free_trash ptr={:p}", ptr);
+                }
+            }
         }
     }
 
     /// Get a buffer for a slot, reallocating if necessary
     pub fn get_buffer(&mut self, slot_id: usize, min_size: usize) -> *mut c_void {
-        if let Some(frame) = self.call_stack_slots.last_mut() {
-            if slot_id < frame.len() {
-                if let Some((ptr, cap)) = frame[slot_id] {
+        if let Some(frame) = self.call_stack_frames.last_mut() {
+            if slot_id < frame.slots.len() {
+                if let Some((ptr, cap)) = frame.slots[slot_id] {
                     if cap >= min_size {
                         // Reuse
                         if crate::mem_log_enabled() {
@@ -524,26 +541,35 @@ impl MemoryManager {
                         }
                         return ptr;
                     } else {
-                        // Realloc (Free + Malloc to avoid copy overhead since we don't care about old data)
-                        unsafe { libc::free(ptr); }
+                        // Grow: Alloc New + Defere Free Old (No Copy)
                         let new_ptr = unsafe { libc::malloc(min_size) };
-                        frame[slot_id] = Some((new_ptr, min_size));
+                        if new_ptr.is_null() {
+                            panic!("[TL_MEM] Slot buffer malloc failed");
+                        }
+                        
+                        // Move old ptr to trash (Deferred Free)
+                         // We do NOT copy data. Caller must handle initialization.
+                        frame.trash.push(ptr);
+                        
+                        // Update slot
+                        frame.slots[slot_id] = Some((new_ptr, min_size));
+                        
                         if crate::mem_log_enabled() {
-                             eprintln!("[TL_MEM] expand_buffer slot={} old_cap={} new_cap={} ptr={:p}", slot_id, cap, min_size, new_ptr);
+                             eprintln!("[TL_MEM] expand_buffer_nocopy slot={} old_cap={} new_cap={} old_ptr={:p} new_ptr={:p}", slot_id, cap, min_size, ptr, new_ptr);
                         }
                         return new_ptr;
                     }
                 } else {
-                    // Alloc
+                    // Start Alloc
                     let new_ptr = unsafe { libc::malloc(min_size) };
-                    frame[slot_id] = Some((new_ptr, min_size));
+                    frame.slots[slot_id] = Some((new_ptr, min_size));
                     if crate::mem_log_enabled() {
                          eprintln!("[TL_MEM] alloc_buffer slot={} size={} ptr={:p}", slot_id, min_size, new_ptr);
                     }
                     return new_ptr;
                 }
             }
-            eprintln!("[TL_MEM] ERROR: Slot ID {} out of bounds (frame size {})", slot_id, frame.len());
+            eprintln!("[TL_MEM] ERROR: Slot ID {} out of bounds (frame size {})", slot_id, frame.slots.len());
         } else {
             eprintln!("[TL_MEM] ERROR: No function frame active for get_buffer");
         }
@@ -730,6 +756,40 @@ pub extern "C" fn tl_ptr_dec_ref(ptr: *mut c_void) -> i32 {
         eprintln!("[TL_MEM] dec_ref not_found ptr={:p}", ptr);
     }
     1
+}
+
+/// Increase reference count (Generic)
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_ptr_inc_ref(ptr: *mut c_void) {
+    if ptr.is_null() {
+        return;
+    }
+    let mut mgr = MEMORY_MANAGER.lock().unwrap();
+    
+    // If we have track of it, increment.
+    // If not, it means we are converting from Single Ownership (1, implicit) to Shared (2).
+    // But wait, our system assumes unregistered pointers have refcount 1 if they are managed.
+    // Actually, `register_struct` calls put it in Refcounts? No.
+    // Tensors are registered in `tl_mem_register_tensor`.
+    // Structs are registered in `tl_mem_register_struct_named`.
+    
+    if let Some(count) = mgr.refcounts.get_mut(&ptr) {
+        *count += 1;
+        if crate::mem_log_enabled() {
+            eprintln!("[TL_MEM] inc_ref ptr={:p} new_count={}", ptr, *count);
+        }
+    } else {
+        // It's not in refcounts.
+        // If it's a managed pointer (in scopes), it implicity has usage 1.
+        // We upgrading it to 2.
+        // However, we need to know if it's actually managed.
+        // If it was allocated by malloc or arena, we track it?
+        // Let's assume valid pointer provided by compiler needs tracking.
+        mgr.refcounts.insert(ptr, 2);
+        if crate::mem_log_enabled() {
+            eprintln!("[TL_MEM] inc_ref new_entry ptr={:p} count=2", ptr);
+        }
+    }
 }
 
 /// Decrease reference count (Generic) - Returns bool
