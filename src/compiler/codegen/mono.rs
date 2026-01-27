@@ -291,7 +291,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Usize => Ok(self.context.i64_type().into()), // usize as i64
             Type::Void => {
                 panic!("Void type encountered in get_llvm_type");
-                // Err("Void type has no LLVM representation".to_string())
             },
             
             Type::Tensor(_, _) | Type::TensorShaped(_, _) => {

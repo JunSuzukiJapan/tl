@@ -4342,7 +4342,7 @@ impl SemanticAnalyzer {
 
 
 
-                // Handle Vec::new() -> Vec<Void> (treated as polymorphic empty vec)
+                // Handle Vec::new() -> Vec<T> or Vec<Void> (polymorphic empty vec)
                 let is_vec = match type_name {
                     Type::Vec(_) => true,
                     Type::UserDefined(n, _) if n == "Vec" => true,
@@ -4351,8 +4351,26 @@ impl SemanticAnalyzer {
                 };
                 
                 if is_vec && method_name == "new" {
-                    // Return UserDefined("Vec", [Void])
-                    return Ok(Type::UserDefined("Vec".into(), vec![Type::Void]));
+                    // Extract the inner type from Vec<T> if specified
+                    let inner_type = match type_name {
+                        Type::Vec(inner) => Some(inner.as_ref().clone()),
+                        Type::UserDefined(_, args) | Type::Struct(_, args) => {
+                            if args.len() == 1 {
+                                Some(args[0].clone())
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    
+                    // If inner type is specified and not Void, use it; otherwise use Void
+                    let result_inner = match inner_type {
+                        Some(t) if !matches!(t, Type::Void) => t,
+                        _ => Type::Void,
+                    };
+                    
+                    return Ok(Type::Vec(Box::new(result_inner)));
                 }
 
                 // Special handling for Param::checkpoint to allow method references
@@ -5263,6 +5281,44 @@ impl SemanticAnalyzer {
             // Promotions
             (Type::F64, Type::F32) => true,
             (Type::F64, Type::I64) => true,
+            
+            // Vec<T> compatibility with UserDefined("Vec", [T]) or Struct("Vec", [T])
+            (Type::Vec(inner1), Type::Vec(inner2)) => {
+                // Vec<Void> is compatible with any Vec<T> (polymorphic)
+                if matches!(inner1.as_ref(), Type::Void) || matches!(inner2.as_ref(), Type::Void) {
+                    true
+                } else {
+                    self.are_types_compatible(inner1, inner2)
+                }
+            }
+            (Type::Vec(inner), Type::UserDefined(n, args)) | (Type::UserDefined(n, args), Type::Vec(inner)) => {
+                if n == "Vec" {
+                    if matches!(inner.as_ref(), Type::Void) {
+                        // Vec<Void> is compatible with any Vec<T>
+                        true
+                    } else if args.len() == 1 {
+                        self.are_types_compatible(inner, &args[0])
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+            (Type::Vec(inner), Type::Struct(n, args)) | (Type::Struct(n, args), Type::Vec(inner)) => {
+                if n == "Vec" {
+                    if matches!(inner.as_ref(), Type::Void) {
+                        true
+                    } else if args.len() == 1 {
+                        self.are_types_compatible(inner, &args[0])
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+            
             _ => false,
         }
     }

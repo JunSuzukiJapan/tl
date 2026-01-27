@@ -3380,6 +3380,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                     None
                 }
             }
+            Type::Struct(n, args) if n == "Vec" => {
+                if args.is_empty() {
+                    Some(Box::new(Type::Void))
+                } else if args.len() == 1 {
+                    Some(Box::new(args[0].clone()))
+                } else {
+                    None
+                }
+            }
             _ => None,
         };
 
@@ -3402,7 +3411,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                  // LLVM sees it as pointer.
                  // We might need to pointer cast if strict typing is used.
                  // But in TL runtime, all objects are pointers.
-                 return Ok((res, ty.clone()));
+                 // Return correct type Vec<inner> instead of ty.clone() which may be Vec<Void>
+                 return Ok((res, Type::Vec(inner)));
             }
         }
 

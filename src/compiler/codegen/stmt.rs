@@ -1263,6 +1263,32 @@ impl<'ctx> CodeGenerator<'ctx> {
                                  val_ty = target_ty.clone();
                              }
                          }
+                    } else if let Type::Vec(target_inner) = target_ty {
+                         // Fix for Vec::new() -> Vec<Void> being assigned to Vec<T>
+                         if let Type::Vec(ref val_inner) = val_ty {
+                             if matches!(val_inner.as_ref(), Type::Void) {
+                                 val_ty = Type::Vec(target_inner.clone());
+                             }
+                         } else if let Type::UserDefined(ref vn, _) = val_ty {
+                             if vn == "Vec" {
+                                 val_ty = Type::Vec(target_inner.clone());
+                             }
+                         }
+                    } else if let Type::Struct(sn, sargs) = target_ty {
+                         // Fix for resolved Vec type annotation: Type::Struct("Vec", [I64]) etc.
+                         if sn == "Vec" && sargs.len() == 1 {
+                             // Check if val_ty is Vec<Void> or UserDefined("Vec", [Void])
+                             let is_vec_void = match &val_ty {
+                                 Type::Vec(inner) => matches!(inner.as_ref(), Type::Void),
+                                 Type::UserDefined(vn, vargs) if vn == "Vec" => {
+                                     vargs.is_empty() || vargs.iter().any(|a| matches!(a, Type::Void))
+                                 }
+                                 _ => false,
+                             };
+                             if is_vec_void {
+                                 val_ty = Type::Vec(Box::new(sargs[0].clone()));
+                             }
+                         }
                     }
                 }
 

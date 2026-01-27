@@ -133,13 +133,13 @@ impl TypeRegistry {
                 is_varargs: false,
                 min_args: 0,
             },
-            // argmax(dim) -> Tensor<I64>
+            // argmax(dim, keepdim) -> Tensor<I64>
             MethodSignature {
                 name: "argmax".to_string(),
-                params: vec![ParamType::AnyInt],
+                params: vec![ParamType::AnyInt, ParamType::Bool],
                 return_type: ReturnType::Exact(Type::Tensor(Box::new(Type::I64), 0)),
                 is_varargs: false,
-                min_args: 1,
+                min_args: 2,
             },
             // to_i64() -> Tensor<I64>
             MethodSignature {
@@ -1033,10 +1033,10 @@ impl TypeRegistry {
             "read_i32_be".to_string(),
             MethodSignature {
                 name: "read_i32_be".to_string(),
-                params: vec![],
+                params: vec![ParamType::AnyInt],
                 return_type: ReturnType::Exact(Type::I64),
                 is_varargs: false,
-                min_args: 0,
+                min_args: 1,
             },
         );
         vec_u8_methods.insert(
@@ -1320,6 +1320,8 @@ impl TypeRegistry {
             Type::F64 => "F64".to_string(),
             Type::I64 => "I64".to_string(),
             Type::I32 => "I32".to_string(),
+            Type::U8 => "U8".to_string(),
+            Type::Usize => "Usize".to_string(),
             Type::Bool => "Bool".to_string(),
             Type::UserDefined(name, _) => name.clone(),
             Type::Struct(name, _) => name.clone(),
