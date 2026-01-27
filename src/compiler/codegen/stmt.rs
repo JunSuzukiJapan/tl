@@ -514,6 +514,43 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .build_conditional_branch(is_null, merge_block, free_block)
                     .map_err(|e| e.to_string())?;
 
+                // --- FIX: Stack Cleanup Mode (sret) ---
+                // --- FIX: Stack Cleanup Mode (sret) ---
+                if mode == super::CLEANUP_STACK {
+                     self.builder.position_at_end(free_block);
+
+                     for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
+                        match f_ty {
+                            Type::Tensor(_, _)
+                            | Type::TensorShaped(_, _)
+                            | Type::Struct(_, _)
+                            | Type::UserDefined(_, _)
+                            | Type::Enum(_, _)
+                            | Type::Vec(_)
+                            | Type::Tuple(_) => {
+                                let f_ptr = self
+                                    .builder
+                                    .build_struct_gep(struct_ty, ptr, i as u32, "field_gep_stack")
+                                    .map_err(|e| e.to_string())?;
+                                let f_val = self
+                                    .builder
+                                    .build_load(
+                                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                                        f_ptr,
+                                        "field_load_stack",
+                                    )
+                                    .map_err(|e| e.to_string())?;
+                                // Recursively free content (Clean FULL)
+                                self.emit_recursive_free(f_val, f_ty, super::CLEANUP_FULL)?;
+                            }
+                            _ => {}
+                        }
+                    }
+                    self.builder.build_unconditional_branch(merge_block).map_err(|e| e.to_string())?;
+                    self.builder.position_at_end(merge_block);
+                    return Ok(());
+                }
+
                 self.builder.position_at_end(free_block);
 
                 // --- FIX: Unregister from Scope to prevent double-free by tl_mem_exit_scope ---
@@ -775,6 +812,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     pub(crate) fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+        self.current_time += 1;
         let prev_span = self.current_span.clone();
         self.current_span = Some(stmt.span.clone());
         let result = self.compile_stmt_inner(stmt);
@@ -1011,6 +1049,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 type_annotation,
                 init,
             } => {
+                let def_time = self.current_time;
+
                 if let Some(expr) = init {
                     let (val_ir, _inferred_ty) = self.ensure_tensor_v2(expr, 0)?;
                     let val_ty = if matches!(type_annotation, Type::Tensor(_, _)) {
@@ -1063,7 +1103,24 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .unwrap()
                             .insert(name.clone(), (ptr.into(), val_ty, super::CLEANUP_FULL));
                     }
+                } else {
+                     // Alloc but no init? (Current code path seems to assume init is Some for now based on AST?)
+                     // If init is None, we might just alloc.
                 }
+
+                // Register Liveness
+                let last_use = if let Some(analysis) = &self.function_analysis {
+                    match analysis.last_use_times.get(&def_time) {
+                         Some(&t) => t,
+                         None => 0
+                    }
+                } else {
+                    0
+                };
+                if let Some(scope) = self.variable_liveness.last_mut() {
+                    scope.insert(name.clone(), last_use);
+                }
+
                 Ok(())
             }
             StmtKind::Let {
@@ -1072,70 +1129,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 value,
                 mutable: _,
             } => {
+                let def_time = self.current_time;
+
                 // 1. Analyze value for Free Indices (Implicit Tensor Equation)
                 let free_indices = self.infer_free_indices(value);
 
                 if !free_indices.is_empty() {
-                    // Found free indices -> It's a tensor equation! e.g. let C = A[i, j] * B[j, k];
-                    // free_indices will be ["i", "k"] (sorted)
-                    // Delegate to compile_tensor_equation
-                    // Helper to convert indices string to generator format
-                    // Delegate to compile_tensor_equation
-                    // Helper to convert indices string to generator format
-                    // Note: Implicit equations don't have explicit ranges here, effectively 0..Limit inferred later.
-                    // But our AST expects clauses now.
-                    // compile_tensor_equation expects `&[ComprehensionClause]`.
-                    // But wait, `compile_tensor_equation` generates loops FROM clauses.
-                    // Implicit equations: `let C = A[i]`. LHS=C (no explicit indices). RHS has free `i`.
-                    // We treat this as `[ i | A[i] ]`.
-                    // So we need to synthesize `indices=["i"]` and `clauses=[Generator("i", IMPLICIT)]`?
-                    // No, existing logic for explicit comprehension has explicit ranges.
-                    // Implicit reduction/equation relies on bounds inference.
-
-                    // We should invoke `compile_tensor_equation` with:
-                    // indices = free_indices
-                    // clauses = [] (No explicit generators)
-                    // body = value
-
-                    // But `compile_tensor_equation` iterates `clauses` to generate loops!
-                    // If clauses is empty, it generates NO LOOPS.
-                    // This breaks implicit equations.
-
-                    // Fix: `compile_tensor_equation` accepts `indices` (LHS/Output) AND `clauses`.
-                    // If `clauses` is empty, it should try to infer loops from `indices` + `free vars`?
-                    // OR: We must synthesize clauses effectively.
-                    // We don't know bounds easily here without analysis.
-                    // Actually, `compile_tensor_equation` does `self.enter_scope()` and bounds lookup.
-                    // But it expects clauses to drive the loops.
-
-                    // REVERT/ADJUSTMENT to `compile_tensor_equation`:
-                    // It should take `indices: &[String]` (Output dims) and `clauses: &[Clause]`.
-                    // It should ALSO take `implicit_indices: &[String]`?
-                    // Or we just synthesize clauses.
-                    // But we can't synthesize semantic `Expr` for bounds easily.
-
-                    // Let's modify `compile_tensor_equation` to accept an optional "Force Loops for these indices" argument?
-                    // Or better: Use `ExprKind::TensorComprehension` AST node effectively.
-                    // Implicit equation `C = A[i]` is semantically `C = [i | A[i]]` where `i` range is inferred.
-                    // Our new syntax supports `[i | A[i]]` (Implicit body? No, implicit generator?).
-                    // `i` is in LHS. RHS has no generator for `i`.
-                    // Logic must handle "LHS index NOT in generators".
-                    // Existing logic (old): matched `(idx, range_opt)`. If `range_opt` None, inferred.
-                    // New logic: `Clause::Generator` HAS `range: Expr`. Mandatory.
-
-                    // So we need a way to represent "Generator with Implicit Range" in `Clause`.
-                    // We can add `ExprKind::ImplicitRange`? Or `Option<Expr>` in `Generator` variant?
-
-                    // Let's update `ComprehensionClause` definition to allow optional range?
-                    // `Generator { name: String, range: Option<Expr> }`.
-                    // This restores compatibility with implicit generators.
-
-                    // Implicit equation `C = A[i]` is semantically `C = [i | { A[i] }]` (Empty clauses).
-                    // `compile_tensor_equation` will detect that `i` is in `indices` but not in `clauses`,
-                    // and will infer the range from `body` (value).
-
                     let clauses: Vec<ComprehensionClause> = Vec::new();
-
                     return self
                         .compile_tensor_equation(name, &free_indices, &clauses, Some(value))
                         .map_err(|e| e.to_string());
@@ -1228,6 +1228,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // If the value is a temporary (FnCall, BinOp, etc), we take ownership (Move).
                 // If the value is an L-value (Variable, FieldAccess), we must Copy (Acquire/Clone).
 
+                let mut is_last_use_move = false;
+                if let ExprKind::Variable(vname) = &value.inner {
+                    if self.is_last_use(vname) {
+                        is_last_use_move = true;
+                        // Mark source as moved (transfer ownership)
+                        for scope in self.variables.iter_mut().rev() {
+                            if let Some(entry) = scope.get_mut(vname) {
+                                entry.2 = super::CLEANUP_NONE;
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 let is_rvalue = matches!(
                     &value.inner,
                     ExprKind::FnCall(_, _)
@@ -1238,7 +1252,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         | ExprKind::TensorLiteral(_)
                         | ExprKind::IfExpr(_, _, _) // Treating IfExpr as R-value (Assumes IfExpr logic ensures failure-safety)
                         | ExprKind::Block(_)
-                );
+                ) || is_last_use_move;
 
                 let should_deep_clone = match &val_ty {
                     Type::Tensor(_, _) | Type::TensorShaped(_, _) => !is_rvalue, // Clone only if L-value
@@ -1297,9 +1311,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 
                 // RefCount Logic: Clone on Copy
                 let mut moved = false;
+                let mut cleanup_mode = super::CLEANUP_FULL;
+                
                 if let Some(temps) = self.temporaries.last_mut() {
                     if let Some(idx) = temps.iter().position(|(v, _, _)| *v == val_ir) {
-                        temps.remove(idx);
+                        let (_, _, mode) = temps.remove(idx);
+                        cleanup_mode = mode;
                         moved = true;
                     }
                 }
@@ -1344,10 +1361,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                             if is_slot_backed {
                                 super::CLEANUP_FINALIZE
                             } else {
-                                super::CLEANUP_FULL
+                                cleanup_mode
                             },
                         ),
                     ); // Store pointer and type
+
+                // Register Liveness
+                let last_use = if let Some(analysis) = &self.function_analysis {
+                    match analysis.last_use_times.get(&def_time) {
+                        Some(&t) => t,
+                        None => 0
+                    }
+                } else {
+                    0
+                };
+                if let Some(scope) = self.variable_liveness.last_mut() {
+                    scope.insert(name.clone(), last_use);
+                }
 
                 // DEBUG TRACE: Log assignment to variable
                 match &val_ty {
@@ -2299,6 +2329,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 iterator,
                 body,
             } => {
+                let def_time = self.current_time;
                 let parent = self
                     .builder
                     .get_insert_block()
@@ -2596,6 +2627,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .last_mut()
                     .unwrap()
                     .insert(loop_var.clone(), (var_alloca.into(), loop_var_val.1, super::CLEANUP_NONE));
+
+                // Register Liveness for loop variable
+                let last_use = if let Some(analysis) = &self.function_analysis {
+                    match analysis.last_use_times.get(&def_time) {
+                         Some(&t) => t,
+                         None => 0
+                    }
+                } else {
+                    0
+                };
+                if let Some(scope) = self.variable_liveness.last_mut() {
+                    scope.insert(loop_var.clone(), last_use);
+                }
 
                 // Compile body
                 for stmt in body {

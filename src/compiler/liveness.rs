@@ -1,34 +1,32 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use crate::compiler::ast::*;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Interval {
-    pub start: usize,
-    pub end: usize,
-}
 
 #[derive(Debug, Default)]
 pub struct FunctionAnalysis {
-    pub slots: HashMap<String, usize>, // Variable -> Slot ID
+    pub slots: HashMap<String, usize>, // Legacy: For Allocator (Variable -> Slot ID)
     pub num_slots: usize,
+    pub last_use_times: HashMap<usize, usize>, // DefTime -> LastUseTime
 }
 
 pub struct LivenessAnalyzer {
-    // Variable -> Interval
-    intervals: HashMap<String, Interval>,
+    // DefTime -> LastUseTime
+    last_use_times: HashMap<usize, usize>,
+    
+    // Scope Management: Name -> DefTime
+    scopes: Vec<HashMap<String, usize>>,
+    
     // Current instruction index (virtual time)
     current_time: usize,
-    // Variables currently alive (to handle loops correctly?)
-    // Or just simple intervals for now.
     
-    // Result
+    // Legacy: Slot Map (Name -> Slot) - Rough approx for now
     slot_map: HashMap<String, usize>,
 }
 
 impl LivenessAnalyzer {
     pub fn new() -> Self {
         LivenessAnalyzer {
-            intervals: HashMap::new(),
+            last_use_times: HashMap::new(),
+            scopes: vec![HashMap::new()],
             current_time: 0,
             slot_map: HashMap::new(),
         }
@@ -37,14 +35,25 @@ impl LivenessAnalyzer {
     pub fn analyze(func: &FunctionDef) -> FunctionAnalysis {
         let mut analyzer = LivenessAnalyzer::new();
         analyzer.visit_function(func);
-        analyzer.assign_slots();
+        // analyzer.assign_slots(); // Legacy: Slot assignment disabled for now
         
-        let num_slots = analyzer.calculate_max_slots();
+        // let num_slots = analyzer.calculate_max_slots();
+        let num_slots = 0;
         
         FunctionAnalysis {
-            slots: analyzer.slot_map,
+            slots: analyzer.slot_map, // Will be empty
             num_slots,
+            last_use_times: analyzer.last_use_times,
         }
+
+    }
+
+    fn enter_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+
+    fn exit_scope(&mut self) {
+        self.scopes.pop();
     }
 
     fn visit_function(&mut self, func: &FunctionDef) {
@@ -84,6 +93,8 @@ impl LivenessAnalyzer {
                 }
             }
             StmtKind::For { loop_var, iterator, body } => {
+                self.enter_scope(); // Loop Scope
+                
                 self.visit_expr(iterator);
                 // Loop var defined
                 self.define_var(loop_var, time);
@@ -94,15 +105,9 @@ impl LivenessAnalyzer {
                     self.visit_stmt(s);
                 }
                 let loop_end = self.current_time;
-
-                // CRITICAL: Any variable used in the loop must be extended to loop_end
-                // Ideally we do a fix-point analysis, but conservative approach:
-                // If a var is used in loop, its end >= loop_end.
-                // For now, linear scan might miss back-edges.
-                // Simple hack: Scan body twice? Or just track "live-in" / "live-out".
-                // Let's rely on simple linear scan for first prototype and refine for loops later.
-                // Actually, if we just extend the usage of anything touched in the loop to the end of the loop, it works for 90% cases.
                 self.extend_loop_vars(loop_start, loop_end);
+                
+                self.exit_scope();
             }
             StmtKind::While { cond, body } => {
                 self.visit_expr(cond);
@@ -119,6 +124,7 @@ impl LivenessAnalyzer {
     }
 
     fn visit_expr(&mut self, expr: &Expr) {
+        self.current_time += 1;
         let time = self.current_time;
         match &expr.inner {
             ExprKind::Variable(name) => {
@@ -161,35 +167,51 @@ impl LivenessAnalyzer {
             }
             ExprKind::IfExpr(cond, then_block, else_block_opt) => {
                 self.visit_expr(cond);
+                
+                self.enter_scope();
                 for s in then_block {
                     self.visit_stmt(s);
                 }
+                self.exit_scope();
+
                 if let Some(else_block) = else_block_opt {
+                    self.enter_scope();
                     for s in else_block {
                         self.visit_stmt(s);
                     }
+                    self.exit_scope();
                 }
             }
             ExprKind::Block(stmts) => {
+                self.enter_scope();
                 for s in stmts {
                     self.visit_stmt(s);
                 }
+                self.exit_scope();
             }
             ExprKind::IfLet { expr, then_block, else_block, .. } => {
                 self.visit_expr(expr);
+                
+                self.enter_scope();
                 for s in then_block {
                     self.visit_stmt(s);
                 }
+                self.exit_scope();
+                
                 if let Some(else_block) = else_block {
+                    self.enter_scope();
                     for s in else_block {
                         self.visit_stmt(s);
                     }
+                    self.exit_scope();
                 }
             }
             ExprKind::Match { expr, arms } => {
                 self.visit_expr(expr);
                 for (_, body_expr) in arms {
+                    self.enter_scope();
                     self.visit_expr(body_expr);
+                    self.exit_scope();
                 }
             }
             ExprKind::StructInit(_, _, fields) => {
@@ -203,15 +225,17 @@ impl LivenessAnalyzer {
                 }
             }
             ExprKind::TensorComprehension { clauses, body, .. } => {
+                self.enter_scope();
                 for c in clauses {
                     match c {
-                        ComprehensionClause::Generator { range, .. } => self.visit_expr(range),
-                        ComprehensionClause::Condition(cond) => self.visit_expr(cond),
+                        ComprehensionClause::Generator { range, .. } => self.visit_expr(range), // Range evaluated in OUTER scope? No, logic varies.
+                        ComprehensionClause::Condition(cond) => self.visit_expr(cond), // Condition vars?
                     }
                 }
                 if let Some(b) = body {
                     self.visit_expr(b);
                 }
+                self.exit_scope();
             }
             // Literals that don't contain other expressions
             ExprKind::Float(_)
@@ -233,12 +257,28 @@ impl LivenessAnalyzer {
     }
 
     fn define_var(&mut self, name: &str, time: usize) {
-        self.intervals.insert(name.to_string(), Interval { start: time, end: time });
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name.to_string(), time);
+        }
+        // Initialize last use as definition time (zero length life initially)
+        self.last_use_times.insert(time, time);
+        
+        // Legacy Map (Approximate)
+        if !self.slot_map.contains_key(name) {
+             let slot = self.slot_map.len();
+             self.slot_map.insert(name.to_string(), slot);
+        }
     }
 
     fn use_var(&mut self, name: &str, time: usize) {
-        if let Some(interval) = self.intervals.get_mut(name) {
-             interval.end = std::cmp::max(interval.end, time);
+        // Find definition in nearest scope
+        for scope in self.scopes.iter().rev() {
+            if let Some(&def_time) = scope.get(name) {
+                if let Some(last_use) = self.last_use_times.get_mut(&def_time) {
+                    *last_use = std::cmp::max(*last_use, time);
+                }
+                return;
+            }
         }
     }
     
@@ -260,44 +300,14 @@ impl LivenessAnalyzer {
         // Or we revisit loop body?
     }
 
+    /*
     fn assign_slots(&mut self) {
-        // Collect all intervals
-        let mut intervals: Vec<(String, Interval)> = self.intervals.iter()
-            .map(|(k, v)| (k.clone(), *v))
-            .collect();
-        
-        // Sort by start time
-        intervals.sort_by_key(|(_, i)| i.start);
-
-        let mut active: Vec<(usize, usize)> = Vec::new(); // (end_time, slot_id) of active allocations
-
-        for (name, interval) in intervals {
-            // Expire old intervals
-            // Remove intervals that ended before this one starts
-            // Actually, we can reuse a slot if its previous occupant ended BEFORE this start.
-            // i.e., occupant.end < interval.start
-            
-            // Find a free slot
-            // active list contains currently occupied slots.
-            active.retain(|(end, _)| *end >= interval.start);
-            
-            let mut used_slots = HashSet::new();
-            for (_, slot) in &active {
-                used_slots.insert(*slot);
-            }
-
-            // Find lowest available slot
-            let mut slot = 0;
-            while used_slots.contains(&slot) {
-                slot += 1;
-            }
-
-            self.slot_map.insert(name, slot);
-            active.push((interval.end, slot));
-        }
+        // Disabled
     }
 
     fn calculate_max_slots(&self) -> usize {
-        self.slot_map.values().map(|s| s + 1).max().unwrap_or(0)
+        0
     }
+    */
+
 }

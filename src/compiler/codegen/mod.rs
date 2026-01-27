@@ -14,6 +14,7 @@ use std::collections::HashMap;
 pub const CLEANUP_NONE: u8 = 0;
 pub const CLEANUP_FULL: u8 = 1;
 pub const CLEANUP_FINALIZE: u8 = 2;
+pub const CLEANUP_STACK: u8 = 3;
 
 pub mod builtins;
 pub mod expr;
@@ -49,6 +50,8 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) function_analysis: Option<crate::compiler::liveness::FunctionAnalysis>,
     pub(crate) current_sret_dest: Option<inkwell::values::PointerValue<'ctx>>,
     pub(crate) temporaries: Vec<Vec<(BasicValueEnum<'ctx>, Type, u8)>>,
+    pub(crate) variable_liveness: Vec<HashMap<String, usize>>, // Parallel to variables: Last Use Time
+    pub(crate) current_time: usize,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -83,6 +86,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             function_analysis: None,
             current_sret_dest: None,
             temporaries: vec![Vec::new()],
+            variable_liveness: vec![HashMap::new()],
+            current_time: 0,
         };
 
         // Register all methods (instance and static)
@@ -189,10 +194,14 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     pub(crate) fn add_temp(&mut self, val: BasicValueEnum<'ctx>, ty: Type) {
+        self.add_temp_with_mode(val, ty, CLEANUP_FULL);
+    }
+
+    pub(crate) fn add_temp_with_mode(&mut self, val: BasicValueEnum<'ctx>, ty: Type, mode: u8) {
         // Only track types that need freeing
         match &ty {
             Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Vec(_) | Type::Tuple(_) | Type::Enum(_, _) => {
-                 self.temporaries.last_mut().expect("No temporary context").push((val, ty, CLEANUP_FULL));
+                 self.temporaries.last_mut().expect("No temporary context").push((val, ty, mode));
             }
             _ => {}
         }
@@ -394,6 +403,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     // Enter a new scope
     fn enter_scope(&mut self) {
         self.variables.push(std::collections::HashMap::new());
+        self.variable_liveness.push(std::collections::HashMap::new());
         self.push_temp_scope(); // Track temporaries for this scope
         if let Some(f) = self.module.get_function("tl_mem_enter_scope") {
             self.builder.build_call(f, &[], "").unwrap();
@@ -659,6 +669,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     // Exit the current scope
+    // Exit the current scope
     fn exit_scope(&mut self) {
         // Only emit cleanup if the current block is NOT terminated.
         // Note: This causes enter/exit imbalance at runtime for return statements.
@@ -673,6 +684,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.emit_top_scope_cleanup();
         }
         self.variables.pop();
+        self.variable_liveness.pop();
         // Just pop the temporaries stack (cleanup code was emitted by emit_top_scope_cleanup if needed)
         self.temporaries.pop();
     }
@@ -1190,10 +1202,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Let's assume Structs needs SRET, but Tensors do NOT.
         // String is a pointer, so exclusion is needed.
         let uses_sret = match &func.return_type {
-            // CRITICAL FIX: Disable SRET for Structs. Use Reference Semantics (Pointer Return).
-            // This prevents "Copy to Unregistered Buffer" issues and ensures valid RefCounting.
-            Type::Struct(_, _) => false,
-            Type::UserDefined(name, _) if name != "String" => false, 
+            Type::Struct(name, _) if name != "Vec" && name != "Map" => true,
+            Type::UserDefined(name, _) if name != "String" && name != "Vec" && name != "Map" => true, 
             _ => false,
         };
 
@@ -1316,8 +1326,8 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Check if this function uses sret
         let uses_sret = match &func.return_type {
-             Type::Struct(_, _) => false,
-             Type::UserDefined(name, _) if name != "String" => false,
+             Type::Struct(name, _) if name != "Vec" && name != "Map" => true,
+             Type::UserDefined(name, _) if name != "String" && name != "Vec" && name != "Map" => true,
              _ => false,
         };
         let param_offset = if uses_sret { 1 } else { 0 };

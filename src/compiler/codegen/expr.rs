@@ -1558,10 +1558,23 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
         Ok(())
     }
+    pub(crate) fn is_last_use(&self, name: &str) -> bool {
+        for scope in self.variable_liveness.iter().rev() {
+            if let Some(&last_use) = scope.get(name) {
+                // If current_time has reached the last_use time, it's a move.
+                // Note: last_use is 0 if it was never used or not found in analysis.
+                if last_use == 0 { return false; }
+                return self.current_time >= last_use;
+            }
+        }
+        false
+    }
+
     pub(crate) fn compile_expr(
         &mut self,
         expr: &Expr,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        self.current_time += 1;
         let prev_span = self.current_span.clone();
         self.current_span = Some(expr.span.clone());
         let result = self.compile_expr_inner(expr);
@@ -6750,7 +6763,14 @@ impl<'ctx> CodeGenerator<'ctx> {
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         let (val, ty) = self.compile_fn_call_dps(name, args, None)?;
-        self.add_temp(val, ty.clone());
+        
+        let mode = match &ty {
+             Type::Struct(name, _) if name != "Vec" && name != "Map" => super::CLEANUP_STACK,
+             Type::UserDefined(name, _) if name != "String" && name != "Vec" && name != "Map" => super::CLEANUP_STACK,
+             _ => super::CLEANUP_FULL,
+        };
+        
+        self.add_temp_with_mode(val, ty.clone(), mode);
         Ok((val, ty))
     }
 
@@ -6892,26 +6912,18 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Tensors are returned by pointer directly, so exclude them.
         let mut dest_val = None;
         if match ret_type {
-             // CRITICAL FIX: Disable SRET for Structs (Pointer Return)
-             Type::Struct(_, _) => false,
-             Type::UserDefined(ref name, _) if name != "String" => false,
+             Type::Struct(ref name, _) if name != "Vec" && name != "Map" => true,
+             Type::UserDefined(ref name, _) if name != "String" && name != "Vec" && name != "Map" => true,
              _ => false 
         } {
              if let Some(d) = dest {
                  dest_val = Some(d);
              } else {
-                 // Allocate Temp Buffer
-                 // We use a fixed size sufficient for OpaqueTensor struct (96 bytes safe upper bound)
-                 let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
-                 let size = self.context.i64_type().const_int(96, false);
-                 let call = self.builder.build_call(malloc_fn, &[size.into()], "tensor_tmp").map_err(|e| e.to_string())?;
-                 let raw_ptr = match call.try_as_basic_value() {
-                      ValueKind::Basic(v) => v.into_pointer_value(),
-                      _ => return Err("malloc failed".into()),
-                 };
-                 // Cast to opaque ptr
-                 let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_tmp").unwrap();
-                 dest_val = Some(cast_ptr.into());
+                 // Allocate Temp Buffer on Stack (DPS)
+                 let current_block = self.builder.get_insert_block().unwrap();
+                 let current_func = current_block.get_parent().unwrap();
+                 let alloca = self.create_entry_block_alloca(current_func, "sret_temp", &ret_type)?;
+                 dest_val = Some(alloca.into());
              }
              
              if let Some(d) = dest_val {
