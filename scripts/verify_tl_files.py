@@ -13,6 +13,7 @@ import os
 import re
 import time
 import argparse
+import tempfile
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
@@ -107,8 +108,68 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
     """TL ファイルを実行して結果を返す"""
     start_time = time.time()
     
+    # 環境変数の準備 (ライブラリパス設定)
+    env = os.environ.copy()
+    runtime_dir = tl_binary.parent
+    # macOS/Linux対応: LIBRARY_PATHを設定してリンカが tl_runtime を見つけられるようにする
+    extra_lib_path = str(runtime_dir)
+    env["LIBRARY_PATH"] = f"{extra_lib_path}:{env.get('LIBRARY_PATH', '')}"
+    env["LD_LIBRARY_PATH"] = f"{extra_lib_path}:{env.get('LD_LIBRARY_PATH', '')}"
+    env["DYLD_LIBRARY_PATH"] = f"{extra_lib_path}:{env.get('DYLD_LIBRARY_PATH', '')}"
+
     skip, reason = should_skip(filepath)
     if skip:
+        # スキップ対象でもビルド確認を行う (main関数がある場合のみ)
+        if "main 関数なし" not in reason:
+            script_dir = Path(__file__).parent
+            project_root = script_dir.parent
+            
+            with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
+                 tmp_path = tmp.name
+            try:
+                 compile_cmd = [str(tl_binary), "-c", str(filepath), "-o", tmp_path]
+                 # コンパイルのみ実行
+                 compile_result = subprocess.run(
+                     compile_cmd,
+                     capture_output=True,
+                     text=True,
+                     timeout=timeout,
+                     cwd=project_root,
+                     env=env
+                 )
+                 
+                 if compile_result.returncode != 0:
+                      return TestResult(
+                          file=str(filepath),
+                          status=Status.FAIL,
+                          output=compile_result.stdout,
+                          error=f"Build Failed:\n{compile_result.stderr}",
+                          duration=time.time() - start_time,
+                          reason=f"Build Failed ({reason})"
+                      )
+                 else:
+                      # ビルド成功したら SKIP (Build OK)
+                      return TestResult(
+                          file=str(filepath),
+                          status=Status.SKIP,
+                          output="",
+                          error="",
+                          duration=time.time() - start_time,
+                          reason=f"{reason} (Build OK)"
+                      )
+            except Exception as e:
+                return TestResult(
+                    file=str(filepath),
+                    status=Status.FAIL,
+                    output="",
+                    error=str(e),
+                    duration=time.time() - start_time,
+                    reason=f"Build Check Error: {e}"
+                )
+            finally:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+
         return TestResult(
             file=str(filepath),
             status=Status.SKIP,
@@ -140,7 +201,8 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
                  capture_output=True,
                  text=True,
                  timeout=timeout,
-                 cwd=project_root # Fix: Compile from root so 'target/debug' path in tl main.rs works
+                 cwd=project_root, # Fix: Compile from root so 'target/debug' path in tl main.rs works
+                 env=env
              )
              
              if compile_result.returncode != 0:
@@ -353,6 +415,26 @@ def main():
         project_root / "tests",
         project_root / "examples",
     ]
+    
+    # ランタイムライブラリのリンク準備 (libtl_runtime.a)
+    # Cargoはハッシュ付きのファイル名を生成するため (libtl_runtime-xxx.a)、
+    # リンカが見つけられるように libtl_runtime.a としてシンボリックリンクを作成する。
+    runtime_dir = tl_binary.parent
+    lib_path = runtime_dir / "libtl_runtime.a"
+    deps_dir = runtime_dir / "deps"
+    
+    if deps_dir.exists():
+        candidates = list(deps_dir.glob("libtl_runtime-*.a"))
+        if candidates:
+            latest_lib = max(candidates, key=lambda p: p.stat().st_mtime)
+            try:
+                # 既存のリンク/ファイルを削除して更新
+                if lib_path.exists():
+                    lib_path.unlink()
+                os.symlink(latest_lib, lib_path)
+                # print(f"🔗 Runtime library linked: {latest_lib.name} -> {lib_path.name}")
+            except Exception as e:
+                print(f"⚠️ Warning: Failed to symlink runtime library: {e}")
     
     print("🔍 TL ファイル検証エージェント")
     print(f"📁 検索ディレクトリ: {', '.join(str(d) for d in directories)}")
