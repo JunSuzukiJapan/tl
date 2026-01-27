@@ -1176,10 +1176,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string());
                 }
 
-                let mut is_slot_backed = false;
-                let mut dps_result = None;
+                let is_slot_backed = false;
+                let dps_result = None;
 
-                if let ExprKind::FnCall(fn_name, args) = &value.inner {
+                if let ExprKind::FnCall(fn_name, _args) = &value.inner {
                     // Check if function returns Tensor
                     // We need to resolve name properly if it's imported (simplified check for now)
                     let simple_name = fn_name.split("::").last().unwrap_or(fn_name);
