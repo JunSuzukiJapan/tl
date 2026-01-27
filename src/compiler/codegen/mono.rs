@@ -304,6 +304,17 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
 
             Type::Struct(name, _args) | Type::UserDefined(name, _args) => {
+                // Compatibility: Handle primitives parsed as UserDefined
+                match name.as_str() {
+                    "bool" => return Ok(self.context.bool_type().into()),
+                    "i64" => return Ok(self.context.i64_type().into()),
+                    "i32" => return Ok(self.context.i32_type().into()),
+                    "f32" => return Ok(self.context.f32_type().into()),
+                    "f64" => return Ok(self.context.f64_type().into()),
+                    "usize" => return Ok(self.context.i64_type().into()),
+                    _ => {}
+                }
+
                 // Handle special types
                 if name == "String" || name == "File" || name == "Path" || name == "Env" || name == "Http" {
                     return Ok(self.context.ptr_type(AddressSpace::default()).into());

@@ -5192,16 +5192,37 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // In ensure_vec_method: "let fn_type = core_fn.get_type();"
                     // So checks against fn_type param types.
                     
-                    let param_type = fn_val.get_nth_param(1).unwrap().get_type();
-                    let arg_casted = if param_type.is_pointer_type() {
-                         // Cast arg to whatever pointer type the function expects (likely i8*)
-                         let ptr = arg_val.into_pointer_value();
-                         self.builder.build_pointer_cast(
-                             ptr, 
-                             param_type.into_pointer_type(),
-                             "arg_cast"
-                         ).unwrap().into()
-                    } else if param_type.is_int_type() {
+                     let param_type = fn_val.get_nth_param(1).unwrap().get_type();
+                     let arg_casted = if param_type.is_pointer_type() {
+                          // If function expects pointer (e.g. void* for generic push), 
+                          // but we have a scalar (bool, int, float), we must spill to stack and pass pointer.
+                          if arg_val.is_pointer_value() {
+                              let ptr = arg_val.into_pointer_value();
+                              self.builder.build_pointer_cast(
+                                  ptr, 
+                                  param_type.into_pointer_type(),
+                                  "arg_cast"
+                              ).unwrap().into()
+                          } else {
+                              // Spill scalar to stack
+                              let func_val = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                              let alloca = self.create_entry_block_alloca(func_val, "arg_spill", &arg_ty)?;
+                              
+                              // Store value (maybe cast to expected size? Runtime expects size of T)
+                              // For bool, it is i1. Runtime likely expects i8 (1 byte).
+                              // Just store as is? create_entry_block_alloca uses arg_type.
+                              // If arg_type is Bool, it allocates i1.
+                              // But LLVM might pack i1? 
+                              // Usually i1 is stored as i8 in memory.
+                              self.builder.build_store(alloca, arg_val).unwrap();
+                              
+                              self.builder.build_pointer_cast(
+                                  alloca,
+                                  param_type.into_pointer_type(),
+                                  "arg_spill_cast"
+                              ).unwrap().into()
+                          }
+                     } else if param_type.is_int_type() {
                          if arg_val.is_int_value() {
                              if arg_val.into_int_value().get_type() != param_type.into_int_type() {
                                  // Cast int (e.g. i64 -> u8)
@@ -5282,27 +5303,24 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // So we check return type of `fn_val`.
                     let ret_type = fn_val.get_type().get_return_type().unwrap(); // We know it's not void for get
                     
-                    let final_res = if ret_type.is_pointer_type() {
-                         // Cast to expected inner type pointer
-                         let inner_llvm_ty = self.get_llvm_type(&inner)?;
-                         // If inner is Struct, get_llvm_type returns pointer (opaque struct ptr).
-                         // That's what we want.
-                         let ptr_ty = match inner_llvm_ty {
-                            inkwell::types::BasicTypeEnum::PointerType(p) => p,
-                            _ => return Err("Expected pointer type for Vec inner element".into()), 
-                         };
-                         
-                         // If check if res is already correct type?
-                         // struct types are opaque pointers. i8* is opaque pointer (in new LLVM).
-                         // But if we need explicit cast for strictness or older LLVM...
-                         self.builder.build_pointer_cast(
-                             res.into_pointer_value(),
-                             ptr_ty,
-                             "cast_back"
-                         ).unwrap().into()
-                    } else {
+                     let final_res = if ret_type.is_pointer_type() {
+                          let inner_llvm_ty = self.get_llvm_type(&inner)?;
+                          if inner_llvm_ty.is_pointer_type() {
+                              // Inner is Struct/Tensor/Vec (Pointer types)
+                              let ptr_ty = inner_llvm_ty.into_pointer_type();
+                              self.builder.build_pointer_cast(
+                                  res.into_pointer_value(),
+                                  ptr_ty,
+                                  "cast_back"
+                              ).unwrap().into()
+                          } else {
+                              // Inner is Scalar
+                              let ptr = res.into_pointer_value();
+                              self.builder.build_load(inner_llvm_ty, ptr, "vec_get_load").unwrap()
+                          }
+                     } else {
                         res
-                    };
+                     };
                     
                     return Ok((final_res, *inner.clone()));
                 }

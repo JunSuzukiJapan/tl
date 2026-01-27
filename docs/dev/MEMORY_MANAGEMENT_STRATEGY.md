@@ -143,28 +143,44 @@ V2.1システムは、最も頻繁な計算（テンソル演算）を最適化�
 
 ---
 
-## [English] Future Roadmap (V3.0+ Candidates)
+## [English] V3.0 Optimizations (Implemented)
 
-### 1. Return Value Optimization (RVO / NRVO)
-Currently, returning a complex object (Struct/Tensor) from a function involves incrementing its reference count, returning the pointer, and then potentially assigning it to a new variable (another increment/decrement cycle).
--   **Optimization**: Implement **Destination Passing Style**. The caller provides a pointer to uninitialized memory (the destination) as a hidden argument. The callee constructs the return value directly into this memory.
--   **Benefit**: Eliminates redundant copy/ref-count operations for return values.
+### 1. Return Value Optimization (RVO / DPS)
+Strict "Destination Passing Style" (DPS) has been implemented to eliminate return value overhead.
+-   **Mechanism**: The caller acts as the "Owner" of the return value slot. It pre-allocates uninitialized stack memory (or reuses a slot) and passes a pointer (`*dest`) to the callee.
+-   **Execution**:
+    1.  The callee constructs the result directly into `*dest`.
+    2.  `tl_ptr_cleanup` is NOT called on `*dest` within the callee (ownership remains with caller).
+    3.  Returning a struct/tensor involves NO `inc_ref` operations.
+-   **Benefit**: Zero-copy returns for large structs and tensors.
 
 ### 2. Move Semantics / Last-Use Optimization
-Variables that are passed to a function and never used again in the caller scope can be "moved".
--   **Optimization**: Static analysis identifies the "last use" of a variable. The compiler emits a move operation (passing ownership) instead of a copy (incref). The callee takes ownership and is responsible for cleanup (or further moving).
--   **Benefit**: Removes pairs of `inc_ref`/`dec_ref` operations, significantly reducing overhead for chain function calls.
+Variables that are passed to a function or assigned as their "last use" in a scope are "moved".
+-   **Mechanism**: 
+    1.  **Liveness Analysis (V3.1)**: The compiler identifies the last statement where a variable is used.
+    2.  **Codegen**: At the point of last use, the compiler omits the `inc_ref` (retain) operation.
+    3.  **Ownership**: Ownership is effectively transferred to the receiving variable or function.
+    4.  **No Cleanup**: The original variable is not decremented at end of scope (handled by `CLEANUP_NONE` flag or skipped), preventing double-free.
+-   **Benefit**: Eliminates redundant `inc_ref`/`dec_ref` pairs, critical for performance in deep call chains.
 
 ---
 
-## [Japanese] 将来のロードマップ (V3.0+ 候補)
+## [Japanese] V3.0 最適化 (実装済み)
 
-### 1. 戻り値の最適化 (RVO / NRVO)
-現在、関数から複雑なオブジェクト（Struct/Tensor）を返す際、参照カウントを増やしてポインタを返し、呼び出し元で変数に代入する（さらに増減が発生する）というコストがかかっています。
--   **最適化**: **Destination Passing Style**（宛先渡しスタイル）を導入します。呼び出し元が「結果を格納するメモリ領域（ポインタ）」を隠し引数として関数に渡し、関数はその領域に直接データを構築します。
--   **メリット**: 戻り値に関する不要なコピーや参照カウント操作を完全に排除できます。
+### 1. 戻り値の最適化 (RVO / DPS)
+戻り値のオーバーヘッドを排除するために、厳格な「Destination Passing Style (DPS)」が実装されました。
+-   **メカニズム**: 呼び出し元が戻り値スロットの「所有者」となります。未初期化のスタックメモリ（またはスロット）を事前に確保し、そのポインタ（`*dest`）を呼び出し先（Callee）に渡します。
+-   **実行**:
+    1.  呼び出し先は、結果を直接 `*dest` に構築します。
+    2.  呼び出し先内部では、`*dest` に対して `tl_ptr_cleanup` を呼び出しません（所有権は呼び出し元にあるため）。
+    3.  構造体やテンソルを返す際に、`inc_ref` 操作は一切発生しません。
+-   **メリット**: 大きな構造体やテンソルのゼロコピー返却を実現。
 
 ### 2. ムーブセマンティクス / ラストユース最適化 (Move Semantics)
-関数に渡された後、呼び出し元で二度と使用されない変数は「移動（Move）」させることができます。
--   **最適化**: 静的解析により変数の「最後の使用（Last Use）」を特定します。コンパイラはコピー（inc_ref）の代わりにムーブ操作（所有権の移動）を行うコードを生成します。受け取った関数側が所有権を持ち、解放（またはさらなる移動）の責任を負います。
--   **メリット**: `inc_ref` と `dec_ref` のペアを削除でき、特に関数チェーン呼び出し時のオーバーヘッドを劇的に削減できます。
+関数に渡されたり、代入されたりする際、それが「最後の使用（Last Use）」である変数は「移動（Move）」されます。
+-   **メカニズム**:
+    1.  **生存区間解析 (V3.1)**: コンパイラは変数が最後に使用されるステートメントを特定します。
+    2.  **コード生成**: 最後の使用時点では、`inc_ref` (retain) 操作を省略します。
+    3.  **所有権**: 所有権は受信側の変数や関数に効率的に転送されます。
+    4.  **クリーンアップなし**: 元の変数はスコープ終了時にデクリメントされません（`CLEANUP_NONE` フラグ等で管理）、二重解放を防ぎます。
+-   **メリット**: `inc_ref` / `dec_ref` のペアを削除し、深い呼び出しチェーンにおけるパフォーマンスを劇的に向上させます。
