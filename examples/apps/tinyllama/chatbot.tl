@@ -33,14 +33,9 @@ impl RMSNorm {
 
 impl MLP {
     fn from_map(m: Map, p: String) -> MLP {
-        // Detailed logging prevents Trace Trap (Stack Alignment Workaround)
-//        println("   MLP: G");
         let g = Linear::from_map(m, string_concat(p, "_gate.weight"));
-//        println("   MLP: U");
         let u = Linear::from_map(m, string_concat(p, "_up.weight"));
-//        println("   MLP: D");
         let d = Linear::from_map(m, string_concat(p, "_down.weight"));
-//        println("   MLP: Done");
         return MLP {
             g: g,
             u: u,
@@ -58,20 +53,13 @@ impl MLP {
 
 impl Attention {
     fn from_map(m: Map, p: String) -> Attention {
-        // Detailed logging prevents Trace Trap (Stack Alignment Workaround)
-//        println("  Attn: Q");
         let q = Linear::from_map(m, string_concat(p, "_q.weight"));
-//        println("  Attn: K");
         let k = Linear::from_map(m, string_concat(p, "_k.weight"));
-//        println("  Attn: V");
         let v = Linear::from_map(m, string_concat(p, "_v.weight"));
-//        println("  Attn: O");
         let o = Linear::from_map(m, string_concat(p, "_output.weight"));
-//        println("  Attn: Done");
         return Attention { q: q, k: k, v: v, o: o };
     }
     fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, sl: i64, ch: KVCache, li: i64, sp: i64) -> Tensor<f32, 2> {
-        // ....reshape([1) -> .reshape(...)
         let q_4d = self.q.forward(x.clone()).reshape([1, sl, 32, 64]);
         let k_4d = self.k.forward(x.clone()).reshape([1, sl, 4, 64]);
         let v_4d = self.v.forward(x.clone()).reshape([1, sl, 4, 64]);
@@ -108,25 +96,17 @@ impl Attention {
         let sm_soft = sm.softmax(3);
         let ao = sm_soft.matmul_4d(vw).transpose(1, 2);
         
-        // ao.reshape([sl) -> .reshape(...)
         return self.o.forward(ao.reshape([sl, 2048]));
     }
 }
 
 impl Block {
     fn from_map(m: Map, li: i64) -> Block {
-        // Detailed logging prevents Trace Trap (Stack Alignment Workaround)
-//        println(string_concat("Loading block ", string_from_int(li)));
         let p = string_concat("blk.", string_from_int(li));
-//        println(" Blk: AN");
         let an = RMSNorm::new(m, string_concat(p, ".attn_norm.weight"));
-//        println(" Blk: FFN_N");
         let ffn = RMSNorm::new(m, string_concat(p, ".ffn_norm.weight"));
-//        println(" Blk: Attn");
         let at = Attention::from_map(m, string_concat(p, ".attn"));
-//        println(" Blk: MLP");
         let mlp = MLP::from_map(m, string_concat(p, ".ffn"));
-//        println(" Blk: Done");
         return Block {
             an: an,
             ffn: ffn,
@@ -243,8 +223,9 @@ fn main() {
             return;
         }
         
-        let p1 = "<|system|>\nYou are a generic chatbot</s>\n<|user|>\n";
-        let p2 = "</s>\n<|assistant|>\n";
+        // Vicuna/Alpaca format (avoids special token splitting issues)
+        let p1 = "A chat between a curious user and an assistant.\n\nUSER: ";
+        let p2 = "\nASSISTANT:";
         let prompt = string_concat(p1, string_concat(input_str, p2));
         let mut tokens = tok.encode(prompt);
         let cache = KVCache::new(22);
@@ -286,12 +267,12 @@ fn main() {
             let s_nxt = tok.decode(nxt);
             print(s_nxt);
             
-            // Stop String Check
+            // Stop String Check (Vicuna format)
             gen_str = string_concat(gen_str, s_nxt);
-            if string_contains(gen_str, "<|user|>") {
+            if string_contains(gen_str, "USER:") {
                 gen_idx = 200; // Break loop
             }
-            if string_contains(gen_str, "<|assistant|>") {
+            if string_contains(gen_str, "ASSISTANT:") {
                 gen_idx = 200; // Break loop
             }
 
