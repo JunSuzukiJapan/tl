@@ -133,13 +133,13 @@ impl TypeRegistry {
                 is_varargs: false,
                 min_args: 0,
             },
-            // argmax(dim, keepdim) -> Tensor<I64>
+            // argmax(dim, keepdim?) -> Tensor<I64>
             MethodSignature {
                 name: "argmax".to_string(),
                 params: vec![ParamType::AnyInt, ParamType::Bool],
                 return_type: ReturnType::Exact(Type::Tensor(Box::new(Type::I64), 0)),
-                is_varargs: false,
-                min_args: 2,
+                is_varargs: true,
+                min_args: 1,
             },
             // to_i64() -> Tensor<I64>
             MethodSignature {
