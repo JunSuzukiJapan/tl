@@ -3952,6 +3952,55 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Ok((res, Type::Bool));
         }
 
+        // Tensor::from_vec_u8(vec, offset, shape, rank) -> Tensor
+        if type_name == "Tensor" && method_name == "from_vec_u8" {
+            if args.len() != 4 {
+                return Err("Tensor::from_vec_u8 requires 4 arguments (vec, offset, shape, rank)".into());
+            }
+            
+            // Compile vec
+            let (vec_val, _) = self.compile_expr(&args[0])?;
+            // Compile offset
+            let (offset_val, _) = self.compile_expr(&args[1])?;
+            // Compile rank
+            let (rank_val, _) = self.compile_expr(&args[3])?;
+            
+            // Compile shape as array literal and get pointer
+            // For ScalarArray, compile_expr returns a pointer to the array
+            let (shape_val, shape_ty) = self.compile_expr(&args[2])?;
+            
+            let shape_ptr = if let Type::ScalarArray(_, _) = shape_ty {
+                // shape_val is already a pointer to the array
+                shape_val
+            } else {
+                return Err(format!("from_vec_u8: shape must be ScalarArray, got {:?}", shape_ty));
+            };
+            
+            let fn_val = self
+                .module
+                .get_function("tl_tensor_from_vec_u8")
+                .ok_or("tl_tensor_from_vec_u8 not found")?;
+            
+            let call = self
+                .builder
+                .build_call(
+                    fn_val,
+                    &[vec_val.into(), offset_val.into(), shape_ptr.into(), rank_val.into()],
+                    "tensor_from_vec_u8",
+                )
+                .map_err(|e| e.to_string())?;
+            
+            let res = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("Invalid return from Tensor::from_vec_u8".into()),
+            };
+            
+            // Register tensor
+            self.add_temp(res, Type::Tensor(Box::new(Type::F32), 2));
+            
+            return Ok((res, Type::Tensor(Box::new(Type::F32), 2)));
+        }
+
         // 1. StaticMethodManager Lookup
         let method_opt = self
             .static_methods
@@ -5383,6 +5432,35 @@ impl<'ctx> CodeGenerator<'ctx> {
                             self.context.i64_type().const_int(0, false).into(),
                             Type::Void,
                         ));
+                }
+                "to_tensor_2d" => {
+                    // to_tensor_2d(offset, dim0, dim1) -> Tensor<f32, 2>
+                    if args.len() != 3 {
+                        return Err("to_tensor_2d requires 3 arguments: offset, dim0, dim1".into());
+                    }
+                    let (offset_val, _) = self.compile_expr(&args[0])?;
+                    let (dim0_val, _) = self.compile_expr(&args[1])?;
+                    let (dim1_val, _) = self.compile_expr(&args[2])?;
+                    
+                    // Derive function name from type parameter
+                    let fn_name = self.mangle_generic_method("vec", &[*inner.clone()], "to_tensor_2d");
+                    let fn_val = self
+                        .module
+                        .get_function(&fn_name)
+                        .ok_or(format!("{} not found", fn_name))?;
+                    let call = self
+                        .builder
+                        .build_call(
+                            fn_val,
+                            &[obj_val.into(), offset_val.into(), dim0_val.into(), dim1_val.into()],
+                            "vec_to_tensor_2d",
+                        )
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from to_tensor_2d".into()),
+                    };
+                    return Ok((res, Type::Tensor(Box::new(Type::F32), 2)));
                 }
                 "read_i32_be" if matches!(inner.as_ref(), Type::U8) => {
                      if args.len() != 1 {

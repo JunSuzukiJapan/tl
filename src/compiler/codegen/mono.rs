@@ -244,10 +244,11 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     /// Convert a Type to a string suffix for mangling.
-    fn type_to_suffix(&self, ty: &Type) -> String {
+    pub fn type_to_suffix(&self, ty: &Type) -> String {
         match ty {
             Type::I64 => "i64".to_string(),
             Type::I32 => "i32".to_string(),
+            Type::U8 => "u8".to_string(),
             Type::F32 => "f32".to_string(),
             Type::F64 => "f64".to_string(),
             Type::Bool => "bool".to_string(),
@@ -275,6 +276,25 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             _ => "unknown".to_string(),
         }
+    }
+
+    /// Mangle a method name for a generic type.
+    /// Example: mangle_generic_method("Vec", [U8], "to_tensor_2d") -> "tl_vec_u8_to_tensor_2d"
+    pub fn mangle_generic_method(
+        &self,
+        base_type: &str,
+        type_args: &[Type],
+        method: &str,
+    ) -> String {
+        let suffix = if type_args.is_empty() {
+            String::new()
+        } else {
+            format!("_{}", type_args.iter()
+                .map(|t| self.type_to_suffix(t).to_lowercase())
+                .collect::<Vec<_>>()
+                .join("_"))
+        };
+        format!("tl_{}{}_{}", base_type.to_lowercase(), suffix, method)
     }
 
     /// Get or create the LLVM type for the given AST Type.

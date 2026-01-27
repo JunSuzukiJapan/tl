@@ -7,10 +7,24 @@ struct Linear {
 
 impl Linear {
     fn new(i: i64, o: i64) -> Linear {
-        return Linear(
-            (Tensor::randn([i, o], true) * 0.001).detach(true), 
-            (Tensor::zeros([o], true)).detach(true)
-        );
+        // Workaround: StructInit does not correctly handle BinOp results,
+        // so we assign to intermediate variables and avoid BinOp in struct fields.
+        let w_base = Tensor::randn([i, o], true);
+        let w = w_base * 0.001;
+        let w_d = w.detach(true);
+        print("w_d after detach:");
+        print(w_d);
+        
+        let b_base = Tensor::zeros([o], true);
+        let b_d = b_base.detach(true);
+        print("b_d after detach:");
+        print(b_d);
+        
+        print("Constructing Linear...");
+        let result = Linear(w_d, b_d);
+        print("Linear constructed, checking result.W:");
+        print(result.W);
+        return result;
     }
     
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
@@ -47,17 +61,15 @@ fn load_mnist_images(path: String) -> Tensor<f32, 2> {
     
     let dim = rows * cols;
     
-    // WORKAROUND: Compiler bug with variable array literals [count, dim]
+    // Use the new specialized to_tensor_2d method
     if count == 60000 {
-        let shape = [60000, 784];
-        let t = Tensor::from_vec_u8(vec, 16, shape, 2);
+        let t = vec.to_tensor_2d(16, 60000, 784);
         vec.free();
         return t as Tensor<f32, 2>;
     }
     
     // Assume 10000 for test set
-    let shape = [10000, 784];
-    let t = Tensor::from_vec_u8(vec, 16, shape, 2);
+    let t = vec.to_tensor_2d(16, 10000, 784);
     
     vec.free();
     return t as Tensor<f32, 2>;

@@ -1049,6 +1049,16 @@ impl TypeRegistry {
                 min_args: 0,
             },
         );
+        vec_u8_methods.insert(
+            "to_tensor_2d".to_string(),
+            MethodSignature {
+                name: "to_tensor_2d".to_string(),
+                params: vec![ParamType::AnyInt, ParamType::AnyInt, ParamType::AnyInt],
+                return_type: ReturnType::Exact(Type::Tensor(Box::new(Type::F32), 2)),
+                is_varargs: false,
+                min_args: 3,
+            },
+        );
         self.methods.insert("Vec<U8>".to_string(), vec_u8_methods);
 
         // Generic Vec methods (registered under "Vec")

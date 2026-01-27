@@ -21,8 +21,8 @@ fn main() {
     print("Starting training loop...");
     
     // Check initial weights (pixel 400 - center of image)
-    print("Initial W (row 400):");
-    print(model.W.slice(400, 1));
+    print("After model creation, check model.W:");
+    print(model.W);
     
     while epoch < 10 {  // 10 epochs
         let mut b = 0;

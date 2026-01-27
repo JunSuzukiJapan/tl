@@ -1393,6 +1393,7 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_vec_u8_get") { execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_get as usize); }
     if let Some(f) = module.get_function("tl_vec_u8_len") { execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_len as usize); }
     if let Some(f) = module.get_function("tl_vec_u8_free") { execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_free as usize); }
+    if let Some(f) = module.get_function("tl_vec_u8_to_tensor_2d") { execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_to_tensor_2d as usize); }
 
     // Aliases for String -> Ptr
     if let Some(f) = module.get_function("tl_vec_string_new") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_new as usize); }
@@ -2110,6 +2111,9 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_vec_u8_free") {
         execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_free as usize);
+    }
+    if let Some(f) = module.get_function("tl_vec_u8_to_tensor_2d") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_to_tensor_2d as usize);
     }
 
     // Binary file I/O mappings
@@ -3047,6 +3051,17 @@ pub fn declare_runtime_functions<'ctx>(
     let vec_u8_free_type = void_type.fn_type(&[ptr_type.into()], false);
     module.add_function("tl_vec_u8_free", vec_u8_free_type, None);
     fn_return_types.insert("tl_vec_u8_free".to_string(), Type::Void);
+
+    // tl_vec_u8_to_tensor_2d(ptr, offset, dim0, dim1) -> tensor_ptr
+    let vec_u8_to_tensor_2d_type = ptr_type.fn_type(
+        &[ptr_type.into(), i64_type.into(), i64_type.into(), i64_type.into()],
+        false,
+    );
+    module.add_function("tl_vec_u8_to_tensor_2d", vec_u8_to_tensor_2d_type, None);
+    fn_return_types.insert(
+        "tl_vec_u8_to_tensor_2d".to_string(),
+        Type::Tensor(Box::new(Type::F32), 2),
+    );
 
     // --- Binary file I/O ---
     let i8_ptr = context.ptr_type(inkwell::AddressSpace::default());

@@ -1476,6 +1476,50 @@ pub extern "C" fn tl_tensor_from_vec_u8(
     }
 }
 
+/// 2D version with explicit dimensions (avoids shape pointer issues)
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_u8_to_tensor_2d(
+    ptr: *mut Vec<u8>,
+    offset: i64,
+    dim0: i64,
+    dim1: i64,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let vec = &*ptr;
+        let offset = offset as usize;
+        let shape = vec![dim0 as usize, dim1 as usize];
+
+        let total_elements: usize = shape.iter().product();
+
+        if offset + total_elements > vec.len() {
+            eprintln!(
+                "tl_vec_u8_to_tensor_2d: Not enough elements. Needed {}, have {} (offset {})",
+                total_elements,
+                vec.len() - offset,
+                offset
+            );
+            crate::error::set_last_error("tl_vec_u8_to_tensor_2d: Out of bounds", crate::error::RuntimeErrorCode::IndexOutOfBounds);
+            return std::ptr::null_mut();
+        }
+
+        let sub_vec = &vec[offset..offset + total_elements];
+        let data_f32: Vec<f32> = sub_vec.iter().map(|&b| b as f32 / 255.0).collect();
+
+        let device = get_device();
+        let t_cpu =
+            candle_core::Tensor::from_vec(data_f32, shape, &candle_core::Device::Cpu).unwrap();
+        let tensor = if device.is_metal() || device.is_cuda() {
+            t_cpu.to_device(&device).unwrap()
+        } else {
+            t_cpu
+        };
+
+        let tensor_with_grad = OpaqueTensor(TensorVariant::Standard(tensor, None, None));
+
+        Box::into_raw(Box::new(tensor_with_grad))
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_from_u8_labels(
     ptr: *mut Vec<u8>,
