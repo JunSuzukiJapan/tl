@@ -1313,14 +1313,21 @@ impl<'ctx> CodeGenerator<'ctx> {
         struct_name: &str,
         prefix: String,
     ) -> Result<(), String> {
+        // Extract simple name from module path (e.g., "mnist_common::Linear" -> "Linear")
+        let simple_name = if struct_name.contains("::") {
+            struct_name.split("::").last().unwrap()
+        } else {
+            struct_name
+        };
+
         let def = self
             .struct_defs
-            .get(struct_name)
+            .get(simple_name)
             .ok_or(format!("Struct definition '{}' not found", struct_name))?;
 
         let struct_ty = *self
             .struct_types
-            .get(struct_name)
+            .get(simple_name)
             .ok_or("Struct LLVM type not found")?;
 
         for (i, (field_name, field_type)) in def.fields.iter().enumerate() {
@@ -1391,14 +1398,21 @@ impl<'ctx> CodeGenerator<'ctx> {
         struct_name: &str,
         prefix: String,
     ) -> Result<(), String> {
+        // Extract simple name from module path
+        let simple_name = if struct_name.contains("::") {
+            struct_name.split("::").last().unwrap()
+        } else {
+            struct_name
+        };
+
         let def = self
             .struct_defs
-            .get(struct_name)
+            .get(simple_name)
             .ok_or(format!("Struct definition '{}' not found", struct_name))?;
 
         let struct_ty = *self
             .struct_types
-            .get(struct_name)
+            .get(simple_name)
             .ok_or("Struct LLVM type not found")?;
 
         for (i, (field_name, field_type)) in def.fields.iter().enumerate() {
@@ -2869,19 +2883,26 @@ impl<'ctx> CodeGenerator<'ctx> {
              self.mangle_type_name(name, generics)
         };
         
+        // Extract simple name from module path
+        let simple_lookup_name = if lookup_name.contains("::") {
+            lookup_name.split("::").last().unwrap().to_string()
+        } else {
+            lookup_name.clone()
+        };
+        
         // Debug:
         // if generics.len() > 0 { ... }
 
         let struct_type = *self
             .struct_types
-            .get(&lookup_name)
+            .get(&simple_lookup_name)
             .ok_or_else(|| {
                  format!("Struct type {} not found in codegen", lookup_name)
             })?;
 
         let struct_def = self
             .struct_defs
-            .get(&lookup_name)
+            .get(&simple_lookup_name)
             .ok_or_else(|| {
                  format!("Struct definition {} not found", lookup_name)
             })?
@@ -3236,14 +3257,21 @@ impl<'ctx> CodeGenerator<'ctx> {
         name: &str,
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        // Extract simple name from module path
+        let simple_name = if name.contains("::") {
+            name.split("::").last().unwrap()
+        } else {
+            name
+        };
+
         let struct_type = *self
             .struct_types
-            .get(name)
+            .get(simple_name)
             .ok_or(format!("Struct type {} not found in codegen", name))?;
 
         let struct_def = self
             .struct_defs
-            .get(name)
+            .get(simple_name)
             .ok_or(format!("Struct definition {} not found", name))?
             .clone();
 
@@ -6066,10 +6094,17 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => return Err(format!("Method {} not found on type {:?}", method, obj_ty)),
         };
 
+        // Extract simple name from module path for mangling
+        let simple_struct_name = if struct_name.contains("::") {
+            struct_name.split("::").last().unwrap().to_string()
+        } else {
+            struct_name.clone()
+        };
+
         // Try exact mangling first: tl_{Struct}_{Method}
-        let mangled_name = format!("tl_{}_{}", struct_name, method);
+        let mangled_name = format!("tl_{}_{}", simple_struct_name, method);
         // Fallback to lowercase
-        let stdlib_name = format!("tl_{}_{}", struct_name.to_lowercase(), method);
+        let stdlib_name = format!("tl_{}_{}", simple_struct_name.to_lowercase(), method);
 
         let (func_val, final_name) = if let Some(f) = self.module.get_function(&mangled_name) {
             (f, mangled_name)

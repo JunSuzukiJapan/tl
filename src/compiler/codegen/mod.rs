@@ -734,7 +734,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(), // OpaqueTensor*
                     Type::Struct(name, _) | Type::UserDefined(name, _) => {
-                        if self.struct_types.contains_key(name) || name == "String" {
+                        // Extract simple name from module path (e.g., "mnist_common::Linear" -> "Linear")
+                        let simple_name = if name.contains("::") {
+                            name.split("::").last().unwrap()
+                        } else {
+                            name.as_str()
+                        };
+                        if self.struct_types.contains_key(simple_name) || name == "String" {
                             self.context
                                 .ptr_type(inkwell::AddressSpace::default())
                                 .into()

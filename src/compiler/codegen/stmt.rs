@@ -109,9 +109,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if name == "String" {
                     return Ok(());
                 }
-                if let Some(struct_def) = self.struct_defs.get(name) {
+                // Extract simple name from module path (e.g., "mnist_common::Linear" -> "Linear")
+                let simple_name = if name.contains("::") {
+                    name.split("::").last().unwrap()
+                } else {
+                    name.as_str()
+                };
+                if let Some(struct_def) = self.struct_defs.get(simple_name) {
                     let ptr = val.into_pointer_value();
-                    let st_llvm_ty = *self.struct_types.get(name).unwrap();
+                    let st_llvm_ty = if let Some(st) = self.struct_types.get(simple_name) {
+                        *st
+                    } else {
+                        // eprintln!("DEBUG: emit_recursive_unregister struct type {} NOT FOUND", simple_name);
+                        return Ok(());
+                    };
 
                     for (i, (_, field_type)) in struct_def.fields.iter().enumerate() {
                         if matches!(
@@ -145,7 +156,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                     }
                 } else {
-                     eprintln!("DEBUG: emit_recursive_unregister struct {} NOT FOUND in struct_defs", name);
+                     // eprintln!("DEBUG: emit_recursive_unregister struct {} NOT FOUND in struct_defs", simple_name);
                 }
             }
             _ => {}
@@ -524,14 +535,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                     return Ok(());
                 }
 
+                // Extract simple name from module path
+                let simple_name = if name.contains("::") {
+                    name.split("::").last().unwrap()
+                } else {
+                    name.as_str()
+                };
+
                 let struct_def = self
                     .struct_defs
-                    .get(name)
+                    .get(simple_name)
                     .ok_or(format!("Struct def {} not found", name))?
                     .clone();
                 let struct_ty = *self
                     .struct_types
-                    .get(name)
+                    .get(simple_name)
                     .ok_or(format!("Struct type {} not found", name))?;
                 let ptr = val.into_pointer_value();
 
