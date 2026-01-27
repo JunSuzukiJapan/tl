@@ -1289,7 +1289,10 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) -> FreeOutcome {
 
         if let Ok(mut pool) = memory_manager::TENSOR_POOL.lock() {
             match pool.release(t, num_elements, dtype_id, device_id) {
-                memory_manager::PoolOutcome::Pooled => return FreeOutcome::Pooled,
+                memory_manager::PoolOutcome::Pooled => {
+                    std::ptr::drop_in_place(t);
+                    return FreeOutcome::Pooled;
+                }
                 memory_manager::PoolOutcome::Duplicate => return FreeOutcome::Pooled,
                 memory_manager::PoolOutcome::Full => { /* Fallthrough to free */ }
             }

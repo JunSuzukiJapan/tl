@@ -1991,51 +1991,98 @@ impl<'ctx> CodeGenerator<'ctx> {
                         new_val_basic
                     }
                     AssignOp::AddAssign => {
-                        // Load current value
-                        let load_type: inkwell::types::BasicTypeEnum = match var_type {
-                            Type::I64 => self.context.i64_type().into(),
-                            Type::F32 => self.context.f32_type().into(),
-                            Type::Bool => self.context.bool_type().into(),
-                            Type::Tensor(_, _) => self
-                                .context
-                                .ptr_type(inkwell::AddressSpace::default())
-                                .into(),
-                            _ => {
-                                return Err(format!(
-                                    "Unsupported type for assignment operation: {:?}",
-                                    var_type
-                                ))
-                            }
-                        };
+                        if let Type::Tensor(_, _) = var_type {
+                            let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                            let current_val = self
+                                .builder
+                                .build_load(
+                                    load_type,
+                                    var_ptr.into_pointer_value(),
+                                    &format!("{}_current", name),
+                                )
+                                .map_err(|e| e.to_string())?;
 
-                        let current_val = self
-                            .builder
-                            .build_load(
-                                load_type,
-                                var_ptr.into_pointer_value(),
-                                &format!("{}_current", name),
-                            )
-                            .map_err(|e| e.to_string())?;
+                            let add_assign_fn = if matches!(val_type, Type::Tensor(_, _)) {
+                                self.module.get_function("tl_tensor_add_assign").unwrap()
+                            } else {
+                                self.module
+                                    .get_function("tl_tensor_add_assign_scalar_f32")
+                                    .unwrap()
+                            };
 
-                        // For +=, we are computing New = Old + Val.
-                        // The `compile_bin_op` creates a NEW tensor result.
-                        // We must free the OLD `current_val` after we use it (or rely on `dl_tensor_add` to NOT consume it? Candle ops return new tensors).
-                        // Current `tl_tensor_add` returns new tensor.
-                        // So `current_val` (pointer to old tensor) is now orphaned unless we free it.
-                        // BUT: `compile_bin_op` emits `tl_tensor_add(lhs, rhs)`.
-                        // Does `tl_tensor_add` take ownership? No, specific implementation just reads.
-                        // So we MUST free `current_val` here before overwriting `var_ptr`.
+                            let val_arg = if matches!(val_type, Type::Tensor(_, _)) {
+                                val.into()
+                            } else {
+                                // Convert to f32 if necessary
+                                let scalar_f32: inkwell::values::FloatValue = match val_type {
+                                    Type::F32 => val.into_float_value(),
+                                    Type::F64 => self
+                                        .builder
+                                        .build_float_cast(
+                                            val.into_float_value(),
+                                            self.context.f32_type(),
+                                            "f64_to_f32",
+                                        )
+                                        .map_err(|e| e.to_string())?,
+                                    Type::I64 | Type::I32 => self
+                                        .builder
+                                        .build_signed_int_to_float(
+                                            val.into_int_value(),
+                                            self.context.f32_type(),
+                                            "int_to_f32",
+                                        )
+                                        .map_err(|e| e.to_string())?,
+                                    _ => {
+                                        return Err(format!(
+                                            "AddAssign: unsupported RHS type {:?}",
+                                            val_type
+                                        ))
+                                    }
+                                };
+                                scalar_f32.into()
+                            };
 
-                        // Free logic removed.
+                            self.builder
+                                .build_call(add_assign_fn, &[current_val.into(), val_arg], "")
+                                .map_err(|e| e.to_string())?;
 
-                        let (op_res, _) = self.compile_bin_op(
-                            current_val,
-                            var_type.clone(),
-                            val,
-                            val_type,
-                            BinOp::Add,
-                        )?;
-                        op_res
+                            return Ok(());
+                        } else {
+                            // Generic path
+                            let load_type: inkwell::types::BasicTypeEnum = match var_type {
+                                Type::I64 => self.context.i64_type().into(),
+                                Type::F32 => self.context.f32_type().into(),
+                                Type::Bool => self.context.bool_type().into(),
+                                Type::Tensor(_, _) => self
+                                    .context
+                                    .ptr_type(inkwell::AddressSpace::default())
+                                    .into(),
+                                _ => {
+                                    return Err(format!(
+                                        "Unsupported type for assignment operation: {:?}",
+                                        var_type
+                                    ))
+                                }
+                            };
+
+                            let current_val = self
+                                .builder
+                                .build_load(
+                                    load_type,
+                                    var_ptr.into_pointer_value(),
+                                    &format!("{}_current", name),
+                                )
+                                .map_err(|e| e.to_string())?;
+
+                            let (op_res, _) = self.compile_bin_op(
+                                current_val,
+                                var_type.clone(),
+                                val,
+                                val_type,
+                                BinOp::Add,
+                            )?;
+                            op_res
+                        }
                     }
                     AssignOp::SubAssign => {
                         if let Type::Tensor(_, _) = var_type {
