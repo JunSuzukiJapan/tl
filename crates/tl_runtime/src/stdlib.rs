@@ -6,6 +6,17 @@ use std::os::raw::c_char;
 // --- Strings ---
 
 #[unsafe(no_mangle)]
+pub extern "C" fn tl_string_free(s: *mut c_char) {
+    if s.is_null() {
+        return;
+    }
+    unsafe {
+        crate::tl_log_free(s as *const c_void, std::ptr::null(), 0);
+        let _ = CString::from_raw(s);
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_prompt(prompt: *const c_char) -> *mut c_char {
     // Print prompt
     if !prompt.is_null() {

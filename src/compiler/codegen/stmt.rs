@@ -484,8 +484,43 @@ impl<'ctx> CodeGenerator<'ctx> {
                     return self.emit_recursive_free(val, &Type::Vec(Box::new(inner_ty)), super::CLEANUP_FULL);
                 }
 
-                // Skip String
+                // Handle String cleanup
                 if name == "String" {
+                    let free_fn = self
+                        .module
+                        .get_function("tl_string_free")
+                        .or_else(|| {
+                             let void_ty = self.context.void_type();
+                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                             let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                             Some(self.module.add_function("tl_string_free", ft, None))
+                        })
+                        .ok_or("tl_string_free not found")?;
+                    
+                    let ptr = val.into_pointer_value();
+                    
+                    // Emit log free (optional, the runtime fn also logs, but consistenct with other types?)
+                    // Runtime fn logs. No need to log here twice OR runtime one is better.
+                    // But emit_recursive_free usually logs? 
+                    // L451 logs for Tensor.
+                    // Let's rely on runtime valid pointer.
+                    // But we should check null.
+                    
+                    // Runtime null check
+                    let current_block = self.builder.get_insert_block().unwrap();
+                    let func = current_block.get_parent().unwrap();
+                    let free_block = self.context.append_basic_block(func, "free_string");
+                    let merge_block = self.context.append_basic_block(func, "after_string_free");
+
+                    let is_null = self.builder.build_is_null(ptr, "is_null_str").map_err(|e| e.to_string())?;
+                    self.builder.build_conditional_branch(is_null, merge_block, free_block).map_err(|e| e.to_string())?;
+
+                    self.builder.position_at_end(free_block);
+                    let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_str").unwrap();
+                    self.builder.build_call(free_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
+                    self.builder.build_unconditional_branch(merge_block).unwrap();
+
+                    self.builder.position_at_end(merge_block);
                     return Ok(());
                 }
 
