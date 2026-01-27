@@ -61,6 +61,15 @@ Structs require careful lifecycle management:
     -   Result: Struct Container (Unregistered, Survives) + Fields (Refcount > 0, Survive).
 
 ---
+#### C. Function Argument Strategy: "Borrowing" (V2.2 Optimization)
+To further reduce overhead and ambiguity, specialized handling for function arguments is introduced:
+
+-   **Borrowing**: Arguments passed to a function are considered "Owned by the Caller" (or external scope).
+-   **No Registration**: The callee function does **NOT** register arguments (`tl_mem_register_*`) or increment their reference counts upon entry.
+-   **Implication**:
+    -   Arguments are treated as "valid references" guaranteed to outlive the function call.
+    -   **Reassignment**: If an argument variable is reassigned, the old value is NOT decremented (because it wasn't owned). The new value IS registered.
+    -   **Return/Struct**: If an argument is returned or stored in a struct, explicit `tl_ptr_acquire` (retain) is required to promote the borrowed reference to an owned one.
 
 ## [Japanese] メモリ管理戦略 V2.1 (ハイブリッド静的解析)
 
@@ -111,6 +120,18 @@ V2.1システムは、最も頻繁な計算（テンソル演算）を最適化�
 
 ---
 
+#### C. 関数引数戦略: "Borrowing" (V2.2 最適化)
+さらなるオーバーヘッド削減と責任分界の明確化のため、関数引数に対して特別な扱いを導入します。
+
+-   **借用 (Borrowing)**: 関数に渡された引数は、「呼び出し元（または外部スコープ）が所有している」とみなします。
+-   **登録なし (No Registration)**: 呼び出された関数（被呼者）は、引数に対して `tl_mem_register_*` を**呼び出しません**。参照カウントのインクリメントも行いません。
+-   **影響とルール**:
+    -   引数は、関数呼び出し期間中は常に有効であることが保証された「参照」として扱われます。
+    -   **再代入**: 引数変数に新しい値を代入する場合、古い値（引数として渡された値）の参照カウントはデクリメント**しません**（所有していないため）。新しい値は通常通り登録（所有）します。
+    -   **返却/構造体への格納**: 引数を関数から返す場合、または構造体のフィールドにセットして永続化する場合は、明示的な `tl_ptr_acquire` (retain) を呼び出し、借用された参照を所有された参照へと昇格させる必要があります。
+
+---
+
 ### 4. 比較 (V1 vs V2.1)
 
 | 機能 | V1 (旧) | V2.1 (現在) |
@@ -119,3 +140,31 @@ V2.1システムは、最も頻繁な計算（テンソル演算）を最適化�
 | **構造体管理** | 不完全な所有権管理 | **Strict RefCount + Shallow Unregister** |
 | **メソッド実行** | フレームなし (不安定) | **関数同様のフレーム確保** (安定) |
 | **スロット再利用** | なし | **あり (Liveness Analysis)** |
+
+---
+
+## [English] Future Roadmap (V3.0+ Candidates)
+
+### 1. Return Value Optimization (RVO / NRVO)
+Currently, returning a complex object (Struct/Tensor) from a function involves incrementing its reference count, returning the pointer, and then potentially assigning it to a new variable (another increment/decrement cycle).
+-   **Optimization**: Implement **Destination Passing Style**. The caller provides a pointer to uninitialized memory (the destination) as a hidden argument. The callee constructs the return value directly into this memory.
+-   **Benefit**: Eliminates redundant copy/ref-count operations for return values.
+
+### 2. Move Semantics / Last-Use Optimization
+Variables that are passed to a function and never used again in the caller scope can be "moved".
+-   **Optimization**: Static analysis identifies the "last use" of a variable. The compiler emits a move operation (passing ownership) instead of a copy (incref). The callee takes ownership and is responsible for cleanup (or further moving).
+-   **Benefit**: Removes pairs of `inc_ref`/`dec_ref` operations, significantly reducing overhead for chain function calls.
+
+---
+
+## [Japanese] 将来のロードマップ (V3.0+ 候補)
+
+### 1. 戻り値の最適化 (RVO / NRVO)
+現在、関数から複雑なオブジェクト（Struct/Tensor）を返す際、参照カウントを増やしてポインタを返し、呼び出し元で変数に代入する（さらに増減が発生する）というコストがかかっています。
+-   **最適化**: **Destination Passing Style**（宛先渡しスタイル）を導入します。呼び出し元が「結果を格納するメモリ領域（ポインタ）」を隠し引数として関数に渡し、関数はその領域に直接データを構築します。
+-   **メリット**: 戻り値に関する不要なコピーや参照カウント操作を完全に排除できます。
+
+### 2. ムーブセマンティクス / ラストユース最適化 (Move Semantics)
+関数に渡された後、呼び出し元で二度と使用されない変数は「移動（Move）」させることができます。
+-   **最適化**: 静的解析により変数の「最後の使用（Last Use）」を特定します。コンパイラはコピー（inc_ref）の代わりにムーブ操作（所有権の移動）を行うコードを生成します。受け取った関数側が所有権を持ち、解放（またはさらなる移動）の責任を負います。
+-   **メリット**: `inc_ref` と `dec_ref` のペアを削除でき、特に関数チェーン呼び出し時のオーバーヘッドを劇的に削減できます。

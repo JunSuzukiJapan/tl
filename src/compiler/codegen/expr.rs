@@ -5108,7 +5108,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Check for Vec (either Type::Vec or UserDefined("Vec"))
         let inner_opt = match &obj_ty {
             Type::Vec(inner) => Some(inner.clone()),
-            Type::UserDefined(n, args) => {
+            Type::UserDefined(n, args) | Type::Struct(n, args) => {
                  if n == "Vec" {
                      if args.is_empty() {
                         Some(Box::new(Type::Void))

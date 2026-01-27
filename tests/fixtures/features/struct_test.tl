@@ -3,17 +3,17 @@ struct Counter {
 }
 
 impl Counter {
-    fn increment(self: Counter, amount: i64) {
-        self.val = self.val + amount;
+    fn increment(self, amount: i64) -> Counter {
+        return Counter { val: self.val + amount };
     }
     
-    fn get(self: Counter) -> i64 {
+    fn get(self) -> i64 {
         return self.val;
     }
 }
 
 print(100);
-let c = Counter(0);
+let mut c = Counter { val: 0 };
 print(200);
-c.increment(10);
+c = c.increment(10);
 print(c.get());

@@ -46,9 +46,12 @@ impl GenericResolver {
             }
             
             // Case 2: Matching structs/user types
+            // Case 2: Matching structs/user types
             (Type::UserDefined(n1, args1), Type::UserDefined(n2, args2)) 
             | (Type::Struct(n1, args1), Type::Struct(n2, args2))
-            | (Type::Enum(n1, args1), Type::Enum(n2, args2)) => {
+            | (Type::Enum(n1, args1), Type::Enum(n2, args2))
+            | (Type::UserDefined(n1, args1), Type::Struct(n2, args2))
+            | (Type::Struct(n1, args1), Type::UserDefined(n2, args2)) => {
                 if n1 != n2 {
                     return Err(format!("Type mismatch: {} vs {}", n1, n2));
                 }

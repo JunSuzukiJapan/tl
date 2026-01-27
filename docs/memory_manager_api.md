@@ -140,7 +140,7 @@ pub fn exit_scope(&mut self)
 ```rust
 pub fn register_struct(&mut self, ptr: *mut c_void)
 pub fn register_tensor(&mut self, ptr: *mut OpaqueTensor)
-pub fn register_vec_ptr(&mut self, ptr: *mut c_void)
+
 
 /// **現在のスコープ**からのみポインタの登録を解除します（ムーブセマンティクス用）
 pub fn unregister(&mut self, ptr: *mut c_void)

@@ -1316,8 +1316,8 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Check if this function uses sret
         let uses_sret = match &func.return_type {
-             Type::Struct(_, _) => true,
-             Type::UserDefined(name, _) if name != "String" => true,
+             Type::Struct(_, _) => false,
+             Type::UserDefined(name, _) if name != "String" => false,
              _ => false,
         };
         let param_offset = if uses_sret { 1 } else { 0 };
@@ -1524,7 +1524,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .get_function("tl_tensor_free")
             .ok_or("tl_tensor_free must be declared")?;
         // Runtime function tl_ptr_inc_ref
-        let tl_ptr_inc_ref_fn = self
+        let _tl_ptr_inc_ref_fn = self
             .module
             .get_function("tl_ptr_inc_ref")
             .or_else(|| {

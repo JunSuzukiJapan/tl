@@ -1891,12 +1891,12 @@ impl SemanticAnalyzer {
                  // Or just implement simplified version here.
                  // receiver_type is the concrete type.
                  // We need hypothetical generic definition.
-                 let generic_structure = match receiver_type {
+                let generic_structure = match receiver_type {
                     Type::Vec(_) => Type::Vec(Box::new(Type::UserDefined("T".into(), vec![]))),
-                    Type::UserDefined(n, args) if n == "Vec" && args.len() == 1 => {
+                    Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Vec" && args.len() == 1 => {
                         Type::UserDefined("Vec".into(), vec![Type::UserDefined("T".into(), vec![])])
                     }
-                    Type::UserDefined(n, args) if n == "Map" && args.len() == 2 => {
+                    Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Map" && args.len() == 2 => {
                          Type::Struct("Map".into(), vec![
                             Type::UserDefined("K".into(), vec![]),
                             Type::UserDefined("V".into(), vec![])

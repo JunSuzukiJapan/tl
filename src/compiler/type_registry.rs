@@ -1381,13 +1381,11 @@ impl TypeRegistry {
                 // HARDCODED support for standard builtins for now (Vec/Map)
                 let generic_structure = match receiver {
                     Type::Vec(_) => Type::Vec(Box::new(Type::UserDefined("T".into(), vec![]))),
-                    Type::UserDefined(n, args) if n == "Vec" && args.len() == 1 => {
+                    Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Vec" && args.len() == 1 => {
                         Type::UserDefined("Vec".into(), vec![Type::UserDefined("T".into(), vec![])])
                     }
-                    // Map is a Struct "Map" with 2 generics? 
-                    // Actually Map isn't explicitly defined as a Type variant, it's a struct in stdlib.
-                    // But if it's treated as UserDefined("Map", [K, V])...
-                    Type::UserDefined(n, args) if n == "Map" && args.len() == 2 => {
+                    // Map generic support (K, V)
+                    Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Map" && args.len() == 2 => {
                         Type::Struct("Map".into(), vec![
                             Type::UserDefined("K".into(), vec![]),
                             Type::UserDefined("V".into(), vec![])

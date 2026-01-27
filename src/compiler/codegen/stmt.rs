@@ -1359,31 +1359,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                     _ => {}
                 }
-                                                                                  /*
-                                                                                  match &val_ty {
-                                                                                      Type::Tensor(_, _) => {
-                                                                                          if let Some(register_fn) =
-                                                                                              self.module.get_function("tl_mem_register_tensor")
-                                                                                          {
-                                                                                              // Load the pointer from alloca (val_ir is the value to store, so it's the pointer)
-                                                                                              // val_ir is the T* (OpaqueTensor*)
-                                                                                              self.builder
-                                                                                                  .build_call(register_fn, &[val_ir.into()], "")
-                                                                                                  .map_err(|e| e.to_string())?;
-                                                                                          }
-                                                                                      }
-                                                                                      Type::Struct(_, _) | Type::UserDefined(_, _) => {
-                                                                                          /*
-                                                                                          if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
-                                                                                              self.builder
-                                                                                                  .build_call(register_fn, &[val_ir.into()], "")
-                                                                                                  .map_err(|e| e.to_string())?;
-                                                                                          }
-                                                                                          */
-                                                                                      }
-                                                                                      _ => {}
-                                                                                  }
-                                                                                  */
                 Ok(())
             }
             StmtKind::Return(expr_opt) => {
