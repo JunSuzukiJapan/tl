@@ -63,9 +63,7 @@ pub extern "C" fn tl_mem_register_struct_named(ptr: *mut c_void, name: *const c_
 #[no_mangle]
 pub extern "C" fn tl_mem_register_tensor(ptr: *mut OpaqueTensor)
 
-/// Vecポインタのアロケーションを登録します
-#[no_mangle]
-pub extern "C" fn tl_mem_register_vec_ptr(ptr: *mut c_void)
+
 
 /// 汎用的なポインタ登録（型ロジックを推論します）
 #[no_mangle]

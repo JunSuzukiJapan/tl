@@ -139,7 +139,6 @@ lazy_static::lazy_static! {
 enum AllocationType {
     Struct, // malloc'd struct - needs simple free()
     Tensor, // OpaqueTensor* - needs tl_tensor_free()
-    VecPtr, // Vec<*mut c_void> - needs iteration release + drop
 }
 
 /// Record of a single allocation
@@ -224,7 +223,6 @@ impl MemoryManager {
                 match record.alloc_type {
                     AllocationType::Struct => struct_allocs += 1,
                     AllocationType::Tensor => tensor_allocs += 1,
-                    AllocationType::VecPtr => struct_allocs += 1,
                 }
             }
             if crate::mem_log_enabled() {
@@ -417,21 +415,6 @@ impl MemoryManager {
                                  eprintln!("[TL_MEM] freed tensor outcome={}", outcome_str);
                              }
                         }
-                        AllocationType::VecPtr => {
-                            unsafe {
-                                let v_ptr = ptr as *mut Vec<*mut c_void>;
-                                let v = std::ptr::read(v_ptr); // Move Vec out
-                                for elem in &v {
-                                    // Recursive release of elements
-                                    // NOTE: This calls generic release (recurses)
-                                    // Refcounts handle cyclic checks? (No cyclic garbage collector yet)
-                                    // But strictly we should release.
-                                    self.release_ptr(*elem);
-                                }
-                                drop(v); // Free buffer
-                                libc::free(ptr); // Free container
-                            }
-                        }
                     }
                 } else {
                      // Assume Struct if unknown (fallback?) or just leak/warn?
@@ -451,22 +434,7 @@ impl MemoryManager {
         self.release_ptr(ptr);
     }
 
-    /// Register a VecPtr allocation
-    pub fn register_vec_ptr(&mut self, ptr: *mut c_void) {
-        if ptr.is_null() { return; }
-        
-        self.ptr_types.entry(ptr).or_insert(AllocationType::VecPtr);
 
-        if let Some(scope) = self.scopes.last_mut() {
-             let count = self.refcounts.entry(ptr).or_insert(0);
-             if *count == 0 {
-                  *count = 1;
-             } else {
-                  *count += 1;
-             }
-             scope.push(AllocationRecord { ptr, alloc_type: AllocationType::VecPtr });
-        }
-    }
 
     /// Register a pointer with known type (Internal)
     pub fn register_any_ptr(&mut self, ptr: *mut c_void) {
@@ -667,13 +635,7 @@ pub extern "C" fn tl_mem_register_ptr(ptr: *mut c_void) {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_mem_register_vec_ptr(ptr: *mut c_void) {
-    if !ptr.is_null() {
-        let mut mgr = MEMORY_MANAGER.lock().unwrap();
-        mgr.register_vec_ptr(ptr);
-    }
-}
+
 
 
 pub fn register_tensor_meta_global(ptr: *mut OpaqueTensor, meta: AllocationMeta) {
