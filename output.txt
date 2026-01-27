@@ -1,5 +1,0 @@
-Testing tensor comprehension memory...
-=== Attempt 0
-  Epoch 0
-  Attempt done
-All attempts done!
