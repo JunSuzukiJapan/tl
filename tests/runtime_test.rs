@@ -202,7 +202,7 @@ fn test_matmul() {
     let t_c = unwrap_tensor(tl_tensor_matmul(t_a, t_b));
     assert_tensor_valid(t_c);
 
-    let shape_c = unsafe { (*t_c).0.dims().to_vec() };
+    let shape_c = unsafe { (*t_c).as_tensor().unwrap().dims().to_vec() };
     assert_eq!(shape_c, vec![2, 2]);
 
     // Check Value at (0, 0) -> 22. But get_item_f32 uses indices.
@@ -333,7 +333,7 @@ fn test_reshape_transpose() {
 
     let t_flat = tl_tensor_reshape_new(t, shape_t);
     assert_tensor_valid(t_flat);
-    let dims = unsafe { (*t_flat).0.dims().to_vec() };
+    let dims = unsafe { (*t_flat).as_tensor().unwrap().dims().to_vec() };
     assert_eq!(dims, vec![4, 1]);
 
     safe_free(t);
