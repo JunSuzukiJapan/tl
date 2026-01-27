@@ -1194,6 +1194,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if let Some(ret_ty) = self.fn_return_types.get(lookup_name) {
                          if matches!(ret_ty, Type::Tensor(_, _)) {
                              // Check if we have a slot for this variable
+                             // FIX: Disabled DPS for Tensors for now.
+                             // Most runtime functions (tl_tensor_new, add, etc) return a NEW pointer (Box::into_raw).
+                             // They do not support writing to a caller-provided OpaqueTensor* (Slot).
+                             // Attempting DPS here causes the Return Value to be ignored (Leak)
+                             // and the Slot Buffer (uninitialized) to be used (Crash/UB) and finalized (Double Free/Bad Free).
+                             
+                             /*
                              if let Some(analysis) = &self.function_analysis {
                                  if let Some(&slot_id) = analysis.slots.get(name) {
                                       // DO DPS
@@ -1224,6 +1231,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                       is_slot_backed = true;
                                  }
                              }
+                             */
                          }
                     }
                 }
