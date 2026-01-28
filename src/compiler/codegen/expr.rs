@@ -7880,6 +7880,18 @@ fn compile_print_common<'ctx>(
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
                 .map_err(|e| e.to_string())?;
         }
+        Type::UserDefined(s, _) if s == "Tensor" => {
+            let fn_name = if is_newline {
+                "tl_tensor_print"
+            } else {
+                "tl_tensor_display"
+            };
+            let fn_val = codegen.module.get_function(fn_name).unwrap();
+            codegen
+                .builder
+                .build_call(fn_val, &[(*arg_val).into()], "print_call")
+                .map_err(|e| e.to_string())?;
+        }
         Type::UserDefined(s, _) if s == "String" => {
             let fn_name = if is_newline {
                 "tl_print_string"
