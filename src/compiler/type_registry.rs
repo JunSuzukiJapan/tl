@@ -74,6 +74,8 @@ pub enum ReturnType {
 pub struct TypeRegistry {
     /// Type name -> Method name -> Signature
     methods: HashMap<String, HashMap<String, MethodSignature>>,
+    /// Type name -> Generic parameter names (e.g., "Vec" -> ["T"], "HashMap" -> ["K", "V"])
+    generics: HashMap<String, Vec<String>>,
 }
 
 impl TypeRegistry {
@@ -81,6 +83,7 @@ impl TypeRegistry {
     pub fn new() -> Self {
         let mut registry = Self {
             methods: HashMap::new(),
+            generics: HashMap::new(),
         };
         registry.register_builtins();
         registry
@@ -99,6 +102,12 @@ impl TypeRegistry {
         self.register_hashmap_methods();
         self.register_option_methods();
         self.register_ml_methods(); // Tokenizer, KVCache, Map
+        
+        // Register generic type parameters
+        self.generics.insert("Vec".to_string(), vec!["T".to_string()]);
+        self.generics.insert("Option".to_string(), vec!["T".to_string()]);
+        self.generics.insert("HashMap".to_string(), vec!["K".to_string(), "V".to_string()]);
+        self.generics.insert("Map".to_string(), vec!["K".to_string(), "V".to_string()]);
     }
 
     /// Register Tensor methods
@@ -1445,6 +1454,33 @@ impl TypeRegistry {
         None
     }
 
+    /// Get generic parameter names for a type (e.g., "Vec" -> ["T"], "HashMap" -> ["K", "V"])
+    pub fn get_generic_params(&self, type_name: &str) -> Option<&Vec<String>> {
+        self.generics.get(type_name)
+    }
+
+    /// Build an abstract generic structure from a concrete type using registered generic params
+    /// Example: Option<i64> with params ["T"] -> Option<T>
+    pub fn build_generic_structure(receiver_type: &Type, generic_params: &[String]) -> Type {
+        let abstract_params: Vec<Type> = generic_params.iter()
+            .map(|name| Type::UserDefined(name.clone(), vec![]))
+            .collect();
+        
+        match receiver_type {
+            Type::Vec(_) => {
+                if abstract_params.len() == 1 {
+                    Type::Vec(Box::new(abstract_params[0].clone()))
+                } else {
+                    Type::UserDefined("Vec".into(), abstract_params)
+                }
+            }
+            Type::UserDefined(name, _) | Type::Struct(name, _) => {
+                Type::UserDefined(name.clone(), abstract_params)
+            }
+            _ => receiver_type.clone(),
+        }
+    }
+
     /// Convert Type to registry key string
     pub fn type_to_key(ty: &Type) -> String {
         match ty {
@@ -1506,46 +1542,26 @@ impl TypeRegistry {
             }
             ParamType::Generic(name) => {
                 // Infer bindings from receiver type.
-                // Assuming receiver is capable of having generics (UserDefined, Struct, Vec, Map, etc.)
-                // For Vec<T>, if receiver is Vec<I64>, then T=I64.
-                // We need the "Generic Type Definition" of receiver to resolve against.
-                // This is slightly tricky here because we don't pass the "Generic Definition" of the receiver class easily.
-                // However, we can TRY to guess. if receiver is Vec<Concrete>, and we know Vec def is Vec<T>.
-                // For now, simpler support for Vec<T> and Map<K,V>:
+                // Use build_generic_structure to create the abstract type pattern
                 
-                // Construct a hypothetical generic definition for known builtin generics?
-                // Or just use GenericResolver if we construct the generic pattern on the fly.
-                
-                // HARDCODED support for standard builtins for now (Vec/Map)
-                let generic_structure = match receiver {
-                    Type::Vec(_) => Type::Vec(Box::new(Type::UserDefined("T".into(), vec![]))),
-                    Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Vec" && args.len() == 1 => {
-                        Type::UserDefined("Vec".into(), vec![Type::UserDefined("T".into(), vec![])])
-                    }
-                    // Option generic support (T)
-                    Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Option" && args.len() == 1 => {
-                        Type::UserDefined("Option".into(), vec![Type::UserDefined("T".into(), vec![])])
-                    }
-                    // HashMap generic support (K, V)
-                    Type::UserDefined(n, args) | Type::Struct(n, args) if n == "HashMap" && args.len() == 2 => {
-                        Type::UserDefined("HashMap".into(), vec![
-                            Type::UserDefined("K".into(), vec![]),
-                            Type::UserDefined("V".into(), vec![])
-                        ])
-                    }
-                    // Map generic support (K, V)
-                    Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Map" && args.len() == 2 => {
-                        Type::Struct("Map".into(), vec![
-                            Type::UserDefined("K".into(), vec![]),
-                            Type::UserDefined("V".into(), vec![])
-                        ])
-                    }
-                    // For unknown user structs, we'd need to look up struct def. 
-                    // But here we only check builtins usually registered in this file.
-                    // If the user defines methods on Generic struct, we need to know the struct def.
-                    // Currently we are only fixing "Vec" methods.
-                    _ => return false, // Lookup failed or not supported yet
+                // Get type name and generic parameters from receiver type
+                let (type_name, args) = match receiver {
+                    Type::Vec(inner) => ("Vec", vec![inner.as_ref().clone()]),
+                    Type::UserDefined(n, args) => (n.as_str(), args.clone()),
+                    Type::Struct(n, args) => (n.as_str(), args.clone()),
+                    _ => return false,
                 };
+                
+                // Determine generic parameter names based on argument count
+                // Standard convention: 1 arg -> ["T"], 2 args -> ["K", "V"]
+                let generic_params: Vec<String> = match args.len() {
+                    1 => vec!["T".to_string()],
+                    2 => vec!["K".to_string(), "V".to_string()],
+                    n => (0..n).map(|i| format!("T{}", i)).collect(),
+                };
+                
+                // Build abstract generic structure
+                let generic_structure = Self::build_generic_structure(receiver, &generic_params);
                 
                 let bindings = match crate::compiler::generics::GenericResolver::resolve_bindings(&generic_structure, receiver) {
                     Ok(b) => b,

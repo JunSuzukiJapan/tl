@@ -1916,47 +1916,43 @@ impl SemanticAnalyzer {
             }
             ReturnType::Void => Type::Void,
             ReturnType::Generic(name) => {
-                 // Resolve generic return type
-                 // E.g. Vec<T> -> get -> T
-                 // receiver_type: Vec<I64> -> T = I64
-                 // We need to resolve bindings again.
-                 
-                 // Reuse logic from matches_param_type?
-                 // Or just implement simplified version here.
-                 // receiver_type is the concrete type.
-                 // We need hypothetical generic definition.
-                let generic_structure = match receiver_type {
-                    Type::Vec(_) => Type::Vec(Box::new(Type::UserDefined("T".into(), vec![]))),
-                    Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Vec" && args.len() == 1 => {
-                        Type::UserDefined("Vec".into(), vec![Type::UserDefined("T".into(), vec![])])
-                    }
-                    Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Option" && args.len() == 1 => {
-                        Type::UserDefined("Option".into(), vec![Type::UserDefined("T".into(), vec![])])
-                    }
-                    Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Map" && args.len() == 2 => {
-                         Type::Struct("Map".into(), vec![
-                            Type::UserDefined("K".into(), vec![]),
-                            Type::UserDefined("V".into(), vec![])
-                        ])
-                    }
-                    Type::UserDefined(n, args) | Type::Struct(n, args) if n == "HashMap" && args.len() == 2 => {
-                         Type::UserDefined("HashMap".into(), vec![
-                            Type::UserDefined("K".into(), vec![]),
-                            Type::UserDefined("V".into(), vec![])
-                        ])
-                    }
-                    _ => return Type::UserDefined(name.clone(), vec![]), // Fallback if unknown generic struct
-                 };
-                 
-                 let bindings = match crate::compiler::generics::GenericResolver::resolve_bindings(&generic_structure, receiver_type) {
-                     Ok(b) => b,
-                     Err(_) => return Type::UserDefined(name.clone(), vec![]),
-                 };
-                 
-                 match bindings.get(name) {
-                     Some(ty) => ty.clone(),
-                     None => Type::UserDefined(name.clone(), vec![]),
-                 }
+                // Resolve generic return type using TypeRegistry's generic information
+                // E.g. Vec<T> -> get -> T
+                // receiver_type: Vec<I64> -> T = I64
+                
+                // Get type name and args from receiver
+                let (type_name, args) = match receiver_type {
+                    Type::Vec(inner) => ("Vec", vec![inner.as_ref().clone()]),
+                    Type::UserDefined(n, args) => (n.as_str(), args.clone()),
+                    Type::Struct(n, args) => (n.as_str(), args.clone()),
+                    _ => return Type::UserDefined(name.clone(), vec![]),
+                };
+                
+                // Get generic params from TypeRegistry, or infer from arg count
+                let generic_params: Vec<String> = self.type_registry
+                    .get_generic_params(type_name)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        // Fallback: infer from argument count
+                        match args.len() {
+                            1 => vec!["T".to_string()],
+                            2 => vec!["K".to_string(), "V".to_string()],
+                            n => (0..n).map(|i| format!("T{}", i)).collect(),
+                        }
+                    });
+                
+                // Build abstract generic structure
+                let generic_structure = TypeRegistry::build_generic_structure(receiver_type, &generic_params);
+                
+                let bindings = match crate::compiler::generics::GenericResolver::resolve_bindings(&generic_structure, receiver_type) {
+                    Ok(b) => b,
+                    Err(_) => return Type::UserDefined(name.clone(), vec![]),
+                };
+                
+                match bindings.get(name) {
+                    Some(ty) => ty.clone(),
+                    None => Type::UserDefined(name.clone(), vec![]),
+                }
             }
         }
     }
