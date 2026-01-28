@@ -4346,8 +4346,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         // 3. Generic Fallback: Compile Args & Handle SRET
-        // Get return type to check if this uses sret (do this before compiling args)
-        let ret_ty = self.get_return_type_from_signature(func);
+        // Get return type - first check registered method_return_types, then fall back to signature inference
+        let ret_ty = if let Some(ret) = self.method_return_types.get(&actual_name) {
+            ret.clone()
+        } else {
+            self.get_return_type_from_signature(func)
+        };
 
         // Check for SRET usage logic (Structs/UserDefined return types usually use SRET in this ABI)
         // If the function definition requires SRET (hidden first arg pointer), we must allocate it.
@@ -7489,7 +7493,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             ));
         };
 
-        let ret_type = self.get_return_type_from_signature(func);
+        let ret_type = if let Some(ret) = self.method_return_types.get(&resolved_name) {
+            ret.clone()
+        } else {
+            self.get_return_type_from_signature(func)
+        };
 
         let mut compiled_args_vals = Vec::with_capacity(args.len() + 1);
         let mut compiled_args_types = Vec::with_capacity(args.len());

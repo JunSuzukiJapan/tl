@@ -41,6 +41,7 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) instance_methods: HashMap<String, expr::InstanceMethodManager>,
     pub(crate) static_methods: HashMap<String, expr::StaticMethodManager>,
     pub(crate) destructors: HashMap<String, String>, // TypeName -> FreeFnName
+    pub(crate) method_return_types: HashMap<String, Type>, // MangledName -> ReturnType
     pub(crate) loop_stack: Vec<(
         inkwell::basic_block::BasicBlock<'ctx>,
         inkwell::basic_block::BasicBlock<'ctx>,
@@ -82,6 +83,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             static_methods: HashMap::new(),
             destructors: HashMap::new(),
             loop_stack: Vec::new(),
+            method_return_types: HashMap::new(),
             relations: std::collections::HashSet::new(),
             current_span: None,
             function_analysis: None,
@@ -991,6 +993,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
 
                 let _function = self.module.add_function(&mangled_name, fn_type, None);
+                
+                // Register return type for this method
+                let return_type = if let Type::UserDefined(n, _) = &method.return_type {
+                    if n == "Self" {
+                        imp.target_type.clone()
+                    } else {
+                        method.return_type.clone()
+                    }
+                } else {
+                    method.return_type.clone()
+                };
+                self.method_return_types.insert(mangled_name.clone(), return_type);
             }
         }
 
@@ -1333,6 +1347,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         for (i, arg) in val.get_param_iter().skip(param_offset).enumerate() {
             arg.set_name(&func.args[i].0);
         }
+
+        // Register return type for this function
+        self.method_return_types.insert(func.name.clone(), func.return_type.clone());
 
         Ok(val)
     }
