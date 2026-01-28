@@ -1128,6 +1128,72 @@ impl TypeRegistry {
         // Yes, likely.
         
         vec_generic_methods.insert(
+            "pop".to_string(),
+            MethodSignature {
+                name: "pop".to_string(),
+                params: vec![],
+                return_type: ReturnType::Generic("T".to_string()),
+                is_varargs: false,
+                min_args: 0,
+            },
+        );
+
+        vec_generic_methods.insert(
+            "insert".to_string(),
+            MethodSignature {
+                name: "insert".to_string(),
+                params: vec![ParamType::AnyInt, ParamType::Generic("T".to_string())],
+                return_type: ReturnType::Void,
+                is_varargs: false,
+                min_args: 2,
+            },
+        );
+
+        vec_generic_methods.insert(
+            "remove".to_string(),
+            MethodSignature {
+                name: "remove".to_string(),
+                params: vec![ParamType::AnyInt],
+                return_type: ReturnType::Generic("T".to_string()),
+                is_varargs: false,
+                min_args: 1,
+            },
+        );
+
+        vec_generic_methods.insert(
+            "clear".to_string(),
+            MethodSignature {
+                name: "clear".to_string(),
+                params: vec![],
+                return_type: ReturnType::Void,
+                is_varargs: false,
+                min_args: 0,
+            },
+        );
+
+        vec_generic_methods.insert(
+            "is_empty".to_string(),
+            MethodSignature {
+                name: "is_empty".to_string(),
+                params: vec![],
+                return_type: ReturnType::Exact(Type::Bool),
+                is_varargs: false,
+                min_args: 0,
+            },
+        );
+
+        vec_generic_methods.insert(
+            "contains".to_string(),
+            MethodSignature {
+                name: "contains".to_string(),
+                params: vec![ParamType::Generic("T".to_string())],
+                return_type: ReturnType::Exact(Type::Bool),
+                is_varargs: false,
+                min_args: 1,
+            },
+        );
+
+        vec_generic_methods.insert(
             "free".to_string(),
             MethodSignature {
                 name: "free".to_string(),

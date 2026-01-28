@@ -16,6 +16,7 @@ pub const CLEANUP_FULL: u8 = 1;
 pub const CLEANUP_FINALIZE: u8 = 2;
 pub const CLEANUP_STACK: u8 = 3;
 
+pub mod builtin_impls;
 pub mod builtins;
 pub mod expr;
 pub mod kb;
@@ -95,6 +96,21 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Register builtins (Enums, etc.)
         codegen.register_builtins();
+
+        // Register builtin generic impls (Vec<T>, etc.)
+        builtin_impls::register_builtin_structs(&mut codegen.struct_defs);
+        builtin_impls::register_builtin_impls(&mut codegen.generic_impls);
+        
+        // Compile the struct defs we just added so their types are registered in LLVM
+        // (Usually compile_struct_defs handles this, but since we add them late, we might need to ensure they are handled.
+        // Actually, struct_defs are normally compiled in compile_module loop.
+        // But here we are in CodeGenerator constructor.
+        // Does compile_struct_defs get called later for these?
+        // CodeGenerator doesn't usually iterate struct_defs itself, the Compiler Driver does.
+        // BUT `codegen.struct_defs` is populated here.
+        // We should manually compile them to ensure opaque types exist.)
+        let vec_defs = codegen.struct_defs.values().cloned().collect::<Vec<_>>();
+        codegen.compile_struct_defs(&vec_defs).unwrap(); // This registers LLVM types.
 
         // Delegate to runtime module
         builtins::declare_runtime_functions(

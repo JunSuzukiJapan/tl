@@ -98,10 +98,23 @@ if type_name == "MyType" && method_name == "new" {
 
 ---
 
-## チェックリスト
-1. [ ] Runtime関数実装 (FFI)
-2. [ ] Semantics: TypeRegistry (インスタンスメソッド)
-3. [ ] Semantics: `semantics.rs` (スタティックメソッド `MyType::new`)
-4. [ ] Codegen: `builtins.rs` (宣言 & 戻り値型登録)
-5. [ ] Codegen: `expr.rs` (`compile_static_method_call`)
-6. [ ] Codegen: SRET除外設定
+## よくある間違いと修正
+
+### 誤解: 「特殊化された関数をあらかじめ実装する必要がある」
+**修正**: 組み込み型は、**システムに型とメソッドの定義を登録するだけ**であるべきです。
+ユーザーが `Vec<i64>` を使用した時点で、システム（CodeGenerator）が必要な特化実装を生成（Monomorphization）します。
+開発者が `tl_vec_i64_push`, `tl_vec_f32_push` などを手動（またはマクロ）で事前に大量に用意する必要はありません。システムがどのように特化を処理するか（例：`i64` は `ptr` 実装をキャストして使う、あるいはLLVM IRをインライン生成する等）は、Codegen層の責務です。
+
+**ランタイム (`crates/tl_runtime`) には、いかなる関数も実装してはいけない。**
+
+### 名前マングリングによる整合性保証
+`src/compiler/codegen/mono.rs` の `mangle_generic_method` 関数を使用することで、**関数名をどこかに個別に登録したり記憶したりすることなく、呼び出し側（Compiler）と呼ばれる側（Backend/Symbol）の関数名が自動的に一致する** 仕組みになっています。
+
+```rust
+// src/compiler/codegen/mono.rs
+pub fn mangle_generic_method(...) -> String {
+    // 例: tl_vec_i64_pop
+    format!("tl_{}{}_{}", base_type, suffix, method)
+}
+```
+この機構により、ジェネリック型の特殊化は完全に自動化されており、手動での名前管理は不要（かつ有害）です。

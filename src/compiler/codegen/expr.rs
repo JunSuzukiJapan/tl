@@ -1011,6 +1011,21 @@ fn compile_varbuilder_get_static<'ctx>(
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
+    fn substitute_type_generic(&self, ty: &Type, generics: &[String], args: &[Type]) -> Type {
+        match ty {
+            Type::UserDefined(name, inner_args) => {
+                 if let Some(idx) = generics.iter().position(|g| g == name) {
+                     return args[idx].clone();
+                 }
+                 Type::UserDefined(name.clone(), inner_args.iter().map(|t| self.substitute_type_generic(t, generics, args)).collect())
+            }
+             Type::Struct(name, inner_args) => Type::Struct(name.clone(), inner_args.iter().map(|t| self.substitute_type_generic(t, generics, args)).collect()),
+             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.substitute_type_generic(inner, generics, args)), *rank),
+             Type::Vec(inner) => Type::Vec(Box::new(self.substitute_type_generic(inner, generics, args))),
+             _ => ty.clone(),
+        }
+    }
+
     pub(crate) fn register_all_methods(&mut self) {
         // --- Tensor Instance Methods ---
         let mut tensor_methods = InstanceMethodManager::new();
@@ -2076,27 +2091,40 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             ExprKind::FieldAccess(obj, field) => {
                 let (obj_val, obj_ty) = self.compile_expr(obj)?;
-                let struct_name = match &obj_ty {
-                    Type::Struct(name, args) | Type::UserDefined(name, args) => {
-                         if args.is_empty() {
-                             name.clone()
-                         } else {
-                             self.mangle_type_name(name, args)
-                         }
-                    }
+                
+                // Determine struct name and generic args
+                let (base_name, generic_args) = match &obj_ty {
+                    Type::Struct(name, args) | Type::UserDefined(name, args) => (name.clone(), args.clone()),
                     _ => return Err(format!("Field access on non-struct type {:?}", obj_ty)),
                 };
 
-                let simple_struct_name = if struct_name.contains("::") {
-                    struct_name.split("::").last().unwrap()
+                // Determine mangled name for lookup
+                let mangled_name = if generic_args.is_empty() {
+                    base_name.clone()
                 } else {
-                    &struct_name
+                    self.mangle_type_name(&base_name, &generic_args)
                 };
 
-                let struct_def = self
-                    .struct_defs
-                    .get(simple_struct_name)
-                    .ok_or(format!("Struct definition for {} not found", struct_name))?;
+                let simple_struct_name = if mangled_name.contains("::") {
+                    mangled_name.split("::").last().unwrap().to_string()
+                } else {
+                    mangled_name.clone()
+                };
+
+                /*
+                Logic:
+                1. Try looking up exact specialized name (e.g. "Vec_i64").
+                2. If not found, try base name (e.g. "Vec") effectively falling back to generic definition.
+                   If base name is found, we must substitutions generic params in the field type.
+                */
+                
+                let (struct_def, is_generic_base) = if let Some(def) = self.struct_defs.get(&simple_struct_name) {
+                    (def, false)
+                } else if let Some(def) = self.struct_defs.get(&base_name) {
+                    (def, true)
+                } else {
+                     return Err(format!("Struct definition for {} not found (checked {} and {})", base_name, simple_struct_name, base_name));
+                };
 
                 let field_idx = struct_def
                     .fields
@@ -2104,13 +2132,48 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .position(|(n, _)| n == field)
                     .ok_or(format!(
                         "Field {} not found in struct {}",
-                        field, struct_name
+                        field, base_name
                     ))?;
-                let (_, field_ty) = &struct_def.fields[field_idx];
+                
+                // Retrieve field type and substitute if necessary
+                let (_, field_ty_raw) = &struct_def.fields[field_idx];
+                let field_ty = if is_generic_base && !generic_args.is_empty() {
+                     self.substitute_type_generic(field_ty_raw, &struct_def.generics, &generic_args)
+                } else {
+                     field_ty_raw.clone()
+                };
+                
+                // Continue with loading... use simple_struct_name or base_name for struct type lookup?
+                // self.struct_types stores llvm type.
+                // If we are using generic base, "Vec_i64" might NOT be in struct_types if it wasn't compiled.
+                // But monomorphize_method usually generates it?
+                // If it isn't in struct_defs, maybe it isn't in struct_types either?
+                // If so, we need to register it?
+                // Or maybe Vec is Opaque Pointer in struct_types?
+                
+                // For Vec, we know it translates to i8*.
+                // But for general structs, we need correct offset.
+                // If we use Generic definition, we assume layout matches logic.
+                // For Vec, fields are fixed.
+                
+                // If struct_types doesn't have specialized name, try base name?
+                // BUT LLVM types for specialized structs might differ if fields differ (size).
+                // For Vec, size is fixed (ptr, i64, i64).
+                // So "Vec" in struct_types should be sufficient if registered?
+                // CodeGenerator registers "Vec" in init.
+                
+                let st_llvm_ty = if let Some(t) = self.struct_types.get(&simple_struct_name) {
+                     t
+                } else if let Some(t) = self.struct_types.get(&base_name) {
+                     t 
+                } else {
+                     return Err(format!("LLVM struct type for {} not found", base_name));
+                };
+
 
                 if obj_val.is_pointer_value() {
                     let ptr = obj_val.into_pointer_value();
-                    let st_llvm_ty = self.struct_types.get(simple_struct_name).unwrap();
+                    // let st_llvm_ty = self.struct_types.get(simple_struct_name).unwrap(); // Handled above
 
                     let field_ptr = self
                         .builder
@@ -5502,7 +5565,119 @@ impl<'ctx> CodeGenerator<'ctx> {
                         };
                         return Ok((res, Type::I64));
                 }
-                _ => {}
+                _ => {
+                    // Generic fallback for methods like pop, insert, clear, remove, contains
+                    // This handles generic methods generated by ensuring_vec_method
+                    let fn_name = self.ensure_vec_method(&inner, method)
+                        .map_err(|e| format!("Failed to monomorphize {}: {}", method, e))?;
+                    
+                    let fn_val = self.module.get_function(&fn_name)
+                        .ok_or(format!("{} not found", fn_name))?;
+                    
+                     // Verify arg count (fn_val includes self param)
+                    if args.len() != fn_val.count_params() as usize - 1 { 
+                        return Err(format!("{} expects {} args, got {}", method, fn_val.count_params() - 1, args.len()));
+                    }
+
+                    // Prepare arguments
+                    let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::with_capacity(args.len() + 1);
+                    
+                    // 1. Handle 'self' parameter
+                    let self_param_ty = fn_val.get_nth_param(0).unwrap().get_type();
+                    let obj_casted = if self_param_ty.is_pointer_type() {
+                         if obj_val.is_pointer_value() {
+                             self.builder.build_pointer_cast(obj_val.into_pointer_value(), self_param_ty.into_pointer_type(), "self_cast").unwrap().into()
+                         } else {
+                             obj_val
+                         }
+                    } else {
+                        obj_val
+                    };
+                    call_args.push(obj_casted.into());
+
+                    // 2. Handle other arguments
+                    for (i, arg) in args.iter().enumerate() {
+                        let (arg_val, _arg_ty) = self.compile_expr(arg)?;
+                        // +1 index because of self param
+                        let param_ty = fn_val.get_nth_param((i + 1) as u32).unwrap().get_type();
+                        
+                        let arg_casted: inkwell::values::BasicValueEnum = if param_ty.is_pointer_type() {
+                            if arg_val.is_pointer_value() {
+                                self.builder.build_pointer_cast(arg_val.into_pointer_value(), param_ty.into_pointer_type(), "arg_cast").unwrap().into()
+                            } else {
+                                // Spill scalar to stack if function expects pointer
+                                let func_val = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                                let alloca = self.create_entry_block_alloca(func_val, "arg_spill", &_arg_ty)?;
+                                self.builder.build_store(alloca, arg_val).unwrap();
+                                self.builder.build_pointer_cast(alloca, param_ty.into_pointer_type(), "arg_spill_cast").unwrap().into()
+                            }
+                        } else if param_ty.is_int_type() {
+                             if arg_val.is_int_value() {
+                                 let int_val = arg_val.into_int_value();
+                                 if int_val.get_type() != param_ty.into_int_type() {
+                                      // Integral cast (zext/sext/trunc?)
+                                      // For now try int_cast (covers sign extension/truncation usually based on context, but build_int_cast is mostly generic)
+                                      self.builder.build_int_cast(int_val, param_ty.into_int_type(), "arg_int_cast").unwrap().into()
+                                 } else {
+                                      arg_val
+                                 }
+                             } else {
+                                  return Err(format!("Expected int for {}, arg {}", method, i));
+                             }
+                        } else {
+                            arg_val
+                        };
+                        call_args.push(arg_casted.into());
+                    }
+                    
+                    // 3. Make the call
+                    let call = self.builder.build_call(fn_val, &call_args, method)
+                        .map_err(|e| e.to_string())?;
+                        
+                    // 4. Handle result
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(ret_val) => {
+                             // Check return type matching
+                             let ret_ty = fn_val.get_type().get_return_type().unwrap();
+                             if ret_ty.is_pointer_type() {
+                                 let inner_llvm_ty = self.get_llvm_type(&inner)?;
+                                 
+                                 // Heuristic based on method name for return type
+                                 match method {
+                                     "is_empty" | "contains" => ret_val,
+                                     "pop" | "remove" | "get" => {
+                                          if inner_llvm_ty.is_pointer_type() {
+                                              self.builder.build_pointer_cast(
+                                                  ret_val.into_pointer_value(),
+                                                  inner_llvm_ty.into_pointer_type(),
+                                                  "ret_cast"
+                                              ).unwrap().into()
+                                          } else {
+                                              ret_val
+                                          }
+                                     },
+                                     _ => ret_val,
+                                 }
+                             } else {
+                                 ret_val
+                             }
+                        }
+                        _ => {
+                            // Void return
+                            self.context.i64_type().const_int(0, false).into()
+                        }
+                    };
+                    
+                    // Determine High-level return type
+                     let ret_type_hl = match method {
+                         "is_empty" | "contains" => Type::Bool,
+                         "insert" | "clear" => Type::Void,
+                         "pop" | "remove" | "get" => *inner.clone(),
+                         _ => Type::Void, // Unknown
+                     };
+
+                    return Ok((res, ret_type_hl));
+                }
             }
         }
 

@@ -527,7 +527,13 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Ok(mangled_fn_name);
         }
         
-        // Fallback: use core function name directly
+        // Fallback: use generic monomorphization using AST from builtin_impls
+        // "Vec" is the struct name, [element_type] is the arg.
+        if self.generic_impls.contains_key("Vec") {
+            return self.monomorphize_method("Vec", method_name, &[element_type.clone()]);
+        }
+        
+        // Fallback: use core function name directly (likely will fail link if not found)
         Ok(core_fn_name)
     }
 }
