@@ -1548,7 +1548,7 @@ impl TypeRegistry {
                 // Use build_generic_structure to create the abstract type pattern
                 
                 // Get type name and generic parameters from receiver type
-                let (type_name, args) = match receiver {
+                let (_type_name, args) = match receiver {
                     Type::Vec(inner) => ("Vec", vec![inner.as_ref().clone()]),
                     Type::UserDefined(n, args) => (n.as_str(), args.clone()),
                     Type::Struct(n, args) => (n.as_str(), args.clone()),

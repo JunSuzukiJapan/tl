@@ -1,5 +1,5 @@
 use crate::compiler::ast::*;
-use crate::compiler::error::Span;
+
 use std::collections::HashMap;
 
 /// Register built-in generic implementations (e.g., Vec<T>, Option<T>)

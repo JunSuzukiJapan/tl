@@ -444,7 +444,7 @@ impl MemoryManager {
                             if crate::mem_log_enabled() {
                                 eprintln!("[TL_MEM] free_custom ptr={:p}", ptr);
                             }
-                            unsafe { dtor(ptr); }
+                            dtor(ptr);
                         }
                     }
                 } else {

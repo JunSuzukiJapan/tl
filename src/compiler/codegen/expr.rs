@@ -6723,7 +6723,7 @@ impl<'ctx> CodeGenerator<'ctx> {
              // We can treat it nicely.
              
              let option_ptr = obj_val.into_pointer_value();
-             let generic_option_ty = self.context.struct_type(&[
+             let _generic_option_ty = self.context.struct_type(&[
                  self.context.i64_type().into(), // tag
                  // Value type is unknown here, but for GEP index 1 we can use a dummy? 
                  // Or we can just use i8 ptr and cast?
@@ -6822,7 +6822,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  // Inline panic implementation using tl_panic
                  let panic_msg = self.builder.build_global_string_ptr("Option::unwrap() called on None", "panic_msg").unwrap();
                  let panic_fn = self.module.get_function("tl_panic").unwrap_or_else(|| {
-                     let fn_ty = self.context.void_type().fn_type(&[self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into()], false);
+                     let fn_ty = self.context.void_type().fn_type(&[self.context.ptr_type(inkwell::AddressSpace::default()).into()], false);
                      self.module.add_function("tl_panic", fn_ty, None)
                  });
                  self.builder.build_call(panic_fn, &[panic_msg.as_pointer_value().into()], "").unwrap();
@@ -6839,7 +6839,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  if args.len() != 1 {
                      return Err("unwrap_or requires 1 argument (default)".into());
                  }
-                 let (default_val, default_ty) = self.compile_expr(&args[0])?;
+                 let (default_val, _default_ty) = self.compile_expr(&args[0])?;
                  
                  // Check if default_ty matches inner_ty? Semantics check this.
                  
@@ -7614,7 +7614,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::I32 // Fallback
                 }
             }
-            Some(inkwell::types::BasicTypeEnum::FloatType(f)) => {
+            Some(inkwell::types::BasicTypeEnum::FloatType(_f)) => {
                 // Assuming F32 default
                  Type::F32 // Or F64? We mostly use F32 but have F64 ops.
                  // How to distinguish? width.
@@ -10213,7 +10213,7 @@ fn compile_hashmap_get<'ctx>(
     if args.len() != 1 {
         return Err("HashMap::get takes 1 argument".into());
     }
-    let (key_val, key_ty) = &args[0];
+    let (_key_val, key_ty) = &args[0];
     let is_string = matches!(key_ty, Type::UserDefined(n, _) if n == "String");
     if !is_string {
         return Err(format!("HashMap key type must be String (runtime restriction), found {:?}", key_ty));
@@ -10286,7 +10286,7 @@ fn compile_hashmap_remove<'ctx>(
     if args.len() != 1 {
         return Err("HashMap::remove takes 1 argument".into());
     }
-    let (key_val, key_ty) = &args[0];
+    let (_key_val, key_ty) = &args[0];
     let is_string = matches!(key_ty, Type::UserDefined(n, _) if n == "String");
     if !is_string {
         return Err(format!("HashMap key type must be String (runtime restriction), found {:?}", key_ty));
@@ -10347,7 +10347,7 @@ fn compile_hashmap_contains_key<'ctx>(
     _map_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let (key_val, key_ty) = &args[0];
+    let (_key_val, key_ty) = &args[0];
     let is_string = matches!(key_ty, Type::UserDefined(n, _) if n == "String");
     if !is_string {
         return Err(format!("HashMap key type must be String (runtime restriction), found {:?}", key_ty));

@@ -1606,7 +1606,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // Register return types FIRST so recursive/future calls find it
-        for relation in relations {
+        for _relation in relations {
         }
 
         let i64_type = self.context.i64_type();

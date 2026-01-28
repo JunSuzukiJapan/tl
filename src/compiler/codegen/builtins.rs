@@ -2224,7 +2224,7 @@ pub fn declare_runtime_functions<'ctx>(
 
     // End of function
 
-    let tensor_type = Type::Tensor(Box::new(Type::F32), 1); // Common return type for many tensor ops
+    let _tensor_type = Type::Tensor(Box::new(Type::F32), 1); // Common return type for many tensor ops
 
     let f32_unary_methods = [
         "abs",
@@ -2259,10 +2259,10 @@ pub fn declare_runtime_functions<'ctx>(
         "to_radians",
         "trunc",
     ];
-    for name in f32_unary_methods {
+    for _name in f32_unary_methods {
     }
     let f32_binary_methods = ["atan2", "copysign", "hypot", "log", "powf"];
-    for name in f32_binary_methods {
+    for _name in f32_binary_methods {
     }
     let f64_unary_methods = [
         "abs",
@@ -2297,22 +2297,22 @@ pub fn declare_runtime_functions<'ctx>(
         "to_radians",
         "trunc",
     ];
-    for name in f64_unary_methods {
+    for _name in f64_unary_methods {
     }
     let f64_binary_methods = ["atan2", "copysign", "hypot", "log", "powf"];
-    for name in f64_binary_methods {
+    for _name in f64_binary_methods {
     }
     let i64_unary_methods = ["abs", "signum"];
-    for name in i64_unary_methods {
+    for _name in i64_unary_methods {
     }
     let i64_binary_methods = ["div_euclid", "rem_euclid", "pow"];
-    for name in i64_binary_methods {
+    for _name in i64_binary_methods {
     }
     let i32_unary_methods = ["abs", "signum"];
-    for name in i32_unary_methods {
+    for _name in i32_unary_methods {
     }
     let i32_binary_methods = ["div_euclid", "rem_euclid", "pow"];
-    for name in i32_binary_methods {
+    for _name in i32_binary_methods {
     }
     // Add missing types that were likely in the original file but I need to make sure are present
                                                                     // ... complete as needed based on original CodeGen
@@ -2983,7 +2983,7 @@ pub fn declare_runtime_functions<'ctx>(
         module.add_function("tl_tensor_reshape", reshape_type, None);
     }
     // Also need return type
-    let tensor_type_local = Type::Tensor(Box::new(Type::F32), 1);
+    let _tensor_type_local = Type::Tensor(Box::new(Type::F32), 1);
 
     if let Some(f) = module.get_function("tl_tensor_reshape") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_reshape_new as usize);
