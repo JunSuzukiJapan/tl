@@ -2379,6 +2379,15 @@ pub extern "C" fn tl_tensor_transpose(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_transpose_2d(
+    t: *mut OpaqueTensor,
+    dim0: usize,
+    dim1: usize,
+) -> *mut OpaqueTensor {
+    tl_tensor_transpose(t, dim0, dim1)
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_backward(t: *mut OpaqueTensor) {
     if t.is_null() {
         eprintln!("Runtime Error: tl_tensor_backward received NULL pointer");
