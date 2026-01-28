@@ -2,10 +2,13 @@ use crate::compiler::ast::*;
 use crate::compiler::error::Span;
 use std::collections::HashMap;
 
-/// Register built-in generic implementations (e.g., Vec<T>)
+/// Register built-in generic implementations (e.g., Vec<T>, Option<T>)
 pub fn register_builtin_impls(generic_impls: &mut HashMap<String, Vec<ImplBlock>>) {
     let vec_impl = create_vec_impl();
     generic_impls.insert("Vec".to_string(), vec![vec_impl]);
+
+    let option_impl = create_option_impl();
+    generic_impls.insert("Option".to_string(), vec![option_impl]);
 }
 
 /// Register built-in struct definitions
@@ -39,34 +42,26 @@ pub fn register_builtin_structs(struct_defs: &mut HashMap<String, StructDef>) {
     };
     eprintln!("DEBUG register_builtin_structs inserting Vec with {} fields", vec_struct.fields.len());
     struct_defs.insert("Vec".to_string(), vec_struct);
+
+    // Note: Option<T> is handled inline in codegen (expr.rs) without a registered struct definition.
+    // The Option struct { tag: i64, value: T } is created dynamically based on the concrete type T.
 }
 
 fn create_vec_impl() -> ImplBlock {
     let t_type = Type::UserDefined("T".to_string(), vec![]);
-    let int_type = Type::I64;
-    let bool_type = Type::Bool;
-    let void_type = Type::Void;
-
-    // --- Helpers for creating AST nodes ---
-    // Explicitly typed to avoid inference locking
-    fn expr(kind: ExprKind) -> Expr {
-        Spanned::new(kind, Span::default())
-    }
-    // fn stmt(kind: StmtKind) -> Stmt {
-    //    Spanned::new(kind, Span::default())
-    // }
-    
-    // self variable expression
-    let self_expr = || expr(ExprKind::Variable("self".to_string()));
-    
-    // access field: self.field
-    let field_access = |field: &str| expr(ExprKind::FieldAccess(
-        Box::new(self_expr()),
-        field.to_string(),
-    ));
 
     ImplBlock {
         target_type: Type::UserDefined("Vec".to_string(), vec![t_type.clone()]),
+        generics: vec!["T".to_string()],
+        methods: vec![],
+    }
+}
+
+fn create_option_impl() -> ImplBlock {
+    let t_type = Type::UserDefined("T".to_string(), vec![]);
+
+    ImplBlock {
+        target_type: Type::UserDefined("Option".to_string(), vec![t_type.clone()]),
         generics: vec!["T".to_string()],
         methods: vec![],
     }

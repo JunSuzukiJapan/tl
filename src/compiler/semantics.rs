@@ -1930,6 +1930,9 @@ impl SemanticAnalyzer {
                     Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Vec" && args.len() == 1 => {
                         Type::UserDefined("Vec".into(), vec![Type::UserDefined("T".into(), vec![])])
                     }
+                    Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Option" && args.len() == 1 => {
+                        Type::UserDefined("Option".into(), vec![Type::UserDefined("T".into(), vec![])])
+                    }
                     Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Map" && args.len() == 2 => {
                          Type::Struct("Map".into(), vec![
                             Type::UserDefined("K".into(), vec![]),
@@ -4387,6 +4390,49 @@ impl SemanticAnalyzer {
                     };
                     
                     return Ok(Type::Vec(Box::new(result_inner)));
+                }
+
+                // Handle Option::some(val) -> Option<T> and Option::none() -> Option<T>
+                let is_option = match type_name {
+                    Type::UserDefined(n, _) if n == "Option" => true,
+                    Type::Struct(n, _) if n == "Option" => true,
+                    _ => false,
+                };
+
+                if is_option && method_name == "some" {
+                    // Option::some(val) -> infer T from val
+                    if args.len() != 1 {
+                        return self.err(
+                            SemanticError::ArgumentCountMismatch {
+                                name: "Option::some".into(),
+                                expected: 1,
+                                found: args.len(),
+                            },
+                            Some(expr.span.clone()),
+                        );
+                    }
+                    let inner_type = self.check_expr(&mut args[0])?;
+                    return Ok(Type::UserDefined("Option".to_string(), vec![inner_type]));
+                }
+
+                if is_option && method_name == "none" {
+                    // Option::none() -> Option<Void> (will be inferred later)
+                    if !args.is_empty() {
+                        return self.err(
+                            SemanticError::ArgumentCountMismatch {
+                                name: "Option::none".into(),
+                                expected: 0,
+                                found: args.len(),
+                            },
+                            Some(expr.span.clone()),
+                        );
+                    }
+                    // Extract inner type from Option<T> if specified
+                    let inner_type = match type_name {
+                        Type::UserDefined(_, gen_args) if !gen_args.is_empty() => gen_args[0].clone(),
+                        _ => Type::Void,
+                    };
+                    return Ok(Type::UserDefined("Option".to_string(), vec![inner_type]));
                 }
 
                 // Special handling for Param::checkpoint to allow method references

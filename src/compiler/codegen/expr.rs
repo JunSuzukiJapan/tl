@@ -3583,6 +3583,81 @@ impl<'ctx> CodeGenerator<'ctx> {
              return Ok((res, ty.clone()));
         }
 
+        // Handle Option::some(val) and Option::none()
+        let is_option = match ty {
+            Type::UserDefined(n, _) if n == "Option" => true,
+            Type::Struct(n, _) if n == "Option" => true,
+            _ => false,
+        };
+
+        if is_option && method_name == "some" {
+            // Option::some(val) -> allocate Option struct with tag=1 and value=val
+            if args.len() != 1 {
+                return Err("Option::some requires 1 argument".into());
+            }
+            let (inner_val, inner_type) = self.compile_expr(&args[0])?;
+            
+            // Create Option struct: { tag: i64, value: T }
+            let i64_type = self.context.i64_type();
+            let llvm_inner_type = self.get_llvm_type(&inner_type)?;
+            let option_struct_type = self.context.struct_type(&[i64_type.into(), llvm_inner_type], false);
+            
+            // Allocate on stack
+            let option_ptr = self.builder.build_alloca(option_struct_type, "option_some")
+                .map_err(|e| e.to_string())?;
+            
+            // Set tag = 1 (Some)
+            let tag_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 0, "tag_ptr")
+                .map_err(|e| e.to_string())?;
+            self.builder.build_store(tag_ptr, i64_type.const_int(1, false))
+                .map_err(|e| e.to_string())?;
+            
+            // Set value
+            let value_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 1, "value_ptr")
+                .map_err(|e| e.to_string())?;
+            self.builder.build_store(value_ptr, inner_val)
+                .map_err(|e| e.to_string())?;
+            
+            return Ok((option_ptr.into(), Type::UserDefined("Option".to_string(), vec![inner_type])));
+        }
+
+        if is_option && method_name == "none" {
+            // Option::none() -> allocate Option struct with tag=0
+            if !args.is_empty() {
+                return Err("Option::none takes no arguments".into());
+            }
+            
+            // Extract inner type from Option<T> if specified
+            let inner_type = match ty {
+                Type::UserDefined(_, gen_args) if !gen_args.is_empty() => gen_args[0].clone(),
+                _ => Type::I64, // Default to I64 for unspecified Option type
+            };
+            
+            // Create Option struct: { tag: i64, value: T }
+            let i64_type = self.context.i64_type();
+            let llvm_inner_type = self.get_llvm_type(&inner_type)?;
+            let option_struct_type = self.context.struct_type(&[i64_type.into(), llvm_inner_type], false);
+            
+            // Allocate on stack
+            let option_ptr = self.builder.build_alloca(option_struct_type, "option_none")
+                .map_err(|e| e.to_string())?;
+            
+            // Set tag = 0 (None)
+            let tag_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 0, "tag_ptr")
+                .map_err(|e| e.to_string())?;
+            self.builder.build_store(tag_ptr, i64_type.const_int(0, false))
+                .map_err(|e| e.to_string())?;
+            
+            // Value is undefined for None, but we zero-initialize for safety
+            let value_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 1, "value_ptr")
+                .map_err(|e| e.to_string())?;
+            let zero_val = llvm_inner_type.const_zero();
+            self.builder.build_store(value_ptr, zero_val)
+                .map_err(|e| e.to_string())?;
+            
+            return Ok((option_ptr.into(), Type::UserDefined("Option".to_string(), vec![inner_type])));
+        }
+
         if type_name == "Tokenizer" && method_name == "new" {
             if args.len() != 1 {
                 return Err("Tokenizer::new requires 1 argument".into());
@@ -5728,6 +5803,97 @@ impl<'ctx> CodeGenerator<'ctx> {
                      };
 
                     return Ok((res, ret_type_hl));
+                }
+            }
+        }
+
+        // Check for Option (either Type::UserDefined("Option") or Type::Struct("Option"))
+        let option_inner_opt = match &obj_ty {
+            Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Option" => {
+                if args.len() == 1 {
+                    Some(args[0].clone())
+                } else {
+                    Some(Type::I64) // Default inner type
+                }
+            }
+            _ => None,
+        };
+
+        if let Some(inner_type) = option_inner_opt {
+            let i64_type = self.context.i64_type();
+            let llvm_inner_type = self.get_llvm_type(&inner_type)?;
+            let option_struct_type = self.context.struct_type(&[i64_type.into(), llvm_inner_type], false);
+            let option_ptr = obj_val.into_pointer_value();
+            
+            match method {
+                "is_some" => {
+                    // Load tag and compare with 1
+                    let tag_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 0, "tag_ptr")
+                        .map_err(|e| e.to_string())?;
+                    let tag_val = self.builder.build_load(i64_type, tag_ptr, "tag")
+                        .map_err(|e| e.to_string())?;
+                    let is_some = self.builder.build_int_compare(
+                        inkwell::IntPredicate::EQ,
+                        tag_val.into_int_value(),
+                        i64_type.const_int(1, false),
+                        "is_some"
+                    ).map_err(|e| e.to_string())?;
+                    return Ok((is_some.into(), Type::Bool));
+                }
+                "is_none" => {
+                    // Load tag and compare with 0
+                    let tag_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 0, "tag_ptr")
+                        .map_err(|e| e.to_string())?;
+                    let tag_val = self.builder.build_load(i64_type, tag_ptr, "tag")
+                        .map_err(|e| e.to_string())?;
+                    let is_none = self.builder.build_int_compare(
+                        inkwell::IntPredicate::EQ,
+                        tag_val.into_int_value(),
+                        i64_type.const_int(0, false),
+                        "is_none"
+                    ).map_err(|e| e.to_string())?;
+                    return Ok((is_none.into(), Type::Bool));
+                }
+                "unwrap" => {
+                    // TODO: Add runtime check for None case (panic)
+                    // For now, just return the value
+                    let value_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 1, "value_ptr")
+                        .map_err(|e| e.to_string())?;
+                    let value = self.builder.build_load(llvm_inner_type, value_ptr, "unwrap_value")
+                        .map_err(|e| e.to_string())?;
+                    return Ok((value, inner_type));
+                }
+                "unwrap_or" => {
+                    if args.len() != 1 {
+                        return Err("unwrap_or requires 1 argument".into());
+                    }
+                    let (default_val, _) = self.compile_expr(&args[0])?;
+                    
+                    // Load tag
+                    let tag_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 0, "tag_ptr")
+                        .map_err(|e| e.to_string())?;
+                    let tag_val = self.builder.build_load(i64_type, tag_ptr, "tag")
+                        .map_err(|e| e.to_string())?;
+                    let is_some = self.builder.build_int_compare(
+                        inkwell::IntPredicate::EQ,
+                        tag_val.into_int_value(),
+                        i64_type.const_int(1, false),
+                        "is_some"
+                    ).map_err(|e| e.to_string())?;
+                    
+                    // Load value
+                    let value_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 1, "value_ptr")
+                        .map_err(|e| e.to_string())?;
+                    let value = self.builder.build_load(llvm_inner_type, value_ptr, "option_value")
+                        .map_err(|e| e.to_string())?;
+                    
+                    // Select based on tag
+                    let result = self.builder.build_select(is_some, value, default_val, "unwrap_or_result")
+                        .map_err(|e| e.to_string())?;
+                    return Ok((result, inner_type));
+                }
+                _ => {
+                    // Unknown Option method, fall through to generic handling
                 }
             }
         }

@@ -97,6 +97,7 @@ impl TypeRegistry {
         self.register_vec_methods();
         self.register_vec_methods();
         self.register_hashmap_methods();
+        self.register_option_methods();
         self.register_ml_methods(); // Tokenizer, KVCache, Map
     }
 
@@ -1207,6 +1208,61 @@ impl TypeRegistry {
         self.methods.insert("Vec".to_string(), vec_generic_methods);
     }
 
+    /// Register Option<T> methods
+    fn register_option_methods(&mut self) {
+        let mut option_methods = HashMap::new();
+
+        // is_some() -> Bool
+        option_methods.insert(
+            "is_some".to_string(),
+            MethodSignature {
+                name: "is_some".to_string(),
+                params: vec![],
+                return_type: ReturnType::Exact(Type::Bool),
+                is_varargs: false,
+                min_args: 0,
+            },
+        );
+
+        // is_none() -> Bool
+        option_methods.insert(
+            "is_none".to_string(),
+            MethodSignature {
+                name: "is_none".to_string(),
+                params: vec![],
+                return_type: ReturnType::Exact(Type::Bool),
+                is_varargs: false,
+                min_args: 0,
+            },
+        );
+
+        // unwrap() -> T
+        option_methods.insert(
+            "unwrap".to_string(),
+            MethodSignature {
+                name: "unwrap".to_string(),
+                params: vec![],
+                return_type: ReturnType::Generic("T".to_string()),
+                is_varargs: false,
+                min_args: 0,
+            },
+        );
+
+        // unwrap_or(default: T) -> T
+        option_methods.insert(
+            "unwrap_or".to_string(),
+            MethodSignature {
+                name: "unwrap_or".to_string(),
+                params: vec![ParamType::Generic("T".to_string())],
+                return_type: ReturnType::Generic("T".to_string()),
+                is_varargs: false,
+                min_args: 1,
+            },
+        );
+
+        self.methods.insert("Option".to_string(), option_methods);
+    }
+
     /// Register ML-related special types (Tokenizer, KVCache, Map)
     fn register_ml_methods(&mut self) {
         // Tokenizer
@@ -1465,6 +1521,10 @@ impl TypeRegistry {
                     Type::Vec(_) => Type::Vec(Box::new(Type::UserDefined("T".into(), vec![]))),
                     Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Vec" && args.len() == 1 => {
                         Type::UserDefined("Vec".into(), vec![Type::UserDefined("T".into(), vec![])])
+                    }
+                    // Option generic support (T)
+                    Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Option" && args.len() == 1 => {
+                        Type::UserDefined("Option".into(), vec![Type::UserDefined("T".into(), vec![])])
                     }
                     // HashMap generic support (K, V)
                     Type::UserDefined(n, args) | Type::Struct(n, args) if n == "HashMap" && args.len() == 2 => {
