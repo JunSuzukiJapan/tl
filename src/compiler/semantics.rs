@@ -1936,6 +1936,12 @@ impl SemanticAnalyzer {
                             Type::UserDefined("V".into(), vec![])
                         ])
                     }
+                    Type::UserDefined(n, args) | Type::Struct(n, args) if n == "HashMap" && args.len() == 2 => {
+                         Type::UserDefined("HashMap".into(), vec![
+                            Type::UserDefined("K".into(), vec![]),
+                            Type::UserDefined("V".into(), vec![])
+                        ])
+                    }
                     _ => return Type::UserDefined(name.clone(), vec![]), // Fallback if unknown generic struct
                  };
                  

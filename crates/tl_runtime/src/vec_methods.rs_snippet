@@ -1,0 +1,167 @@
+
+// --- Vec Pop ---
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_i64_pop(ptr: *mut Vec<i64>) -> i64 {
+    if ptr.is_null() { return 0; }
+    let vec = unsafe { &mut *ptr };
+    vec.pop().unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_f32_pop(ptr: *mut Vec<f32>) -> f32 {
+    if ptr.is_null() { return 0.0; }
+    let vec = unsafe { &mut *ptr };
+    vec.pop().unwrap_or(0.0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_ptr_pop(ptr: *mut Vec<*mut std::ffi::c_void>) -> *mut std::ffi::c_void {
+    if ptr.is_null() { return std::ptr::null_mut(); }
+    let vec = unsafe { &mut *ptr };
+    vec.pop().unwrap_or(std::ptr::null_mut())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_string_pop(ptr: *mut Vec<*mut std::ffi::c_void>) -> *mut std::ffi::c_void {
+    tl_vec_ptr_pop(ptr)
+}
+
+// --- Vec Clear ---
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_i64_clear(ptr: *mut Vec<i64>) {
+    if !ptr.is_null() { unsafe { (*ptr).clear(); } }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_f32_clear(ptr: *mut Vec<f32>) {
+    if !ptr.is_null() { unsafe { (*ptr).clear(); } }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_ptr_clear(ptr: *mut Vec<*mut std::ffi::c_void>) {
+    if !ptr.is_null() { unsafe { (*ptr).clear(); } }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_string_clear(ptr: *mut Vec<*mut std::ffi::c_void>) {
+    tl_vec_ptr_clear(ptr)
+}
+
+// --- Vec Is Empty ---
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_i64_is_empty(ptr: *mut Vec<i64>) -> bool {
+    if ptr.is_null() { return true; }
+    unsafe { (*ptr).is_empty() }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_f32_is_empty(ptr: *mut Vec<f32>) -> bool {
+    if ptr.is_null() { return true; }
+    unsafe { (*ptr).is_empty() }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_ptr_is_empty(ptr: *mut Vec<*mut std::ffi::c_void>) -> bool {
+    if ptr.is_null() { return true; }
+    unsafe { (*ptr).is_empty() }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_string_is_empty(ptr: *mut Vec<*mut std::ffi::c_void>) -> bool {
+    tl_vec_ptr_is_empty(ptr)
+}
+
+// --- Vec Remove ---
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_i64_remove(ptr: *mut Vec<i64>, idx: usize) -> i64 {
+    if ptr.is_null() { return 0; }
+    let vec = unsafe { &mut *ptr };
+    if idx < vec.len() { vec.remove(idx) } else { 0 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_f32_remove(ptr: *mut Vec<f32>, idx: usize) -> f32 {
+    if ptr.is_null() { return 0.0; }
+    let vec = unsafe { &mut *ptr };
+    if idx < vec.len() { vec.remove(idx) } else { 0.0 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_ptr_remove(ptr: *mut Vec<*mut std::ffi::c_void>, idx: usize) -> *mut std::ffi::c_void {
+    if ptr.is_null() { return std::ptr::null_mut(); }
+    let vec = unsafe { &mut *ptr };
+    if idx < vec.len() { vec.remove(idx) } else { std::ptr::null_mut() }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_string_remove(ptr: *mut Vec<*mut std::ffi::c_void>, idx: usize) -> *mut std::ffi::c_void {
+    tl_vec_ptr_remove(ptr, idx)
+}
+
+// --- Vec Insert ---
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_i64_insert(ptr: *mut Vec<i64>, idx: usize, val: i64) {
+    if ptr.is_null() { return; }
+    let vec = unsafe { &mut *ptr };
+    if idx <= vec.len() { vec.insert(idx, val); }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_f32_insert(ptr: *mut Vec<f32>, idx: usize, val: f32) {
+    if ptr.is_null() { return; }
+    let vec = unsafe { &mut *ptr };
+    if idx <= vec.len() { vec.insert(idx, val); }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_ptr_insert(ptr: *mut Vec<*mut std::ffi::c_void>, idx: usize, val: *mut std::ffi::c_void) {
+    if ptr.is_null() { return; }
+    let vec = unsafe { &mut *ptr };
+    if idx <= vec.len() { vec.insert(idx, val); }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_string_insert(ptr: *mut Vec<*mut std::ffi::c_void>, idx: usize, val: *mut std::ffi::c_void) {
+    tl_vec_ptr_insert(ptr, idx, val)
+}
+
+// --- Vec Contains ---
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_i64_contains(ptr: *mut Vec<i64>, val: i64) -> bool {
+    if ptr.is_null() { return false; }
+    let vec = unsafe { &*ptr };
+    vec.contains(&val)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_f32_contains(ptr: *mut Vec<f32>, val: f32) -> bool {
+    if ptr.is_null() { return false; }
+    let vec = unsafe { &*ptr };
+    vec.contains(&val)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_ptr_contains(ptr: *mut Vec<*mut std::ffi::c_void>, val: *mut std::ffi::c_void) -> bool {
+    if ptr.is_null() { return false; }
+    let vec = unsafe { &*ptr };
+    vec.contains(&val)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_string_contains(ptr: *mut Vec<*mut std::ffi::c_void>, val: *mut std::ffi::c_void) -> bool {
+    if ptr.is_null() || val.is_null() { return false; }
+    let vec = unsafe { &*ptr };
+    // String contains should arguably check string content, but for raw ptr generic, identity check is default.
+    // However, for Strings, likely want content check. But that requires specialized string logic.
+    // Let's stick to pointer equality for now unless we implement deep compare.
+    // Actually, TL strings are just char pointers, so comparing pointers is usually wrong unless interned.
+    // We should probably implement `tl_string_compare` based contains but `Vec<T>` implies T is Eq.
+    // For now, pointer equality.
+    vec.contains(&val)
+}

@@ -94,8 +94,16 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Here we pre-mangled it to "tl_Struct_Args_method", so we can just use compile_fn?
         // Yes, as long as compile_fn uses the name in function def.
         
+        // Save current builder position
+        let previous_block = self.builder.get_insert_block();
+
         self.compile_fn_proto(&new_method)?;
         self.compile_fn(&new_method, &[])?;
+        
+        // Restore builder position
+        if let Some(block) = previous_block {
+            self.builder.position_at_end(block);
+        }
         
         Ok(mangled_name)
     }
@@ -393,6 +401,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Get the generic struct definition
         let struct_def = self.struct_defs.get(base_name).cloned()
             .ok_or_else(|| format!("Generic struct definition not found: {}", base_name))?;
+
+        eprintln!("DEBUG monomorphize_struct {} -> {}. Generic fields: {}", base_name, mangled_name, struct_def.fields.len());
+
+        if base_name == "Vec" {
+             eprintln!("DEBUG monomorphize_struct Vec -> {}. Generic fields: {}", mangled_name, struct_def.fields.len());
+        }
         
         // Build type parameter substitution map
         let mut subst: HashMap<String, Type> = HashMap::new();
@@ -474,6 +488,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let core_fn_name = match element_type {
             Type::I64 => format!("tl_vec_i64_{}", method_name),
             Type::F32 => format!("tl_vec_f32_{}", method_name),
+            Type::UserDefined(name, _) if name == "String" => format!("tl_vec_string_{}", method_name),
             _ => format!("tl_vec_ptr_{}", method_name), // Pointer-based for structs/strings
         };
         

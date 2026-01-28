@@ -4175,3 +4175,175 @@ pub extern "C" fn tl_tensor_map_get_1d(
 ) -> *mut OpaqueTensor {
     tl_tensor_map_get(map, name)
 }
+
+// --- Vec Pop ---
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_i64_pop(ptr: *mut Vec<i64>) -> i64 {
+    if ptr.is_null() { return 0; }
+    let vec = unsafe { &mut *ptr };
+    vec.pop().unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_f32_pop(ptr: *mut Vec<f32>) -> f32 {
+    if ptr.is_null() { return 0.0; }
+    let vec = unsafe { &mut *ptr };
+    vec.pop().unwrap_or(0.0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_ptr_pop(ptr: *mut Vec<*mut std::ffi::c_void>) -> *mut std::ffi::c_void {
+    if ptr.is_null() { return std::ptr::null_mut(); }
+    let vec = unsafe { &mut *ptr };
+    vec.pop().unwrap_or(std::ptr::null_mut())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_string_pop(ptr: *mut Vec<*mut std::ffi::c_void>) -> *mut std::ffi::c_void {
+    tl_vec_ptr_pop(ptr)
+}
+
+// --- Vec Clear ---
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_i64_clear(ptr: *mut Vec<i64>) {
+    if !ptr.is_null() { unsafe { (*ptr).clear(); } }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_f32_clear(ptr: *mut Vec<f32>) {
+    if !ptr.is_null() { unsafe { (*ptr).clear(); } }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_ptr_clear(ptr: *mut Vec<*mut std::ffi::c_void>) {
+    if !ptr.is_null() { unsafe { (*ptr).clear(); } }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_string_clear(ptr: *mut Vec<*mut std::ffi::c_void>) {
+    tl_vec_ptr_clear(ptr)
+}
+
+// --- Vec Is Empty ---
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_i64_is_empty(ptr: *mut Vec<i64>) -> bool {
+    if ptr.is_null() { return true; }
+    unsafe { (*ptr).is_empty() }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_f32_is_empty(ptr: *mut Vec<f32>) -> bool {
+    if ptr.is_null() { return true; }
+    unsafe { (*ptr).is_empty() }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_ptr_is_empty(ptr: *mut Vec<*mut std::ffi::c_void>) -> bool {
+    if ptr.is_null() { return true; }
+    unsafe { (*ptr).is_empty() }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_string_is_empty(ptr: *mut Vec<*mut std::ffi::c_void>) -> bool {
+    tl_vec_ptr_is_empty(ptr)
+}
+
+// --- Vec Remove ---
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_i64_remove(ptr: *mut Vec<i64>, idx: usize) -> i64 {
+    if ptr.is_null() { return 0; }
+    let vec = unsafe { &mut *ptr };
+    if idx < vec.len() { vec.remove(idx) } else { 0 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_f32_remove(ptr: *mut Vec<f32>, idx: usize) -> f32 {
+    if ptr.is_null() { return 0.0; }
+    let vec = unsafe { &mut *ptr };
+    if idx < vec.len() { vec.remove(idx) } else { 0.0 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_ptr_remove(ptr: *mut Vec<*mut std::ffi::c_void>, idx: usize) -> *mut std::ffi::c_void {
+    if ptr.is_null() { return std::ptr::null_mut(); }
+    let vec = unsafe { &mut *ptr };
+    if idx < vec.len() { vec.remove(idx) } else { std::ptr::null_mut() }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_string_remove(ptr: *mut Vec<*mut std::ffi::c_void>, idx: usize) -> *mut std::ffi::c_void {
+    tl_vec_ptr_remove(ptr, idx)
+}
+
+// --- Vec Insert ---
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_i64_insert(ptr: *mut Vec<i64>, idx: usize, val: i64) {
+    if ptr.is_null() { return; }
+    let vec = unsafe { &mut *ptr };
+    if idx <= vec.len() { vec.insert(idx, val); }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_f32_insert(ptr: *mut Vec<f32>, idx: usize, val: f32) {
+    if ptr.is_null() { return; }
+    let vec = unsafe { &mut *ptr };
+    if idx <= vec.len() { vec.insert(idx, val); }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_ptr_insert(ptr: *mut Vec<*mut std::ffi::c_void>, idx: usize, val: *mut std::ffi::c_void) {
+    if ptr.is_null() { return; }
+    let vec = unsafe { &mut *ptr };
+    if idx <= vec.len() { vec.insert(idx, val); }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_string_insert(ptr: *mut Vec<*mut std::ffi::c_void>, idx: usize, val: *mut std::ffi::c_void) {
+    tl_vec_ptr_insert(ptr, idx, val)
+}
+
+// --- Vec Contains ---
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_i64_contains(ptr: *mut Vec<i64>, val: i64) -> bool {
+    if ptr.is_null() { return false; }
+    let vec = unsafe { &*ptr };
+    vec.contains(&val)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_f32_contains(ptr: *mut Vec<f32>, val: f32) -> bool {
+    if ptr.is_null() { return false; }
+    let vec = unsafe { &*ptr };
+    vec.contains(&val)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_ptr_contains(ptr: *mut Vec<*mut std::ffi::c_void>, val: *mut std::ffi::c_void) -> bool {
+    if ptr.is_null() { return false; }
+    let vec = unsafe { &*ptr };
+    vec.contains(&val)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_string_contains(ptr: *mut Vec<*mut std::ffi::c_void>, val: *mut std::ffi::c_void) -> bool {
+    if ptr.is_null() || val.is_null() { return false; }
+    let vec = unsafe { &*ptr };
+    
+    // Deep comparison for strings
+    let val_cstr = unsafe { std::ffi::CStr::from_ptr(val as *const std::os::raw::c_char) };
+    
+    for &item in vec.iter() {
+        if item.is_null() { continue; }
+        let item_cstr = unsafe { std::ffi::CStr::from_ptr(item as *const std::os::raw::c_char) };
+        if item_cstr == val_cstr {
+            return true;
+        }
+    }
+    false
+}

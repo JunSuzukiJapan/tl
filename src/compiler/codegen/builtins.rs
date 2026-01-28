@@ -1,9 +1,7 @@
 use inkwell::context::Context;
 use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Module as InkwellModule;
-use inkwell::module::Module;
 use inkwell::AddressSpace;
-use std::collections::HashMap;
 
 use crate::compiler::ast::Type;
 use tl_runtime as runtime;
@@ -410,9 +408,75 @@ pub fn declare_runtime_functions<'ctx>(
     let get_type = f32_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
     add_fn("tl_tensor_get", get_type);
 
-    // tl_tensor_slice(t: *mut, start: usize, len: usize) -> *mut
+    // tl_vec_slice(t: *mut, start: usize, len: usize) -> *mut
     let slice_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into()], false);
     add_fn("tl_tensor_slice", slice_type);
+
+    // --- Vec Methods ---
+    
+    // pop(vec) -> val
+    let pop_i64_type = i64_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_vec_i64_pop", pop_i64_type);
+    add_fn("tl_vec_u8_pop", pop_i64_type); // u8 returns i64
+    
+    let pop_f32_type = f32_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_vec_f32_pop", pop_f32_type);
+
+    let pop_ptr_type = void_ptr.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_vec_ptr_pop", pop_ptr_type);
+    add_fn("tl_vec_string_pop", pop_ptr_type);
+
+    // clear(vec) -> void
+    let clear_type = void_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_vec_i64_clear", clear_type);
+    add_fn("tl_vec_f32_clear", clear_type);
+    add_fn("tl_vec_ptr_clear", clear_type);
+    add_fn("tl_vec_string_clear", clear_type);
+    add_fn("tl_vec_u8_clear", clear_type);
+
+    // is_empty(vec) -> bool
+    let is_empty_type = context.bool_type().fn_type(&[void_ptr.into()], false);
+    add_fn("tl_vec_i64_is_empty", is_empty_type);
+    add_fn("tl_vec_f32_is_empty", is_empty_type);
+    add_fn("tl_vec_ptr_is_empty", is_empty_type);
+    add_fn("tl_vec_string_is_empty", is_empty_type);
+    add_fn("tl_vec_u8_is_empty", is_empty_type);
+
+    // remove(vec, idx) -> val
+    let remove_i64_type = i64_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_vec_i64_remove", remove_i64_type);
+    add_fn("tl_vec_u8_remove", remove_i64_type);
+
+    let remove_f32_type = f32_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_vec_f32_remove", remove_f32_type);
+
+    let remove_ptr_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_vec_ptr_remove", remove_ptr_type);
+    add_fn("tl_vec_string_remove", remove_ptr_type);
+
+    // insert(vec, idx, val) -> void
+    let insert_i64_type = void_type.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into()], false);
+    add_fn("tl_vec_i64_insert", insert_i64_type);
+    add_fn("tl_vec_u8_insert", insert_i64_type);
+
+    let insert_f32_type = void_type.fn_type(&[void_ptr.into(), i64_type.into(), f32_type.into()], false);
+    add_fn("tl_vec_f32_insert", insert_f32_type);
+
+    let insert_ptr_type = void_type.fn_type(&[void_ptr.into(), i64_type.into(), void_ptr.into()], false);
+    add_fn("tl_vec_ptr_insert", insert_ptr_type);
+    add_fn("tl_vec_string_insert", insert_ptr_type);
+
+    // contains(vec, val) -> bool
+    let contains_i64_type = context.bool_type().fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_vec_i64_contains", contains_i64_type);
+    add_fn("tl_vec_u8_contains", contains_i64_type);
+
+    let contains_f32_type = context.bool_type().fn_type(&[void_ptr.into(), f32_type.into()], false);
+    add_fn("tl_vec_f32_contains", contains_f32_type);
+
+    let contains_ptr_type = context.bool_type().fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_vec_ptr_contains", contains_ptr_type);
+    add_fn("tl_vec_string_contains", contains_ptr_type);
 
     // tl_tensor_len(t: *mut) -> i64
     let len_type = i64_type.fn_type(&[void_ptr.into()], false);
@@ -1964,8 +2028,8 @@ pub fn declare_runtime_functions<'ctx>(
     // CLI Args
 
     // Added missing ones (Define type locally as declared later)
-    let tensor_type = Type::Tensor(Box::new(Type::F32), 1);
-
+    let _tensor_type = Type::Tensor(Box::new(Type::F32), 1);
+    let _tensor_type_local = Type::Tensor(Box::new(Type::I64), 1);
     // Removed duplicate tl_tensor_to_i64
 
     // Added for Tensor Refactor

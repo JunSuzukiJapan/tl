@@ -1260,7 +1260,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 } else {
                     self.compile_expr(value)?
                 };
-
                 // Ownership: Shared. The temporary (value) remains in scope and will be released at scope exit.
                 // The variable (name) acquires a NEW reference via deep_clone below.
                 // We do NOT unregister the temporary. Ref 1 (Temp) + Ref 1 (Var) = 2.
@@ -1276,9 +1275,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                     {
                         let (_v, _t) = self.ensure_tensor_v2(value, 0)?;
                     } else if let Type::UserDefined(n, _) = target_ty {
-                         if n.starts_with("Vec") {
-                             // Fix for Vec::new() -> Vec<Void> being assigned to Vec<T> (or Vec_T)
-                             if matches!(val_ty, Type::Vec(_)) || matches!(val_ty, Type::UserDefined(ref vn, _) if vn == "Vec") {
+                         if n.starts_with("Vec") || n == "HashMap" {
+                             // Fix for Vec::new() -> Vec<Void> / HashMap::new() -> HashMap being assigned to typed var
+                             let is_match = match &val_ty {
+                                 Type::Vec(_) => true,
+                                 Type::UserDefined(vn, _) | Type::Struct(vn, _) => vn == "Vec" || vn == "HashMap",
+                                 _ => false
+                             };
+                             if is_match {
                                  val_ty = target_ty.clone();
                              }
                          }
@@ -1306,6 +1310,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                              };
                              if is_vec_void {
                                  val_ty = Type::Vec(Box::new(sargs[0].clone()));
+                             }
+                         } else if sn == "HashMap" && sargs.len() == 2 {
+                             // Fix for HashMap::new() -> HashMap (no args)
+                             if matches!(val_ty, Type::UserDefined(ref vn, ref vargs) if vn == "HashMap" && vargs.is_empty()) {
+                                 val_ty = target_ty.clone();
                              }
                          }
                     }
@@ -1578,10 +1587,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                         if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
                              self.builder.build_call(exit_fn, &[], "").unwrap();
                         }
-                        self.builder
-                            .build_return(Some(&val))
-                            .map_err(|e| e.to_string())?;
+                        let ret_instr = self.builder
+                            .build_return(Some(&val));
+                        ret_instr.map_err(|e| e.to_string())?;
                     }
+
                 } else {
                     // return; (Void return)
                     self.emit_all_scopes_cleanup();
@@ -1676,6 +1686,52 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 // Cast logic
                                 // (If needed, e.g. i64 -> f32?)
                                 // Assume types match for now or basic int/float check above
+
+                                self.builder
+                                    .build_store(elem_ptr, val_ir)
+                                    .map_err(|e| e.to_string())?;
+                                return Ok(());
+                            }
+                            Type::Vec(elem_ty) => {
+                                if idxs.len() != 1 {
+                                    return Err("Vec only supports 1D indexing".into());
+                                }
+                                // Load Vec Buffer Pointer (ptr)
+                                let ptr_type =
+                                    self.context.ptr_type(inkwell::AddressSpace::default());
+                                let vec_ptr = self
+                                    .builder
+                                    .build_load(ptr_type, var_ptr.into_pointer_value(), "vec_ptr")
+                                    .map_err(|e| e.to_string())?
+                                    .into_pointer_value();
+
+                                // Compile Index
+                                let (idx_val, idx_ty) = self.compile_expr(&idxs[0])?;
+                                let idx_int = match idx_ty {
+                                    Type::I64 => idx_val.into_int_value(),
+                                    Type::I32 => self
+                                        .builder
+                                        .build_int_z_extend(
+                                            idx_val.into_int_value(),
+                                            self.context.i64_type(),
+                                            "zext",
+                                        )
+                                        .unwrap(),
+                                    _ => return Err("Index must be integer".into()),
+                                };
+
+                                let llvm_elem_type = self.get_llvm_type(elem_ty.as_ref())?;
+                                
+                                let elem_ptr = unsafe {
+                                    self.builder
+                                        .build_in_bounds_gep(
+                                            llvm_elem_type,
+                                            vec_ptr,
+                                            &[idx_int],
+                                            "vec_elem_ptr",
+                                        )
+                                        .map_err(|e| e.to_string())?
+                                };
 
                                 self.builder
                                     .build_store(elem_ptr, val_ir)

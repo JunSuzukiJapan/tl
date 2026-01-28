@@ -2130,10 +2130,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .fields
                     .iter()
                     .position(|(n, _)| n == field)
-                    .ok_or(format!(
-                        "Field {} not found in struct {}",
-                        field, base_name
-                    ))?;
+                    .ok_or_else(|| {
+                        if base_name == "Vec" {
+                             eprintln!("DEBUG expr.rs Vec entry: {:?}", self.struct_defs.get("Vec"));
+                             eprintln!("DEBUG expr.rs actual_name: {}", base_name); // Wait actual_name is not available here easily? default to base_name?
+                             // Re-derive specialized name to debug
+                             if let Some(spec) = self.struct_defs.keys().find(|k| k.starts_with("Vec_")) {
+                                  eprintln!("DEBUG expr.rs Found specialized struct: {} with fields: {}", spec, self.struct_defs.get(spec).unwrap().fields.len());
+                             }
+                        }
+                        format!(
+                        "Field {} not found in struct {}. Available: {:?}",
+                        field, base_name, struct_def.fields.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>()
+                    )})?;
                 
                 // Retrieve field type and substitute if necessary
                 let (_, field_ty_raw) = &struct_def.fields[field_idx];
@@ -2193,7 +2202,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::Struct(_, _) | Type::UserDefined(_, _) => self
+                        Type::Struct(_, _) 
+                        | Type::UserDefined(_, _) 
+                        | Type::Vec(_)
+                        | Type::Enum(_, _)
+                        | Type::Tuple(_) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
@@ -2384,6 +2397,44 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .map_err(|e| e.to_string())?;
 
                         Ok((loaded, *elem_type))
+                    }
+                    Type::Vec(elem_type) => {
+                         if indices.len() != 1 {
+                            return Err("Vec only supports 1D index".into());
+                        }
+
+                        let llvm_elem_type = self.get_llvm_type(elem_type.as_ref())?;
+                        let i64_type = self.context.i64_type();
+                        let vec_ptr = val.into_pointer_value();
+
+                        let (idx_val, idx_ty) = self.compile_expr(&indices[0])?;
+                        let idx_int = match idx_ty {
+                            Type::I64 => idx_val.into_int_value(),
+                            Type::I32 => self
+                                .builder
+                                .build_int_z_extend(idx_val.into_int_value(), i64_type, "zext")
+                                .map_err(|e| e.to_string())?,
+                            _ => return Err("Index must be integer".into()),
+                        };
+
+                        // Direct GEP into generic buffer
+                        let elem_ptr = unsafe {
+                            self.builder
+                                .build_in_bounds_gep(
+                                    llvm_elem_type,
+                                    vec_ptr,
+                                    &[idx_int],
+                                    "vec_elem_ptr",
+                                )
+                                .map_err(|e| e.to_string())?
+                        };
+
+                        let loaded = self
+                            .builder
+                            .build_load(llvm_elem_type, elem_ptr, "vec_elem")
+                            .map_err(|e| e.to_string())?;
+
+                        Ok((loaded, *elem_type.clone()))
                     }
                     Type::Tensor(inner, _) => {
                         // Prepare indices array
@@ -9645,11 +9696,33 @@ fn compile_hashmap_insert<'ctx>(
         return Err(format!("HashMap key type must be String (runtime restriction), found {:?}", key_ty));
     }
     // Cast value to void*
-    let void_ptr = codegen.builder.build_pointer_cast(
-        val_val.into_pointer_value(),
-        codegen.context.ptr_type(inkwell::AddressSpace::default()),
-        "val_void"
-    ).map_err(|e| e.to_string())?;
+    let void_ptr = if val_val.is_pointer_value() {
+        codegen.builder.build_pointer_cast(
+            val_val.into_pointer_value(),
+            codegen.context.ptr_type(inkwell::AddressSpace::default()),
+            "val_void"
+        ).map_err(|e| e.to_string())?
+    } else if val_val.is_int_value() {
+        // Int -> Ptr
+        codegen.builder.build_int_to_ptr(
+            val_val.into_int_value(),
+            codegen.context.ptr_type(inkwell::AddressSpace::default()),
+            "val_int_ptr"
+        ).map_err(|e| e.to_string())?
+    } else if val_val.is_float_value() {
+        // Float -> Bitcast(Int) -> Ptr
+        let float_val = val_val.into_float_value();
+        let bit_size = float_val.get_type().get_bit_width();
+        let int_type = codegen.context.custom_width_int_type(bit_size);
+        let as_int = codegen.builder.build_bit_cast(float_val, int_type, "float_cast").unwrap().into_int_value();
+        codegen.builder.build_int_to_ptr(
+            as_int,
+            codegen.context.ptr_type(inkwell::AddressSpace::default()),
+            "val_float_ptr"
+        ).map_err(|e| e.to_string())?
+    } else {
+        return Err(format!("Unsupported type for HashMap value: {:?}", val_ty));
+    };
 
     let fn_val = codegen.module.get_function("tl_hashmap_insert").ok_or("tl_hashmap_insert not found")?;
     codegen.builder.build_call(fn_val, &[map_val.into(), (*key_val).into(), void_ptr.into()], "").map_err(|e| e.to_string())?;
@@ -9660,7 +9733,7 @@ fn compile_hashmap_insert<'ctx>(
 fn compile_hashmap_get<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     map_val: BasicValueEnum<'ctx>,
-    _map_ty: Type,
+    map_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 {
@@ -9675,30 +9748,70 @@ fn compile_hashmap_get<'ctx>(
     let fn_val = codegen.module.get_function("tl_hashmap_get").ok_or("tl_hashmap_get not found")?;
     let call = codegen.builder.build_call(fn_val, &[map_val.into(), args[0].0.into()], "get_res").map_err(|e| e.to_string())?;
     
-    // Determine return type - currently defaults to Tensor based on User request context?
-    // Implementation plan said "HashMap<String, *mut c_void>".
-    // And "get_return_type_from_signature" logic uses:
-    // Some(inkwell::types::BasicTypeEnum::PointerType(_)) => Type::Tensor(Box::new(Type::F32), 0) (default)
-    
-    // BUT here we return strict type if we can. 
-    // Since HashMap is "opaque values", the safest is Tensor or rely on derived type.
-    // Let's use get_return_type_from_signature via helper if possible, or return Tensor.
-    // Current semantics: HashMap usually stores Tensors.
-    // We'll return Tensor.
-    
-    let val = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
+    let ptr_val = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
         _ => return Err("Invalid return from tl_hashmap_get".into()),
     };
-    Ok((val, Type::Tensor(Box::new(Type::F32), 0))) // Defaulting to simple tensor
+
+    // Determine value type V from HashMap<K, V>
+    let value_type = match &map_ty {
+        Type::UserDefined(name, args) | Type::Struct(name, args) if name == "HashMap" && args.len() == 2 => {
+            args[1].clone()
+        }
+        _ => Type::Tensor(Box::new(Type::F32), 0), // Fallback
+    };
+
+    let ret_val: BasicValueEnum = match &value_type {
+        Type::I64 | Type::Usize => {
+            codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_i64").map_err(|e| e.to_string())?.into()
+        }
+        Type::I32 => {
+             // Cast to i64 then truncate? Or assuming stored as generic ptr-sized int?
+             // Since we use int_to_ptr with native size, ptr_to_int returns i64 (on 64bit). 
+             // We cast to target int type.
+             let as_i64 = codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_raw").map_err(|e| e.to_string())?;
+             codegen.builder.build_int_cast(as_i64, codegen.context.i32_type(), "val_i32").unwrap().into()
+        }
+        Type::F64 => {
+             let as_int = codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_raw").map_err(|e| e.to_string())?;
+             codegen.builder.build_bit_cast(as_int, codegen.context.f64_type(), "val_f64").unwrap().into()
+        }
+        Type::F32 => {
+             // 32-bit float stored in 64-bit pointer? 
+             // Truncate logic depends on how we stored it.
+             // We stored via custom_width_int_type(32) -> int_to_ptr.
+             // So retrieving: ptr_to_int(64) -> truncate(32) -> bitcast(f32).
+             let as_i64 = codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_raw").map_err(|e| e.to_string())?;
+             let as_i32 = codegen.builder.build_int_cast(as_i64, codegen.context.custom_width_int_type(32), "val_trunc").unwrap();
+             codegen.builder.build_bit_cast(as_i32, codegen.context.f32_type(), "val_f32").unwrap().into()
+        }
+        Type::Bool => {
+             let as_int = codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_raw").map_err(|e| e.to_string())?;
+             codegen.builder.build_int_cast(as_int, codegen.context.bool_type(), "val_bool").unwrap().into()
+        }
+        _ => {
+            // Pointer types: pointer_cast
+            let llvm_ty = codegen.get_llvm_type(&value_type)?;
+            if llvm_ty.is_pointer_type() {
+                 codegen.builder.build_pointer_cast(ptr_val, llvm_ty.into_pointer_type(), "val_cast").unwrap().into()
+            } else {
+                 return Err(format!("Unsupported HashMap value type for retrieval: {:?}", value_type));
+            }
+        }
+    };
+
+    Ok((ret_val, value_type))
 }
 
 fn compile_hashmap_remove<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     map_val: BasicValueEnum<'ctx>,
-    _map_ty: Type,
+    map_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("HashMap::remove takes 1 argument".into());
+    }
     let (key_val, key_ty) = &args[0];
     let is_string = matches!(key_ty, Type::UserDefined(n, _) if n == "String");
     if !is_string {
@@ -9706,11 +9819,52 @@ fn compile_hashmap_remove<'ctx>(
     }
     let fn_val = codegen.module.get_function("tl_hashmap_remove").ok_or("tl_hashmap_remove not found")?;
     let call = codegen.builder.build_call(fn_val, &[map_val.into(), args[0].0.into()], "rem_res").map_err(|e| e.to_string())?;
-    let val = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
+    
+    let ptr_val = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
         _ => return Err("Invalid return from tl_hashmap_remove".into()),
     };
-    Ok((val, Type::Tensor(Box::new(Type::F32), 0)))
+
+    // Determine value type V from HashMap<K, V>
+    let value_type = match &map_ty {
+        Type::UserDefined(name, args) | Type::Struct(name, args) if name == "HashMap" && args.len() == 2 => {
+            args[1].clone()
+        }
+        _ => Type::Tensor(Box::new(Type::F32), 0),
+    };
+
+    let ret_val: BasicValueEnum = match &value_type {
+        Type::I64 | Type::Usize => {
+            codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_i64").map_err(|e| e.to_string())?.into()
+        }
+        Type::I32 => {
+             let as_i64 = codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_raw").map_err(|e| e.to_string())?;
+             codegen.builder.build_int_cast(as_i64, codegen.context.i32_type(), "val_i32").unwrap().into()
+        }
+        Type::F64 => {
+             let as_int = codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_raw").map_err(|e| e.to_string())?;
+             codegen.builder.build_bit_cast(as_int, codegen.context.f64_type(), "val_f64").unwrap().into()
+        }
+        Type::F32 => {
+             let as_i64 = codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_raw").map_err(|e| e.to_string())?;
+             let as_i32 = codegen.builder.build_int_cast(as_i64, codegen.context.custom_width_int_type(32), "val_trunc").unwrap();
+             codegen.builder.build_bit_cast(as_i32, codegen.context.f32_type(), "val_f32").unwrap().into()
+        }
+        Type::Bool => {
+             let as_int = codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_raw").map_err(|e| e.to_string())?;
+             codegen.builder.build_int_cast(as_int, codegen.context.bool_type(), "val_bool").unwrap().into()
+        }
+        _ => {
+            let llvm_ty = codegen.get_llvm_type(&value_type)?;
+            if llvm_ty.is_pointer_type() {
+                 codegen.builder.build_pointer_cast(ptr_val, llvm_ty.into_pointer_type(), "val_cast").unwrap().into()
+            } else {
+                 return Err(format!("Unsupported HashMap value type for retrieval: {:?}", value_type));
+            }
+        }
+    };
+
+    Ok((ret_val, value_type))
 }
 
 fn compile_hashmap_contains_key<'ctx>(

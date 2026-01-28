@@ -1126,7 +1126,7 @@ impl TypeRegistry {
         // get(index) -> T
         // Need to update ReturnType enum first? 
         // Yes, likely.
-        
+        // pop() -> T
         vec_generic_methods.insert(
             "pop".to_string(),
             MethodSignature {
@@ -1137,40 +1137,40 @@ impl TypeRegistry {
                 min_args: 0,
             },
         );
-
+        // insert(index, val) -> void
         vec_generic_methods.insert(
             "insert".to_string(),
             MethodSignature {
                 name: "insert".to_string(),
-                params: vec![ParamType::AnyInt, ParamType::Generic("T".to_string())],
-                return_type: ReturnType::Void,
+                params: vec![ParamType::Exact(Type::I64), ParamType::Generic("T".to_string())],
+                return_type: ReturnType::Exact(Type::Void),
                 is_varargs: false,
                 min_args: 2,
             },
         );
-
+        // remove(index) -> T
         vec_generic_methods.insert(
             "remove".to_string(),
             MethodSignature {
                 name: "remove".to_string(),
-                params: vec![ParamType::AnyInt],
+                params: vec![ParamType::Exact(Type::I64)],
                 return_type: ReturnType::Generic("T".to_string()),
                 is_varargs: false,
                 min_args: 1,
             },
         );
-
+        // clear() -> void
         vec_generic_methods.insert(
             "clear".to_string(),
             MethodSignature {
                 name: "clear".to_string(),
                 params: vec![],
-                return_type: ReturnType::Void,
+                return_type: ReturnType::Exact(Type::Void),
                 is_varargs: false,
                 min_args: 0,
             },
         );
-
+        // is_empty() -> Bool
         vec_generic_methods.insert(
             "is_empty".to_string(),
             MethodSignature {
@@ -1181,7 +1181,7 @@ impl TypeRegistry {
                 min_args: 0,
             },
         );
-
+        // contains(val) -> Bool
         vec_generic_methods.insert(
             "contains".to_string(),
             MethodSignature {
@@ -1571,13 +1571,13 @@ impl TypeRegistry {
             },
         );
 
-        // remove(key: K) -> Bool
+        // remove(key: K) -> V
         map_methods.insert(
             "remove".to_string(),
             MethodSignature {
                 name: "remove".to_string(),
                 params: vec![ParamType::Generic("K".to_string())],
-                return_type: ReturnType::Exact(Type::Bool),
+                return_type: ReturnType::Generic("V".to_string()),
                 is_varargs: false,
                 min_args: 1,
             },
