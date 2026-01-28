@@ -11,6 +11,7 @@ pub use memory_manager::{
 pub mod checkpoint;
 pub mod context;
 pub mod cuda_ext;
+pub mod hashmap;
 pub mod knowledge_base;
 pub mod llm;
 pub mod logic;

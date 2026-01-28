@@ -139,6 +139,7 @@ lazy_static::lazy_static! {
 enum AllocationType {
     Struct, // malloc'd struct - needs simple free()
     Tensor, // OpaqueTensor* - needs tl_tensor_free()
+    Custom(extern "C" fn(*mut c_void)), // Custom destructor
 }
 
 /// Record of a single allocation
@@ -223,6 +224,7 @@ impl MemoryManager {
                 match record.alloc_type {
                     AllocationType::Struct => struct_allocs += 1,
                     AllocationType::Tensor => tensor_allocs += 1,
+                    AllocationType::Custom(_) => struct_allocs += 1,
                 }
             }
             if crate::mem_log_enabled() {
@@ -349,6 +351,29 @@ impl MemoryManager {
         }
     }
 
+    /// Register a pointer with a custom destructor
+    pub fn register_custom(&mut self, ptr: *mut c_void, dtor: extern "C" fn(*mut c_void)) {
+        if ptr.is_null() { return; }
+        
+        self.ptr_types.entry(ptr).or_insert(AllocationType::Custom(dtor));
+
+        if let Some(scope) = self.scopes.last_mut() {
+             let count = self.refcounts.entry(ptr).or_insert(0);
+             if *count == 0 {
+                 *count = 1;
+             } else {
+                 *count += 1;
+             }
+             scope.push(AllocationRecord {
+                 ptr,
+                 alloc_type: AllocationType::Custom(dtor),
+             });
+             if crate::mem_log_enabled() {
+                eprintln!("[TL_MEM] register_custom ptr={:p} refcount={}", ptr, *count);
+             }
+        }
+    }
+
     pub fn register_tensor_meta(&mut self, ptr: *mut c_void, meta: AllocationMeta) {
         if ptr.is_null() {
             return;
@@ -414,6 +439,12 @@ impl MemoryManager {
                                  // Logging... (Simplified for brevity as original was long)
                                  eprintln!("[TL_MEM] freed tensor outcome={}", outcome_str);
                              }
+                        }
+                        AllocationType::Custom(dtor) => {
+                            if crate::mem_log_enabled() {
+                                eprintln!("[TL_MEM] free_custom ptr={:p}", ptr);
+                            }
+                            unsafe { dtor(ptr); }
                         }
                     }
                 } else {
@@ -607,6 +638,14 @@ pub extern "C" fn tl_mem_register_struct_named(ptr: *mut c_void, name: *const st
     if !ptr.is_null() {
         let mut mgr = MEMORY_MANAGER.lock().unwrap();
         mgr.register_struct_named(ptr, name);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_mem_register_custom(ptr: *mut c_void, dtor: extern "C" fn(*mut c_void)) {
+    if !ptr.is_null() {
+        let mut mgr = MEMORY_MANAGER.lock().unwrap();
+        mgr.register_custom(ptr, dtor);
     }
 }
 

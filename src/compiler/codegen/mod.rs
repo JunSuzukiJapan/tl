@@ -29,7 +29,6 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) builder: Builder<'ctx>,
     pub(crate) execution_engine: ExecutionEngine<'ctx>,
     pub(crate) variables: Vec<HashMap<String, (BasicValueEnum<'ctx>, Type, u8)>>,
-    pub(crate) fn_return_types: HashMap<String, Type>,
     pub(crate) struct_types: HashMap<String, StructType<'ctx>>,
     pub(crate) struct_defs: HashMap<String, StructDef>,
     pub(crate) enum_types: HashMap<String, StructType<'ctx>>,
@@ -40,6 +39,7 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) builtin_manager: expr::BuiltinManager,
     pub(crate) instance_methods: HashMap<String, expr::InstanceMethodManager>,
     pub(crate) static_methods: HashMap<String, expr::StaticMethodManager>,
+    pub(crate) destructors: HashMap<String, String>, // TypeName -> FreeFnName
     pub(crate) loop_stack: Vec<(
         inkwell::basic_block::BasicBlock<'ctx>,
         inkwell::basic_block::BasicBlock<'ctx>,
@@ -69,7 +69,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             builder,
             execution_engine,
             variables: vec![HashMap::new()],
-            fn_return_types: HashMap::new(),
             struct_types: HashMap::new(),
             struct_defs: HashMap::new(),
             enum_types: HashMap::new(),
@@ -80,6 +79,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             builtin_manager: expr::BuiltinManager::new(),
             instance_methods: HashMap::new(),
             static_methods: HashMap::new(),
+            destructors: HashMap::new(),
             loop_stack: Vec::new(),
             relations: std::collections::HashSet::new(),
             current_span: None,
@@ -101,7 +101,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             codegen.context,
             &codegen.module,
             &codegen.execution_engine,
-            &mut codegen.fn_return_types,
         );
 
         codegen
@@ -388,6 +387,9 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     fn register_builtins(&mut self) {
+        // Register destructors
+        self.destructors.insert("HashMap".to_string(), "tl_hashmap_free".to_string());
+
         let device_enum = EnumDef {
             name: "Device".to_string(),
             generics: vec![],
@@ -439,7 +441,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 "String" => {}
                                 "File" | "Path" => {}
                                 "Env" | "Http" => {}
-                                "Map" | "Tokenizer" | "KVCache" | 
+                                "Map" | "HashMap" | "Tokenizer" | "KVCache" | 
                                 "Block" | "RMSNorm" | "Attention" | "MLP" => {}
                                 _ => {
                                     // Pass cleanup_mode to recursive free
@@ -956,8 +958,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
 
                 let _function = self.module.add_function(&mangled_name, fn_type, None);
-                self.fn_return_types
-                    .insert(mangled_name.clone(), method.return_type.clone());
             }
         }
 
@@ -1214,8 +1214,6 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     pub(crate) fn compile_fn_proto(&mut self, func: &FunctionDef) -> Result<FunctionValue<'ctx>, String> {
-        self.fn_return_types
-            .insert(func.name.clone(), func.return_type.clone());
 
         // Check if this function returns a struct (requires sret)
         // Check if this function returns a struct (requires sret)
@@ -1223,8 +1221,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Let's assume Structs needs SRET, but Tensors do NOT.
         // String is a pointer, so exclusion is needed.
         let uses_sret = match &func.return_type {
-            Type::Struct(name, _) if name != "Vec" && name != "Map" => true,
-            Type::UserDefined(name, _) if name != "String" && name != "Vec" && name != "Map" => true, 
+            Type::Struct(name, _) if name != "Vec" && name != "Map" && name != "HashMap" => true,
+            Type::UserDefined(name, _) if name != "String" && name != "Vec" && name != "Map" && name != "HashMap" => true, 
             _ => false,
         };
 
@@ -1347,8 +1345,8 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Check if this function uses sret
         let uses_sret = match &func.return_type {
-             Type::Struct(name, _) if name != "Vec" && name != "Map" => true,
-             Type::UserDefined(name, _) if name != "String" && name != "Vec" && name != "Map" => true,
+             Type::Struct(name, _) if name != "Vec" && name != "Map" && name != "HashMap" => true,
+             Type::UserDefined(name, _) if name != "String" && name != "Vec" && name != "Map" && name != "HashMap" => true,
              _ => false,
         };
         let param_offset = if uses_sret { 1 } else { 0 };
@@ -1532,8 +1530,6 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Register return types FIRST so recursive/future calls find it
         for relation in relations {
-            self.fn_return_types
-                .insert(relation.name.clone(), Type::Tensor(Box::new(Type::F32), 1));
         }
 
         let i64_type = self.context.i64_type();

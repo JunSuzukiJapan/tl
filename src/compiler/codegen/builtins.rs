@@ -1,5 +1,6 @@
 use inkwell::context::Context;
 use inkwell::execution_engine::ExecutionEngine;
+use inkwell::module::Module as InkwellModule;
 use inkwell::module::Module;
 use inkwell::AddressSpace;
 use std::collections::HashMap;
@@ -9,9 +10,8 @@ use tl_runtime as runtime;
 
 pub fn declare_runtime_functions<'ctx>(
     context: &'ctx Context,
-    module: &Module<'ctx>,
+    module: &InkwellModule<'ctx>,
     execution_engine: &ExecutionEngine<'ctx>,
-    fn_return_types: &mut HashMap<String, Type>,
 ) {
     let i64_type = context.i64_type(); // usize
     let i32_type = context.i32_type();
@@ -683,6 +683,45 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_map_free(map)
     let map_free_type = void_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_tensor_map_free", map_free_type);
+
+    // --- HashMap Support ---
+    // tl_hashmap_new() -> *mut HashMap
+    let hashmap_new_type = void_ptr.fn_type(&[], false);
+    add_fn("tl_hashmap_new", hashmap_new_type);
+
+    // tl_hashmap_insert(map, key, value) -> bool (Workaround)
+    let hashmap_insert_type = context.bool_type().fn_type(
+        &[void_ptr.into(), i8_ptr.into(), void_ptr.into()],
+        false,
+    );
+    add_fn("tl_hashmap_insert", hashmap_insert_type);
+
+    // tl_hashmap_get(map, key) -> *mut Value
+    let hashmap_get_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_hashmap_get", hashmap_get_type);
+
+    // tl_hashmap_remove(map, key) -> *mut Value
+    add_fn("tl_hashmap_remove", hashmap_get_type);
+
+    // tl_hashmap_contains_key(map, key) -> bool
+    let hashmap_contains_type = context
+        .bool_type()
+        .fn_type(&[void_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_hashmap_contains_key", hashmap_contains_type);
+
+    // tl_hashmap_len(map) -> i64
+    let hashmap_len_type = i64_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_hashmap_len", hashmap_len_type);
+
+    // tl_hashmap_clear(map) -> bool (Workaround)
+    let hashmap_clear_type = context.bool_type().fn_type(&[void_ptr.into()], false);
+    add_fn("tl_hashmap_clear", hashmap_clear_type);
+
+    // Register return types explicitly for Method Call compilation
+
+    // tl_hashmap_free(map)
+    add_fn("tl_hashmap_free", hashmap_clear_type);
+
 
     // Reshape
     let reshape_dims_type =
@@ -1923,31 +1962,9 @@ pub fn declare_runtime_functions<'ctx>(
     }
 
     // CLI Args
-    fn_return_types.insert("tl_args_count".to_string(), Type::I64);
-    fn_return_types.insert("tl_string_to_i64".to_string(), Type::I64);
-    fn_return_types.insert(
-        "tl_args_get".to_string(),
-        Type::UserDefined("String".to_string(), vec![]),
-    );
 
     // Added missing ones (Define type locally as declared later)
     let tensor_type = Type::Tensor(Box::new(Type::F32), 1);
-    fn_return_types.insert("tl_tensor_exp".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_log".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_sin".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_cos".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_tan".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_abs".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_sigmoid".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_tanh".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_max".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_max_dim".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_min".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_min_dim".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_mean".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_mean_dim".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_argmin".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_argmax".to_string(), tensor_type.clone());
 
     // Removed duplicate tl_tensor_to_i64
 
@@ -2145,24 +2162,6 @@ pub fn declare_runtime_functions<'ctx>(
 
     let tensor_type = Type::Tensor(Box::new(Type::F32), 1); // Common return type for many tensor ops
 
-    fn_return_types.insert("tl_tensor_new".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_new_i64".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_to_f32".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_to_i64".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_add".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_mul".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_neg".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_slice".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_print".to_string(), Type::Void);
-    fn_return_types.insert("tl_tensor_device_id".to_string(), Type::I64);
-    fn_return_types.insert("tl_tensor_print_1".to_string(), Type::Void);
-    fn_return_types.insert("tl_tensor_print_2".to_string(), Type::Void);
-    fn_return_types.insert("tl_tensor_print_3".to_string(), Type::Void);
-    fn_return_types.insert("tl_print_i64".to_string(), Type::Void);
-    fn_return_types.insert("tl_print_i32".to_string(), Type::Void);
-    fn_return_types.insert("tl_print_f32".to_string(), Type::Void);
-    fn_return_types.insert("tl_print_f64".to_string(), Type::Void);
-    fn_return_types.insert("tl_print_bool".to_string(), Type::Void);
     let f32_unary_methods = [
         "abs",
         "acos",
@@ -2197,13 +2196,10 @@ pub fn declare_runtime_functions<'ctx>(
         "trunc",
     ];
     for name in f32_unary_methods {
-        fn_return_types.insert(format!("tl_f32_{}", name), Type::F32);
     }
     let f32_binary_methods = ["atan2", "copysign", "hypot", "log", "powf"];
     for name in f32_binary_methods {
-        fn_return_types.insert(format!("tl_f32_{}", name), Type::F32);
     }
-    fn_return_types.insert("tl_f32_powi".to_string(), Type::F32);
     let f64_unary_methods = [
         "abs",
         "acos",
@@ -2238,45 +2234,23 @@ pub fn declare_runtime_functions<'ctx>(
         "trunc",
     ];
     for name in f64_unary_methods {
-        fn_return_types.insert(format!("tl_f64_{}", name), Type::F64);
     }
     let f64_binary_methods = ["atan2", "copysign", "hypot", "log", "powf"];
     for name in f64_binary_methods {
-        fn_return_types.insert(format!("tl_f64_{}", name), Type::F64);
     }
-    fn_return_types.insert("tl_f64_powi".to_string(), Type::F64);
     let i64_unary_methods = ["abs", "signum"];
     for name in i64_unary_methods {
-        fn_return_types.insert(format!("tl_i64_{}", name), Type::I64);
     }
     let i64_binary_methods = ["div_euclid", "rem_euclid", "pow"];
     for name in i64_binary_methods {
-        fn_return_types.insert(format!("tl_i64_{}", name), Type::I64);
     }
-    fn_return_types.insert("tl_i64_is_positive".to_string(), Type::Bool);
-    fn_return_types.insert("tl_i64_is_negative".to_string(), Type::Bool);
     let i32_unary_methods = ["abs", "signum"];
     for name in i32_unary_methods {
-        fn_return_types.insert(format!("tl_i32_{}", name), Type::I32);
     }
     let i32_binary_methods = ["div_euclid", "rem_euclid", "pow"];
     for name in i32_binary_methods {
-        fn_return_types.insert(format!("tl_i32_{}", name), Type::I32);
     }
-    fn_return_types.insert("tl_i32_is_positive".to_string(), Type::Bool);
-    fn_return_types.insert("tl_i32_is_negative".to_string(), Type::Bool);
-    fn_return_types.insert("tl_tensor_len".to_string(), Type::I64);
-    fn_return_types.insert("tl_tensor_get".to_string(), Type::F32);
-    fn_return_types.insert("tl_tensor_get_i64_md".to_string(), Type::I64);
-    fn_return_types.insert("tl_tensor_dim".to_string(), Type::I64);
     // Add missing types that were likely in the original file but I need to make sure are present
-    fn_return_types.insert("tl_tensor_transpose".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_reshape".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_reshape_dims".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_sum_dim".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_matmul".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_contiguous".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_sum".to_string(), Type::F32); // Or tensor 0D? Usually returns scalar in simple implementation
                                                                     // ... complete as needed based on original CodeGen
                                                                     // tl_tensor_reshape_dims(tensor: *mut OpaqueTensor, dims: *const i64, num_dims: i64) -> *mut OpaqueTensor
     let tensor_reshape_dims_type = void_ptr.fn_type(
@@ -2364,28 +2338,18 @@ pub fn declare_runtime_functions<'ctx>(
         false,
     );
     module.add_function("tl_tensor_argmax", argmax_type, None);
-    fn_return_types.insert(
-        "tl_tensor_argmax".to_string(),
-        Type::Tensor(Box::new(Type::F32), 0),
-    );
 
     // tl_tensor_item(t: *mut) -> f32
     let item_type = f32_type.fn_type(&[void_ptr.into()], false);
     module.add_function("tl_tensor_item", item_type, None);
-    fn_return_types.insert("tl_tensor_item".to_string(), Type::F32);
 
     // tl_tensor_item_i64(t: *mut) -> i64
     let item_i64_type = i64_type.fn_type(&[void_ptr.into()], false);
     module.add_function("tl_tensor_item_i64", item_i64_type, None);
-    fn_return_types.insert("tl_tensor_item_i64".to_string(), Type::I64);
 
     // tl_tensor_to_i64(t: *mut) -> *mut
     let to_i64_type = void_ptr.fn_type(&[void_ptr.into()], false);
     module.add_function("tl_tensor_to_i64", to_i64_type, None);
-    fn_return_types.insert(
-        "tl_tensor_to_i64".to_string(),
-        Type::Tensor(Box::new(Type::I64), 0),
-    );
 
     // tl_load_all_params(path: *const i8) -> void
     let load_all_type = void_type.fn_type(&[i8_ptr.into()], false);
@@ -2431,50 +2395,8 @@ pub fn declare_runtime_functions<'ctx>(
     module.add_function("tl_tensor_ones", ones_type, None);
 
     // Register new return types
-    fn_return_types.insert("tl_tensor_randn".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_grad".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_detach".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_softmax".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_cross_entropy".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_sum".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_backward".to_string(), Type::Void);
-    fn_return_types.insert("tl_tensor_sub_assign".to_string(), Type::Void);
-    fn_return_types.insert("tl_tensor_pow".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_sqrt".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_sin".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_cos".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_relu".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_gelu".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_tril".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_sum_dim".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_embedding".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_save".to_string(), Type::Void);
-    fn_return_types.insert("tl_tensor_load".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_save_all_params".to_string(), Type::Void);
-    fn_return_types.insert("tl_load_all_params".to_string(), Type::Void);
-    fn_return_types.insert("tl_add_parameter".to_string(), Type::Void);
-    fn_return_types.insert("tl_register_parameter".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_arena_get_offset".to_string(), Type::I64);
-    fn_return_types.insert("tl_arena_get_capacity".to_string(), Type::I64);
-    fn_return_types.insert("tl_arena_is_active".to_string(), Type::Bool);
-    fn_return_types.insert("tl_arena_alloc".to_string(), Type::I64);
-    fn_return_types.insert("tl_arena_reset".to_string(), Type::Void);
-    fn_return_types.insert("tl_get_memory_mb".to_string(), Type::I64);
-    fn_return_types.insert("tl_get_metal_pool_bytes".to_string(), Type::I64);
-    fn_return_types.insert("tl_get_metal_pool_mb".to_string(), Type::I64);
-    fn_return_types.insert("tl_get_metal_pool_count".to_string(), Type::I64);
-    fn_return_types.insert("tl_get_pool_count".to_string(), Type::I64);
-    fn_return_types.insert("tl_get_refcount_count".to_string(), Type::I64);
-    fn_return_types.insert("tl_get_scope_depth".to_string(), Type::I64);
-    fn_return_types.insert("tl_metal_sync".to_string(), Type::Void);
 
     // VarBuilder-based parameter management
-    fn_return_types.insert("tl_varbuilder_get".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_update_all_params".to_string(), Type::Void);
-    fn_return_types.insert("tl_varbuilder_grad".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_conv2d".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_clamp".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_ones".to_string(), tensor_type.clone());
 
     // --- Standard Library Phase 1 ---
 
@@ -2647,91 +2569,25 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::logic::tl_query as usize);
     }
 
-    // Return types
-    fn_return_types.insert(
-        "tl_string_concat".to_string(),
-        Type::UserDefined("String".to_string(), vec![]),
-    );
-    fn_return_types.insert(
-        "tl_string_from_int".to_string(),
-        Type::UserDefined("String".to_string(), vec![]),
-    );
-    fn_return_types.insert("tl_tokenizer_new".to_string(), Type::I64);
-    fn_return_types.insert(
-        "tl_tokenizer_encode".to_string(),
-        Type::Tensor(Box::new(Type::I64), 0),
-    );
-    fn_return_types.insert(
-        "tl_tokenizer_decode".to_string(),
-        Type::UserDefined("String".to_string(), vec![]),
-    );
-    fn_return_types.insert(
-        "tl_gguf_load".to_string(),
-        Type::UserDefined("Map".to_string(), vec![]),
-    );
-    fn_return_types.insert(
-        "tl_file_open".to_string(),
-        Type::UserDefined("File".to_string(), vec![]),
-    );
-    fn_return_types.insert(
-        "tl_file_read_string".to_string(),
-        Type::UserDefined("String".to_string(), vec![]),
-    );
-    fn_return_types.insert("tl_file_write_string".to_string(), Type::Void);
-    fn_return_types.insert("tl_file_close".to_string(), Type::Void);
-    fn_return_types.insert(
-        "tl_path_new".to_string(),
-        Type::UserDefined("Path".to_string(), vec![]),
-    );
-    fn_return_types.insert(
-        "tl_path_join".to_string(),
-        Type::UserDefined("Path".to_string(), vec![]),
-    );
-    fn_return_types.insert("tl_path_exists".to_string(), Type::Bool);
-    fn_return_types.insert("tl_path_is_dir".to_string(), Type::Bool);
-    fn_return_types.insert("tl_path_is_file".to_string(), Type::Bool);
-    fn_return_types.insert(
-        "tl_path_to_string".to_string(),
-        Type::UserDefined("String".to_string(), vec![]),
-    );
-    fn_return_types.insert("tl_path_free".to_string(), Type::Void);
-    fn_return_types.insert("tl_http_download".to_string(), Type::Bool);
-    fn_return_types.insert(
-        "tl_http_get".to_string(),
-        Type::UserDefined("String".to_string(), vec![]),
-    );
-    fn_return_types.insert(
-        "tl_env_get".to_string(),
-        Type::UserDefined("String".to_string(), vec![]),
-    );
-    fn_return_types.insert(
-        "tl_read_line".to_string(),
-        Type::UserDefined("String".to_string(), vec![]),
-    );
 
     // tl_get_memory_mb() -> i64
     let get_memory_type = i64_type.fn_type(&[], false);
     module.add_function("tl_get_memory_mb", get_memory_type, None);
-    fn_return_types.insert("tl_get_memory_mb".to_string(), Type::I64);
 
     // tl_get_metal_pool_bytes() -> i64
     let get_metal_pool_bytes_type = i64_type.fn_type(&[], false);
     module.add_function("tl_get_metal_pool_bytes", get_metal_pool_bytes_type, None);
-    fn_return_types.insert("tl_get_metal_pool_bytes".to_string(), Type::I64);
 
     // tl_get_metal_pool_mb() -> i64
     let get_metal_pool_mb_type = i64_type.fn_type(&[], false);
     module.add_function("tl_get_metal_pool_mb", get_metal_pool_mb_type, None);
-    fn_return_types.insert("tl_get_metal_pool_mb".to_string(), Type::I64);
 
     // tl_get_metal_pool_count() -> i64
     let get_metal_pool_count_type = i64_type.fn_type(&[], false);
     module.add_function("tl_get_metal_pool_count", get_metal_pool_count_type, None);
-    fn_return_types.insert("tl_get_metal_pool_count".to_string(), Type::I64);
     // tl_metal_sync() -> void
     let metal_sync_type = context.void_type().fn_type(&[], false);
     module.add_function("tl_metal_sync", metal_sync_type, None);
-    fn_return_types.insert("tl_metal_sync".to_string(), Type::Void);
     // tl_trace_mem(file: i8*, line: i32, col: i32, tag: i8*) -> void
     let trace_type = context.void_type().fn_type(
         &[
@@ -2743,13 +2599,9 @@ pub fn declare_runtime_functions<'ctx>(
         false,
     );
     module.add_function("tl_trace_mem", trace_type, None);
-    fn_return_types.insert("tl_trace_mem".to_string(), Type::Void);
     module.add_function("tl_get_pool_count", get_memory_type, None);
-    fn_return_types.insert("tl_get_pool_count".to_string(), Type::I64);
     module.add_function("tl_get_refcount_count", get_memory_type, None);
-    fn_return_types.insert("tl_get_refcount_count".to_string(), Type::I64);
     module.add_function("tl_get_scope_depth", get_memory_type, None);
-    fn_return_types.insert("tl_get_scope_depth".to_string(), Type::I64);
 
     // Memory manager functions
     let void_type = context.void_type();
@@ -2758,57 +2610,44 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_mem_enter_scope() -> void
     let mem_enter_type = void_type.fn_type(&[], false);
     module.add_function("tl_mem_enter_scope", mem_enter_type, None);
-    fn_return_types.insert("tl_mem_enter_scope".to_string(), Type::Void);
 
     // tl_mem_exit_scope() -> void
     let mem_exit_type = void_type.fn_type(&[], false);
     module.add_function("tl_mem_exit_scope", mem_exit_type, None);
-    fn_return_types.insert("tl_mem_exit_scope".to_string(), Type::Void);
 
     // tl_mem_register_struct(ptr) -> void
     let mem_register_struct_type = void_type.fn_type(&[ptr_type.into()], false);
     module.add_function("tl_mem_register_struct", mem_register_struct_type, None);
-    fn_return_types.insert("tl_mem_register_struct".to_string(), Type::Void);
 
     // tl_mem_register_tensor(ptr) -> void
     let mem_register_tensor_type = void_type.fn_type(&[ptr_type.into()], false);
     module.add_function("tl_mem_register_tensor", mem_register_tensor_type, None);
-    fn_return_types.insert("tl_mem_register_tensor".to_string(), Type::Void);
 
     // tl_mem_unregister(ptr) -> void
     let mem_unregister_type = void_type.fn_type(&[ptr_type.into()], false);
     module.add_function("tl_mem_unregister", mem_unregister_type, None);
-    fn_return_types.insert("tl_mem_unregister".to_string(), Type::Void);
 
     // tl_mem_register_struct_named(ptr, name) -> void
     let reg_struct_named_type = void_type.fn_type(&[ptr_type.into(), ptr_type.into()], false);
     module.add_function("tl_mem_register_struct_named", reg_struct_named_type, None);
-    fn_return_types.insert("tl_mem_register_struct_named".to_string(), Type::Void);
 
     // tl_ptr_acquire(ptr) -> void
     let ptr_acquire_type = void_type.fn_type(&[ptr_type.into()], false);
     module.add_function("tl_ptr_acquire", ptr_acquire_type, None);
-    fn_return_types.insert("tl_ptr_acquire".to_string(), Type::Void);
 
     // tl_pool_acquire(usize) -> ptr
     let pool_acquire_type = ptr_type.fn_type(&[i64_type.into()], false);
     module.add_function("tl_pool_acquire", pool_acquire_type, None);
-    fn_return_types.insert(
-        "tl_pool_acquire".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    ); // Simplified rank
 
     // tl_pool_release(ptr, usize) -> void
     let pool_release_type = void_type.fn_type(&[ptr_type.into(), i64_type.into()], false);
     module.add_function("tl_pool_release", pool_release_type, None);
-    fn_return_types.insert("tl_pool_release".to_string(), Type::Void);
 
     // --- KV Cache ---
 
     // tl_kv_cache_new(layers: i64) -> i64
     let kv_new_type = i64_type.fn_type(&[i64_type.into()], false);
     add_fn("tl_kv_cache_new", kv_new_type);
-    fn_return_types.insert("tl_kv_cache_new".to_string(), Type::I64);
 
     if let Some(f) = module.get_function("tl_kv_cache_new") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_new as usize);
@@ -2817,7 +2656,6 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_kv_cache_free(ptr: i64) -> void
     let kv_free_type = void_type.fn_type(&[i64_type.into()], false);
     add_fn("tl_kv_cache_free", kv_free_type);
-    fn_return_types.insert("tl_kv_cache_free".to_string(), Type::Void);
 
     if let Some(f) = module.get_function("tl_kv_cache_free") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_free as usize);
@@ -2826,10 +2664,6 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_kv_cache_get_k(ptr: i64, layer: i64) -> Tensor
     let kv_get_type = ptr_type.fn_type(&[i64_type.into(), i64_type.into()], false);
     add_fn("tl_kv_cache_get_k", kv_get_type);
-    fn_return_types.insert(
-        "tl_kv_cache_get_k".to_string(),
-        Type::Tensor(Box::new(Type::F32), 4),
-    );
 
     if let Some(f) = module.get_function("tl_kv_cache_get_k") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_get_k as usize);
@@ -2837,10 +2671,6 @@ pub fn declare_runtime_functions<'ctx>(
 
     // tl_kv_cache_get_v(ptr: i64, layer: i64) -> Tensor
     add_fn("tl_kv_cache_get_v", kv_get_type);
-    fn_return_types.insert(
-        "tl_kv_cache_get_v".to_string(),
-        Type::Tensor(Box::new(Type::F32), 4),
-    );
 
     if let Some(f) = module.get_function("tl_kv_cache_get_v") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_get_v as usize);
@@ -2857,7 +2687,6 @@ pub fn declare_runtime_functions<'ctx>(
         false,
     );
     add_fn("tl_kv_cache_update", kv_update_type);
-    fn_return_types.insert("tl_kv_cache_update".to_string(), Type::Void);
 
     if let Some(f) = module.get_function("tl_kv_cache_update") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_update as usize);
@@ -2868,7 +2697,6 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_kv_cache_new(layers: i64) -> i64
     let kv_new_type = i64_type.fn_type(&[i64_type.into()], false);
     add_fn("tl_kv_cache_new", kv_new_type);
-    fn_return_types.insert("tl_kv_cache_new".to_string(), Type::I64);
 
     if let Some(f) = module.get_function("tl_kv_cache_new") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_new as usize);
@@ -2877,7 +2705,6 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_kv_cache_free(ptr: i64) -> void
     let kv_free_type = void_type.fn_type(&[i64_type.into()], false);
     add_fn("tl_kv_cache_free", kv_free_type);
-    fn_return_types.insert("tl_kv_cache_free".to_string(), Type::Void);
 
     if let Some(f) = module.get_function("tl_kv_cache_free") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_free as usize);
@@ -2886,10 +2713,6 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_kv_cache_get_k(ptr: i64, layer: i64) -> Tensor
     let kv_get_type = ptr_type.fn_type(&[i64_type.into(), i64_type.into()], false);
     add_fn("tl_kv_cache_get_k", kv_get_type);
-    fn_return_types.insert(
-        "tl_kv_cache_get_k".to_string(),
-        Type::Tensor(Box::new(Type::F32), 2),
-    );
 
     if let Some(f) = module.get_function("tl_kv_cache_get_k") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_get_k as usize);
@@ -2897,10 +2720,6 @@ pub fn declare_runtime_functions<'ctx>(
 
     // tl_kv_cache_get_v(ptr: i64, layer: i64) -> Tensor
     add_fn("tl_kv_cache_get_v", kv_get_type);
-    fn_return_types.insert(
-        "tl_kv_cache_get_v".to_string(),
-        Type::Tensor(Box::new(Type::F32), 2),
-    );
 
     if let Some(f) = module.get_function("tl_kv_cache_get_v") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_get_v as usize);
@@ -2917,7 +2736,6 @@ pub fn declare_runtime_functions<'ctx>(
         false,
     );
     add_fn("tl_kv_cache_update", kv_update_type);
-    fn_return_types.insert("tl_kv_cache_update".to_string(), Type::Void);
 
     if let Some(f) = module.get_function("tl_kv_cache_update") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_kv_cache_update as usize);
@@ -2928,15 +2746,10 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_alloc_tmp(size) -> void*
     let alloc_tmp_type = ptr_type.fn_type(&[i64_type.into()], false);
     module.add_function("tl_alloc_tmp", alloc_tmp_type, None);
-    fn_return_types.insert(
-        "tl_alloc_tmp".to_string(),
-        Type::Tensor(Box::new(Type::F32), 1),
-    );
 
     // tl_free_tmp(ptr) -> void
     let free_tmp_type = void_type.fn_type(&[ptr_type.into()], false);
     module.add_function("tl_free_tmp", free_tmp_type, None);
-    fn_return_types.insert("tl_free_tmp".to_string(), Type::Void);
 
     // tl_query(name: *i8, mask: i64, args: *Tensor, tags: *u8) -> *Tensor
     let query_type = void_ptr.fn_type(
@@ -2944,41 +2757,10 @@ pub fn declare_runtime_functions<'ctx>(
         false,
     );
     module.add_function("tl_query", query_type, None);
-    fn_return_types.insert("tl_query".to_string(), tensor_type.clone());
 
-    fn_return_types.insert("tl_env_set".to_string(), Type::Void);
-    fn_return_types.insert("tl_tensor_cat2".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_rms_norm".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_silu".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_apply_rope".to_string(), tensor_type.clone());
 
     // Alias Returns
-    fn_return_types.insert("tl_tensor_transpose_2d".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_matmul_4d".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_add_4d".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_cat_4d".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_silu_4d".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_scale".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_rope_new_cos".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_rope_new_sin".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_new_causal_mask".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_scale".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_display_string".to_string(), Type::Void);
-    fn_return_types.insert("tl_tensor_narrow".to_string(), tensor_type.clone());
-    fn_return_types.insert(
-        "tl_tensor_repeat_interleave".to_string(),
-        tensor_type.clone(),
-    );
-    fn_return_types.insert("tl_tensor_get_shape".to_string(), tensor_type.clone());
-    fn_return_types.insert("tl_tensor_reshape_2d".to_string(), tensor_type.clone());
-    fn_return_types.insert(
-        "tl_tensor_reshape_3d_to_2d".to_string(),
-        tensor_type.clone(),
-    );
-    fn_return_types.insert("tl_tensor_map_get_1d".to_string(), tensor_type.clone());
 
-    fn_return_types.insert("tl_system_time".to_string(), Type::F32); // Using F32 as default float for now
-    fn_return_types.insert("tl_system_sleep".to_string(), Type::Void);
 
     // --- Vec<u8> support for binary data ---
     let u8_type = context.i8_type();
@@ -2986,30 +2768,22 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_vec_u8_new() -> *mut Vec<u8>
     let vec_u8_new_type = ptr_type.fn_type(&[], false);
     module.add_function("tl_vec_u8_new", vec_u8_new_type, None);
-    fn_return_types.insert("tl_vec_u8_new".to_string(), Type::Vec(Box::new(Type::U8)));
 
     // tl_vec_u8_with_capacity(cap: usize) -> *mut Vec<u8>
     let vec_u8_with_cap_type = ptr_type.fn_type(&[i64_type.into()], false);
     module.add_function("tl_vec_u8_with_capacity", vec_u8_with_cap_type, None);
-    fn_return_types.insert(
-        "tl_vec_u8_with_capacity".to_string(),
-        Type::Vec(Box::new(Type::U8)),
-    );
 
     // tl_vec_u8_len(ptr) -> usize
     let vec_u8_len_type = i64_type.fn_type(&[ptr_type.into()], false);
     module.add_function("tl_vec_u8_len", vec_u8_len_type, None);
-    fn_return_types.insert("tl_vec_u8_len".to_string(), Type::I64);
 
     // tl_vec_u8_get(ptr, idx) -> u8
     let vec_u8_get_type = u8_type.fn_type(&[ptr_type.into(), i64_type.into()], false);
     module.add_function("tl_vec_u8_get", vec_u8_get_type, None);
-    fn_return_types.insert("tl_vec_u8_get".to_string(), Type::U8);
 
     // tl_vec_u8_read_i32_be(ptr, idx) -> i64
     let vec_u8_read_i32_type = i64_type.fn_type(&[ptr_type.into(), i64_type.into()], false);
     module.add_function("tl_vec_u8_read_i32_be", vec_u8_read_i32_type, None);
-    fn_return_types.insert("tl_vec_u8_read_i32_be".to_string(), Type::I64);
 
     // tl_tensor_from_vec_u8(ptr, offset, shape_ptr, rank) -> tensor_ptr
     let tensor_from_vec_type = ptr_type.fn_type(
@@ -3022,35 +2796,24 @@ pub fn declare_runtime_functions<'ctx>(
         false,
     );
     module.add_function("tl_tensor_from_vec_u8", tensor_from_vec_type, None);
-    fn_return_types.insert(
-        "tl_tensor_from_vec_u8".to_string(),
-        Type::Tensor(Box::new(Type::F32), 0),
-    );
 
     // tl_tensor_from_u8_labels(ptr, offset, count) -> tensor_ptr
     let tensor_from_labels_type =
         ptr_type.fn_type(&[ptr_type.into(), i64_type.into(), i64_type.into()], false);
     module.add_function("tl_tensor_from_u8_labels", tensor_from_labels_type, None);
-    fn_return_types.insert(
-        "tl_tensor_from_u8_labels".to_string(),
-        Type::Tensor(Box::new(Type::I64), 1),
-    );
 
     // tl_vec_u8_set(ptr, idx, val) -> void
     let vec_u8_set_type =
         void_type.fn_type(&[ptr_type.into(), i64_type.into(), u8_type.into()], false);
     module.add_function("tl_vec_u8_set", vec_u8_set_type, None);
-    fn_return_types.insert("tl_vec_u8_set".to_string(), Type::Void);
 
     // tl_vec_u8_push(ptr, val) -> void
     let vec_u8_push_type = void_type.fn_type(&[ptr_type.into(), u8_type.into()], false);
     module.add_function("tl_vec_u8_push", vec_u8_push_type, None);
-    fn_return_types.insert("tl_vec_u8_push".to_string(), Type::Void);
 
     // tl_vec_u8_free(ptr) -> void
     let vec_u8_free_type = void_type.fn_type(&[ptr_type.into()], false);
     module.add_function("tl_vec_u8_free", vec_u8_free_type, None);
-    fn_return_types.insert("tl_vec_u8_free".to_string(), Type::Void);
 
     // tl_vec_u8_to_tensor_2d(ptr, offset, dim0, dim1) -> tensor_ptr
     let vec_u8_to_tensor_2d_type = ptr_type.fn_type(
@@ -3058,10 +2821,6 @@ pub fn declare_runtime_functions<'ctx>(
         false,
     );
     module.add_function("tl_vec_u8_to_tensor_2d", vec_u8_to_tensor_2d_type, None);
-    fn_return_types.insert(
-        "tl_vec_u8_to_tensor_2d".to_string(),
-        Type::Tensor(Box::new(Type::F32), 2),
-    );
 
     // --- Binary file I/O ---
     let i8_ptr = context.ptr_type(inkwell::AddressSpace::default());
@@ -3069,36 +2828,25 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_file_read_binary(path) -> *mut Vec<u8>
     let file_read_binary_type = ptr_type.fn_type(&[i8_ptr.into()], false);
     module.add_function("tl_file_read_binary", file_read_binary_type, None);
-    fn_return_types.insert(
-        "tl_file_read_binary".to_string(),
-        Type::Vec(Box::new(Type::U8)),
-    );
 
     // tl_file_write_binary(path, data) -> bool
     let file_write_binary_type = context
         .bool_type()
         .fn_type(&[i8_ptr.into(), ptr_type.into()], false);
     module.add_function("tl_file_write_binary", file_write_binary_type, None);
-    fn_return_types.insert("tl_file_write_binary".to_string(), Type::Bool);
 
     // --- Image loading functions ---
 
     // tl_image_load_grayscale(path) -> *mut Vec<u8>
     let image_load_type = ptr_type.fn_type(&[i8_ptr.into()], false);
     module.add_function("tl_image_load_grayscale", image_load_type, None);
-    fn_return_types.insert(
-        "tl_image_load_grayscale".to_string(),
-        Type::Vec(Box::new(Type::U8)),
-    );
 
     // tl_image_width(path) -> i64
     let image_dim_type = i64_type.fn_type(&[i8_ptr.into()], false);
     module.add_function("tl_image_width", image_dim_type, None);
-    fn_return_types.insert("tl_image_width".to_string(), Type::I64);
 
     // tl_image_height(path) -> i64
     module.add_function("tl_image_height", image_dim_type, None);
-    fn_return_types.insert("tl_image_height".to_string(), Type::I64);
     // --- Missing Mappings for Llama 3 ---
 
     // tl_tensor_map_get_quantized -> ptr (OpaqueQTensor*)
@@ -3127,7 +2875,6 @@ pub fn declare_runtime_functions<'ctx>(
         .bool_type()
         .fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
     add_fn("tl_string_contains", str_contains_type);
-    fn_return_types.insert("tl_string_contains".to_string(), Type::Bool);
     if let Some(f) = module.get_function("tl_string_contains") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_contains as usize);
     }
@@ -3135,10 +2882,6 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_string_from_int
     let str_from_int_type = i8_ptr.fn_type(&[i64_type.into()], false);
     add_fn("tl_string_from_int", str_from_int_type);
-    fn_return_types.insert(
-        "tl_string_from_int".to_string(),
-        Type::UserDefined("String".into(), vec![]),
-    );
     if let Some(f) = module.get_function("tl_string_from_int") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_int as usize);
     }
@@ -3149,7 +2892,6 @@ pub fn declare_runtime_functions<'ctx>(
         false,
     );
     add_fn("tl_tensor_argmax", argmax_type);
-    fn_return_types.insert("tl_tensor_argmax".to_string(), tensor_type.clone());
     if let Some(f) = module.get_function("tl_tensor_argmax") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_argmax as usize);
     }
@@ -3157,7 +2899,6 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_item_i64
     let item_i64_type = i64_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_tensor_item_i64", item_i64_type);
-    fn_return_types.insert("tl_tensor_item_i64".to_string(), Type::I64);
     if let Some(f) = module.get_function("tl_tensor_item_i64") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_item_i64 as usize);
     }
@@ -3167,10 +2908,6 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_cat_i64 as usize);
     }
     // Fix: register return type
-    fn_return_types.insert(
-        "tl_tensor_cat_i64".to_string(),
-        Type::Tensor(Box::new(Type::I64), 1),
-    );
 
     // tl_tensor_reshape -> tl_tensor_reshape_new alias for generic fallback
     // Define types locally since this is late in function
@@ -3183,7 +2920,6 @@ pub fn declare_runtime_functions<'ctx>(
     }
     // Also need return type
     let tensor_type_local = Type::Tensor(Box::new(Type::F32), 1);
-    fn_return_types.insert("tl_tensor_reshape".to_string(), tensor_type_local);
 
     if let Some(f) = module.get_function("tl_tensor_reshape") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_reshape_new as usize);
@@ -3192,10 +2928,6 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_sample(t, temp, topp) -> tensor (llm.rs)
     let sample_type = void_ptr.fn_type(&[void_ptr.into(), f32_type.into(), f32_type.into()], false);
     add_fn("tl_tensor_sample", sample_type);
-    fn_return_types.insert(
-        "tl_tensor_sample".to_string(),
-        Type::Tensor(Box::new(Type::I64), 1),
-    );
     if let Some(f) = module.get_function("tl_tensor_sample") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_sample as usize);
     }

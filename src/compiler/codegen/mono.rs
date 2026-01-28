@@ -51,8 +51,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         let suffix = generic_args.iter().map(|t| self.type_to_suffix(t)).collect::<Vec<_>>().join("_");
         let mangled_name = format!("tl_{}_{}_{}", struct_name, suffix, method_name);
         
-        if self.module.get_function(&mangled_name).is_some() || self.fn_return_types.contains_key(&mangled_name) {
-             return Ok(mangled_name);
+        if self.module.get_function(&mangled_name).is_some() {
+            return Ok(mangled_name);
         }
 
         // Instantiate
@@ -86,7 +86,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         new_method.body = new_method.body.iter().map(|s| full_substitutor.substitute_stmt(s)).collect();
         
         // Compile
-        self.fn_return_types.insert(mangled_name.clone(), new_method.return_type.clone());
         // Compile
         
         // Add to module
@@ -141,8 +140,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mangled_name = format!("{}_{}", func_name, 
              type_args.iter().map(|t| self.type_to_suffix(t)).collect::<Vec<_>>().join("_"));
              
-        // 5. Check cache/module
-        if self.module.get_function(&mangled_name).is_some() || self.fn_return_types.contains_key(&mangled_name) {
+        if self.module.get_function(&mangled_name).is_some() {
             return Ok(mangled_name);
         }
         
@@ -164,7 +162,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         
         // 7. Compile
         // Need to register proto first (for recursion support etc)
-        self.fn_return_types.insert(mangled_name.clone(), new_func.return_type.clone());
         self.compile_fn_proto(&new_func)?;
         self.compile_fn(&new_func, &[])?;
         

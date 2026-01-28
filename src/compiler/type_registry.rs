@@ -95,6 +95,8 @@ impl TypeRegistry {
         self.register_path_methods();
         self.register_varbuilder_methods();
         self.register_vec_methods();
+        self.register_vec_methods();
+        self.register_hashmap_methods();
         self.register_ml_methods(); // Tokenizer, KVCache, Map
     }
 
@@ -1398,6 +1400,13 @@ impl TypeRegistry {
                     Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Vec" && args.len() == 1 => {
                         Type::UserDefined("Vec".into(), vec![Type::UserDefined("T".into(), vec![])])
                     }
+                    // HashMap generic support (K, V)
+                    Type::UserDefined(n, args) | Type::Struct(n, args) if n == "HashMap" && args.len() == 2 => {
+                        Type::UserDefined("HashMap".into(), vec![
+                            Type::UserDefined("K".into(), vec![]),
+                            Type::UserDefined("V".into(), vec![])
+                        ])
+                    }
                     // Map generic support (K, V)
                     Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Map" && args.len() == 2 => {
                         Type::Struct("Map".into(), vec![
@@ -1442,8 +1451,109 @@ impl TypeRegistry {
             (Type::Tensor(_, _), Type::Tensor(_, _)) => true,
             (Type::TensorShaped(_, _), Type::Tensor(_, _)) => true,
             (Type::Tensor(_, _), Type::TensorShaped(_, _)) => true,
+            (Type::UserDefined(n, _), Type::Tensor(_, _)) if n == "Tensor" => true,
+            (Type::Tensor(_, _), Type::UserDefined(n, _)) if n == "Tensor" => true,
             _ => crate::compiler::generics::GenericResolver::types_equivalent(a, b),
         }
+    }
+    fn register_hashmap_methods(&mut self) {
+        let mut map_methods = HashMap::new();
+
+        // new() -> HashMap<K, V>
+        map_methods.insert(
+            "new".to_string(),
+            MethodSignature {
+                name: "new".to_string(),
+                params: vec![],
+                return_type: ReturnType::Exact(Type::UserDefined("HashMap".to_string(), vec![
+                    Type::Void,
+                    Type::Void,
+                ])),
+                is_varargs: false,
+                min_args: 0,
+            },
+        );
+
+        // insert(key: K, value: V) -> Void
+        map_methods.insert(
+            "insert".to_string(),
+            MethodSignature {
+                name: "insert".to_string(),
+                params: vec![
+                    // Key: K
+                    ParamType::Generic("K".to_string()),
+                    // Value: V
+                    ParamType::Generic("V".to_string()),
+                ],
+                return_type: ReturnType::Exact(Type::Bool), // Workaround for Void Codegen panic
+                is_varargs: false,
+                min_args: 2,
+            },
+        );
+
+        // get(key: K) -> V
+        map_methods.insert(
+            "get".to_string(),
+            MethodSignature {
+                name: "get".to_string(),
+                params: vec![
+                    ParamType::Generic("K".to_string())
+                ],
+                return_type: ReturnType::Generic("V".to_string()),
+                is_varargs: false,
+                min_args: 1,
+            },
+        );
+
+        // remove(key: K) -> Bool
+        map_methods.insert(
+            "remove".to_string(),
+            MethodSignature {
+                name: "remove".to_string(),
+                params: vec![ParamType::Generic("K".to_string())],
+                return_type: ReturnType::Exact(Type::Bool),
+                is_varargs: false,
+                min_args: 1,
+            },
+        );
+
+        // contains_key(key: K) -> Bool
+        map_methods.insert(
+            "contains_key".to_string(),
+            MethodSignature {
+                name: "contains_key".to_string(),
+                params: vec![ParamType::Generic("K".to_string())],
+                return_type: ReturnType::Exact(Type::Bool),
+                is_varargs: false,
+                min_args: 1,
+            },
+        );
+
+        // len() -> I64
+        map_methods.insert(
+            "len".to_string(),
+            MethodSignature {
+                name: "len".to_string(),
+                params: vec![],
+                return_type: ReturnType::Exact(Type::I64),
+                is_varargs: false,
+                min_args: 0,
+            },
+        );
+
+        // clear() -> Void
+        map_methods.insert(
+            "clear".to_string(),
+            MethodSignature {
+                name: "clear".to_string(),
+                params: vec![],
+                return_type: ReturnType::Exact(Type::Bool),
+                is_varargs: false,
+                min_args: 0,
+            },
+        );
+
+        self.methods.insert("HashMap".to_string(), map_methods);
     }
 }
 
@@ -1452,3 +1562,4 @@ impl Default for TypeRegistry {
         Self::new()
     }
 }
+

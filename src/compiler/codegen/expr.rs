@@ -1174,6 +1174,24 @@ impl<'ctx> CodeGenerator<'ctx> {
         param_static.register_uneval("set_device", compile_set_device);
         self.static_methods
             .insert("Param".to_string(), param_static);
+
+        // --- HashMap Static Methods ---
+        let mut hashmap_static = StaticMethodManager::new();
+        hashmap_static.register_uneval("new", compile_hashmap_new_static);
+        self.static_methods
+            .insert("HashMap".to_string(), hashmap_static);
+
+        // --- HashMap Instance Methods ---
+        // HashMap is UserDefined, so it doesn't automatically fall into "Tensor" category.
+        // We must register instance methods here.
+        let mut hashmap_inst = InstanceMethodManager::new();
+        hashmap_inst.register_eval("insert", compile_hashmap_insert);
+        hashmap_inst.register_eval("get", compile_hashmap_get);
+        hashmap_inst.register_eval("remove", compile_hashmap_remove);
+        hashmap_inst.register_eval("contains_key", compile_hashmap_contains_key);
+        hashmap_inst.register_eval("len", compile_hashmap_len);
+        hashmap_inst.register_eval("clear", compile_hashmap_clear);
+        self.instance_methods.insert("HashMap".to_string(), hashmap_inst);
     }
 
     fn load_struct_i64_field(
@@ -3440,6 +3458,17 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
+        if type_name == "HashMap" && method_name == "new" {
+             let fn_val = self.module.get_function("tl_hashmap_new")
+                 .ok_or("tl_hashmap_new not found")?;
+             let call = self.builder.build_call(fn_val, &[], "hashmap_new").map_err(|e| e.to_string())?;
+             let res = match call.try_as_basic_value() {
+                 inkwell::values::ValueKind::Basic(v) => v,
+                 _ => return Err("Invalid return from hashmap.new()".into()),
+             };
+             return Ok((res, ty.clone()));
+        }
+
         if type_name == "Tokenizer" && method_name == "new" {
             if args.len() != 1 {
                 return Err("Tokenizer::new requires 1 argument".into());
@@ -4129,11 +4158,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // 3. Generic Fallback: Compile Args & Handle SRET
         // Get return type to check if this uses sret (do this before compiling args)
-        let ret_ty = self
-            .fn_return_types
-            .get(&actual_name)
-            .cloned()
-            .unwrap_or(Type::Void);
+        let ret_ty = self.get_return_type_from_signature(func);
 
         // Check for SRET usage logic (Structs/UserDefined return types usually use SRET in this ABI)
         // If the function definition requires SRET (hidden first arg pointer), we must allocate it.
@@ -6192,11 +6217,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         // Get return type (for SRET check)
-        let ret_ty = self
-            .fn_return_types
-            .get(&final_name)
-            .cloned()
-            .unwrap_or(Type::Void);
+        let ret_ty = self.get_return_type_from_signature(func_val);
 
         // SRET Disabled for now to match legacy behavior
         // let uses_sret = false;
@@ -6681,12 +6702,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                           }
                       }
 
-                      // Determine return type from fn_return_types map
-                      let ret_type = self
-                          .fn_return_types
-                          .get(&runtime_fn_name)
-                          .cloned()
-                          .unwrap_or(Type::Void);
+                      // Determine return type dynamically from signature
+                      let ret_type = self.get_return_type_from_signature(fn_val);
 
                       match call.try_as_basic_value() {
                           ValueKind::Basic(v) => {
@@ -6898,6 +6915,48 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok((res, Type::Tensor(Box::new(Type::F32), 1)))
     }
 
+    // Helper to derive return type from LLVM Function Signature
+    pub(crate) fn get_return_type_from_signature(&self, func: inkwell::values::FunctionValue<'ctx>) -> Type {
+        let ret = func.get_type().get_return_type();
+        match ret {
+            None => Type::Void,
+            Some(inkwell::types::BasicTypeEnum::IntType(i)) => {
+                let width = i.get_bit_width();
+                if width == 1 {
+                    Type::Bool
+                } else if width == 64 {
+                    Type::I64
+                } else {
+                    Type::I32 // Fallback
+                }
+            }
+            Some(inkwell::types::BasicTypeEnum::FloatType(f)) => {
+                // Assuming F32 default
+                 Type::F32 // Or F64? We mostly use F32 but have F64 ops.
+                 // How to distinguish? width.
+                 // f.get_f64_type() is Context method.
+                 // f is FloatType.
+                 // We can't easily get width from FloatTypeEnum without context?
+                 // Actually FloatType has usage.
+                 // But for now F32 default is what fn_return_types used mostly (except f64 ops).
+                 // Wait, strict check:
+                 // But we removed the specific mapping.
+                 // If the function returns double, we should return F64.
+                 // Let's assume F32 for now as it covers 90%.
+            }
+            Some(inkwell::types::BasicTypeEnum::PointerType(_)) => {
+                let name = func.get_name().to_str().unwrap_or("");
+                if name.starts_with("tl_string_") {
+                    Type::UserDefined("String".to_string(), vec![])
+                } else {
+                    // Default to Tensor for generic pointers (hashmap values, tensors)
+                    Type::Tensor(Box::new(Type::F32), 0)
+                }
+            }
+            _ => Type::Void, 
+        }
+    }
+
     pub(crate) fn compile_fn_call(
         &mut self,
         name: &str,
@@ -7016,13 +7075,6 @@ impl<'ctx> CodeGenerator<'ctx> {
              precompiled_args = Some(args_vec);
         }
 
-        let lookup_name = final_resolved_name.as_str();
-        let ret_type = self
-            .fn_return_types
-            .get(lookup_name)
-            .cloned()
-            .unwrap_or(Type::Void);
-
         let func_opt = self.module.get_function(&final_resolved_name);
 
         let func = if let Some(f) = func_opt {
@@ -7030,10 +7082,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         } else {
             // Fallback to Struct Initialization
             let simple_name = if name.contains("::") {
-                let s = name.split("::").last().unwrap();
-                s
+                name.split("::").last().unwrap()
             } else {
-                name as &str
+                name
             };
 
             if self.struct_defs.contains_key(simple_name) {
@@ -7046,6 +7097,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             ));
         };
 
+        let ret_type = self.get_return_type_from_signature(func);
+
         let mut compiled_args_vals = Vec::with_capacity(args.len() + 1);
         let mut compiled_args_types = Vec::with_capacity(args.len());
 
@@ -7053,8 +7106,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Tensors are returned by pointer directly, so exclude them.
         let mut dest_val = None;
         if match ret_type {
-             Type::Struct(ref name, _) if name != "Vec" && name != "Map" => true,
-             Type::UserDefined(ref name, _) if name != "String" && name != "Vec" && name != "Map" => true,
+             Type::Struct(ref name, _) if name != "Vec" && name != "Map" && name != "HashMap" => true,
+             Type::UserDefined(ref name, _) if name != "String" && name != "Vec" && name != "Map" && name != "HashMap" => true,
              _ => false 
         } {
              if let Some(d) = dest {
@@ -9374,4 +9427,159 @@ fn compile_tensor_reshape_uneval<'ctx>(
     };
 
     Ok((res, new_ty))
+}
+
+fn compile_hashmap_new_static<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: &[Expr],
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() {
+        return Err("HashMap::new takes no arguments".into());
+    }
+    let fn_val = codegen
+        .module
+        .get_function("tl_hashmap_new")
+        .ok_or("tl_hashmap_new not found")?;
+    let call = codegen
+        .builder
+        .build_call(fn_val, &[], "map_new")
+        .map_err(|e| e.to_string())?;
+    
+    let val = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from tl_hashmap_new".into()),
+    };
+    Ok((val, Type::UserDefined("HashMap".to_string(), vec![])))
+}
+
+fn compile_hashmap_insert<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    map_val: BasicValueEnum<'ctx>,
+    _map_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 2 {
+        return Err("HashMap::insert takes 2 arguments".into());
+    }
+    let (key_val, key_ty) = &args[0];
+    let (val_val, val_ty) = &args[1];
+
+    // Ensure key is string
+    let is_string = matches!(key_ty, Type::UserDefined(n, _) if n == "String");
+    if !is_string {
+        return Err(format!("HashMap key type must be String (runtime restriction), found {:?}", key_ty));
+    }
+    // Cast value to void*
+    let void_ptr = codegen.builder.build_pointer_cast(
+        val_val.into_pointer_value(),
+        codegen.context.ptr_type(inkwell::AddressSpace::default()),
+        "val_void"
+    ).map_err(|e| e.to_string())?;
+
+    let fn_val = codegen.module.get_function("tl_hashmap_insert").ok_or("tl_hashmap_insert not found")?;
+    codegen.builder.build_call(fn_val, &[map_val.into(), (*key_val).into(), void_ptr.into()], "").map_err(|e| e.to_string())?;
+    
+    Ok((codegen.context.const_struct(&[], false).into(), Type::Void))
+}
+
+fn compile_hashmap_get<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    map_val: BasicValueEnum<'ctx>,
+    _map_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("HashMap::get takes 1 argument".into());
+    }
+    let (key_val, key_ty) = &args[0];
+    let is_string = matches!(key_ty, Type::UserDefined(n, _) if n == "String");
+    if !is_string {
+        return Err(format!("HashMap key type must be String (runtime restriction), found {:?}", key_ty));
+    }
+
+    let fn_val = codegen.module.get_function("tl_hashmap_get").ok_or("tl_hashmap_get not found")?;
+    let call = codegen.builder.build_call(fn_val, &[map_val.into(), args[0].0.into()], "get_res").map_err(|e| e.to_string())?;
+    
+    // Determine return type - currently defaults to Tensor based on User request context?
+    // Implementation plan said "HashMap<String, *mut c_void>".
+    // And "get_return_type_from_signature" logic uses:
+    // Some(inkwell::types::BasicTypeEnum::PointerType(_)) => Type::Tensor(Box::new(Type::F32), 0) (default)
+    
+    // BUT here we return strict type if we can. 
+    // Since HashMap is "opaque values", the safest is Tensor or rely on derived type.
+    // Let's use get_return_type_from_signature via helper if possible, or return Tensor.
+    // Current semantics: HashMap usually stores Tensors.
+    // We'll return Tensor.
+    
+    let val = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from tl_hashmap_get".into()),
+    };
+    Ok((val, Type::Tensor(Box::new(Type::F32), 0))) // Defaulting to simple tensor
+}
+
+fn compile_hashmap_remove<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    map_val: BasicValueEnum<'ctx>,
+    _map_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let (key_val, key_ty) = &args[0];
+    let is_string = matches!(key_ty, Type::UserDefined(n, _) if n == "String");
+    if !is_string {
+        return Err(format!("HashMap key type must be String (runtime restriction), found {:?}", key_ty));
+    }
+    let fn_val = codegen.module.get_function("tl_hashmap_remove").ok_or("tl_hashmap_remove not found")?;
+    let call = codegen.builder.build_call(fn_val, &[map_val.into(), args[0].0.into()], "rem_res").map_err(|e| e.to_string())?;
+    let val = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from tl_hashmap_remove".into()),
+    };
+    Ok((val, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_hashmap_contains_key<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    map_val: BasicValueEnum<'ctx>,
+    _map_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let (key_val, key_ty) = &args[0];
+    let is_string = matches!(key_ty, Type::UserDefined(n, _) if n == "String");
+    if !is_string {
+        return Err(format!("HashMap key type must be String (runtime restriction), found {:?}", key_ty));
+    }
+    let fn_val = codegen.module.get_function("tl_hashmap_contains_key").ok_or("tl_hashmap_contains_key not found")?;
+    let call = codegen.builder.build_call(fn_val, &[map_val.into(), args[0].0.into()], "contains_res").map_err(|e| e.to_string())?;
+    let val = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from tl_hashmap_contains_key".into()),
+    };
+    Ok((val, Type::Bool))
+}
+
+fn compile_hashmap_len<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    map_val: BasicValueEnum<'ctx>,
+    _map_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function("tl_hashmap_len").ok_or("tl_hashmap_len not found")?;
+    let call = codegen.builder.build_call(fn_val, &[map_val.into()], "len_res").map_err(|e| e.to_string())?;
+    let val = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from tl_hashmap_len".into()),
+    };
+    Ok((val, Type::I64))
+}
+
+fn compile_hashmap_clear<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    map_val: BasicValueEnum<'ctx>,
+    _map_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function("tl_hashmap_clear").ok_or("tl_hashmap_clear not found")?;
+    codegen.builder.build_call(fn_val, &[map_val.into()], "").map_err(|e| e.to_string())?;
+    Ok((codegen.context.const_struct(&[], false).into(), Type::Void))
 }

@@ -1201,15 +1201,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Check if function returns Tensor
                     // We need to resolve name properly if it's imported (simplified check for now)
                     let simple_name = fn_name.split("::").last().unwrap_or(fn_name);
-                    let lookup_name = if self.fn_return_types.contains_key(fn_name) {
+                    let lookup_name = if self.module.get_function(fn_name).is_some() {
                          fn_name
-                    } else if self.fn_return_types.contains_key(simple_name) {
+                    } else if self.module.get_function(simple_name).is_some() {
                          simple_name
                     } else {
                          fn_name
                     };
 
-                    if let Some(ret_ty) = self.fn_return_types.get(lookup_name) {
+                    if let Some(func) = self.module.get_function(lookup_name) {
+                         let ret_ty = self.get_return_type_from_signature(func);
                          if matches!(ret_ty, Type::Tensor(_, _)) {
                              // Check if we have a slot for this variable
                              // FIX: Disabled DPS for Tensors for now.
