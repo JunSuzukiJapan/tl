@@ -163,7 +163,9 @@ fn main() {
                 if File::download(url, save_path) {
                     println("Download complete.");
                     model_path = save_path;
-                    File::write(config_path, model_path);
+                    let f = File::open(config_path, "w");
+                    f.write_string(model_path);
+                    f.close();
                     break;
                 } else {
                     println("Download failed.");
@@ -176,7 +178,9 @@ fn main() {
                     let new_path = read_line("Enter model absolute path> ");
                     if File::exists(new_path) {
                         model_path = new_path;
-                        File::write(config_path, model_path);
+                        let f = File::open(config_path, "w");
+                        f.write_string(model_path);
+                        f.close();
                         break;
                     } else {
                         println("File not found. Please try again.");

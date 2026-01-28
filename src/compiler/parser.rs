@@ -1386,6 +1386,18 @@ fn parse_module(input: Input) -> IResult<Input, crate::compiler::ast::Module, Pa
         }
 
         // Try helpers
+        // Statements (for scripts) - Check BEFORE rules to avoid ambiguous atom parsing (e.g. `f.` fact vs `f.close()`)
+        if let Ok((rest, stmt)) = parse_stmt(input) {
+            match stmt.inner {
+                StmtKind::TensorDecl{..} => module.tensor_decls.push(stmt),
+                _ => {
+                   module.tensor_decls.push(stmt);
+                }
+            }
+            input = rest;
+            continue;
+        }
+
         match parse_function_def(input) {
             Ok((rest, f)) => { module.functions.push(f); input = rest; continue; }
             Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
@@ -1443,28 +1455,7 @@ fn parse_module(input: Input) -> IResult<Input, crate::compiler::ast::Module, Pa
             Err(nom::Err::Error(_)) | Err(nom::Err::Incomplete(_)) => {}
         }
 
-        // Statements (for scripts)
-        // Try pare_stmt
-        if let Ok((rest, stmt)) = parse_stmt(input) {
-            match stmt.inner {
-                StmtKind::TensorDecl{..} => module.tensor_decls.push(stmt),
-                _ => {
-                   // Ignore or error?
-                   // If we are in parse_module, usually we expect items.
-                   // But scripts allow stmts.
-                   // Given AST limitations, we might skip generic stmts here or push to tensor_decls if they are conceptually top level "script actions"?
-                   // No, tensor_decls is typed Vec<Stmt>.
-                   // If I push "Expr(fn_call)" to tensor_decls, it matches the type (Stmt).
-                   // Maybe `tensor_decls` is actually "top level statements"? 
-                   // Let's assume yes and push ALL top level statements to `tensor_decls` as a hack/fallback?
-                   // Or just Expr/Assign/etc.
-                   // Let's prevent infinite loop if parse_stmt consumes distinct tokens.
-                   module.tensor_decls.push(stmt);
-                }
-            }
-            input = rest;
-            continue;
-        }
+
 
         return Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Unknown top level item".to_string()) }));
     }

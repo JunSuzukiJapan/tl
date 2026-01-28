@@ -4507,6 +4507,7 @@ impl SemanticAnalyzer {
                 };
 
                 if user_func.is_none() {
+
                     // Check if it's an Enum Variant constructor (Unit or Tuple)
                     // Struct variants are parsed as EnumInit or StructInit, so shouldn't appear here (unless parser produces StaticCall for brace variants?)
                     // Current parser produces EnumInit for brace variants relative to module, but if path-based?
@@ -4815,6 +4816,7 @@ impl SemanticAnalyzer {
                 // Use type_to_key for string comparison
                 // Check TypeRegistry for built-in static methods
                 let type_key = TypeRegistry::type_to_key(type_name);
+                
                 if let Some(sig_ref) = self.type_registry.get_method(&type_key, method_name) {
                     let sig = sig_ref.clone();
                     // Check arg count

@@ -4047,6 +4047,30 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string())?;
                     return Ok((ok.into(), Type::Bool));
                 }
+                "open" => {
+                    if args.len() != 2 {
+                        return Err("File::open requires 2 arguments".into());
+                    }
+                    let (path_val, _) = self.compile_expr(&args[0])?;
+                    let (mode_val, _) = self.compile_expr(&args[1])?;
+                    let fn_val = self
+                        .module
+                        .get_function("tl_file_open")
+                        .ok_or("tl_file_open not found")?;
+                    let call = self
+                        .builder
+                        .build_call(
+                            fn_val,
+                            &[path_val.into(), mode_val.into()],
+                            "file_open",
+                        )
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from File::open".into()),
+                    };
+                    return Ok((res, Type::UserDefined("File".to_string(), vec![])));
+                }
                 "download" => {
                     if args.len() != 2 {
                         return Err("File::download requires 2 arguments".into());
@@ -6066,6 +6090,61 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Unevaluated methods handle their own arg compilation and cleanup
                     return func(self, obj, method, args);
                 }
+            }
+        }
+
+        if type_name == "File" {
+            match method {
+                "read_string" => {
+                    let fn_val = self
+                        .module
+                        .get_function("tl_file_read_string")
+                        .ok_or("tl_file_read_string not found")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into()], "file_read_str")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from File::read_string".into()),
+                    };
+                    return Ok((res, Type::UserDefined("String".to_string(), vec![])));
+                }
+                "write_string" => {
+                    if args.len() != 1 {
+                        return Err("File::write_string requires 1 argument".into());
+                    }
+                    let (content_val, _) = self.compile_expr(&args[0])?;
+                    let fn_val = self
+                        .module
+                        .get_function("tl_file_write_string")
+                        .ok_or("tl_file_write_string not found")?;
+                    self.builder
+                        .build_call(
+                            fn_val,
+                            &[obj_val.into(), content_val.into()],
+                            "file_write_str",
+                        )
+                        .map_err(|e| e.to_string())?;
+                    return Ok((
+                        self.context.i64_type().const_int(0, false).into(),
+                        Type::Void,
+                    ));
+                }
+                "close" => {
+                    let fn_val = self
+                        .module
+                        .get_function("tl_file_close")
+                        .ok_or("tl_file_close not found")?;
+                    self.builder
+                        .build_call(fn_val, &[obj_val.into()], "file_close")
+                        .map_err(|e| e.to_string())?;
+                    return Ok((
+                        self.context.i64_type().const_int(0, false).into(),
+                        Type::Void,
+                    ));
+                }
+                _ => {}
             }
         }
 
