@@ -3882,7 +3882,7 @@ dependencies = [
 
 [[package]]
 name = "tl-lang"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "ariadne",
@@ -3916,7 +3916,7 @@ dependencies = [
 
 [[package]]
 name = "tl_runtime"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "byteorder",
  "candle-core",
