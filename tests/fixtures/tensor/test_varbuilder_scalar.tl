@@ -3,7 +3,7 @@ fn main() {
     println("=== VarBuilder Simple Test ===");
     
     // Create parameter using varbuilder_get with individual dimensions
-    let w = VarBuilder::get("weights", 10, 5);
+    let w = VarBuilder::get("weights", [10, 5]);
     println("Parameter created");
     
     // Forward pass

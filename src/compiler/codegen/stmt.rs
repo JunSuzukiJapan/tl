@@ -1274,7 +1274,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         && matches!(val_ty, Type::ScalarArray(_, _))
                     {
                         let (_v, _t) = self.ensure_tensor_v2(value, 0)?;
-                    } else if let Type::UserDefined(n, _) = target_ty {
+                    } else if let Type::UserDefined(n, args) = target_ty {
                          if n.starts_with("Vec") || n == "HashMap" {
                              // Fix for Vec::new() -> Vec<Void> / HashMap::new() -> HashMap being assigned to typed var
                              let is_match = match &val_ty {
@@ -1284,6 +1284,48 @@ impl<'ctx> CodeGenerator<'ctx> {
                              };
                              if is_match {
                                  val_ty = target_ty.clone();
+                             }
+                         } else if n == "Option" && args.len() == 1 {
+                             // Fix for Option::none() -> Option<I64> being assigned to Option<T>
+                             if let Type::UserDefined(vn, vargs) = &val_ty {
+                                 if vn == "Option" && vargs.len() == 1 {
+                                     // Normalize Generic Argument if needed (e.g. UserDefined("I64") -> I64)
+                                     // This happens because Codegen sees raw AST type annotations.
+                                     let mut normalized_target = target_ty.clone();
+                                     if let Type::UserDefined(_, inner_args) = &mut normalized_target {
+                                         if inner_args.len() == 1 {
+                                            let inner = &inner_args[0];
+                                            if let Type::UserDefined(name, empty) = inner {
+                                                if empty.is_empty() {
+                                                    let norm = match name.as_str() {
+                                                        "I64" => Some(Type::I64),
+                                                        "I32" => Some(Type::I32),
+                                                        "F64" => Some(Type::F64),
+                                                        "F32" => Some(Type::F32),
+                                                        "Bool" => Some(Type::Bool),
+                                                        "Void" => Some(Type::Void),
+                                                        _ => None
+                                                    };
+                                                    if let Some(n) = norm {
+                                                        inner_args[0] = n;
+                                                    }
+                                                }
+                                            }
+                                         }
+                                     }
+
+                                     val_ty = normalized_target;
+                                     // Cast LLVM value
+                                     if val_ir.is_pointer_value() {
+                                         let target_llvm_ty = self.get_llvm_type(&val_ty).unwrap();
+                                         let casted = self.builder.build_pointer_cast(
+                                             val_ir.into_pointer_value(), 
+                                             target_llvm_ty.into_pointer_type(), 
+                                             "option_cast"
+                                         ).unwrap();
+                                         val_ir = casted.into();
+                                     }
+                                 }
                              }
                          }
                     } else if let Type::Vec(target_inner) = target_ty {
@@ -1316,7 +1358,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                              if matches!(val_ty, Type::UserDefined(ref vn, ref vargs) if vn == "HashMap" && vargs.is_empty()) {
                                  val_ty = target_ty.clone();
                              }
-                         }
+                        } else if sn == "Option" && sargs.len() == 1 {
+                             // Fix for Option::none() -> Option<I64> being assigned to Option<T>
+                             if let Type::UserDefined(vn, vargs) = &val_ty {
+                                 if vn == "Option" && vargs.len() == 1 {
+                                     // Force target type
+                                     val_ty = target_ty.clone();
+                                     
+                                     // Ensure pointer cast for LLVM type safety
+                                     // Both are pointers, but we want to be explicit
+                                      if val_ir.is_pointer_value() {
+                                         let target_llvm_ty = self.get_llvm_type(&val_ty).unwrap();
+                                         let casted = self.builder.build_pointer_cast(
+                                             val_ir.into_pointer_value(), 
+                                             target_llvm_ty.into_pointer_type(), 
+                                             "option_cast"
+                                         ).unwrap();
+                                         val_ir = casted.into();
+                                      }
+                                 }
+                             }
+                        }
                     }
                 }
 

@@ -118,3 +118,47 @@ pub fn mangle_generic_method(...) -> String {
 }
 ```
 この機構により、ジェネリック型の特殊化は完全に自動化されており、手動での名前管理は不要（かつ有害）です。
+
+---
+
+## 実装の注意点とベストプラクティス (Lessons Learned)
+
+`Option<T>` などのジェネリック型を実装する際に発生しやすい問題と、その回避策です。
+
+### 1. Codegenにおける型注釈の正規化 (Normalization)
+
+`Let` 文などで変数に型注釈が付いている場合、ASTレベルではプリミティブ型も `UserDefined("I64", [])` のように表現されることがあります。
+しかし、Codegen フェーズでは `Type::I64` と `Type::UserDefined("I64", ...)` は**別の型**として扱われます。これが原因で `BinOp` (二項演算) などで `Type mismatch` エラーが発生することがあります。
+
+**対策**:
+Codegen (`stmt.rs`, `expr.rs`) で型注釈を扱う際は、ジェネリック引数に含まれるプリミティブ型名（"I64", "Bool" 等）を検出し、正規化（`Type::I64` 等への変換）を行う必要があります。
+
+```rust
+// 例: UserDefined("I64") -> Type::I64 への正規化ロジック
+if let Type::UserDefined(name, empty) = inner {
+    if empty.is_empty() {
+        let norm = match name.as_str() {
+            "I64" => Some(Type::I64),
+            "Void" => Some(Type::Void),
+            _ => None
+        };
+        // ... 適用 ...
+    }
+}
+```
+
+### 2. `Void` 型の取り扱いとパニック回避
+
+`Option::none()` のように、ジェネリック型引数がコンテキストから推論できない（またはデフォルト値が必要な）場合、安易に `Type::Void` を使用すると、LLVM コード生成時 (`get_llvm_type`) に `Void type encountered` パニックを引き起こす可能性があります（`Void` はサイズを持たないため）。
+
+**対策**:
+*   **ダミー型の使用**: レイアウトを確定させるため、`Void` の代わりに `I64` などの安全な型プレースホルダーを使用する。
+    *   例: `Option<Void>` ではなく `Option<I64>` として生成する（タグが `None` なら値はアクセスされないため安全）。
+*   **ポインタキャスト**: 生成された値を特定の型変数に代入する際は、明示的なポインタキャスト (`build_pointer_cast`) を行って整合性を保つ。
+
+### 3. 型注釈の強制適用 (Type Forcing)
+
+`Option::none()` -> `Option<I64>` (Default) を `Option<String>` 型の変数に代入する場合など、右辺値の型と左辺の型が一致しないことがあります。
+
+**対策**:
+`Let` 文の処理 (`stmt.rs`) において、型注釈が存在する場合はそちらを優先し、右辺値の型情報を上書き（およびキャスト）するロジックを組み込むことで、後続の処理での型不一致を防げます。

@@ -121,8 +121,35 @@ impl<'ctx> CodeGenerator<'ctx> {
             &codegen.execution_engine,
         );
 
+        codegen.register_builtin_return_types();
+
         codegen
     }
+
+    fn register_builtin_return_types(&mut self) {
+        // Path
+        self.method_return_types.insert("tl_path_new".to_string(), Type::UserDefined("Path".to_string(), vec![]));
+        self.method_return_types.insert("tl_path_to_string".to_string(), Type::UserDefined("String".to_string(), vec![]));
+        self.method_return_types.insert("tl_path_join".to_string(), Type::UserDefined("Path".to_string(), vec![]));
+        
+        // String
+        self.method_return_types.insert("tl_string_new".to_string(), Type::UserDefined("String".to_string(), vec![]));
+
+        // File
+        self.method_return_types.insert("tl_file_open".to_string(), Type::UserDefined("File".to_string(), vec![]));
+        self.method_return_types.insert("tl_file_read_string".to_string(), Type::UserDefined("String".to_string(), vec![]));
+        self.method_return_types.insert("tl_file_write_string".to_string(), Type::Void);
+        self.method_return_types.insert("tl_file_close".to_string(), Type::Void);
+
+        // Env
+        self.method_return_types.insert("tl_env_get".to_string(), Type::UserDefined("String".to_string(), vec![]));
+        self.method_return_types.insert("tl_env_set".to_string(), Type::Void);
+        
+        // Map / HashMap (treated as structs but return pointers, so we must register them to avoid Tensor default)
+        self.method_return_types.insert("tl_tensor_map_new".to_string(), Type::Struct("Map".to_string(), vec![]));
+        self.method_return_types.insert("tl_hashmap_new".to_string(), Type::Struct("HashMap".to_string(), vec![]));
+    }
+
     pub fn dump_ir(&self) {
         self.module.print_to_stderr();
     }
@@ -1269,7 +1296,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // String is a pointer, so exclusion is needed.
         let uses_sret = match &func.return_type {
             Type::Struct(name, _) if name != "Vec" && name != "Map" && name != "HashMap" => true,
-            Type::UserDefined(name, _) if name != "String" && name != "Vec" && name != "Map" && name != "HashMap" => true, 
+            Type::UserDefined(name, _) if name != "String" && name != "Vec" && name != "Map" && name != "HashMap" && name != "Path" && name != "File" => true, 
             _ => false,
         };
 

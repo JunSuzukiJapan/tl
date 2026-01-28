@@ -2279,7 +2279,17 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             ExprKind::StructInit(name, generics, fields) => self.compile_struct_init(name, generics, fields),
             ExprKind::StaticMethodCall(type_ty, method_name, args) => {
-                self.compile_static_method_call(type_ty, method_name, args)
+                let struct_name = match type_ty {
+                    Type::UserDefined(name, _) => name,
+                    Type::Struct(name, _) => name,
+                    Type::Enum(name, _) => name,
+                    Type::F32 => "F32",
+                    Type::I64 => "I64",
+                    Type::Bool => "Bool",
+                    // Add other types as needed or implement a helper
+                    _ => return Err(format!("Cannot call static method on type {:?}", type_ty)),
+                };
+                self.compile_static_method_call(struct_name, method_name, args)
             }
             ExprKind::BinOp(lhs, op, rhs) => {
                 let left = self.compile_expr(lhs)?;
@@ -3518,14 +3528,121 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     fn compile_static_method_call(
         &mut self,
-        ty: &Type,
-        method_name: &str,
+        struct_name: &str,
+        method: &str,
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        let type_name = crate::compiler::type_registry::TypeRegistry::type_to_key(ty);
+        // Compatibility aliases for existing logic
+        let type_name = struct_name;
+        let method_name = method;
+
+        // Handle Option<T> static methods (Registration over Implementation)
+        if struct_name == "Option" {
+            if method == "some" {
+                if args.len() != 1 {
+                    return Err("Option::some requires exactly 1 argument".to_string());
+                }
+                let (val, ty) = self.compile_expr(&args[0])?;
+                
+                // Construct Option struct type: { i64, T }
+                let option_ty = self.context.struct_type(&[
+                    self.context.i64_type().into(), // tag: 1 = Some
+                    val.get_type(),                 // value
+                ], false);
+                
+                // Allocate
+                let ptr = self.builder.build_alloca(option_ty, "option_some").unwrap();
+                
+                // Set tag = 1
+                let tag_ptr = self.builder.build_struct_gep(option_ty, ptr, 0, "tag_ptr").unwrap();
+                self.builder.build_store(tag_ptr, self.context.i64_type().const_int(1, false)).unwrap();
+                
+                // Set value
+                let val_ptr = self.builder.build_struct_gep(option_ty, ptr, 1, "val_ptr").unwrap();
+                self.builder.build_store(val_ptr, val).unwrap();
+                
+                // Return pointer and type
+                return Ok((ptr.into(), Type::UserDefined("Option".to_string(), vec![ty])));
+            } else if method == "none" {
+                 // For none(), we need to know T.
+                 // In many cases, it might be inferred or we can treat it as Option<Void> initially?
+                 // Or we can create a generic Option None.
+                 // However, without type inference passing T here, we might struggle to allocate correct size if T is not known.
+                 // WORKAROUND: For now, if generic T is not provided, we might fail or default.
+                 // actually, `none` usually relies on context.
+                 // Let's create a dummy placeholder or rely on the fact that `UserDefined` handles it.
+                 // But wait, we need to return a Value.
+                 // If we don't know T, we can't allocate {i64, T}.
+                 // HACK: generic None often needs type hint. 
+                 // If specific T is needed, user might do: `let x: Option<I64> = Option::none();`
+                 // In codegen, we only see the call `Option::none()`.
+                 // We'll create a generic {i64} for now? No, that breaks layout.
+                 // Strategy: Return a "GenericNone" or similar marker?
+                 // OR, assume Void for T and let assignment handle cast/bitcast if pointers match?
+                 // NO, struct sizes differ.
+                 // 
+                 // BETTER STRATEGY: 
+                 // In standard TL usage `Option::none()` usually implies T is inferred.
+                 // If we are effectively "void", we can interpret it.
+                 // But `Option` layout depends on T.
+                 // 
+                 // Let's assume for `none` we can't allocate meaningful storage without T.
+                 // But valid code usually strictly types it.
+                 // 
+                 // Simple implementation: 
+                 // Create a {i64} only struct for None? 
+                 // No, receiver expects {i64, T}.
+                 // 
+                 // FOR THIS TASK: We will assume Option::none() is valid only if we can infer T from context?
+                 // But we are in codegen. Type check happened in Semantics.
+                 // Did semantics attach implicit Generic arg?
+                 // No.
+                 // 
+                 // Let's allow `Option::none` to return a specialized "Zero Option" 
+                 // that is just an i64 (0). 
+                 // And then upon use/assignment/return, it might need casting?
+                 // 
+                 // PROPOSAL: All Option types are pointers.
+                 // If `none` is represented as a NULL POINTER?
+                 // No, we want Structural Identity.
+                 //
+                 // Let's implement `some` first. `none` might need more thought or T passed.
+                 // Actually, if T is unknown, layout is unknown.
+                 // 
+                 // TEMPORARY FIX: `Option::none` returns a pointer to {i64, i8} (dummy T=i8),
+                 // effectively just setting tag=0.
+                 // Since it is None, we never access value.
+                 // The size might be wrong if we copy it.
+                 // Correct approach requires T.
+                 // 
+                 // But wait, `Option<T>` is `UserDefined`.
+                 // Is it passed by pointer or value?
+                 // If pointer, then size mismatch is okay only if we don't copy by value.
+                 // But `store` operation copies by value (memcpy).
+                 //
+                 // We will punt on `none` complexity for a second and implement `some`.
+                 // For `none`, we'll generate an error for now if logic is missing.
+                 
+                 let option_ty = self.context.struct_type(&[
+                    self.context.i64_type().into(), // tag: 0
+                    self.context.i64_type().into(), // dummy value (i64 aligned)
+                ], false);
+                let ptr = self.builder.build_alloca(option_ty, "option_none").unwrap();
+                let tag_ptr = self.builder.build_struct_gep(option_ty, ptr, 0, "tag_ptr").unwrap();
+                self.builder.build_store(tag_ptr, self.context.i64_type().const_int(0, false)).unwrap();
+                
+                // Return Option<I64> to avoid Void type panic in codegen
+                // Since it is None (tag=0), the value type doesn't matter for logic,
+                // and I64 ensures pointer-size alignment for most cases.
+                 return Ok((ptr.into(), Type::UserDefined("Option".to_string(), vec![Type::I64])));
+            }
+        }
+
+        let simple_struct_name = struct_name.split('<').next().unwrap_or(struct_name);
+        let ty = Type::UserDefined(simple_struct_name.to_string(), vec![]); // Reconstruct a basic Type for old logic
 
         // Handle Vec<T>::new()
-        let inner_opt = match ty {
+        let inner_opt = match &ty {
             Type::Vec(inner) => Some(inner.clone()),
             Type::UserDefined(n, args) if n == "Vec" => {
                 if args.is_empty() {
@@ -3584,7 +3701,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // Handle Option::some(val) and Option::none()
-        let is_option = match ty {
+        let is_option = match &ty {
             Type::UserDefined(n, _) if n == "Option" => true,
             Type::Struct(n, _) if n == "Option" => true,
             _ => false,
@@ -4218,7 +4335,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // 1. StaticMethodManager Lookup
         let method_opt = self
             .static_methods
-            .get(&type_name)
+            .get(type_name)
             .and_then(|m| m.get(method_name))
             .copied();
         if let Some(method) = method_opt {
@@ -4251,31 +4368,31 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // 1. Resolve Mangled Name
-        let simple_type_name = if type_name.contains("::") {
-            type_name.split("::").last().unwrap()
+        let simple_type_name = if struct_name.contains("::") {
+            struct_name.split("::").last().unwrap()
         } else {
-            &type_name
+            &struct_name
         };
-        let mangled_name = format!("tl_{}_{}", simple_type_name, method_name);
-        let stdlib_name = format!("tl_{}_{}", simple_type_name.to_lowercase(), method_name);
+        let mangled_name = format!("tl_{}_{}", simple_type_name, method);
+        let stdlib_name = format!("tl_{}_{}", simple_type_name.to_lowercase(), method);
 
         // 2. Lookup Function
         let (func, actual_name) = if let Some(f) = self.module.get_function(&mangled_name) {
             (f, mangled_name)
         } else if let Some(f) = self.module.get_function(&stdlib_name) {
             (f, stdlib_name)
-        } else if let Some(f) = self.module.get_function(method_name) {
-            (f, method_name.to_string())
+        } else if let Some(f) = self.module.get_function(method) {
+            (f, method.to_string())
         } else {
              // Fallback: Check if it is an Enum Variant initialization
-             if let Some(enum_def) = self.enum_defs.get(&type_name).cloned() {
-                 if let Some(variant_idx) = enum_def.variants.iter().position(|v| v.name == method_name) {
+             if let Some(enum_def) = self.enum_defs.get(struct_name).cloned() {
+                 if let Some(variant_idx) = enum_def.variants.iter().position(|v| v.name == method) {
                      let variant_def = &enum_def.variants[variant_idx];
                      if args.len() != variant_def.fields.len() {
-                         return Err(format!("Enum variant {}::{} expects {} args, got {}", type_name, method_name, variant_def.fields.len(), args.len()));
+                         return Err(format!("Enum variant {}::{} expects {} args, got {}", struct_name, method, variant_def.fields.len(), args.len()));
                      }
                      
-                     let enum_ty = *self.enum_types.get(&type_name).ok_or(format!("Enum type {} not found", type_name))?;
+                     let enum_ty = *self.enum_types.get(struct_name).ok_or(format!("Enum type {} not found", struct_name))?;
                      
                      // Allocate
                      // Manual malloc(i64)
@@ -4293,7 +4410,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                     let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
                     let alloca = match self.builder
-                        .build_call(malloc_fn, &[size.into()], &format!("enum_{}", type_name))
+                        .build_call(malloc_fn, &[size.into()], &format!("enum_{}", struct_name))
                         .map_err(|e| e.to_string())?
                         .try_as_basic_value() {
                             inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
@@ -4335,13 +4452,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                          }
                      }
                      
-                     return Ok((alloca.into(), Type::Enum(type_name.to_string(), vec![])));
+                     return Ok((alloca.into(), Type::Enum(struct_name.to_string(), vec![])));
                  }
              }
 
             return Err(format!(
                 "Static method {}::{} not found (checked {}, {}, and {})",
-                type_name, method_name, mangled_name, stdlib_name, method_name
+                struct_name, method, mangled_name, stdlib_name, method
             ));
         };
 
@@ -6597,6 +6714,173 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         // Try exact mangling first: tl_{Struct}_{Method}
+        // Option<T> instance methods (Direct Field Access)
+        if simple_struct_name == "Option" {
+             // Receiver is a pointer to { i64, T }
+             // Cast to generic option struct ptr { i64, T } ?
+             // Actually, we don't know T here easily without parsing self type.
+             // But we only access tag (i64) at index 0, and value at index 1.
+             // We can treat it nicely.
+             
+             let option_ptr = obj_val.into_pointer_value();
+             let generic_option_ty = self.context.struct_type(&[
+                 self.context.i64_type().into(), // tag
+                 // Value type is unknown here, but for GEP index 1 we can use a dummy? 
+                 // Or we can just use i8 ptr and cast?
+                 // Safer: Get element type from obj type if possible?
+                 // obj_ty should be Type::UserDefined("Option", [T])
+                 self.context.i8_type().into(), // Dummy
+             ], false); // This is strictly for GEP offset calculation of index 0. 
+             // Index 1 might differ if packed? No, LLVM struct layout is usually standard.
+             // But wait, if T is large, simply guessing might be wrong if alignment matters?
+             // Actually, if we use `struct_gep`, we need accurate type.
+             
+             // Strategy:
+             // 1. Get Tag (index 0). This is always at offset 0 (i64).
+             //    We can bitcast to *i64.
+             // 2. Get Value (index 1).
+             
+             // Extract T from obj_ty
+             let inner_ty = if let Type::UserDefined(_, generics) = &obj_ty {
+                 generics.first().cloned().unwrap_or(Type::Void)
+             } else {
+                 Type::Void
+             };
+             
+             // Reconstruct accurate Option Type
+             let val_llvm_ty = match &inner_ty {
+                 Type::Tensor(_, _) => self.context.ptr_type(inkwell::AddressSpace::default()).into(), // Tensors are pointers
+                 Type::UserDefined(_, _) | Type::Struct(_, _) | Type::Vec(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(), // Map removed as it is UserDefined
+                 Type::F32 => self.context.f32_type().into(),
+                 Type::I64 => self.context.i64_type().into(),
+                 Type::Bool => self.context.bool_type().into(),
+                 Type::Void => self.context.i8_type().into(), // Fallback
+                 _ => self.context.i64_type().into(),
+             };
+             
+             let option_struct_ty = self.context.struct_type(&[
+                 self.context.i64_type().into(),
+                 val_llvm_ty
+             ], false);
+             
+             // Cast obj_val to *{i64, T}
+             let typed_ptr = self.builder.build_pointer_cast(
+                 option_ptr,
+                 self.context.ptr_type(inkwell::AddressSpace::default()),
+                 "option_typed_ptr"
+             ).unwrap();
+
+             if method == "is_some" {
+                 let tag_ptr = self.builder.build_struct_gep(option_struct_ty, typed_ptr, 0, "tag_ptr").unwrap();
+                 let tag = self.builder.build_load(self.context.i64_type(), tag_ptr, "tag").unwrap().into_int_value();
+                 
+                 // tag == 1
+                 let is_some = self.builder.build_int_compare(
+                     inkwell::IntPredicate::EQ,
+                     tag,
+                     self.context.i64_type().const_int(1, false),
+                     "is_some"
+                 ).unwrap();
+                 return Ok((is_some.into(), Type::Bool));
+                 
+             } else if method == "is_none" {
+                 let tag_ptr = self.builder.build_struct_gep(option_struct_ty, typed_ptr, 0, "tag_ptr").unwrap();
+                 let tag = self.builder.build_load(self.context.i64_type(), tag_ptr, "tag").unwrap().into_int_value();
+                 
+                 // tag == 0
+                 let is_none = self.builder.build_int_compare(
+                     inkwell::IntPredicate::EQ,
+                     tag,
+                     self.context.i64_type().const_int(0, false),
+                     "is_none"
+                 ).unwrap();
+                 return Ok((is_none.into(), Type::Bool));
+                 
+             } else if method == "unwrap" {
+                 // Check tag
+                 let tag_ptr = self.builder.build_struct_gep(option_struct_ty, typed_ptr, 0, "tag_ptr").unwrap();
+                 let tag = self.builder.build_load(self.context.i64_type(), tag_ptr, "tag").unwrap().into_int_value();
+                 
+                 let is_some = self.builder.build_int_compare(
+                     inkwell::IntPredicate::EQ,
+                     tag,
+                     self.context.i64_type().const_int(1, false),
+                     "is_some"
+                 ).unwrap();
+                 
+                 let current_block = self.builder.get_insert_block().unwrap();
+                 let func = current_block.get_parent().unwrap();
+                 
+                 let success_block = self.context.append_basic_block(func, "unwrap_success");
+                 let fail_block = self.context.append_basic_block(func, "unwrap_fail");
+                 
+                 self.builder.build_conditional_branch(is_some, success_block, fail_block).unwrap();
+                 
+                 // Fail: Panic
+                 self.builder.position_at_end(fail_block);
+                 
+                 // Inline panic implementation using tl_panic
+                 let panic_msg = self.builder.build_global_string_ptr("Option::unwrap() called on None", "panic_msg").unwrap();
+                 let panic_fn = self.module.get_function("tl_panic").unwrap_or_else(|| {
+                     let fn_ty = self.context.void_type().fn_type(&[self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into()], false);
+                     self.module.add_function("tl_panic", fn_ty, None)
+                 });
+                 self.builder.build_call(panic_fn, &[panic_msg.as_pointer_value().into()], "").unwrap();
+                 self.builder.build_unreachable().unwrap();
+                 
+                 // Success: Load value
+                 self.builder.position_at_end(success_block);
+                 let val_ptr = self.builder.build_struct_gep(option_struct_ty, typed_ptr, 1, "val_ptr").unwrap();
+                 let val = self.builder.build_load(val_llvm_ty, val_ptr, "val").unwrap(); // Load T
+                 
+                 return Ok((val, inner_ty));
+
+             } else if method == "unwrap_or" {
+                 if args.len() != 1 {
+                     return Err("unwrap_or requires 1 argument (default)".into());
+                 }
+                 let (default_val, default_ty) = self.compile_expr(&args[0])?;
+                 
+                 // Check if default_ty matches inner_ty? Semantics check this.
+                 
+                 let tag_ptr = self.builder.build_struct_gep(option_struct_ty, typed_ptr, 0, "tag_ptr").unwrap();
+                 let tag = self.builder.build_load(self.context.i64_type(), tag_ptr, "tag").unwrap().into_int_value();
+                 
+                 let is_some = self.builder.build_int_compare(
+                     inkwell::IntPredicate::EQ,
+                     tag,
+                     self.context.i64_type().const_int(1, false),
+                     "is_some"
+                 ).unwrap();
+                 
+                 let current_block = self.builder.get_insert_block().unwrap();
+                 let func = current_block.get_parent().unwrap();
+                 
+                 let success_block = self.context.append_basic_block(func, "unwrap_or_some");
+                 let fail_block = self.context.append_basic_block(func, "unwrap_or_none");
+                 let merge_block = self.context.append_basic_block(func, "unwrap_or_merge");
+                 
+                 self.builder.build_conditional_branch(is_some, success_block, fail_block).unwrap();
+                 
+                 // Some: Load value
+                 self.builder.position_at_end(success_block);
+                 let val_ptr = self.builder.build_struct_gep(option_struct_ty, typed_ptr, 1, "val_ptr").unwrap();
+                 let val_some = self.builder.build_load(val_llvm_ty, val_ptr, "val_some").unwrap();
+                 self.builder.build_unconditional_branch(merge_block).unwrap();
+                 
+                 // None: Use default
+                 self.builder.position_at_end(fail_block);
+                 self.builder.build_unconditional_branch(merge_block).unwrap();
+                 
+                 // Merge
+                 self.builder.position_at_end(merge_block);
+                 let phi = self.builder.build_phi(val_llvm_ty, "unwrap_result").unwrap();
+                 phi.add_incoming(&[(&val_some, success_block), (&default_val, fail_block)]);
+                 
+                 return Ok((phi.as_basic_value(), inner_ty));
+             }
+        }
+
         let mangled_name = format!("tl_{}_{}", simple_struct_name, method);
         // Fallback to lowercase
         let stdlib_name = format!("tl_{}_{}", simple_struct_name.to_lowercase(), method);
@@ -6613,7 +6897,11 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         // Get return type (for SRET check)
-        let ret_ty = self.get_return_type_from_signature(func_val);
+        let ret_ty = if let Some(ret) = self.method_return_types.get(&final_name) {
+            ret.clone()
+        } else {
+            self.get_return_type_from_signature(func_val)
+        };
 
         // SRET Disabled for now to match legacy behavior
         // let uses_sret = false;
@@ -7507,7 +7795,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut dest_val = None;
         if match ret_type {
              Type::Struct(ref name, _) if name != "Vec" && name != "Map" && name != "HashMap" => true,
-             Type::UserDefined(ref name, _) if name != "String" && name != "Vec" && name != "Map" && name != "HashMap" => true,
+             Type::UserDefined(ref name, _) if name != "String" && name != "Vec" && name != "Map" && name != "HashMap" && name != "Path" && name != "File" => true,
              _ => false 
         } {
              if let Some(d) = dest {

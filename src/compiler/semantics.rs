@@ -434,6 +434,19 @@ impl SemanticAnalyzer {
 
     fn resolve_user_type(&self, ty: &Type) -> Type {
         if let Type::UserDefined(name, args) = ty {
+            // Normalize primitive types disguised as UserDefined
+            if args.is_empty() {
+                match name.as_str() {
+                    "I64" => return Type::I64,
+                    "I32" => return Type::I32,
+                    "F32" => return Type::F32,
+                    "F64" => return Type::F64,
+                    "Bool" => return Type::Bool,
+                    "Void" => return Type::Void,
+                    _ => {}
+                }
+            }
+
             let resolved_name = self.resolve_symbol_name(name);
             // Recursively resolve generic args
             let resolved_args: Vec<Type> = args.iter().map(|a| self.resolve_user_type(a)).collect();
@@ -1430,8 +1443,11 @@ impl SemanticAnalyzer {
                     self.check_expr(value)?
                 };
 
-                let final_type = if let Some(ann) = type_annotation {
-                    if !self.are_types_compatible(ann, &inferred_type) {
+                let final_type = if let Some(ann_raw) = type_annotation {
+                    // Normalize the type annotation
+                    let ann = self.resolve_user_type(ann_raw);
+                    
+                    if !self.are_types_compatible(&ann, &inferred_type) {
                         return self.err(
                             SemanticError::TypeMismatch {
                                 expected: ann.clone(),

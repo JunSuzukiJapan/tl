@@ -1430,7 +1430,10 @@ impl TypeRegistry {
             },
         );
         self.methods.insert("Map".to_string(), map_methods);
+        self.register_option_methods();
     }
+
+
 
     /// Get method signature for a given type and method name
     pub fn get_method(&self, type_name: &str, method_name: &str) -> Option<&MethodSignature> {
