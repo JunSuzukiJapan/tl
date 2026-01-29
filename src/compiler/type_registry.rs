@@ -4,7 +4,8 @@
 //! This module provides a unified way to manage type information and method signatures,
 //! enabling consistent type checking across the compiler.
 
-use crate::compiler::ast::Type;
+use crate::compiler::ast::{Type, FunctionDef};
+use crate::compiler::builtin_ast;
 use std::collections::HashMap;
 
 /// Represents a method signature with parameter types and return type.
@@ -23,7 +24,7 @@ pub struct MethodSignature {
 }
 
 /// Parameter type specification
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ParamType {
     /// Exact type match required
     Exact(Type),
@@ -48,7 +49,7 @@ pub enum ParamType {
 }
 
 /// Return type specification
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ReturnType {
     /// Exact type
     Exact(Type),
@@ -97,8 +98,12 @@ impl TypeRegistry {
         self.register_file_methods();
         self.register_path_methods();
         self.register_varbuilder_methods();
-        self.register_vec_methods();
-        self.register_vec_methods();
+        self.register_varbuilder_methods();
+        
+        // Register builtins from AST (New Architecture)
+        self.register_ast_impls();
+        
+        // self.register_vec_methods(); // Replaced by register_ast_impls
         self.register_hashmap_methods();
         self.register_option_methods();
         self.register_ml_methods(); // Tokenizer, KVCache, Map
@@ -1699,6 +1704,68 @@ impl TypeRegistry {
         );
 
         self.methods.insert("HashMap".to_string(), map_methods);
+    }
+    /// Register builtin implementations from AST
+    fn register_ast_impls(&mut self) {
+        let impls = builtin_ast::load_builtin_impls();
+        for imp in impls {
+            // Determine registry key name (e.g. "Vec")
+            let type_name = match &imp.target_type {
+                Type::UserDefined(n, _) => n.clone(),
+                Type::Struct(n, _) => n.clone(),
+                _ => Self::type_to_key(&imp.target_type),
+            };
+
+            // Register Generics if not present
+            if !self.generics.contains_key(&type_name) && !imp.generics.is_empty() {
+                 self.generics.insert(type_name.clone(), imp.generics.clone());
+            }
+
+            // Get or create methods map
+            let mut methods_map = self.methods.entry(type_name.clone()).or_insert_with(HashMap::new).clone();
+            
+            for func in imp.methods {
+                 let sig = self.function_def_to_signature(&func, &imp.generics);
+                 methods_map.insert(func.name.clone(), sig);
+            }
+            self.methods.insert(type_name, methods_map);
+        }
+    }
+
+    fn function_def_to_signature(&self, func: &FunctionDef, generics: &[String]) -> MethodSignature {
+        let params: Vec<ParamType> = func.args.iter().map(|(_, ty)| {
+             self.type_to_param_type(ty, generics)
+        }).collect();
+        
+        let return_type = self.type_to_return_type(&func.return_type, generics);
+        
+        MethodSignature {
+            name: func.name.clone(),
+            params,
+            return_type,
+            is_varargs: false,
+            min_args: func.args.len(),
+        }
+    }
+
+    fn type_to_param_type(&self, ty: &Type, generics: &[String]) -> ParamType {
+        match ty {
+            Type::UserDefined(name, args) if args.is_empty() && generics.contains(name) => {
+                ParamType::Generic(name.clone())
+            }
+            Type::Bool => ParamType::Bool,
+            _ => ParamType::Exact(ty.clone())
+        }
+    }
+
+    fn type_to_return_type(&self, ty: &Type, generics: &[String]) -> ReturnType {
+        match ty {
+            Type::Void => ReturnType::Void,
+            Type::UserDefined(name, args) if args.is_empty() && generics.contains(name) => {
+                ReturnType::Generic(name.clone())
+            }
+            _ => ReturnType::Exact(ty.clone())
+        }
     }
 }
 

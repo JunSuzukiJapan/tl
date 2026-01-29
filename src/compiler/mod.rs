@@ -11,6 +11,7 @@ pub mod generics;
 pub mod type_registry;
 pub mod liveness;
 
+pub mod builtin_ast;
 pub mod semantics;
 pub mod shape_analysis; // Phase 2: Static size analysis for Arena
 pub mod lexer;
