@@ -374,63 +374,67 @@ impl Monomorphizer {
                          }
                      }
                  }
-                 // 4. Try generic Enum (e.g. Option::Some)
+                 // 4. Try generic Enum (e.g. Option::Some) - LEGACY? 
+                 // Semantics should receive StructInit and transform to EnumInit.
+                 // But if Monomorphizer runs after Semantics, this case might be unreachable for valid Enums?
+                 // Or maybe for un-resolved?
+                 // Let's comment this out or just fix it?
+                 // The compilation error forces me to fix it.
+                 // But since semantics converts to EnumInit, this branch should strictly not trigger for Enums unless semantics failed or logic differs.
+                 // Given strict compilation check, I'll update it to be safe.
                  else {
-                     // Extract type name from "Type::Variant"
-                     // Clone to avoid borrowing `name`
+                     // ... Update logic to use VariantKind ...
                      let (type_name_str, variant_name_str) = {
                         let parts: Vec<&str> = name.split("::").collect();
                         let t = if parts.len() > 1 { parts[0].to_string() } else { name.clone() };
                         let v = if parts.len() > 1 { parts[1].to_string() } else { "".to_string() };
                         (t, v)
                      };
-                     
+
                      if let Some(def) = self.generic_enums.get(&type_name_str) {
-                         // Find variant def
-                         let variant_def = def.variants.iter().find(|v| v.name == variant_name_str);
-                         
-                         if let Some(v_def) = variant_def {
-                             let mut inferred_map = HashMap::new();
-                             let mut all_inferred = true;
-                             
-                             for (fname, val) in fields.iter() {
-                                 if let Some(field_ty) = v_def.fields.iter().find(|(f, _)| f == fname).map(|(_, t)| t) {
-                                     if let Some(val_ty) = self.infer_expr_type(&val.inner) {
-                                         self.unify_types(field_ty, &val_ty, &mut inferred_map);
-                                     }
-                                 }
-                             }
-                             
-                             let mut type_args = Vec::new();
-                             for param in &def.generics {
-                                 if let Some(ty) = inferred_map.get(param) {
-                                     type_args.push(ty.clone());
-                                 } else {
-                                     all_inferred = false;
-                                 }
-                             }
-                             
-                             if all_inferred && !type_args.is_empty() {
-                                 log::debug!("Rewriting Enum Init: {} -> {} with args {:?}", name, type_name_str, type_args);
-                                 // Instantiate Enum
-                                 let concrete_enum_name = self.request_struct_instantiation(&type_name_str, type_args.clone());
-                                 // Rewrite Name to "ConcreteEnum::Variant"
-                                 *name = format!("{}::{}", concrete_enum_name, variant_name_str);
-                                 
-                                 // Populate field context
-                                 if let Some(c_def) = self.concrete_enums.iter().find(|e| e.name == concrete_enum_name) {
-                                     if let Some(c_v) = c_def.variants.iter().find(|v| v.name == variant_name_str) {
-                                         for (fname, fty) in &c_v.fields {
-                                             field_types_map.insert(fname.clone(), fty.clone());
+                          if let Some(v_def) = def.variants.iter().find(|v| v.name == variant_name_str) {
+                               // Assuming StructInit syntax implies Struct Variant
+                               if let crate::compiler::ast::VariantKind::Struct(def_fields) = &v_def.kind {
+                                    let mut inferred_map = HashMap::new();
+                                    let mut all_inferred = true;
+                                    
+                                    for (fname, val) in fields.iter() {
+                                        if let Some(field_ty) = def_fields.iter().find(|(f, _)| f == fname).map(|(_, t)| t) {
+                                            if let Some(val_ty) = self.infer_expr_type(&val.inner) {
+                                                self.unify_types(field_ty, &val_ty, &mut inferred_map);
+                                            }
+                                        }
+                                    }
+                                    // ... existing instantiation logic ...
+                                     let mut type_args = Vec::new();
+                                     for param in &def.generics {
+                                         if let Some(ty) = inferred_map.get(param) {
+                                             type_args.push(ty.clone());
+                                         } else {
+                                             all_inferred = false;
                                          }
                                      }
-                                 }
-                             } else {
-                                 for (fname, fty) in &v_def.fields {
-                                     field_types_map.insert(fname.clone(), fty.clone());
-                                 }
-                             }
-                         }
+                                     
+                                     if all_inferred && !type_args.is_empty() {
+                                          let concrete_enum_name = self.request_struct_instantiation(&type_name_str, type_args.clone());
+                                          *name = format!("{}::{}", concrete_enum_name, variant_name_str);
+                                          
+                                          if let Some(c_def) = self.concrete_enums.iter().find(|e| e.name == concrete_enum_name) {
+                                               if let Some(c_v) = c_def.variants.iter().find(|v| v.name == variant_name_str) {
+                                                    if let crate::compiler::ast::VariantKind::Struct(c_fields) = &c_v.kind {
+                                                         for (fname, fty) in c_fields {
+                                                             field_types_map.insert(fname.clone(), fty.clone());
+                                                         }
+                                                    }
+                                               }
+                                          }
+                                     } else {
+                                          for (fname, fty) in def_fields {
+                                              field_types_map.insert(fname.clone(), fty.clone());
+                                          }
+                                     }
+                               }
+                          }
                      }
                  }
 
@@ -440,68 +444,96 @@ impl Monomorphizer {
                  }
                  return;
              }
-             ExprKind::EnumInit { enum_name, variant_name, fields } => {
-                 if let Some(def) = self.generic_enums.get(enum_name) {
-                     if let Some(v_def) = def.variants.iter().find(|v| v.name == *variant_name) {
-                         let mut inferred_map = HashMap::new();
-                         let mut all_inferred = true;
-                         
-                         for (fname, val) in fields.iter() {
-                             if let Some(field_ty) = v_def.fields.iter().find(|(f, _)| f == fname).map(|(_, t)| t) {
-                                 if let Some(val_ty) = self.infer_expr_type(&val.inner) {
-                                     self.unify_types(field_ty, &val_ty, &mut inferred_map);
-                                 }
-                             }
-                         }
-                         
-                         let mut type_args = Vec::new();
-                         for param in &def.generics {
-                             if let Some(ty) = inferred_map.get(param) {
-                                 type_args.push(ty.clone());
-                             } else {
-                                 all_inferred = false;
-                             }
-                         }
-                         
-                         if all_inferred && !type_args.is_empty() {
-                             let concrete_enum_name = self.request_struct_instantiation(enum_name, type_args.clone());
-                             *enum_name = concrete_enum_name;
-                             
-                             // Populate field types context?
-                             // We need to rewrite fields.
-                             if let Some(c_def) = self.concrete_enums.iter().find(|e| e.name == *enum_name) {
-                                 if let Some(c_v) = c_def.variants.iter().find(|v| v.name == *variant_name) {
-                                     let mut field_types_map = HashMap::new();
-                                     for (fname, fty) in &c_v.fields {
-                                         field_types_map.insert(fname.clone(), fty.clone());
+              ExprKind::EnumInit { enum_name, variant_name, payload } => {
+                  if let Some(def) = self.generic_enums.get(enum_name) {
+                      if let Some(v_def) = def.variants.iter().find(|v| v.name == *variant_name) {
+                          let mut inferred_map = HashMap::new();
+                          let mut all_inferred = true;
+                          
+                          // Infer generics
+                          match (&*payload, &v_def.kind) {
+                              (EnumVariantInit::Unit, VariantKind::Unit) => {},
+                              (EnumVariantInit::Tuple(exprs), VariantKind::Tuple(types)) => {
+                                  for (e_val, field_ty) in exprs.iter().zip(types.iter()) {
+                                      if let Some(val_ty) = self.infer_expr_type(&e_val.inner) {
+                                          self.unify_types(field_ty, &val_ty, &mut inferred_map);
+                                      }
+                                  }
+                              },
+                              (EnumVariantInit::Struct(fields), VariantKind::Struct(def_fields)) => {
+                                  for (fname, val) in fields.iter() {
+                                     if let Some(field_ty) = def_fields.iter().find(|(f, _)| f == fname).map(|(_, t)| t) {
+                                         if let Some(val_ty) = self.infer_expr_type(&val.inner) {
+                                             self.unify_types(field_ty, &val_ty, &mut inferred_map);
+                                         }
                                      }
-                                     
-                                     for (fname, val) in fields {
-                                         let ctx_ty = field_types_map.get(fname);
-                                         self.rewrite_expr(&mut val.inner, subst, ctx_ty);
-                                     }
-                                     return;
-                                 }
-                             }
-                         } else {
-                             // Generic, but not fully inferred?
-                             // Just rewrite fields with generic types if possible.
-                             // But we lack concrete types.
-                         }
-                     }
-                 }
-                 
-                 // Recurse fields even if not generic rewrite
-                 for (_fname, val) in fields {
-                     self.rewrite_expr(&mut val.inner, subst, None);
-                 }
-             }
-             
-             _ => {}
-         }
-         
-         match expr {
-              ExprKind::FnCall(name, args) => {
+                                  }
+                              }
+                              _ => {} // Mismatch handled in semantics
+                          }
+                          
+                          let mut type_args = Vec::new();
+                          for param in &def.generics {
+                              if let Some(ty) = inferred_map.get(param) {
+                                  type_args.push(ty.clone());
+                              } else {
+                                  all_inferred = false;
+                              }
+                          }
+                          
+                          if all_inferred && !type_args.is_empty() {
+                              let concrete_enum_name = self.request_struct_instantiation(enum_name, type_args.clone());
+                              *enum_name = concrete_enum_name;
+                              
+                              // Rewrite fields with concrete types
+                              // Need to fetch concrete variant definition
+                              // Clone the variant kind to avoid borrowing self during rewrite
+                              let concrete_variant_kind = if let Some(c_def) = self.concrete_enums.iter().find(|e| e.name == *enum_name) {
+                                  if let Some(c_v) = c_def.variants.iter().find(|v| v.name == *variant_name) {
+                                      Some(c_v.kind.clone())
+                                  } else { None }
+                              } else { None };
+
+                              if let Some(kind) = concrete_variant_kind {
+                                      match (&mut *payload, &kind) {
+                                           (EnumVariantInit::Tuple(exprs), VariantKind::Tuple(types)) => {
+                                                for (e, ty) in exprs.iter_mut().zip(types.iter()) {
+                                                     self.rewrite_expr(&mut e.inner, subst, Some(ty));
+                                                }
+                                                return;
+                                           },
+                                           (EnumVariantInit::Struct(fields), VariantKind::Struct(def_fields)) => {
+                                                let mut field_types_map = HashMap::new();
+                                                for (fname, fty) in def_fields {
+                                                    field_types_map.insert(fname.clone(), fty.clone());
+                                                }
+                                                for (fname, val) in fields {
+                                                     let ctx_ty = field_types_map.get(fname);
+                                                     self.rewrite_expr(&mut val.inner, subst, ctx_ty);
+                                                }
+                                                return;
+                                           },
+                                           _ => {}
+                                      }
+                                  }
+                          // Else generic default handling (rewrite children)
+                  
+                  }
+                  
+                  // Recurse children
+                  match payload {
+                      EnumVariantInit::Unit => {},
+                      EnumVariantInit::Tuple(exprs) => {
+                          for e in exprs { self.rewrite_expr(&mut e.inner, subst, None); }
+                      },
+                      EnumVariantInit::Struct(fields) => {
+                          for (_, e) in fields { self.rewrite_expr(&mut e.inner, subst, None); }
+                      }
+                  }
+                  }
+              }
+          }
+          ExprKind::FnCall(name, args) => {
                   // Rewrite args first
                   for arg in args.iter_mut() {
                       self.rewrite_expr(&mut arg.inner, subst, None);
@@ -801,8 +833,18 @@ impl Monomorphizer {
             new_def.generics.clear();
             
             for variant in &mut new_def.variants {
-                for (_, ty) in &mut variant.fields {
-                    *ty = self.substitute_type(ty, &subst);
+                match &mut variant.kind {
+                    crate::compiler::ast::VariantKind::Unit => {},
+                    crate::compiler::ast::VariantKind::Tuple(types) => {
+                        for ty in types {
+                            *ty = self.substitute_type(ty, &subst);
+                        }
+                    },
+                    crate::compiler::ast::VariantKind::Struct(fields) => {
+                        for (_, ty) in fields {
+                            *ty = self.substitute_type(ty, &subst);
+                        }
+                    }
                 }
             }
             

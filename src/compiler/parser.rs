@@ -419,6 +419,47 @@ fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
         )(rest2)?;
         let (rest3, _) = opt(expect_token(Token::Comma))(rest3)?;
         let (rest4, _) = expect_token(Token::RBrace)(rest3)?;
+        
+        // Distinguish StructInit vs EnumInit (Struct Variant)
+        // Syntactically identical: Type { ... } vs Enum::Variant { ... }
+        // If path has >= 2 segments, likely Enum::Variant. But could be Mod::Struct.
+        // Ambiguity resolution needed in semantics?
+        // Current parser assumes StructInit only? No, old parser had EnumInit?
+        // AST has StructInit and EnumInit.
+        // Logic: Try to parse as StructInit for now. Semantics should convert if it resolves to an Enum Variant?
+        // Or we assume `Enum::Variant { ... }` is EnumInit.
+        // If path length > 1, let's assume it *could* be EnumInit.
+        // But Struct can be Mod::Struct.
+        // Let's produce StructInit, and rely on TypeRegistry/Semantics to re-classify?
+        // AST Refactoring plan says "EnumInit { payload: EnumVariantInit }".
+        // Let's modify `parse_path_based_atom` to check if it looks like an Enum Variant?
+        // Actually, without symbol table, we can't be sure.
+        // Wait, current parser ALREADY assumes StructInit for `{ ... }`.
+        
+        // HOWEVER, to support `Enum::Variant { ... }`, we might want to check if the LAST segment is a variant name.
+        // If so, `enum_name` = rest of path.
+        // But `Mod::Struct` has no variant name.
+        // Existing `ExprKind::EnumInit` has `enum_name` and `variant_name`.
+        // If we emit StructInit(Full::Path, ...), can we convert later?
+        // YES. StructInit(Name, ...) -> Check if Name is a Struct or (Enum, Variant).
+        // If Enum, convert to EnumInit.
+        // So for `parser.rs`, sticking to `StructInit` for `{}` syntax is safest/simplest, UNLESS we explicitly want to support distinct EnumInit syntax now.
+        // BUT, `VariantDef` changed. If we emit EnumInit, we need `EnumVariantInit::Struct(fields)`.
+        
+        // Let's assume we maintain `StructInit` here for now, as re-classifying requires semantic info.
+        // The AST change mainly affects how we *store* it if we knew it was an Enum.
+        // Wait, if `EnumInit` is used in current parser, where is it instantiated?
+        // Ah, `parse_path_based_atom` does NOT instantiate EnumInit currently in the presented code (lines 337-441).它 only emits `StructInit`.
+        // So `EnumInit` is currently UNUSED in parser? Or I missed it?
+        // Line 272 `EnumInit` existed in AST but was it used?
+        // Checking `parse_expr`: it calls `parse_path_based_atom`.
+        // `parse_path_based_atom` emits `StructInit` (line 422).
+        // It seems the legacy parser might have been different or I am missing something.
+        // Wait, line 425 mentions "Type::Variant (tuple variant with no args)".
+        // Basically, parser seems to emit StructInit or StaticMethodCall.
+        
+        // OK. I will leave `StructInit` as is for Parsing. The real change needed is in `parse_enum_def` and `parse_pattern`.
+        // `parse_pattern` USES `EnumPattern`.
         return Ok((rest4, Spanned::new(ExprKind::StructInit(type_name, generics, fields), crate::compiler::error::Span::default())));
     }
     
@@ -1043,10 +1084,7 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
              if let Type::UserDefined(name, _) = ty {
                   if let Ok((rest4, _)) = expect_token(Token::LBrace)(rest3) {
                       // Struct Pattern { field: var, ... }
-                      // Need to map `field: var` or `field`.
-                      // Pattern definition expects `Vec<(String, String)>`.
-                      // Example: `Some { value: x }` -> ("value", "x").
-                      let (rest5, bindings) = separated_list0(
+                      let (rest5, bindings_vec) = separated_list0(
                          expect_token(Token::Comma),
                          |input| {
                              let (input, field) = identifier(input)?;
@@ -1061,32 +1099,29 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
                       )(rest4)?;
                       let (rest5, _) = opt(expect_token(Token::Comma))(rest5)?;
                       let (rest5, _) = expect_token(Token::RBrace)(rest5)?;
+                      
+                      let bindings = crate::compiler::ast::EnumPatternBindings::Struct(bindings_vec);
                       return Ok((rest5, Pattern::EnumPattern { enum_name: name, variant_name: method, bindings }));
                   } else if let Ok((rest4, _)) = expect_token(Token::LParen)(rest3) {
                       // Tuple Pattern ( ... )
-                      // Pattern only supports `bindings: Vec<(String, String)>`.
-                      // Map tuple args to "0", "1"...
                       let (rest5, vars) = separated_list0(expect_token(Token::Comma), identifier)(rest4)?;
                       let (rest5, _) = expect_token(Token::RParen)(rest5)?;
-                      let bindings = vars.into_iter().enumerate().map(|(i, v)| (i.to_string(), v)).collect();
+                      
+                      let bindings = crate::compiler::ast::EnumPatternBindings::Tuple(vars);
                       return Ok((rest5, Pattern::EnumPattern { enum_name: name, variant_name: method, bindings }));
                   } else {
                       // Unit Variant
-                      return Ok((rest3, Pattern::EnumPattern { enum_name: name, variant_name: method, bindings: vec![] }));
+                      let bindings = crate::compiler::ast::EnumPatternBindings::Unit;
+                      return Ok((rest3, Pattern::EnumPattern { enum_name: name, variant_name: method, bindings }));
                   }
              }
          } else {
              // Just Type (Identifier). `None`. `Some`.
-             // Treat as EnumPattern with empty enum_name? Or infer?
-             // Since AST has enum_name, using "" as placeholder?
-             // Or assumes `ty` is the variant name if enum_name is missing?
-             // If `MaybeInt::Some` -> enum=MaybeInt, variant=Some.
-             // If `None` -> enum="?", variant=None.
-             // Or checks if `ty` is UserDefined(name). Use name as variant name.
+             // Treat as EnumPattern with empty enum_name?
              if let Type::UserDefined(name, _) = ty {
                   // Check for { or (
                   if let Ok((rest2, _)) = expect_token(Token::LBrace)(rest) {
-                      let (rest3, bindings) = separated_list0(
+                      let (rest3, bindings_vec) = separated_list0(
                          expect_token(Token::Comma),
                          |input| {
                              let (input, field) = identifier(input)?;
@@ -1100,18 +1135,20 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
                       )(rest2)?;
                        let (rest3, _) = opt(expect_token(Token::Comma))(rest3)?;
                        let (rest3, _) = expect_token(Token::RBrace)(rest3)?;
-                       // Assume Enum name is unknown/global? 
-                       // Wait, AST requires enum_name.
-                       // Use "Unknown" or empty?
+                       let bindings = crate::compiler::ast::EnumPatternBindings::Struct(bindings_vec);
+                       // We don't know the enum name. Use empty? Or assume variant name IS the type name (for None)?
+                       // If checking for `None`, usually `Option::None`. `None` implies it's imported.
+                       // For now, assume variant_name = name, enum_name = "".
                        return Ok((rest3, Pattern::EnumPattern { enum_name: String::new(), variant_name: name, bindings }));
                   } else if let Ok((rest2, _)) = expect_token(Token::LParen)(rest) {
                       let (rest3, vars) = separated_list0(expect_token(Token::Comma), identifier)(rest2)?;
                       let (rest3, _) = expect_token(Token::RParen)(rest3)?;
-                      let bindings = vars.into_iter().enumerate().map(|(i, v)| (i.to_string(), v)).collect();
+                      let bindings = crate::compiler::ast::EnumPatternBindings::Tuple(vars);
                       return Ok((rest3, Pattern::EnumPattern { enum_name: String::new(), variant_name: name, bindings }));
                   } else {
                        // Unit variant
-                       return Ok((rest, Pattern::EnumPattern { enum_name: String::new(), variant_name: name, bindings: vec![] }));
+                       let bindings = crate::compiler::ast::EnumPatternBindings::Unit;
+                       return Ok((rest, Pattern::EnumPattern { enum_name: String::new(), variant_name: name, bindings }));
                   }
              }
          }
@@ -1245,9 +1282,7 @@ fn parse_enum_def(input: Input) -> IResult<Input, crate::compiler::ast::EnumDef,
                     let (rest, types) = separated_list1(expect_token(Token::Comma), parse_type)(rest)?;
                     let (rest, _) = expect_token(Token::RParen)(rest)?;
                     
-                    // Map tuple fields to named fields "0", "1", ...
-                    let fields = types.into_iter().enumerate().map(|(i, t)| (i.to_string(), t)).collect();
-                    Ok((rest, crate::compiler::ast::VariantDef { name: v_name, fields }))
+                    Ok((rest, crate::compiler::ast::VariantDef { name: v_name, kind: crate::compiler::ast::VariantKind::Tuple(types) }))
                 } else if let Ok((rest, _)) = expect_token(Token::LBrace)(input) {
                     // Struct Variant: Variant { name: Type, ... }
                     let (rest, fields) = separated_list1(
@@ -1260,9 +1295,9 @@ fn parse_enum_def(input: Input) -> IResult<Input, crate::compiler::ast::EnumDef,
                         }
                     )(rest)?;
                     let (rest, _) = expect_token(Token::RBrace)(rest)?;
-                    Ok((rest, crate::compiler::ast::VariantDef { name: v_name, fields }))
+                    Ok((rest, crate::compiler::ast::VariantDef { name: v_name, kind: crate::compiler::ast::VariantKind::Struct(fields) }))
                 } else {
-                     Ok((input, crate::compiler::ast::VariantDef { name: v_name, fields: vec![] }))
+                     Ok((input, crate::compiler::ast::VariantDef { name: v_name, kind: crate::compiler::ast::VariantKind::Unit }))
                 }
             }
         )(input)?;
@@ -1354,9 +1389,9 @@ fn parse_rule(input: Input) -> IResult<Input, crate::compiler::ast::Rule, Parser
     if let Ok((rest, _)) = expect_token(Token::Entails)(rest_after_head) {
         // Rule
         let (rest, body) = separated_list1(expect_token(Token::Comma), parse_logic_literal)(rest)?;
-        let (rest, _) = expect_token(Token::Dot)(rest)?;
+        let (rest, _) = alt((expect_token(Token::Dot), expect_token(Token::SemiColon)))(rest)?;
         Ok((rest, crate::compiler::ast::Rule { head, body, weight: None }))
-    } else if let Ok((rest, _)) = expect_token(Token::Dot)(rest_after_head) {
+    } else if let Ok((rest, _)) = alt((expect_token(Token::Dot), expect_token(Token::SemiColon)))(rest_after_head) {
         // Fact
         Ok((rest, crate::compiler::ast::Rule { head, body: vec![], weight: None }))
     } else {

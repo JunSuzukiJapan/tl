@@ -219,9 +219,19 @@ impl LivenessAnalyzer {
                     self.visit_expr(expr);
                 }
             }
-            ExprKind::EnumInit { fields, .. } => {
-                for (_, expr) in fields {
-                    self.visit_expr(expr);
+            ExprKind::EnumInit { payload, .. } => {
+                match payload {
+                    crate::compiler::ast::EnumVariantInit::Unit => {},
+                    crate::compiler::ast::EnumVariantInit::Tuple(exprs) => {
+                        for e in exprs {
+                            self.visit_expr(e);
+                        }
+                    },
+                    crate::compiler::ast::EnumVariantInit::Struct(fields) => {
+                        for (_, expr) in fields {
+                            self.visit_expr(expr);
+                        }
+                    }
                 }
             }
             ExprKind::TensorComprehension { clauses, body, .. } => {

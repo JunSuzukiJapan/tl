@@ -441,19 +441,19 @@ impl<'ctx> CodeGenerator<'ctx> {
             variants: vec![
                 VariantDef {
                     name: "Auto".to_string(),
-                    fields: vec![],
+                    kind: VariantKind::Unit,
                 },
                 VariantDef {
                     name: "Cpu".to_string(),
-                    fields: vec![],
+                    kind: VariantKind::Unit,
                 },
                 VariantDef {
                     name: "Metal".to_string(),
-                    fields: vec![],
+                    kind: VariantKind::Unit,
                 },
                 VariantDef {
                     name: "Cuda".to_string(),
-                    fields: vec![],
+                    kind: VariantKind::Unit,
                 },
             ],
         };
@@ -864,7 +864,13 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             for v in &e.variants {
                 let mut field_types: Vec<inkwell::types::BasicTypeEnum> = Vec::new();
-                for (_, ty) in &v.fields {
+                let fields_iter: Box<dyn Iterator<Item = &Type>> = match &v.kind {
+                     VariantKind::Unit => Box::new(std::iter::empty()),
+                     VariantKind::Tuple(types) => Box::new(types.iter()),
+                     VariantKind::Struct(fields) => Box::new(fields.iter().map(|(_, t)| t)),
+                };
+
+                for ty in fields_iter {
                     let field_llvm_ty = match ty {
                         Type::F32 => self.context.f32_type().into(),
                         Type::F64 => self.context.f64_type().into(),

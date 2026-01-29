@@ -324,7 +324,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let case_block = cases[i].1;
                     self.builder.position_at_end(case_block);
 
-                    if !variant.fields.is_empty() {
+                    let field_types_list = match &variant.kind {
+                        crate::compiler::ast::VariantKind::Unit => vec![],
+                        crate::compiler::ast::VariantKind::Tuple(types) => types.clone(),
+                        crate::compiler::ast::VariantKind::Struct(fields) => fields.iter().map(|(_, t)| t.clone()).collect(),
+                    };
+
+                    if !field_types_list.is_empty() {
                         // Cast Payload (Element 1 is [i8 x N])
                         let payload_ptr_raw = self
                             .builder
@@ -333,7 +339,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                         // Reconstruct Variant Struct Type for GEP
                         let mut field_types: Vec<inkwell::types::BasicTypeEnum> = vec![];
-                        for (_, ty) in &variant.fields {
+                        for ty in &field_types_list {
                             let llvm_ty = match ty {
                                 Type::F32 => self.context.f32_type().into(),
                                 Type::I64 => self.context.i64_type().into(),
@@ -366,7 +372,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             )
                             .unwrap();
 
-                        for (idx, (_, f_ty)) in variant.fields.iter().enumerate() {
+                        for (idx, f_ty) in field_types_list.iter().enumerate() {
                             if matches!(
                                 f_ty,
                                 Type::Tensor(_, _)
@@ -4010,10 +4016,16 @@ impl<'ctx> CodeGenerator<'ctx> {
             let case_block = cases[i].1;
             self.builder.position_at_end(case_block);
 
-            if !variant.fields.is_empty() {
+            let field_types_list = match &variant.kind {
+                crate::compiler::ast::VariantKind::Unit => vec![],
+                crate::compiler::ast::VariantKind::Tuple(types) => types.clone(),
+                crate::compiler::ast::VariantKind::Struct(fields) => fields.iter().map(|(_, t)| t.clone()).collect(),
+            };
+
+            if !field_types_list.is_empty() {
                 // Reconstruct field types for GEP/Load/Store
                 let mut field_types: Vec<inkwell::types::BasicTypeEnum> = vec![];
-                for (_, ty) in &variant.fields {
+                for ty in &field_types_list {
                     let llvm_ty = match ty {
                         Type::F32 => self.context.f32_type().into(),
                         Type::I64 => self.context.i64_type().into(),
@@ -4054,7 +4066,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .unwrap();
 
                 // Copy Fields
-                for (idx, (_, f_ty)) in variant.fields.iter().enumerate() {
+                for (idx, f_ty) in field_types_list.iter().enumerate() {
                     let src_field_ptr = self
                         .builder
                         .build_struct_gep(variant_struct_ty, src_variant_ptr, idx as u32, "src_f")

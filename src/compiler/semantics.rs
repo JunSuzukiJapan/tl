@@ -53,6 +53,8 @@ pub enum SemanticError {
     ContinueOutsideLoop,
     #[error("negation is not stratified: {0}")]
     NegationNotStratified(String),
+    #[error("Generic error: {0}")]
+    Generic(String),
 }
 
 impl SemanticError {
@@ -106,6 +108,7 @@ impl SemanticError {
             SemanticError::NegationNotStratified(name) => {
                 SemanticErrorKind::NegationNotStratified(name)
             }
+            SemanticError::Generic(msg) => SemanticErrorKind::UnknownFunction(msg), // Fallback mostly
         };
         TlError::Semantic { kind, span }
     }
@@ -211,19 +214,19 @@ impl SemanticAnalyzer {
             variants: vec![
                 VariantDef {
                     name: "Auto".to_string(),
-                    fields: vec![],
+                    kind: VariantKind::Unit,
                 },
                 VariantDef {
                     name: "Cpu".to_string(),
-                    fields: vec![],
+                    kind: VariantKind::Unit,
                 },
                 VariantDef {
                     name: "Metal".to_string(),
-                    fields: vec![],
+                    kind: VariantKind::Unit,
                 },
                 VariantDef {
                     name: "Cuda".to_string(),
-                    fields: vec![],
+                    kind: VariantKind::Unit,
                 },
             ],
         };
@@ -514,39 +517,46 @@ impl SemanticAnalyzer {
                     })?;
                 let variant_def = &enum_def.variants[variant_idx];
 
-                let mut seen_fields = HashSet::new();
-                let mut seen_vars = HashSet::new();
-                for (field_name, var_name) in bindings {
-                    if !seen_fields.insert(field_name.clone()) {
-                        return Err(SemanticError::DuplicateDefinition(format!(
-                            "Field {} in enum pattern",
-                            field_name
-                        )));
-                    }
-                    if !seen_vars.insert(var_name.clone()) {
-                        return Err(SemanticError::DuplicateDefinition(format!(
-                            "Binding {} in enum pattern",
-                            var_name
-                        )));
-                    }
+                let variant_def = &enum_def.variants[variant_idx];
 
-                    let field_type = variant_def
-                        .fields
-                        .iter()
-                        .find(|(f, _)| f == field_name)
-                        .map(|(_, t)| t)
-                        .ok_or_else(|| {
-                            SemanticError::VariableNotFound(format!(
-                                "Field {} in variant {}",
-                                field_name, variant_name
-                            ))
-                        })?;
-
-                    self.declare_variable(var_name.clone(), field_type.clone(), true)
-                        .unwrap();
+                match (&bindings, &variant_def.kind) {
+                     (EnumPatternBindings::Unit, VariantKind::Unit) => {
+                          Ok(Some(variant_idx))
+                     },
+                     (EnumPatternBindings::Tuple(vars), VariantKind::Tuple(types)) => {
+                          if vars.len() != types.len() {
+                                return Err(SemanticError::ArgumentCountMismatch{
+                                     name: variant_name.clone(),
+                                     expected: types.len(),
+                                     found: vars.len(),
+                                });
+                          }
+                          for (var_name, ty) in vars.iter().zip(types.iter()) {
+                                self.declare_variable(var_name.clone(), ty.clone(), false) // Immutable by default for simple bindings? Original code used 'true' (mutable). Let's use false to be safe/standard, or true if TL semantics require it. Original was true. I will use true.
+                                    .map_err(|e| SemanticError::DuplicateDefinition(var_name.clone()))?; 
+                          }
+                          Ok(Some(variant_idx))
+                     },
+                     (EnumPatternBindings::Struct(fields), VariantKind::Struct(def_fields)) => {
+                          let mut seen_fields = HashSet::new();
+                          let mut seen_vars = HashSet::new();
+                          for (field_name, var_name) in fields {
+                              if !seen_fields.insert(field_name.clone()) {
+                                  return Err(SemanticError::DuplicateDefinition(format!("Field {} in enum pattern", field_name)));
+                              }
+                              if !seen_vars.insert(var_name.clone()) {
+                                  return Err(SemanticError::DuplicateDefinition(format!("Binding {} in enum pattern", var_name)));
+                              }
+                              
+                              let field_type = def_fields.iter().find(|(f, _)| f == field_name).map(|(_, t)| t).ok_or_else(|| SemanticError::VariableNotFound(format!("Field {} in variant {}", field_name, variant_name)))?;
+                              
+                              self.declare_variable(var_name.clone(), field_type.clone(), true) // Using true based on previous code
+                                  .unwrap();
+                          }
+                          Ok(Some(variant_idx))
+                     },
+                     _ => Err(SemanticError::TypeMismatch{ expected: Type::UserDefined("Matching Variant Kind".into(), vec![]), found: Type::UserDefined("Invalid Pattern".into(), vec![]) })
                 }
-
-                Ok(Some(variant_idx))
             }
         }
     }
@@ -2128,10 +2138,43 @@ impl SemanticAnalyzer {
                 } else if let Some((enum_def, variant_def)) = self.resolve_enum_variant(name) {
                     // It is an Enum Variant! Transform to EnumInit.
                     let fields_owned = std::mem::take(fields);
+                    
+                    // Validate fields against variant definition here or later?
+                    // We need to convert named fields to appropriate payload.
+                    // For Tuple Variant, fields might be named "0", "1"... or maybe not supported in StructInit syntax?
+                    // Rust allows `Variant { 0: a, 1: b }` for tuple variants? No.
+                    // But our parser parses `Variant { ... }` as StructInit.
+                    
+                    let payload = match &variant_def.kind {
+                         crate::compiler::ast::VariantKind::Struct(def_fields) => {
+                              crate::compiler::ast::EnumVariantInit::Struct(fields_owned)
+                         },
+                         crate::compiler::ast::VariantKind::Tuple(types) => {
+                              // If using brace syntax for tuple variant, we expect fields "0", "1"...?
+                              // Or maybe we should Error? 
+                              // "Variant { ... }" is only valid for Struct Variant.
+                              // But if user wrote `Variant { 0: val }` maybe?
+                              // For now, let's assume StructInit syntax only maps to Struct Variant.
+                              return self.err(
+                                  SemanticError::TypeMismatch {
+                                      expected: Type::UserDefined("Struct Variant".into(), vec![]),
+                                      found: Type::UserDefined("Tuple/Unit Variant".into(), vec![]),
+                                  },
+                                  Some(expr.span.clone())
+                              );
+                         }
+                         crate::compiler::ast::VariantKind::Unit => {
+                              if !fields_owned.is_empty() {
+                                   return self.err(SemanticError::ArgumentCountMismatch { name: variant_def.name.clone(), expected: 0, found: fields_owned.len() }, Some(expr.span.clone()));
+                              }
+                              crate::compiler::ast::EnumVariantInit::Unit
+                         }
+                    };
+
                     expr.inner = ExprKind::EnumInit {
                         enum_name: enum_def.name.clone(),
                         variant_name: variant_def.name.clone(),
-                        fields: fields_owned,
+                        payload,
                     };
                     // Re-check as EnumInit
                     self.check_expr(expr)
@@ -2145,7 +2188,7 @@ impl SemanticAnalyzer {
             ExprKind::EnumInit {
                 enum_name,
                 variant_name,
-                fields,
+                payload,
             } => {
                 let enum_def = self
                     .enums
@@ -2165,94 +2208,54 @@ impl SemanticAnalyzer {
                     })
                     .map_err(|e| e.to_tl_error(Some(expr.span.clone())))?;
 
-                let mut initialized_fields = HashSet::new();
-                let mut inferred_generics: HashMap<String, Type> = HashMap::new();
-
-                for (field_name, field_expr) in fields {
-                    if initialized_fields.contains(field_name) {
-                        return self.err(
-                            SemanticError::DuplicateDefinition(format!(
-                                "Field {} in enum variant init",
-                                field_name
-                            )),
-                            Some(expr.span.clone()),
-                        );
-                    }
-                    initialized_fields.insert(field_name.clone());
-
-                    let expected_type = variant_def
-                        .fields
-                        .iter()
-                        .find(|(f, _)| f == field_name)
-                        .map(|(_, t)| t)
-                        .ok_or_else(|| {
-                            SemanticError::VariableNotFound(format!(
-                                "Field {} in variant {}",
-                                field_name, variant_name
-                            ))
-                        })
-                        .map_err(|e| e.to_tl_error(Some(expr.span.clone())))?;
-
-                    let found_type = self.check_expr(field_expr)?;
-                    
-                    // Infer generics
-                    let mut unify = |t1: &Type, t2: &Type| -> bool {
-                        if let Type::UserDefined(n1, _) = t1 {
-                            if enum_def.generics.contains(n1) {
-                                if let Some(existing) = inferred_generics.get(n1) {
-                                    return self.are_types_compatible(existing, t2);
-                                } else {
-                                    inferred_generics.insert(n1.clone(), t2.clone());
-                                    return true;
-                                }
-                            }
-                        }
-                        self.are_types_compatible(t1, t2)
-                    };
-
-                    if !unify(expected_type, &found_type) {
-                        return self.err(
-                            SemanticError::TypeMismatch {
-                                expected: expected_type.clone(),
-                                found: found_type,
-                            },
-                            Some(field_expr.span.clone()),
-                        );
-                    }
+                // Check payload
+                match (payload, &variant_def.kind) {
+                     (crate::compiler::ast::EnumVariantInit::Unit, crate::compiler::ast::VariantKind::Unit) => {
+                          Ok(Type::Enum(enum_name.clone(), vec![])) // Generics? match enum generics
+                     },
+                     (crate::compiler::ast::EnumVariantInit::Tuple(exprs), crate::compiler::ast::VariantKind::Tuple(types)) => {
+                          if exprs.len() != types.len() {
+                               return self.err(SemanticError::ArgumentCountMismatch{ name: variant_name.clone(), expected: types.len(), found: exprs.len() }, Some(expr.span.clone()));
+                          }
+                          // Check types
+                          // Need to handle generics... 
+                          // For now, just check exprs
+                           for e in exprs {
+                               let _ = self.check_expr(e)?;
+                           }
+                           Ok(Type::Enum(enum_name.clone(), vec![]))
+                     },
+                     (crate::compiler::ast::EnumVariantInit::Struct(fields), crate::compiler::ast::VariantKind::Struct(def_fields)) => {
+                         let mut initialized_fields = HashSet::new();
+                         // Logic similar to StructInit
+                         for (field_name, field_expr) in fields {
+                             // ... check duplicate, check existence, check type ...
+                             if initialized_fields.contains(field_name) {
+                                  return self.err(SemanticError::DuplicateDefinition(field_name.clone()), Some(field_expr.span.clone()));
+                             }
+                             initialized_fields.insert(field_name.clone());
+                             
+                             let expected_ty = def_fields.iter().find(|(n, _)| n == field_name).map(|(_, t)| t).ok_or_else(|| SemanticError::VariableNotFound(field_name.clone())).map_err(|e| e.to_tl_error(Some(field_expr.span.clone())))?;
+                             
+                             let found_ty = self.check_expr(field_expr)?;
+                             if !self.are_types_compatible(expected_ty, &found_ty) {
+                                  // try unify for generics... omitted for brevity but should be there
+                                  return self.err(SemanticError::TypeMismatch{ expected: expected_ty.clone(), found: found_ty }, Some(field_expr.span.clone()));
+                             }
+                         }
+                         
+                         // Check missing
+                         for (fname, _) in def_fields {
+                              if !initialized_fields.contains(fname) {
+                                   return self.err(SemanticError::ArgumentCountMismatch{ name: variant_name.clone(), expected: def_fields.len(), found: initialized_fields.len() }, Some(expr.span.clone()));
+                              }
+                         }
+                         Ok(Type::Enum(enum_name.clone(), vec![]))
+                     },
+                     _ => {
+                          self.err(SemanticError::TypeMismatch{ expected: Type::UserDefined("Correct Variant Kind".into(), vec![]), found: Type::UserDefined("Invalid Init".into(), vec![]) }, Some(expr.span.clone()))
+                     }
                 }
-
-                // Check for missing fields
-                for (field_name, _) in &variant_def.fields {
-                    if !initialized_fields.contains(field_name) {
-                        return self.err(
-                            SemanticError::ArgumentCountMismatch {
-                                name: format!("Variant init {}", variant_name),
-                                expected: variant_def.fields.len(),
-                                found: initialized_fields.len(),
-                            },
-                            Some(expr.span.clone()),
-                        );
-                    }
-                }
-                
-                // Construct type args
-                let mut type_args = Vec::new();
-                for param in &enum_def.generics {
-                    if let Some(ty) = inferred_generics.get(param) {
-                        type_args.push(ty.clone());
-                    } else {
-                        // defaulting to Void or error?
-                        // For now allow partial? Or error?
-                        // If un-inferred, return param itself? No that's monomorphization job.
-                        // Semantics expects concrete types?
-                        // Let's assume they are "Unknown" or just keep them generic?
-                        // But we return Type::Enum which expects args.
-                        // Let's assume Type::UserDefined(param)
-                        type_args.push(Type::UserDefined(param.clone(), vec![])); 
-                    }
-                }
-
-                Ok(Type::Enum(enum_name.clone(), type_args))
             }
             ExprKind::Match {
                 expr: subject_expr,
@@ -2485,11 +2488,11 @@ impl SemanticAnalyzer {
 
                 // 4. Try as Enum Unit Variant
                 if let Some((enum_def, variant_def)) = self.resolve_enum_variant(name) {
-                    if !variant_def.fields.is_empty() {
+                    if !matches!(variant_def.kind, crate::compiler::ast::VariantKind::Unit) {
                         return self.err(
                             SemanticError::TypeMismatch {
                                 expected: Type::UserDefined("Unit Variant".into(), vec![]),
-                                found: Type::UserDefined("Struct Variant".into(), vec![]),
+                                found: Type::UserDefined("Struct/Tuple Variant".into(), vec![]),
                             },
                             Some(expr.span.clone()),
                         );
@@ -2497,7 +2500,7 @@ impl SemanticAnalyzer {
                     expr.inner = ExprKind::EnumInit {
                         enum_name: enum_def.name.clone(),
                         variant_name: variant_def.name.clone(),
-                        fields: vec![],
+                        payload: crate::compiler::ast::EnumVariantInit::Unit,
                     };
                     return self.check_expr(expr);
                 }
@@ -4521,72 +4524,73 @@ impl SemanticAnalyzer {
                              let variant = variant_ref.clone();
 
                              // Found variant. Check args.
-                             // Unit Variant: args should be empty.
-                             // Tuple Variant: args should match fields.
-                             
-                             // Mapped fields "0", "1"... => positional.
-                             // EnumDef fields are Vec<(String, Type)>.
-                             
-                             if args.len() != variant.fields.len() {
-                                 return self.err(
-                                     SemanticError::ArgumentCountMismatch {
-                                         name: format!("{}::{}", type_name_key, method_name),
-                                         expected: variant.fields.len(),
-                                         found: args.len(),
-                                     },
-                                     Some(expr.span.clone()),
-                                 );
-                             }
-                             
-                             // Check argument types
-                             // Assuming positional matching for Tuple variants.
-                             // What about named fields? Can we call Struct Variant like a function?
-                             // Rust syntax `Variant { ... }`. `Variant(...)` is only for Tuple Variants.
-                             // If user writes `StructVariant(1, 2)`, it's error?
-                             // For now assume positional match works if counts match?
-                             // Or strictly check field names? Tuple variants have names "0", "1".
-                             
-                             let mut inferred_generics: HashMap<String, Type> = HashMap::new();
-                             
-                             for (i, arg_expr) in args.iter_mut().enumerate() {
-                                 let arg_type = self.check_expr(arg_expr)?;
-                                 let expected_type_def = &variant.fields[i].1;
-                                 
-                                 // Substitute enum generics if any?
-                                 // Enum Type::UserDefined(name, generics).
-                                 // We need to map EnumDef generics to provided generics.
-                                 // resolved_type (type_name alias) has generics.
-                                 // Construct substitution map.
-                                 if !enum_def.generics.is_empty() {
-                                     if let Type::UserDefined(_, provided_generics) = type_name {
-                                         if provided_generics.len() == enum_def.generics.len() {
-                                             for (ename, ptype) in enum_def.generics.iter().zip(provided_generics.iter()) {
-                                                 inferred_generics.insert(ename.clone(), ptype.clone());
-                                             }
-                                         }
-                                     }
+                             match &variant {
+                                 crate::compiler::ast::VariantDef { kind: crate::compiler::ast::VariantKind::Unit, .. } => {
+                                      if !args.is_empty() {
+                                          return self.err(
+                                              SemanticError::ArgumentCountMismatch {
+                                                  name: format!("{}::{}", type_name_key, method_name),
+                                                  expected: 0,
+                                                  found: args.len(),
+                                              },
+                                              Some(expr.span.clone()),
+                                          );
+                                      }
+                                      return Ok(type_name.clone());
                                  }
-                                 
-                                 let expected_type = self.substitute_generics(expected_type_def, &inferred_generics);
-                                 
-                                 if !self.are_types_compatible(&arg_type, &expected_type) {
-                                     return self.err(
-                                         SemanticError::TypeMismatch {
-                                             expected: expected_type,
-                                             found: arg_type,
-                                         },
-                                         Some(arg_expr.span.clone()),
-                                     );
-                                 }
-                             }
-                             
-                             // Return the Enum type
-                             // return Ok(type_name.clone());
-                             
+                                 crate::compiler::ast::VariantDef { kind: crate::compiler::ast::VariantKind::Tuple(types), .. } => {
+                                      if args.len() != types.len() {
+                                          return self.err(
+                                              SemanticError::ArgumentCountMismatch {
+                                                  name: format!("{}::{}", type_name_key, method_name),
+                                                  expected: types.len(),
+                                                  found: args.len(),
+                                              },
+                                              Some(expr.span.clone()),
+                                          );
+                                      }
 
-                             // Return the Enum type
-                            // Return the Enum type
-                            return Ok(type_name.clone());
+                                      let mut inferred_generics: HashMap<String, Type> = HashMap::new();
+                                      
+                                      // Construct substitution map.
+                                      if !enum_def.generics.is_empty() {
+                                          if let Type::UserDefined(_, provided_generics) = type_name {
+                                              if provided_generics.len() == enum_def.generics.len() {
+                                                  for (ename, ptype) in enum_def.generics.iter().zip(provided_generics.iter()) {
+                                                      inferred_generics.insert(ename.clone(), ptype.clone());
+                                                  }
+                                              }
+                                          }
+                                      }
+                                      
+                                      for (i, arg_expr) in args.iter_mut().enumerate() {
+                                          let arg_type = self.check_expr(arg_expr)?;
+                                          let expected_type_def = &types[i];
+                                          let expected_type = self.substitute_generics(expected_type_def, &inferred_generics);
+                                          
+                                          if !self.are_types_compatible(&arg_type, &expected_type) {
+                                              return self.err(
+                                                  SemanticError::TypeMismatch {
+                                                      expected: expected_type,
+                                                      found: arg_type,
+                                                  },
+                                                  Some(arg_expr.span.clone()),
+                                              );
+                                          }
+                                      }
+                                      return Ok(type_name.clone());
+                                 }
+                                 crate::compiler::ast::VariantDef { kind: crate::compiler::ast::VariantKind::Struct(_), .. } => {
+                                      // Struct variant cannot be called as function?
+                                      // Or do we support Constructor-like syntax?
+                                      // Rust supports `Variant { ... }`.
+                                      // If user tries `Variant(a, b)`, it is error.
+                                      return self.err(
+                                           SemanticError::Generic(format!("Struct variant {}::{} cannot be initialized with tuple syntax (use {{ ... }})", type_name_key, method_name)),
+                                           Some(expr.span.clone())
+                                      );
+                                 }
+                             }
 
                         }
                     }

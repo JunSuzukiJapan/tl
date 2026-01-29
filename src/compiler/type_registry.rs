@@ -104,13 +104,13 @@ impl TypeRegistry {
         self.register_ast_impls();
         
         // self.register_vec_methods(); // Replaced by register_ast_impls
-        self.register_hashmap_methods();
-        self.register_option_methods();
+        // self.register_hashmap_methods(); // Replaced by register_ast_impls
+        // self.register_option_methods(); // Replaced by register_ast_impls
         self.register_ml_methods(); // Tokenizer, KVCache, Map
         
         // Register generic type parameters
         self.generics.insert("Vec".to_string(), vec!["T".to_string()]);
-        self.generics.insert("Option".to_string(), vec!["T".to_string()]);
+        // self.generics.insert("Option".to_string(), vec!["T".to_string()]); // Replaced by register_ast_impls
         self.generics.insert("HashMap".to_string(), vec!["K".to_string(), "V".to_string()]);
         self.generics.insert("Map".to_string(), vec!["K".to_string(), "V".to_string()]);
     }
@@ -1032,250 +1032,9 @@ impl TypeRegistry {
         self.methods.insert("String".to_string(), string_map);
     }
 
-    /// Register Vec methods
-    fn register_vec_methods(&mut self) {
-        // Special Vec<U8> methods (legacy/specific)
-        let mut vec_u8_methods = HashMap::new();
-        vec_u8_methods.insert(
-            "len".to_string(),
-            MethodSignature {
-                name: "len".to_string(),
-                params: vec![],
-                return_type: ReturnType::Exact(Type::I64),
-                is_varargs: false,
-                min_args: 0,
-            },
-        );
-        vec_u8_methods.insert(
-            "read_i32_be".to_string(),
-            MethodSignature {
-                name: "read_i32_be".to_string(),
-                params: vec![ParamType::AnyInt],
-                return_type: ReturnType::Exact(Type::I64),
-                is_varargs: false,
-                min_args: 1,
-            },
-        );
-        vec_u8_methods.insert(
-            "free".to_string(),
-            MethodSignature {
-                name: "free".to_string(),
-                params: vec![],
-                return_type: ReturnType::Void,
-                is_varargs: false,
-                min_args: 0,
-            },
-        );
-        vec_u8_methods.insert(
-            "to_tensor_2d".to_string(),
-            MethodSignature {
-                name: "to_tensor_2d".to_string(),
-                params: vec![ParamType::AnyInt, ParamType::AnyInt, ParamType::AnyInt],
-                return_type: ReturnType::Exact(Type::Tensor(Box::new(Type::F32), 2)),
-                is_varargs: false,
-                min_args: 3,
-            },
-        );
-        self.methods.insert("Vec<U8>".to_string(), vec_u8_methods);
 
-        // Generic Vec methods (registered under "Vec")
-        // These are fallbacks if specific Vec<T> methods aren't found
-        let mut vec_generic_methods = HashMap::new();
-        
-        // new(capacity) -> Vec<T> (Static method? No, usually Vec::new())
-        // But here we register instance methods. 
-        // Static methods are handled differently (StaticMethodCall).
-        // Let's assume we implement instance methods for now.
-        
-        // push(val: T)
-        vec_generic_methods.insert(
-            "push".to_string(),
-            MethodSignature {
-                name: "push".to_string(),
-                params: vec![ParamType::Generic("T".to_string())],
-                return_type: ReturnType::Void,
-                is_varargs: false,
-                min_args: 1,
-            }
-        );
 
-        // pop() -> T
-        // Note: We don't have ReturnType::Generic("T") yet.
-        // ReturnType has `SameAsReceiver`. But we need `T`.
-        // Or we can use `Exact(Type::UserDefined("T"))` and apply bindings?
-        // `codegen` uses `MethodSignature` to check types.
-        // `semantics.rs` uses `get_method` to validate args.
-        // Return type resolution: `semantics.rs` needs to substitute `T` with concrete type.
-        // We need to check how `semantics.rs` handles return types.
-        // `semantics.rs` blindly recursively resolves UserType?
-        // Let's check `semantics.rs`. If I return `Type::UserDefined("T", [])`, will it be substituted?
-        // Probably not automatically unless `semantics.rs` does it.
-        // But for `push`, `ParamType::Generic` is used in `matches_param_type` (which I just updated).
-        // For return type, we might need `ReturnType::Generic`.
-        // Let's add `ReturnType::Generic("T")` too?
-        // For now, let's stick to `push` and `len` and `get` which are most important.
-        // `get(i) -> T`. We need `ReturnType::Generic`.
-        
-        vec_generic_methods.insert(
-             "len".to_string(),
-             MethodSignature {
-                 name: "len".to_string(),
-                 params: vec![],
-                 return_type: ReturnType::Exact(Type::I64),
-                 is_varargs: false,
-                 min_args: 0,
-             }
-        );
 
-        vec_generic_methods.insert(
-             "get".to_string(),
-             MethodSignature {
-                 name: "get".to_string(),
-                 params: vec![ParamType::AnyInt],
-                 return_type: ReturnType::Generic("T".to_string()),
-                 is_varargs: false,
-                 min_args: 1,
-             }
-        );
-        
-        // get(index) -> T
-        // Need to update ReturnType enum first? 
-        // Yes, likely.
-        // pop() -> T
-        vec_generic_methods.insert(
-            "pop".to_string(),
-            MethodSignature {
-                name: "pop".to_string(),
-                params: vec![],
-                return_type: ReturnType::Generic("T".to_string()),
-                is_varargs: false,
-                min_args: 0,
-            },
-        );
-        // insert(index, val) -> void
-        vec_generic_methods.insert(
-            "insert".to_string(),
-            MethodSignature {
-                name: "insert".to_string(),
-                params: vec![ParamType::Exact(Type::I64), ParamType::Generic("T".to_string())],
-                return_type: ReturnType::Exact(Type::Void),
-                is_varargs: false,
-                min_args: 2,
-            },
-        );
-        // remove(index) -> T
-        vec_generic_methods.insert(
-            "remove".to_string(),
-            MethodSignature {
-                name: "remove".to_string(),
-                params: vec![ParamType::Exact(Type::I64)],
-                return_type: ReturnType::Generic("T".to_string()),
-                is_varargs: false,
-                min_args: 1,
-            },
-        );
-        // clear() -> void
-        vec_generic_methods.insert(
-            "clear".to_string(),
-            MethodSignature {
-                name: "clear".to_string(),
-                params: vec![],
-                return_type: ReturnType::Exact(Type::Void),
-                is_varargs: false,
-                min_args: 0,
-            },
-        );
-        // is_empty() -> Bool
-        vec_generic_methods.insert(
-            "is_empty".to_string(),
-            MethodSignature {
-                name: "is_empty".to_string(),
-                params: vec![],
-                return_type: ReturnType::Exact(Type::Bool),
-                is_varargs: false,
-                min_args: 0,
-            },
-        );
-        // contains(val) -> Bool
-        vec_generic_methods.insert(
-            "contains".to_string(),
-            MethodSignature {
-                name: "contains".to_string(),
-                params: vec![ParamType::Generic("T".to_string())],
-                return_type: ReturnType::Exact(Type::Bool),
-                is_varargs: false,
-                min_args: 1,
-            },
-        );
-
-        vec_generic_methods.insert(
-            "free".to_string(),
-            MethodSignature {
-                name: "free".to_string(),
-                params: vec![],
-                return_type: ReturnType::Void,
-                is_varargs: false,
-                min_args: 0,
-            }
-        );
-
-        self.methods.insert("Vec".to_string(), vec_generic_methods);
-    }
-
-    /// Register Option<T> methods
-    fn register_option_methods(&mut self) {
-        let mut option_methods = HashMap::new();
-
-        // is_some() -> Bool
-        option_methods.insert(
-            "is_some".to_string(),
-            MethodSignature {
-                name: "is_some".to_string(),
-                params: vec![],
-                return_type: ReturnType::Exact(Type::Bool),
-                is_varargs: false,
-                min_args: 0,
-            },
-        );
-
-        // is_none() -> Bool
-        option_methods.insert(
-            "is_none".to_string(),
-            MethodSignature {
-                name: "is_none".to_string(),
-                params: vec![],
-                return_type: ReturnType::Exact(Type::Bool),
-                is_varargs: false,
-                min_args: 0,
-            },
-        );
-
-        // unwrap() -> T
-        option_methods.insert(
-            "unwrap".to_string(),
-            MethodSignature {
-                name: "unwrap".to_string(),
-                params: vec![],
-                return_type: ReturnType::Generic("T".to_string()),
-                is_varargs: false,
-                min_args: 0,
-            },
-        );
-
-        // unwrap_or(default: T) -> T
-        option_methods.insert(
-            "unwrap_or".to_string(),
-            MethodSignature {
-                name: "unwrap_or".to_string(),
-                params: vec![ParamType::Generic("T".to_string())],
-                return_type: ReturnType::Generic("T".to_string()),
-                is_varargs: false,
-                min_args: 1,
-            },
-        );
-
-        self.methods.insert("Option".to_string(), option_methods);
-    }
 
     /// Register ML-related special types (Tokenizer, KVCache, Map)
     fn register_ml_methods(&mut self) {
@@ -1435,7 +1194,6 @@ impl TypeRegistry {
             },
         );
         self.methods.insert("Map".to_string(), map_methods);
-        self.register_option_methods();
     }
 
 
@@ -1606,105 +1364,7 @@ impl TypeRegistry {
             _ => crate::compiler::generics::GenericResolver::types_equivalent(a, b),
         }
     }
-    fn register_hashmap_methods(&mut self) {
-        let mut map_methods = HashMap::new();
 
-        // new() -> HashMap<K, V>
-        map_methods.insert(
-            "new".to_string(),
-            MethodSignature {
-                name: "new".to_string(),
-                params: vec![],
-                return_type: ReturnType::Exact(Type::UserDefined("HashMap".to_string(), vec![
-                    Type::Void,
-                    Type::Void,
-                ])),
-                is_varargs: false,
-                min_args: 0,
-            },
-        );
-
-        // insert(key: K, value: V) -> Void
-        map_methods.insert(
-            "insert".to_string(),
-            MethodSignature {
-                name: "insert".to_string(),
-                params: vec![
-                    // Key: K
-                    ParamType::Generic("K".to_string()),
-                    // Value: V
-                    ParamType::Generic("V".to_string()),
-                ],
-                return_type: ReturnType::Exact(Type::Bool), // Workaround for Void Codegen panic
-                is_varargs: false,
-                min_args: 2,
-            },
-        );
-
-        // get(key: K) -> V
-        map_methods.insert(
-            "get".to_string(),
-            MethodSignature {
-                name: "get".to_string(),
-                params: vec![
-                    ParamType::Generic("K".to_string())
-                ],
-                return_type: ReturnType::Generic("V".to_string()),
-                is_varargs: false,
-                min_args: 1,
-            },
-        );
-
-        // remove(key: K) -> V
-        map_methods.insert(
-            "remove".to_string(),
-            MethodSignature {
-                name: "remove".to_string(),
-                params: vec![ParamType::Generic("K".to_string())],
-                return_type: ReturnType::Generic("V".to_string()),
-                is_varargs: false,
-                min_args: 1,
-            },
-        );
-
-        // contains_key(key: K) -> Bool
-        map_methods.insert(
-            "contains_key".to_string(),
-            MethodSignature {
-                name: "contains_key".to_string(),
-                params: vec![ParamType::Generic("K".to_string())],
-                return_type: ReturnType::Exact(Type::Bool),
-                is_varargs: false,
-                min_args: 1,
-            },
-        );
-
-        // len() -> I64
-        map_methods.insert(
-            "len".to_string(),
-            MethodSignature {
-                name: "len".to_string(),
-                params: vec![],
-                return_type: ReturnType::Exact(Type::I64),
-                is_varargs: false,
-                min_args: 0,
-            },
-        );
-
-        // clear() -> Void
-        map_methods.insert(
-            "clear".to_string(),
-            MethodSignature {
-                name: "clear".to_string(),
-                params: vec![],
-                return_type: ReturnType::Exact(Type::Bool),
-                is_varargs: false,
-                min_args: 0,
-            },
-        );
-
-        self.methods.insert("HashMap".to_string(), map_methods);
-    }
     /// Register builtin implementations from AST
     fn register_ast_impls(&mut self) {
         let impls = builtin_ast::load_builtin_impls();

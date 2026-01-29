@@ -1712,7 +1712,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             ExprKind::EnumInit {
                 enum_name,
                 variant_name,
-                fields,
+                payload,
             } => {
                 let enum_def = self
                     .enum_defs
@@ -1767,7 +1767,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // 3. Store Fields
                 let variant_def = &enum_def.variants[variant_idx];
-                if !fields.is_empty() {
+                
+                // Helper to compile field storage
+                let mut compile_fields = |fields_def: &Vec<Type>, exprs: &Vec<Expr>, field_names: Option<&Vec<String>>| -> Result<(), String> {
                     let payload_ptr_raw = self
                         .builder
                         .build_struct_gep(enum_ty, alloca, 1, "payload_ptr_raw")
@@ -1775,7 +1777,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                     // Reconstruct Variant Struct Type
                     let mut field_types: Vec<inkwell::types::BasicTypeEnum> = vec![];
-                    for (_, ty) in &variant_def.fields {
+                    for ty in fields_def {
                         let llvm_ty = match ty {
                             Type::F32 => self.context.f32_type().into(),
                             Type::I64 => self.context.i64_type().into(),
@@ -1803,21 +1805,24 @@ impl<'ctx> CodeGenerator<'ctx> {
                         )
                         .unwrap();
 
-                    // Sort fields to match definition order (parser might shuffle? No, Vec is ordered)
-                    // But init fields might be out of order? AST stores as Vec, usually parser preserves source order.
-                    // But user might write out of order? AST doesn't enforce order if named?
-                    // AST `EnumInit` has `fields: Vec<(String, Expr)>`. Semantics checks existence.
-                    // We need to iterate over VARIANT definition fields and find corresponding expr in INIT.
-
-                    for (idx, (f_name, f_ty)) in variant_def.fields.iter().enumerate() {
-                        let (_, expr) = fields
-                            .iter()
-                            .find(|(n, _)| n == f_name)
-                            .ok_or(format!("Missing field {}", f_name))?;
+                    // Iterate over DEFINITION fields
+                    for (idx, f_ty) in fields_def.iter().enumerate() {
+                        // Find expression
+                        let expr = if let Some(names) = field_names {
+                             // Struct variant: find by name
+                             // exprs is actually not Vec<Expr>, but we pass it as such? 
+                             // Wait, payload closure arg needs adjustment.
+                             // Actually, let's handle struct/tuple separately in the match below to avoid closure complexity.
+                             // Placeholder to compile
+                             return Err("Struct variant not supported in closure helper".to_string());
+                        } else {
+                             // Tuple variant: by index
+                             &exprs[idx]
+                        };
 
                         let (val, _) = self.compile_expr(expr)?;
-                        // Deep clone if needed?
-                        // Similar to StructInit/Let: r-value move, l-value clone.
+                        
+                        // Deep clone logic
                         let is_rvalue = matches!(
                             &expr.inner,
                             ExprKind::FnCall(_, _)
@@ -1835,7 +1840,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             _ => false,
                         };
                         if should_deep_clone {
-                            stored_val = self.emit_deep_clone(val, f_ty)?;
+                             stored_val = self.emit_deep_clone(val, f_ty)?;
                         }
 
                         let f_ptr = self
@@ -1849,26 +1854,145 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .map_err(|e| e.to_string())?;
 
                         self.builder.build_store(f_ptr, stored_val).unwrap();
-
-                        // Register ownership if needed
-                        if matches!(
-                            f_ty,
-                            Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _)
-                        ) {
-                            // Struct owns it now.
-                            // If we deep cloned, we own the clone.
-                            // If we moved (is_rvalue), we own the original.
-                        }
                     }
+                    Ok(())
+                };
+
+                match (&variant_def.kind, payload) {
+                     (crate::compiler::ast::VariantKind::Unit, crate::compiler::ast::EnumVariantInit::Unit) => {
+                         // No fields to store
+                     },
+                     (crate::compiler::ast::VariantKind::Tuple(types), crate::compiler::ast::EnumVariantInit::Tuple(exprs)) => {
+                         // Simplify: inline the logic
+                        let payload_ptr_raw = self
+                            .builder
+                            .build_struct_gep(enum_ty, alloca, 1, "payload_ptr_raw")
+                            .map_err(|e| e.to_string())?;
+
+                        // Reconstruct Variant Struct Type
+                        let mut field_types_llvm: Vec<inkwell::types::BasicTypeEnum> = vec![];
+                        for ty in types {
+                             let llvm_ty = match ty {
+                                Type::F32 => self.context.f32_type().into(),
+                                Type::I64 => self.context.i64_type().into(),
+                                Type::Bool => self.context.bool_type().into(),
+                                Type::Tensor(_, _)
+                                | Type::Struct(_, _)
+                                | Type::Enum(_, _)
+                                | Type::UserDefined(_, _)
+                                | Type::Vec(_) => self
+                                    .context
+                                    .ptr_type(inkwell::AddressSpace::default())
+                                    .into(),
+                                _ => self.context.i64_type().into(),
+                            };
+                            field_types_llvm.push(llvm_ty);
+                        }
+                        let variant_struct_ty = self.context.struct_type(&field_types_llvm, false);
+
+                        let payload_ptr = self
+                            .builder
+                            .build_pointer_cast(
+                                payload_ptr_raw,
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "payload_cast",
+                            )
+                            .unwrap();
+                        
+                        for (idx, (f_ty, expr)) in types.iter().zip(exprs.iter()).enumerate() {
+                             let (val, _) = self.compile_expr(expr)?;
+                             
+                            let is_rvalue = matches!(
+                                &expr.inner,
+                                ExprKind::FnCall(_, _)
+                                    | ExprKind::MethodCall(_, _, _)
+                                    | ExprKind::StaticMethodCall(_, _, _)
+                                    | ExprKind::BinOp(_, _, _)
+                                    | ExprKind::UnOp(_, _)
+                                    | ExprKind::TensorLiteral(_)
+                                    | ExprKind::Block(_)
+                            );
+                            let mut stored_val = val;
+                            let should_deep_clone = match f_ty {
+                                Type::Tensor(_, _) => !is_rvalue,
+                                Type::Struct(_, _) | Type::UserDefined(_, _) => !is_rvalue,
+                                _ => false,
+                            };
+                            if should_deep_clone {
+                                 stored_val = self.emit_deep_clone(val, f_ty)?;
+                            }
+                            
+                            let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "").map_err(|e| e.to_string())?;
+                            self.builder.build_store(f_ptr, stored_val).unwrap();
+                        }
+                     },
+                     (crate::compiler::ast::VariantKind::Struct(fields_def), crate::compiler::ast::EnumVariantInit::Struct(exprs)) => {
+                        let payload_ptr_raw = self
+                            .builder
+                            .build_struct_gep(enum_ty, alloca, 1, "payload_ptr_raw")
+                            .map_err(|e| e.to_string())?;
+                        
+                        let mut field_types_llvm: Vec<inkwell::types::BasicTypeEnum> = vec![];
+                        for (_, ty) in fields_def {
+                             let llvm_ty = match ty {
+                                Type::F32 => self.context.f32_type().into(),
+                                Type::I64 => self.context.i64_type().into(),
+                                Type::Bool => self.context.bool_type().into(),
+                                Type::Tensor(_, _)
+                                | Type::Struct(_, _)
+                                | Type::Enum(_, _)
+                                | Type::UserDefined(_, _)
+                                | Type::Vec(_) => self
+                                    .context
+                                    .ptr_type(inkwell::AddressSpace::default())
+                                    .into(),
+                                _ => self.context.i64_type().into(),
+                            };
+                            field_types_llvm.push(llvm_ty);
+                        }
+                        let variant_struct_ty = self.context.struct_type(&field_types_llvm, false);
+
+                        let payload_ptr = self
+                            .builder
+                            .build_pointer_cast(
+                                payload_ptr_raw,
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "payload_cast",
+                            )
+                            .unwrap();
+                            
+                        for (idx, (f_name, f_ty)) in fields_def.iter().enumerate() {
+                             let (_, expr) = exprs.iter().find(|(n, _)| n == f_name).ok_or(format!("Missing field {}", f_name))?;
+                             
+                             let (val, _) = self.compile_expr(expr)?;
+                             
+                            let is_rvalue = matches!(
+                                &expr.inner,
+                                ExprKind::FnCall(_, _)
+                                    | ExprKind::MethodCall(_, _, _)
+                                    | ExprKind::StaticMethodCall(_, _, _)
+                                    | ExprKind::BinOp(_, _, _)
+                                    | ExprKind::UnOp(_, _)
+                                    | ExprKind::TensorLiteral(_)
+                                    | ExprKind::Block(_)
+                            );
+                            let mut stored_val = val;
+                            let should_deep_clone = match f_ty {
+                                Type::Tensor(_, _) => !is_rvalue,
+                                Type::Struct(_, _) | Type::UserDefined(_, _) => !is_rvalue,
+                                _ => false,
+                            };
+                            if should_deep_clone {
+                                 stored_val = self.emit_deep_clone(val, f_ty)?;
+                            }
+                            
+                            let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "").map_err(|e| e.to_string())?;
+                            self.builder.build_store(f_ptr, stored_val).unwrap();
+                        }
+                     },
+                     _ => return Err(format!("Mismatch between variant definition {:?} and init payload {:?}", variant_def.kind, payload)),
                 }
 
-                // Return pointer to Enum
-                // Wait, objects are passed by pointer usually.
-                // But `alloca` IS a pointer to the struct storage.
-                // If I want to return the "Value", for Struct/Enum, the Value IS the pointer.
-                // So I return `alloca.into()`.
-                // Check struct init logic.
-                // compile_struct_init returns `alloca.into()`.
                 Ok((alloca.into(), Type::Enum(enum_name.clone(), vec![])))
             }
             ExprKind::Match {
@@ -4412,9 +4536,14 @@ impl<'ctx> CodeGenerator<'ctx> {
              if let Some(enum_def) = self.enum_defs.get(struct_name).cloned() {
                  if let Some(variant_idx) = enum_def.variants.iter().position(|v| v.name == method) {
                      let variant_def = &enum_def.variants[variant_idx];
-                     if args.len() != variant_def.fields.len() {
-                         return Err(format!("Enum variant {}::{} expects {} args, got {}", struct_name, method, variant_def.fields.len(), args.len()));
-                     }
+                      let field_count = match &variant_def.kind {
+                          crate::compiler::ast::VariantKind::Unit => 0,
+                          crate::compiler::ast::VariantKind::Tuple(t) => t.len(),
+                          crate::compiler::ast::VariantKind::Struct(f) => f.len(),
+                      };
+                      if args.len() != field_count {
+                          return Err(format!("Enum variant {}::{} expects {} args, got {}", struct_name, method, field_count, args.len()));
+                      }
                      
                      let enum_ty = *self.enum_types.get(struct_name).ok_or(format!("Enum type {} not found", struct_name))?;
                      
@@ -4446,21 +4575,26 @@ impl<'ctx> CodeGenerator<'ctx> {
                      self.builder.build_store(tag_ptr, self.context.i32_type().const_int(variant_idx as u64, false)).map_err(|e| e.to_string())?;
                      
                      // Store Fields
-                     if !variant_def.fields.is_empty() {
-                         let payload_ptr_raw = self.builder.build_struct_gep(enum_ty, alloca, 1, "payload_ptr_raw").map_err(|e| e.to_string())?;
-                         
-                         let mut field_types = vec![];
-                         for (_, ty) in &variant_def.fields {
-                             let llvm_ty = match ty {
-                                 Type::F32 => self.context.f32_type().into(),
-                                 Type::I64 => self.context.i64_type().into(),
-                                 Type::Bool => self.context.bool_type().into(),
-                                 Type::Tensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::UserDefined(_, _) | Type::Vec(_) => 
-                                     self.context.ptr_type(inkwell::AddressSpace::default()).into(),
-                                 _ => self.context.i64_type().into(),
-                             };
-                             field_types.push(llvm_ty);
-                         }
+                      let field_types_list = match &variant_def.kind {
+                            crate::compiler::ast::VariantKind::Unit => vec![],
+                            crate::compiler::ast::VariantKind::Tuple(types) => types.clone(),
+                            crate::compiler::ast::VariantKind::Struct(fields) => fields.iter().map(|(_, t)| t.clone()).collect(),
+                      };
+                      if !field_types_list.is_empty() {
+                          let payload_ptr_raw = self.builder.build_struct_gep(enum_ty, alloca, 1, "payload_ptr_raw").map_err(|e| e.to_string())?;
+                          
+                          let mut field_types = vec![];
+                          for ty in &field_types_list {
+                              let llvm_ty = match ty {
+                                  Type::F32 => self.context.f32_type().into(),
+                                  Type::I64 => self.context.i64_type().into(),
+                                  Type::Bool => self.context.bool_type().into(),
+                                  Type::Tensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::UserDefined(_, _) | Type::Vec(_) => 
+                                      self.context.ptr_type(inkwell::AddressSpace::default()).into(),
+                                  _ => self.context.i64_type().into(),
+                              };
+                              field_types.push(llvm_ty);
+                          }
                          let variant_struct_ty = self.context.struct_type(&field_types, false);
                          
                          let payload_ptr = self.builder.build_pointer_cast(
@@ -5342,23 +5476,33 @@ impl<'ctx> CodeGenerator<'ctx> {
         enum_ptr: inkwell::values::PointerValue<'ctx>,
         enum_def: &EnumDef,
         variant_idx: usize,
-        bindings: &[(String, String)],
+        bindings: &crate::compiler::ast::EnumPatternBindings,
     ) -> Result<(), String> {
-        if bindings.is_empty() {
-            return Ok(());
-        }
-
         let variant_def = &enum_def.variants[variant_idx];
-        let mut field_types = Vec::with_capacity(variant_def.fields.len());
-        for (_, ty) in &variant_def.fields {
-            field_types.push(self.get_llvm_type(ty)?);
-        }
-        let variant_struct_ty = self.context.struct_type(&field_types, false);
 
+        // Prepare Variant Struct Type for GEP
+        let mut field_types_llvm: Vec<inkwell::types::BasicTypeEnum> = vec![];
+        let fields_iter: Box<dyn Iterator<Item = &Type>> = match &variant_def.kind {
+             crate::compiler::ast::VariantKind::Unit => Box::new(std::iter::empty()),
+             crate::compiler::ast::VariantKind::Tuple(types) => Box::new(types.iter()),
+             crate::compiler::ast::VariantKind::Struct(fields) => Box::new(fields.iter().map(|(_, t)| t)),
+        };
+        
+        for ty in fields_iter {
+            field_types_llvm.push(self.get_llvm_type(ty)?);
+        }
+        let variant_struct_ty = self.context.struct_type(&field_types_llvm, false);
+
+        // Get Payload Pointer
+        // Always GEP to index 1 (payload) if not unit?
+        // Wait, if Unit, layout is just Tag?
+        // Enum layout: { i32 tag, Union payload }? Or { i32 tag, [MaxPayloadSize x i8] }?
+        // `builtin_ast.rs` defines Enum layout.
+        // Assuming Enum is { tag, payload }.
         let payload_ptr_raw = self
             .builder
             .build_struct_gep(enum_ty, enum_ptr, 1, "payload_ptr_raw")
-            .unwrap();
+            .map_err(|e| e.to_string())?;
         let payload_ptr = self
             .builder
             .build_pointer_cast(
@@ -5368,44 +5512,89 @@ impl<'ctx> CodeGenerator<'ctx> {
             )
             .unwrap();
 
-        for (field_name, bind_name) in bindings {
-            let f_idx = variant_def
-                .fields
-                .iter()
-                .position(|(n, _)| n == field_name)
-                .ok_or("Enum field not found")?;
-            let (_, f_ty) = &variant_def.fields[f_idx];
+        match (&variant_def.kind, bindings) {
+            (crate::compiler::ast::VariantKind::Unit, crate::compiler::ast::EnumPatternBindings::Unit) => {
+                Ok(())
+            },
+            (crate::compiler::ast::VariantKind::Tuple(types), crate::compiler::ast::EnumPatternBindings::Tuple(vars)) => {
+                if types.len() != vars.len() {
+                    return Err(format!("Tuple pattern length mismatch: expected {}, found {}", types.len(), vars.len()));
+                }
+                
+                for (i, bind_name) in vars.iter().enumerate() {
+                    let f_ty = &types[i];
+                    
+                    let f_ptr = self
+                        .builder
+                        .build_struct_gep(variant_struct_ty, payload_ptr, i as u32, "field_ptr")
+                        .map_err(|e| e.to_string())?;
 
-            let f_ptr = self
-                .builder
-                .build_struct_gep(variant_struct_ty, payload_ptr, f_idx as u32, "field_ptr")
-                .unwrap();
+                    let llvm_ty = self.get_llvm_type(f_ty)?;
+                    let f_val = self.builder.build_load(llvm_ty, f_ptr, "bind_val").unwrap();
 
-            let llvm_ty = self.get_llvm_type(f_ty)?;
-            let f_val = self.builder.build_load(llvm_ty, f_ptr, "bind_val").unwrap();
+                    let alloca = self.create_entry_block_alloca(current_func, bind_name, f_ty)?;
+                    let stored_val = if matches!(
+                        f_ty,
+                        Type::Tensor(_, _)
+                            | Type::Struct(_, _)
+                            | Type::Enum(_, _)
+                            | Type::UserDefined(_, _)
+                            | Type::Tuple(_)
+                    ) {
+                        self.emit_deep_clone(f_val, f_ty)?
+                    } else {
+                        f_val
+                    };
+                    self.builder.build_store(alloca, stored_val).unwrap();
 
-            let alloca = self.create_entry_block_alloca(current_func, bind_name, f_ty)?;
-            let stored_val = if matches!(
-                f_ty,
-                Type::Tensor(_, _)
-                    | Type::Struct(_, _)
-                    | Type::Enum(_, _)
-                    | Type::UserDefined(_, _)
-                    | Type::Tuple(_)
-            ) {
-                self.emit_deep_clone(f_val, f_ty)?
-            } else {
-                f_val
-            };
-            self.builder.build_store(alloca, stored_val).unwrap();
+                    self.variables
+                        .last_mut()
+                        .unwrap()
+                        .insert(bind_name.clone(), (alloca.into(), f_ty.clone(), super::CLEANUP_FULL));
+                }
+                Ok(())
+            },
+            (crate::compiler::ast::VariantKind::Struct(fields), crate::compiler::ast::EnumPatternBindings::Struct(bindings_list)) => {
+                for (field_name, bind_name) in bindings_list {
+                    let f_idx = fields
+                        .iter()
+                        .position(|(n, _)| n == field_name)
+                        .ok_or(format!("Field {} not found in variant {}", field_name, variant_def.name))?;
+                    
+                    let (_, f_ty) = &fields[f_idx];
 
-            self.variables
-                .last_mut()
-                .unwrap()
-                .insert(bind_name.clone(), (alloca.into(), f_ty.clone(), super::CLEANUP_FULL));
+                    let f_ptr = self
+                        .builder
+                        .build_struct_gep(variant_struct_ty, payload_ptr, f_idx as u32, "field_ptr")
+                        .map_err(|e| e.to_string())?;
+
+                    let llvm_ty = self.get_llvm_type(f_ty)?;
+                    let f_val = self.builder.build_load(llvm_ty, f_ptr, "bind_val").unwrap();
+
+                    let alloca = self.create_entry_block_alloca(current_func, bind_name, f_ty)?;
+                    let stored_val = if matches!(
+                        f_ty,
+                        Type::Tensor(_, _)
+                            | Type::Struct(_, _)
+                            | Type::Enum(_, _)
+                            | Type::UserDefined(_, _)
+                            | Type::Tuple(_)
+                    ) {
+                        self.emit_deep_clone(f_val, f_ty)?
+                    } else {
+                        f_val
+                    };
+                    self.builder.build_store(alloca, stored_val).unwrap();
+
+                    self.variables
+                        .last_mut()
+                        .unwrap()
+                        .insert(bind_name.clone(), (alloca.into(), f_ty.clone(), super::CLEANUP_FULL));
+                }
+                Ok(())
+            },
+             _ => Ok(()), 
         }
-
-        Ok(())
     }
 
     fn is_lvalue_expr(expr: &Expr) -> bool {

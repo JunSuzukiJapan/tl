@@ -132,11 +132,14 @@ pub struct ImplBlock {
 #[derive(Debug, Clone, PartialEq)]
 pub struct VariantDef {
     pub name: String,
-    pub fields: Vec<(String, Type)>, // Named fields or empty for unit/tuple-like
-                                     // For now we only support named fields or unit. Tuple variants can be named fields "0", "1"... or just distinct syntax?
-                                     // Let's stick to named fields for simplicity (struct variants), or maybe tuple variants too later.
-                                     // Rust allows: Unit, Tuple(A,B), Struct{x:A}
-                                     // Let's start with Struct-like variants (named fields) and Unit variants (empty fields).
+    pub kind: VariantKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum VariantKind {
+    Unit,
+    Tuple(Vec<Type>),
+    Struct(Vec<(String, Type)>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -268,11 +271,11 @@ pub enum ExprKind {
     // Struct Init: Name { field: value, ... }
     StructInit(String, Vec<Type>, Vec<(String, Expr)>),
 
-    // Enum Init: Enum::Variant { field: value, ... }
+    // Enum Init: Enum::Variant { ... } or Enum::Variant(...)
     EnumInit {
         enum_name: String,
         variant_name: String,
-        fields: Vec<(String, Expr)>,
+        payload: EnumVariantInit,
     },
 
     // Match expression
@@ -287,10 +290,11 @@ pub enum Pattern {
     // Enum Pattern: Enum::Variant { x, y } (binds fields to variables)
     // For now, simplify binding: just list variable names that bind to fields by position or name?
     // Let's support: Variant { field: var, ... }
+    // Enum Pattern
     EnumPattern {
         enum_name: String,
         variant_name: String,
-        bindings: Vec<(String, String)>, // (field_name, var_name)
+        bindings: EnumPatternBindings,
     },
     // Wildcard
     Wildcard,
@@ -362,4 +366,18 @@ pub struct Module {
     pub queries: Vec<Expr>,
     pub imports: Vec<String>,
     pub submodules: HashMap<String, Module>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum EnumVariantInit {
+    Unit,
+    Tuple(Vec<Expr>),
+    Struct(Vec<(String, Expr)>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum EnumPatternBindings {
+    Unit,
+    Tuple(Vec<String>), // Bind to vars by position
+    Struct(Vec<(String, String)>), // field: var
 }
