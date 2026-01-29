@@ -12,10 +12,12 @@ pub fn get_vec_struct_def() -> StructDef {
     StructDef {
         name: "Vec".to_string(),
         fields: vec![
-            ("ptr".to_string(), Type::Vec(Box::new(t.clone()))),
+            ("ptr".to_string(), Type::I64),
             ("cap".to_string(), Type::I64),
             ("len".to_string(), Type::I64),
         ],
         generics: vec!["T".to_string()],
     }
 }
+
+pub const SOURCE: &str = include_str!("vec.tl");

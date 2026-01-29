@@ -4,7 +4,7 @@ enum Option<T> {
     None,
 }
 
-impl Option<T> {
+impl<T> Option<T> {
     extern fn is_some(self) -> bool;
     extern fn is_none(self) -> bool;
     extern fn unwrap(self) -> T;

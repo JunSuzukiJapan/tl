@@ -4,7 +4,7 @@ enum Result<T, E> {
     Err(E),
 }
 
-impl Result<T, E> {
+impl<T, E> Result<T, E> {
     extern fn is_ok(self) -> bool;
     extern fn is_err(self) -> bool;
     extern fn unwrap(self) -> T;

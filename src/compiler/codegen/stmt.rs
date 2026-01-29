@@ -483,20 +483,35 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // 1. Elements are recursively freed
                 // 2. The container is freed via tl_vec_void_free (Box::from_raw) to avoid malloc/free mismatch crash.
                 if name.starts_with("Vec") {
-                    let inner_ty = if let Type::UserDefined(_, args) = ty {
-                        if !args.is_empty() {
-                             args[0].clone()
+                    let inner_ty = if name == "Vec" {
+                         if let Type::UserDefined(_, args) = ty {
+                             if !args.is_empty() {
+                                  args[0].clone()
+                             } else {
+                                  Type::I64
+                             }
+                        } else if let Type::Struct(_, args) = ty {
+                            if !args.is_empty() {
+                                 args[0].clone()
+                            } else {
+                                 Type::I64
+                            }
                         } else {
-                             Type::Void
+                            Type::I64
                         }
-                    } else if let Type::Struct(_, args) = ty {
-                        if !args.is_empty() {
-                             args[0].clone()
-                        } else {
-                             Type::Void
-                        }
+                    } else if name.starts_with("Vec_") {
+                         let suffix = &name[4..];
+                         match suffix {
+                             "i64" => Type::I64,
+                             "f32" => Type::F32,
+                             "u8"  => Type::U8,
+                             "bool" => Type::Bool,
+                             "String" => Type::UserDefined("String".to_string(), vec![]),
+                             _ => Type::UserDefined(suffix.to_string(), vec![]),
+                         }
                     } else {
-                        Type::Void
+                         // Fallback for random Structs starting with Vec...
+                         Type::I64
                     };
                     return self.emit_recursive_free(val, &Type::Vec(Box::new(inner_ty)), super::CLEANUP_FULL);
                 }

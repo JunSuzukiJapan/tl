@@ -194,3 +194,5 @@ fn compile_unwrap<'ctx>(
         
     Ok((value, t_type))
 }
+
+pub const SOURCE: &str = include_str!("result.tl");

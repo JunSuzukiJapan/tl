@@ -12,3 +12,5 @@ pub fn get_hashmap_struct_def() -> StructDef {
         generics: vec!["K".to_string(), "V".to_string()],
     }
 }
+
+pub const SOURCE: &str = include_str!("hashmap.tl");

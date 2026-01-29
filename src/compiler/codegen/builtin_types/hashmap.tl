@@ -1,11 +1,11 @@
 // src/compiler/codegen/builtin_types/hashmap.tl
 
 struct HashMap<K, V> {
-    ptr: ptr<T>, // Opaque HashMap pointer
+    ptr: I64, // Opaque HashMap pointer
     len: I64,
 }
 
-impl HashMap<K, V> {
+impl<K, V> HashMap<K, V> {
     extern fn new() -> HashMap<K, V>;
     extern fn insert(self, key: K, value: V) -> Bool;
     extern fn get(self, key: K) -> V;

@@ -171,3 +171,5 @@ fn compile_unwrap_or<'ctx>(
         
     Ok((result, inner_type))
 }
+
+pub const SOURCE: &str = include_str!("option.tl");

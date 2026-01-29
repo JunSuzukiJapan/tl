@@ -314,9 +314,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::F64 => Ok(self.context.f64_type().into()),
             Type::Bool => Ok(self.context.bool_type().into()),
             Type::Usize => Ok(self.context.i64_type().into()), // usize as i64
-            Type::Void => {
-                panic!("Void type encountered in get_llvm_type");
-            },
+            Type::Void => panic!("Void type encountered in get_llvm_type"),
             
             Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
                 Ok(self.context.ptr_type(AddressSpace::default()).into())
@@ -401,12 +399,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Get the generic struct definition
         let struct_def = self.struct_defs.get(base_name).cloned()
             .ok_or_else(|| format!("Generic struct definition not found: {}", base_name))?;
-
-        eprintln!("DEBUG monomorphize_struct {} -> {}. Generic fields: {}", base_name, mangled_name, struct_def.fields.len());
-
-        if base_name == "Vec" {
-             eprintln!("DEBUG monomorphize_struct Vec -> {}. Generic fields: {}", mangled_name, struct_def.fields.len());
-        }
         
         // Build type parameter substitution map
         let mut subst: HashMap<String, Type> = HashMap::new();
@@ -422,9 +414,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         
         // Build field types with substitution
         let mut field_llvm_types = Vec::new();
-        for (_field_name, field_ty) in &struct_def.fields {
+        for (field_name, field_ty) in &struct_def.fields {
             let substituted_ty = self.substitute_type(field_ty, &subst);
-            let llvm_ty = self.get_llvm_type(&substituted_ty)?;
+            let llvm_ty = self.get_llvm_type(&substituted_ty).map_err(|e| format!("Error compiling field {} of {}: {}", field_name, mangled_name, e))?;
             field_llvm_types.push(llvm_ty);
         }
         
@@ -529,7 +521,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  "is_empty" => (vec![vec_ptr_ty.into()], Some(bool_ty.into())),
                  "clear" => (vec![vec_ptr_ty.into()], None),
                  // set? "set"(vec*, idx, T)
-                 "set" => (vec![vec_ptr_ty.into(), i64_ty.into(), elem_llvm_ty.into()], None),
+                 "set" | "insert" => (vec![vec_ptr_ty.into(), i64_ty.into(), elem_llvm_ty.into()], None),
                  "to_tensor_2d" => (vec![vec_ptr_ty.into(), i64_ty.into(), i64_ty.into(), i64_ty.into()], Some(self.context.ptr_type(AddressSpace::default()).into())),
                  "read_i32_be" => (vec![vec_ptr_ty.into(), i64_ty.into()], Some(i64_ty.into())),
                  _ => return Err(format!("Unknown Vec method for wrapper gen: {}", method_name)),

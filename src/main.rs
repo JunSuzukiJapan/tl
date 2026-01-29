@@ -109,6 +109,10 @@ fn main() -> Result<()> {
         }
     }
 
+    // Load builtins
+    let builtins = load_builtins().context("Failed to load builtins")?;
+    log::info!("Loaded builtins: {} structs, {} impls", builtins.structs.len(), builtins.impls.len());
+    
     // Determine mode
     let is_compile_mode = cli.compile || cli.output.is_some() || cli.save_asm || cli.emit_llvm;
 
@@ -130,6 +134,15 @@ fn main() -> Result<()> {
                     std::process::exit(1);
                 }
             };
+
+            // Inject builtins
+            ast.structs.extend(builtins.structs.clone());
+            ast.enums.extend(builtins.enums.clone());
+            ast.impls.extend(builtins.impls.clone());
+            ast.functions.extend(builtins.functions.clone());
+            // No need to inject imports/modules unless structured?
+
+            println!("DEBUG: AST stats - structs: {}, impls: {}, functions: {}", ast.structs.len(), ast.impls.len(), ast.functions.len());
 
             // Semantics
             let mut analyzer = SemanticAnalyzer::new(String::new());
@@ -353,6 +366,14 @@ fn main() -> Result<()> {
                 }
             }
         }
+
+        // Merge builtins
+        combined_module.structs.extend(builtins.structs.clone());
+        combined_module.enums.extend(builtins.enums.clone());
+        combined_module.impls.extend(builtins.impls.clone());
+        combined_module.functions.extend(builtins.functions.clone());
+
+        println!("DEBUG: JIT AST stats - structs: {}, impls: {}", combined_module.structs.len(), combined_module.impls.len());
 
         // Semantics (Check only)
         let mut analyzer = SemanticAnalyzer::new(String::new());
@@ -638,4 +659,44 @@ fn load_module_recursive(
 fn print_tl_error_with_source(error: &TlError, source: &str, file_hint: Option<&str>) {
     let output = format_error_with_source(error, source, file_hint);
     eprint!("{}", output);
+}
+
+fn load_builtins() -> Result<tl_lang::compiler::ast::Module> {
+    use tl_lang::compiler::codegen::builtin_types;
+
+    let sources = [
+        builtin_types::vec::SOURCE,
+        builtin_types::hashmap::SOURCE,
+        builtin_types::option::SOURCE,
+        builtin_types::result::SOURCE,
+    ];
+
+    let mut combined = tl_lang::compiler::ast::Module {
+        structs: vec![],
+        enums: vec![],
+        impls: vec![],
+        functions: vec![],
+        tensor_decls: vec![],
+        relations: vec![],
+        rules: vec![],
+        queries: vec![],
+        imports: vec![],
+        submodules: std::collections::HashMap::new(),
+    };
+    
+    for (i, src) in sources.iter().enumerate() {
+         let m = tl_lang::compiler::parser::parse_from_source(src)
+            .map_err(|e| anyhow::anyhow!("Failed to parse builtin {}: {:?}", i, e))?;
+         
+         combined.structs.extend(m.structs);
+         combined.enums.extend(m.enums);
+         combined.impls.extend(m.impls);
+         combined.functions.extend(m.functions);
+         combined.tensor_decls.extend(m.tensor_decls);
+         combined.relations.extend(m.relations);
+         combined.rules.extend(m.rules);
+         combined.queries.extend(m.queries);
+    }
+    
+    Ok(combined)
 }

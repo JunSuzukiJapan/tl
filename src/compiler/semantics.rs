@@ -239,35 +239,10 @@ impl SemanticAnalyzer {
         };
         self.enums.insert("Device".to_string(), device_enum);
 
-        // Register Vec<T> struct
-        let vec_struct = crate::compiler::codegen::builtin_types::vec::get_vec_struct_def();
-        self.structs.insert("Vec".to_string(), vec_struct);
 
-        // Register Map<K, V> struct (KEEP MANUAL for now if Map is different from HashMap, waiting for map.rs?)
-        // The original code had Map struct manually defined here.
-        // Wait, Map is different from HashMap in original usage?
-        // Check original: 
-        // let map_struct = StructDef { name: "Map"... };
-        // self.structs.insert("Map"...)
-        // It seems Map is indeed separate or an alias.
-        // Let's keep Map manual if we didn't create map.rs.
-        let map_struct = StructDef {
-            name: "Map".to_string(),
-            generics: vec!["K".to_string(), "V".to_string()],
-            fields: vec![],
-        };
-        self.structs.insert("Map".to_string(), map_struct);
-
-        // Register HashMap struct
-        let hashmap_struct = crate::compiler::codegen::builtin_types::hashmap::get_hashmap_struct_def();
-        self.structs.insert("HashMap".to_string(), hashmap_struct);
-
-        // Register built-in Enums
-        let option_def = crate::compiler::codegen::builtin_types::option::get_option_enum_def();
-        self.enums.insert(option_def.name.clone(), option_def);
-
-        let result_def = crate::compiler::codegen::builtin_types::result::get_result_enum_def();
-        self.enums.insert(result_def.name.clone(), result_def);
+        // removed: Register generic structs (Vec, Map, HashMap, Option, Result) 
+        // These are now injected via source loading in main.rs
+        // This prevents DuplicateDefinition errors.
     }
 
     pub fn enter_scope(&mut self) {
@@ -600,17 +575,7 @@ impl SemanticAnalyzer {
         self.check_stratified_negation(module)?;
         self.check_module_bodies(module, "")?;
 
-        // Context: Inject built-in generic structs (Vec, Map) and enums into the AST module so Monomorphizer can see them.
-        // These are defined in declare_builtins but not present in the input AST.
-        let builtin_structs = ["Vec", "Map", "HashMap"];
-        for name in builtin_structs {
-            if let Some(def) = self.structs.get(name) {
-                // Avoid duplication if already present (e.g. if we run check multiple times or user defined it shadow)
-                if !module.structs.iter().any(|s| s.name == *name) {
-                    module.structs.push(def.clone());
-                }
-            }
-        }
+        // Context: Inject Device enum if not present
         let builtin_enums = ["Device"];
         for name in builtin_enums {
             if let Some(def) = self.enums.get(name) {
@@ -618,6 +583,17 @@ impl SemanticAnalyzer {
                     module.enums.push(def.clone());
                 }
             }
+        }
+
+        // Resolve types in struct definitions
+        for struct_def in &mut module.structs {
+            for (_, field_ty) in &mut struct_def.fields {
+                *field_ty = self.resolve_user_type(field_ty);
+            }
+            // Update struct def in self.structs registry?
+            // self.structs is a map. Use insert to overwrite.
+            // Note: register_module_symbols populated self.structs.
+            self.structs.insert(struct_def.name.clone(), struct_def.clone());
         }
 
         Ok(())
@@ -744,6 +720,8 @@ impl SemanticAnalyzer {
     fn check_module_bodies(&mut self, module: &mut Module, prefix: &str) -> Result<(), TlError> {
         let saved_prefix = self.current_module.clone();
         self.current_module = prefix.to_string();
+        
+        println!("DEBUG: check_module_bodies '{}' impls: {}", prefix, module.impls.len());
 
         // Check impl blocks (Register methods first)
         for i in &mut module.impls {
@@ -1151,13 +1129,15 @@ impl SemanticAnalyzer {
             impl_block.target_type = resolved_target.clone();
         }
         
-        // Extract name from resolved target_type
+        // Match, extract name
         let final_target_name = match &impl_block.target_type {
             Type::UserDefined(name, _) => name.clone(),
             Type::Struct(name, _) => name.clone(),
             Type::Enum(name, _) => name.clone(),
             _ => return self.err(SemanticError::TypeMismatch { expected: Type::UserDefined("StructOrEnum".into(), vec![]), found: impl_block.target_type.clone() }, None),
         };
+        
+        println!("DEBUG: check_impl_block for {}", final_target_name);
 
         // Check if target struct/enum exists
         if !self.structs.contains_key(&final_target_name) && !self.enums.contains_key(&final_target_name) {
@@ -1214,6 +1194,7 @@ impl SemanticAnalyzer {
                         None,
                     );
                 }
+                println!("DEBUG: Registered method {}::{}", final_target_name, name);
                 struct_methods.insert(name, resolved_method);
             }
         }
@@ -5454,11 +5435,56 @@ impl SemanticAnalyzer {
                     _ => TypeRegistry::type_to_key(&obj_type),
                 };
 
-                if let Some(methods) = self.methods.get(&type_name) {
-                    if let Some(method_def) = methods.get(method_name) {
-                        // Clone the signature to avoid borrow checker issues with self.methods
-                        let args_types: Vec<(String, Type)> = method_def.args.clone();
-                        let ret_type = method_def.return_type.clone();
+                // DEBUG PRINT
+                println!("DEBUG: method '{}' on type '{:?}' key '{}'", method_name, obj_type, type_name);
+                println!("DEBUG: Available keys: {:?}", self.methods.keys());
+
+                let method_data = if let Some(methods) = self.methods.get(&type_name) {
+                    methods.get(method_name).map(|m| (m.args.clone(), m.return_type.clone()))
+                } else {
+                    None
+                };
+
+                if let Some((args_types, raw_return_type)) = method_data {
+                        // Build substitution map for generics (e.g. T -> I64 for Vec<I64>)
+                        let mut subst = std::collections::HashMap::new();
+                        // Handle Structs
+                        if let Type::Struct(name, inner_args) = &obj_type {
+                            if let Some(def) = self.structs.get(name) {
+                                for (i, param) in def.generics.iter().enumerate() {
+                                    if i < inner_args.len() {
+                                        subst.insert(param.clone(), inner_args[i].clone());
+                                    }
+                                }
+                            }
+                        }
+                        // Handle Enums (Option, Result)
+                        if let Type::Enum(name, inner_args) = &obj_type {
+                            if let Some(def) = self.enums.get(name) {
+                                for (i, param) in def.generics.iter().enumerate() {
+                                    if i < inner_args.len() {
+                                        subst.insert(param.clone(), inner_args[i].clone());
+                                    }
+                                }
+                            }
+                        }
+                        // Handle UserDefined
+                        if let Type::UserDefined(name, inner_args) = &obj_type {
+                             if let Some(def) = self.structs.get(name) {
+                                for (i, param) in def.generics.iter().enumerate() {
+                                    if i < inner_args.len() {
+                                        subst.insert(param.clone(), inner_args[i].clone());
+                                    }
+                                }
+                             } else if let Some(def) = self.enums.get(name) {
+                                for (i, param) in def.generics.iter().enumerate() {
+                                    if i < inner_args.len() {
+                                        subst.insert(param.clone(), inner_args[i].clone());
+                                    }
+                                }
+                             }
+                        }
+
 
                         let implicit_self = !args_types.is_empty() && args_types[0].0 == "self";
                         let expected_arg_count = if implicit_self {
@@ -5481,19 +5507,23 @@ impl SemanticAnalyzer {
                         let start_idx = if implicit_self { 1 } else { 0 };
                         for (i, arg) in args.iter_mut().enumerate() {
                             let arg_type = self.check_expr(arg)?;
-                            let expected_type = &args_types[start_idx + i].1;
-                            if !self.are_types_compatible(&arg_type, expected_type) {
+                            let raw_expected_type = &args_types[start_idx + i].1;
+                            let expected_type = self.substitute_generics(raw_expected_type, &subst);
+                            
+                            if !self.are_types_compatible(&arg_type, &expected_type) {
                                 return self.err(
                                     SemanticError::TypeMismatch {
-                                        expected: expected_type.clone(),
+                                        expected: expected_type,
                                         found: arg_type,
                                     },
                                     Some(arg.span.clone()),
                                 );
                             }
                         }
+
+                         // Substitute return type
+                        let ret_type = self.substitute_generics(&raw_return_type, &subst);
                         return Ok(ret_type);
-                    }
                 }
 
                 // 3. Method not found

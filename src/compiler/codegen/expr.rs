@@ -4203,7 +4203,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Vec(inner) => Some(inner.clone()),
             Type::UserDefined(n, args) if n == "Vec" => {
                 if args.is_empty() {
-                    Some(Box::new(Type::Void))
+                    Some(Box::new(Type::I64))
                 } else if args.len() == 1 {
                     Some(Box::new(args[0].clone()))
                 } else {
@@ -4212,7 +4212,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             Type::Struct(n, args) if n == "Vec" => {
                 if args.is_empty() {
-                    Some(Box::new(Type::Void))
+                    Some(Box::new(Type::I64))
                 } else if args.len() == 1 {
                     Some(Box::new(args[0].clone()))
                 } else {
@@ -5690,7 +5690,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Try TypeManager first
         let type_name_opt = match &obj_ty {
-            Type::Vec(_) => Some("Vec".to_string()),
+
             Type::UserDefined(n, _) => Some(n.clone()),
             Type::Struct(n, _) => Some(n.clone()),
             Type::Enum(n, _) => Some(n.clone()),
@@ -5723,98 +5723,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         }
 
-        // Check for Vec (either Type::Vec or UserDefined("Vec"))
-        let inner_opt = match &obj_ty {
-            Type::Vec(inner) => Some(inner.clone()),
-            Type::UserDefined(n, args) | Type::Struct(n, args) => {
-                 if n == "Vec" {
-                     if args.is_empty() {
-                        Some(Box::new(Type::Void))
-                     } else if args.len() == 1 {
-                        Some(Box::new(args[0].clone()))
-                     } else {
-                        None
-                     }
-                 } else if n.starts_with("Vec_") {
-                     let suffix = &n[4..];
-                     match suffix {
-                         "i64" => Some(Box::new(Type::I64)),
-                         "f32" => Some(Box::new(Type::F32)),
-                         "u8" => Some(Box::new(Type::U8)),
-                         "String" => Some(Box::new(Type::UserDefined(String::from("String"), vec![]))),
-                         _ => Some(Box::new(Type::UserDefined(suffix.to_string(), vec![]))),
-                     }
-                 } else {
-                     None
-                 }
-            }
-            _ => None,
-        };
-        
-        if let Some(inner) = inner_opt {
-             // 1. Resolve method via ensure_vec_method (Generates wrapper if needed)
-             let specialized_fn_name = self.ensure_vec_method(&inner, method)
-                 .map_err(|e| format!("Failed to resolve Vec method {}: {}", method, e))?;
-             
-             let fn_val = self.module.get_function(&specialized_fn_name)
-                 .ok_or(format!("Function {} not found after generation", specialized_fn_name))?;
-             
-             // 2. Compile arguments
-             let params = fn_val.get_params(); // self, arg1, arg2...
-             if args.len() + 1 != params.len() {
-                  return Err(format!("Arg count mismatch for Vec::{}: expected {}, got {}", 
-                      method, params.len() - 1, args.len()));
-             }
 
-             let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::with_capacity(args.len() + 1);
-             call_args.push(obj_val.into()); // Self is always valid as is (ptr)
-             
-             for (i, arg) in args.iter().enumerate() {
-                 let (arg_val, _) = self.compile_expr(arg)?;
-                 let param_ty = params[i + 1].get_type();
-                 
-                 let casted_val = if param_ty.is_int_type() && arg_val.is_int_value() {
-                      let int_val = arg_val.into_int_value();
-                      if int_val.get_type() != param_ty.into_int_type() {
-                          self.builder.build_int_cast(int_val, param_ty.into_int_type(), "arg_int_cast").unwrap().into()
-                      } else {
-                          arg_val
-                      }
-                 } else if param_ty.is_pointer_type() && arg_val.is_pointer_value() {
-                      let ptr_val = arg_val.into_pointer_value();
-                      if ptr_val.get_type() != param_ty.into_pointer_type() {
-                           self.builder.build_pointer_cast(ptr_val, param_ty.into_pointer_type(), "arg_ptr_cast").unwrap().into()
-                      } else {
-                           arg_val
-                      }
-                 } else {
-                     arg_val
-                 };
-                 call_args.push(casted_val.into());
-             }
-             
-             // 3. Make Call
-             let call = self.builder.build_call(fn_val, &call_args, method)
-                 .map_err(|e| e.to_string())?;
-                 
-             // 4. Return Value Handling
-             let res = match call.try_as_basic_value() {
-                 inkwell::values::ValueKind::Basic(v) => v,
-                 _ => self.context.i64_type().const_int(0, false).into(), // Void
-             };
-             
-             // Determine High-Level Return Type
-             let ret_type = match method {
-                 "len" | "read_i32_be" => Type::I64,
-                 "is_empty" => Type::Bool,
-                 "push" | "clear" | "set" => Type::Void,
-                 "pop" | "get" | "remove" => *inner.clone(),
-                 "to_tensor_2d" => Type::Tensor(Box::new(Type::F32), 2),
-                 _ => Type::Void,
-             };
-             
-             return Ok((res, ret_type));
-        }
 
 
 
@@ -6396,6 +6305,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // 4. Generic Fallback (Struct Methods / Mangled Names)
         let struct_name = match &obj_ty {
+            Type::Vec(_) => "Vec".to_string(),
             Type::Struct(name, _) | Type::UserDefined(name, _) | Type::Enum(name, _) => name.clone(),
             Type::Tensor(_, _) => "Tensor".to_string(),
             _ => return Err(format!("Method {} not found on type {:?}", method, obj_ty)),
@@ -7709,6 +7619,7 @@ fn compile_print_common<'ctx>(
     }
     // Check type of arg
     let (arg_val, arg_type) = &args[0];
+
     match arg_type {
         Type::I64 => {
             let fn_name = if is_newline {
