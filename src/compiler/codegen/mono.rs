@@ -551,4 +551,69 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Fallback: use core function name directly (likely will fail link if not found)
         Ok(core_fn_name)
     }
+    /// Monomorphize a generic enum definition with concrete type arguments.
+    /// Returns the LLVM StructType for the specialized enum.
+    /// Layout strategy: { i32 (tag), Variant1Payload?, Variant2Payload?, ... }
+    pub fn monomorphize_enum(
+        &mut self,
+        base_name: &str,
+        type_args: &[Type],
+    ) -> Result<StructType<'ctx>, String> {
+        let mangled_name = self.mangle_type_name(base_name, type_args);
+        
+        // Check if already monomorphized
+        if let Some(existing) = self.enum_types.get(&mangled_name) {
+            return Ok(*existing);
+        }
+        
+        // Get the generic enum definition
+        let enum_def = self.enum_defs.get(base_name).cloned()
+            .ok_or_else(|| format!("Generic enum definition not found: {}", base_name))?;
+
+        // Build substitution map
+        let mut subst: HashMap<String, Type> = HashMap::new();
+        for (i, param_name) in enum_def.generics.iter().enumerate() {
+            if let Some(arg) = type_args.get(i) {
+                subst.insert(param_name.clone(), arg.clone());
+            }
+        }
+        
+        // Create opaque struct first (to support recursion if needed)
+        let opaque_struct = self.context.opaque_struct_type(&mangled_name);
+        self.enum_types.insert(mangled_name.clone(), opaque_struct);
+        
+        // Build fields: Tag (i32) + Payloads
+        let mut field_types = vec![self.context.i32_type().into()]; // Tag
+        
+        for variant in &enum_def.variants {
+            match &variant.kind {
+                crate::compiler::ast::VariantKind::Tuple(types) => {
+                    // For Result<T, E>, variants are Tuple([T]) and Tuple([E]).
+                    for ty in types {
+                        let substituted = self.substitute_type(ty, &subst);
+                        if substituted != Type::Void {
+                            let llvm_ty = self.get_llvm_type(&substituted)?;
+                            field_types.push(llvm_ty);
+                        }
+                    }
+                }
+                crate::compiler::ast::VariantKind::Struct(fields) => {
+                     for (_, ty) in fields {
+                        let substituted = self.substitute_type(ty, &subst);
+                        if substituted != Type::Void {
+                            let llvm_ty = self.get_llvm_type(&substituted)?;
+                             field_types.push(llvm_ty);
+                        }
+                     }
+                }
+                crate::compiler::ast::VariantKind::Unit => {}
+            }
+        }
+
+        // Set struct body
+        opaque_struct.set_body(&field_types, false);
+        
+        Ok(opaque_struct)
+    }
+
 }

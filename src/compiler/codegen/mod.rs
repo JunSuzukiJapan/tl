@@ -1,4 +1,5 @@
 use crate::compiler::ast::*;
+use crate::compiler::builtin_ast;
 use crate::compiler::shape_analysis::ShapeAnalyzer;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
@@ -98,6 +99,10 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Register builtins (Enums, etc.)
         codegen.register_builtins();
+        // Load builtin enums from AST (Option, Result)
+        for def in builtin_ast::load_builtin_enums() {
+            codegen.enum_defs.insert(def.name.clone(), def);
+        }
 
         // Register builtin generic impls (Vec<T>, etc.)
         builtin_impls::register_builtin_structs(&mut codegen.struct_defs);

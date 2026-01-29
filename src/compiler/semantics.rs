@@ -257,6 +257,11 @@ impl SemanticAnalyzer {
             fields: vec![],
         };
         self.structs.insert("HashMap".to_string(), hashmap_struct);
+
+        // Register built-in Enums from AST injection (Option, Result)
+        for enum_def in crate::compiler::builtin_ast::load_builtin_enums() {
+            self.enums.insert(enum_def.name.clone(), enum_def);
+        }
     }
 
     pub fn enter_scope(&mut self) {
@@ -4510,12 +4515,7 @@ impl SemanticAnalyzer {
                 };
 
                 if user_func.is_none() {
-
                     // Check if it's an Enum Variant constructor (Unit or Tuple)
-                    // Struct variants are parsed as EnumInit or StructInit, so shouldn't appear here (unless parser produces StaticCall for brace variants?)
-                    // Current parser produces EnumInit for brace variants relative to module, but if path-based?
-                    // Parser handles `Type::Variant { }` as EnumInit.
-                    // So here likely `Type::Variant(args)` or `Type::Variant`.
                     
                     if let Some(enum_def_ref) = self.enums.get(&type_name_key) {
                         if let Some(variant_ref) = enum_def_ref.variants.iter().find(|v| v.name == *method_name) {
@@ -4563,8 +4563,29 @@ impl SemanticAnalyzer {
                                           }
                                       }
                                       
+                                      // Infer from arguments first
                                       for (i, arg_expr) in args.iter_mut().enumerate() {
                                           let arg_type = self.check_expr(arg_expr)?;
+                                          let expected_def = &types[i];
+                                          
+                                          // Simple inference: If expected is "T", then T = arg_type.
+                                          if let Type::UserDefined(n, empty) = expected_def {
+                                              if empty.is_empty() {
+                                                   if enum_def.generics.contains(n) {
+                                                       if !inferred_generics.contains_key(n) {
+                                                           inferred_generics.insert(n.clone(), arg_type.clone());
+                                                       }
+                                                       // Else: we could check compatibility or "unify"
+                                                   }
+                                              }
+                                          }
+                                          // Note: This logic is very simple and only infers top-level generic params.
+                                          // It won't handle Vec<T> pattern matching inference yet.
+                                      }
+
+                                      // Validate arguments with inferred types
+                                      for (i, arg_expr) in args.iter_mut().enumerate() {
+                                          let arg_type = self.check_expr(arg_expr)?; // Re-check (cheap if cached or simple)
                                           let expected_type_def = &types[i];
                                           let expected_type = self.substitute_generics(expected_type_def, &inferred_generics);
                                           
@@ -4578,20 +4599,26 @@ impl SemanticAnalyzer {
                                               );
                                           }
                                       }
-                                      return Ok(type_name.clone());
+                                      
+                                      // Construct return type specific to inferred generics
+                                      let mut final_gen_args = Vec::new();
+                                      for g_name in &enum_def.generics {
+                                          if let Some(t) = inferred_generics.get(g_name) {
+                                              final_gen_args.push(t.clone());
+                                          } else {
+                                              final_gen_args.push(Type::Void);
+                                          }
+                                      }
+                                      return Ok(Type::UserDefined(enum_def.name.clone(), final_gen_args));
                                  }
                                  crate::compiler::ast::VariantDef { kind: crate::compiler::ast::VariantKind::Struct(_), .. } => {
                                       // Struct variant cannot be called as function?
-                                      // Or do we support Constructor-like syntax?
-                                      // Rust supports `Variant { ... }`.
-                                      // If user tries `Variant(a, b)`, it is error.
-                                      return self.err(
+                                         return self.err(
                                            SemanticError::Generic(format!("Struct variant {}::{} cannot be initialized with tuple syntax (use {{ ... }})", type_name_key, method_name)),
                                            Some(expr.span.clone())
                                       );
                                  }
                              }
-
                         }
                     }
 
@@ -4705,11 +4732,15 @@ impl SemanticAnalyzer {
                 }
 
                 if let Some(func) = user_func {
-                    if func.args.len() != args.len() {
+                    // Check if function expects self
+                    let has_self = !func.args.is_empty() && func.args[0].0 == "self";
+                    let expected_args = if has_self { func.args.len() - 1 } else { func.args.len() };
+
+                    if expected_args != args.len() {
                         return self.err(
                             SemanticError::ArgumentCountMismatch {
                                 name: format!("{}::{}", type_name_key, method_name),
-                                expected: func.args.len(),
+                                expected: expected_args,
                                 found: args.len(),
                             },
                             Some(expr.span.clone()),
@@ -4727,7 +4758,13 @@ impl SemanticAnalyzer {
                     let mut inferred_generics: HashMap<String, Type> = HashMap::new();
                     inferred_generics.insert("Self".to_string(), type_name.clone());
 
-                    for (arg_val, (_, arg_type)) in args.iter_mut().zip(&func.args) {
+                    let param_iter = if has_self {
+                        func.args.iter().skip(1)
+                    } else {
+                        func.args.iter().skip(0)
+                    };
+
+                    for (arg_val, (_, arg_type)) in args.iter_mut().zip(param_iter) {
                         let val_type = self.check_expr(arg_val)?;
                         
                         if !struct_generics.is_empty() || !func.generics.is_empty() {

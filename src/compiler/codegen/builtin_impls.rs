@@ -9,6 +9,7 @@ pub fn register_builtin_impls(generic_impls: &mut HashMap<String, Vec<ImplBlock>
          let name = match &imp.target_type {
              Type::UserDefined(n, _) => n.clone(),
              Type::Struct(n, _) => n.clone(),
+             Type::Enum(n, _) => n.clone(),
              Type::Vec(_) => "Vec".to_string(), // Fallback if target is Type::Vec
              _ => "Unknown".to_string(),
          };

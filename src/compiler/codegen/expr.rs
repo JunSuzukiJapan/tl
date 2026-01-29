@@ -2413,7 +2413,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Add other types as needed or implement a helper
                     _ => return Err(format!("Cannot call static method on type {:?}", type_ty)),
                 };
-                self.compile_static_method_call(struct_name, method_name, args)
+                self.compile_static_method_call(struct_name, method_name, args, &type_ty)
             }
             ExprKind::BinOp(lhs, op, rhs) => {
                 let left = self.compile_expr(lhs)?;
@@ -3655,10 +3655,95 @@ impl<'ctx> CodeGenerator<'ctx> {
         struct_name: &str,
         method: &str,
         args: &[Expr],
+        target_type: &Type,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         // Compatibility aliases for existing logic
         let type_name = struct_name;
         let method_name = method;
+
+        // Result<T, E>
+        if struct_name == "Result" {
+             // Pre-compile arguments to infer types if needed
+             let mut compiled_args = Vec::new();
+             for arg_expr in args {
+                 compiled_args.push(self.compile_expr(arg_expr)?);
+             }
+
+             // Extract generics
+             let (t_ty, e_ty) = match target_type {
+                 Type::UserDefined(_, gens) | Type::Struct(_, gens) | Type::Enum(_, gens) => {
+                     if gens.len() == 2 {
+                         (gens[0].clone(), gens[1].clone())
+                     } else {
+                         // Fallback inference: Infer from arguments
+                         if method == "Ok" && !compiled_args.is_empty() {
+                              (compiled_args[0].1.clone(), Type::Void)
+                         } else if method == "Err" && !compiled_args.is_empty() {
+                              (Type::Void, compiled_args[0].1.clone())
+                         } else {
+                              (Type::I64, Type::I64) 
+                         }
+                     }
+                 }
+                 _ => {
+                      if method == "Ok" && !compiled_args.is_empty() {
+                           (compiled_args[0].1.clone(), Type::Void)
+                      } else if method == "Err" && !compiled_args.is_empty() {
+                           (Type::Void, compiled_args[0].1.clone())
+                      } else {
+                           (Type::I64, Type::I64)
+                      }
+                 }
+             };
+
+             // Build fields: tag + payloads
+             let mut fields = vec![self.context.i32_type().into()]; // Tag
+             
+             let mut t_idx = 0;
+             let mut e_idx = 0;
+             
+             // Append T if not void
+             if t_ty != Type::Void {
+                 fields.push(self.get_llvm_type(&t_ty)?);
+                 t_idx = fields.len() - 1;
+             }
+             
+             // Append E if not void
+             if e_ty != Type::Void {
+                 fields.push(self.get_llvm_type(&e_ty)?);
+                 e_idx = fields.len() - 1;
+             }
+
+             let result_struct_ty = self.context.struct_type(&fields, false);
+             let ptr = self.builder.build_alloca(result_struct_ty, "result_val").unwrap();
+             
+             // Set tag
+             let tag_ptr = self.builder.build_struct_gep(result_struct_ty, ptr, 0, "tag_ptr").unwrap();
+             let tag_val = if method == "Ok" { 0 } else { 1 };
+             self.builder.build_store(tag_ptr, self.context.i32_type().const_int(tag_val, false)).unwrap();
+             
+             // Set payload via method
+             if method == "Ok" {
+                 if args.len() != 1 { return Err("Ok expects 1 arg".into()); }
+                 if t_ty != Type::Void {
+                      let val = compiled_args[0].0;
+                      let t_ptr = self.builder.build_struct_gep(result_struct_ty, ptr, t_idx as u32, "t_ptr").unwrap();
+                      self.builder.build_store(t_ptr, val).unwrap();
+                 }
+             } else if method == "Err" {
+                 if args.len() != 1 { return Err("Err expects 1 arg".into()); }
+                 if e_ty != Type::Void {
+                      let val = compiled_args[0].0;
+                      let e_ptr = self.builder.build_struct_gep(result_struct_ty, ptr, e_idx as u32, "e_ptr").unwrap();
+                      self.builder.build_store(e_ptr, val).unwrap();
+                 }
+             } else {
+                 return Err("Unknown Result method".into());
+             }
+             
+             let result_type = Type::Enum("Result".to_string(), vec![t_ty, e_ty]);
+             return Ok((ptr.into(), result_type));
+        }
 
         // Handle Option<T> static methods (Registration over Implementation)
         if struct_name == "Option" {
@@ -5231,19 +5316,17 @@ impl<'ctx> CodeGenerator<'ctx> {
         arms: &[(Pattern, Expr)],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         let (subject_val, subject_ty) = self.compile_expr(subject_expr)?;
-        let enum_name = match subject_ty {
-            Type::Enum(n, _) | Type::UserDefined(n, _) => n,
+        let (enum_name, generic_args) = match &subject_ty {
+            Type::Enum(n, args) | Type::UserDefined(n, args) => (n, args),
             _ => return Err("Match on non-enum".into()),
         };
-        let enum_def = self
-            .enum_defs
-            .get(&enum_name)
-            .ok_or("Enum def not found")?
-            .clone();
-        let enum_ty = *self
-            .enum_types
-            .get(&enum_name)
-            .ok_or("Enum type not found")?;
+
+        // Ensure enum layout is generated
+        let enum_ty = self.monomorphize_enum(enum_name, generic_args)
+            .map_err(|e| format!("Failed to monomorphize enum {}: {}", enum_name, e))?;
+
+        let enum_def = self.enum_defs.get(enum_name).cloned().ok_or("Enum def not found")?;
+
 
         let ptr = subject_val.into_pointer_value();
 
@@ -5278,6 +5361,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut used_variants = HashSet::new();
         for (arm_idx, (pat, _)) in arms.iter().enumerate() {
             if let Pattern::EnumPattern { variant_name, .. } = pat {
+                // Fetch def 
+                let enum_def = self.enum_defs.get(enum_name).ok_or("Enum def not found")?;
                 let idx = enum_def
                     .variants
                     .iter()
@@ -5345,6 +5430,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     &enum_def,
                     variant_idx,
                     bindings,
+                    generic_args,
                 )?;
             }
 
@@ -5477,12 +5563,154 @@ impl<'ctx> CodeGenerator<'ctx> {
         enum_def: &EnumDef,
         variant_idx: usize,
         bindings: &crate::compiler::ast::EnumPatternBindings,
+        generic_args: &[Type],
     ) -> Result<(), String> {
         let variant_def = &enum_def.variants[variant_idx];
 
-        // Prepare Variant Struct Type for GEP
-        let mut field_types_llvm: Vec<inkwell::types::BasicTypeEnum> = vec![];
-        let fields_iter: Box<dyn Iterator<Item = &Type>> = match &variant_def.kind {
+        // Build substitution map for concrete types
+        let mut subst: HashMap<String, Type> = HashMap::new();
+        for (i, param_name) in enum_def.generics.iter().enumerate() {
+            if let Some(arg) = generic_args.get(i) {
+                subst.insert(param_name.clone(), arg.clone());
+            }
+        }
+
+        // Calculate start index for this variant's fields
+        // Flat layout: { i32 (tag), Variant0_Field0, Variant0_Field1... Variant1_Field0... }
+        let mut current_field_idx = 1; // Start at 1 (Tag is 0)
+
+        for (idx, variant) in enum_def.variants.iter().enumerate() {
+            if idx == variant_idx {
+                break;
+            }
+            // Skip fields of previous variants
+            match &variant.kind {
+                 crate::compiler::ast::VariantKind::Tuple(types) => {
+                     for ty in types {
+                         let concrete_ty = self.substitute_type_simple_bind(ty, &subst);
+                         if concrete_ty != Type::Void {
+                             current_field_idx += 1;
+                         }
+                     }
+                 }
+                 crate::compiler::ast::VariantKind::Struct(fields) => {
+                     for (_, ty) in fields {
+                         let concrete_ty = self.substitute_type_simple_bind(ty, &subst);
+                         if concrete_ty != Type::Void {
+                             current_field_idx += 1;
+                         }
+                     }
+                 }
+                 crate::compiler::ast::VariantKind::Unit => {}
+            }
+        }
+        
+        // Bind fields
+        let variant_def = &enum_def.variants[variant_idx];
+        match (&variant_def.kind, bindings) {
+            (crate::compiler::ast::VariantKind::Unit, crate::compiler::ast::EnumPatternBindings::Unit) => {
+                Ok(())
+            },
+            (crate::compiler::ast::VariantKind::Tuple(types), crate::compiler::ast::EnumPatternBindings::Tuple(vars)) => {
+                if types.len() != vars.len() {
+                    return Err(format!("Tuple pattern length mismatch: expected {}, found {}", types.len(), vars.len()));
+                }
+                
+                for (i, bind_name) in vars.iter().enumerate() {
+                    let field_ty = &types[i];
+                    let concrete_ty = self.substitute_type_simple_bind(field_ty, &subst);
+
+                    if concrete_ty == Type::Void {
+                         continue;
+                    }
+                    
+                    if bind_name == "_" {
+                         current_field_idx += 1;
+                         continue;
+                    }
+                    
+                    let f_ptr = self
+                        .builder
+                        .build_struct_gep(enum_ty, enum_ptr, current_field_idx, "field_ptr")
+                        .map_err(|e| e.to_string())?;
+                    current_field_idx += 1;
+
+                    let llvm_ty = self.get_llvm_type(&concrete_ty)?;
+                    let f_val = self.builder.build_load(llvm_ty, f_ptr, "bind_val").unwrap();
+
+                    let alloca = self.create_entry_block_alloca(current_func, bind_name, &concrete_ty)?;
+                    let stored_val = if matches!(
+                        concrete_ty,
+                        Type::Tensor(_, _)
+                            | Type::Struct(_, _)
+                            | Type::Enum(_, _)
+                            | Type::UserDefined(_, _)
+                            | Type::Tuple(_)
+                    ) {
+                        self.emit_deep_clone(f_val, &concrete_ty)?
+                    } else {
+                        f_val
+                    };
+                    self.builder.build_store(alloca, stored_val).unwrap();
+
+                    self.variables
+                        .last_mut()
+                        .unwrap()
+                        .insert(bind_name.clone(), (alloca.into(), concrete_ty.clone(), super::CLEANUP_FULL));
+                }
+                Ok(())
+            },
+            (crate::compiler::ast::VariantKind::Struct(fields), crate::compiler::ast::EnumPatternBindings::Struct(bindings_list)) => {
+                 for (def_field_name, def_ty) in fields {
+                     let concrete_ty = self.substitute_type_simple_bind(def_ty, &subst);
+                     if concrete_ty == Type::Void { continue; }
+                     
+                     let binding = bindings_list.iter().find(|(n, _)| n == def_field_name);
+                     
+                     if let Some((_, bind_var_name)) = binding {
+                         if bind_var_name != "_" {
+                             let f_ptr = self
+                                 .builder
+                                 .build_struct_gep(enum_ty, enum_ptr, current_field_idx, "field_ptr")
+                                 .map_err(|e| e.to_string())?;
+                             
+                             let llvm_ty = self.get_llvm_type(&concrete_ty)?;
+                             let f_val = self.builder.build_load(llvm_ty, f_ptr, "bind_val").unwrap();
+                             
+                             let alloca = self.create_entry_block_alloca(current_func, bind_var_name, &concrete_ty)?;
+                             let stored_val = self.emit_deep_clone(f_val, &concrete_ty)?; 
+                             self.builder.build_store(alloca, stored_val).unwrap();
+                             
+                             self.variables.last_mut().unwrap().insert(bind_var_name.clone(), (alloca.into(), concrete_ty.clone(), super::CLEANUP_FULL));
+                         }
+                     }
+                     current_field_idx += 1;
+                 }
+                 Ok(())
+            }
+             _ => Err("Invalid pattern binding for variant".into())
+        }
+    }
+    
+    fn substitute_type_simple_bind(&self, ty: &Type, subst: &HashMap<String, Type>) -> Type {
+        match ty {
+            Type::UserDefined(name, args) => {
+                if args.is_empty() {
+                    if let Some(replacement) = subst.get(name) {
+                        return replacement.clone();
+                    }
+                }
+                Type::UserDefined(name.clone(), args.iter().map(|t| self.substitute_type_simple_bind(t, subst)).collect())
+            }
+            Type::Struct(name, args) => Type::Struct(name.clone(), args.iter().map(|t| self.substitute_type_simple_bind(t, subst)).collect()),
+            Type::Enum(name, args) => Type::Enum(name.clone(), args.iter().map(|t| self.substitute_type_simple_bind(t, subst)).collect()),
+            Type::Tensor(t, rank) => Type::Tensor(Box::new(self.substitute_type_simple_bind(t, subst)), *rank),
+            Type::Vec(t) => Type::Vec(Box::new(self.substitute_type_simple_bind(t, subst))),
+            _ => ty.clone()
+        }
+    }
+
+/*
              crate::compiler::ast::VariantKind::Unit => Box::new(std::iter::empty()),
              crate::compiler::ast::VariantKind::Tuple(types) => Box::new(types.iter()),
              crate::compiler::ast::VariantKind::Struct(fields) => Box::new(fields.iter().map(|(_, t)| t)),
@@ -5595,7 +5823,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             },
              _ => Ok(()), 
         }
-    }
+*/
 
     fn is_lvalue_expr(expr: &Expr) -> bool {
         matches!(
@@ -6236,6 +6464,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let type_name = match &obj_ty {
             Type::Struct(name, _) => name.clone(),
             Type::UserDefined(name, _) => name.clone(),
+            Type::Enum(name, _) => name.clone(),
             Type::Tensor(_, _) => "Tensor".to_string(),
             Type::F32 => "F32".to_string(),
             Type::F64 => "F64".to_string(),
@@ -6969,7 +7198,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // 4. Generic Fallback (Struct Methods / Mangled Names)
         let struct_name = match &obj_ty {
-            Type::Struct(name, _) | Type::UserDefined(name, _) => name.clone(),
+            Type::Struct(name, _) | Type::UserDefined(name, _) | Type::Enum(name, _) => name.clone(),
             Type::Tensor(_, _) => "Tensor".to_string(),
             _ => return Err(format!("Method {} not found on type {:?}", method, obj_ty)),
         };
@@ -7149,11 +7378,32 @@ impl<'ctx> CodeGenerator<'ctx> {
              }
         }
 
+        // Check for generic impls first
+        let generic_func = if self.generic_impls.contains_key(&type_name) {
+             let generics = match &obj_ty {
+                 Type::UserDefined(_, args) | Type::Struct(_, args) | Type::Enum(_, args) => args.clone(),
+                 Type::Vec(inner) => vec![*inner.clone()],
+                 _ => vec![],
+             };
+             // Try monomorphize
+             match self.monomorphize_method(&type_name, method, &generics) {
+                 Ok(name) => {
+                     let f = self.module.get_function(&name).ok_or(format!("{} not found", name))?;
+                     Some((f, name))
+                 },
+                 Err(e) => return Err(e),
+             }
+        } else {
+             None
+        };
+
         let mangled_name = format!("tl_{}_{}", simple_struct_name, method);
         // Fallback to lowercase
         let stdlib_name = format!("tl_{}_{}", simple_struct_name.to_lowercase(), method);
 
-        let (func_val, final_name) = if let Some(f) = self.module.get_function(&mangled_name) {
+        let (func_val, final_name) = if let Some(res) = generic_func {
+            res
+        } else if let Some(f) = self.module.get_function(&mangled_name) {
             (f, mangled_name)
         } else if let Some(f) = self.module.get_function(&stdlib_name) {
             (f, stdlib_name)
