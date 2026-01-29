@@ -161,7 +161,7 @@ fn compile_kv_cache_free<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     instance_val: BasicValueEnum<'ctx>,
     instance_ty: Type,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "_h")?;
     let fn_val = codegen.module.get_function("tl_kv_cache_free").ok_or("tl_kv_cache_free not found")?;

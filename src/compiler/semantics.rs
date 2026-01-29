@@ -240,14 +240,17 @@ impl SemanticAnalyzer {
         self.enums.insert("Device".to_string(), device_enum);
 
         // Register Vec<T> struct
-        let vec_struct = StructDef {
-            name: "Vec".to_string(),
-            generics: vec!["T".to_string()],
-            fields: vec![],
-        };
+        let vec_struct = crate::compiler::codegen::builtin_types::vec::get_vec_struct_def();
         self.structs.insert("Vec".to_string(), vec_struct);
 
-        // Register Map<K, V> struct
+        // Register Map<K, V> struct (KEEP MANUAL for now if Map is different from HashMap, waiting for map.rs?)
+        // The original code had Map struct manually defined here.
+        // Wait, Map is different from HashMap in original usage?
+        // Check original: 
+        // let map_struct = StructDef { name: "Map"... };
+        // self.structs.insert("Map"...)
+        // It seems Map is indeed separate or an alias.
+        // Let's keep Map manual if we didn't create map.rs.
         let map_struct = StructDef {
             name: "Map".to_string(),
             generics: vec!["K".to_string(), "V".to_string()],
@@ -255,20 +258,16 @@ impl SemanticAnalyzer {
         };
         self.structs.insert("Map".to_string(), map_struct);
 
-        // Register HashMap struct (Opaque)
-        let hashmap_struct = StructDef {
-            name: "HashMap".to_string(),
-            generics: vec![], // Treating as opaque non-generic for now in semantics, or should I add K,V?
-                              // TypeRegistry uses UserDefined("HashMap", vec![]). 
-                              // So empty generics here to match.
-            fields: vec![],
-        };
+        // Register HashMap struct
+        let hashmap_struct = crate::compiler::codegen::builtin_types::hashmap::get_hashmap_struct_def();
         self.structs.insert("HashMap".to_string(), hashmap_struct);
 
-        // Register built-in Enums from AST injection (Option, Result)
-        for enum_def in crate::compiler::builtin_ast::load_builtin_enums() {
-            self.enums.insert(enum_def.name.clone(), enum_def);
-        }
+        // Register built-in Enums
+        let option_def = crate::compiler::codegen::builtin_types::option::get_option_enum_def();
+        self.enums.insert(option_def.name.clone(), option_def);
+
+        let result_def = crate::compiler::codegen::builtin_types::result::get_result_enum_def();
+        self.enums.insert(result_def.name.clone(), result_def);
     }
 
     pub fn enter_scope(&mut self) {
@@ -567,7 +566,7 @@ impl SemanticAnalyzer {
                           for (var_name, ty) in vars.iter().zip(types.iter()) {
                                 let concrete_ty = crate::compiler::generics::GenericResolver::apply_bindings(ty, &resolved_bindings);
                                 self.declare_variable(var_name.clone(), concrete_ty, false) 
-                                    .map_err(|e| SemanticError::DuplicateDefinition(var_name.clone()))?; 
+                                    .map_err(|_e| SemanticError::DuplicateDefinition(var_name.clone()))?; 
                           }
                           Ok(Some(variant_idx))
                      },
@@ -2182,10 +2181,10 @@ impl SemanticAnalyzer {
                     // But our parser parses `Variant { ... }` as StructInit.
                     
                     let payload = match &variant_def.kind {
-                         crate::compiler::ast::VariantKind::Struct(def_fields) => {
+                         crate::compiler::ast::VariantKind::Struct(_def_fields) => {
                               crate::compiler::ast::EnumVariantInit::Struct(fields_owned)
                          },
-                         crate::compiler::ast::VariantKind::Tuple(types) => {
+                         crate::compiler::ast::VariantKind::Tuple(_types) => {
                               // If using brace syntax for tuple variant, we expect fields "0", "1"...?
                               // Or maybe we should Error? 
                               // "Variant { ... }" is only valid for Struct Variant.

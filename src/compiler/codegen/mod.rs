@@ -1,5 +1,5 @@
 use crate::compiler::ast::*;
-use crate::compiler::builtin_ast;
+
 use crate::compiler::shape_analysis::ShapeAnalyzer;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
@@ -103,8 +103,11 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Register builtins (Enums, etc.)
         codegen.register_builtins();
-        // Load builtin enums from AST (Option, Result)
-        let builtin_enums = builtin_ast::load_builtin_enums();
+        // Load builtin enums (Option, Result)
+        let builtin_enums = vec![
+            builtin_types::option::get_option_enum_def(),
+            builtin_types::result::get_result_enum_def(),
+        ];
         for def in &builtin_enums {
             codegen.enum_defs.insert(def.name.clone(), def.clone());
         }
@@ -491,6 +494,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         builtin_types::tensor::register_tensor_types(&mut self.type_manager);
         builtin_types::option::register_option_types(&mut self.type_manager);
         builtin_types::llm::register_llm_types(&mut self.type_manager);
+        builtin_types::result::register_result_types(&mut self.type_manager);
+        builtin_types::string::register_string_types(&mut self.type_manager);
 
 
 

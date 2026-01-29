@@ -1,8 +1,28 @@
 use crate::compiler::codegen::type_manager::{CodeGenType, TypeManager, InstanceMethod};
 use crate::compiler::codegen::CodeGenerator;
-use crate::compiler::ast::Type;
+use crate::compiler::ast::{Type, EnumDef, VariantDef, VariantKind};
 use inkwell::values::BasicValueEnum;
 use inkwell::IntPredicate;
+
+pub fn get_option_enum_def() -> EnumDef {
+    // enum Option<T> { Some(T), None }
+    let t = Type::UserDefined("T".to_string(), vec![]);
+    
+    EnumDef {
+        name: "Option".to_string(),
+        generics: vec!["T".to_string()],
+        variants: vec![
+            VariantDef {
+                name: "None".to_string(),
+                kind: VariantKind::Unit,
+            },
+            VariantDef {
+                name: "Some".to_string(),
+                kind: VariantKind::Tuple(vec![t.clone()]),
+            },
+        ],
+    }
+}
 
 pub fn register_option_types(manager: &mut TypeManager) {
     let mut option = CodeGenType::new("Option");
