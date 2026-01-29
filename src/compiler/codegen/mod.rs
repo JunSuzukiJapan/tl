@@ -25,6 +25,7 @@ pub mod mono;
 pub mod stmt;
 pub mod tensor;
 pub mod type_manager;
+pub mod builtin_types;
 
 pub struct CodeGenerator<'ctx> {
     pub(crate) context: &'ctx Context,
@@ -448,6 +449,59 @@ impl<'ctx> CodeGenerator<'ctx> {
         option_type.register_static_method("Some", expr::StaticMethod::Evaluated(expr::compile_option_some));
         option_type.register_static_method("None", expr::StaticMethod::Evaluated(expr::compile_option_none));
         self.type_manager.register_type(option_type);
+
+        // Register Result Type in TypeManager
+        let mut result_type = type_manager::CodeGenType::new("Result");
+        result_type.register_static_method("Ok", expr::StaticMethod::Evaluated(expr::compile_result_ok));
+        result_type.register_static_method("Err", expr::StaticMethod::Evaluated(expr::compile_result_err));
+        self.type_manager.register_type(result_type);
+
+
+
+        // Register Vec Type
+        let mut vec_type = type_manager::CodeGenType::new("Vec");
+        vec_type.register_static_method("new", expr::StaticMethod::Evaluated(expr::compile_vec_new));
+        vec_type.register_instance_method("len", expr::InstanceMethod::Evaluated(expr::compile_vec_len));
+        vec_type.register_instance_method("push", expr::InstanceMethod::Evaluated(expr::compile_vec_push));
+        vec_type.register_instance_method("pop", expr::InstanceMethod::Evaluated(expr::compile_vec_pop));
+        vec_type.register_instance_method("get", expr::InstanceMethod::Evaluated(expr::compile_vec_get));
+        vec_type.register_instance_method("set", expr::InstanceMethod::Evaluated(expr::compile_vec_set));
+        self.type_manager.register_type(vec_type);
+
+        let mut hashmap_type = type_manager::CodeGenType::new("HashMap");
+        hashmap_type.register_static_method("new", expr::StaticMethod::Evaluated(expr::compile_hashmap_new));
+        hashmap_type.register_instance_method("insert", expr::InstanceMethod::Evaluated(expr::compile_hashmap_insert));
+        hashmap_type.register_instance_method("get", expr::InstanceMethod::Evaluated(expr::compile_hashmap_get));
+        hashmap_type.register_instance_method("remove", expr::InstanceMethod::Evaluated(expr::compile_hashmap_remove));
+        hashmap_type.register_instance_method("contains_key", expr::InstanceMethod::Evaluated(expr::compile_hashmap_contains_key));
+        hashmap_type.register_instance_method("len", expr::InstanceMethod::Evaluated(expr::compile_hashmap_len));
+        hashmap_type.register_instance_method("clear", expr::InstanceMethod::Evaluated(expr::compile_hashmap_clear));
+        self.type_manager.register_type(hashmap_type);
+
+        // Register LLM Types (Tokenizer, KVCache)
+        builtin_types::llm::register_llm_types(&mut self.type_manager);
+
+        // Register System Type (Static Methods only)
+        let mut system_type = type_manager::CodeGenType::new("System");
+        system_type.register_static_method("memory_mb", expr::StaticMethod::Evaluated(expr::compile_system_memory_mb));
+        system_type.register_static_method("metal_pool_bytes", expr::StaticMethod::Evaluated(expr::compile_system_metal_pool_bytes));
+        system_type.register_static_method("metal_pool_mb", expr::StaticMethod::Evaluated(expr::compile_system_metal_pool_mb));
+        system_type.register_static_method("metal_pool_count", expr::StaticMethod::Evaluated(expr::compile_system_metal_pool_count));
+        system_type.register_static_method("metal_sync", expr::StaticMethod::Evaluated(expr::compile_system_metal_sync));
+        system_type.register_static_method("pool_count", expr::StaticMethod::Evaluated(expr::compile_system_pool_count));
+        system_type.register_static_method("refcount_count", expr::StaticMethod::Evaluated(expr::compile_system_refcount_count));
+        system_type.register_static_method("scope_depth", expr::StaticMethod::Evaluated(expr::compile_system_scope_depth));
+        self.type_manager.register_type(system_type);
+
+        // Register IO Types (File, Path, Env, Http)
+        builtin_types::io::register_io_types(&mut self.type_manager);
+        builtin_types::system::register_system_types(&mut self.type_manager);
+
+        // Register Tensor Type
+        let mut tensor_type = type_manager::CodeGenType::new("Tensor");
+        tensor_type.register_static_method("clear_grads", expr::StaticMethod::Evaluated(expr::compile_tensor_clear_grads));
+        tensor_type.register_static_method("from_vec_u8", expr::StaticMethod::Evaluated(expr::compile_tensor_from_vec_u8));
+        self.type_manager.register_type(tensor_type);
 
         let device_enum = EnumDef {
             name: "Device".to_string(),

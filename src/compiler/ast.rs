@@ -103,6 +103,7 @@ pub enum Type {
     UserDefined(String, Vec<Type>), // Name, Generic Args
 
     Void, // For functions returning nothing
+    Undefined(u64), // For unresolved generics (unique ID)
 }
 
 #[derive(Debug, Clone, PartialEq)]

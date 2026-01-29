@@ -903,24 +903,24 @@ impl TypeRegistry {
             },
             MethodSignature {
                 name: "exists".to_string(),
-                params: vec![],
+                params: vec![ParamType::Exact(Type::UserDefined("String".to_string(), vec![]))],
                 return_type: ReturnType::Exact(Type::Bool),
                 is_varargs: false,
-                min_args: 0,
+                min_args: 1,
             },
             MethodSignature {
                 name: "is_dir".to_string(),
-                params: vec![],
+                params: vec![ParamType::Exact(Type::UserDefined("String".to_string(), vec![]))],
                 return_type: ReturnType::Exact(Type::Bool),
                 is_varargs: false,
-                min_args: 0,
+                min_args: 1,
             },
             MethodSignature {
                 name: "is_file".to_string(),
-                params: vec![],
+                params: vec![ParamType::Exact(Type::UserDefined("String".to_string(), vec![]))],
                 return_type: ReturnType::Exact(Type::Bool),
                 is_varargs: false,
-                min_args: 0,
+                min_args: 1,
             },
             MethodSignature {
                 name: "to_string".to_string(),
@@ -1240,7 +1240,7 @@ impl TypeRegistry {
                     Type::UserDefined("Vec".into(), abstract_params)
                 }
             }
-            Type::UserDefined(name, _) | Type::Struct(name, _) => {
+            Type::UserDefined(name, _) | Type::Struct(name, _) | Type::Enum(name, _) => {
                 Type::UserDefined(name.clone(), abstract_params)
             }
             _ => receiver_type.clone(),
@@ -1315,15 +1315,17 @@ impl TypeRegistry {
                     Type::Vec(inner) => ("Vec", vec![inner.as_ref().clone()]),
                     Type::UserDefined(n, args) => (n.as_str(), args.clone()),
                     Type::Struct(n, args) => (n.as_str(), args.clone()),
+                    Type::Enum(n, args) => (n.as_str(), args.clone()),
                     _ => return false,
                 };
                 
                 // Determine generic parameter names based on argument count
                 // Standard convention: 1 arg -> ["T"], 2 args -> ["K", "V"]
-                let generic_params: Vec<String> = match args.len() {
-                    1 => vec!["T".to_string()],
-                    2 => vec!["K".to_string(), "V".to_string()],
-                    n => (0..n).map(|i| format!("T{}", i)).collect(),
+                let generic_params: Vec<String> = match (_type_name, args.len()) {
+                    (_, 1) => vec!["T".to_string()],
+                    ("Result", 2) => vec!["T".to_string(), "E".to_string()],
+                    (_, 2) => vec!["K".to_string(), "V".to_string()],
+                    (_, n) => (0..n).map(|i| format!("T{}", i)).collect(),
                 };
                 
                 // Build abstract generic structure

@@ -4,9 +4,10 @@ use inkwell::types::BasicType;
 use inkwell::values::*;
 use std::collections::{HashMap, HashSet};
 
-fn compile_option_some<'ctx>(
+pub fn compile_option_some<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target_type: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 {
         return Err("Option::Some requires 1 argument".into());
@@ -37,18 +38,25 @@ fn compile_option_some<'ctx>(
     Ok((option_ptr.into(), Type::UserDefined("Option".to_string(), vec![inner_type])))
 }
 
-fn compile_option_none<'ctx>(
+pub fn compile_option_none<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    target_type: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if !args.is_empty() {
         return Err("Option::None takes no arguments".into());
     }
 
     // Default to I64 for unspecified Option type if inferrence fails
-    // Note: Ideally we should get the type hint here, but StaticMethodEval signature doesn't propagate it yet.
-    // For now we assume I64, which is compatible with how it was handled before (void replacement).
-    let inner_type = Type::I64; 
+    let inner_type = if let Some(Type::UserDefined(_, gens)) = target_type {
+        if !gens.is_empty() {
+             gens[0].clone()
+        } else {
+             Type::I64
+        }
+    } else {
+        Type::I64
+    };
 
     // Create Option struct: { tag: i64, value: T }
     let i64_type = codegen.context.i64_type();
@@ -73,6 +81,746 @@ fn compile_option_none<'ctx>(
         .map_err(|e| e.to_string())?;
 
     Ok((option_ptr.into(), Type::UserDefined("Option".to_string(), vec![inner_type])))
+}
+
+pub fn compile_result_ok<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    target_type: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("Result::Ok requires 1 argument".into());
+    }
+    
+    // Fallback: Default to Void for unspecified types
+    let (t_ty, e_ty) = match target_type {
+        Some(Type::UserDefined(_, gens)) | Some(Type::Struct(_, gens)) | Some(Type::Enum(_, gens)) => {
+            if gens.len() == 2 {
+                (gens[0].clone(), gens[1].clone())
+            } else {
+                (args[0].1.clone(), Type::Void)
+            }
+        }
+        _ => (args[0].1.clone(), Type::Void),
+    };
+
+    // Build fields: tag + payloads
+    let mut fields = vec![codegen.context.i32_type().into()]; // Tag
+    let mut t_idx = 0;
+    
+    // Append T if not void
+    if t_ty != Type::Void {
+        fields.push(codegen.get_llvm_type(&t_ty)?);
+        t_idx = fields.len() - 1;
+    }
+    
+    // Append E if not void
+    if e_ty != Type::Void {
+        fields.push(codegen.get_llvm_type(&e_ty)?);
+    }
+
+    let result_struct_ty = codegen.context.struct_type(&fields, false);
+    let ptr = codegen.builder.build_alloca(result_struct_ty, "result_val").map_err(|e| e.to_string())?;
+    
+    // Set tag = 0 (Ok)
+    let tag_ptr = codegen.builder.build_struct_gep(result_struct_ty, ptr, 0, "tag_ptr").map_err(|e| e.to_string())?;
+    codegen.builder.build_store(tag_ptr, codegen.context.i32_type().const_int(0, false)).map_err(|e| e.to_string())?;
+    
+    // Set payload
+    if t_ty != Type::Void {
+         let val = args[0].0;
+         let t_ptr = codegen.builder.build_struct_gep(result_struct_ty, ptr, t_idx as u32, "t_ptr").map_err(|e| e.to_string())?;
+         codegen.builder.build_store(t_ptr, val).map_err(|e| e.to_string())?;
+    }
+    
+    let result_type = Type::Enum("Result".to_string(), vec![t_ty, e_ty]);
+    Ok((ptr.into(), result_type))
+}
+
+pub fn compile_result_err<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    target_type: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("Result::Err requires 1 argument".into());
+    }
+    
+    // Fallback
+    let (t_ty, e_ty) = match target_type {
+        Some(Type::UserDefined(_, gens)) | Some(Type::Struct(_, gens)) | Some(Type::Enum(_, gens)) => {
+            if gens.len() == 2 {
+                (gens[0].clone(), gens[1].clone())
+            } else {
+                (Type::Void, args[0].1.clone())
+            }
+        }
+        _ => (Type::Void, args[0].1.clone()),
+    };
+
+    // Build fields: tag + payloads
+    let mut fields = vec![codegen.context.i32_type().into()]; // Tag
+    let mut e_idx = 0;
+    
+    // Append T if not void
+    if t_ty != Type::Void {
+        fields.push(codegen.get_llvm_type(&t_ty)?);
+    }
+    
+    // Append E if not void
+    if e_ty != Type::Void {
+        fields.push(codegen.get_llvm_type(&e_ty)?);
+        e_idx = fields.len() - 1;
+    }
+
+    let result_struct_ty = codegen.context.struct_type(&fields, false);
+    let ptr = codegen.builder.build_alloca(result_struct_ty, "result_val").map_err(|e| e.to_string())?;
+    
+    // Set tag = 1 (Err)
+    let tag_ptr = codegen.builder.build_struct_gep(result_struct_ty, ptr, 0, "tag_ptr").map_err(|e| e.to_string())?;
+    codegen.builder.build_store(tag_ptr, codegen.context.i32_type().const_int(1, false)).map_err(|e| e.to_string())?;
+    
+    // Set payload
+    if e_ty != Type::Void {
+         let val = args[0].0;
+         let e_ptr = codegen.builder.build_struct_gep(result_struct_ty, ptr, e_idx as u32, "e_ptr").map_err(|e| e.to_string())?;
+         codegen.builder.build_store(e_ptr, val).map_err(|e| e.to_string())?;
+    }
+    
+    let result_type = Type::Enum("Result".to_string(), vec![t_ty, e_ty]);
+    Ok((ptr.into(), result_type))
+}
+
+pub fn compile_vec_new<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    target_type: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    // Determine element type from target_type hint
+    let inner_type = if let Some(target) = target_type {
+        match target {
+            Type::Vec(inner) => *inner.clone(),
+            Type::UserDefined(_, args) | Type::Struct(_, args) => {
+                 if !args.is_empty() { args[0].clone() } else { Type::Void }
+            }
+            _ => Type::Void,
+        }
+    } else {
+        Type::Void
+    };
+
+    let fn_name = match inner_type {
+        Type::U8 => "tl_vec_u8_new",
+        Type::I64 => "tl_vec_i64_new",
+        Type::F32 => "tl_vec_f32_new",
+        _ => "tl_vec_ptr_new",
+    };
+
+    let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
+    let call = codegen.builder.build_call(fn_val, &[], "vec_new").map_err(|e| e.to_string())?;
+    
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from vec.new()".into()),
+    };
+
+    Ok((res, Type::Vec(Box::new(inner_type))))
+}
+
+pub fn compile_hashmap_new<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    target_type: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function("tl_hashmap_new").ok_or("tl_hashmap_new not found")?;
+    let call = codegen.builder.build_call(fn_val, &[], "hashmap_new").map_err(|e| e.to_string())?;
+    
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from hashmap.new()".into()),
+    };
+    
+    // Return with proper type if hinted
+    let ret_type = if let Some(ty) = target_type {
+        ty.clone()
+    } else {
+        Type::UserDefined("HashMap".to_string(), vec![])
+    };
+
+    Ok((res, ret_type))
+}
+
+pub fn compile_tokenizer_new<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target_type: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("Tokenizer::new requires 1 argument".into());
+    }
+    let path_val = args[0].0;
+    
+    let fn_val = codegen.module.get_function("tl_tokenizer_new").ok_or("tl_tokenizer_new not found")?;
+    let call = codegen.builder.build_call(fn_val, &[path_val.into()], "tok_new").map_err(|e| e.to_string())?;
+    let handle = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from Tokenizer::new".into()),
+    };
+
+    let struct_type = *codegen.struct_types.get("Tokenizer").ok_or("Struct type Tokenizer not found")?;
+    let struct_def = codegen.struct_defs.get("Tokenizer").ok_or("Struct definition Tokenizer not found")?;
+    let size = struct_type.size_of().ok_or("Cannot determine size of Tokenizer")?;
+    
+    let size_int = size;
+    let size_i64 = if size_int.get_type() == codegen.context.i32_type() {
+        codegen.builder.build_int_z_extend(size_int, codegen.context.i64_type(), "size_i64").unwrap()
+    } else {
+        size_int
+    };
+
+    let malloc_fn = codegen.module.get_function("malloc").ok_or("malloc not found (declare in builtins)")?;
+    let call = codegen.builder.build_call(malloc_fn, &[size_i64.into()], "tokenizer_malloc").map_err(|e| e.to_string())?;
+    let raw_ptr = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+        _ => return Err("malloc returned invalid value".into()),
+    };
+    
+    if let Some(register_fn) = codegen.module.get_function("tl_mem_register_struct") {
+        let cast_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap();
+        codegen.builder.build_call(register_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
+    }
+    
+    let struct_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "tokenizer_ptr").map_err(|e| e.to_string())?;
+    
+    let field_idx = struct_def.fields.iter().position(|(n, _)| n == "_h").ok_or("Field _h not found in Tokenizer")?;
+    let field_ptr = codegen.builder.build_struct_gep(struct_type, struct_ptr, field_idx as u32, "tokenizer_h").map_err(|e| e.to_string())?;
+    codegen.builder.build_store(field_ptr, handle).map_err(|e| e.to_string())?;
+    
+    Ok((struct_ptr.into(), Type::Struct("Tokenizer".to_string(), vec![])))
+}
+
+pub fn compile_kv_cache_new<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target_type: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("KVCache::new requires 1 argument".into());
+    }
+    let layers_val = args[0].0;
+
+    let fn_val = codegen.module.get_function("tl_kv_cache_new").ok_or("tl_kv_cache_new not found")?;
+    let call = codegen.builder.build_call(fn_val, &[layers_val.into()], "kv_new").map_err(|e| e.to_string())?;
+    let handle = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from KVCache::new".into()),
+    };
+
+    let struct_type = *codegen.struct_types.get("KVCache").ok_or("Struct type KVCache not found")?;
+    let struct_def = codegen.struct_defs.get("KVCache").ok_or("Struct definition KVCache not found")?;
+    let size = struct_type.size_of().ok_or("Cannot determine size of KVCache")?;
+    
+    let size_int = size;
+    let size_i64 = if size_int.get_type() == codegen.context.i32_type() {
+        codegen.builder.build_int_z_extend(size_int, codegen.context.i64_type(), "size_i64").unwrap()
+    } else {
+        size_int
+    };
+
+    let malloc_fn = codegen.module.get_function("malloc").ok_or("malloc not found (declare in builtins)")?;
+    let call = codegen.builder.build_call(malloc_fn, &[size_i64.into()], "kvcache_malloc").map_err(|e| e.to_string())?;
+    let raw_ptr = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+        _ => return Err("malloc returned invalid value".into()),
+    };
+    
+    if let Some(register_fn) = codegen.module.get_function("tl_mem_register_struct") {
+        let cast_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap();
+        codegen.builder.build_call(register_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
+    }
+    
+    let struct_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "kvcache_ptr").map_err(|e| e.to_string())?;
+    
+    let field_idx = struct_def.fields.iter().position(|(n, _)| n == "_h").ok_or("Field _h not found in KVCache")?;
+    let field_ptr = codegen.builder.build_struct_gep(struct_type, struct_ptr, field_idx as u32, "kvcache_h").map_err(|e| e.to_string())?;
+    codegen.builder.build_store(field_ptr, handle).map_err(|e| e.to_string())?;
+    
+    Ok((struct_ptr.into(), Type::Struct("KVCache".to_string(), vec![])))
+}
+
+// System Static Methods
+fn compile_system_method<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    fn_name: &str,
+    ret_type: Type,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
+    let call = codegen.builder.build_call(fn_val, &[], "sys_call").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err(format!("Invalid return from {}", fn_name)),
+    };
+    Ok((res, ret_type))
+}
+
+pub fn compile_system_memory_mb<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("System::memory_mb takes no arguments".into()); }
+    compile_system_method(codegen, "tl_get_memory_mb", Type::I64)
+}
+
+pub fn compile_system_metal_pool_bytes<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("System::metal_pool_bytes takes no arguments".into()); }
+    compile_system_method(codegen, "tl_get_metal_pool_bytes", Type::I64)
+}
+
+pub fn compile_system_metal_pool_mb<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("System::metal_pool_mb takes no arguments".into()); }
+    compile_system_method(codegen, "tl_get_metal_pool_mb", Type::I64)
+}
+
+pub fn compile_system_metal_pool_count<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("System::metal_pool_count takes no arguments".into()); }
+    compile_system_method(codegen, "tl_get_metal_pool_count", Type::I64)
+}
+
+pub fn compile_system_metal_sync<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("System::metal_sync takes no arguments".into()); }
+    compile_system_method(codegen, "tl_metal_synchronize", Type::Void)
+}
+
+pub fn compile_system_pool_count<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("System::pool_count takes no arguments".into()); }
+    compile_system_method(codegen, "tl_get_pool_count", Type::I64)
+}
+
+pub fn compile_system_refcount_count<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("System::refcount_count takes no arguments".into()); }
+    compile_system_method(codegen, "tl_get_refcount_count", Type::I64)
+}
+
+pub fn compile_system_scope_depth<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("System::scope_depth takes no arguments".into()); }
+    compile_system_method(codegen, "tl_get_scope_depth", Type::I64)
+}
+
+// File Static Methods
+pub fn compile_file_open<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 2 { return Err("File::open requires 2 arguments".into()); }
+    let fn_val = codegen.module.get_function("tl_file_open").ok_or("tl_file_open not found")?;
+    let call = codegen.builder.build_call(fn_val, &[args[0].0.into(), args[1].0.into()], "file_open").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from File::open".into()),
+    };
+    Ok((res, Type::UserDefined("File".to_string(), vec![])))
+}
+
+pub fn compile_file_exists<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("File::exists requires 1 argument".into()); }
+    let fn_val = codegen.module.get_function("tl_file_exists_i64").ok_or("tl_file_exists_i64 not found")?;
+    let call = codegen.builder.build_call(fn_val, &[args[0].0.into()], "file_exists").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+        _ => return Err("Invalid return from File::exists".into()),
+    };
+    let ok = codegen.builder.build_int_compare(inkwell::IntPredicate::EQ, res, codegen.context.i64_type().const_int(1, false), "exists_bool").unwrap();
+    Ok((ok.into(), Type::Bool))
+}
+
+pub fn compile_file_read_static<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("File::read requires 1 argument".into()); }
+    let fn_val = codegen.module.get_function("tl_read_file").ok_or("tl_read_file not found")?;
+    let call = codegen.builder.build_call(fn_val, &[args[0].0.into()], "file_read").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from File::read".into()),
+    };
+    Ok((res, Type::UserDefined("String".to_string(), vec![])))
+}
+
+pub fn compile_file_download<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 2 { return Err("File::download requires 2 arguments".into()); }
+    let fn_val = codegen.module.get_function("tl_download_file").ok_or("tl_download_file not found")?;
+    let call = codegen.builder.build_call(fn_val, &[args[0].0.into(), args[1].0.into()], "file_download").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+        _ => return Err("Invalid return from File::download".into()),
+    };
+    let ok = codegen.builder.build_int_compare(inkwell::IntPredicate::EQ, res, codegen.context.i64_type().const_int(1, false), "download_bool").unwrap();
+    Ok((ok.into(), Type::Bool))
+}
+
+pub fn compile_file_read_binary<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("File::read_binary requires 1 argument".into()); }
+    let fn_val = codegen.module.get_function("tl_file_read_binary").ok_or("tl_file_read_binary not found")?;
+    let call = codegen.builder.build_call(fn_val, &[args[0].0.into()], "file_read_binary").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from File::read_binary".into()),
+    };
+    Ok((res, Type::Vec(Box::new(Type::U8))))
+}
+
+pub fn compile_path_exists<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("Path::exists requires 1 argument".into()); }
+    let fn_val = codegen.module.get_function("tl_path_exists").ok_or("tl_path_exists not found")?;
+    let call = codegen.builder.build_call(fn_val, &[args[0].0.into()], "path_exists").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v, // Bool return type?
+        _ => return Err("Invalid return from Path::exists".into()),
+    };
+    // Original code checks return loop handling for Bool?
+    // Line 4886 says: return Ok((res, Type::Bool));
+    // So tl_path_exists returns i1 (bool) directly? 
+    // Wait, checked the earlier view - yes, it returned res (v) directly as Type::Bool.
+    Ok((res, Type::Bool))
+}
+
+// Tensor Static Methods
+pub fn compile_tensor_clear_grads<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("Tensor::clear_grads takes no arguments".into()); }
+    let fn_val = codegen.module.get_function("tl_clear_grads").ok_or("tl_clear_grads not found")?;
+    codegen.builder.build_call(fn_val, &[], "clear_grads").map_err(|e| e.to_string())?;
+    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
+}
+
+pub fn compile_tensor_from_vec_u8<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 4 { return Err("Tensor::from_vec_u8 requires 4 arguments".into()); }
+    let vec_val = args[0].0;
+    let offset_val = args[1].0;
+    let shape_val = args[2].0;
+    let rank_val = args[3].0;
+    
+    // shape must be pointer (ScalarArray)
+    
+    let fn_val = codegen.module.get_function("tl_tensor_from_vec_u8").ok_or("tl_tensor_from_vec_u8 not found")?;
+    let call = codegen.builder.build_call(fn_val, &[vec_val.into(), offset_val.into(), shape_val.into(), rank_val.into()], "from_vec_u8").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from from_vec_u8".into()),
+    };
+    // Register temp logic if needed (TypeManager usually handles invocation, but temp tracking depends on caller?)
+    // Existing logic had: self.add_temp(res, Type::Tensor(Box::new(Type::F32), 2));
+    // CodeGenerator methods (like add_temp) are available via `codegen`.
+    codegen.add_temp(res, Type::Tensor(Box::new(Type::F32), 2));
+    Ok((res, Type::Tensor(Box::new(Type::F32), 2)))
+}
+
+// Tokenizer Instance Methods
+pub fn compile_tokenizer_encode<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("Tokenizer::encode requires 1 argument".into()); }
+    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "_h")?;
+    let (prompt_val, _) = args[0];
+    let fn_val = codegen.module.get_function("tl_tokenizer_encode").ok_or("tl_tokenizer_encode not found")?;
+    let call = codegen.builder.build_call(fn_val, &[handle.into(), prompt_val.into()], "tok_encode").map_err(|e| e.to_string())?;
+    // check_tensor_result(val, msg) is method of codegen.
+    let res = codegen.check_tensor_result(call, "tok_encode_error")?;
+    Ok((res, Type::Tensor(Box::new(Type::I64), 0)))
+}
+
+pub fn compile_tokenizer_decode<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("Tokenizer::decode requires 1 argument".into()); }
+    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "_h")?;
+    let (ids_val, _) = args[0];
+    let fn_val = codegen.module.get_function("tl_tokenizer_decode").ok_or("tl_tokenizer_decode not found")?;
+    let call = codegen.builder.build_call(fn_val, &[handle.into(), ids_val.into()], "tok_decode").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from Tokenizer::decode".into()),
+    };
+    Ok((res, Type::UserDefined("String".to_string(), vec![])))
+}
+
+// KVCache Instance Methods
+pub fn compile_kv_cache_free<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "_h")?;
+    let fn_val = codegen.module.get_function("tl_kv_cache_free").ok_or("tl_kv_cache_free not found")?;
+    codegen.builder.build_call(fn_val, &[handle.into()], "kv_free").map_err(|e| e.to_string())?;
+    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
+}
+
+pub fn compile_kv_cache_get_k<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("KVCache::get_k requires 1 argument".into()); }
+    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "_h")?;
+    let (layer_val, _) = args[0];
+    let fn_val = codegen.module.get_function("tl_kv_cache_get_k").ok_or("tl_kv_cache_get_k not found")?;
+    let call = codegen.builder.build_call(fn_val, &[handle.into(), layer_val.into()], "kv_get_k").map_err(|e| e.to_string())?;
+    let res = codegen.check_tensor_result(call, "kv_get_k_error")?;
+    Ok((res, Type::Tensor(Box::new(Type::F32), 2))) // Assuming 2D tensor
+}
+
+pub fn compile_kv_cache_get_v<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("KVCache::get_v requires 1 argument".into()); }
+    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "_h")?;
+    let (layer_val, _) = args[0];
+    let fn_val = codegen.module.get_function("tl_kv_cache_get_v").ok_or("tl_kv_cache_get_v not found")?;
+    let call = codegen.builder.build_call(fn_val, &[handle.into(), layer_val.into()], "kv_get_v").map_err(|e| e.to_string())?;
+    let res = codegen.check_tensor_result(call, "kv_get_v_error")?;
+    Ok((res, Type::Tensor(Box::new(Type::F32), 2))) // Assuming 2D tensor
+}
+
+// Vec Instance Methods
+pub fn compile_vec_len<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("Vec::len takes no arguments".into()); }
+    let inner_ty = if let Type::Vec(inner) = instance_ty {
+        *inner
+    } else {
+        Type::Void // Should be handled by TypeManager logic or type check
+    };
+    
+    let fn_name = match inner_ty {
+        Type::U8 => "tl_vec_u8_len",
+        Type::I64 => "tl_vec_i64_len",
+        Type::F32 => "tl_vec_f32_len",
+        _ => "tl_vec_ptr_len",
+    };
+    let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
+    let call = codegen.builder.build_call(fn_val, &[instance_val.into()], "vec_len").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from Vec::len".into()),
+    };
+    Ok((res, Type::I64))
+}
+
+pub fn compile_vec_push<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("Vec::push requires 1 argument".into()); }
+    let (val, ty) = args[0].clone();
+    let inner_ty = if let Type::Vec(inner) = instance_ty {
+        *inner
+    } else {
+        Type::Void
+    };
+    
+    // cast if necessary (for ptr types to void*)
+    let arg_val = if matches!(inner_ty, Type::U8 | Type::I64 | Type::F32) {
+        val
+    } else {
+        // Cast to ptr? Logic in existing code:
+        // "tl_vec_ptr_push" takes (vec, ptr).
+        // LLVM pointer to pointer cast is implicit? No, explicit usually.
+        // Existing logic likely handled casting.
+        val
+    };
+
+    let fn_name = match inner_ty {
+        Type::U8 => "tl_vec_u8_push",
+        Type::I64 => "tl_vec_i64_push",
+        Type::F32 => "tl_vec_f32_push",
+        _ => "tl_vec_ptr_push",
+    };
+    let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
+    
+    // Check if cast is required for ptr push
+    let actual_arg = if fn_name == "tl_vec_ptr_push" {
+         if val.is_pointer_value() {
+            codegen.builder.build_pointer_cast(val.into_pointer_value(), codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap().into()
+         } else {
+             val
+         }
+    } else {
+        val
+    };
+
+    codegen.builder.build_call(fn_val, &[instance_val.into(), actual_arg.into()], "vec_push").map_err(|e| e.to_string())?;
+    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
+}
+
+pub fn compile_vec_pop<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("Vec::pop takes no arguments".into()); }
+    let inner_ty = if let Type::Vec(inner) = instance_ty {
+        *inner
+    } else {
+        Type::Void
+    };
+    
+    let fn_name = match inner_ty {
+        Type::U8 => "tl_vec_u8_pop",
+        Type::I64 => "tl_vec_i64_pop",
+        Type::F32 => "tl_vec_f32_pop",
+        _ => "tl_vec_ptr_pop",
+    };
+    let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
+    let call = codegen.builder.build_call(fn_val, &[instance_val.into()], "vec_pop").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from Vec::pop".into()),
+    };
+    Ok((res, inner_ty))
+}
+
+pub fn compile_vec_get<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("Vec::get requires 1 argument (index)".into()); }
+    let index_val = args[0].0;
+    
+    let inner_ty = if let Type::Vec(inner) = instance_ty {
+        *inner
+    } else {
+        Type::Void
+    };
+    
+    let fn_name = match inner_ty {
+        Type::U8 => "tl_vec_u8_get",
+        Type::I64 => "tl_vec_i64_get",
+        Type::F32 => "tl_vec_f32_get",
+        _ => "tl_vec_ptr_get",
+    };
+    let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
+    
+    let call = codegen.builder.build_call(fn_val, &[instance_val.into(), index_val.into()], "vec_get").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from Vec::get".into()),
+    };
+    Ok((res, inner_ty))
+}
+
+pub fn compile_vec_set<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 2 { return Err("Vec::set requires 2 arguments (index, value)".into()); }
+    let index_val = args[0].0;
+    let value_val = args[1].0;
+    
+    let inner_ty = if let Type::Vec(inner) = instance_ty {
+        *inner
+    } else {
+        Type::Void
+    };
+    
+    let fn_name = match inner_ty {
+        Type::U8 => "tl_vec_u8_set",
+        Type::I64 => "tl_vec_i64_set",
+        Type::F32 => "tl_vec_f32_set",
+        _ => "tl_vec_ptr_set",
+    };
+    let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
+    
+    // cast if needed (for ptr methods)
+    let actual_val = if fn_name == "tl_vec_ptr_set" {
+         if value_val.is_pointer_value() {
+              codegen.builder.build_pointer_cast(value_val.into_pointer_value(), codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap().into()
+         } else {
+             value_val
+         }
+    } else {
+         value_val
+    };
+
+    codegen.builder.build_call(fn_val, &[instance_val.into(), index_val.into(), actual_val.into()], "vec_set").map_err(|e| e.to_string())?;
+    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
 }
 
 pub type BuiltinFnEval = for<'a, 'ctx> fn(
@@ -140,11 +888,13 @@ impl InstanceMethodManager {
 pub type StaticMethodEval = for<'a, 'ctx> fn(
     &'a mut CodeGenerator<'ctx>,
     Vec<(BasicValueEnum<'ctx>, Type)>,
+    Option<&Type>, // target_type hint
 ) -> Result<(BasicValueEnum<'ctx>, Type), String>;
 
 pub type StaticMethodUneval = for<'a, 'ctx> fn(
     &'a mut CodeGenerator<'ctx>,
     &[Expr], // args
+    Option<&Type>, // target_type hint
 ) -> Result<(BasicValueEnum<'ctx>, Type), String>;
 
 #[derive(Clone, Copy)]
@@ -822,6 +1572,7 @@ fn compile_tensor_div_assign<'ctx>(
 fn compile_tensor_zeros<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: &[Expr],
+    _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.is_empty() {
         return Err("Tensor::zeros requires shape argument".into());
@@ -925,6 +1676,7 @@ fn compile_tensor_zeros<'ctx>(
 fn compile_varbuilder_get_static<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: &[Expr],
+    _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     // Arg 0: Name (String)
     let (name_val, _) = codegen.compile_expr(&args[0])?;
@@ -3733,22 +4485,24 @@ impl<'ctx> CodeGenerator<'ctx> {
         let method_name = method;
 
         // Try TypeManager first
-        if let Some(type_obj) = self.type_manager.get_type(type_name) {
-            if let Some(method) = type_obj.get_static_method(method_name) {
-                 match method {
+        let method_enum = self.type_manager.get_type(type_name)
+             .and_then(|t| t.get_static_method(method))
+             .copied();
+
+        if let Some(method_enum) = method_enum {
+             match method_enum {
                      StaticMethod::Evaluated(func) => {
                          let mut compiled_args = Vec::new();
                          for arg in args {
                              compiled_args.push(self.compile_expr(arg)?);
                          }
-                         return func(self, compiled_args);
+                         return func(self, compiled_args, Some(target_type));
                      }
                      StaticMethod::Unevaluated(func) => {
-                         return func(self, args);
+                         return func(self, args, Some(target_type));
                      }
                  }
             }
-        }
 
         // Result<T, E>
         if struct_name == "Result" {
@@ -3987,182 +4741,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
-        if type_name == "HashMap" && method_name == "new" {
-             let fn_val = self.module.get_function("tl_hashmap_new")
-                 .ok_or("tl_hashmap_new not found")?;
-             let call = self.builder.build_call(fn_val, &[], "hashmap_new").map_err(|e| e.to_string())?;
-        // Handle Option::some(val) and Option::none() - This block is now handled by TypeManager
-        // The original code for Option::some and Option::none is removed as per the instruction.
 
-        if type_name == "Tokenizer" && method_name == "new" {
-            if args.len() != 1 {
-                return Err("Tokenizer::new requires 1 argument".into());
-            }
-            let (path_val, _) = self.compile_expr(&args[0])?;
-            let fn_val = self
-                .module
-                .get_function("tl_tokenizer_new")
-                .ok_or("tl_tokenizer_new not found")?;
-            let call = self
-                .builder
-                .build_call(fn_val, &[path_val.into()], "tok_new")
-                .map_err(|e| e.to_string())?;
-            let handle = match call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(v) => v,
-                _ => return Err("Invalid return from Tokenizer::new".into()),
-            };
 
-            let struct_type = *self
-                .struct_types
-                .get("Tokenizer")
-                .ok_or("Struct type Tokenizer not found")?;
-            let struct_def = self
-                .struct_defs
-                .get("Tokenizer")
-                .ok_or("Struct definition Tokenizer not found")?;
-            let size = struct_type
-                .size_of()
-                .ok_or("Cannot determine size of Tokenizer")?;
-            
-            let size_int = size;
-            let size_i64 = if size_int.get_type() == self.context.i32_type() {
-                self.builder.build_int_z_extend(size_int, self.context.i64_type(), "size_i64").unwrap()
-            } else {
-                size_int
-            };
 
-            let malloc_fn = self
-                .module
-                .get_function("malloc")
-                .ok_or("malloc not found (declare in builtins)")?;
-            let call = self
-                .builder
-                .build_call(malloc_fn, &[size_i64.into()], "tokenizer_malloc")
-                .map_err(|e| e.to_string())?;
-            let raw_ptr = match call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-                _ => return Err("malloc returned invalid value".into()),
-            };
-            if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
-                let cast_ptr = self
-                    .builder
-                    .build_pointer_cast(
-                        raw_ptr,
-                        self.context.ptr_type(inkwell::AddressSpace::default()),
-                        "cast_ptr",
-                    )
-                    .unwrap();
-                self.builder
-                    .build_call(register_fn, &[cast_ptr.into()], "")
-                    .map_err(|e| e.to_string())?;
-            }
-            let struct_ptr = self
-                .builder
-                .build_pointer_cast(
-                    raw_ptr,
-                    self.context.ptr_type(inkwell::AddressSpace::default()),
-                    "tokenizer_ptr",
-                )
-                .map_err(|e| e.to_string())?;
-            let field_idx = struct_def
-                .fields
-                .iter()
-                .position(|(n, _)| n == "_h")
-                .ok_or("Field _h not found in Tokenizer")?;
-            let field_ptr = self
-                .builder
-                .build_struct_gep(struct_type, struct_ptr, field_idx as u32, "tokenizer_h")
-                .map_err(|e| e.to_string())?;
-            self.builder
-                .build_store(field_ptr, handle)
-                .map_err(|e| e.to_string())?;
-            return Ok((struct_ptr.into(), Type::Struct("Tokenizer".to_string(), vec![])));
-        }
 
-        if type_name == "KVCache" && method_name == "new" {
-            if args.len() != 1 {
-                return Err("KVCache::new requires 1 argument".into());
-            }
-            let (layers_val, _) = self.compile_expr(&args[0])?;
-            let fn_val = self
-                .module
-                .get_function("tl_kv_cache_new")
-                .ok_or("tl_kv_cache_new not found")?;
-            let call = self
-                .builder
-                .build_call(fn_val, &[layers_val.into()], "kv_new")
-                .map_err(|e| e.to_string())?;
-            let handle = match call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(v) => v,
-                _ => return Err("Invalid return from KVCache::new".into()),
-            };
 
-            let struct_type = *self
-                .struct_types
-                .get("KVCache")
-                .ok_or("Struct type KVCache not found")?;
-            let struct_def = self
-                .struct_defs
-                .get("KVCache")
-                .ok_or("Struct definition KVCache not found")?;
-            let size = struct_type
-                .size_of()
-                .ok_or("Cannot determine size of KVCache")?;
-            
-            let size_int = size;
-            let size_i64 = if size_int.get_type() == self.context.i32_type() {
-                self.builder.build_int_z_extend(size_int, self.context.i64_type(), "size_i64").unwrap()
-            } else {
-                size_int
-            };
-
-            let malloc_fn = self
-                .module
-                .get_function("malloc")
-                .ok_or("malloc not found (declare in builtins)")?;
-            let call = self
-                .builder
-                .build_call(malloc_fn, &[size_i64.into()], "kvcache_malloc")
-                .map_err(|e| e.to_string())?;
-            let raw_ptr = match call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-                _ => return Err("malloc returned invalid value".into()),
-            };
-            if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
-                let cast_ptr = self
-                    .builder
-                    .build_pointer_cast(
-                        raw_ptr,
-                        self.context.ptr_type(inkwell::AddressSpace::default()),
-                        "cast_ptr",
-                    )
-                    .unwrap();
-                self.builder
-                    .build_call(register_fn, &[cast_ptr.into()], "")
-                    .map_err(|e| e.to_string())?;
-            }
-            let struct_ptr = self
-                .builder
-                .build_pointer_cast(
-                    raw_ptr,
-                    self.context.ptr_type(inkwell::AddressSpace::default()),
-                    "kvcache_ptr",
-                )
-                .map_err(|e| e.to_string())?;
-            let field_idx = struct_def
-                .fields
-                .iter()
-                .position(|(n, _)| n == "_h")
-                .ok_or("Field _h not found in KVCache")?;
-            let field_ptr = self
-                .builder
-                .build_struct_gep(struct_type, struct_ptr, field_idx as u32, "kvcache_h")
-                .map_err(|e| e.to_string())?;
-            self.builder
-                .build_store(field_ptr, handle)
-                .map_err(|e| e.to_string())?;
-            return Ok((struct_ptr.into(), Type::Struct("KVCache".to_string(), vec![])));
-        }
 
         if type_name == "Map" && method_name == "load" {
             if args.len() != 1 {
@@ -4184,310 +4767,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Ok((res, Type::UserDefined("Map".to_string(), vec![])));
         }
 
-        if type_name == "File" {
-            match method_name {
-                "exists" => {
-                    if args.len() != 1 {
-                        return Err("File::exists requires 1 argument".into());
-                    }
-                    let (path_val, _) = self.compile_expr(&args[0])?;
-                    let fn_val = self
-                        .module
-                        .get_function("tl_file_exists_i64")
-                        .ok_or("tl_file_exists_i64 not found")?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[path_val.into()], "file_exists")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-                        _ => return Err("Invalid return from File::exists".into()),
-                    };
-                    let ok = self
-                        .builder
-                        .build_int_compare(
-                            inkwell::IntPredicate::EQ,
-                            res,
-                            self.context.i64_type().const_int(1, false),
-                            "file_exists_bool",
-                        )
-                        .map_err(|e| e.to_string())?;
-                    return Ok((ok.into(), Type::Bool));
-                }
-                "read" => {
-                    if args.len() != 1 {
-                        return Err("File::read requires 1 argument".into());
-                    }
-                    let (path_val, _) = self.compile_expr(&args[0])?;
-                    let fn_val = self
-                        .module
-                        .get_function("tl_read_file")
-                        .ok_or("tl_read_file not found")?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[path_val.into()], "file_read")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from File::read".into()),
-                    };
-                    return Ok((res, Type::UserDefined("String".to_string(), vec![])));
-                }
-                "write" => {
-                    if args.len() != 2 {
-                        return Err("File::write requires 2 arguments".into());
-                    }
-                    let (path_val, _) = self.compile_expr(&args[0])?;
-                    let (content_val, _) = self.compile_expr(&args[1])?;
-                    let fn_val = self
-                        .module
-                        .get_function("tl_write_file")
-                        .ok_or("tl_write_file not found")?;
-                    let call = self
-                        .builder
-                        .build_call(
-                            fn_val,
-                            &[path_val.into(), content_val.into()],
-                            "file_write",
-                        )
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-                        _ => return Err("Invalid return from File::write".into()),
-                    };
-                    let ok = self
-                        .builder
-                        .build_int_compare(
-                            inkwell::IntPredicate::EQ,
-                            res,
-                            self.context.i64_type().const_int(1, false),
-                            "file_write_bool",
-                        )
-                        .map_err(|e| e.to_string())?;
-                    return Ok((ok.into(), Type::Bool));
-                }
-                "open" => {
-                    if args.len() != 2 {
-                        return Err("File::open requires 2 arguments".into());
-                    }
-                    let (path_val, _) = self.compile_expr(&args[0])?;
-                    let (mode_val, _) = self.compile_expr(&args[1])?;
-                    let fn_val = self
-                        .module
-                        .get_function("tl_file_open")
-                        .ok_or("tl_file_open not found")?;
-                    let call = self
-                        .builder
-                        .build_call(
-                            fn_val,
-                            &[path_val.into(), mode_val.into()],
-                            "file_open",
-                        )
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from File::open".into()),
-                    };
-                    return Ok((res, Type::UserDefined("File".to_string(), vec![])));
-                }
-                "download" => {
-                    if args.len() != 2 {
-                        return Err("File::download requires 2 arguments".into());
-                    }
-                    let (url_val, _) = self.compile_expr(&args[0])?;
-                    let (path_val, _) = self.compile_expr(&args[1])?;
-                    let fn_val = self
-                        .module
-                        .get_function("tl_download_file")
-                        .ok_or("tl_download_file not found")?;
-                    let call = self
-                        .builder
-                        .build_call(
-                            fn_val,
-                            &[url_val.into(), path_val.into()],
-                            "file_download",
-                        )
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-                        _ => return Err("Invalid return from File::download".into()),
-                    };
-                    let ok = self
-                        .builder
-                        .build_int_compare(
-                            inkwell::IntPredicate::EQ,
-                            res,
-                            self.context.i64_type().const_int(1, false),
-                            "file_download_bool",
-                        )
-                        .map_err(|e| e.to_string())?;
-                    return Ok((ok.into(), Type::Bool));
-                }
-                "read_binary" => {
-                    if args.len() != 1 {
-                        return Err("File::read_binary requires 1 argument".into());
-                    }
-                    let (path_val, _) = self.compile_expr(&args[0])?;
-                    let fn_val = self
-                        .module
-                        .get_function("tl_file_read_binary")
-                        .ok_or("tl_file_read_binary not found")?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[path_val.into()], "file_read_binary")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from File::read_binary".into()),
-                    };
-                    return Ok((res, Type::Vec(Box::new(Type::U8))));
-                }
-                _ => {}
-            }
-        }
 
-        if type_name == "System" && method_name == "memory_mb" {
-            if !args.is_empty() {
-                return Err("System::memory_mb takes no arguments".into());
-            }
-            let fn_val = self
-                .module
-                .get_function("tl_get_memory_mb")
-                .ok_or("tl_get_memory_mb not found")?;
-            let call = self
-                .builder
-                .build_call(fn_val, &[], "mem_mb")
-                .map_err(|e| e.to_string())?;
-            let res = match call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(v) => v,
-                _ => return Err("Invalid return from System::memory_mb".into()),
-            };
-            return Ok((res, Type::I64));
-        }
-        if type_name == "System" && method_name == "metal_pool_bytes" {
-            if !args.is_empty() {
-                return Err("System::metal_pool_bytes takes no arguments".into());
-            }
-            let fn_val = self
-                .module
-                .get_function("tl_get_metal_pool_bytes")
-                .ok_or("tl_get_metal_pool_bytes not found")?;
-            let call = self
-                .builder
-                .build_call(fn_val, &[], "metal_pool_bytes")
-                .map_err(|e| e.to_string())?;
-            let res = match call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(v) => v,
-                _ => return Err("Invalid return from System::metal_pool_bytes".into()),
-            };
-            return Ok((res, Type::I64));
-        }
-        if type_name == "System" && method_name == "metal_pool_mb" {
-            if !args.is_empty() {
-                return Err("System::metal_pool_mb takes no arguments".into());
-            }
-            let fn_val = self
-                .module
-                .get_function("tl_get_metal_pool_mb")
-                .ok_or("tl_get_metal_pool_mb not found")?;
-            let call = self
-                .builder
-                .build_call(fn_val, &[], "metal_pool_mb")
-                .map_err(|e| e.to_string())?;
-            let res = match call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(v) => v,
-                _ => return Err("Invalid return from System::metal_pool_mb".into()),
-            };
-            return Ok((res, Type::I64));
-        }
-        if type_name == "System" && method_name == "metal_pool_count" {
-            if !args.is_empty() {
-                return Err("System::metal_pool_count takes no arguments".into());
-            }
-            let fn_val = self
-                .module
-                .get_function("tl_get_metal_pool_count")
-                .ok_or("tl_get_metal_pool_count not found")?;
-            let call = self
-                .builder
-                .build_call(fn_val, &[], "metal_pool_count")
-                .map_err(|e| e.to_string())?;
-            let res = match call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(v) => v,
-                _ => return Err("Invalid return from System::metal_pool_count".into()),
-            };
-            return Ok((res, Type::I64));
-        }
-        if type_name == "System" && method_name == "metal_sync" {
-            if !args.is_empty() {
-                return Err("System::metal_sync takes no arguments".into());
-            }
-            let fn_val = self
-                .module
-                .get_function("tl_metal_sync")
-                .ok_or("tl_metal_sync not found")?;
-            self.builder
-                .build_call(fn_val, &[], "metal_sync")
-                .map_err(|e| e.to_string())?;
-            return Ok((
-                self.context.i64_type().const_int(0, false).into(),
-                Type::Void,
-            ));
-        }
-        if type_name == "System" && method_name == "pool_count" {
-            if !args.is_empty() {
-                return Err("System::pool_count takes no arguments".into());
-            }
-            let fn_val = self
-                .module
-                .get_function("tl_get_pool_count")
-                .ok_or("tl_get_pool_count not found")?;
-            let call = self
-                .builder
-                .build_call(fn_val, &[], "pool_count")
-                .map_err(|e| e.to_string())?;
-            let res = match call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(v) => v,
-                _ => return Err("Invalid return from System::pool_count".into()),
-            };
-            return Ok((res, Type::I64));
-        }
-        if type_name == "System" && method_name == "refcount_count" {
-            if !args.is_empty() {
-                return Err("System::refcount_count takes no arguments".into());
-            }
-            let fn_val = self
-                .module
-                .get_function("tl_get_refcount_count")
-                .ok_or("tl_get_refcount_count not found")?;
-            let call = self
-                .builder
-                .build_call(fn_val, &[], "refcount_count")
-                .map_err(|e| e.to_string())?;
-            let res = match call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(v) => v,
-                _ => return Err("Invalid return from System::refcount_count".into()),
-            };
-            return Ok((res, Type::I64));
-        }
-        if type_name == "System" && method_name == "scope_depth" {
-            if !args.is_empty() {
-                return Err("System::scope_depth takes no arguments".into());
-            }
-            let fn_val = self
-                .module
-                .get_function("tl_get_scope_depth")
-                .ok_or("tl_get_scope_depth not found")?;
-            let call = self
-                .builder
-                .build_call(fn_val, &[], "scope_depth")
-                .map_err(|e| e.to_string())?;
-            let res = match call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(v) => v,
-                _ => return Err("Invalid return from System::scope_depth".into()),
-            };
-            return Ok((res, Type::I64));
-        }
+
+
 
         if type_name == "Tensor" && method_name == "clear_grads" {
             if !args.is_empty() {
@@ -4506,25 +4788,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             ));
         }
 
-        if type_name == "Path" && method_name == "exists" {
-            if args.len() != 1 {
-                return Err("Path::exists requires 1 argument".into());
-            }
-            let (path_val, _) = self.compile_expr(&args[0])?;
-            let fn_val = self
-                .module
-                .get_function("tl_path_exists")
-                .ok_or("tl_path_exists not found")?;
-            let call = self
-                .builder
-                .build_call(fn_val, &[path_val.into()], "path_exists")
-                .map_err(|e| e.to_string())?;
-            let res = match call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(v) => v,
-                _ => return Err("Invalid return from Path::exists".into()),
-            };
-            return Ok((res, Type::Bool));
-        }
+
 
         // Tensor::from_vec_u8(vec, offset, shape, rank) -> Tensor
         if type_name == "Tensor" && method_name == "from_vec_u8" {
@@ -4598,14 +4862,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                         compiled_args.push((val, ty.clone()));
                         compiled_args_types.push((val, ty));
                     }
-                    let res = func(self, compiled_args);
+                    let res = func(self, compiled_args, Some(target_type));
 
                     return res;
-
-
                 }
                 StaticMethod::Unevaluated(func) => {
-                    return func(self, args);
+                    return func(self, args, Some(target_type));
                 }
             }
         }
@@ -4731,10 +4993,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // No, Step 201 showed `uses_sret = false; /* SRET DISABLED */`.
         // If SRET was disabled in legacy code, I should probably keep it disabled unless I know otherwise.
         // BUT `Struct::new` relies on it?
-        // Step 201 had `if uses_sret { ... }`.
-        // If `uses_sret` was hardcoded to `false`, then SRET is NOT used.
-        // I will replicate strict legacy behavior: SRET disabled.
-        // Wait, Step 201 line 3244: `let uses_sret = false;`.
+        // Step 201 line 3244: `let uses_sret = false;`.
         // So I'll just compile args and call.
 
         let mut compiled_args = Vec::with_capacity(args.len());
@@ -5989,6 +6248,41 @@ impl<'ctx> CodeGenerator<'ctx> {
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         let (obj_val, obj_ty) = self.compile_expr(obj)?;
+
+        // Try TypeManager first
+        let type_name_opt = match &obj_ty {
+            Type::Vec(_) => Some("Vec".to_string()),
+            Type::UserDefined(n, _) => Some(n.clone()),
+            Type::Struct(n, _) => Some(n.clone()),
+            Type::Enum(n, _) => Some(n.clone()),
+            Type::Tensor(_, _) => Some("Tensor".to_string()),
+
+            _ => None,
+        };
+
+        if let Some(name) = type_name_opt {
+             // Handle "Vec" specially if we want to support UserDefined("Vec") alias canonicalization? 
+             // Logic above handles it if UserDefined("Vec") returns "Vec".
+                          let method_enum = self.type_manager.get_type(&name)
+                  .and_then(|t| t.get_instance_method(method))
+                  .copied();
+
+              if let Some(method_enum) = method_enum {
+                   match method_enum {
+                           InstanceMethod::Evaluated(func) => {
+                               let mut compiled_args = Vec::new();
+                               for arg in args {
+                                   compiled_args.push(self.compile_expr(arg)?);
+                               }
+                               return func(self, obj_val, obj_ty, compiled_args);
+                           }
+                           InstanceMethod::Unevaluated(func) => {
+                               return func(self, obj, method, args);
+                           }
+                      }
+                 }
+
+        }
 
         // Check for Vec (either Type::Vec or UserDefined("Vec"))
         let inner_opt = match &obj_ty {
@@ -8404,6 +8698,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 fn compile_set_device<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: &[Expr],
+    _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 {
         return Err("set_device expects 1 argument".into());
@@ -8448,6 +8743,7 @@ fn compile_set_device<'ctx>(
 fn compile_checkpoint<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: &[Expr],
+    _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 2 {
         return Err("checkpoint requires 2 arguments: (method_ref, input)".into());
@@ -9258,6 +9554,7 @@ fn compile_transpose<'ctx>(
 fn compile_save_weights<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 2 {
         return Err("save_weights requires 2 arguments: tensor/struct, path".into());
@@ -9332,6 +9629,7 @@ fn compile_save_weights<'ctx>(
 fn compile_load_weights<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() == 1 {
         let (path_val, path_ty) = &args[0];
@@ -9414,6 +9712,7 @@ fn compile_load_weights<'ctx>(
 fn compile_register_modules<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 {
         return Err("register_modules requires 1 argument (struct)".into());
@@ -9431,6 +9730,7 @@ fn compile_register_modules<'ctx>(
 fn compile_update_all_params<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 {
         return Err("update_all_params requires 1 argument".into());
@@ -9450,6 +9750,7 @@ fn compile_update_all_params<'ctx>(
 fn compile_add_parameter<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     let fn_val = codegen.module.get_function("tl_add_parameter").unwrap();
     let (name_val, _) = &args[0];
@@ -9467,6 +9768,7 @@ fn compile_add_parameter<'ctx>(
 fn compile_load_all_params<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     let fn_val = codegen.module.get_function("tl_load_all_params").unwrap();
     let path_val = if args.len() == 2 {
@@ -9496,6 +9798,7 @@ fn compile_load_all_params<'ctx>(
 fn compile_parameter<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 {
         return Err("parameter requires 1 argument".into());
@@ -9519,6 +9822,7 @@ fn compile_parameter<'ctx>(
 fn compile_load_tensor<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     let fn_val = codegen.module.get_function("tl_tensor_load").unwrap();
     let (path_val, _) = &args[0];
@@ -9536,6 +9840,7 @@ fn compile_load_tensor<'ctx>(
 fn compile_save_all_params<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     let fn_val = codegen.module.get_function("tl_save_all_params").unwrap();
     let path_val = if args.len() == 2 {
@@ -9688,6 +9993,7 @@ fn compile_tensor_creation_helper<'ctx>(
 fn compile_randn<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: &[Expr],
+    _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     compile_tensor_creation_helper(codegen, args, "tl_tensor_randn_debug")
 }
@@ -9695,6 +10001,7 @@ fn compile_randn<'ctx>(
 fn compile_ones<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: &[Expr],
+    _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     compile_tensor_creation_helper(codegen, args, "tl_tensor_ones")
 }
@@ -10660,6 +10967,7 @@ fn compile_tensor_reshape_uneval<'ctx>(
 fn compile_hashmap_new_static<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: &[Expr],
+    _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if !args.is_empty() {
         return Err("HashMap::new takes no arguments".into());
@@ -10680,7 +10988,7 @@ fn compile_hashmap_new_static<'ctx>(
     Ok((val, Type::UserDefined("HashMap".to_string(), vec![])))
 }
 
-fn compile_hashmap_insert<'ctx>(
+pub fn compile_hashmap_insert<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     map_val: BasicValueEnum<'ctx>,
     _map_ty: Type,
@@ -10732,7 +11040,7 @@ fn compile_hashmap_insert<'ctx>(
     Ok((codegen.context.const_struct(&[], false).into(), Type::Void))
 }
 
-fn compile_hashmap_get<'ctx>(
+pub fn compile_hashmap_get<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     map_val: BasicValueEnum<'ctx>,
     map_ty: Type,
@@ -10805,7 +11113,7 @@ fn compile_hashmap_get<'ctx>(
     Ok((ret_val, value_type))
 }
 
-fn compile_hashmap_remove<'ctx>(
+pub fn compile_hashmap_remove<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     map_val: BasicValueEnum<'ctx>,
     map_ty: Type,
@@ -10869,7 +11177,7 @@ fn compile_hashmap_remove<'ctx>(
     Ok((ret_val, value_type))
 }
 
-fn compile_hashmap_contains_key<'ctx>(
+pub fn compile_hashmap_contains_key<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     map_val: BasicValueEnum<'ctx>,
     _map_ty: Type,
@@ -10889,7 +11197,7 @@ fn compile_hashmap_contains_key<'ctx>(
     Ok((val, Type::Bool))
 }
 
-fn compile_hashmap_len<'ctx>(
+pub fn compile_hashmap_len<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     map_val: BasicValueEnum<'ctx>,
     _map_ty: Type,
@@ -10904,7 +11212,7 @@ fn compile_hashmap_len<'ctx>(
     Ok((val, Type::I64))
 }
 
-fn compile_hashmap_clear<'ctx>(
+pub fn compile_hashmap_clear<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     map_val: BasicValueEnum<'ctx>,
     _map_ty: Type,
