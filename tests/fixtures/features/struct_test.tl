@@ -4,11 +4,11 @@ struct Counter {
 
 impl Counter {
     fn increment(self, amount: i64) -> Counter {
-        return Counter { val: self.val + amount };
+        Counter { val: self.val + amount }
     }
     
     fn get(self) -> i64 {
-        return self.val;
+        self.val
     }
 }
 

@@ -16,7 +16,7 @@ print(target);
 fn Linear_new(in_dim: i64, out_dim: i64) -> Linear {
     let W = Tensor::randn([in_dim, out_dim], true);
     let b = Tensor::randn([out_dim], true);
-    return Linear(W.clone(), b.clone());
+    Linear(W.clone(), b.clone())
 }
 
 fn forward(model: Linear, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
@@ -24,7 +24,7 @@ fn forward(model: Linear, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
     let out = x.matmul(model.W);
     // Add bias (broadcasting)
     let y = out + model.b;
-    return y;
+    y
 }
 
 let model = Linear_new(2, 3);

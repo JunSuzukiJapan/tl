@@ -14,7 +14,7 @@ impl Linear {
     }
     
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
-        return x.matmul(self.W) + self.b;
+        x.matmul(self.W) + self.b
     }
     
     fn step(self, lr: f32) -> Linear {
@@ -23,7 +23,7 @@ impl Linear {
         let gbg = s.b.grad();
         s.W = (s.W - gWg * lr).detach(true);
         s.b = (s.b - gbg * lr).detach(true);
-        return s;
+        s
     }
 }
 
@@ -33,18 +33,18 @@ struct Embedding {
 
 impl Embedding {
     fn new(v: i64, d: i64) -> Embedding {
-        return Embedding((Tensor::randn([v, d], true) * 0.1).detach(true));
+        Embedding((Tensor::randn([v, d], true) * 0.1).detach(true))
     }
     
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> {
-        return i.embedding(self.w);
+        i.embedding(self.w)
     }
     
     fn step(self, lr: f32) -> Embedding {
         let s = self;
         let g = s.w.grad();
         s.w = (s.w - g * lr).detach(true);
-        return s;
+        s
     }
 }
 
@@ -55,7 +55,7 @@ struct LayerNorm {
 
 impl LayerNorm {
     fn new(d: i64) -> LayerNorm {
-        return LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true));
+        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true))
     }
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
         // Simplified LayerNorm (just scale/shift, assuming input is roughly normalized or relying on optimizer)
@@ -69,7 +69,7 @@ impl LayerNorm {
         let gb = s.b.grad();
         s.w = (s.w - gw * lr).detach(true);
         s.b = (s.b - gb * lr).detach(true);
-        return s;
+        s
     }
 }
 
@@ -83,13 +83,13 @@ struct CausalSelfAttention {
 
 impl CausalSelfAttention {
     fn new(d: i64) -> CausalSelfAttention {
-        return CausalSelfAttention(
+        CausalSelfAttention(
             Linear::new(1, 1), // dummy
             Linear::new(d, d), 
             Linear::new(d, d), 
             Linear::new(d, d), 
             Linear::new(d, d)
-        );
+        )
     }
 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
@@ -122,7 +122,7 @@ impl CausalSelfAttention {
         let att = att.softmax(2);
         let y = att.matmul(v);
         
-        return self.c_proj.forward(y);
+        self.c_proj.forward(y)
     }
 
     fn step(self, lr: f32) -> CausalSelfAttention {
@@ -131,7 +131,7 @@ impl CausalSelfAttention {
         s.k_proj = s.k_proj.step(lr);
         s.v_proj = s.v_proj.step(lr);
         s.c_proj = s.c_proj.step(lr);
-        return s;
+        s
     }
 }
 
@@ -142,7 +142,7 @@ struct MLP {
 
 impl MLP {
     fn new(d: i64) -> MLP {
-        return MLP(Linear::new(d, d * 4), Linear::new(d * 4, d));
+        MLP(Linear::new(d, d * 4), Linear::new(d * 4, d))
     }
     
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
@@ -154,7 +154,7 @@ impl MLP {
         let s = self;
         s.c_fc = s.c_fc.step(lr);
         s.c_proj = s.c_proj.step(lr);
-        return s;
+        s
     }
 }
 
@@ -167,13 +167,13 @@ struct Block {
 
 impl Block {
     fn new(d: i64) -> Block {
-        return Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d));
+        Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d))
     }
     
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
         let x = x + self.attn.forward(self.ln1.forward(x));
         let x = x + self.mlp.forward(self.ln2.forward(x));
-        return x;
+        x
     }
     
     fn step(self, lr: f32) -> Block {
@@ -182,7 +182,7 @@ impl Block {
         s.attn = s.attn.step(lr);
         s.ln2 = s.ln2.step(lr);
         s.mlp = s.mlp.step(lr);
-        return s;
+        s
     }
 }
 
@@ -196,13 +196,13 @@ struct GPT {
 
 impl GPT {
     fn new(vocab_size: i64, d_model: i64, max_len: i64) -> GPT {
-        return GPT(
+        GPT(
             Embedding::new(vocab_size, d_model),
             Embedding::new(max_len, d_model),
             Block::new(d_model),
             LayerNorm::new(d_model),
             Linear::new(d_model, vocab_size)
-        );
+        )
     }
     
     fn forward(self, idx: Tensor<f32, 2>) -> Tensor<f32, 3> {
@@ -220,7 +220,7 @@ impl GPT {
         let x = self.bg.forward(x);
         let x = self.ln_f.forward(x);
         let logits = self.head.forward(x);
-        return logits;
+        logits
     }
     
     fn step(self, lr: f32) -> GPT {
@@ -230,7 +230,7 @@ impl GPT {
         s.bg = s.bg.step(lr);
         s.ln_f = s.ln_f.step(lr);
         s.head = s.head.step(lr);
-        return s;
+        s
     }
 }
 
@@ -298,7 +298,7 @@ fn gen_data(step: i64) -> Tensor<f32, 2> {
     
     // Return combined: 0..12 inputs, 13 target
     let arr = [fk1, fv1, fk2, fv2, fk3, fv3, fk4, fv4, fk5, fv5, fk6, fv6, fqk, fqa];
-    return arr.reshape([1, 14]);
+    arr.reshape([1, 14])
 }
 
 // Recall Task Training Script

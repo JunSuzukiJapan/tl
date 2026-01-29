@@ -14,7 +14,7 @@ fn create_container(r: i64, c: i64) -> Container {
     print("create_container: result.t =");
     print(result.t);
     print("create_container: returning...");
-    return result;
+    result
 }
 
 fn main() {

@@ -24,11 +24,11 @@ impl Linear {
         let result = Linear(w_d, b_d);
         print("Linear constructed, checking result.W:");
         print(result.W);
-        return result;
+        result
     }
     
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
-        return x.matmul(self.W) + self.b;
+        x.matmul(self.W) + self.b
     }
     
     fn step(self, lr: f32) -> Linear {
@@ -37,7 +37,7 @@ impl Linear {
         let gb = s.b.grad();
         s.W = (s.W - gW * lr).detach(true);
         s.b = (s.b - gb * lr).detach(true);
-        return s;
+        s
     }
 }
 
@@ -72,7 +72,7 @@ fn load_mnist_images(path: String) -> Tensor<f32, 2> {
     let t = vec.to_tensor_2d(16, 10000, 784);
     
     vec.free();
-    return t as Tensor<f32, 2>;
+    t as Tensor<f32, 2>
 }
 
 fn load_mnist_labels(path: String) -> Tensor<i64, 1> {
@@ -92,5 +92,5 @@ fn load_mnist_labels(path: String) -> Tensor<i64, 1> {
     let t = Tensor::from_u8_labels(vec, 8, count);
     
     vec.free();
-    return t as Tensor<i64, 1>;
+    t as Tensor<i64, 1>
 }

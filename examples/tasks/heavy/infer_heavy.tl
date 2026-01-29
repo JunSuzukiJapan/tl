@@ -13,27 +13,27 @@ fn argmax(t: Tensor<f32, 1>) -> i64 {
 
 // 4層GPT (train_heavy.tlと同じ定義)
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
-impl Linear { fn new(i: i64, o: i64) -> Linear { return Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)); } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { return x.matmul(self.W) + self.b; } }
+impl Linear { fn new(i: i64, o: i64) -> Linear { Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { x.matmul(self.W) + self.b } }
 struct Embedding { w: Tensor<f32, 2> }
-impl Embedding { fn new(v: i64, d: i64) -> Embedding { return Embedding((Tensor::randn([v, d], true)*0.1).detach(true)); } fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { return i.embedding(self.w); } }
+impl Embedding { fn new(v: i64, d: i64) -> Embedding { Embedding((Tensor::randn([v, d], true)*0.1).detach(true)) } fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { i.embedding(self.w) } }
 struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
-impl LayerNorm { fn new(d: i64) -> LayerNorm { return LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)); } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { return x + self.b; } }
+impl LayerNorm { fn new(d: i64) -> LayerNorm { LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { x + self.b } }
 struct CausalSelfAttention { q_proj: Linear, k_proj: Linear, v_proj: Linear, p_proj: Linear }
-impl CausalSelfAttention { fn new(d: i64) -> CausalSelfAttention { return CausalSelfAttention(Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d)); } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { let q = self.q_proj.forward(x); let k = self.k_proj.forward(x); let v = self.v_proj.forward(x); let k_t = k.transpose(1, 2); let qk = q.matmul(k_t) * 0.05103; let masked = qk.tril(0); let attn = masked.softmax(2); let y = attn.matmul(v); return self.p_proj.forward(y); } }
+impl CausalSelfAttention { fn new(d: i64) -> CausalSelfAttention { CausalSelfAttention(Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d)) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { let q = self.q_proj.forward(x); let k = self.k_proj.forward(x); let v = self.v_proj.forward(x); let k_t = k.transpose(1, 2); let qk = q.matmul(k_t) * 0.05103; let masked = qk.tril(0); let attn = masked.softmax(2); let y = attn.matmul(v); self.p_proj.forward(y) } }
 struct MLP { f: Linear, p: Linear }
-impl MLP { fn new(d: i64) -> MLP { return MLP(Linear::new(d, d*4), Linear::new(d*4, d)); } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { return self.p.forward(self.f.forward(x).relu()); } }
+impl MLP { fn new(d: i64) -> MLP { MLP(Linear::new(d, d*4), Linear::new(d*4, d)) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { self.p.forward(self.f.forward(x).relu()) } }
 struct Block { l1: LayerNorm, a: CausalSelfAttention, l2: LayerNorm, m: MLP }
-impl Block { fn new(d: i64) -> Block { return Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)); } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { let x = x + self.a.forward(self.l1.forward(x)); return x + self.m.forward(self.l2.forward(x)); } }
+impl Block { fn new(d: i64) -> Block { Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { let x = x + self.a.forward(self.l1.forward(x)); x + self.m.forward(self.l2.forward(x)) } }
 
 // 4-Layer GPT
 struct GPTHeavy { w: Embedding, wp: Embedding, b1: Block, b2: Block, b3: Block, b4: Block, l: LayerNorm, h: Linear }
 impl GPTHeavy { 
     fn new(v: i64, d: i64) -> GPTHeavy { 
-        return GPTHeavy(
+        GPTHeavy(
             Embedding::new(v, d), Embedding::new(12, d), 
             Block::new(d), Block::new(d), Block::new(d), Block::new(d),
             LayerNorm::new(d), Linear::new(d, v)
-        ); 
+        ) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
@@ -45,7 +45,7 @@ impl GPTHeavy {
         let x = self.b2.forward(x);
         let x = self.b3.forward(x);
         let x = self.b4.forward(x);
-        return self.h.forward(self.l.forward(x)); 
+        self.h.forward(self.l.forward(x)) 
     } 
 }
 

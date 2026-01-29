@@ -9,7 +9,7 @@ impl Linear {
         return Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return x.matmul(self.W) + self.b; 
+        x.matmul(self.W) + self.b 
     } 
     fn step(self, lr: f32) { 
         let gW = self.W.grad(); 
@@ -22,10 +22,10 @@ impl Linear {
 struct Embedding { w: Tensor<f32, 2> }
 impl Embedding { 
     fn new(v: i64, d: i64) -> Embedding { 
-        return Embedding((Tensor::randn([v, d], true)*0.1).detach(true)); 
+        Embedding((Tensor::randn([v, d], true)*0.1).detach(true)) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
-        return i.embedding(self.w); 
+        i.embedding(self.w) 
     } 
     fn step(self, lr: f32) { 
         let g = self.w.grad(); 
@@ -36,7 +36,7 @@ impl Embedding {
 struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
 impl LayerNorm { 
     fn new(d: i64) -> LayerNorm { 
-        return LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)); 
+        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         // Standard LayerNorm: (x - mean) / std * w + b.
@@ -107,7 +107,7 @@ impl CausalSelfAttention {
         let y_trans = y_heads.transpose(0, 1); // [9, 4, 32]
         let y_out = y_trans.reshape([1, 9, 192]);
         
-        return self.o_proj.forward(y_out); 
+        self.o_proj.forward(y_out) 
     } 
     fn step(self, lr: f32) { 
         self.q_proj.step(lr); 
@@ -120,10 +120,10 @@ impl CausalSelfAttention {
 struct MLP { f: Linear, p: Linear }
 impl MLP { 
     fn new(d: i64) -> MLP { 
-        return MLP(Linear::new(d, d*4), Linear::new(d*4, d)); 
+        MLP(Linear::new(d, d*4), Linear::new(d*4, d)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return self.p.forward(self.f.forward(x).relu()); 
+        self.p.forward(self.f.forward(x).relu()) 
     } 
     fn step(self, lr: f32) { 
         self.f.step(lr); 
@@ -134,11 +134,11 @@ impl MLP {
 struct Block { l1: LayerNorm, a: CausalSelfAttention, l2: LayerNorm, m: MLP }
 impl Block { 
     fn new(d: i64) -> Block { 
-        return Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)); 
+        Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         let x = x + self.a.forward(self.l1.forward(x)); 
-        return x + self.m.forward(self.l2.forward(x)); 
+        x + self.m.forward(self.l2.forward(x)) 
     } 
     fn step(self, lr: f32) { 
         self.l1.step(lr); 
@@ -151,10 +151,10 @@ impl Block {
 struct PositionalEmbedding { w: Tensor<f32, 2> }
 impl PositionalEmbedding {
     fn new(max_len: i64, d: i64) -> PositionalEmbedding {
-        return PositionalEmbedding((Tensor::randn([max_len, d], true)*0.02).detach(true));
+        PositionalEmbedding((Tensor::randn([max_len, d], true)*0.02).detach(true))
     }
     fn forward(self, p: Tensor<f32, 2>) -> Tensor<f32, 3> {
-        return p.embedding(self.w);
+        p.embedding(self.w)
     }
     fn step(self, lr: f32) {
         let g = self.w.grad();
@@ -165,14 +165,14 @@ impl PositionalEmbedding {
 struct Transformer { w: Embedding, p: PositionalEmbedding, b1: Block, b2: Block, l: LayerNorm, h: Linear }
 impl Transformer { 
     fn new(v: i64, max_len: i64, d: i64) -> Transformer { 
-        return Transformer(
+        Transformer(
             Embedding::new(v, d), 
             PositionalEmbedding::new(max_len, d), 
             Block::new(d), 
             Block::new(d), 
             LayerNorm::new(d), 
             Linear::new(d, v)
-        ); 
+        ) 
     } 
     fn forward(self, i: Tensor<f32, 2>, p: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let tok_emb = self.w.forward(i);
@@ -180,7 +180,7 @@ impl Transformer {
         let x = tok_emb + pos_emb;
         let x = self.b1.forward(x);
         let x = self.b2.forward(x);
-        return self.h.forward(self.l.forward(x)); 
+        self.h.forward(self.l.forward(x)) 
     } 
     fn step(self, lr: f32) { 
         self.w.step(lr); 

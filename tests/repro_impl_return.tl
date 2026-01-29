@@ -21,7 +21,7 @@ impl Container {
         print("Container::create: result.t =");
         print(result.t);
         print("Container::create: returning...");
-        return result;
+        result
     }
 }
 

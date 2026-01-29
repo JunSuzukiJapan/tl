@@ -10,7 +10,7 @@ impl TwoInts {
         print("Creating TwoInts...");
         let result = TwoInts(x, y);
         print("TwoInts constructed.");
-        return result;
+        result
     }
     
     fn get_a(self) -> i64 {
@@ -18,7 +18,7 @@ impl TwoInts {
         let a = self.a;
         print("get_a: self.a =");
         print(a);
-        return a;
+        a
     }
     
     fn get_b(self) -> i64 {
@@ -26,7 +26,7 @@ impl TwoInts {
         let b = self.b;
         print("get_b: self.b =");
         print(b);
-        return b;
+        b
     }
 }
 

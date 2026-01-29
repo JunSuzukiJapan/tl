@@ -18,7 +18,7 @@ struct Linear {
 
 impl Linear {
     fn new(in_dim: i64, out_dim: i64) -> Linear {
-        return Linear(Tensor::randn([in_dim, out_dim], true), Tensor::randn([out_dim], true));
+        Linear(Tensor::randn([in_dim, out_dim], true), Tensor::randn([out_dim], true))
     }
 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
@@ -36,7 +36,7 @@ struct Embedding {
 
 impl Embedding {
     fn new(vocab: i64, d_model: i64) -> Embedding {
-        return Embedding(Tensor::randn([vocab, d_model], true));
+        Embedding(Tensor::randn([vocab, d_model], true))
     }
 
     fn forward(self, idx: Tensor<f32, 2>) -> Tensor<f32, 3> {
@@ -79,10 +79,10 @@ struct CausalSelfAttention {
 
 impl CausalSelfAttention {
     fn new(d_model: i64) -> CausalSelfAttention {
-        return CausalSelfAttention(
+        CausalSelfAttention(
             Linear::new(d_model, d_model * 3),
             Linear::new(d_model * 3, d_model)
-        );
+        )
     }
 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
@@ -125,7 +125,7 @@ impl CausalSelfAttention {
         let y = prob.matmul(V); // [B, S, D]
         
         let out = self.c_proj.forward(y);
-        return out;
+        out
     }
 }
 
@@ -136,10 +136,10 @@ struct MLP {
 
 impl MLP {
     fn new(d_model: i64) -> MLP {
-        return MLP(
+        MLP(
             Linear::new(d_model, d_model * 4),
             Linear::new(d_model * 4, d_model)
-        );
+        )
     }
 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
@@ -158,12 +158,12 @@ struct Block {
 
 impl Block {
     fn new(d_model: i64) -> Block {
-        return Block(
+        Block(
             LayerNorm::new(d_model),
             CausalSelfAttention::new(d_model),
             LayerNorm::new(d_model),
             MLP::new(d_model)
-        );
+        )
     }
 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
@@ -174,7 +174,7 @@ impl Block {
         let ln2 = self.ln2.forward(x);
         let mlp = self.mlp.forward(ln2);
         let x = x + mlp;
-        return x;
+        x
     }
 }
 

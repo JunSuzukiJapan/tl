@@ -6,7 +6,7 @@ impl Linear {
         return Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return x.matmul(self.W) + self.b; 
+        x.matmul(self.W) + self.b 
     } 
     fn step(self, lr: f32) -> Linear { 
         let s = self; 
@@ -14,46 +14,46 @@ impl Linear {
         let gb = s.b.grad(); 
         s.W = (s.W - gW * lr).detach(true); 
         s.b = (s.b - gb * lr).detach(true); 
-        return s; 
+        s 
     } 
 }
 
 struct Embedding { w: Tensor<f32, 2> }
 impl Embedding { 
     fn new(v: i64, d: i64) -> Embedding { 
-        return Embedding((Tensor::randn([v, d], true)*0.1).detach(true)); 
+        Embedding((Tensor::randn([v, d], true)*0.1).detach(true)) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
-        return i.embedding(self.w); 
+        i.embedding(self.w) 
     } 
     fn step(self, lr: f32) -> Embedding { 
         let s = self; 
         let g = s.w.grad(); 
         s.w = (s.w - g * lr).detach(true); 
-        return s; 
+        s 
     } 
 }
 
 struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
 impl LayerNorm { 
     fn new(d: i64) -> LayerNorm { 
-        return LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)); 
+        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return x + self.b; 
+        x + self.b 
     } 
     fn step(self, lr: f32) -> LayerNorm { 
         let s = self; 
         let gb = s.b.grad(); 
         s.b = (s.b - gb * lr).detach(true); 
-        return s; 
+        s 
     } 
 }
 
 struct CausalSelfAttention { q_proj: Linear, k_proj: Linear, v_proj: Linear, p_proj: Linear }
 impl CausalSelfAttention { 
     fn new(d: i64) -> CausalSelfAttention { 
-        return CausalSelfAttention(Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d)); 
+        CausalSelfAttention(Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         let q = self.q_proj.forward(x); 
@@ -66,7 +66,7 @@ impl CausalSelfAttention {
         let masked = qk.tril(0);
         let attn = masked.softmax(2);
         let y = attn.matmul(v);
-        return self.p_proj.forward(y); 
+        self.p_proj.forward(y) 
     } 
     fn step(self, lr: f32) -> CausalSelfAttention { 
         let s = self; 
@@ -74,34 +74,34 @@ impl CausalSelfAttention {
         s.k_proj = s.k_proj.step(lr); 
         s.v_proj = s.v_proj.step(lr); 
         s.p_proj = s.p_proj.step(lr); 
-        return s; 
+        s 
     } 
 }
 
 struct MLP { f: Linear, p: Linear }
 impl MLP { 
     fn new(d: i64) -> MLP { 
-        return MLP(Linear::new(d, d*4), Linear::new(d*4, d)); 
+        MLP(Linear::new(d, d*4), Linear::new(d*4, d)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return self.p.forward(self.f.forward(x).relu()); 
+        self.p.forward(self.f.forward(x).relu()) 
     } 
     fn step(self, lr: f32) -> MLP { 
         let s = self; 
         s.f = s.f.step(lr); 
         s.p = s.p.step(lr); 
-        return s; 
+        s 
     } 
 }
 
 struct Block { l1: LayerNorm, a: CausalSelfAttention, l2: LayerNorm, m: MLP }
 impl Block { 
     fn new(d: i64) -> Block { 
-        return Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)); 
+        Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         let x = x + self.a.forward(self.l1.forward(x)); 
-        return x + self.m.forward(self.l2.forward(x)); 
+        x + self.m.forward(self.l2.forward(x)) 
     } 
     fn step(self, lr: f32) -> Block { 
         let s = self; 
@@ -109,7 +109,7 @@ impl Block {
         s.a = s.a.step(lr); 
         s.l2 = s.l2.step(lr); 
         s.m = s.m.step(lr); 
-        return s; 
+        s 
     } 
 }
 
@@ -117,14 +117,14 @@ impl Block {
 struct GPT2 { w: Embedding, wp: Embedding, b1: Block, b2: Block, l: LayerNorm, h: Linear }
 impl GPT2 { 
     fn new(v: i64, d: i64) -> GPT2 { 
-        return GPT2(
+        GPT2(
             Embedding::new(v, d), 
             Embedding::new(12, d), 
             Block::new(d), 
             Block::new(d), 
             LayerNorm::new(d), 
             Linear::new(d, v)
-        ); 
+        ) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
@@ -134,7 +134,7 @@ impl GPT2 {
         let x = tok_emb + pos_emb;
         let x = self.b1.forward(x);
         let x = self.b2.forward(x);
-        return self.h.forward(self.l.forward(x)); 
+        self.h.forward(self.l.forward(x)) 
     } 
     fn step(self, lr: f32) -> GPT2 { 
         let s = self; 
@@ -144,7 +144,7 @@ impl GPT2 {
         s.b2 = s.b2.step(lr); 
         s.l = s.l.step(lr); 
         s.h = s.h.step(lr); 
-        return s; 
+        s 
     } 
 }
 
@@ -192,7 +192,7 @@ fn train_step(model: GPT2, lr: f32, i: i64, j: i64) -> GPT2 {
     
     loss.backward();
     model.step(lr);
-    return model;
+    model
 }
 
 fn train_epoch(model: GPT2, lr: f32, epoch: i64) -> GPT2 {
@@ -215,7 +215,7 @@ fn train_epoch(model: GPT2, lr: f32, epoch: i64) -> GPT2 {
     }
     
     print("Epoch:"); print(epoch);
-    return model;
+    model
 }
 
 fn main() {

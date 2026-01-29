@@ -5,7 +5,7 @@ struct Point {
 
 fn create_point(x: i64, y: i64) -> Point {
     let p = Point { x: x, y: y };
-    return p;
+    p
 }
 
 fn main() {

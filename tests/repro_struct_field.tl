@@ -18,7 +18,7 @@ impl Container {
         print("Creating Container...");
         let c = Container(tensor);
         print("Container created.");
-        return c;
+        c
     }
     
     fn get_tensor(self) -> Tensor<f32, 2> {
@@ -26,7 +26,7 @@ impl Container {
         let t = self.t;
         print("get_tensor: self.t =");
         print(t);
-        return t;
+        t
     }
 }
 
@@ -43,7 +43,7 @@ impl TwoFields {
         print("Constructing TwoFields...");
         let result = TwoFields(w, b);
         print("TwoFields constructed.");
-        return result;
+        result
     }
     
     fn get_W(self) -> Tensor<f32, 2> {
@@ -51,7 +51,7 @@ impl TwoFields {
         let w = self.W;
         print("get_W: self.W =");
         print(w);
-        return w;
+        w
     }
 }
 

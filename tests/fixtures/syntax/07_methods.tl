@@ -5,11 +5,11 @@ struct Rect {
 
 impl Rect {
     fn new(w: i64, h: i64) -> Rect {
-        return Rect { w: w, h: h };
+        Rect { w: w, h: h }
     }
 
     fn area(self) -> i64 {
-        return self.w * self.h;
+        self.w * self.h
     }
 }
 

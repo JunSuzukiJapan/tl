@@ -1,5 +1,5 @@
 struct S { x: i64 }
-impl S { fn new(v: i64) -> S { return S(v); } }
+impl S { fn new(v: i64) -> S { S(v) } }
 
 fn main() {
     print("Testing memory manager with struct allocation...");

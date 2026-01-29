@@ -3,5 +3,5 @@ fn main() -> i64 {
     // let a = sum(values[i] for i in values); // Old syntax
     let a = values.sum();
     print(a);
-    return 0;
+    0
 }

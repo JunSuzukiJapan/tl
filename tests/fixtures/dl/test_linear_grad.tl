@@ -11,14 +11,14 @@ struct Linear {
 
 impl Linear {
     fn new(in_features: i64, out_features: i64) -> Linear {
-        return Linear(
+        Linear(
             Tensor::randn([in_features, out_features], true),
             Tensor::randn([out_features], true)
-        );
+        )
     }
     
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
-        return x.matmul(self.weight) + self.bias;
+        x.matmul(self.weight) + self.bias
     }
     
     fn step(self, lr: f32) {
@@ -31,11 +31,11 @@ impl Linear {
 
 impl SimpleModel {
     fn new() -> SimpleModel {
-        return SimpleModel(Linear::new(10, 5));
+        SimpleModel(Linear::new(10, 5))
     }
     
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
-        return self.linear.forward(x);
+        self.linear.forward(x)
     }
     
     fn step(self, lr: f32) {

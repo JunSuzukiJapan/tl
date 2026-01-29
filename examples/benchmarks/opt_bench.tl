@@ -7,5 +7,5 @@ fn main() -> i64 {
     }
     print("Result: ");
     println(x);
-    return 0;
+    0
 }

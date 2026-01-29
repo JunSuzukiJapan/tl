@@ -6,11 +6,11 @@ struct Emb {
 
 impl Emb {
     fn new(vocab: i64, d: i64) -> Emb {
-        return Emb(Tensor::randn([vocab, d], true) * 0.1);
+        Emb(Tensor::randn([vocab, d], true) * 0.1)
     }
     
     fn forward(self, idx: Tensor<f32, 2>) -> Tensor<f32, 3> {
-        return idx.embedding(self.weight);
+        idx.embedding(self.weight)
     }
 }
 

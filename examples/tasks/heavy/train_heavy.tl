@@ -2,10 +2,10 @@
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
-        return Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)); 
+        Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return x.matmul(self.W) + self.b; 
+        x.matmul(self.W) + self.b 
     } 
     fn step(self, lr: f32) -> Linear { 
         let s = self; 
@@ -13,49 +13,49 @@ impl Linear {
         let gb = s.b.grad(); 
         s.W = (s.W - gW * lr).detach(true); 
         s.b = (s.b - gb * lr).detach(true); 
-        return s; 
+        s 
     } 
-    fn clone(self) -> Linear { return Linear(self.W.clone(), self.b.clone()); }
+    fn clone(self) -> Linear { Linear(self.W.clone(), self.b.clone()) }
 }
 
 struct Embedding { w: Tensor<f32, 2> }
 impl Embedding { 
     fn new(v: i64, d: i64) -> Embedding {
-        return Embedding((Tensor::randn([v, d], true)*0.1).detach(true));
+        Embedding((Tensor::randn([v, d], true)*0.1).detach(true))
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
-        return i.embedding(self.w); 
+        i.embedding(self.w) 
     } 
     fn step(self, lr: f32) -> Embedding { 
         let s = self; 
         let g = s.w.grad(); 
         s.w = (s.w - g * lr).detach(true); 
-        return s; 
+        s 
     } 
-    fn clone(self) -> Embedding { return Embedding(self.w.clone()); }
+    fn clone(self) -> Embedding { Embedding(self.w.clone()) }
 }
 
 struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
 impl LayerNorm { 
     fn new(d: i64) -> LayerNorm { 
-        return LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)); 
+        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return x + self.b; 
+        x + self.b 
     } 
     fn step(self, lr: f32) -> LayerNorm { 
         let s = self; 
         let gb = s.b.grad(); 
         s.b = (s.b - gb * lr).detach(true); 
-        return s; 
+        s 
     } 
-    fn clone(self) -> LayerNorm { return LayerNorm(self.w.clone(), self.b.clone()); }
+    fn clone(self) -> LayerNorm { LayerNorm(self.w.clone(), self.b.clone()) }
 }
 
 struct CausalSelfAttention { q_proj: Linear, k_proj: Linear, v_proj: Linear, p_proj: Linear }
 impl CausalSelfAttention { 
     fn new(d: i64) -> CausalSelfAttention { 
-        return CausalSelfAttention(Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d)); 
+        CausalSelfAttention(Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         let q = self.q_proj.forward(x); 
@@ -68,7 +68,7 @@ impl CausalSelfAttention {
         let masked = qk.tril(0);
         let attn = masked.softmax(2);
         let y = attn.matmul(v);
-        return self.p_proj.forward(y); 
+        self.p_proj.forward(y) 
     } 
     fn step(self, lr: f32) -> CausalSelfAttention { 
         let s = self; 
@@ -76,38 +76,38 @@ impl CausalSelfAttention {
         s.k_proj = s.k_proj.step(lr); 
         s.v_proj = s.v_proj.step(lr); 
         s.p_proj = s.p_proj.step(lr); 
-        return s; 
+        s 
     } 
     fn clone(self) -> CausalSelfAttention {
-        return CausalSelfAttention(self.q_proj.clone(), self.k_proj.clone(), self.v_proj.clone(), self.p_proj.clone());
+        CausalSelfAttention(self.q_proj.clone(), self.k_proj.clone(), self.v_proj.clone(), self.p_proj.clone())
     }
 }
 
 struct MLP { f: Linear, p: Linear }
 impl MLP { 
     fn new(d: i64) -> MLP { 
-        return MLP(Linear::new(d, d*4), Linear::new(d*4, d)); 
+        MLP(Linear::new(d, d*4), Linear::new(d*4, d)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return self.p.forward(self.f.forward(x).relu()); 
+        self.p.forward(self.f.forward(x).relu()) 
     } 
     fn step(self, lr: f32) -> MLP { 
         let s = self; 
         s.f = s.f.step(lr); 
         s.p = s.p.step(lr); 
-        return s; 
+        s 
     } 
-    fn clone(self) -> MLP { return MLP(self.f.clone(), self.p.clone()); }
+    fn clone(self) -> MLP { MLP(self.f.clone(), self.p.clone()) }
 }
 
 struct Block { l1: LayerNorm, a: CausalSelfAttention, l2: LayerNorm, m: MLP }
 impl Block { 
     fn new(d: i64) -> Block { 
-        return Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)); 
+        Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         let x = x + self.a.forward(self.l1.forward(x)); 
-        return x + self.m.forward(self.l2.forward(x)); 
+        x + self.m.forward(self.l2.forward(x)) 
     } 
     fn step(self, lr: f32) -> Block { 
         let s = self; 
@@ -115,10 +115,10 @@ impl Block {
         s.a = s.a.step(lr); 
         s.l2 = s.l2.step(lr); 
         s.m = s.m.step(lr); 
-        return s; 
+        s 
     } 
     fn clone(self) -> Block {
-        return Block(self.l1.clone(), self.a.clone(), self.l2.clone(), self.m.clone());
+        Block(self.l1.clone(), self.a.clone(), self.l2.clone(), self.m.clone())
     }
 }
 
@@ -130,7 +130,7 @@ struct GPTHeavy {
 }
 impl GPTHeavy { 
     fn new(v: i64, d: i64) -> GPTHeavy { 
-        return GPTHeavy(
+        GPTHeavy(
             Embedding::new(v, d), 
             Embedding::new(12, d), 
             Block::new(d), 
@@ -139,7 +139,7 @@ impl GPTHeavy {
             Block::new(d),
             LayerNorm::new(d), 
             Linear::new(d, v)
-        ); 
+        ) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
@@ -151,7 +151,7 @@ impl GPTHeavy {
         let x = Param::checkpoint(self.b2.forward, x);
         let x = Param::checkpoint(self.b3.forward, x);
         let x = Param::checkpoint(self.b4.forward, x);
-        return self.h.forward(self.l.forward(x)); 
+        self.h.forward(self.l.forward(x)) 
     } 
     fn step(self, lr: f32) -> GPTHeavy { 
         let s = self; 
@@ -163,14 +163,14 @@ impl GPTHeavy {
         s.b4 = s.b4.step(lr); 
         s.l = s.l.step(lr); 
         s.h = s.h.step(lr); 
-        return s; 
+        s 
     }
     fn clone(self) -> GPTHeavy {
-        return GPTHeavy(
+        GPTHeavy(
             self.w.clone(), self.wp.clone(),
             self.b1.clone(), self.b2.clone(), self.b3.clone(), self.b4.clone(),
             self.l.clone(), self.h.clone()
-        );
+        )
     }
 }
 
@@ -215,7 +215,7 @@ fn train_step(model: GPTHeavy, lr: f32, i: i64, j: i64) -> GPTHeavy {
     // Step
     m = m.step(lr);
     
-    return m;
+    m
 }
 
 fn train_epoch(model: GPTHeavy, lr: f32, epoch: i64) -> GPTHeavy {
@@ -239,7 +239,7 @@ fn train_epoch(model: GPTHeavy, lr: f32, epoch: i64) -> GPTHeavy {
 
     print("Epoch:"); print(epoch);
     print("MB:"); print(System::memory_mb());
-    return m;
+    m
 }
 
 fn main() {

@@ -34,7 +34,7 @@ fn my_embedding(indices: Tensor<f32, 2>, w: Tensor<f32, 2>, V: i64) -> Tensor<f3
     let one_hot_d = one_hot.detach(true);
     
     let out_flat = one_hot_d.matmul(w);
-    return out_flat.reshape([1, 12, 128]);
+    out_flat.reshape([1, 12, 128])
 }
 
 // Causal Mask (tril()の代替)
@@ -57,37 +57,37 @@ fn get_causal_mask(size: i64) -> Tensor<f32, 2> {
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
-        return Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)); 
+        Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return x.matmul(self.W) + self.b; 
+        x.matmul(self.W) + self.b 
     } 
 }
 
 struct Embedding { w: Tensor<f32, 2>, vocab_size: i64 }
 impl Embedding { 
     fn new(v: i64, d: i64) -> Embedding { 
-        return Embedding((Tensor::randn([v, d], true)*0.1).detach(true), v); 
+        Embedding((Tensor::randn([v, d], true)*0.1).detach(true), v) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
-        return my_embedding(i, self.w, self.vocab_size); 
+        my_embedding(i, self.w, self.vocab_size) 
     } 
 }
 
 struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
 impl LayerNorm { 
     fn new(d: i64) -> LayerNorm { 
-        return LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)); 
+        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return x * self.w + self.b; 
+        x * self.w + self.b 
     } 
 }
 
 struct CausalSelfAttention { q_proj: Linear, k_proj: Linear, v_proj: Linear, p_proj: Linear }
 impl CausalSelfAttention { 
     fn new(d: i64) -> CausalSelfAttention { 
-        return CausalSelfAttention(Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d)); 
+        CausalSelfAttention(Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         let q = self.q_proj.forward(x); 
@@ -103,28 +103,28 @@ impl CausalSelfAttention {
         
         let attn_weights = masked_scores.softmax(2);
         let y = attn_weights.matmul(v); 
-        return self.p_proj.forward(y); 
+        self.p_proj.forward(y) 
     } 
 }
 
 struct MLP { f: Linear, p: Linear }
 impl MLP { 
     fn new(d: i64) -> MLP { 
-        return MLP(Linear::new(d, d*4), Linear::new(d*4, d)); 
+        MLP(Linear::new(d, d*4), Linear::new(d*4, d)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        return self.p.forward(self.f.forward(x).relu()); 
+        self.p.forward(self.f.forward(x).relu()) 
     } 
 }
 
 struct Block { l1: LayerNorm, a: CausalSelfAttention, l2: LayerNorm, m: MLP }
 impl Block { 
     fn new(d: i64) -> Block { 
-        return Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)); 
+        Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         let x = x + self.a.forward(self.l1.forward(x)); 
-        return x + self.m.forward(self.l2.forward(x)); 
+        x + self.m.forward(self.l2.forward(x)) 
     } 
 }
 
@@ -132,7 +132,7 @@ impl Block {
 struct GPT { w: Embedding, wp: Embedding, b1: Block, b2: Block, b3: Block, l: LayerNorm, h: Linear }
 impl GPT { 
     fn new(v: i64, d: i64) -> GPT { 
-        return GPT(
+        GPT(
             Embedding::new(v, d), 
             Embedding::new(12, d), 
             Block::new(d), 
@@ -140,7 +140,7 @@ impl GPT {
             Block::new(d), 
             LayerNorm::new(d), 
             Linear::new(d, v)
-        ); 
+        ) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
@@ -151,7 +151,7 @@ impl GPT {
         let x = self.b1.forward(x);
         let x = self.b2.forward(x);
         let x = self.b3.forward(x);
-        return self.h.forward(self.l.forward(x)); 
+        self.h.forward(self.l.forward(x)) 
     } 
 }
 

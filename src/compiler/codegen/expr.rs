@@ -4,6 +4,77 @@ use inkwell::types::BasicType;
 use inkwell::values::*;
 use std::collections::{HashMap, HashSet};
 
+fn compile_option_some<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("Option::Some requires 1 argument".into());
+    }
+    let (inner_val, inner_type) = args[0].clone();
+
+    // Create Option struct: { tag: i64, value: T }
+    let i64_type = codegen.context.i64_type();
+    let llvm_inner_type = codegen.get_llvm_type(&inner_type)?;
+    let option_struct_type = codegen.context.struct_type(&[i64_type.into(), llvm_inner_type], false);
+
+    // Allocate on stack
+    let option_ptr = codegen.builder.build_alloca(option_struct_type, "option_some")
+        .map_err(|e| e.to_string())?;
+
+    // Set tag = 1 (Some)
+    let tag_ptr = codegen.builder.build_struct_gep(option_struct_type, option_ptr, 0, "tag_ptr")
+        .map_err(|e| e.to_string())?;
+    codegen.builder.build_store(tag_ptr, i64_type.const_int(1, false))
+        .map_err(|e| e.to_string())?;
+
+    // Set value
+    let value_ptr = codegen.builder.build_struct_gep(option_struct_type, option_ptr, 1, "value_ptr")
+        .map_err(|e| e.to_string())?;
+    codegen.builder.build_store(value_ptr, inner_val)
+        .map_err(|e| e.to_string())?;
+
+    Ok((option_ptr.into(), Type::UserDefined("Option".to_string(), vec![inner_type])))
+}
+
+fn compile_option_none<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() {
+        return Err("Option::None takes no arguments".into());
+    }
+
+    // Default to I64 for unspecified Option type if inferrence fails
+    // Note: Ideally we should get the type hint here, but StaticMethodEval signature doesn't propagate it yet.
+    // For now we assume I64, which is compatible with how it was handled before (void replacement).
+    let inner_type = Type::I64; 
+
+    // Create Option struct: { tag: i64, value: T }
+    let i64_type = codegen.context.i64_type();
+    let llvm_inner_type = codegen.get_llvm_type(&inner_type)?;
+    let option_struct_type = codegen.context.struct_type(&[i64_type.into(), llvm_inner_type], false);
+
+    // Allocate on stack
+    let option_ptr = codegen.builder.build_alloca(option_struct_type, "option_none")
+        .map_err(|e| e.to_string())?;
+
+    // Set tag = 0 (None)
+    let tag_ptr = codegen.builder.build_struct_gep(option_struct_type, option_ptr, 0, "tag_ptr")
+        .map_err(|e| e.to_string())?;
+    codegen.builder.build_store(tag_ptr, i64_type.const_int(0, false))
+        .map_err(|e| e.to_string())?;
+
+    // Value is undefined for None, but we zero-initialize for safety
+    let value_ptr = codegen.builder.build_struct_gep(option_struct_type, option_ptr, 1, "value_ptr")
+        .map_err(|e| e.to_string())?;
+    let zero_val = llvm_inner_type.const_zero();
+    codegen.builder.build_store(value_ptr, zero_val)
+        .map_err(|e| e.to_string())?;
+
+    Ok((option_ptr.into(), Type::UserDefined("Option".to_string(), vec![inner_type])))
+}
+
 pub type BuiltinFnEval = for<'a, 'ctx> fn(
     &'a mut CodeGenerator<'ctx>,
     Vec<(BasicValueEnum<'ctx>, Type)>,
@@ -3661,6 +3732,24 @@ impl<'ctx> CodeGenerator<'ctx> {
         let type_name = struct_name;
         let method_name = method;
 
+        // Try TypeManager first
+        if let Some(type_obj) = self.type_manager.get_type(type_name) {
+            if let Some(method) = type_obj.get_static_method(method_name) {
+                 match method {
+                     StaticMethod::Evaluated(func) => {
+                         let mut compiled_args = Vec::new();
+                         for arg in args {
+                             compiled_args.push(self.compile_expr(arg)?);
+                         }
+                         return func(self, compiled_args);
+                     }
+                     StaticMethod::Unevaluated(func) => {
+                         return func(self, args);
+                     }
+                 }
+            }
+        }
+
         // Result<T, E>
         if struct_name == "Result" {
              // Pre-compile arguments to infer types if needed
@@ -3902,87 +3991,8 @@ impl<'ctx> CodeGenerator<'ctx> {
              let fn_val = self.module.get_function("tl_hashmap_new")
                  .ok_or("tl_hashmap_new not found")?;
              let call = self.builder.build_call(fn_val, &[], "hashmap_new").map_err(|e| e.to_string())?;
-             let res = match call.try_as_basic_value() {
-                 inkwell::values::ValueKind::Basic(v) => v,
-                 _ => return Err("Invalid return from hashmap.new()".into()),
-             };
-             return Ok((res, ty.clone()));
-        }
-
-        // Handle Option::some(val) and Option::none()
-        let is_option = match &ty {
-            Type::UserDefined(n, _) if n == "Option" => true,
-            Type::Struct(n, _) if n == "Option" => true,
-            _ => false,
-        };
-
-        if is_option && method_name == "some" {
-            // Option::some(val) -> allocate Option struct with tag=1 and value=val
-            if args.len() != 1 {
-                return Err("Option::some requires 1 argument".into());
-            }
-            let (inner_val, inner_type) = self.compile_expr(&args[0])?;
-            
-            // Create Option struct: { tag: i64, value: T }
-            let i64_type = self.context.i64_type();
-            let llvm_inner_type = self.get_llvm_type(&inner_type)?;
-            let option_struct_type = self.context.struct_type(&[i64_type.into(), llvm_inner_type], false);
-            
-            // Allocate on stack
-            let option_ptr = self.builder.build_alloca(option_struct_type, "option_some")
-                .map_err(|e| e.to_string())?;
-            
-            // Set tag = 1 (Some)
-            let tag_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 0, "tag_ptr")
-                .map_err(|e| e.to_string())?;
-            self.builder.build_store(tag_ptr, i64_type.const_int(1, false))
-                .map_err(|e| e.to_string())?;
-            
-            // Set value
-            let value_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 1, "value_ptr")
-                .map_err(|e| e.to_string())?;
-            self.builder.build_store(value_ptr, inner_val)
-                .map_err(|e| e.to_string())?;
-            
-            return Ok((option_ptr.into(), Type::UserDefined("Option".to_string(), vec![inner_type])));
-        }
-
-        if is_option && method_name == "none" {
-            // Option::none() -> allocate Option struct with tag=0
-            if !args.is_empty() {
-                return Err("Option::none takes no arguments".into());
-            }
-            
-            // Extract inner type from Option<T> if specified
-            let inner_type = match ty {
-                Type::UserDefined(_, gen_args) if !gen_args.is_empty() => gen_args[0].clone(),
-                _ => Type::I64, // Default to I64 for unspecified Option type
-            };
-            
-            // Create Option struct: { tag: i64, value: T }
-            let i64_type = self.context.i64_type();
-            let llvm_inner_type = self.get_llvm_type(&inner_type)?;
-            let option_struct_type = self.context.struct_type(&[i64_type.into(), llvm_inner_type], false);
-            
-            // Allocate on stack
-            let option_ptr = self.builder.build_alloca(option_struct_type, "option_none")
-                .map_err(|e| e.to_string())?;
-            
-            // Set tag = 0 (None)
-            let tag_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 0, "tag_ptr")
-                .map_err(|e| e.to_string())?;
-            self.builder.build_store(tag_ptr, i64_type.const_int(0, false))
-                .map_err(|e| e.to_string())?;
-            
-            // Value is undefined for None, but we zero-initialize for safety
-            let value_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 1, "value_ptr")
-                .map_err(|e| e.to_string())?;
-            let zero_val = llvm_inner_type.const_zero();
-            self.builder.build_store(value_ptr, zero_val)
-                .map_err(|e| e.to_string())?;
-            
-            return Ok((option_ptr.into(), Type::UserDefined("Option".to_string(), vec![inner_type])));
-        }
+        // Handle Option::some(val) and Option::none() - This block is now handled by TypeManager
+        // The original code for Option::some and Option::none is removed as per the instruction.
 
         if type_name == "Tokenizer" && method_name == "new" {
             if args.len() != 1 {

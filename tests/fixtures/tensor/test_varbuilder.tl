@@ -10,19 +10,19 @@ struct Linear {
 
 impl Linear {
     fn new(name: String, in_features: i64, out_features: i64) -> Linear {
-        return Linear(
+        Linear(
             name + ".weight",
             name + ".bias",
             in_features,
             out_features
-        );
+        )
     }
     
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
         // Get parameters from VarMap by name
         let weight = VarBuilder::get(self.weight_name, [self.in_features, self.out_features]);
         let bias = VarBuilder::get(self.bias_name, [self.out_features]);
-        return x.matmul(weight) + bias;
+        x.matmul(weight) + bias
     }
 }
 

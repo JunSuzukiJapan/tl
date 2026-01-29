@@ -7,7 +7,7 @@ fn factorial(n: f32) -> f32 {
 
 fn add(a: f32, b: f32) -> f32 {
     let res = a + b;
-    return res;
+    res
 }
 
 fn main() {

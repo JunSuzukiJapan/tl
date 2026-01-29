@@ -14,21 +14,21 @@ struct Block { an: RMSNorm, ffn: RMSNorm, at: Attention, mlp: MLP }
 
 // --- Standard Library Wrapper Implementations ---
 
-fn string_concat(a: String, b: String) -> String { return a.concat(b); }
-fn string_from_int(i: i64) -> String { return String::from_int(i); }
-fn string_contains(h: String, n: String) -> bool { return h.contains(n); }
+fn string_concat(a: String, b: String) -> String { a.concat(b) }
+fn string_from_int(i: i64) -> String { String::from_int(i) }
+fn string_contains(h: String, n: String) -> bool { h.contains(n) }
 
 // --- App Impls ---
 impl Linear {
-    fn from_map(m: Map, k: String) -> Linear { return Linear { w: m.get(k).transpose_2d(0, 1) }; }
+    fn from_map(m: Map, k: String) -> Linear { Linear { w: m.get(k).transpose_2d(0, 1) } }
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { 
-        return x.matmul(self.w); 
+        x.matmul(self.w) 
     }
 }
 
 impl RMSNorm {
-    fn new(m: Map, k: String) -> RMSNorm { return RMSNorm { w: m.get_1d(k), e: 0.00001 }; }
-    fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { return x.rms_norm(self.w, self.e); }
+    fn new(m: Map, k: String) -> RMSNorm { RMSNorm { w: m.get_1d(k), e: 0.00001 } }
+    fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { x.rms_norm(self.w, self.e) }
 }
 
 impl MLP {
@@ -36,18 +36,18 @@ impl MLP {
         let g = Linear::from_map(m, string_concat(p, "_gate.weight"));
         let u = Linear::from_map(m, string_concat(p, "_up.weight"));
         let d = Linear::from_map(m, string_concat(p, "_down.weight"));
-        return MLP {
+        MLP {
             g: g,
             u: u,
             d: d
-        };
+        }
     }
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
         let gx = self.g.forward(x.clone());
         let sx = gx.silu();
         let ux = self.u.forward(x.clone());
         let mu = sx.mul(ux);
-        return self.d.forward(mu);
+        self.d.forward(mu)
     }
 }
 
@@ -57,7 +57,7 @@ impl Attention {
         let k = Linear::from_map(m, string_concat(p, "_k.weight"));
         let v = Linear::from_map(m, string_concat(p, "_v.weight"));
         let o = Linear::from_map(m, string_concat(p, "_output.weight"));
-        return Attention { q: q, k: k, v: v, o: o };
+        Attention { q: q, k: k, v: v, o: o }
     }
     fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, sl: i64, ch: KVCache, li: i64, sp: i64) -> Tensor<f32, 2> {
         let q_4d = self.q.forward(x.clone()).reshape([1, sl, 32, 64]);
@@ -96,7 +96,7 @@ impl Attention {
         let sm_soft = sm.softmax(3);
         let ao = sm_soft.matmul_4d(vw).transpose(1, 2);
         
-        return self.o.forward(ao.reshape([sl, 2048]));
+        self.o.forward(ao.reshape([sl, 2048]))
     }
 }
 
@@ -107,18 +107,18 @@ impl Block {
         let ffn = RMSNorm::new(m, string_concat(p, ".ffn_norm.weight"));
         let at = Attention::from_map(m, string_concat(p, ".attn"));
         let mlp = MLP::from_map(m, string_concat(p, ".ffn"));
-        return Block {
+        Block {
             an: an,
             ffn: ffn,
             at: at,
             mlp: mlp
-        };
+        }
     }
     fn forward(self, x: Tensor<f32, 2>, cos: Tensor<f32, 2>, sin: Tensor<f32, 2>, sl: i64, ch: KVCache, li: i64, sp: i64) -> Tensor<f32, 2> {
         let attn_out = self.at.forward(self.an.forward(x.clone()), cos, sin, sl, ch, li, sp);
         let x2 = x.add(attn_out);
         let ffn_out = self.mlp.forward(self.ffn.forward(x2.clone()));
-        return x2.add(ffn_out);
+        x2.add(ffn_out)
     }
 }
 

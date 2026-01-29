@@ -16,10 +16,10 @@ fn main() {
 }
 
 fn process_vec(v: Vec<i64>) -> i64 {
-    return v.len();
+    v.len()
 }
 
 fn mutate_vec(v: Vec<i64>) -> Vec<i64> {
     v.push(100);
-    return v;
+    v
 }

@@ -24,6 +24,7 @@ pub mod kb;
 pub mod mono;
 pub mod stmt;
 pub mod tensor;
+pub mod type_manager;
 
 pub struct CodeGenerator<'ctx> {
     pub(crate) context: &'ctx Context,
@@ -55,6 +56,7 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) temporaries: Vec<Vec<(BasicValueEnum<'ctx>, Type, u8)>>,
     pub(crate) variable_liveness: Vec<HashMap<String, usize>>, // Parallel to variables: Last Use Time
     pub(crate) current_time: usize,
+    pub(crate) type_manager: type_manager::TypeManager,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -92,6 +94,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             temporaries: vec![Vec::new()],
             variable_liveness: vec![HashMap::new()],
             current_time: 0,
+            type_manager: type_manager::TypeManager::new(),
         };
 
         // Register all methods (instance and static)
@@ -439,6 +442,12 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn register_builtins(&mut self) {
         // Register destructors
         self.destructors.insert("HashMap".to_string(), "tl_hashmap_free".to_string());
+
+        // Register Option Type in TypeManager
+        let mut option_type = type_manager::CodeGenType::new("Option");
+        option_type.register_static_method("Some", expr::StaticMethod::Evaluated(expr::compile_option_some));
+        option_type.register_static_method("None", expr::StaticMethod::Evaluated(expr::compile_option_none));
+        self.type_manager.register_type(option_type);
 
         let device_enum = EnumDef {
             name: "Device".to_string(),

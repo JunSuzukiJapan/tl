@@ -8,7 +8,7 @@ struct Rect<T> {
 
 impl<T> Rect<T> {
     fn area(self) -> T {
-        return self.w * self.h;
+        self.w * self.h
     }
 }
 

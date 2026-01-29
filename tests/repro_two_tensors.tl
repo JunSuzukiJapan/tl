@@ -18,7 +18,7 @@ impl TwoTensors {
         print("Constructing TwoTensors...");
         let result = TwoTensors(ta, tb);
         print("TwoTensors constructed.");
-        return result;
+        result
     }
     
     fn get_a(self) -> Tensor<f32, 2> {
@@ -26,7 +26,7 @@ impl TwoTensors {
         let a = self.a;
         print("get_a: self.a =");
         print(a);
-        return a;
+        a
     }
     
     fn get_b(self) -> Tensor<f32, 2> {
@@ -34,7 +34,7 @@ impl TwoTensors {
         let b = self.b;
         print("get_b: self.b =");
         print(b);
-        return b;
+        b
     }
 }
 
