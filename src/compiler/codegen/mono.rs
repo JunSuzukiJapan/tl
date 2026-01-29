@@ -1,7 +1,7 @@
 use super::CodeGenerator;
 use crate::compiler::ast::Type;
 use crate::compiler::ast_subst::TypeSubstitutor;
-use inkwell::types::{BasicTypeEnum, StructType};
+use inkwell::types::{BasicType, BasicTypeEnum, BasicMetadataTypeEnum, StructType};
 use inkwell::AddressSpace;
 use std::collections::HashMap;
 
@@ -488,50 +488,188 @@ impl<'ctx> CodeGenerator<'ctx> {
         let core_fn_name = match element_type {
             Type::I64 => format!("tl_vec_i64_{}", method_name),
             Type::F32 => format!("tl_vec_f32_{}", method_name),
+            Type::U8 => format!("tl_vec_u8_{}", method_name), // New U8 support
             Type::UserDefined(name, _) if name == "String" => format!("tl_vec_string_{}", method_name),
-            _ => format!("tl_vec_ptr_{}", method_name), // Pointer-based for structs/strings
+            _ => format!("tl_vec_ptr_{}", method_name), // Pointer-based for structs/others
         };
         
-        // If core function exists but mangled doesn't, create a wrapper function
+        // If core function exists but mangled doesn't, create a wrapper function.
+        // The wrapper will have the "High Level" signature (e.g. taking T), 
+        // but calls the Lower Level runtime function (e.g. taking i8*).
         if let Some(core_fn) = self.module.get_function(&core_fn_name) {
-             // Create mangled function
-             // Note: Params might need casting if we are strictly using matched types.
-             // But for now, we just want a function accessible by mangled name.
-             // Since ensure_vec_method callers will cast arguments to what the wrapper expects?
-             // No, the wrapper should adapt types if possible, or just have same signature as core fn?
-             // The core fn `tl_vec_ptr_push` takes `(i8* vec, i8* elem)`.
-             // `tl_vec_i64_push` takes `(i8* vec, i64 elem)`.
+             // 1. Determine Wrapper Function Type
+             // It generally follows the AST definition.
+             // Self is always Vec<T> (which is i8* at runtime).
+             // Args depend on method.
+             // We can infer args from the Core Fn for some, but specialized ones need care.
              
-             // If we duplicate the signature of core_fn, we don't change anything for the caller, except the name.
-             // Caller currently does casting in compile_method_call.
+             // Core Fn Types:
+             // push(vec*, elem) -> void
+             // pop(vec*) -> elem
+             // get(vec*, idx) -> elem
              
-             let fn_type = core_fn.get_type();
+             // For "ptr" variant: elem is i8*.
+             // For "i64" variant: elem is i64.
+             
+             // Wrapper should take:
+             // push(vec*, T)
+             // pop(vec*) -> T
+             // get(vec*, i64) -> T
+             
+             let vec_ptr_ty = self.context.ptr_type(AddressSpace::default());
+             let elem_llvm_ty = self.get_llvm_type(element_type)?;
+             let i64_ty = self.context.i64_type();
+             let bool_ty = self.context.bool_type();
+             
+             let (param_types, ret_type): (Vec<BasicMetadataTypeEnum>, Option<BasicTypeEnum>) = match method_name {
+                 "push" => (vec![vec_ptr_ty.into(), elem_llvm_ty.into()], None),
+                 "pop" => (vec![vec_ptr_ty.into()], Some(elem_llvm_ty)),
+                 "get" | "remove" => (vec![vec_ptr_ty.into(), i64_ty.into()], Some(elem_llvm_ty)),
+                 "len" => (vec![vec_ptr_ty.into()], Some(i64_ty.into())),
+                 "is_empty" => (vec![vec_ptr_ty.into()], Some(bool_ty.into())),
+                 "clear" => (vec![vec_ptr_ty.into()], None),
+                 // set? "set"(vec*, idx, T)
+                 "set" => (vec![vec_ptr_ty.into(), i64_ty.into(), elem_llvm_ty.into()], None),
+                 "to_tensor_2d" => (vec![vec_ptr_ty.into(), i64_ty.into(), i64_ty.into(), i64_ty.into()], Some(self.context.ptr_type(AddressSpace::default()).into())),
+                 "read_i32_be" => (vec![vec_ptr_ty.into(), i64_ty.into()], Some(i64_ty.into())),
+                 _ => return Err(format!("Unknown Vec method for wrapper gen: {}", method_name)),
+             };
+             
+             let fn_type = if let Some(ret) = ret_type {
+                 ret.fn_type(&param_types, false)
+             } else {
+                 self.context.void_type().fn_type(&param_types, false)
+             };
+             
              let wrapper_fn = self.module.add_function(&mangled_fn_name, fn_type, None);
              
-             // Generate body: call core_fn
+             // Generate body: Adapter Logic
              let entry_bb = self.context.append_basic_block(wrapper_fn, "entry");
-             let saved_block = self.builder.get_insert_block(); // Save current block
+             let saved_block = self.builder.get_insert_block(); 
              self.builder.position_at_end(entry_bb);
              
-             let mut args = Vec::new();
-             for i in 0..wrapper_fn.count_params() {
-                 args.push(wrapper_fn.get_nth_param(i).unwrap().into());
+             // Prepare args for Core Fn Call
+             let mut call_args = Vec::new();
+             
+             // Self (Arg 0) is always passed through (it's opaquely Vec*)
+             call_args.push(wrapper_fn.get_nth_param(0).unwrap().into());
+             
+             // Handle other args
+             // Basic mapping: Wrapper Arg -> Core Fn Arg
+             // If Core Fn expects i8* but Wrapper got T:
+             // - If T is Struct/String (already ptr): Bitcast T* -> i8*
+             // - If T is Scalar (and we are using ptr fallback): Alloca(T), Store(val), Bitcast Alloca -> i8*
+             
+             // Identify if we are using the generic 'ptr' backend or a specialized one
+             let is_generic_ptr_backend = core_fn_name.contains("_ptr_");
+             
+             match method_name {
+                 "push" => {
+                     // arg 1 is 'item'
+                     let item_val = wrapper_fn.get_nth_param(1).unwrap();
+                     if is_generic_ptr_backend {
+                         // Expects i8*
+                         if item_val.is_pointer_value() {
+                             // Cast generic ptr to i8*
+                             let casted = self.builder.build_pointer_cast(
+                                 item_val.into_pointer_value(),
+                                 vec_ptr_ty,
+                                 "elem_cast"
+                             ).unwrap();
+                             call_args.push(casted.into());
+                         } else {
+                             // Spill scalar to stack
+                             let alloca = self.builder.build_alloca(elem_llvm_ty, "spill").unwrap();
+                             self.builder.build_store(alloca, item_val).unwrap();
+                             let casted = self.builder.build_pointer_cast(alloca, vec_ptr_ty, "spill_cast").unwrap();
+                             call_args.push(casted.into());
+                         }
+                     } else {
+                         // Specialized backend (i64, f32, etc)
+                         // types should match exactly or require trivial cast?
+                         // e.g. T=u8, Core=u8. T=i64, Core=i64.
+                         // But if T=bool? Core is what? U8?
+                         // If T=bool and core is U8?
+                         // Currently we only specialized for I64, F32, U8.
+                         // Bool falls back to ptr? No, Bool is 'i1', ptr backend handles 'i1' via spill?
+                         // Or we might map Bool to U8 backend?
+                         call_args.push(item_val.into());
+                     }
+                 },
+                 "get" | "remove" | "read_i32_be" => {
+                      // arg 1 is index (i64). Pass through.
+                      call_args.push(wrapper_fn.get_nth_param(1).unwrap().into());
+                 },
+                 "to_tensor_2d" => {
+                      // args 1, 2, 3 are i64. Pass through.
+                      call_args.push(wrapper_fn.get_nth_param(1).unwrap().into());
+                      call_args.push(wrapper_fn.get_nth_param(2).unwrap().into());
+                      call_args.push(wrapper_fn.get_nth_param(3).unwrap().into());
+                 },
+                 "set" => {
+                      // arg 1 is index, arg 2 is item
+                      call_args.push(wrapper_fn.get_nth_param(1).unwrap().into());
+                      
+                      let item_val = wrapper_fn.get_nth_param(2).unwrap();
+                      if is_generic_ptr_backend {
+                         if item_val.is_pointer_value() {
+                             let casted = self.builder.build_pointer_cast(
+                                 item_val.into_pointer_value(), 
+                                 vec_ptr_ty, 
+                                 "elem_cast"
+                             ).unwrap();
+                             call_args.push(casted.into());
+                         } else {
+                             let alloca = self.builder.build_alloca(elem_llvm_ty, "spill").unwrap();
+                             self.builder.build_store(alloca, item_val).unwrap();
+                             let casted = self.builder.build_pointer_cast(alloca, vec_ptr_ty, "spill_cast").unwrap();
+                             call_args.push(casted.into());
+                         }
+                      } else {
+                          call_args.push(item_val.into());
+                      }
+                 }
+                 _ => {}
              }
              
-             let call = self.builder.build_call(core_fn, &args, "");
+             let call = self.builder.build_call(core_fn, &call_args, "");
              
-             if core_fn.get_type().get_return_type().is_none() {
-                 let _ = self.builder.build_return(None);
-             } else {
-                 match call.unwrap().try_as_basic_value() {
-                     inkwell::values::ValueKind::Basic(v) => {
-                         let _ = self.builder.build_return(Some(&v));
+             // Handle Return
+             if let Some(ret) = ret_type {
+                 let raw_ret = match call.unwrap().try_as_basic_value() {
+                      inkwell::values::ValueKind::Basic(v) => v,
+                      _ => panic!("Expected basic value return"),
+                 };
+                 
+                 if is_generic_ptr_backend {
+                     if raw_ret.is_pointer_value() {
+                         let raw_ptr = raw_ret.into_pointer_value();
+                         if ret.is_pointer_type() {
+                             // Core returns i8*, wrapper returns T*. Cast i8* -> T*.
+                             // Note: with opaque pointers, this might be redundant, but keeps signature strict if typed.
+                             let casted = self.builder.build_pointer_cast(raw_ptr, ret.into_pointer_type(), "ret_cast").unwrap();
+                             self.builder.build_return(Some(&casted)).unwrap();
+                         } else {
+                             // Core returns i8*, wrapper returns T. Load T from i8*.
+                             // Cast i8* -> T* (opaque ptr)
+                             let casted_ptr = self.builder.build_pointer_cast(
+                                 raw_ptr,
+                                 self.context.ptr_type(AddressSpace::default()), 
+                                 "load_cast"
+                             ).unwrap();
+                             let loaded = self.builder.build_load(ret, casted_ptr, "ret_load").unwrap();
+                             self.builder.build_return(Some(&loaded)).unwrap();
+                         }
+                     } else {
+                         // Core returns scalar (e.g. len -> i64), wrapper returns scalar.
+                         self.builder.build_return(Some(&raw_ret)).unwrap();
                      }
-                     _ => {
-                        // Should not happen if return type is not none?
-                        let _ = self.builder.build_return(None);
-                     }
+                 } else {
+                     // Specialized backend returns T directly
+                     self.builder.build_return(Some(&raw_ret)).unwrap();
                  }
+             } else {
+                 self.builder.build_return(None).unwrap();
              }
              
              // Restore builder position
@@ -543,12 +681,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
         
         // Fallback: use generic monomorphization using AST from builtin_impls
-        // "Vec" is the struct name, [element_type] is the arg.
         if self.generic_impls.contains_key("Vec") {
             return self.monomorphize_method("Vec", method_name, &[element_type.clone()]);
         }
         
-        // Fallback: use core function name directly (likely will fail link if not found)
         Ok(core_fn_name)
     }
     /// Monomorphize a generic enum definition with concrete type arguments.

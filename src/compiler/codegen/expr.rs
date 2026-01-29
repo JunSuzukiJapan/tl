@@ -5752,364 +5752,68 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
         
         if let Some(inner) = inner_opt {
-            match method {
-                "len" => {
-                    let fn_name = match inner.as_ref() {
-                        Type::U8 => "tl_vec_u8_len",
-                        Type::I64 => "tl_vec_i64_len",
-                        Type::F32 => "tl_vec_f32_len",
-                        _ => "tl_vec_ptr_len",
-                    };
-                    let fn_val = self
-                        .module
-                        .get_function(fn_name)
-                        .ok_or(format!("{} not found", fn_name))?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[obj_val.into()], "vec_len")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from vec.len()".into()),
-                    };
-                    return Ok((res, Type::I64));
-                }
-                "push" => {
-                    if args.len() != 1 {
-                        return Err("push requires 1 argument".into());
-                    }
-                    let (arg_val, arg_ty) = self.compile_expr(&args[0])?;
-                    
-                    // Use Monomorphizer to get/create specialized method
-                    let fn_name = self.ensure_vec_method(&inner, "push")
-                        .map_err(|e| format!("Failed to monomorphize push: {}", e))?;
-                    
-                    let fn_val = self.module.get_function(&fn_name)
-                        .ok_or(format!("{} not found", fn_name))?;
+             // 1. Resolve method via ensure_vec_method (Generates wrapper if needed)
+             let specialized_fn_name = self.ensure_vec_method(&inner, method)
+                 .map_err(|e| format!("Failed to resolve Vec method {}: {}", method, e))?;
+             
+             let fn_val = self.module.get_function(&specialized_fn_name)
+                 .ok_or(format!("Function {} not found after generation", specialized_fn_name))?;
+             
+             // 2. Compile arguments
+             let params = fn_val.get_params(); // self, arg1, arg2...
+             if args.len() + 1 != params.len() {
+                  return Err(format!("Arg count mismatch for Vec::{}: expected {}, got {}", 
+                      method, params.len() - 1, args.len()));
+             }
 
-                    // Prepare argument: cast if necessary
-                    // For struct types (which use generic ptr implementation), we need to cast to i8*
-                    // unless we generated a specialized wrapper (which ensure_vec_method handles via aliasing to core fn)
-                    // The core fn for structs is tl_vec_ptr_push(vec*, void*)
-                    // So we expect the function to take i8*.
-                    
-                    // However, we added alias with correct name, but sharing the SAME signature as core function?
-                    // In ensure_vec_method: "let fn_type = core_fn.get_type();"
-                    // So checks against fn_type param types.
-                    
-                     let param_type = fn_val.get_nth_param(1).unwrap().get_type();
-                     let arg_casted = if param_type.is_pointer_type() {
-                          // If function expects pointer (e.g. void* for generic push), 
-                          // but we have a scalar (bool, int, float), we must spill to stack and pass pointer.
-                          if arg_val.is_pointer_value() {
-                              let ptr = arg_val.into_pointer_value();
-                              self.builder.build_pointer_cast(
-                                  ptr, 
-                                  param_type.into_pointer_type(),
-                                  "arg_cast"
-                              ).unwrap().into()
-                          } else {
-                              // Spill scalar to stack
-                              let func_val = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-                              let alloca = self.create_entry_block_alloca(func_val, "arg_spill", &arg_ty)?;
-                              
-                              // Store value (maybe cast to expected size? Runtime expects size of T)
-                              // For bool, it is i1. Runtime likely expects i8 (1 byte).
-                              // Just store as is? create_entry_block_alloca uses arg_type.
-                              // If arg_type is Bool, it allocates i1.
-                              // But LLVM might pack i1? 
-                              // Usually i1 is stored as i8 in memory.
-                              self.builder.build_store(alloca, arg_val).unwrap();
-                              
-                              self.builder.build_pointer_cast(
-                                  alloca,
-                                  param_type.into_pointer_type(),
-                                  "arg_spill_cast"
-                              ).unwrap().into()
-                          }
-                     } else if param_type.is_int_type() {
-                         if arg_val.is_int_value() {
-                             if arg_val.into_int_value().get_type() != param_type.into_int_type() {
-                                 // Cast int (e.g. i64 -> u8)
-                                 self.builder.build_int_cast(
-                                     arg_val.into_int_value(),
-                                     param_type.into_int_type(),
-                                     "arg_int_cast"
-                                 ).unwrap().into()
-                             } else {
-                                 arg_val
-                             }
-                         } else {
-                             return Err(format!("Expected int for push, got {:?}", arg_ty));
-                         }
-                    } else if param_type.is_float_type() {
-                         // Check float types
-                         arg_val
-                    } else {
-                        arg_val
-                    };
-
-                    self.builder
-                        .build_call(fn_val, &[obj_val.into(), arg_casted.into()], "")
-                        .map_err(|e| e.to_string())?;
-                    
-                    // Return Void
-                    return Ok((
-                        self.context.i64_type().const_int(0, false).into(),
-                        Type::Void,
-                    ));
-                }
-                "get" => {
-                    if args.len() != 1 {
-                        return Err("get requires 1 argument".into());
-                    }
-                    let (idx_val, _) = self.compile_expr(&args[0])?;
-                    // Ensure index is i64
-                    let idx_i64 = if idx_val.is_int_value() {
-                        let int_val = idx_val.into_int_value();
-                        if int_val.get_type().get_bit_width() == 32 {
-                            self.builder.build_int_z_extend(int_val, self.context.i64_type(), "idx_ext").unwrap()
-                        } else {
-                            int_val
-                        }
-                    } else {
-                         return Err("Index must be integer".into());
-                    };
-
-                    // Use Monomorphizer
-                    let fn_name = self.ensure_vec_method(&inner, "get")
-                        .map_err(|e| format!("Failed to monomorphize get: {}", e))?;
-                    
-                    let fn_val = self.module.get_function(&fn_name)
-                        .ok_or(format!("{} not found", fn_name))?;
-                        
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[obj_val.into(), idx_i64.into()], "vec_get")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from vec.get()".into()),
-                    };
-                    
-                    // No need to cast back if specialized wrapper returns correct type!
-                    // If ensure_vec_method creates a wrapper that calls core fn (which returns i8*)
-                    // The wrapper logic in mono.rs (generic call) returns whatever core fn returns (i8*).
-                    // So we STILL need to cast if the wrapper returns i8* but we expect Point*.
-                    
-                    // Wait, ensure_vec_method in mono.rs creates wrapper with SAME signature as core fn.
-                    // core fn for struct is `tl_vec_ptr_get` -> returns i8*.
-                    // So `fn_val` returns i8*.
-                    // So we DO need to cast result to `inner` type pointer.
-                    
-                    // But if inner is i64, core fn is `tl_vec_i64_get` -> returns i64.
-                    // Wrapper returns i64. No cast needed.
-                    
-                    // So we check return type of `fn_val`.
-                    let ret_type = fn_val.get_type().get_return_type().unwrap(); // We know it's not void for get
-                    
-                     let final_res = if ret_type.is_pointer_type() {
-                          let inner_llvm_ty = self.get_llvm_type(&inner)?;
-                          if inner_llvm_ty.is_pointer_type() {
-                              // Inner is Struct/Tensor/Vec (Pointer types)
-                              let ptr_ty = inner_llvm_ty.into_pointer_type();
-                              self.builder.build_pointer_cast(
-                                  res.into_pointer_value(),
-                                  ptr_ty,
-                                  "cast_back"
-                              ).unwrap().into()
-                          } else {
-                              // Inner is Scalar
-                              let ptr = res.into_pointer_value();
-                              self.builder.build_load(inner_llvm_ty, ptr, "vec_get_load").unwrap()
-                          }
-                     } else {
-                        res
-                     };
-                    
-                    return Ok((final_res, *inner.clone()));
-                }
-                "free" => {
-                     let fn_name = match inner.as_ref() {
-                        Type::U8 => "tl_vec_u8_free",
-                        Type::I64 => "tl_vec_i64_free", // Impl needed
-                        Type::F32 => "tl_vec_f32_free", // Impl needed
-                        _ => "tl_vec_ptr_free",         // Impl needed
-                    };
-                    let fn_val = self
-                            .module
-                            .get_function(fn_name)
-                            .ok_or(format!("{} not found", fn_name))?;
-                        self.builder
-                            .build_call(fn_val, &[obj_val.into()], "vec_free")
-                            .map_err(|e| e.to_string())?;
-                        return Ok((
-                            self.context.i64_type().const_int(0, false).into(),
-                            Type::Void,
-                        ));
-                }
-                "to_tensor_2d" => {
-                    // to_tensor_2d(offset, dim0, dim1) -> Tensor<f32, 2>
-                    if args.len() != 3 {
-                        return Err("to_tensor_2d requires 3 arguments: offset, dim0, dim1".into());
-                    }
-                    let (offset_val, _) = self.compile_expr(&args[0])?;
-                    let (dim0_val, _) = self.compile_expr(&args[1])?;
-                    let (dim1_val, _) = self.compile_expr(&args[2])?;
-                    
-                    // Derive function name from type parameter
-                    let fn_name = self.mangle_generic_method("vec", &[*inner.clone()], "to_tensor_2d");
-                    let fn_val = self
-                        .module
-                        .get_function(&fn_name)
-                        .ok_or(format!("{} not found", fn_name))?;
-                    let call = self
-                        .builder
-                        .build_call(
-                            fn_val,
-                            &[obj_val.into(), offset_val.into(), dim0_val.into(), dim1_val.into()],
-                            "vec_to_tensor_2d",
-                        )
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from to_tensor_2d".into()),
-                    };
-                    return Ok((res, Type::Tensor(Box::new(Type::F32), 2)));
-                }
-                "read_i32_be" if matches!(inner.as_ref(), Type::U8) => {
-                     if args.len() != 1 {
-                            return Err("read_i32_be requires 1 argument".into());
-                        }
-                        let (idx_val, _) = self.compile_expr(&args[0])?;
-                        let fn_val = self
-                            .module
-                            .get_function("tl_vec_u8_read_i32_be")
-                            .ok_or("tl_vec_u8_read_i32_be not found")?;
-                        let call = self
-                            .builder
-                            .build_call(fn_val, &[obj_val.into(), idx_val.into()], "vec_i32")
-                            .map_err(|e| e.to_string())?;
-                        let res = match call.try_as_basic_value() {
-                            inkwell::values::ValueKind::Basic(v) => v,
-                            _ => return Err("Invalid return from vec.read_i32_be()".into()),
-                        };
-                        return Ok((res, Type::I64));
-                }
-                _ => {
-                    // Generic fallback for methods like pop, insert, clear, remove, contains
-                    // This handles generic methods generated by ensuring_vec_method
-                    let fn_name = self.ensure_vec_method(&inner, method)
-                        .map_err(|e| format!("Failed to monomorphize {}: {}", method, e))?;
-                    
-                    let fn_val = self.module.get_function(&fn_name)
-                        .ok_or(format!("{} not found", fn_name))?;
-                    
-                     // Verify arg count (fn_val includes self param)
-                    if args.len() != fn_val.count_params() as usize - 1 { 
-                        return Err(format!("{} expects {} args, got {}", method, fn_val.count_params() - 1, args.len()));
-                    }
-
-                    // Prepare arguments
-                    let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::with_capacity(args.len() + 1);
-                    
-                    // 1. Handle 'self' parameter
-                    let self_param_ty = fn_val.get_nth_param(0).unwrap().get_type();
-                    let obj_casted = if self_param_ty.is_pointer_type() {
-                         if obj_val.is_pointer_value() {
-                             self.builder.build_pointer_cast(obj_val.into_pointer_value(), self_param_ty.into_pointer_type(), "self_cast").unwrap().into()
-                         } else {
-                             obj_val
-                         }
-                    } else {
-                        obj_val
-                    };
-                    call_args.push(obj_casted.into());
-
-                    // 2. Handle other arguments
-                    for (i, arg) in args.iter().enumerate() {
-                        let (arg_val, _arg_ty) = self.compile_expr(arg)?;
-                        // +1 index because of self param
-                        let param_ty = fn_val.get_nth_param((i + 1) as u32).unwrap().get_type();
-                        
-                        let arg_casted: inkwell::values::BasicValueEnum = if param_ty.is_pointer_type() {
-                            if arg_val.is_pointer_value() {
-                                self.builder.build_pointer_cast(arg_val.into_pointer_value(), param_ty.into_pointer_type(), "arg_cast").unwrap().into()
-                            } else {
-                                // Spill scalar to stack if function expects pointer
-                                let func_val = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-                                let alloca = self.create_entry_block_alloca(func_val, "arg_spill", &_arg_ty)?;
-                                self.builder.build_store(alloca, arg_val).unwrap();
-                                self.builder.build_pointer_cast(alloca, param_ty.into_pointer_type(), "arg_spill_cast").unwrap().into()
-                            }
-                        } else if param_ty.is_int_type() {
-                             if arg_val.is_int_value() {
-                                 let int_val = arg_val.into_int_value();
-                                 if int_val.get_type() != param_ty.into_int_type() {
-                                      // Integral cast (zext/sext/trunc?)
-                                      // For now try int_cast (covers sign extension/truncation usually based on context, but build_int_cast is mostly generic)
-                                      self.builder.build_int_cast(int_val, param_ty.into_int_type(), "arg_int_cast").unwrap().into()
-                                 } else {
-                                      arg_val
-                                 }
-                             } else {
-                                  return Err(format!("Expected int for {}, arg {}", method, i));
-                             }
-                        } else {
-                            arg_val
-                        };
-                        call_args.push(arg_casted.into());
-                    }
-                    
-                    // 3. Make the call
-                    let call = self.builder.build_call(fn_val, &call_args, method)
-                        .map_err(|e| e.to_string())?;
-                        
-                    // 4. Handle result
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(ret_val) => {
-                             // Check return type matching
-                             let ret_ty = fn_val.get_type().get_return_type().unwrap();
-                             if ret_ty.is_pointer_type() {
-                                 let inner_llvm_ty = self.get_llvm_type(&inner)?;
-                                 
-                                 // Heuristic based on method name for return type
-                                 match method {
-                                     "is_empty" | "contains" => ret_val,
-                                     "pop" | "remove" | "get" => {
-                                          if inner_llvm_ty.is_pointer_type() {
-                                              self.builder.build_pointer_cast(
-                                                  ret_val.into_pointer_value(),
-                                                  inner_llvm_ty.into_pointer_type(),
-                                                  "ret_cast"
-                                              ).unwrap().into()
-                                          } else {
-                                              ret_val
-                                          }
-                                     },
-                                     _ => ret_val,
-                                 }
-                             } else {
-                                 ret_val
-                             }
-                        }
-                        _ => {
-                            // Void return
-                            self.context.i64_type().const_int(0, false).into()
-                        }
-                    };
-                    
-                    // Determine High-level return type
-                     let ret_type_hl = match method {
-                         "is_empty" | "contains" => Type::Bool,
-                         "insert" | "clear" => Type::Void,
-                         "pop" | "remove" | "get" => *inner.clone(),
-                         _ => Type::Void, // Unknown
-                     };
-
-                    return Ok((res, ret_type_hl));
-                }
-            }
+             let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::with_capacity(args.len() + 1);
+             call_args.push(obj_val.into()); // Self is always valid as is (ptr)
+             
+             for (i, arg) in args.iter().enumerate() {
+                 let (arg_val, _) = self.compile_expr(arg)?;
+                 let param_ty = params[i + 1].get_type();
+                 
+                 let casted_val = if param_ty.is_int_type() && arg_val.is_int_value() {
+                      let int_val = arg_val.into_int_value();
+                      if int_val.get_type() != param_ty.into_int_type() {
+                          self.builder.build_int_cast(int_val, param_ty.into_int_type(), "arg_int_cast").unwrap().into()
+                      } else {
+                          arg_val
+                      }
+                 } else if param_ty.is_pointer_type() && arg_val.is_pointer_value() {
+                      let ptr_val = arg_val.into_pointer_value();
+                      if ptr_val.get_type() != param_ty.into_pointer_type() {
+                           self.builder.build_pointer_cast(ptr_val, param_ty.into_pointer_type(), "arg_ptr_cast").unwrap().into()
+                      } else {
+                           arg_val
+                      }
+                 } else {
+                     arg_val
+                 };
+                 call_args.push(casted_val.into());
+             }
+             
+             // 3. Make Call
+             let call = self.builder.build_call(fn_val, &call_args, method)
+                 .map_err(|e| e.to_string())?;
+                 
+             // 4. Return Value Handling
+             let res = match call.try_as_basic_value() {
+                 inkwell::values::ValueKind::Basic(v) => v,
+                 _ => self.context.i64_type().const_int(0, false).into(), // Void
+             };
+             
+             // Determine High-Level Return Type
+             let ret_type = match method {
+                 "len" | "read_i32_be" => Type::I64,
+                 "is_empty" => Type::Bool,
+                 "push" | "clear" | "set" => Type::Void,
+                 "pop" | "get" | "remove" => *inner.clone(),
+                 "to_tensor_2d" => Type::Tensor(Box::new(Type::F32), 2),
+                 _ => Type::Void,
+             };
+             
+             return Ok((res, ret_type));
         }
 
 
