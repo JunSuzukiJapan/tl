@@ -1,4 +1,4 @@
-// src/compiler/codegen/inner_type/hashmap.tl
+// src/compiler/codegen/builtin_types/hashmap.tl
 
 struct HashMap<K, V> {
     ptr: ptr<T>, // Opaque HashMap pointer

@@ -1,3 +1,4 @@
+// src/compiler/codegen/builtin_types/option.tl
 enum Option<T> {
     Some(T),
     None,

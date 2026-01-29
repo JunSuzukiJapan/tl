@@ -1,4 +1,4 @@
-// src/compiler/codegen/inner_type/vec.tl
+// src/compiler/codegen/builtin_types/vec.tl
 
 // Vec構造体の定義
 struct Vec<T> {
