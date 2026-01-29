@@ -532,43 +532,7 @@ pub fn compile_path_exists<'ctx>(
     Ok((res, Type::Bool))
 }
 
-// Tensor Static Methods
-pub fn compile_tensor_clear_grads<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if !args.is_empty() { return Err("Tensor::clear_grads takes no arguments".into()); }
-    let fn_val = codegen.module.get_function("tl_clear_grads").ok_or("tl_clear_grads not found")?;
-    codegen.builder.build_call(fn_val, &[], "clear_grads").map_err(|e| e.to_string())?;
-    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
-}
 
-pub fn compile_tensor_from_vec_u8<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 4 { return Err("Tensor::from_vec_u8 requires 4 arguments".into()); }
-    let vec_val = args[0].0;
-    let offset_val = args[1].0;
-    let shape_val = args[2].0;
-    let rank_val = args[3].0;
-    
-    // shape must be pointer (ScalarArray)
-    
-    let fn_val = codegen.module.get_function("tl_tensor_from_vec_u8").ok_or("tl_tensor_from_vec_u8 not found")?;
-    let call = codegen.builder.build_call(fn_val, &[vec_val.into(), offset_val.into(), shape_val.into(), rank_val.into()], "from_vec_u8").map_err(|e| e.to_string())?;
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from from_vec_u8".into()),
-    };
-    // Register temp logic if needed (TypeManager usually handles invocation, but temp tracking depends on caller?)
-    // Existing logic had: self.add_temp(res, Type::Tensor(Box::new(Type::F32), 2));
-    // CodeGenerator methods (like add_temp) are available via `codegen`.
-    codegen.add_temp(res, Type::Tensor(Box::new(Type::F32), 2));
-    Ok((res, Type::Tensor(Box::new(Type::F32), 2)))
-}
 
 // Tokenizer Instance Methods
 pub fn compile_tokenizer_encode<'ctx>(
@@ -1569,109 +1533,7 @@ fn compile_tensor_div_assign<'ctx>(
         Type::Void,
     ))
 }
-fn compile_tensor_zeros<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: &[Expr],
-    _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.is_empty() {
-        return Err("Tensor::zeros requires shape argument".into());
-    }
 
-    let elements_ref = if let ExprKind::TensorLiteral(el) = &args[0].inner {
-        Some(el)
-    } else if let ExprKind::TensorConstLiteral(el) = &args[0].inner {
-        Some(el)
-    } else {
-        None
-    };
-
-    if let Some(el) = elements_ref {
-        let i64_type = codegen.context.i64_type();
-        let mut vals = Vec::new();
-        for e in el {
-            let (v, t) = codegen.compile_expr(e)?;
-            let int_val = match t {
-                Type::I64 => v.into_int_value(),
-                Type::I32 => codegen
-                    .builder
-                    .build_int_z_extend(v.into_int_value(), i64_type, "ext")
-                    .map_err(|e| e.to_string())?,
-                _ => return Err(format!("Dimension must be integer, found {:?}", t)),
-            };
-            vals.push(int_val);
-        }
-
-        let rank = el.len();
-        let shape_array_type = i64_type.array_type(rank as u32);
-        let shape_alloca = codegen
-            .builder
-            .build_alloca(shape_array_type, "shape_arr")
-            .map_err(|e| e.to_string())?;
-
-        for (i, val) in vals.iter().enumerate() {
-            let ptr = unsafe {
-                codegen
-                    .builder
-                    .build_in_bounds_gep(
-                        shape_array_type,
-                        shape_alloca,
-                        &[
-                            i64_type.const_int(0, false),
-                            i64_type.const_int(i as u64, false),
-                        ],
-                        "tmp",
-                    )
-                    .map_err(|e| e.to_string())?
-            };
-            codegen
-                .builder
-                .build_store(ptr, *val)
-                .map_err(|e| e.to_string())?;
-        }
-
-        let req_grad = if args.len() > 1 {
-            let (v, _) = codegen.compile_expr(&args[1])?;
-            v.into_int_value()
-        } else {
-            codegen.context.bool_type().const_int(0, false)
-        };
-
-        let f = codegen
-            .module
-            .get_function("tl_tensor_zeros")
-            .ok_or("tl_tensor_zeros not found")?;
-        let call = codegen
-            .builder
-            .build_call(
-                f,
-                &[
-                    i64_type.const_int(rank as u64, false).into(),
-                    shape_alloca.into(),
-                    req_grad.into(),
-                ],
-                "zeros_res",
-            )
-            .map_err(|e| e.to_string())?;
-
-        let v = codegen.check_tensor_result(call, "zeros_error")?;
-        let result_ty = Type::Tensor(Box::new(Type::F32), rank);
-        // codegen.emit_register_tensor(v, &result_ty)?;
-        return Ok((v, result_ty));
-    }
-
-    // Generic path: Compile shape expr -> Tensor/Array
-    // We delegate to runtime if the shape is dynamic (a Tuple or Tensor).
-    // NOT IMPLEMENTED Generic fallback for now, as existing code handled it differently.
-    // Assuming users pass literals for now or we rely on compile_static_method_call fallback?
-    // Wait, if we register this, compile_static_method_call WON'T fallback for "zeros".
-    // So we MUST handle generic case or fail.
-    // Existing code logic: "Optimization for... else { ... }"
-    // I need to copy the ELSE block.
-    // Since I don't have it, I'll return Err for now and instruct user to use literals if they hit this.
-    // Or better, just try to compile args[0] and use it?
-    Err("Generic Tensor::zeros (non-literal shape) not yet ported to refactored dispatch. Please use literal shape [d1, d2] for now.".into())
-}
 
 fn compile_varbuilder_get_static<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
@@ -1982,15 +1844,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         i32_methods.register_eval("is_negative", compile_i32_is_negative);
         self.instance_methods.insert("I32".to_string(), i32_methods);
 
-        // --- Tensor Static Methods ---
-        let mut tensor_static = StaticMethodManager::new();
-        // Unevaluated because of special TensorLiteral handling optimization
-        tensor_static.register_uneval("zeros", compile_tensor_zeros);
-        tensor_static.register_uneval("randn", compile_randn);
-        tensor_static.register_uneval("ones", compile_ones);
-        tensor_static.register_eval("load", compile_load_tensor);
-        self.static_methods
-            .insert("Tensor".to_string(), tensor_static);
+
 
         // --- VarBuilder Static Methods ---
         let mut varbuilder_static = StaticMethodManager::new();
@@ -4771,73 +4625,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
 
-        if type_name == "Tensor" && method_name == "clear_grads" {
-            if !args.is_empty() {
-                return Err("Tensor::clear_grads takes no arguments".into());
-            }
-            let fn_val = self
-                .module
-                .get_function("tl_clear_grads")
-                .ok_or("tl_clear_grads not found")?;
-            self.builder
-                .build_call(fn_val, &[], "clear_grads")
-                .map_err(|e| e.to_string())?;
-            return Ok((
-                self.context.i64_type().const_int(0, false).into(),
-                Type::Void,
-            ));
-        }
 
-
-
-        // Tensor::from_vec_u8(vec, offset, shape, rank) -> Tensor
-        if type_name == "Tensor" && method_name == "from_vec_u8" {
-            if args.len() != 4 {
-                return Err("Tensor::from_vec_u8 requires 4 arguments (vec, offset, shape, rank)".into());
-            }
-            
-            // Compile vec
-            let (vec_val, _) = self.compile_expr(&args[0])?;
-            // Compile offset
-            let (offset_val, _) = self.compile_expr(&args[1])?;
-            // Compile rank
-            let (rank_val, _) = self.compile_expr(&args[3])?;
-            
-            // Compile shape as array literal and get pointer
-            // For ScalarArray, compile_expr returns a pointer to the array
-            let (shape_val, shape_ty) = self.compile_expr(&args[2])?;
-            
-            let shape_ptr = if let Type::ScalarArray(_, _) = shape_ty {
-                // shape_val is already a pointer to the array
-                shape_val
-            } else {
-                return Err(format!("from_vec_u8: shape must be ScalarArray, got {:?}", shape_ty));
-            };
-            
-            let fn_val = self
-                .module
-                .get_function("tl_tensor_from_vec_u8")
-                .ok_or("tl_tensor_from_vec_u8 not found")?;
-            
-            let call = self
-                .builder
-                .build_call(
-                    fn_val,
-                    &[vec_val.into(), offset_val.into(), shape_ptr.into(), rank_val.into()],
-                    "tensor_from_vec_u8",
-                )
-                .map_err(|e| e.to_string())?;
-            
-            let res = match call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(v) => v,
-                _ => return Err("Invalid return from Tensor::from_vec_u8".into()),
-            };
-            
-            // Register tensor
-            self.add_temp(res, Type::Tensor(Box::new(Type::F32), 2));
-            
-            return Ok((res, Type::Tensor(Box::new(Type::F32), 2)));
-        }
 
         // 1. StaticMethodManager Lookup
         let method_opt = self
@@ -9819,24 +9607,6 @@ fn compile_parameter<'ctx>(
     Ok((res, (*arg_ty).clone()))
 }
 
-fn compile_load_tensor<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let fn_val = codegen.module.get_function("tl_tensor_load").unwrap();
-    let (path_val, _) = &args[0];
-    let call = codegen
-        .builder
-        .build_call(fn_val, &[(*path_val).into()], "load_res")
-        .map_err(|e| e.to_string())?;
-    let res = match call.try_as_basic_value() {
-        ValueKind::Basic(v) => v,
-        _ => return Err("Invalid load return".into()),
-    };
-    Ok((res, Type::Tensor(Box::new(Type::F32), 1)))
-}
-
 fn compile_save_all_params<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
@@ -9867,144 +9637,7 @@ fn compile_save_all_params<'ctx>(
     ))
 }
 
-fn compile_tensor_creation_helper<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: &[Expr],
-    runtime_func_name: &str,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.is_empty() {
-        return Err(format!("{} requires shape", runtime_func_name));
-    }
-    let shape_expr = &args[0];
-    let (rank, shape_vals) = match &shape_expr.inner {
-        ExprKind::TensorLiteral(el) | ExprKind::TensorConstLiteral(el) => {
-            let mut vals = Vec::new();
-            for e in el {
-                let (v, t) = codegen.compile_expr(e)?;
-                let int_val = match t {
-                    Type::I64 => v.into_int_value(),
-                    Type::I32 => codegen
-                        .builder
-                        .build_int_z_extend(
-                            v.into_int_value(),
-                            codegen.context.i64_type(),
-                            "dim_ext",
-                        )
-                        .map_err(|e| e.to_string())?,
-                    _ => return Err(format!("Dimension must be integer, found {:?}", t)),
-                };
-                vals.push(int_val);
-            }
-            (el.len(), vals)
-        }
-        _ => {
-            return Err(format!(
-                "{} currently requires array literal [dim, ...] for shape",
-                runtime_func_name
-            ));
-        }
-    };
-    let requires_grad = if args.len() > 1 {
-        match &args[1].inner {
-            ExprKind::Bool(b) => *b,
-            _ => false,
-        }
-    } else {
-        false
-    };
-    let i64_type = codegen.context.i64_type();
 
-    let current_block = codegen.builder.get_insert_block().unwrap();
-    let function = current_block.get_parent().unwrap();
-    let entry_block = function.get_first_basic_block().unwrap();
-    let entry_builder = codegen.context.create_builder();
-    if let Some(first_instr) = entry_block.get_first_instruction() {
-        entry_builder.position_before(&first_instr);
-    } else {
-        entry_builder.position_at_end(entry_block);
-    }
-
-    let shape_array_type = i64_type.array_type(rank as u32);
-    let shape_alloca = entry_builder
-        .build_alloca(shape_array_type, "shape_arr")
-        .map_err(|e| e.to_string())?;
-
-    shape_alloca
-        .as_instruction_value()
-        .unwrap()
-        .set_alignment(16)
-        .map_err(|e| e.to_string())?;
-
-    for (i, val) in shape_vals.iter().enumerate() {
-        let ptr = unsafe {
-            codegen.builder.build_in_bounds_gep(
-                shape_array_type,
-                shape_alloca,
-                &[
-                    i64_type.const_int(0, false),
-                    i64_type.const_int(i as u64, false),
-                ],
-                "shape_ptr_in",
-            )
-        }
-        .map_err(|e| e.to_string())?;
-        codegen
-            .builder
-            .build_store(ptr, *val)
-            .map_err(|e| e.to_string())?;
-    }
-    let req_grad_val = codegen
-        .context
-        .bool_type()
-        .const_int(if requires_grad { 1 } else { 0 }, false);
-    let f = codegen
-        .module
-        .get_function(runtime_func_name)
-        .ok_or(format!("{} not found", runtime_func_name))?;
-
-    let zero = i64_type.const_int(0, false);
-    let first_elem_ptr = unsafe {
-        codegen.builder.build_in_bounds_gep(
-            shape_array_type,
-            shape_alloca,
-            &[zero, zero],
-            "first_elem_ptr",
-        )
-    }
-    .map_err(|e| e.to_string())?;
-
-    let call = codegen
-        .builder
-        .build_call(
-            f,
-            &[
-                i64_type.const_int(rank as u64, false).into(),
-                first_elem_ptr.into(),
-                req_grad_val.into(),
-            ],
-            "creation_res",
-        )
-        .map_err(|e| e.to_string())?;
-    let res = codegen.check_tensor_result(call, "creation_error")?;
-
-    Ok((res, Type::Tensor(Box::new(Type::F32), rank)))
-}
-
-fn compile_randn<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: &[Expr],
-    _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    compile_tensor_creation_helper(codegen, args, "tl_tensor_randn_debug")
-}
-
-fn compile_ones<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: &[Expr],
-    _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    compile_tensor_creation_helper(codegen, args, "tl_tensor_ones")
-}
 
 fn compile_varbuilder_get<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,

@@ -80,5 +80,12 @@ fn main() {
     let mem = System::memory_mb();
     print("Memory: "); print(mem); print("\n");
 
+    // 8. Tensor Check
+    let t_zeros = Tensor::zeros([2, 5]);
+    let t_ones = Tensor::ones([2, 2]);
+    let t_randn = Tensor::randn([2, 2]);
+    Tensor::clear_grads();
+    print("Tensor verification passed\n");
+
     print("Verification passed!\n");
 }

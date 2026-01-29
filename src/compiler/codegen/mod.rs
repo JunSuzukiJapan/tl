@@ -496,12 +496,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Register IO Types (File, Path, Env, Http)
         builtin_types::io::register_io_types(&mut self.type_manager);
         builtin_types::system::register_system_types(&mut self.type_manager);
+        builtin_types::tensor::register_tensor_types(&mut self.type_manager);
 
-        // Register Tensor Type
-        let mut tensor_type = type_manager::CodeGenType::new("Tensor");
-        tensor_type.register_static_method("clear_grads", expr::StaticMethod::Evaluated(expr::compile_tensor_clear_grads));
-        tensor_type.register_static_method("from_vec_u8", expr::StaticMethod::Evaluated(expr::compile_tensor_from_vec_u8));
-        self.type_manager.register_type(tensor_type);
+
 
         let device_enum = EnumDef {
             name: "Device".to_string(),
