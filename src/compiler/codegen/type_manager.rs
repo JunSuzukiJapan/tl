@@ -60,3 +60,69 @@ impl TypeManager {
         self.types.entry(name.to_string()).or_insert_with(|| CodeGenType::new(name))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compiler::codegen::CodeGenerator;
+    use crate::compiler::ast::Type;
+    use inkwell::values::BasicValueEnum;
+    use crate::compiler::codegen::expr::InstanceMethod;
+
+    // Mock function matching InstanceMethodEval signature
+    fn mock_method<'a, 'ctx>(
+        _gen: &'a mut CodeGenerator<'ctx>,
+        _val: BasicValueEnum<'ctx>,
+        _ty: Type,
+        _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        Err("Mock called".to_string())
+    }
+
+    #[test]
+    fn test_codegen_type_methods() {
+        let mut ty = CodeGenType::new("TestType");
+        assert_eq!(ty.name, "TestType");
+        
+        // Test registering instance method
+        ty.register_instance_method("test_method", InstanceMethod::Evaluated(mock_method));
+        
+        let method = ty.get_instance_method("test_method");
+        assert!(method.is_some());
+        
+        if let Some(InstanceMethod::Evaluated(_)) = method {
+             // Correctly retrieved
+        } else {
+             panic!("Expected Evaluated instance method");
+        }
+
+        // Test missing method
+        assert!(ty.get_instance_method("non_existent").is_none());
+    }
+
+    #[test]
+    fn test_type_manager_lifecycle() {
+        let mut tm = TypeManager::new();
+        
+        // Test ensure_type (creation)
+        let ty_ref = tm.ensure_type("NewType");
+        assert_eq!(ty_ref.name, "NewType");
+        
+        // Test retrieval
+        let ty_opt = tm.get_type("NewType");
+        assert!(ty_opt.is_some());
+        assert_eq!(ty_opt.unwrap().name, "NewType");
+        
+        // Test ensure_type (existing)
+        let ty_ref2 = tm.ensure_type("NewType");
+        assert_eq!(ty_ref2.name, "NewType");
+        
+        // Register explicit type
+        let mut explicit_ty = CodeGenType::new("Explicit");
+        explicit_ty.register_instance_method("foo", InstanceMethod::Evaluated(mock_method));
+        tm.register_type(explicit_ty);
+        
+        let retrieved = tm.get_type("Explicit").unwrap();
+        assert!(retrieved.get_instance_method("foo").is_some());
+    }
+}
