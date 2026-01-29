@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::compiler::codegen::expr::{StaticMethod, InstanceMethod};
+pub use crate::compiler::codegen::expr::{StaticMethod, InstanceMethod};
 
 /// Represents a type definition within the CodeGenerator, managing its methods.
 pub struct CodeGenType {

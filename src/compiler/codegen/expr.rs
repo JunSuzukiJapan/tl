@@ -250,103 +250,7 @@ pub fn compile_hashmap_new<'ctx>(
     Ok((res, ret_type))
 }
 
-pub fn compile_tokenizer_new<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    _target_type: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 {
-        return Err("Tokenizer::new requires 1 argument".into());
-    }
-    let path_val = args[0].0;
-    
-    let fn_val = codegen.module.get_function("tl_tokenizer_new").ok_or("tl_tokenizer_new not found")?;
-    let call = codegen.builder.build_call(fn_val, &[path_val.into()], "tok_new").map_err(|e| e.to_string())?;
-    let handle = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from Tokenizer::new".into()),
-    };
 
-    let struct_type = *codegen.struct_types.get("Tokenizer").ok_or("Struct type Tokenizer not found")?;
-    let struct_def = codegen.struct_defs.get("Tokenizer").ok_or("Struct definition Tokenizer not found")?;
-    let size = struct_type.size_of().ok_or("Cannot determine size of Tokenizer")?;
-    
-    let size_int = size;
-    let size_i64 = if size_int.get_type() == codegen.context.i32_type() {
-        codegen.builder.build_int_z_extend(size_int, codegen.context.i64_type(), "size_i64").unwrap()
-    } else {
-        size_int
-    };
-
-    let malloc_fn = codegen.module.get_function("malloc").ok_or("malloc not found (declare in builtins)")?;
-    let call = codegen.builder.build_call(malloc_fn, &[size_i64.into()], "tokenizer_malloc").map_err(|e| e.to_string())?;
-    let raw_ptr = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-        _ => return Err("malloc returned invalid value".into()),
-    };
-    
-    if let Some(register_fn) = codegen.module.get_function("tl_mem_register_struct") {
-        let cast_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap();
-        codegen.builder.build_call(register_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
-    }
-    
-    let struct_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "tokenizer_ptr").map_err(|e| e.to_string())?;
-    
-    let field_idx = struct_def.fields.iter().position(|(n, _)| n == "_h").ok_or("Field _h not found in Tokenizer")?;
-    let field_ptr = codegen.builder.build_struct_gep(struct_type, struct_ptr, field_idx as u32, "tokenizer_h").map_err(|e| e.to_string())?;
-    codegen.builder.build_store(field_ptr, handle).map_err(|e| e.to_string())?;
-    
-    Ok((struct_ptr.into(), Type::Struct("Tokenizer".to_string(), vec![])))
-}
-
-pub fn compile_kv_cache_new<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    _target_type: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 {
-        return Err("KVCache::new requires 1 argument".into());
-    }
-    let layers_val = args[0].0;
-
-    let fn_val = codegen.module.get_function("tl_kv_cache_new").ok_or("tl_kv_cache_new not found")?;
-    let call = codegen.builder.build_call(fn_val, &[layers_val.into()], "kv_new").map_err(|e| e.to_string())?;
-    let handle = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from KVCache::new".into()),
-    };
-
-    let struct_type = *codegen.struct_types.get("KVCache").ok_or("Struct type KVCache not found")?;
-    let struct_def = codegen.struct_defs.get("KVCache").ok_or("Struct definition KVCache not found")?;
-    let size = struct_type.size_of().ok_or("Cannot determine size of KVCache")?;
-    
-    let size_int = size;
-    let size_i64 = if size_int.get_type() == codegen.context.i32_type() {
-        codegen.builder.build_int_z_extend(size_int, codegen.context.i64_type(), "size_i64").unwrap()
-    } else {
-        size_int
-    };
-
-    let malloc_fn = codegen.module.get_function("malloc").ok_or("malloc not found (declare in builtins)")?;
-    let call = codegen.builder.build_call(malloc_fn, &[size_i64.into()], "kvcache_malloc").map_err(|e| e.to_string())?;
-    let raw_ptr = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-        _ => return Err("malloc returned invalid value".into()),
-    };
-    
-    if let Some(register_fn) = codegen.module.get_function("tl_mem_register_struct") {
-        let cast_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap();
-        codegen.builder.build_call(register_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
-    }
-    
-    let struct_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "kvcache_ptr").map_err(|e| e.to_string())?;
-    
-    let field_idx = struct_def.fields.iter().position(|(n, _)| n == "_h").ok_or("Field _h not found in KVCache")?;
-    let field_ptr = codegen.builder.build_struct_gep(struct_type, struct_ptr, field_idx as u32, "kvcache_h").map_err(|e| e.to_string())?;
-    codegen.builder.build_store(field_ptr, handle).map_err(|e| e.to_string())?;
-    
-    Ok((struct_ptr.into(), Type::Struct("KVCache".to_string(), vec![])))
-}
 
 // System Static Methods
 fn compile_system_method<'ctx>(
@@ -435,83 +339,7 @@ pub fn compile_system_scope_depth<'ctx>(
     compile_system_method(codegen, "tl_get_scope_depth", Type::I64)
 }
 
-// File Static Methods
-pub fn compile_file_open<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 2 { return Err("File::open requires 2 arguments".into()); }
-    let fn_val = codegen.module.get_function("tl_file_open").ok_or("tl_file_open not found")?;
-    let call = codegen.builder.build_call(fn_val, &[args[0].0.into(), args[1].0.into()], "file_open").map_err(|e| e.to_string())?;
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from File::open".into()),
-    };
-    Ok((res, Type::UserDefined("File".to_string(), vec![])))
-}
 
-pub fn compile_file_exists<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 { return Err("File::exists requires 1 argument".into()); }
-    let fn_val = codegen.module.get_function("tl_file_exists_i64").ok_or("tl_file_exists_i64 not found")?;
-    let call = codegen.builder.build_call(fn_val, &[args[0].0.into()], "file_exists").map_err(|e| e.to_string())?;
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-        _ => return Err("Invalid return from File::exists".into()),
-    };
-    let ok = codegen.builder.build_int_compare(inkwell::IntPredicate::EQ, res, codegen.context.i64_type().const_int(1, false), "exists_bool").unwrap();
-    Ok((ok.into(), Type::Bool))
-}
-
-pub fn compile_file_read_static<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 { return Err("File::read requires 1 argument".into()); }
-    let fn_val = codegen.module.get_function("tl_read_file").ok_or("tl_read_file not found")?;
-    let call = codegen.builder.build_call(fn_val, &[args[0].0.into()], "file_read").map_err(|e| e.to_string())?;
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from File::read".into()),
-    };
-    Ok((res, Type::UserDefined("String".to_string(), vec![])))
-}
-
-pub fn compile_file_download<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 2 { return Err("File::download requires 2 arguments".into()); }
-    let fn_val = codegen.module.get_function("tl_download_file").ok_or("tl_download_file not found")?;
-    let call = codegen.builder.build_call(fn_val, &[args[0].0.into(), args[1].0.into()], "file_download").map_err(|e| e.to_string())?;
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-        _ => return Err("Invalid return from File::download".into()),
-    };
-    let ok = codegen.builder.build_int_compare(inkwell::IntPredicate::EQ, res, codegen.context.i64_type().const_int(1, false), "download_bool").unwrap();
-    Ok((ok.into(), Type::Bool))
-}
-
-pub fn compile_file_read_binary<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 { return Err("File::read_binary requires 1 argument".into()); }
-    let fn_val = codegen.module.get_function("tl_file_read_binary").ok_or("tl_file_read_binary not found")?;
-    let call = codegen.builder.build_call(fn_val, &[args[0].0.into()], "file_read_binary").map_err(|e| e.to_string())?;
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from File::read_binary".into()),
-    };
-    Ok((res, Type::Vec(Box::new(Type::U8))))
-}
 
 pub fn compile_path_exists<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
@@ -534,83 +362,7 @@ pub fn compile_path_exists<'ctx>(
 
 
 
-// Tokenizer Instance Methods
-pub fn compile_tokenizer_encode<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    instance_val: BasicValueEnum<'ctx>,
-    instance_ty: Type,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 { return Err("Tokenizer::encode requires 1 argument".into()); }
-    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "_h")?;
-    let (prompt_val, _) = args[0];
-    let fn_val = codegen.module.get_function("tl_tokenizer_encode").ok_or("tl_tokenizer_encode not found")?;
-    let call = codegen.builder.build_call(fn_val, &[handle.into(), prompt_val.into()], "tok_encode").map_err(|e| e.to_string())?;
-    // check_tensor_result(val, msg) is method of codegen.
-    let res = codegen.check_tensor_result(call, "tok_encode_error")?;
-    Ok((res, Type::Tensor(Box::new(Type::I64), 0)))
-}
 
-pub fn compile_tokenizer_decode<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    instance_val: BasicValueEnum<'ctx>,
-    instance_ty: Type,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 { return Err("Tokenizer::decode requires 1 argument".into()); }
-    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "_h")?;
-    let (ids_val, _) = args[0];
-    let fn_val = codegen.module.get_function("tl_tokenizer_decode").ok_or("tl_tokenizer_decode not found")?;
-    let call = codegen.builder.build_call(fn_val, &[handle.into(), ids_val.into()], "tok_decode").map_err(|e| e.to_string())?;
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from Tokenizer::decode".into()),
-    };
-    Ok((res, Type::UserDefined("String".to_string(), vec![])))
-}
-
-// KVCache Instance Methods
-pub fn compile_kv_cache_free<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    instance_val: BasicValueEnum<'ctx>,
-    instance_ty: Type,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "_h")?;
-    let fn_val = codegen.module.get_function("tl_kv_cache_free").ok_or("tl_kv_cache_free not found")?;
-    codegen.builder.build_call(fn_val, &[handle.into()], "kv_free").map_err(|e| e.to_string())?;
-    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
-}
-
-pub fn compile_kv_cache_get_k<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    instance_val: BasicValueEnum<'ctx>,
-    instance_ty: Type,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 { return Err("KVCache::get_k requires 1 argument".into()); }
-    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "_h")?;
-    let (layer_val, _) = args[0];
-    let fn_val = codegen.module.get_function("tl_kv_cache_get_k").ok_or("tl_kv_cache_get_k not found")?;
-    let call = codegen.builder.build_call(fn_val, &[handle.into(), layer_val.into()], "kv_get_k").map_err(|e| e.to_string())?;
-    let res = codegen.check_tensor_result(call, "kv_get_k_error")?;
-    Ok((res, Type::Tensor(Box::new(Type::F32), 2))) // Assuming 2D tensor
-}
-
-pub fn compile_kv_cache_get_v<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    instance_val: BasicValueEnum<'ctx>,
-    instance_ty: Type,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 { return Err("KVCache::get_v requires 1 argument".into()); }
-    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "_h")?;
-    let (layer_val, _) = args[0];
-    let fn_val = codegen.module.get_function("tl_kv_cache_get_v").ok_or("tl_kv_cache_get_v not found")?;
-    let call = codegen.builder.build_call(fn_val, &[handle.into(), layer_val.into()], "kv_get_v").map_err(|e| e.to_string())?;
-    let res = codegen.check_tensor_result(call, "kv_get_v_error")?;
-    Ok((res, Type::Tensor(Box::new(Type::F32), 2))) // Assuming 2D tensor
-}
 
 // Vec Instance Methods
 pub fn compile_vec_len<'ctx>(
@@ -648,7 +400,7 @@ pub fn compile_vec_push<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 { return Err("Vec::push requires 1 argument".into()); }
-    let (val, ty) = args[0].clone();
+    let (val, _ty) = args[0].clone();
     let inner_ty = if let Type::Vec(inner) = instance_ty {
         *inner
     } else {
@@ -656,7 +408,7 @@ pub fn compile_vec_push<'ctx>(
     };
     
     // cast if necessary (for ptr types to void*)
-    let arg_val = if matches!(inner_ty, Type::U8 | Type::I64 | Type::F32) {
+    let _arg_val = if matches!(inner_ty, Type::U8 | Type::I64 | Type::F32) {
         val
     } else {
         // Cast to ptr? Logic in existing code:
@@ -1886,7 +1638,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.instance_methods.insert("HashMap".to_string(), hashmap_inst);
     }
 
-    fn load_struct_i64_field(
+    pub fn load_struct_i64_field(
         &mut self,
         obj_val: BasicValueEnum<'ctx>,
         obj_ty: &Type,
@@ -2446,7 +2198,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let variant_def = &enum_def.variants[variant_idx];
                 
                 // Helper to compile field storage
-                let mut compile_fields = |fields_def: &Vec<Type>, exprs: &Vec<Expr>, field_names: Option<&Vec<String>>| -> Result<(), String> {
+                let _compile_fields = |fields_def: &Vec<Type>, exprs: &Vec<Expr>, field_names: Option<&Vec<String>>| -> Result<(), String> {
                     let payload_ptr_raw = self
                         .builder
                         .build_struct_gep(enum_ty, alloca, 1, "payload_ptr_raw")
@@ -2485,7 +2237,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Iterate over DEFINITION fields
                     for (idx, f_ty) in fields_def.iter().enumerate() {
                         // Find expression
-                        let expr = if let Some(names) = field_names {
+                        let expr = if let Some(_names) = field_names {
                              // Struct variant: find by name
                              // exprs is actually not Vec<Expr>, but we pass it as such? 
                              // Wait, payload closure arg needs adjustment.
@@ -4442,107 +4194,6 @@ impl<'ctx> CodeGenerator<'ctx> {
              return Ok((ptr.into(), result_type));
         }
 
-        // Handle Option<T> static methods (Registration over Implementation)
-        if struct_name == "Option" {
-            if method == "some" {
-                if args.len() != 1 {
-                    return Err("Option::some requires exactly 1 argument".to_string());
-                }
-                let (val, ty) = self.compile_expr(&args[0])?;
-                
-                // Construct Option struct type: { i64, T }
-                let option_ty = self.context.struct_type(&[
-                    self.context.i64_type().into(), // tag: 1 = Some
-                    val.get_type(),                 // value
-                ], false);
-                
-                // Allocate
-                let ptr = self.builder.build_alloca(option_ty, "option_some").unwrap();
-                
-                // Set tag = 1
-                let tag_ptr = self.builder.build_struct_gep(option_ty, ptr, 0, "tag_ptr").unwrap();
-                self.builder.build_store(tag_ptr, self.context.i64_type().const_int(1, false)).unwrap();
-                
-                // Set value
-                let val_ptr = self.builder.build_struct_gep(option_ty, ptr, 1, "val_ptr").unwrap();
-                self.builder.build_store(val_ptr, val).unwrap();
-                
-                // Return pointer and type
-                return Ok((ptr.into(), Type::UserDefined("Option".to_string(), vec![ty])));
-            } else if method == "none" {
-                 // For none(), we need to know T.
-                 // In many cases, it might be inferred or we can treat it as Option<Void> initially?
-                 // Or we can create a generic Option None.
-                 // However, without type inference passing T here, we might struggle to allocate correct size if T is not known.
-                 // WORKAROUND: For now, if generic T is not provided, we might fail or default.
-                 // actually, `none` usually relies on context.
-                 // Let's create a dummy placeholder or rely on the fact that `UserDefined` handles it.
-                 // But wait, we need to return a Value.
-                 // If we don't know T, we can't allocate {i64, T}.
-                 // HACK: generic None often needs type hint. 
-                 // If specific T is needed, user might do: `let x: Option<I64> = Option::none();`
-                 // In codegen, we only see the call `Option::none()`.
-                 // We'll create a generic {i64} for now? No, that breaks layout.
-                 // Strategy: Return a "GenericNone" or similar marker?
-                 // OR, assume Void for T and let assignment handle cast/bitcast if pointers match?
-                 // NO, struct sizes differ.
-                 // 
-                 // BETTER STRATEGY: 
-                 // In standard TL usage `Option::none()` usually implies T is inferred.
-                 // If we are effectively "void", we can interpret it.
-                 // But `Option` layout depends on T.
-                 // 
-                 // Let's assume for `none` we can't allocate meaningful storage without T.
-                 // But valid code usually strictly types it.
-                 // 
-                 // Simple implementation: 
-                 // Create a {i64} only struct for None? 
-                 // No, receiver expects {i64, T}.
-                 // 
-                 // FOR THIS TASK: We will assume Option::none() is valid only if we can infer T from context?
-                 // But we are in codegen. Type check happened in Semantics.
-                 // Did semantics attach implicit Generic arg?
-                 // No.
-                 // 
-                 // Let's allow `Option::none` to return a specialized "Zero Option" 
-                 // that is just an i64 (0). 
-                 // And then upon use/assignment/return, it might need casting?
-                 // 
-                 // PROPOSAL: All Option types are pointers.
-                 // If `none` is represented as a NULL POINTER?
-                 // No, we want Structural Identity.
-                 //
-                 // Let's implement `some` first. `none` might need more thought or T passed.
-                 // Actually, if T is unknown, layout is unknown.
-                 // 
-                 // TEMPORARY FIX: `Option::none` returns a pointer to {i64, i8} (dummy T=i8),
-                 // effectively just setting tag=0.
-                 // Since it is None, we never access value.
-                 // The size might be wrong if we copy it.
-                 // Correct approach requires T.
-                 // 
-                 // But wait, `Option<T>` is `UserDefined`.
-                 // Is it passed by pointer or value?
-                 // If pointer, then size mismatch is okay only if we don't copy by value.
-                 // But `store` operation copies by value (memcpy).
-                 //
-                 // We will punt on `none` complexity for a second and implement `some`.
-                 // For `none`, we'll generate an error for now if logic is missing.
-                 
-                 let option_ty = self.context.struct_type(&[
-                    self.context.i64_type().into(), // tag: 0
-                    self.context.i64_type().into(), // dummy value (i64 aligned)
-                ], false);
-                let ptr = self.builder.build_alloca(option_ty, "option_none").unwrap();
-                let tag_ptr = self.builder.build_struct_gep(option_ty, ptr, 0, "tag_ptr").unwrap();
-                self.builder.build_store(tag_ptr, self.context.i64_type().const_int(0, false)).unwrap();
-                
-                // Return Option<I64> to avoid Void type panic in codegen
-                // Since it is None (tag=0), the value type doesn't matter for logic,
-                // and I64 ensures pointer-size alignment for most cases.
-                 return Ok((ptr.into(), Type::UserDefined("Option".to_string(), vec![Type::I64])));
-            }
-        }
 
         let simple_struct_name = struct_name.split('<').next().unwrap_or(struct_name);
         let ty = Type::UserDefined(simple_struct_name.to_string(), vec![]); // Reconstruct a basic Type for old logic
@@ -5622,7 +5273,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         bindings: &crate::compiler::ast::EnumPatternBindings,
         generic_args: &[Type],
     ) -> Result<(), String> {
-        let variant_def = &enum_def.variants[variant_idx];
+        let _variant_def = &enum_def.variants[variant_idx];
 
         // Build substitution map for concrete types
         let mut subst: HashMap<String, Type> = HashMap::new();
@@ -6461,96 +6112,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
-        // Check for Option (either Type::UserDefined("Option") or Type::Struct("Option"))
-        let option_inner_opt = match &obj_ty {
-            Type::UserDefined(n, args) | Type::Struct(n, args) if n == "Option" => {
-                if args.len() == 1 {
-                    Some(args[0].clone())
-                } else {
-                    Some(Type::I64) // Default inner type
-                }
-            }
-            _ => None,
-        };
 
-        if let Some(inner_type) = option_inner_opt {
-            let i64_type = self.context.i64_type();
-            let llvm_inner_type = self.get_llvm_type(&inner_type)?;
-            let option_struct_type = self.context.struct_type(&[i64_type.into(), llvm_inner_type], false);
-            let option_ptr = obj_val.into_pointer_value();
-            
-            match method {
-                "is_some" => {
-                    // Load tag and compare with 1
-                    let tag_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 0, "tag_ptr")
-                        .map_err(|e| e.to_string())?;
-                    let tag_val = self.builder.build_load(i64_type, tag_ptr, "tag")
-                        .map_err(|e| e.to_string())?;
-                    let is_some = self.builder.build_int_compare(
-                        inkwell::IntPredicate::EQ,
-                        tag_val.into_int_value(),
-                        i64_type.const_int(1, false),
-                        "is_some"
-                    ).map_err(|e| e.to_string())?;
-                    return Ok((is_some.into(), Type::Bool));
-                }
-                "is_none" => {
-                    // Load tag and compare with 0
-                    let tag_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 0, "tag_ptr")
-                        .map_err(|e| e.to_string())?;
-                    let tag_val = self.builder.build_load(i64_type, tag_ptr, "tag")
-                        .map_err(|e| e.to_string())?;
-                    let is_none = self.builder.build_int_compare(
-                        inkwell::IntPredicate::EQ,
-                        tag_val.into_int_value(),
-                        i64_type.const_int(0, false),
-                        "is_none"
-                    ).map_err(|e| e.to_string())?;
-                    return Ok((is_none.into(), Type::Bool));
-                }
-                "unwrap" => {
-                    // TODO: Add runtime check for None case (panic)
-                    // For now, just return the value
-                    let value_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 1, "value_ptr")
-                        .map_err(|e| e.to_string())?;
-                    let value = self.builder.build_load(llvm_inner_type, value_ptr, "unwrap_value")
-                        .map_err(|e| e.to_string())?;
-                    return Ok((value, inner_type));
-                }
-                "unwrap_or" => {
-                    if args.len() != 1 {
-                        return Err("unwrap_or requires 1 argument".into());
-                    }
-                    let (default_val, _) = self.compile_expr(&args[0])?;
-                    
-                    // Load tag
-                    let tag_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 0, "tag_ptr")
-                        .map_err(|e| e.to_string())?;
-                    let tag_val = self.builder.build_load(i64_type, tag_ptr, "tag")
-                        .map_err(|e| e.to_string())?;
-                    let is_some = self.builder.build_int_compare(
-                        inkwell::IntPredicate::EQ,
-                        tag_val.into_int_value(),
-                        i64_type.const_int(1, false),
-                        "is_some"
-                    ).map_err(|e| e.to_string())?;
-                    
-                    // Load value
-                    let value_ptr = self.builder.build_struct_gep(option_struct_type, option_ptr, 1, "value_ptr")
-                        .map_err(|e| e.to_string())?;
-                    let value = self.builder.build_load(llvm_inner_type, value_ptr, "option_value")
-                        .map_err(|e| e.to_string())?;
-                    
-                    // Select based on tag
-                    let result = self.builder.build_select(is_some, value, default_val, "unwrap_or_result")
-                        .map_err(|e| e.to_string())?;
-                    return Ok((result, inner_type));
-                }
-                _ => {
-                    // Unknown Option method, fall through to generic handling
-                }
-            }
-        }
 
         // 2. Resolve Type Name to check Manager
         let type_name = match &obj_ty {
@@ -6603,169 +6165,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
-        if type_name == "File" {
-            match method {
-                "read_string" => {
-                    let fn_val = self
-                        .module
-                        .get_function("tl_file_read_string")
-                        .ok_or("tl_file_read_string not found")?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[obj_val.into()], "file_read_str")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from File::read_string".into()),
-                    };
-                    return Ok((res, Type::UserDefined("String".to_string(), vec![])));
-                }
-                "write_string" => {
-                    if args.len() != 1 {
-                        return Err("File::write_string requires 1 argument".into());
-                    }
-                    let (content_val, _) = self.compile_expr(&args[0])?;
-                    let fn_val = self
-                        .module
-                        .get_function("tl_file_write_string")
-                        .ok_or("tl_file_write_string not found")?;
-                    self.builder
-                        .build_call(
-                            fn_val,
-                            &[obj_val.into(), content_val.into()],
-                            "file_write_str",
-                        )
-                        .map_err(|e| e.to_string())?;
-                    return Ok((
-                        self.context.i64_type().const_int(0, false).into(),
-                        Type::Void,
-                    ));
-                }
-                "close" => {
-                    let fn_val = self
-                        .module
-                        .get_function("tl_file_close")
-                        .ok_or("tl_file_close not found")?;
-                    self.builder
-                        .build_call(fn_val, &[obj_val.into()], "file_close")
-                        .map_err(|e| e.to_string())?;
-                    return Ok((
-                        self.context.i64_type().const_int(0, false).into(),
-                        Type::Void,
-                    ));
-                }
-                _ => {}
-            }
-        }
 
-        if type_name == "Tokenizer" {
-            let handle = self.load_struct_i64_field(obj_val, &obj_ty, "_h")?;
-            match method {
-                "encode" => {
-                    if args.len() != 1 {
-                        return Err("Tokenizer::encode requires 1 argument".into());
-                    }
-                    let (prompt_val, _) = self.compile_expr(&args[0])?;
-                    let fn_val = self
-                        .module
-                        .get_function("tl_tokenizer_encode")
-                        .ok_or("tl_tokenizer_encode not found")?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[handle.into(), prompt_val.into()], "tok_encode")
-                        .map_err(|e| e.to_string())?;
-                    let res = self.check_tensor_result(call, "tok_encode_error")?;
-                    return Ok((res, Type::Tensor(Box::new(Type::I64), 0)));
-                }
-                "decode" => {
-                    if args.len() != 1 {
-                        return Err("Tokenizer::decode requires 1 argument".into());
-                    }
-                    let (ids_val, _) = self.compile_expr(&args[0])?;
-                    let fn_val = self
-                        .module
-                        .get_function("tl_tokenizer_decode")
-                        .ok_or("tl_tokenizer_decode not found")?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[handle.into(), ids_val.into()], "tok_decode")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from Tokenizer::decode".into()),
-                    };
-                    return Ok((res, Type::UserDefined("String".to_string(), vec![])));
-                }
-                _ => {}
-            }
-        }
 
-        if type_name == "KVCache" {
-            let handle = self.load_struct_i64_field(obj_val, &obj_ty, "_h")?;
-            match method {
-                "free" => {
-                    let fn_val = self
-                        .module
-                        .get_function("tl_kv_cache_free")
-                        .ok_or("tl_kv_cache_free not found")?;
-                    self.builder
-                        .build_call(fn_val, &[handle.into()], "kv_free")
-                        .map_err(|e| e.to_string())?;
-                    return Ok((
-                        self.context.i64_type().const_int(0, false).into(),
-                        Type::Void,
-                    ));
-                }
-                "get_k" | "get_v" => {
-                    if args.len() != 1 {
-                        return Err("KVCache::get_k/get_v requires 1 argument".into());
-                    }
-                    let (layer_val, _) = self.compile_expr(&args[0])?;
-                    let fn_name = if method == "get_k" {
-                        "tl_kv_cache_get_k"
-                    } else {
-                        "tl_kv_cache_get_v"
-                    };
-                    let fn_val = self
-                        .module
-                        .get_function(fn_name)
-                        .ok_or(format!("{} not found", fn_name))?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[handle.into(), layer_val.into()], "kv_get")
-                        .map_err(|e| e.to_string())?;
-                    let res = self.check_tensor_result(call, "kv_get_error")?;
-                    let _ret_ty = Type::Tensor(Box::new(Type::F32), 0);
-                    let _ret_ty = Type::Tensor(Box::new(Type::F32), 0);
 
-                    return Ok((res, Type::Tensor(Box::new(Type::F32), 0)));
-                }
-                "update" => {
-                    if args.len() != 3 {
-                        return Err("KVCache::update requires 3 arguments".into());
-                    }
-                    let (layer_val, _) = self.compile_expr(&args[0])?;
-                    let (k_val, _) = self.compile_expr(&args[1])?;
-                    let (v_val, _) = self.compile_expr(&args[2])?;
-                    let fn_val = self
-                        .module
-                        .get_function("tl_kv_cache_update")
-                        .ok_or("tl_kv_cache_update not found")?;
-                    self.builder
-                        .build_call(
-                            fn_val,
-                            &[handle.into(), layer_val.into(), k_val.into(), v_val.into()],
-                            "kv_update",
-                        )
-                        .map_err(|e| e.to_string())?;
-                    return Ok((
-                        self.context.i64_type().const_int(0, false).into(),
-                        Type::Void,
-                    ));
-                }
-                _ => {}
-            }
-        }
 
         if type_name == "Map" {
             match method {
@@ -8316,36 +7718,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         // Lookup return type FIRST to handle sret
-        // Handle static method syntax: Type::method -> tl_type_method
-        let resolved_name = if self.module.get_function(llvm_func_name).is_some() {
-            llvm_func_name.to_string()
-        } else if llvm_func_name.contains("::") {
-            let parts: Vec<&str> = llvm_func_name.split("::").collect();
-            // Try to resolve simple name (last part) specifically for module imports
-            // where definition is simple name but call is qualified.
-            if let Some(last) = parts.last() {
-                if self.module.get_function(last).is_some() {
-                    last.to_string()
-                } else if parts.len() >= 2 {
-                    let type_name = parts[parts.len() - 2];
-                    let method = parts[parts.len() - 1];
-                    // Try user-defined type mangling (Case Sensitive) first
-                    let mangled = format!("tl_{}_{}", type_name, method);
-                    if self.module.get_function(&mangled).is_some() {
-                        mangled
-                    } else {
-                        // Try Stdlib/Primitive mangling (lowercase)
-                        format!("tl_{}_{}", type_name.to_lowercase(), method)
-                    }
-                } else {
-                    llvm_func_name.to_string()
-                }
-            } else {
-                llvm_func_name.to_string()
-            }
-        } else {
-            llvm_func_name.to_string()
-        };
+        // Simplified: FnCall handles simple names. StaticMethodCall handles :: names.
+        // We only keep simple name resolution for legacy builtins or simple function lookups.
+        let resolved_name = llvm_func_name.to_string();
 
         // Monomorphization Logic: Check if generic
         let mut final_resolved_name = resolved_name.clone();

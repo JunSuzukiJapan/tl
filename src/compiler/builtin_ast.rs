@@ -1,5 +1,5 @@
 use crate::compiler::ast::*;
-use crate::compiler::error::Span;
+
 
 pub fn load_builtin_enums() -> Vec<EnumDef> {
     vec![
@@ -250,12 +250,12 @@ fn create_option_enum() -> EnumDef {
         generics: vec!["T".to_string()],
         variants: vec![
             VariantDef {
-                name: "Some".to_string(),
-                kind: VariantKind::Tuple(vec![t.clone()]),
-            },
-            VariantDef {
                 name: "None".to_string(),
                 kind: VariantKind::Unit,
+            },
+            VariantDef {
+                name: "Some".to_string(),
+                kind: VariantKind::Tuple(vec![t.clone()]),
             },
         ],
     }

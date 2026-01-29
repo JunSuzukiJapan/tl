@@ -104,9 +104,11 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Register builtins (Enums, etc.)
         codegen.register_builtins();
         // Load builtin enums from AST (Option, Result)
-        for def in builtin_ast::load_builtin_enums() {
-            codegen.enum_defs.insert(def.name.clone(), def);
+        let builtin_enums = builtin_ast::load_builtin_enums();
+        for def in &builtin_enums {
+            codegen.enum_defs.insert(def.name.clone(), def.clone());
         }
+        codegen.compile_enum_defs(&builtin_enums).unwrap();
 
         // Register builtin generic impls (Vec<T>, etc.)
         builtin_impls::register_builtin_structs(&mut codegen.struct_defs);
@@ -444,17 +446,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Register destructors
         self.destructors.insert("HashMap".to_string(), "tl_hashmap_free".to_string());
 
-        // Register Option Type in TypeManager
-        let mut option_type = type_manager::CodeGenType::new("Option");
-        option_type.register_static_method("Some", expr::StaticMethod::Evaluated(expr::compile_option_some));
-        option_type.register_static_method("None", expr::StaticMethod::Evaluated(expr::compile_option_none));
-        self.type_manager.register_type(option_type);
 
-        // Register Result Type in TypeManager
-        let mut result_type = type_manager::CodeGenType::new("Result");
-        result_type.register_static_method("Ok", expr::StaticMethod::Evaluated(expr::compile_result_ok));
-        result_type.register_static_method("Err", expr::StaticMethod::Evaluated(expr::compile_result_err));
-        self.type_manager.register_type(result_type);
 
 
 
@@ -497,6 +489,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         builtin_types::io::register_io_types(&mut self.type_manager);
         builtin_types::system::register_system_types(&mut self.type_manager);
         builtin_types::tensor::register_tensor_types(&mut self.type_manager);
+        builtin_types::option::register_option_types(&mut self.type_manager);
+        builtin_types::llm::register_llm_types(&mut self.type_manager);
 
 
 
