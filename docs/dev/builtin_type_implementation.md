@@ -22,12 +22,12 @@
 
 ## 手順の詳細
 
-### 1. TL言語での型定義 (`src/compiler/codegen/inner_type/`)
+### 1. TL言語での型定義 (`src/compiler/codegen/builtin_types/`)
 
-まず、実装したい型を `.tl` ファイルとして作成し、**`src/compiler/codegen/inner_type/` ディレクトリに配置します**。
+まず、実装したい型を `.tl` ファイルとして作成し、**`src/compiler/codegen/builtin_types/` ディレクトリに配置します**。
 
 ```rust
-// src/compiler/codegen/inner_type/vec.tl
+// src/compiler/codegen/builtin_types/vec.tl
 
 // 実際のデータ構造定義
 struct Vec<T> {
