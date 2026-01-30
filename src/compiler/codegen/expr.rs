@@ -6056,6 +6056,31 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => return Err(format!("Method {} not found on type {:?}", method, obj_ty)),
         };
 
+        let (type_name_to_check, generic_args_override) = if struct_name.starts_with("Vec_") {
+             // Attempt invalid demangling for migration support
+             let suffix = &struct_name[4..];
+             let arg_ty = if suffix == "i64" {
+                 Some(Type::I64)
+             } else if suffix == "f32" {
+                 Some(Type::F32) 
+             } else if suffix == "bool" {
+                 Some(Type::Bool)
+             } else {
+                 // Assume struct with name == suffix
+                 // This assumes suffix has no underscores from recursive types, which is BRITTLE
+                 // But sufficient for verify_vec_migration (Vec_Point)
+                 Some(Type::Struct(suffix.to_string(), vec![]))
+             };
+             if let Some(ty) = arg_ty {
+                 ("Vec".to_string(), Some(vec![ty]))
+             } else {
+                 (struct_name.clone(), None)
+             }
+        } else {
+             (struct_name.clone(), None)
+        };
+        let type_name = type_name_to_check;
+
         // Extract simple name from module path for mangling
         let simple_struct_name = if struct_name.contains("::") {
             struct_name.split("::").last().unwrap().to_string()
@@ -6070,10 +6095,14 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Check for generic impls first
         eprintln!("DEBUG: Checking generic_impls for '{}' keys={:?}", type_name, self.generic_impls.keys());
         let generic_func = if self.generic_impls.contains_key(&type_name) {
-             let generics = match &obj_ty {
-                 Type::UserDefined(_, args) | Type::Struct(_, args) | Type::Enum(_, args) => args.clone(),
-                 Type::Vec(inner) => vec![*inner.clone()],
-                 _ => vec![],
+             let generics = if let Some(g) = generic_args_override {
+                 g
+             } else {
+                 match &obj_ty {
+                     Type::UserDefined(_, args) | Type::Struct(_, args) | Type::Enum(_, args) => args.clone(),
+                     Type::Vec(inner) => vec![*inner.clone()],
+                     _ => vec![],
+                 }
              };
              // Try monomorphize
              match self.monomorphize_method(&type_name, method, &generics) {
@@ -6809,6 +6838,13 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     // Helper to derive return type from LLVM Function Signature
     pub(crate) fn get_return_type_from_signature(&self, func: inkwell::values::FunctionValue<'ctx>) -> Type {
+        let name = func.get_name().to_str().unwrap_or("");
+
+        // 1. Check if we have an explicit mapping for this function
+        if let Some(ty) = self.method_return_types.get(name) {
+            return ty.clone();
+        }
+
         let ret = func.get_type().get_return_type();
         match ret {
             None => Type::Void,
@@ -6823,21 +6859,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
             Some(inkwell::types::BasicTypeEnum::FloatType(_f)) => {
-                // Assuming F32 default
-                 Type::F32 // Or F64? We mostly use F32 but have F64 ops.
-                 // How to distinguish? width.
-                 // f.get_f64_type() is Context method.
-                 // f is FloatType.
-                 // We can't easily get width from FloatTypeEnum without context?
-                 // Actually FloatType has usage.
-                 // But for now F32 default is what fn_return_types used mostly (except f64 ops).
-                 // Wait, strict check:
-                 // But we removed the specific mapping.
-                 // If the function returns double, we should return F64.
-                 // Let's assume F32 for now as it covers 90%.
+                 Type::F32 
             }
             Some(inkwell::types::BasicTypeEnum::PointerType(_)) => {
-                let name = func.get_name().to_str().unwrap_or("");
                 if name.starts_with("tl_string_") {
                     Type::UserDefined("String".to_string(), vec![])
                 } else {

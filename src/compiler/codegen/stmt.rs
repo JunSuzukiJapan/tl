@@ -3477,6 +3477,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     call.map_err(|e| e.to_string())?,
                     "binop_scalar_rhs_error",
                 )?;
+
+                // Free temporary scalar tensor
+                let free_fn = self.module.get_function("tl_tensor_free").ok_or("tl_tensor_free not found")?;
+                self.builder.build_call(free_fn, &[scalar_tensor.into()], "").map_err(|e| e.to_string())?;
+
                 let res_ptr = res_val.into_pointer_value();
                 Ok((res_ptr.into(), lhs_type.clone()))
             }
@@ -3548,6 +3553,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     call.map_err(|e| e.to_string())?,
                     "binop_scalar_lhs_error",
                 )?;
+
+                // Free temporary scalar tensor
+                let free_fn = self.module.get_function("tl_tensor_free").ok_or("tl_tensor_free not found")?;
+                self.builder.build_call(free_fn, &[scalar_tensor.into()], "").map_err(|e| e.to_string())?;
+
                 let res_ptr = res_val.into_pointer_value();
                 Ok((res_ptr.into(), rhs_type.clone()))
             }
@@ -3624,6 +3634,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let res_val =
                     self.check_tensor_result(call.map_err(|e| e.to_string())?, "binop_arr_error")?;
                 let res_ptr = res_val.into_pointer_value();
+
+                // Free temporary tensors
+                let free_fn = self.module.get_function("tl_tensor_free").ok_or("tl_tensor_free not found")?;
+                self.builder.build_call(free_fn, &[l_tensor.into()], "").map_err(|e| e.to_string())?;
+                self.builder.build_call(free_fn, &[r_tensor.into()], "").map_err(|e| e.to_string())?;
 
                 // Return as Tensor (since we converted)
                 Ok((res_ptr.into(), Type::Tensor(Box::new(Type::F32), 1)))

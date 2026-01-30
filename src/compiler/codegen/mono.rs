@@ -23,6 +23,13 @@ impl<'ctx> CodeGenerator<'ctx> {
              return self.ensure_hashmap_method(&generic_args[0], &generic_args[1], method_name);
         }
 
+        if struct_name == "Vec" {
+             if generic_args.len() != 1 {
+                 return Err(format!("Vec expects 1 generic arg, got {}", generic_args.len()));
+             }
+             return self.ensure_vec_method(&generic_args[0], method_name);
+        }
+
         // Find method in impls
         let mut target_method = None;
         let mut target_impl = None;
@@ -481,12 +488,24 @@ impl<'ctx> CodeGenerator<'ctx> {
         method_name: &str,
     ) -> Result<String, String> {
         let suffix = self.type_to_suffix(element_type);
-        let mangled_fn_name = format!("tl_vec_{}_{}", suffix, method_name);
+        let mangled_fn_name = format!("tl_Vec_{}_{}", suffix, method_name);
         
         // Check if already declared
         if self.module.get_function(&mangled_fn_name).is_some() {
             return Ok(mangled_fn_name);
         }
+
+        // Register the return type for this specialized method
+        let tl_ret_ty = match method_name {
+            "push" | "clear" | "set" | "insert" => Type::Void,
+            "len" | "read_i32_be" => Type::I64,
+            "is_empty" => Type::Bool,
+            "pop" | "get" | "remove" => element_type.clone(),
+            "to_tensor_2d" => Type::Tensor(Box::new(Type::F32), 2), // Default rank 2?
+            "contains" => Type::Bool,
+            _ => Type::Void, // Fallback
+        };
+        self.method_return_types.insert(mangled_fn_name.clone(), tl_ret_ty);
         
         // Determine which core runtime function to delegate to
         let core_fn_name = match element_type {
@@ -534,6 +553,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  "clear" => (vec![vec_ptr_ty.into()], None),
                  // set? "set"(vec*, idx, T)
                  "set" | "insert" => (vec![vec_ptr_ty.into(), i64_ty.into(), elem_llvm_ty.into()], None),
+                 "contains" => (vec![vec_ptr_ty.into(), elem_llvm_ty.into()], Some(bool_ty.into())),
                  "to_tensor_2d" => (vec![vec_ptr_ty.into(), i64_ty.into(), i64_ty.into(), i64_ty.into()], Some(self.context.ptr_type(AddressSpace::default()).into())),
                  "read_i32_be" => (vec![vec_ptr_ty.into(), i64_ty.into()], Some(i64_ty.into())),
                  _ => return Err(format!("Unknown Vec method for wrapper gen: {}", method_name)),
@@ -568,7 +588,7 @@ impl<'ctx> CodeGenerator<'ctx> {
              let is_generic_ptr_backend = core_fn_name.contains("_ptr_");
              
              match method_name {
-                 "push" => {
+                 "push" | "contains" => {
                      // arg 1 is 'item'
                      let item_val = wrapper_fn.get_nth_param(1).unwrap();
                      if is_generic_ptr_backend {
@@ -610,7 +630,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                       call_args.push(wrapper_fn.get_nth_param(2).unwrap().into());
                       call_args.push(wrapper_fn.get_nth_param(3).unwrap().into());
                  },
-                 "set" => {
+                 "set" | "insert" => {
                       // arg 1 is index, arg 2 is item
                       call_args.push(wrapper_fn.get_nth_param(1).unwrap().into());
                       
@@ -778,6 +798,16 @@ impl<'ctx> CodeGenerator<'ctx> {
         let i64_ty = self.context.i64_type();
         let bool_ty = self.context.bool_type();
 
+        // Register return type
+        let tl_ret_ty = match method_name {
+            "new" => Type::Struct("HashMap".to_string(), vec![key_ty.clone(), val_ty.clone()]),
+            "len" => Type::I64,
+            "clear" | "insert" | "contains_key" => Type::Bool,
+            "get" | "remove" => val_ty.clone(),
+            _ => Type::Void,
+        };
+        self.method_return_types.insert(mangled_fn_name.clone(), tl_ret_ty);
+
         let (param_types, ret_type, run_fn_name): (Vec<BasicMetadataTypeEnum>, Option<inkwell::types::BasicTypeEnum>, &str) = match method_name {
             "new" => (vec![], Some(map_ptr_ty.into()), "tl_hashmap_new"),
             "len" => (vec![map_ptr_ty.into()], Some(i64_ty.into()), "tl_hashmap_len"),
@@ -885,3 +915,4 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
 }
+

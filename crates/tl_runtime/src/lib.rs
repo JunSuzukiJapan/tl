@@ -3986,6 +3986,7 @@ pub extern "C" fn tl_vec_i64_get(ptr: *mut Vec<i64>, idx: usize) -> i64 {
         if idx < vec.len() { vec[idx] } else { 0 }
     }
 }
+
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_i64_free(ptr: *mut Vec<i64>) {
     if !ptr.is_null() { 
@@ -4017,6 +4018,7 @@ pub extern "C" fn tl_vec_f32_get(ptr: *mut Vec<f32>, idx: usize) -> f32 {
         if idx < vec.len() { vec[idx] } else { 0.0 }
     }
 }
+
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_f32_free(ptr: *mut Vec<f32>) {
     if !ptr.is_null() { 
@@ -4059,6 +4061,7 @@ pub extern "C" fn tl_vec_ptr_get(ptr: *mut Vec<*mut std::ffi::c_void>, idx: usiz
         }
     }
 }
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_ptr_free(ptr: *mut Vec<*mut std::ffi::c_void>) {
