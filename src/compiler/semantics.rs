@@ -1,7 +1,7 @@
 // src/compiler/semantics.rs
 use crate::compiler::ast::*;
 use crate::compiler::error::{SemanticErrorKind, Span, TlError};
-use crate::compiler::type_registry::{TypeRegistry, ParamType, ReturnType, MethodSignature};
+// use crate::compiler::type_registry::{TypeRegistry, ParamType, ReturnType, MethodSignature};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
@@ -181,7 +181,6 @@ pub struct SemanticAnalyzer {
     current_return_type: Option<Type>, // Expected return type for current function
     current_module: String,            // Current module prefix (e.g. "a::b")
     loop_depth: usize,                 // Track nesting level of loops for break/continue
-    type_registry: TypeRegistry,       // Centralized type and method signature registry
     undefined_counter: u64,            // Counter for generating unique Undefined types
 }
 
@@ -197,7 +196,7 @@ impl SemanticAnalyzer {
             current_return_type: None,
             current_module: String::new(),
             loop_depth: 0,
-            type_registry: TypeRegistry::new(),
+
             undefined_counter: 0,
         };
         analyzer.declare_builtins();
@@ -1130,12 +1129,7 @@ impl SemanticAnalyzer {
         }
         
         // Match, extract name
-        let final_target_name = match &impl_block.target_type {
-            Type::UserDefined(name, _) => name.clone(),
-            Type::Struct(name, _) => name.clone(),
-            Type::Enum(name, _) => name.clone(),
-            _ => return self.err(SemanticError::TypeMismatch { expected: Type::UserDefined("StructOrEnum".into(), vec![]), found: impl_block.target_type.clone() }, None),
-        };
+        let final_target_name = impl_block.target_type.get_base_name();
         
         println!("DEBUG: check_impl_block for {}", final_target_name);
 
@@ -1814,190 +1808,9 @@ impl SemanticAnalyzer {
         }
     }
 
-    /// Check method call arguments against a signature from the type registry.
-    /// Returns the inferred return type if successful.
-    fn check_method_call_with_registry(
-        &mut self,
-        receiver_type: &Type,
-        method_name: &str,
-        args: &mut [Expr],
-        span: &Span,
-    ) -> Result<Option<Type>, TlError> {
-        let type_key = TypeRegistry::type_to_key(receiver_type);
-        
-        if let Some(sig) = self.type_registry.get_method(&type_key, method_name) {
-            // Clone the signature to avoid borrow issues
-            let sig = sig.clone();
-            
-            // Check argument count
-            if !sig.is_varargs && args.len() != sig.params.len() {
-                return self.err(
-                    SemanticError::ArgumentCountMismatch {
-                        name: method_name.to_string(),
-                        expected: sig.params.len(),
-                        found: args.len(),
-                    },
-                    Some(span.clone()),
-                );
-            }
-            if sig.is_varargs && args.len() < sig.min_args {
-                return self.err(
-                    SemanticError::ArgumentCountMismatch {
-                        name: method_name.to_string(),
-                        expected: sig.min_args,
-                        found: args.len(),
-                    },
-                    Some(span.clone()),
-                );
-            }
 
-            // Check each argument type
-            for (i, arg) in args.iter_mut().enumerate() {
-                let arg_type = self.check_expr(arg)?;
-                
-                let expected_param = if i < sig.params.len() {
-                    &sig.params[i]
-                } else if sig.is_varargs && !sig.params.is_empty() {
-                    // For varargs, use the last param type for remaining args
-                    sig.params.last().unwrap()
-                } else {
-                    continue;
-                };
 
-                if !TypeRegistry::matches_param_type(&arg_type, expected_param, receiver_type) {
-                    let expected_desc = match expected_param {
-                        ParamType::Exact(ty) => ty.clone(),
-                        ParamType::AnyTensor => Type::Tensor(Box::new(Type::Void), 0),
-                        ParamType::ShapeArray => Type::ScalarArray(Box::new(Type::I64), 0),
-                        ParamType::AnyInt => Type::I64,
-                        ParamType::AnyNumeric => Type::F32,
-                        ParamType::Bool => Type::Bool,
-                        ParamType::SameAsReceiver => receiver_type.clone(),
-                        ParamType::TensorOf(inner) => Type::Tensor(inner.clone(), 0),
-                        ParamType::AnyTensorOrNumeric => Type::Tensor(Box::new(Type::F32), 0),
-                        ParamType::Generic(name) => Type::UserDefined(name.clone(), vec![]),
-                    };
-                    return self.err(
-                        SemanticError::TypeMismatch {
-                            expected: expected_desc,
-                            found: arg_type,
-                        },
-                        Some(arg.span.clone()),
-                    );
-                }
-            }
 
-            // Infer return type
-            let return_type = self.infer_return_type_from_sig(receiver_type, &sig, args);
-            return Ok(Some(return_type));
-        }
-
-        // Not found in registry
-        Ok(None)
-    }
-
-    /// Infer return type based on the signature's ReturnType specification
-    fn infer_return_type_from_sig(
-        &self,
-        receiver_type: &Type,
-        sig: &MethodSignature,
-        args: &[Expr],
-    ) -> Type {
-        match &sig.return_type {
-            ReturnType::Exact(ty) => ty.clone(),
-            ReturnType::SameAsReceiver => receiver_type.clone(),
-            ReturnType::TensorSameElementType(rank) => {
-                if let Type::Tensor(inner, _) = receiver_type {
-                    Type::Tensor(inner.clone(), *rank)
-                } else {
-                    Type::Tensor(Box::new(Type::F32), *rank)
-                }
-            }
-            ReturnType::TensorDynamicRank => {
-                if let Type::Tensor(inner, _) = receiver_type {
-                    Type::Tensor(inner.clone(), 0)
-                } else {
-                    Type::Tensor(Box::new(Type::F32), 0)
-                }
-            }
-            ReturnType::InferFromShapeArg => {
-                // Try to infer rank from shape argument
-                let new_rank = if !args.is_empty() {
-                    if let ExprKind::TensorLiteral(elements) = &args[0].inner {
-                        elements.len()
-                    } else if let ExprKind::TensorConstLiteral(elements) = &args[0].inner {
-                        elements.len()
-                    } else {
-                        0
-                    }
-                } else {
-                    0
-                };
-                if let Type::Tensor(inner, _) = receiver_type {
-                    Type::Tensor(inner.clone(), new_rank)
-                } else {
-                    Type::Tensor(Box::new(Type::F32), new_rank)
-                }
-            }
-            ReturnType::ExtractedScalar => {
-                if let Type::Tensor(inner, _) = receiver_type {
-                    *inner.clone()
-                } else {
-                    Type::F32
-                }
-            }
-            ReturnType::TensorRankIncr => {
-                if let Type::Tensor(inner, rank) = receiver_type {
-                    Type::Tensor(inner.clone(), rank + 1)
-                } else if let Type::TensorShaped(inner, shape) = receiver_type {
-                    Type::Tensor(inner.clone(), shape.len() + 1)
-                } else {
-                    Type::Tensor(Box::new(Type::F32), 1)
-                }
-            }
-            ReturnType::Void => Type::Void,
-            ReturnType::Generic(name) => {
-                // Resolve generic return type using TypeRegistry's generic information
-                // E.g. Vec<T> -> get -> T
-                // receiver_type: Vec<I64> -> T = I64
-                
-                // Get type name and args from receiver
-                let (type_name, args) = match receiver_type {
-                    Type::Vec(inner) => ("Vec", vec![inner.as_ref().clone()]),
-                    Type::UserDefined(n, args) => (n.as_str(), args.clone()),
-                    Type::Struct(n, args) => (n.as_str(), args.clone()),
-                    Type::Enum(n, args) => (n.as_str(), args.clone()),
-                    _ => return Type::UserDefined(name.clone(), vec![]),
-                };
-                
-                // Get generic params from TypeRegistry, or infer from arg count
-                let generic_params: Vec<String> = self.type_registry
-                    .get_generic_params(type_name)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        // Fallback: infer from argument count
-                        match args.len() {
-                            1 => vec!["T".to_string()],
-                            2 => vec!["K".to_string(), "V".to_string()],
-                            n => (0..n).map(|i| format!("T{}", i)).collect(),
-                        }
-                    });
-                
-                // Build abstract generic structure
-                let generic_structure = TypeRegistry::build_generic_structure(receiver_type, &generic_params);
-                
-                let bindings = match crate::compiler::generics::GenericResolver::resolve_bindings(&generic_structure, receiver_type) {
-                    Ok(b) => b,
-                    Err(_) => return Type::UserDefined(name.clone(), vec![]),
-                };
-                
-                match bindings.get(name) {
-                    Some(ty) => ty.clone(),
-                    None => Type::UserDefined(name.clone(), vec![]),
-                }
-            }
-        }
-    }
 
     pub fn check_expr(&mut self, expr: &mut Expr) -> Result<Type, TlError> {
         match &mut expr.inner {
@@ -4450,7 +4263,7 @@ impl SemanticAnalyzer {
 
 
                 // Special handling for Param::checkpoint to allow method references
-                let type_name_key = TypeRegistry::type_to_key(type_name);
+                let type_name_key = type_name.get_base_name();
                 if type_name_key == "Param" && method_name == "checkpoint" {
                     if args.len() != 2 {
                         return self.err(
@@ -4500,7 +4313,7 @@ impl SemanticAnalyzer {
                     self.check_expr(arg)?;
                 }
 
-                let type_name_key = TypeRegistry::type_to_key(type_name);
+                let type_name_key = type_name.get_base_name();
                 
                 let user_func = if let Some(methods_map) = self.methods.get(&type_name_key) {
                     methods_map.get(method_name).cloned()
@@ -4583,113 +4396,7 @@ impl SemanticAnalyzer {
 
 
 
-                    // Check TypeRegistry for built-ins
-                    if let Some(sig_ref) = self.type_registry.get_method(&type_name_key, method_name) {
-                        let sig = sig_ref.clone();
-                        // Check arg count
-                        if sig.is_varargs {
-                             if args.len() < sig.min_args {
-                                 return self.err(
-                                     SemanticError::ArgumentCountMismatch {
-                                         name: format!("{}::{}", type_name_key, method_name),
-                                         expected: sig.min_args,
-                                         found: args.len(),
-                                     },
-                                     Some(expr.span.clone()),
-                                 );
-                             }
-                        } else {
-                             if args.len() != sig.params.len() {
-                                 return self.err(
-                                     SemanticError::ArgumentCountMismatch {
-                                         name: format!("{}::{}", type_name_key, method_name),
-                                         expected: sig.params.len(),
-                                         found: args.len(),
-                                     },
-                                     Some(expr.span.clone()),
-                                 );
-                             }
-                        }
 
-                        // Generic inference map
-                        let mut builtin_generics: HashMap<String, Type> = HashMap::new();
-                        // If type_name is Struct with generics, populate them
-                        if let Type::UserDefined(_, gen_args) = type_name {
-                             // This depends on order. Builtin "HashMap" has <K, V>.
-                             // Is there a way to know param names?
-                             // TypeRegistry doesn't store class-level generics yet specifically for builtins except implicitly.
-                             // But for HashMap specifically, we know K, V.
-                             // For now, let's infer strictly from method args if possible, OR assume K,V if type_name matches.
-                             if type_name_key == "HashMap" && gen_args.len() == 2 {
-                                 builtin_generics.insert("K".to_string(), gen_args[0].clone());
-                                 builtin_generics.insert("V".to_string(), gen_args[1].clone());
-                             }
-                        }
-                        
-                        // Check arg types
-                        for (i, arg_expr) in args.iter_mut().enumerate() {
-                            let val_type = self.check_expr(arg_expr)?;
-                            let param_type = if i < sig.params.len() {
-                                &sig.params[i]
-                            } else {
-                                continue;
-                            };
-                            
-                            match param_type {
-                                ParamType::Exact(expected) => {
-                                    // Must substitute generics in expected type
-                                    let expected_sub = self.substitute_generics(expected, &builtin_generics);
-                                    if !self.are_types_compatible(&val_type, &expected_sub) {
-                                         return self.err(
-                                             SemanticError::TypeMismatch {
-                                                 expected: expected_sub,
-                                                 found: val_type,
-                                             },
-                                             Some(arg_expr.span.clone()),
-                                         );
-                                    }
-                                }
-                                ParamType::Generic(g_name) => {
-                                    if let Some(existing) = builtin_generics.get(g_name) {
-                                        if !self.are_types_compatible(&val_type, existing) {
-                                             return self.err(
-                                                 SemanticError::TypeMismatch {
-                                                     expected: existing.clone(),
-                                                     found: val_type.clone(),
-                                                 },
-                                                 Some(arg_expr.span.clone()),
-                                             );
-                                        }
-                                    } else {
-                                        builtin_generics.insert(g_name.clone(), val_type);
-                                    }
-                                }
-                                ParamType::AnyTensor => {
-                                    if !matches!(val_type, Type::Tensor(_, _)) {
-                                         return self.err(
-                                             SemanticError::TypeMismatch {
-                                                 expected: Type::Tensor(Box::new(Type::F32), 0), 
-                                                 found: val_type,
-                                             },
-                                             Some(arg_expr.span.clone()),
-                                         );
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                        
-                        // Return Type
-                        return Ok(match &sig.return_type {
-                            ReturnType::Exact(t) => self.substitute_generics(t, &builtin_generics),
-                            ReturnType::Void => Type::Void,
-                            ReturnType::SameAsReceiver => type_name.clone(),
-                            ReturnType::TensorSameElementType(r) => Type::Tensor(Box::new(Type::F32), *r),
-                            ReturnType::TensorDynamicRank => Type::Tensor(Box::new(Type::F32), 0),
-                            ReturnType::Generic(g) => builtin_generics.get(g).cloned().unwrap_or(Type::Void),
-                            _ => Type::Void, 
-                        });
-                    }
                 }
 
                 if let Some(func) = user_func {
@@ -4709,7 +4416,7 @@ impl SemanticAnalyzer {
                     }
 
                     // Retrieve struct generics
-                    let type_name_str = TypeRegistry::type_to_key(type_name);
+                    let type_name_str = type_name.get_base_name();
                     let struct_generics = if let Some(s) = self.structs.get(&type_name_str) {
                         s.generics.clone()
                     } else {
@@ -4795,7 +4502,7 @@ impl SemanticAnalyzer {
                     // Resolve return type: if it's Self or short name, use method's impl target type
                     let resolved_return = match &func.return_type {
                         Type::UserDefined(ret_name, _) => {
-                            let type_key = TypeRegistry::type_to_key(type_name);
+                            let type_key = type_name.get_base_name();
                             if ret_name == "Self"
                                 || ret_name == type_key.split("::").last().unwrap_or(&type_key)
                             {
@@ -4814,91 +4521,9 @@ impl SemanticAnalyzer {
                     return Ok(resolved_return);
                 }
 
-                // Fallback for builtins
-                // Use type_to_key for string comparison
-                // Check TypeRegistry for built-in static methods
-                let type_key = TypeRegistry::type_to_key(type_name);
-                
-                if let Some(sig_ref) = self.type_registry.get_method(&type_key, method_name) {
-                    let sig = sig_ref.clone();
-                    // Check arg count
-                    if sig.is_varargs {
-                         if args.len() < sig.min_args {
-                             return self.err(
-                                 SemanticError::ArgumentCountMismatch {
-                                     name: format!("{}::{}", type_key, method_name),
-                                     expected: sig.min_args,
-                                     found: args.len(),
-                                 },
-                                 Some(expr.span.clone()),
-                             );
-                         }
-                    } else {
-                         if args.len() != sig.params.len() {
-                             return self.err(
-                                 SemanticError::ArgumentCountMismatch {
-                                     name: format!("{}::{}", type_key, method_name),
-                                     expected: sig.params.len(),
-                                     found: args.len(),
-                                 },
-                                 Some(expr.span.clone()),
-                             );
-                         }
-                    }
 
-                    // Check arg types
-                    // Static methods don't infer from receiver, but might infer params.
-                    // For now simple check.
-                    for (i, arg_expr) in args.iter_mut().enumerate() {
-                        let val_type = self.check_expr(arg_expr)?;
-                        let param_type = if i < sig.params.len() {
-                            &sig.params[i]
-                        } else {
-                            continue;
-                        };
-                        
-                        match param_type {
-                            ParamType::Exact(expected) => {
-                                if !self.are_types_compatible(&val_type, expected) {
-                                     return self.err(
-                                         SemanticError::TypeMismatch {
-                                             expected: expected.clone(),
-                                             found: val_type,
-                                         },
-                                         Some(arg_expr.span.clone()),
-                                     );
-                                }
-                            }
-                            ParamType::AnyTensor => {
-                                if !matches!(val_type, Type::Tensor(_, _)) {
-                                     return self.err(
-                                         SemanticError::TypeMismatch {
-                                             expected: Type::Tensor(Box::new(Type::F32), 0), 
-                                             found: val_type,
-                                         },
-                                         Some(arg_expr.span.clone()),
-                                     );
-                                }
-                            }
-                            // Generic params in static methods? Not implemented inference for static methods yet
-                            // (requires return type context).
-                            // For HashMap::new(), args are empty so this loop is skipped.
-                            _ => {}
-                        }
-                    }
-                    
-                    // Return Type
 
-                    return Ok(match &sig.return_type {
-                        ReturnType::Exact(t) => t.clone(), 
-                        ReturnType::Void => Type::Void,
-                        ReturnType::SameAsReceiver => type_name.clone(),
-                        ReturnType::TensorSameElementType(r) => Type::Tensor(Box::new(Type::F32), *r),
-                        ReturnType::TensorDynamicRank => Type::Tensor(Box::new(Type::F32), 0),
-                        _ => Type::Void, 
-                    });
-                }
-
+                let type_key = type_name.get_base_name();
                 match (type_key.as_str(), method_name.as_str()) {
                     ("File", "open") => {
                         if args.len() != 2 {
@@ -5325,7 +4950,7 @@ impl SemanticAnalyzer {
                     }
                     _ => {
                         // Try as a module function: type_name::method_name might be a qualified function call
-                        let full_name = format!("{}::{}", TypeRegistry::type_to_key(type_name), method_name);
+                        let full_name = format!("{}::{}", type_name.get_base_name(), method_name);
                         if let Some(func) = self.functions.get(&full_name).cloned() {
                             // Check arguments
                             if args.len() != func.args.len() && !func.args.is_empty() {
@@ -5444,19 +5069,12 @@ impl SemanticAnalyzer {
                     obj_type = new_ty;
                 }
 
-                // 1. Try checking with the unified TypeRegistry
-                if let Some(ret_ty) =
-                    self.check_method_call_with_registry(&obj_type, method_name, args, &expr.span)?
-                {
-                    return Ok(ret_ty);
-                }
-
-                // 2. Check for UserDefined methods (impl blocks)
+                // 1. Resolve type name key
                 let type_name = match &obj_type {
                     Type::UserDefined(name, _) => name.clone(),
                     Type::Struct(name, _) => name.clone(),
                     Type::Enum(name, _) => name.clone(),
-                    _ => TypeRegistry::type_to_key(&obj_type),
+                    _ => obj_type.get_base_name(),
                 };
 
                 // DEBUG PRINT
@@ -5597,6 +5215,8 @@ impl SemanticAnalyzer {
             }
             (Type::UserDefined(n, _), Type::Tensor(_, _)) if n == "Tensor" => true,
             (Type::Tensor(_, _), Type::UserDefined(n, _)) if n == "Tensor" => true,
+            (Type::Struct(n, _), Type::Tensor(_, _)) if n == "Tensor" => true,
+            (Type::Tensor(_, _), Type::Struct(n, _)) if n == "Tensor" => true,
             // Allow I32/I64/F32/F64 inter-compatibility for some operations
             (Type::I64, Type::F32) | (Type::F32, Type::I64) => true,
             (Type::I32, Type::I64) | (Type::I64, Type::I32) => true,

@@ -106,6 +106,37 @@ pub enum Type {
     Undefined(u64), // For unresolved generics (unique ID)
 }
 
+impl Type {
+    pub fn get_base_name(&self) -> String {
+        match self {
+            Type::F32 => "F32".to_string(),
+            Type::F64 => "F64".to_string(),
+            Type::F16 => "F16".to_string(),
+            Type::BF16 => "BF16".to_string(),
+            Type::Bool => "Bool".to_string(),
+            Type::I32 => "I32".to_string(),
+            Type::I64 => "I64".to_string(),
+            Type::I8 => "I8".to_string(),
+            Type::U8 => "U8".to_string(),
+            Type::U16 => "U16".to_string(),
+            Type::U32 => "U32".to_string(),
+            Type::Usize => "Usize".to_string(),
+            Type::Entity => "Entity".to_string(),
+            Type::Tensor(_, _) => "Tensor".to_string(),
+            Type::TensorShaped(_, _) => "Tensor".to_string(),
+            Type::Vec(_) => "Vec".to_string(),
+            Type::Struct(n, _) => n.clone(),
+            Type::Enum(n, _) => n.clone(),
+            Type::ScalarArray(_, _) => "ScalarArray".to_string(),
+            Type::Tuple(_) => "Tuple".to_string(), // Or handle specially? TypeRegistry didn't support Tuple generic methods usually.
+            Type::UserDefined(n, _) => n.clone(),
+            Type::Void => "Void".to_string(),
+            Type::Undefined(_) => "Undefined".to_string(),
+            Type::TypeVar(_) => "TypeVar".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDef {
     pub name: String,

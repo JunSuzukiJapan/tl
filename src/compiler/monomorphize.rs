@@ -598,7 +598,7 @@ impl Monomorphizer {
                           
                           // Check if it's a generic struct constructor/method that needs instantiation?
                           // Check if it's a generic struct constructor/method that needs instantiation?
-                          let type_name_str = crate::compiler::type_registry::TypeRegistry::type_to_key(type_ty);
+                          let type_name_str = type_ty.get_base_name();
                           if let Some(def) = self.generic_structs.get(&type_name_str).cloned() {
                               // Find implementation handling this call
                               let mut best_impl: Option<&ImplBlock> = None;

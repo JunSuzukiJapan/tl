@@ -5,6 +5,8 @@ use crate::compiler::ast::Type;
 use inkwell::values::BasicValueEnum;
 use inkwell::IntPredicate;
 
+pub const SOURCE: &str = include_str!("io.tl");
+
 pub fn register_io_types(manager: &mut TypeManager) {
     // File
     let mut file = CodeGenType::new("File");

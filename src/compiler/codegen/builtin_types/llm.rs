@@ -4,6 +4,8 @@ use crate::compiler::ast::Type;
 use inkwell::values::BasicValueEnum;
 
 
+pub const SOURCE: &str = include_str!("llm.tl");
+
 pub fn register_llm_types(manager: &mut TypeManager) {
     // Register Tokenizer
     let mut tokenizer = CodeGenType::new("Tokenizer");

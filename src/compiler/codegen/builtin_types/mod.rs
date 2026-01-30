@@ -7,3 +7,4 @@ pub mod result;
 pub mod string;
 pub mod vec;
 pub mod hashmap;
+pub mod primitives;

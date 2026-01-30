@@ -4,6 +4,8 @@ use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::{Type, Expr, ExprKind};
 use inkwell::values::{BasicValueEnum, ValueKind, BasicValue};
 
+pub const SOURCE: &str = include_str!("tensor.tl");
+
 pub fn register_tensor_types(manager: &mut TypeManager) {
     let mut tensor = CodeGenType::new("Tensor");
     

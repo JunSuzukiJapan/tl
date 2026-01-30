@@ -1013,27 +1013,21 @@ impl<'ctx> CodeGenerator<'ctx> {
         for imp in impls {
             // Check if generic impl
             if !imp.generics.is_empty() {
-                let target_name = match &imp.target_type {
-                    Type::Struct(n, _) | Type::UserDefined(n, _) | Type::Enum(n, _) => n.clone(),
-                    _ => return Err("Invalid impl target type".to_string()),
-                };
+                let target_name = imp.target_type.get_base_name();
                 eprintln!("DEBUG: compile_impl_blocks sees impl for {}", target_name);
                 self.generic_impls.entry(target_name).or_default().push(imp.clone());
                 continue;
             }
 
             for method in &imp.methods {
-                let target_name = match &imp.target_type {
-                    Type::Struct(n, _) | Type::UserDefined(n, _) | Type::Enum(n, _) => n,
-                    _ => return Err("Invalid impl target type".to_string()),
-                };
+                let target_name = imp.target_type.get_base_name();
                 let simple_target = if target_name.contains("::") {
                     target_name.split("::").last().unwrap()
                 } else {
-                    target_name
+                    &target_name
                 };
                 let mangled_name = if method.is_extern {
-                    method.name.clone()
+                    format!("tl_{}_{}", simple_target.to_lowercase(), method.name)
                 } else {
                     format!("tl_{}_{}", simple_target, method.name)
                 };
@@ -1130,17 +1124,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 continue;
             }
             for method in &imp.methods {
-                let target_name = match &imp.target_type {
-                    Type::Struct(n, _) | Type::UserDefined(n, _) | Type::Enum(n, _) => n,
-                    _ => return Err("Invalid impl target type".to_string()),
-                };
+                let target_name = imp.target_type.get_base_name();
                 let simple_target = if target_name.contains("::") {
                     target_name.split("::").last().unwrap()
                 } else {
-                    target_name
+                    &target_name
                 };
                 let mangled_name = if method.is_extern {
-                    method.name.clone()
+                     format!("tl_{}_{}", simple_target.to_lowercase(), method.name)
                 } else {
                     format!("tl_{}_{}", simple_target, method.name)
                 };
