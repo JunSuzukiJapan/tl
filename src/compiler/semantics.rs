@@ -4423,6 +4423,30 @@ impl SemanticAnalyzer {
                     return Ok(Type::Vec(Box::new(result_inner)));
                 }
 
+                // Handle HashMap::new() -> HashMap<K, V> (inferred)
+                let is_hashmap = match type_name {
+                    Type::UserDefined(n, _) if n == "HashMap" => true,
+                    Type::Struct(n, _) if n == "HashMap" => true,
+                    _ => false,
+                };
+
+                if is_hashmap && method_name == "new" {
+                    // Extract inner types if specified: HashMap<K, V>::new()
+                    let (key_type, val_type) = match type_name {
+                         Type::UserDefined(_, args) | Type::Struct(_, args) => {
+                             if args.len() == 2 {
+                                 (args[0].clone(), args[1].clone())
+                             } else {
+                                 // Infer K, V
+                                 (Type::Undefined(self.get_next_undefined_id()), Type::Undefined(self.get_next_undefined_id()))
+                             }
+                         }
+                         _ => (Type::Undefined(self.get_next_undefined_id()), Type::Undefined(self.get_next_undefined_id())),
+                    };
+                    
+                    return Ok(Type::Struct("HashMap".to_string(), vec![key_type, val_type]));
+                }
+
 
 
                 // Special handling for Param::checkpoint to allow method references
