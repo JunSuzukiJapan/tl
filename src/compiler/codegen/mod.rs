@@ -1207,11 +1207,51 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // Check if it's an expression that should be returned
                         if let StmtKind::Expr(expr) = &stmt.inner {
                             let (val, ty) = self.compile_expr(expr)?;
-                            self.emit_recursive_unregister(val, &ty)?;
+                            
+                            // FIX: Logic parity with compile_function implicit return
+                            self.mark_temp_no_cleanup(val);
+                            
+                            if val.is_pointer_value() {
+                                let ptr = val.into_pointer_value();
+                                for scope in self.variables.iter_mut().rev() {
+                                    for (_, (v, _, cleanup)) in scope.iter_mut() {
+                                        if v.is_pointer_value() && v.into_pointer_value() == ptr {
+                                            *cleanup = CLEANUP_NONE;
+                                        }
+                                    }
+                                }
+                            }
+
+                            let mut final_val = val;
+                            match &ty {
+                                Type::Tensor(_, _) => {
+                                    if let Some(prepare_fn) = self.module.get_function("tl_tensor_prepare_return") {
+                                        let ptr = val.into_pointer_value();
+                                        let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                                        let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_prep_ret").unwrap();
+                                        let call = self.builder.build_call(prepare_fn, &[cast_ptr.into()], "ret_ptr").unwrap();
+                                        use inkwell::values::ValueKind;
+                                        if let ValueKind::Basic(basic_val) = call.try_as_basic_value() {
+                                            final_val = basic_val;
+                                        }
+                                    } else {
+                                         self.emit_recursive_unregister(val, &ty)?;
+                                    }
+                                }
+                                _ => {
+                                    self.emit_recursive_unregister(val, &ty)?;
+                                }
+                            }
+
                             self.emit_all_scopes_cleanup();
                             self.variables.pop();
+
+                            if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
+                                 self.builder.build_call(exit_fn, &[], "").unwrap();
+                            }
+
                             self.builder
-                                .build_return(Some(&val))
+                                .build_return(Some(&final_val))
                                 .map_err(|e| e.to_string())?;
                             continue;
                         }
@@ -1625,6 +1665,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                         
                         // FIX: Mark temp no cleanup (like StmtKind::Return)
                         self.mark_temp_no_cleanup(val);
+
+                        // FIX: Also check variables scope for pointer match (Parity with StmtKind::Return)
+                        if val.is_pointer_value() {
+                            let ptr = val.into_pointer_value();
+                            for scope in self.variables.iter_mut().rev() {
+                                // Find precise match for pointer value
+                                for (_, (v, _, cleanup)) in scope.iter_mut() {
+                                    if v.is_pointer_value() && v.into_pointer_value() == ptr {
+                                        *cleanup = CLEANUP_NONE;
+                                    }
+                                }
+                            }
+                        }
 
                         let mut final_val = val; 
                         match &ty {

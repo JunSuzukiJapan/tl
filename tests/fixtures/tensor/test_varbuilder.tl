@@ -40,11 +40,10 @@ fn main() {
     
     for i in range(0, 3) {
         let logits = linear.forward(X);
-        
         // MSE loss
         let diff = logits - Y;
         let squared = diff * diff;
-        let loss = squared.sum();
+        let loss = squared.sumall();
         
         print("Step:");
         print(i);
