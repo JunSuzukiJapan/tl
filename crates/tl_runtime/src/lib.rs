@@ -404,9 +404,7 @@ pub extern "C" fn tl_tensor_new_i64(
     use crate::error::RuntimeError;
 
     let res = std::panic::catch_unwind(|| {
-        println!("DEBUG: tl_tensor_new_i64 rank={}", rank);
         let shape_slice = unsafe { slice::from_raw_parts(shape, rank) };
-        println!("DEBUG: tl_tensor_new_i64 shape={:?}", shape_slice);
 
         let num_elements: usize = shape_slice.iter().product();
         let data_slice = unsafe { slice::from_raw_parts(data, num_elements) };
