@@ -1131,7 +1131,7 @@ impl SemanticAnalyzer {
         // Match, extract name
         let final_target_name = impl_block.target_type.get_base_name();
         
-        println!("DEBUG: check_impl_block for {}", final_target_name);
+
 
         // Check if target struct/enum exists
         if !self.structs.contains_key(&final_target_name) && !self.enums.contains_key(&final_target_name) {
@@ -1188,7 +1188,7 @@ impl SemanticAnalyzer {
                         None,
                     );
                 }
-                println!("DEBUG: Registered method {}::{}", final_target_name, name);
+
                 struct_methods.insert(name, resolved_method);
             }
         }
@@ -5101,8 +5101,8 @@ impl SemanticAnalyzer {
                 };
 
                 // DEBUG PRINT
-                println!("DEBUG: method '{}' on type '{:?}' key '{}'", method_name, obj_type, type_name);
-                println!("DEBUG: Available keys: {:?}", self.methods.keys());
+
+
 
                 let method_data = if let Some(methods) = self.methods.get(&type_name) {
                     methods.get(method_name).map(|m| (m.args.clone(), m.return_type.clone()))

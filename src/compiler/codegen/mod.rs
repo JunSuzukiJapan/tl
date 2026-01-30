@@ -572,25 +572,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 }
                             }
                         }
-                    } else if let Type::Struct(_name, _) = ty {
+                    } else if let Type::Struct(name, _) = ty {
                         // Structs in TL now follow "Reference Semantics" for their members.
                         // We do NOT recursively free members when the Struct itself goes out of scope.
                         // This prevents Double Free issues when Structs are copied (shallow copy).
                         // The Struct wrapper itself (if any) is allocated on stack/alloca so it's fine.
                         // Members (Tensors, Maps) are ref-counted or managed elsewhere (or leaked safely).
                         
-                        /*
-                        // Load the struct pointer from the stack variable (Alloca)
-                        let ptr = val_enum.into_pointer_value();
-                        let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                        // We must check if the pointer stored in alloca is not null
-                        if let Ok(struct_val) =
-                            self.builder.build_load(load_type, ptr, "struct_to_free")
-                        {
-                            // Recursive free handles null check and freeing the container itself
-                            let _ = self.emit_recursive_free(struct_val, ty, *cleanup_mode);
+                        // However, Struct("Tensor") MUST be freed because it holds a handle.
+                        if name == "Tensor" {
+                            let ptr = val_enum.into_pointer_value();
+                            let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                            if let Ok(struct_val) =
+                                self.builder.build_load(load_type, ptr, "tensor_to_free")
+                            {
+                                let _ = self.emit_recursive_free(struct_val, ty, *cleanup_mode);
+                            }
                         }
-                        */
                     } else if matches!(ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Tuple(_) | Type::Vec(_)) {
                          // Tuple and Vec also need loading from Alloca
                         let ptr = val_enum.into_pointer_value();

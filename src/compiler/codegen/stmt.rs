@@ -478,6 +478,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder.position_at_end(merge_block);
             }
             Type::Struct(name, _) | Type::UserDefined(name, _) => {
+                // Handle Tensor specially
+                if name == "Tensor" {
+                    return self.emit_recursive_free(val, &Type::Tensor(Box::new(Type::F32), 1), mode);
+                }
+
                 // Fix: Vec<T> is often represented as UserDefined("Vec", [T])
                 // We must treat it as Type::Vec to ensure:
                 // 1. Elements are recursively freed
