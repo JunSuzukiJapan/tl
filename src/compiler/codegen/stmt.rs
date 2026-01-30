@@ -4049,7 +4049,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::Struct(_, _) | Type::Enum(_, _) | Type::UserDefined(_, _) => self
+                        Type::Struct(_, _) | Type::Enum(_, _) | Type::UserDefined(_, _) | Type::Tuple(_) | Type::Vec(_) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),

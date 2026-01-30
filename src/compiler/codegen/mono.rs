@@ -363,13 +363,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(self.context.ptr_type(AddressSpace::default()).into())
             }
             
-            Type::Tuple(types) => {
-                let mut field_types = Vec::new();
-                for inner_ty in types {
-                    field_types.push(self.get_llvm_type(inner_ty)?);
-                }
-                let struct_ty = self.context.struct_type(&field_types, false);
-                Ok(struct_ty.into())
+            Type::Tuple(_) => {
+                Ok(self.context.ptr_type(AddressSpace::default()).into())
             }
             
             _ => {

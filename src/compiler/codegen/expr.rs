@@ -83,113 +83,7 @@ pub fn compile_option_none<'ctx>(
     Ok((option_ptr.into(), Type::UserDefined("Option".to_string(), vec![inner_type])))
 }
 
-pub fn compile_result_ok<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    target_type: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 {
-        return Err("Result::Ok requires 1 argument".into());
-    }
-    
-    // Fallback: Default to Void for unspecified types
-    let (t_ty, e_ty) = match target_type {
-        Some(Type::UserDefined(_, gens)) | Some(Type::Struct(_, gens)) | Some(Type::Enum(_, gens)) => {
-            if gens.len() == 2 {
-                (gens[0].clone(), gens[1].clone())
-            } else {
-                (args[0].1.clone(), Type::Void)
-            }
-        }
-        _ => (args[0].1.clone(), Type::Void),
-    };
 
-    // Build fields: tag + payloads
-    let mut fields = vec![codegen.context.i32_type().into()]; // Tag
-    let mut t_idx = 0;
-    
-    // Append T if not void
-    if t_ty != Type::Void {
-        fields.push(codegen.get_llvm_type(&t_ty)?);
-        t_idx = fields.len() - 1;
-    }
-    
-    // Append E if not void
-    if e_ty != Type::Void {
-        fields.push(codegen.get_llvm_type(&e_ty)?);
-    }
-
-    let result_struct_ty = codegen.context.struct_type(&fields, false);
-    let ptr = codegen.builder.build_alloca(result_struct_ty, "result_val").map_err(|e| e.to_string())?;
-    
-    // Set tag = 0 (Ok)
-    let tag_ptr = codegen.builder.build_struct_gep(result_struct_ty, ptr, 0, "tag_ptr").map_err(|e| e.to_string())?;
-    codegen.builder.build_store(tag_ptr, codegen.context.i32_type().const_int(0, false)).map_err(|e| e.to_string())?;
-    
-    // Set payload
-    if t_ty != Type::Void {
-         let val = args[0].0;
-         let t_ptr = codegen.builder.build_struct_gep(result_struct_ty, ptr, t_idx as u32, "t_ptr").map_err(|e| e.to_string())?;
-         codegen.builder.build_store(t_ptr, val).map_err(|e| e.to_string())?;
-    }
-    
-    let result_type = Type::Enum("Result".to_string(), vec![t_ty, e_ty]);
-    Ok((ptr.into(), result_type))
-}
-
-pub fn compile_result_err<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    target_type: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 {
-        return Err("Result::Err requires 1 argument".into());
-    }
-    
-    // Fallback
-    let (t_ty, e_ty) = match target_type {
-        Some(Type::UserDefined(_, gens)) | Some(Type::Struct(_, gens)) | Some(Type::Enum(_, gens)) => {
-            if gens.len() == 2 {
-                (gens[0].clone(), gens[1].clone())
-            } else {
-                (Type::Void, args[0].1.clone())
-            }
-        }
-        _ => (Type::Void, args[0].1.clone()),
-    };
-
-    // Build fields: tag + payloads
-    let mut fields = vec![codegen.context.i32_type().into()]; // Tag
-    let mut e_idx = 0;
-    
-    // Append T if not void
-    if t_ty != Type::Void {
-        fields.push(codegen.get_llvm_type(&t_ty)?);
-    }
-    
-    // Append E if not void
-    if e_ty != Type::Void {
-        fields.push(codegen.get_llvm_type(&e_ty)?);
-        e_idx = fields.len() - 1;
-    }
-
-    let result_struct_ty = codegen.context.struct_type(&fields, false);
-    let ptr = codegen.builder.build_alloca(result_struct_ty, "result_val").map_err(|e| e.to_string())?;
-    
-    // Set tag = 1 (Err)
-    let tag_ptr = codegen.builder.build_struct_gep(result_struct_ty, ptr, 0, "tag_ptr").map_err(|e| e.to_string())?;
-    codegen.builder.build_store(tag_ptr, codegen.context.i32_type().const_int(1, false)).map_err(|e| e.to_string())?;
-    
-    // Set payload
-    if e_ty != Type::Void {
-         let val = args[0].0;
-         let e_ptr = codegen.builder.build_struct_gep(result_struct_ty, ptr, e_idx as u32, "e_ptr").map_err(|e| e.to_string())?;
-         codegen.builder.build_store(e_ptr, val).map_err(|e| e.to_string())?;
-    }
-    
-    let result_type = Type::Enum("Result".to_string(), vec![t_ty, e_ty]);
-    Ok((ptr.into(), result_type))
-}
 
 pub fn compile_vec_new<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
@@ -2261,11 +2155,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 | ExprKind::UnOp(_, _)
                                 | ExprKind::TensorLiteral(_)
                                 | ExprKind::Block(_)
+                                | ExprKind::Int(_)
+                                | ExprKind::Float(_)
+                                | ExprKind::Bool(_)
+                                | ExprKind::StringLiteral(_)
                         );
                         let mut stored_val = val;
                         let should_deep_clone = match f_ty {
                             Type::Tensor(_, _) => !is_rvalue,
-                            Type::Struct(_, _) | Type::UserDefined(_, _) => !is_rvalue,
+                            Type::Struct(_, _) => !is_rvalue,
+                            Type::UserDefined(n, args) => {
+                                if args.is_empty() && (n == "I64" || n == "F64" || n == "I32" || n == "F32" || n == "Bool" || n == "Usize" || n == "Entity" ||
+                                   n == "i64" || n == "f64" || n == "i32" || n == "f32" || n == "bool" || n == "usize") {
+                                       false
+                                } else {
+                                       !is_rvalue
+                                }
+                            }
                             _ => false,
                         };
                         if should_deep_clone {
@@ -2340,11 +2246,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     | ExprKind::UnOp(_, _)
                                     | ExprKind::TensorLiteral(_)
                                     | ExprKind::Block(_)
+                                    | ExprKind::Int(_)
+                                    | ExprKind::Float(_)
+                                    | ExprKind::Bool(_)
+                                    | ExprKind::StringLiteral(_)
                             );
                             let mut stored_val = val;
                             let should_deep_clone = match f_ty {
                                 Type::Tensor(_, _) => !is_rvalue,
-                                Type::Struct(_, _) | Type::UserDefined(_, _) => !is_rvalue,
+                                Type::Struct(_, _) => !is_rvalue,
+                                Type::UserDefined(n, args) => {
+                                    if args.is_empty() && (n == "I64" || n == "F64" || n == "I32" || n == "F32" || n == "Bool" || n == "Usize" || n == "Entity" ||
+                                       n == "i64" || n == "f64" || n == "i32" || n == "f32" || n == "bool" || n == "usize") {
+                                           false
+                                    } else {
+                                           !is_rvalue
+                                    }
+                                }
                                 _ => false,
                             };
                             if should_deep_clone {
@@ -2404,11 +2322,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     | ExprKind::UnOp(_, _)
                                     | ExprKind::TensorLiteral(_)
                                     | ExprKind::Block(_)
+                                    | ExprKind::Int(_)
+                                    | ExprKind::Float(_)
+                                    | ExprKind::Bool(_)
+                                    | ExprKind::StringLiteral(_)
                             );
                             let mut stored_val = val;
                             let should_deep_clone = match f_ty {
                                 Type::Tensor(_, _) => !is_rvalue,
-                                Type::Struct(_, _) | Type::UserDefined(_, _) => !is_rvalue,
+                                Type::Struct(_, _) => !is_rvalue,
+                                Type::UserDefined(n, args) => {
+                                    if args.is_empty() && (n == "I64" || n == "F64" || n == "I32" || n == "F32" || n == "Bool" || n == "Usize" || n == "Entity" ||
+                                       n == "i64" || n == "f64" || n == "i32" || n == "f32" || n == "bool" || n == "usize") {
+                                           false
+                                    } else {
+                                           !is_rvalue
+                                    }
+                                }
                                 _ => false,
                             };
                             if should_deep_clone {
@@ -5230,6 +5160,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         ty: &Type,
         is_lvalue: bool,
     ) -> Result<BasicValueEnum<'ctx>, String> {
+
         let is_ref_type = matches!(
             ty,
             Type::Tensor(_, _)
@@ -5273,7 +5204,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         bindings: &crate::compiler::ast::EnumPatternBindings,
         generic_args: &[Type],
     ) -> Result<(), String> {
-        let _variant_def = &enum_def.variants[variant_idx];
+        let variant_def = &enum_def.variants[variant_idx];
 
         // Build substitution map for concrete types
         let mut subst: HashMap<String, Type> = HashMap::new();
@@ -5283,38 +5214,62 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
-        // Calculate start index for this variant's fields
-        // Flat layout: { i32 (tag), Variant0_Field0, Variant0_Field1... Variant1_Field0... }
-        let mut current_field_idx = 1; // Start at 1 (Tag is 0)
+        // Get Payload Pointer (Index 1)
+        // Opaque Layout: { i32, [u8...]}
+        // We cast this pointer to the Variant Struct Pointer
+        let payload_ptr_raw = self.builder
+            .build_struct_gep(enum_ty, enum_ptr, 1, "payload_ptr_raw")
+            .map_err(|e| e.to_string())?;
 
-        for (idx, variant) in enum_def.variants.iter().enumerate() {
-            if idx == variant_idx {
-                break;
-            }
-            // Skip fields of previous variants
-            match &variant.kind {
-                 crate::compiler::ast::VariantKind::Tuple(types) => {
-                     for ty in types {
-                         let concrete_ty = self.substitute_type_simple_bind(ty, &subst);
-                         if concrete_ty != Type::Void {
-                             current_field_idx += 1;
-                         }
-                     }
-                 }
-                 crate::compiler::ast::VariantKind::Struct(fields) => {
-                     for (_, ty) in fields {
-                         let concrete_ty = self.substitute_type_simple_bind(ty, &subst);
-                         if concrete_ty != Type::Void {
-                             current_field_idx += 1;
-                         }
-                     }
-                 }
-                 crate::compiler::ast::VariantKind::Unit => {}
+        // internal helper to get concrete types for this variant
+        let mut field_types = Vec::new();
+        match &variant_def.kind {
+            crate::compiler::ast::VariantKind::Unit => {},
+            crate::compiler::ast::VariantKind::Tuple(types) => {
+                for ty in types {
+                    let concrete_ty = self.substitute_type_simple_bind(ty, &subst);
+                    if concrete_ty != Type::Void {
+                        field_types.push(concrete_ty);
+                    }
+                }
+            },
+            crate::compiler::ast::VariantKind::Struct(fields) => {
+                for (_, ty) in fields {
+                    let concrete_ty = self.substitute_type_simple_bind(ty, &subst);
+                    if concrete_ty != Type::Void {
+                        field_types.push(concrete_ty);
+                    }
+                }
             }
         }
-        
+
+        // Construct Variant LLVM Struct Type
+        let mut llvm_field_types = Vec::new();
+        for f_ty in &field_types {
+            llvm_field_types.push(self.get_llvm_type(f_ty)?);
+        }
+        let variant_struct_ty = self.context.struct_type(&llvm_field_types, false);
+
+        // Cast payload ptr to variant struct ptr
+        // Use pointer_cast (BitCast)
+        // Since payload_ptr_raw is [u8]* (inside struct), and we want { Fields... }*
+        // We cast to PointerType(variant_struct_ty)
+        let variant_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+        // Wait, build_pointer_cast works on values.
+        // We handle opaque pointers in recent LLVM, so just casting the value is enough?
+        // But `build_struct_gep` needs the Type info if we didn't pass it.
+        // `builder.build_struct_gep(variant_struct_ty, payload_ptr, idx, ...)`
+
+        let payload_ptr = self.builder.build_pointer_cast(
+            payload_ptr_raw,
+            variant_ptr_type, // Actually just mapped to ptr
+            "payload_cast"
+        ).unwrap();
+
+
         // Bind fields
-        let variant_def = &enum_def.variants[variant_idx];
+        let mut current_field_idx = 0; // Relative to Variant Struct
+
         match (&variant_def.kind, bindings) {
             (crate::compiler::ast::VariantKind::Unit, crate::compiler::ast::EnumPatternBindings::Unit) => {
                 Ok(())
@@ -5337,9 +5292,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                          continue;
                     }
                     
+                    // Access field from cast payload
                     let f_ptr = self
                         .builder
-                        .build_struct_gep(enum_ty, enum_ptr, current_field_idx, "field_ptr")
+                        .build_struct_gep(variant_struct_ty, payload_ptr, current_field_idx, "field_ptr")
                         .map_err(|e| e.to_string())?;
                     current_field_idx += 1;
 
@@ -5347,17 +5303,24 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let f_val = self.builder.build_load(llvm_ty, f_ptr, "bind_val").unwrap();
 
                     let alloca = self.create_entry_block_alloca(current_func, bind_name, &concrete_ty)?;
-                    let stored_val = if matches!(
-                        concrete_ty,
+                    let stored_val = match &concrete_ty {
+                        Type::Tuple(ts) if ts.is_empty() => f_val,
                         Type::Tensor(_, _)
-                            | Type::Struct(_, _)
-                            | Type::Enum(_, _)
-                            | Type::UserDefined(_, _)
-                            | Type::Tuple(_)
-                    ) {
-                        self.emit_deep_clone(f_val, &concrete_ty)?
-                    } else {
-                        f_val
+                        | Type::Struct(_, _)
+                        | Type::Enum(_, _)
+                        | Type::Tuple(_) => {
+                             self.emit_deep_clone(f_val, &concrete_ty)?
+                        }
+                        Type::UserDefined(n, args) if args.is_empty() => {
+                            if n == "I64" || n == "F64" || n == "I32" || n == "F32" || n == "Bool" || n == "Usize" || n == "Entity" ||
+                               n == "i64" || n == "f64" || n == "i32" || n == "f32" || n == "bool" || n == "usize" {
+                                   f_val
+                            } else {
+                                   self.emit_deep_clone(f_val, &concrete_ty)?
+                            }
+                        }
+                        Type::UserDefined(_, _) => self.emit_deep_clone(f_val, &concrete_ty)?,
+                        _ => f_val,
                     };
                     self.builder.build_store(alloca, stored_val).unwrap();
 
@@ -5377,21 +5340,41 @@ impl<'ctx> CodeGenerator<'ctx> {
                      
                      if let Some((_, bind_var_name)) = binding {
                          if bind_var_name != "_" {
+                             // Access field
                              let f_ptr = self
                                  .builder
-                                 .build_struct_gep(enum_ty, enum_ptr, current_field_idx, "field_ptr")
+                                 .build_struct_gep(variant_struct_ty, payload_ptr, current_field_idx, "field_ptr")
                                  .map_err(|e| e.to_string())?;
                              
                              let llvm_ty = self.get_llvm_type(&concrete_ty)?;
                              let f_val = self.builder.build_load(llvm_ty, f_ptr, "bind_val").unwrap();
                              
                              let alloca = self.create_entry_block_alloca(current_func, bind_var_name, &concrete_ty)?;
-                             let stored_val = self.emit_deep_clone(f_val, &concrete_ty)?; 
+                             let stored_val = match &concrete_ty {
+                                 Type::Tuple(ts) if ts.is_empty() => f_val,
+                                 Type::Tensor(_, _)
+                                 | Type::Struct(_, _)
+                                 | Type::Enum(_, _)
+                                 | Type::Tuple(_) => {
+                                      self.emit_deep_clone(f_val, &concrete_ty)?
+                                 }
+                                 Type::UserDefined(n, args) if args.is_empty() => {
+                                     if n == "I64" || n == "F64" || n == "I32" || n == "F32" || n == "Bool" || n == "Usize" || n == "Entity" ||
+                                        n == "i64" || n == "f64" || n == "i32" || n == "f32" || n == "bool" || n == "usize" {
+                                            f_val
+                                     } else {
+                                            self.emit_deep_clone(f_val, &concrete_ty)?
+                                     }
+                                 }
+                                 Type::UserDefined(_, _) => self.emit_deep_clone(f_val, &concrete_ty)?,
+                                 _ => f_val,
+                             }; 
                              self.builder.build_store(alloca, stored_val).unwrap();
                              
                              self.variables.last_mut().unwrap().insert(bind_var_name.clone(), (alloca.into(), concrete_ty.clone(), super::CLEANUP_FULL));
                          }
                      }
+                     // Always increment standard layout index
                      current_field_idx += 1;
                  }
                  Ok(())

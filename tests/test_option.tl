@@ -1,7 +1,7 @@
 fn test_primitive() {
     print("Testing Option<I64>...");
     let some_val = Option::Some(42);
-    let none_val: Option<I64> = Option::None();
+    let none_val: Option<I64> = Option::None;
 
     if some_val.is_some() {
         print("some_val is some: OK");
@@ -34,7 +34,7 @@ fn test_string() {
     print("\nTesting Option<String>...");
     let s = "Hello";
     let some_str = Option::Some(s);
-    let none_str: Option<String> = Option::None();
+    let none_str: Option<String> = Option::None;
 
     if some_str.is_some() {
         print("some_str is some: OK");

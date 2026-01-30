@@ -494,7 +494,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         builtin_types::tensor::register_tensor_types(&mut self.type_manager);
 
         builtin_types::llm::register_llm_types(&mut self.type_manager);
-        builtin_types::result::register_result_types(&mut self.type_manager);
+        // builtin_types::result::register_result_types(&mut self.type_manager);
         builtin_types::string::register_string_types(&mut self.type_manager);
 
 
@@ -954,6 +954,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
+                        Type::Tuple(_) => self
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
                         _ => {
                             return Err(format!(
                                 "Unsupported type in enum variant {}: {:?}",
@@ -1081,7 +1085,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .fn_type(&param_types, false),
-                        Type::Struct(_, _) | Type::UserDefined(_, _) => self
+                        Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Tuple(_) | Type::Enum(_, _) | Type::Vec(_) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .fn_type(&param_types, false),

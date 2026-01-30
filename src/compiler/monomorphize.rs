@@ -692,7 +692,9 @@ impl Monomorphizer {
                                            if let Some(ty) = inferred_from_expected.as_ref() {
                                                 type_args.push(ty.clone());
                                            } else {
-                                                all_inferred = false;
+                                                // Default to Unit (Tuple([])) if partially inferred (e.g. Result::Ok(x) implies T=Typeof(x), E=Unit)
+                                                // Void is not valid in LLVM structs.
+                                                type_args.push(Type::Tuple(vec![]));
                                            }
                                        }
                                    }
