@@ -6216,7 +6216,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
         // Check for generic impls first
-        eprintln!("DEBUG: Checking generic_impls for '{}' keys={:?}", type_name, self.generic_impls.keys());
+
         let generic_func = if self.generic_impls.contains_key(&type_name) {
              let generics = if let Some(g) = generic_args_override {
                  g
