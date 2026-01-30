@@ -4,7 +4,7 @@ fn main() {
     print("Test 1: Simple gradient");
     let x = Tensor::randn([2, 3], true);
     let y = x * 2.0;
-    let loss = y.sum();
+    let loss = y.sumall();
     
     print("Loss:");
     print(loss);
@@ -22,7 +22,7 @@ fn main() {
     let idx = Tensor::randn([2, 4], false) * 0.0 + 1.0;
     
     let emb = idx.embedding(weight);
-    let loss2 = emb.sum();
+    let loss2 = emb.sumall();
     
     print("Embedding loss:");
     print(loss2);

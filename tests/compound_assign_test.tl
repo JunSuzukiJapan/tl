@@ -45,23 +45,23 @@ fn test_tensor() {
     println("Testing Tensor...");
     let mut a = Tensor::ones([2, 2]);
     a += Tensor::ones([2, 2]);
-    if a.sum().item() != 8.0 { println("Error: Tensor += failed"); }
+    if a.sumall().item() != 8.0 { println("Error: Tensor += failed"); }
     
     a -= Tensor::ones([2, 2]);
-    if a.sum().item() != 4.0 { println("Error: Tensor -= failed"); }
+    if a.sumall().item() != 4.0 { println("Error: Tensor -= failed"); }
     
     a *= 2.0; // Scalar multiply
-    if a.sum().item() != 8.0 { println("Error: Tensor *= scalar failed"); }
+    if a.sumall().item() != 8.0 { println("Error: Tensor *= scalar failed"); }
 
     let mut s = ST { t: Tensor::ones([2, 2]) };
     s.t += Tensor::ones([2, 2]);
-    if s.t.sum().item() != 8.0 { println("Error: Tensor field += failed"); }
+    if s.t.sumall().item() != 8.0 { println("Error: Tensor field += failed"); }
     
     s.t -= Tensor::ones([2, 2]);
-    if s.t.sum().item() != 4.0 { println("Error: Tensor field -= failed"); }
+    if s.t.sumall().item() != 4.0 { println("Error: Tensor field -= failed"); }
     
     s.t *= 3.0;
-    if s.t.sum().item() != 12.0 { println("Error: Tensor field *= failed"); }
+    if s.t.sumall().item() != 12.0 { println("Error: Tensor field *= failed"); }
 }
 
 fn main() {

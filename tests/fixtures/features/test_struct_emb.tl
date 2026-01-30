@@ -21,7 +21,7 @@ fn main() {
     let idx = Tensor::randn([2, 4], false) * 0.0 + 1.0;
     
     let out = emb.forward(idx);
-    let loss = out.sum();
+    let loss = out.sumall();
     
     print("Loss:");
     print(loss);

@@ -111,7 +111,7 @@ fn main() {
     // "Freeze" GT image (it's constant, but make sure we don't backprop through it if we used it later, though here it's numbers)
     // Actually gt_image is from non-variable tensors, so it has no grad.
 
-    println("Ground Truth Image Rendered (sum={})", gt_image.sum().item());
+    println("Ground Truth Image Rendered (sum={})", gt_image.sumall().item());
 
 
     // 4. Optimization
@@ -146,7 +146,7 @@ fn main() {
         
         // Loss: MSE
         let diff = pred_image - gt_image;
-        let loss = diff.pow(2).sum();
+        let loss = diff.pow(2).sumall();
         
         if (iter / 50) * 50 == iter {
             println("Iter {} Loss: {}", iter, loss.item());

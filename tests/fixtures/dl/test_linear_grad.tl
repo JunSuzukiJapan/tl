@@ -62,7 +62,7 @@ fn main() {
         // Simple MSE loss
         let diff = logits - Y;
         let squared = diff * diff;
-        let loss = squared.sum();
+        let loss = squared.sumall();
         
         print("Step:");
         print(i);

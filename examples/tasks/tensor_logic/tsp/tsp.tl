@@ -47,11 +47,11 @@ fn main() {
         
         let diff = path - path_next;
         let diff_sq = diff.pow(2); 
-        let tour_loss = diff_sq.sum(); 
+        let tour_loss = diff_sq.sumall(); 
 
         let col_sums = probs.sum(0); 
         let diff_col = col_sums - 1.0;
-        let constraint_loss = diff_col.pow(2).sum();
+        let constraint_loss = diff_col.pow(2).sumall();
         
         let total_loss = tour_loss + constraint_loss * 5.0;
         
@@ -77,6 +77,6 @@ fn main() {
     let path = probs.matmul(cities);
     let path_next = S.matmul(path);
     let diff = path - path_next;
-    let final_loss = diff.pow(2).sum();
+    let final_loss = diff.pow(2).sumall();
     println("Tour Length: {}", final_loss.item());
 }

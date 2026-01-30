@@ -27,13 +27,13 @@ fn main() {
     for i in 0..epochs {
          let probs = board.softmax(1);
          let col_sums = probs.sum(0);
-         let col_loss = (col_sums - 1.0).pow(2).sum();
+         let col_loss = (col_sums - 1.0).pow(2).sumall();
 
          let anti_diag_sums = [k | k <- 0..(2 * N - 1), r <- 0..N, c <- 0..N, r + c == k { probs[r, c] }];
          let main_diag_sums = [k | k <- 0..(2 * N - 1), r <- 0..N, c <- 0..N, r - c + N - 1 == k { probs[r, c] }];
 
-         let anti_diag_loss = (anti_diag_sums - 1.0).relu().pow(2).sum();
-         let main_diag_loss = (main_diag_sums - 1.0).relu().pow(2).sum();
+         let anti_diag_loss = (anti_diag_sums - 1.0).relu().pow(2).sumall();
+         let main_diag_loss = (main_diag_sums - 1.0).relu().pow(2).sumall();
          
          let total_loss = col_loss + anti_diag_loss + main_diag_loss;
 
@@ -52,11 +52,11 @@ fn main() {
 
     let probs = board.softmax(1);
     let col_sums = probs.sum(0); 
-    let col_loss = (col_sums - 1.0).pow(2).sum();
+    let col_loss = (col_sums - 1.0).pow(2).sumall();
     let anti_diag_sums = [k | k <- 0..(2 * N - 1), r <- 0..N, c <- 0..N, r + c == k { probs[r, c] }];
     let main_diag_sums = [k | k <- 0..(2 * N - 1), r <- 0..N, c <- 0..N, r - c + N - 1 == k { probs[r, c] }];
-    let anti_diag_loss = (anti_diag_sums - 1.0).relu().pow(2).sum();
-    let main_diag_loss = (main_diag_sums - 1.0).relu().pow(2).sum();
+    let anti_diag_loss = (anti_diag_sums - 1.0).relu().pow(2).sumall();
+    let main_diag_loss = (main_diag_sums - 1.0).relu().pow(2).sumall();
     let total_loss = col_loss + anti_diag_loss + main_diag_loss;
     println("Final Loss: {}", total_loss.item());
 

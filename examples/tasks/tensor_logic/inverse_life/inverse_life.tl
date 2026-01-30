@@ -90,7 +90,7 @@ fn main() {
         
         // Loss: MSE(current_est, target_final)
         let diff = current_est - target_final;
-        let loss = diff.pow(2).sum();
+        let loss = diff.pow(2).sumall();
         
         if (iter / 50) * 50 == iter {
              println("Iter {} Loss: {}", iter, loss.item());
@@ -120,7 +120,7 @@ fn main() {
         t = t + 1;
     }
     let diff = state - target_final;
-    let final_loss = diff.pow(2).sum();
+    let final_loss = diff.pow(2).sumall();
     println(final_loss.item());
     
     // Compare Recovered S_0 with Ground Truth S_0
@@ -128,6 +128,6 @@ fn main() {
     let recovered = learnable_logits.sigmoid();
     
     let diff_init = recovered - gt_state;
-    let match_errors = diff_init.abs().sum();
+    let match_errors = diff_init.abs().sumall();
     println("Mismatched Cells in Initial State: {}", match_errors.item());
 }

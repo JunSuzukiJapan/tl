@@ -57,7 +57,7 @@ fn main() {
         // Loss: Binary Cross-Entropy or MSE
         // Using MSE for simplicity
         let diff = output - targets;
-        let loss = diff.pow(2).sum();
+        let loss = diff.pow(2).sumall();
         
         if (iter / 100) * 100 == iter {
             println("Iter {} Loss: {}", iter, loss.item());

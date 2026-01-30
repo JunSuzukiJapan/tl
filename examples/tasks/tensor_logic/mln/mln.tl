@@ -59,7 +59,7 @@ fn main() {
         // Rule 1: Smokes => Cancer
         // Logic: A => B  is equivalent to  1 - A + A*B  (Reichenbach)
         let sat_1 = 1.0 - smokes_prob + smokes_prob * cancer_prob;
-        let energy_1 = (sat_1 * w_smokes_cancer).sum();
+        let energy_1 = (sat_1 * w_smokes_cancer).sumall();
 
         // Rule 2: Friends(x, y) => (Smokes(x) <=> Smokes(y))
         // Similarity: S(x) <=> S(y)  is  S(x)S(y) + (1-S(x))(1-S(y))
@@ -72,7 +72,7 @@ fn main() {
         
         // Apply Friends mask
         let sat_2 = friends * sim;
-        let energy_2 = (sat_2 * w_friends_same).sum();
+        let energy_2 = (sat_2 * w_friends_same).sumall();
 
         // Total Energy (maximize this)
         let total_energy = energy_1 + energy_2;

@@ -24,7 +24,7 @@ fn main() {
     let mut t = Tensor::ones([2, 2]) * 10.0; // [[10, 10], [10, 10]]
     t %= 3.0; // [[1, 1], [1, 1]]
     
-    let sum = t.sum();
+    let sum = t.sumall();
     // 1+1+1+1 = 4
     if (sum - 4.0).abs() > 0.0001 {
         print("Failed tensor %=: expected sum 4.0, got ");

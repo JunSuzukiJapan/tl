@@ -3,7 +3,7 @@ print(A);tensor B: f32 = [10.5, 20.0, 5.5];
 
 // Sum
 // let s = sum(i for i in A); // Old syntax?
-let s = A.sum();
+let s = A.sumall();
 print(s); // Expect 15 (1+2+3+4+5)
 
 // Avg
@@ -20,5 +20,5 @@ print(m); // Expect 20.0
 // let s_cond = sum(i for i in A where i > 2); // Old syntax?
 // Workaround using mask if syntax not supported
 // let mask = A > 2;
-// let s_cond = (A * mask).sum();
+// let s_cond = (A * mask).sumall();
 // print(s_cond); // Expect 12 (3+4+5)

@@ -14,7 +14,7 @@ fn main() {
     // Simple computation
     let x = Tensor::randn([4, 10], false);
     let output = x.matmul(weight) + bias;
-    let loss = output.sum();
+    let loss = output.sumall();
     
     print("Loss:");
     print(loss);

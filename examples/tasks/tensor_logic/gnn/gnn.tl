@@ -70,10 +70,10 @@ fn main() {
         let soft_min = (sum_exp.log()) * -1.0;
         
         // Constraint Loss: (val - soft_min)^2
-        let consistency_loss = (val - soft_min).pow(2).sum();
+        let consistency_loss = (val - soft_min).pow(2).sumall();
         
         // Positivity constraint
-        let positivity_loss = (val * -1.0).relu().pow(2).sum();
+        let positivity_loss = (val * -1.0).relu().pow(2).sumall();
         
         // bc_loss logic: using Tensor broadcasting if val[0] is F32
         let source_val = val[0];

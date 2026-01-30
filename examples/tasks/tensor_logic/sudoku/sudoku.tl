@@ -77,16 +77,16 @@ fn main() {
         // Broadcast hint_mask [9,9,1] against diff [9,9,9]
         // Manual multiplication supports broadcasting
         let masked_diff = diff * hint_mask;
-        let hint_loss = (masked_diff * masked_diff).sum() * 5.0; // Weight hint loss higher
+        let hint_loss = (masked_diff * masked_diff).sumall() * 5.0; // Weight hint loss higher
         
         // 2. Constraints
         let row_sums = probs.sum(1);
         let col_sums = probs.sum(0);
         let cell_sums = probs.sum(2);
         
-        let row_loss = (row_sums - 1.0).pow(2.0).sum();
-        let col_loss = (col_sums - 1.0).pow(2.0).sum();
-        let cell_loss = (cell_sums - 1.0).pow(2.0).sum();
+        let row_loss = (row_sums - 1.0).pow(2.0).sumall();
+        let col_loss = (col_sums - 1.0).pow(2.0).sumall();
+        let cell_loss = (cell_sums - 1.0).pow(2.0).sumall();
         
         let total_loss = row_loss + col_loss + cell_loss + hint_loss;
         

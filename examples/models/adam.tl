@@ -92,21 +92,21 @@ print(model.W);
 
 // Iter 1
 let y_pred = X.matmul(model.W) + model.b;
-let loss = (y_pred * y_pred).sum();
+let loss = (y_pred * y_pred).sumall();
 print(loss);
 loss.backward();
 optim.step(model);
 
 // Iter 2
 let y_pred = X.matmul(model.W) + model.b;
-let loss = (y_pred * y_pred).sum();
+let loss = (y_pred * y_pred).sumall();
 print(loss);
 loss.backward();
 optim.step(model);
 
 // Iter 3
 let y_pred = X.matmul(model.W) + model.b;
-let loss = (y_pred * y_pred).sum();
+let loss = (y_pred * y_pred).sumall();
 print(loss);
 loss.backward();
 optim.step(model);

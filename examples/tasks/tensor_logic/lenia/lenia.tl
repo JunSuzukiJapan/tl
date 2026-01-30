@@ -61,7 +61,7 @@ fn main() {
              let center_x = W / 2;
              // Manual slice print loop (since slice syntax is limited for multi-dim print)
              // Just print sum for sanity check
-             let total_mass = state.sum();
+             let total_mass = state.sumall();
              print("Total Mass: ");
              println(total_mass.item());
         }

@@ -35,7 +35,7 @@ fn main() {
             if b == 0 {
                 // Check input scale via sum
                 print("Input Sum (Batch 0):");
-                print(bx.sum().item());
+                print(bx.sumall().item());
             }
 
             let by = train_y.slice(start, batch_size);

@@ -29,13 +29,13 @@ fn main() {
             let board = Tensor::randn([128, 128], true);
             let probs = board.softmax(1);
             let col_sums = probs.sum(0);
-            let col_loss = (col_sums - 1.0).pow(2).sum();
-            let reg_loss = (probs * (1.0 - probs)).sum() * 0.05;
+            let col_loss = (col_sums - 1.0).pow(2).sumall();
+            let reg_loss = (probs * (1.0 - probs)).sumall() * 0.05;
             let total = col_loss + reg_loss;
             total.backward();
             let g = board.grad();
-            let _gsum = g.sum();
-            let _v = (board * 0.5 + g * 0.1).sum();
+            let _gsum = g.sumall();
+            let _v = (board * 0.5 + g * 0.1).sumall();
 
             i = i + 1;
         }

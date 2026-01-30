@@ -55,35 +55,35 @@ print(model.W);
 
 // Unrolled iteration 1
 let y_pred = forward(model, X);
-let loss = (y_pred * y_pred).sum();
+let loss = (y_pred * y_pred).sumall();
 print(loss);
 loss.backward();
 let model = sgd.step(model);
 
 // Unrolled iteration 2
 let y_pred = forward(model, X);
-let loss = (y_pred * y_pred).sum();
+let loss = (y_pred * y_pred).sumall();
 print(loss);
 loss.backward();
 let model = sgd.step(model);
 
 // Unrolled iteration 3
 let y_pred = forward(model, X);
-let loss = (y_pred * y_pred).sum();
+let loss = (y_pred * y_pred).sumall();
 print(loss);
 loss.backward();
 let model = sgd.step(model);
 
 // Unrolled iteration 4
 let y_pred = forward(model, X);
-let loss = (y_pred * y_pred).sum();
+let loss = (y_pred * y_pred).sumall();
 print(loss);
 loss.backward();
 let model = sgd.step(model);
 
 // Unrolled iteration 5
 let y_pred = forward(model, X);
-let loss = (y_pred * y_pred).sum();
+let loss = (y_pred * y_pred).sumall();
 print(loss);
 loss.backward();
 let model = sgd.step(model);

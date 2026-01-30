@@ -31,17 +31,17 @@ fn main() {
          let probs = board.softmax(1);
          
          let col_sums = probs.sum(0);
-         let col_loss = (col_sums - 1.0).pow(2).sum();
+         let col_loss = (col_sums - 1.0).pow(2).sumall();
 
          let probs_b = probs.reshape([1, N, N]);
          // Broadcasting Ops check
          let anti_diag_sums = (probs_b * anti_diag_mask).sum(2).sum(1);
          let main_diag_sums = (probs_b * main_diag_mask).sum(2).sum(1);
 
-         let anti_diag_loss = (anti_diag_sums - 1.0).relu().pow(2).sum();
-         let main_diag_loss = (main_diag_sums - 1.0).relu().pow(2).sum();
+         let anti_diag_loss = (anti_diag_sums - 1.0).relu().pow(2).sumall();
+         let main_diag_loss = (main_diag_sums - 1.0).relu().pow(2).sumall();
          
-         let reg_loss = (probs * (1.0 - probs)).sum() * 0.05;
+         let reg_loss = (probs * (1.0 - probs)).sumall() * 0.05;
 
          let constraint_loss = col_loss + anti_diag_loss + main_diag_loss;
          let total_loss = constraint_loss + reg_loss;

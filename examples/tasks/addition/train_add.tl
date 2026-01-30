@@ -54,7 +54,7 @@ fn my_cross_entropy(logits: Tensor<f32, 3>, targets: Tensor<f32, 2>) -> Tensor<f
     let mask_d = mask.detach(true);
     
     let selected = mask_d * log_probs_flat;
-    let sum_log_probs = selected.sum();
+    let sum_log_probs = selected.sumall();
     
     // -1 * mean を計算
     let mut neg_one: Tensor<f32, 1> = Tensor::randn([1], false) * 0.0;

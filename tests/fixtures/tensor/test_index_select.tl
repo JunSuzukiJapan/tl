@@ -13,7 +13,7 @@ fn main() {
     print("Selected:");
     print(selected);
     
-    let loss = selected.sum();
+    let loss = selected.sumall();
     
     print("Loss:");
     print(loss);
