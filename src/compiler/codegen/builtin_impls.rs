@@ -11,7 +11,7 @@ pub fn register_builtin_impls(_generic_impls: &mut HashMap<String, Vec<ImplBlock
 /// Register built-in struct definitions
 pub fn register_builtin_structs(struct_defs: &mut HashMap<String, StructDef>) {
     let defs = vec![
-        builtin_types::vec::get_vec_struct_def(),
+        // builtin_types::vec::get_vec_struct_def(), // Migrated to TypeManager
         builtin_types::hashmap::get_hashmap_struct_def(),
     ];
     

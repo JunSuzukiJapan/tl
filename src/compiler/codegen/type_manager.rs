@@ -34,18 +34,30 @@ impl CodeGenType {
     }
 }
 
+use crate::compiler::builtin_loader::BuiltinTypeData;
+
 /// Central manager for all types and their methods in the CodeGenerator.
 pub struct TypeManager {
     types: HashMap<String, CodeGenType>,
+    pub builtin_data: HashMap<String, BuiltinTypeData>,
 }
 
 impl TypeManager {
     pub fn new() -> Self {
-        Self { types: HashMap::new() }
+        Self { 
+            types: HashMap::new(),
+            builtin_data: HashMap::new(),
+        }
     }
 
     pub fn register_type(&mut self, type_obj: CodeGenType) {
         self.types.insert(type_obj.name.clone(), type_obj);
+    }
+
+    /// Register a builtin type defined in .tl (AST + Impls).
+    /// This stores the data to be used by CodeGenerator for AST injection.
+    pub fn register_builtin(&mut self, data: BuiltinTypeData) {
+        self.builtin_data.insert(data.name.clone(), data);
     }
 
     pub fn get_type(&self, name: &str) -> Option<&CodeGenType> {

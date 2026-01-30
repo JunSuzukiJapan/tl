@@ -103,28 +103,49 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Register builtins (Enums, etc.)
         codegen.register_builtins();
-        // Load builtin enums (Option, Result)
+        // Load builtins via TypeManager (Option)
+        let option_data = builtin_types::option::load_option_data();
+        codegen.type_manager.register_builtin(option_data.clone());
+        
+        // Propagate ASTs to CodeGen maps (Temporary Bridge)
+        if let Some(def) = option_data.enum_def {
+            codegen.enum_defs.insert(def.name.clone(), def.clone());
+        }
+        codegen.generic_impls.entry("Option".to_string()).or_default().extend(option_data.impl_blocks);
+
+        // Load builtins via TypeManager (Result)
+        let result_data = builtin_types::result::load_result_data();
+        codegen.type_manager.register_builtin(result_data.clone());
+        
+        // Propagate ASTs to CodeGen maps (Temporary Bridge)
+        if let Some(def) = result_data.enum_def {
+            codegen.enum_defs.insert(def.name.clone(), def.clone());
+        }
+        codegen.generic_impls.entry("Result".to_string()).or_default().extend(result_data.impl_blocks);
+
         let builtin_enums = vec![
-            builtin_types::option::get_option_enum_def(),
-            builtin_types::result::get_result_enum_def(),
+            codegen.enum_defs.get("Option").unwrap().clone(),
+            codegen.enum_defs.get("Result").unwrap().clone(),
         ];
         for def in &builtin_enums {
             codegen.enum_defs.insert(def.name.clone(), def.clone());
         }
         codegen.compile_enum_defs(&builtin_enums).unwrap();
+        
+        // Load builtins via TypeManager (Vec)
+        let vec_data = builtin_types::vec::load_vec_data();
+        codegen.type_manager.register_builtin(vec_data.clone());
+        
+        if let Some(def) = vec_data.struct_def {
+            codegen.struct_defs.insert(def.name.clone(), def);
+        }
+        codegen.generic_impls.entry("Vec".to_string()).or_default().extend(vec_data.impl_blocks);
 
-        // Register builtin generic impls (Vec<T>, etc.)
+        // Register builtin generic impls (HashMap, etc.)
         builtin_impls::register_builtin_structs(&mut codegen.struct_defs);
         builtin_impls::register_builtin_impls(&mut codegen.generic_impls);
         
-        // Compile the struct defs we just added so their types are registered in LLVM
-        // (Usually compile_struct_defs handles this, but since we add them late, we might need to ensure they are handled.
-        // Actually, struct_defs are normally compiled in compile_module loop.
-        // But here we are in CodeGenerator constructor.
-        // Does compile_struct_defs get called later for these?
-        // CodeGenerator doesn't usually iterate struct_defs itself, the Compiler Driver does.
-        // BUT `codegen.struct_defs` is populated here.
-        // We should manually compile them to ensure opaque types exist.)
+        // Compile the struct defs we just added
         let vec_defs = codegen.struct_defs.values().cloned().collect::<Vec<_>>();
         codegen.compile_struct_defs(&vec_defs).unwrap(); // This registers LLVM types.
 
