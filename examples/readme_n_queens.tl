@@ -43,17 +43,17 @@ fn main() {
              
              // Constraint losses
              let col_sums = probs.sum(0);
-             let col_loss = (col_sums - 1.0).pow(2).sum();
+             let col_loss = (col_sums - 1.0).pow(2).sumall();
 
              let probs_b = probs.reshape([1, N, N]);
              let anti_diag_sums = (probs_b * anti_diag_mask).sum(2).sum(1);
              let main_diag_sums = (probs_b * main_diag_mask).sum(2).sum(1);
 
-             let anti_diag_loss = (anti_diag_sums - 1.0).relu().pow(2).sum();
-             let main_diag_loss = (main_diag_sums - 1.0).relu().pow(2).sum();
+             let anti_diag_loss = (anti_diag_sums - 1.0).relu().pow(2).sumall();
+             let main_diag_loss = (main_diag_sums - 1.0).relu().pow(2).sumall();
              
              // Regularization to push toward 0/1
-             let reg_loss = (probs * (1.0 - probs)).sum() * 0.05;
+             let reg_loss = (probs * (1.0 - probs)).sumall() * 0.05;
 
              let constraint_loss = col_loss + anti_diag_loss + main_diag_loss;
              let total_loss = constraint_loss + reg_loss;
@@ -70,7 +70,7 @@ fn main() {
                  if enable_queens_check {
                      let current_queens = [r, c | r <- 0..N, c <- 0..N {
                          if probs[r, c] > 0.5 { 1.0 } else { 0.0 }
-                     }].sum().item();
+                     }].sumall().item();
 
                      if current_queens == 8.0 {
                          println("Converged at epoch {} (found {} queens)", i, current_queens);

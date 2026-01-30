@@ -2793,6 +2793,91 @@ impl<'ctx> CodeGenerator<'ctx> {
                             Ok((res, res_ty))
                         }
                     }
+                    Type::Struct(name, _) | Type::UserDefined(name, _) if name == "Tensor" => {
+                        let rank = indices.len();
+                        let i64_type = self.context.i64_type();
+                        let array_type = i64_type.array_type(rank as u32);
+                        let current_block = self.builder.get_insert_block().unwrap();
+                        let function = current_block.get_parent().unwrap();
+                        let entry_block = function.get_first_basic_block().unwrap();
+                        let entry_builder = self.context.create_builder();
+                        if let Some(first_instr) = entry_block.get_first_instruction() {
+                            entry_builder.position_before(&first_instr);
+                        } else {
+                            entry_builder.position_at_end(entry_block);
+                        }
+                        let array_alloca = entry_builder
+                            .build_alloca(array_type, "idx_arr")
+                            .map_err(|e| e.to_string())?;
+
+                        for (i, idx_expr) in indices.iter().enumerate() {
+                            let (compiled_idx, ty) = self.compile_expr(idx_expr)?;
+                            let idx_val = match ty {
+                                Type::I64 => compiled_idx.into_int_value(),
+                                Type::I32 => self
+                                    .builder
+                                    .build_int_z_extend(
+                                        compiled_idx.into_int_value(),
+                                        i64_type,
+                                        "zext",
+                                    )
+                                    .map_err(|e| e.to_string())?,
+                                Type::F64 | Type::F32 => self
+                                    .builder
+                                    .build_float_to_signed_int(
+                                        compiled_idx.into_float_value(),
+                                        i64_type,
+                                        "f2i",
+                                    )
+                                    .map_err(|e| e.to_string())?,
+                                _ => return Err(format!("Invalid index type {:?}", ty)),
+                            };
+                            let idx_val = inkwell::values::BasicValueEnum::IntValue(idx_val);
+                            let elem_ptr = unsafe {
+                                self.builder
+                                    .build_gep(
+                                        array_type,
+                                        array_alloca,
+                                        &[
+                                            i64_type.const_int(0, false),
+                                            i64_type.const_int(i as u64, false),
+                                        ],
+                                        "idx_ptr",
+                                    )
+                                    .map_err(|e| e.to_string())?
+                            };
+                            self.builder
+                                .build_store(elem_ptr, idx_val)
+                                .map_err(|e| e.to_string())?;
+                        }
+
+                        let get_fn_name = "tl_tensor_get_f32_md";
+                        let get_fn = self.module.get_function(get_fn_name).unwrap();
+                        let tensor_ptr = val.into_pointer_value();
+                        let array_ptr = self
+                            .builder
+                            .build_pointer_cast(
+                                array_alloca,
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "arr_ptr",
+                            )
+                            .map_err(|e| e.to_string())?;
+                        let rank_val = i64_type.const_int(rank as u64, false);
+
+                        let call = self
+                            .builder
+                            .build_call(
+                                get_fn,
+                                &[tensor_ptr.into(), array_ptr.into(), rank_val.into()],
+                                "get_md_call",
+                            )
+                            .map_err(|e| e.to_string())?;
+                        let res = match call.try_as_basic_value() {
+                            ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid get return".into()),
+                        };
+                        Ok((res, Type::F32))
+                    }
                     _ => Err("Index access only on Tensor or ScalarArray".into()),
                 }
             }
@@ -5628,7 +5713,13 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // Special Handling for Tensor methods
-        if let Type::Tensor(elem_ty, _) = &obj_ty {
+        let tensor_elem_ty_opt = match &obj_ty {
+            Type::Tensor(elem_ty, _) => Some(elem_ty.clone()),
+            Type::Struct(name, _) | Type::UserDefined(name, _) if name == "Tensor" => Some(Box::new(Type::F32)),
+            _ => None,
+        };
+
+        if let Some(elem_ty) = tensor_elem_ty_opt {
             match method {
                 "to_i64" => {
                     if !args.is_empty() {
@@ -5712,7 +5803,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let ret_ty = if is_int { Type::I64 } else { Type::F32 };
                     return Ok((res, ret_ty));
                 }
-                "max" | "min" | "mean" | "argmax" | "argmin" => {
+                "max" | "min" | "mean" | "argmax" | "argmin" | "sum" => {
                     if !args.is_empty() {
                         let suffix = if method == "argmax" || method == "argmin" {
                             ""
@@ -5755,7 +5846,39 @@ impl<'ctx> CodeGenerator<'ctx> {
                         if method == "argmax" || method == "argmin" {
                             return Err(format!("{} requires arguments", method));
                         }
+                        // Fallback to no-dim version
+                        let fn_name = format!("tl_tensor_{}", method);
+                        let fn_val = self
+                            .module
+                            .get_function(&fn_name)
+                            .ok_or(format!("{} not found", fn_name))?;
+
+                        let call = self
+                            .builder
+                            .build_call(fn_val, &[obj_val.into()], "reduce_res")
+                            .map_err(|e| e.to_string())?;
+                        let res = match call.try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(v) => v,
+                            _ => return Err(format!("Invalid return from {}()", method).into()),
+                        };
+
+                        return Ok((res, obj_ty.clone()));
                     }
+                }
+                "sumall" => {
+                    let fn_val = self
+                        .module
+                        .get_function("tl_tensor_sum")
+                        .ok_or("tl_tensor_sum not found")?;
+                    let call = self
+                        .builder
+                        .build_call(fn_val, &[obj_val.into()], "sum_res")
+                        .map_err(|e| e.to_string())?;
+                    let res = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Invalid return from sumall()".into()),
+                    };
+                    return Ok((res, obj_ty.clone()));
                 }
                 "detach" => {
                     let fn_val = self
@@ -6379,23 +6502,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                   Ok((res, obj_ty))
               }
-              "sum" => {
-                  let fn_val = self.module.get_function("tl_tensor_sum").unwrap();
-                  let call = self
-                      .builder
-                      .build_call(fn_val, &[obj_val.into()], "sum_res");
 
-                  let res = self.check_tensor_result(call.map_err(|e| e.to_string())?, "sum_error")?;
-
-                  if self.is_safe_to_free(obj, &obj_ty) {
-                      self.emit_recursive_free(obj_val, &obj_ty, super::CLEANUP_FULL)?;
-                  }
-
-                  // sum returns scalar tensor (rank 0 or 1 depending on impl).
-                  // Assuming it returns Tensor<f32, 0> or 1.
-                  self.emit_register_tensor(res, &obj_ty)?;
-                  Ok((res, obj_ty)) // Currently preserving type/rank info is hard, returning same opaque type
-              }
               "slice" => {
                   if args.len() != 2 {
                       return Err("slice requires 2 arguments".into());

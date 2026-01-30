@@ -12,7 +12,7 @@ fn main() {
     
     let D = A.matmul(B);
     let diff = C - D;
-    let s = diff.sum();
+    let s = diff.sumall();
     // Should be close to 0
     print("Difference sum (should be approx 0):");
     print(s);

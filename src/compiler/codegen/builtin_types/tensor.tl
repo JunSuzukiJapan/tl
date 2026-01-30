@@ -9,6 +9,7 @@ impl Tensor {
     
     // Reduction ops
     extern fn sum(self, dim: i64) -> Tensor;
+    extern fn sumall(self) -> Tensor;
     extern fn sum_dim(self, dim: i64, keepdim: bool) -> Tensor;
     extern fn mean(self) -> Tensor;
     extern fn argmax(self, dim: i64, keepdim: bool) -> Tensor;
@@ -30,7 +31,7 @@ impl Tensor {
     // Memory/Movement
     extern fn clone(self) -> Tensor;
     extern fn contiguous(self) -> Tensor;
-    extern fn detach(self, requires_grad: bool) -> Tensor;
+    extern fn detach(self) -> Tensor;
     extern fn cuda(self) -> Tensor;
     extern fn cpu(self) -> Tensor;
     

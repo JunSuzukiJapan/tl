@@ -2378,6 +2378,32 @@ impl SemanticAnalyzer {
                                 Ok(Type::Tensor(inner1.clone(), std::cmp::max(*rank1, *rank2)))
                             }
                         }
+                         // Struct("Tensor") Compatibility with Scalar
+                        (Type::Struct(name, _), val) if name == "Tensor" && (matches!(val, Type::F32 | Type::I64 | Type::F64 | Type::I32)) => {
+                             if matches!(result_ty, Type::Bool) {
+                                Ok(Type::Bool)
+                            } else {
+                                Ok(left) // Result is Tensor
+                            }
+                        }
+                        (val, Type::Struct(name, _)) if name == "Tensor" && (matches!(val, Type::F32 | Type::I64 | Type::F64 | Type::I32)) => {
+                             if matches!(result_ty, Type::Bool) {
+                                Ok(Type::Bool)
+                            } else {
+                                Ok(right) // Result is Tensor
+                            }
+                        }
+                        (Type::Struct(n1, _), Type::Struct(n2, _)) if n1 == "Tensor" && n2 == "Tensor" => {
+                            if matches!(result_ty, Type::Bool) {
+                                Ok(Type::Bool)
+                            } else {
+                                Ok(left) // Result is Tensor
+                            }
+                        }
+                        // Struct("Tensor") Mixed with Legacy Tensor (Support transition)
+                        (Type::Struct(n, _), Type::Tensor(_, _)) if n == "Tensor" => Ok(left),
+                        (Type::Tensor(_, _), Type::Struct(n, _)) if n == "Tensor" => Ok(right),
+
                         _ => self.err(
                             SemanticError::TypeMismatch {
                                 expected: left,
@@ -3963,11 +3989,8 @@ impl SemanticAnalyzer {
             ExprKind::IndexAccess(target, _indices) => {
                 let target_type = self.check_expr(target)?;
                 match target_type {
-                    Type::Tensor(inner, _rank) => Ok(*inner), // Accessing reduces rank to scalar (in this simple logic)
-                    // Actually in Tensor Logic a[i, j] usually denotes the tensor itself with indices bound,
-                    // but for type checking purposes, it resolves to the element type if fully indexed,
-                    // or acts as the tensor for equations.
-                    // Let's assume it validates to the Inner type for now.
+                    Type::Tensor(inner, _rank) => Ok(*inner), 
+                    Type::Struct(name, _) if name == "Tensor" => Ok(Type::F32), // Assume F32 for opaque Tensor
                     _ => self.err(
                         SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
