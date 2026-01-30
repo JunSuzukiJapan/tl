@@ -9,12 +9,17 @@
 
 ## 概要
 
-組み込み型の実装は、以下の4つのステップで行います。
+組み込み型の実装（追加）は、以下の4つのステップで行います。
+
+> [!IMPORTANT]
+> **手順 1〜3 は、ビルド時に毎回自動で行われる処理ではありません。**
+> これらは「新しいジェネリックな組み込み型を追加・定義するときに、開発者が行う（または一回限りのスクリプトで生成する）手順」です。
+> 現状のビルドプロセスで `codegen` 内で自動的に `.tl` がパースされるわけではない点に注意してください。
 
 1.  **TLコード記述**: 組み込みたい型とそのメソッドを、通常の **TL言語** で記述する。
-2.  **AST解析**: 1で記述したTLコードをコンパイラ（のパーサ）で読み込み、AST (抽象構文木) を取得する。
-3.  **Rustコード生成**: 2で得られたASTを解析し、**「そのASTと同等のASTをプログラム的に組み立てるRustコード」** を生成する（マクロやビルドスクリプトを使用）。
-4.  **コンパイラへの注入**: 3で生成されたRustコードを用いて、特殊化前（Generic）のASTとしてコンパイラの `TypeRegistry` や `CodeGenerator` に登録する。
+2.  **AST取得 (Dev Time)**: 1で記述したTLコードを開発ツール等でパースし、AST (抽象構文木) を取得する。
+3.  **Rustコード生成 (Dev Time)**: 2で得られたASTを再現するためのRustコード（AST Builder）を作成/生成する。
+4.  **コンパイラへの注入 (Runtime)**: 3で用意したRustコードを用いて、コンパイラ起動時に `TypeRegistry` 等へASTを登録する。
 
 この手法により、組み込み型は「コンパイラが特別扱いする黒魔術的な型」ではなく、**「標準ライブラリとしてプリロードされる、ただのジェネリックなユーザー定義型」** として扱われるようになります。
 
@@ -22,9 +27,9 @@
 
 ## 手順の詳細
 
-### 1. TL言語での型定義 (`src/compiler/codegen/builtin_types/`)
-
-まず、実装したい型を `.tl` ファイルとして作成し、**`src/compiler/codegen/builtin_types/` ディレクトリに配置します**。
+### 1. TL言語での型定義（開発者が作成）
+実装したい型を `.tl` ファイルとして作成し、**`src/compiler/codegen/builtin_types/` ディレクトリに配置します**。
+これは「こうあるべき」型の定義書となります。
 
 ```rust
 // src/compiler/codegen/builtin_types/vec.tl
@@ -42,30 +47,30 @@ impl Vec<T> {
     }
 
     fn push(self, item: T) {
-        // ...
+// ...
     }
 }
 ```
 
-### 2. ASTの取得
-
-開発ツール（ビルドスクリプト等）を使用して、この `.tl` ファイルをパースします。
+### 2. ASTの取得（開発時の作業）
+開発ツール（手元のスクリプトや一時的なテストコードなど）を使用して、この `.tl` ファイルをパースし、どのようなAST構造になるかを確認します。
 
 ```rust
-// build.rs (concept)
+// build_helper.rs (concept)
 let ast = parser::parse_file("stdlib/vec.tl")?;
+// astの内容を出力して確認
 ```
 
-### 3. Rustコード (AST Builder) の生成
-
-取得した AST を再構築するための Rust コードを生成します。
-これは、コンパイラが起動時に実行するコードになります。
+### 3. Rustコード (AST Builder) の生成（開発時の作業）
+取得した AST を再構築するための Rust コードを作成（またはスクリプトで自動生成）します。
+この生成されたコードが、最終的にコンパイラのソースコードの一部（`vec.rs` など）になります。
+「コンパイラが起動時に実行するコード」を、ここで準備します。
 
 **生成されるRustコードのイメージ:**
 ```rust
 // generated_builtins.rs
 
-pub fn create_vec_ast() -> StructDef {
+pub fn create_vec_struct() -> StructDef {
     StructDef {
         name: "Vec".to_string(),
         generics: vec!["T".to_string()],
@@ -73,7 +78,23 @@ pub fn create_vec_ast() -> StructDef {
             ("ptr".to_string(), Type::Ptr(Box::new(Type::Generic("T")))),
             // ...
         ],
-        // ...
+    }
+}
+
+pub fn create_vec_impl() -> ImplBlock {
+    ImplBlock {
+        target_type: Type::UserDefined("Vec", vec![Type::Generic("T")]),
+        generics: vec!["T"],
+        methods: vec![
+            FunctionDef {
+                 name: "push".to_string(),
+                 args: vec![("item".to_string(), Type::Generic("T"))],
+                 return_type: Type::Void,
+                 body: vec![ /* ... ASTの本体 ... */ ],
+                 // ...
+            },
+            // ... 他のメソッド
+        ],
     }
 }
 ```
