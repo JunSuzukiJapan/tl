@@ -512,7 +512,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::I64 => format!("tl_vec_i64_{}", method_name),
             Type::F32 => format!("tl_vec_f32_{}", method_name),
             Type::U8 => format!("tl_vec_u8_{}", method_name), // New U8 support
-            Type::UserDefined(name, _) if name == "String" => format!("tl_vec_string_{}", method_name),
+            Type::UserDefined(name, _) | Type::Struct(name, _) if name == "String" => format!("tl_vec_string_{}", method_name),
             _ => format!("tl_vec_ptr_{}", method_name), // Pointer-based for structs/others
         };
         

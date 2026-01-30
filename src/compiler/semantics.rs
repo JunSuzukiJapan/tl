@@ -453,6 +453,7 @@ impl SemanticAnalyzer {
             let resolved_args: Vec<Type> = args.iter().map(|a| self.resolve_user_type(a)).collect();
 
             if self.structs.contains_key(&resolved_name) {
+                // println!("DEBUG: resolve_user_type '{}' -> Struct", resolved_name);
                 return Type::Struct(resolved_name, resolved_args);
             }
             if self.enums.contains_key(&resolved_name) {
@@ -722,9 +723,14 @@ impl SemanticAnalyzer {
         
         println!("DEBUG: check_module_bodies '{}' impls: {}", prefix, module.impls.len());
 
-        // Check impl blocks (Register methods first)
+        // Pass 1: Register impl methods
         for i in &mut module.impls {
-            self.check_impl_block(i)?;
+            self.register_impl_block(i)?;
+        }
+
+        // Pass 2: Check impl bodies
+        for i in &mut module.impls {
+            self.check_impl_bodies(i)?;
         }
 
         // Check top-level statements (e.g. tensor_decls)
@@ -1119,7 +1125,7 @@ impl SemanticAnalyzer {
         Ok(errors)
     }
 
-    fn check_impl_block(&mut self, impl_block: &mut ImplBlock) -> Result<(), TlError> {
+    fn register_impl_block(&mut self, impl_block: &mut ImplBlock) -> Result<(), TlError> {
         // Resolve the target type using resolve_user_type to convert UserDefined -> Struct/Enum
         let resolved_target = self.resolve_user_type(&impl_block.target_type);
         
@@ -1130,8 +1136,6 @@ impl SemanticAnalyzer {
         
         // Match, extract name
         let final_target_name = impl_block.target_type.get_base_name();
-        
-
 
         // Check if target struct/enum exists
         if !self.structs.contains_key(&final_target_name) && !self.enums.contains_key(&final_target_name) {
@@ -1140,7 +1144,6 @@ impl SemanticAnalyzer {
                 None,
             );
         }
-
 
         // Check methods
         // 1. Register methods
@@ -1192,9 +1195,13 @@ impl SemanticAnalyzer {
                 struct_methods.insert(name, resolved_method);
             }
         }
+        Ok(())
+    }
 
+    fn check_impl_bodies(&mut self, impl_block: &mut ImplBlock) -> Result<(), TlError> {
+        // Type already resolved in register pass
+        let resolved_target = impl_block.target_type.clone();
 
-        // 2. Check function bodies
         // Skip body check for generic impls as types are unknown until monomorphization
         if !impl_block.generics.is_empty() {
              return Ok(());
@@ -1203,7 +1210,7 @@ impl SemanticAnalyzer {
         for method in &mut impl_block.methods {
             self.check_function(
                 method,
-                Some(impl_block.target_type.clone()),
+                Some(resolved_target.clone()),
             )?;
         }
         Ok(())
@@ -5099,10 +5106,6 @@ impl SemanticAnalyzer {
                     Type::Enum(name, _) => name.clone(),
                     _ => obj_type.get_base_name(),
                 };
-
-                // DEBUG PRINT
-
-
 
                 let method_data = if let Some(methods) = self.methods.get(&type_name) {
                     methods.get(method_name).map(|m| (m.args.clone(), m.return_type.clone()))

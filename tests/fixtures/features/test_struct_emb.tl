@@ -6,7 +6,8 @@ struct Emb {
 
 impl Emb {
     fn new(vocab: i64, d: i64) -> Emb {
-        Emb(Tensor::randn([vocab, d], true) * 0.1)
+        let w = Tensor::randn([vocab, d], true) * 0.1;
+        Emb(w)
     }
     
     fn forward(self, idx: Tensor<f32, 2>) -> Tensor<f32, 3> {

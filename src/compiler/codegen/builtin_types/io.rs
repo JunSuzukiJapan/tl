@@ -89,7 +89,7 @@ fn compile_env_get<'ctx>(
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from Env::get".into()),
     };
-    Ok((res, Type::UserDefined("String".to_string(), vec![])))
+    Ok((res, Type::Struct("String".to_string(), vec![])))
 }
 
 fn compile_http_get<'ctx>(
@@ -104,7 +104,7 @@ fn compile_http_get<'ctx>(
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from Http::get".into()),
     };
-    Ok((res, Type::UserDefined("String".to_string(), vec![])))
+    Ok((res, Type::Struct("String".to_string(), vec![])))
 }
 
 fn compile_path_exists<'ctx>(
@@ -155,7 +155,7 @@ pub fn compile_file_open<'ctx>(
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from File::open".into()),
     };
-    Ok((res, Type::UserDefined("File".to_string(), vec![])))
+    Ok((res, Type::Struct("File".to_string(), vec![])))
 }
 
 pub fn compile_file_exists<'ctx>(
@@ -186,7 +186,7 @@ pub fn compile_file_read_static<'ctx>(
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from File::read".into()),
     };
-    Ok((res, Type::UserDefined("String".to_string(), vec![])))
+    Ok((res, Type::Struct("String".to_string(), vec![])))
 }
 
 pub fn compile_file_download<'ctx>(
@@ -233,7 +233,7 @@ pub fn compile_file_read_string<'ctx>(
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from File::read_string".into()),
     };
-    Ok((res, Type::UserDefined("String".to_string(), vec![])))
+    Ok((res, Type::Struct("String".to_string(), vec![])))
 }
 
 pub fn compile_file_write_string<'ctx>(

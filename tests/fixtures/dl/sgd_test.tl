@@ -25,8 +25,8 @@ impl SGD {
         let step_b = gb * self.lr;
         let new_b = model.b - step_b;
         
-        let dW = new_W.detach(true);
-        let db = new_b.detach(true);
+        let dW = new_W.detach();
+        let db = new_b.detach();
 
         // Return new model with CLONED tensors to avoid use-after-free
         return Linear(dW.clone(), db.clone());

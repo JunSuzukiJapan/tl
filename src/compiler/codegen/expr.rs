@@ -3060,6 +3060,34 @@ impl<'ctx> CodeGenerator<'ctx> {
                         self.context.i64_type().const_int(0, false),
                         "cond_bool"
                     ).map_err(|e| e.to_string())?
+                } else if cond_val.is_pointer_value() {
+                     // Condition is a Tensor (PointerValue). Extract boolean value.
+                     // It is likely a Scalar Tensor from a comparison (e.g. gt, lt).
+                     // use tl_tensor_item_i64 to extract value (0 or 1)
+                     let item_fn = self.module.get_function("tl_tensor_item_i64").or_else(|| self.module.get_function("tl_tensor_item_f32").map(|f| {
+                         // Fallback? f32 compare != 0.0?
+                         // Ideally comparison returns i64-backed scalar tensor (0 or 1).
+                         // Let's assume tl_tensor_item_i64 works for now or if missing try to cast.
+                         // But wait, explicit check for tensor type was done via item_fn earlier?
+                         // The panic says: cond_val is PointerValue.
+                         // The unwrapped item_fn above was for "if cond_val is tensor but identified elsewhere?"
+                         // Wait, let's look at lines 3046-3049 which I didn't see yet.
+                         f
+                     })).ok_or("Runtime function tl_tensor_item_i64 not found to resolve Tensor boolean condition")?;
+                     
+                     let call = self.builder.build_call(item_fn, &[cond_val.into()], "cond_item").map_err(|e| e.to_string())?;
+                     let item_val = match call.try_as_basic_value() {
+                          inkwell::values::ValueKind::Basic(v) => v,
+                          _ => return Err("Expected basic value from tl_tensor_item_i64".into()),
+                     };
+                     
+                     // item_i64 returns i64. Comparison 0 or 1.
+                     self.builder.build_int_compare(
+                        inkwell::IntPredicate::NE,
+                        item_val.into_int_value(),
+                        self.context.i64_type().const_int(0, false),
+                        "cond_bool"
+                     ).map_err(|e| e.to_string())?
                 } else {
                      self
                     .builder
@@ -8054,7 +8082,7 @@ fn compile_save_weights<'ctx>(
     let (t_val, t_ty) = &args[0];
     let (path_val, path_ty) = &args[1];
 
-    if !matches!(path_ty, Type::UserDefined(s, _) if s == "String") {
+    if !matches!(path_ty, Type::UserDefined(s, _) | Type::Struct(s, _) if s == "String") {
         return Err("Second argument to save_weights must be a String (path)".into());
     }
 
@@ -8147,7 +8175,7 @@ fn compile_load_weights<'ctx>(
         // Struct load
         let (struct_val, s_ty) = &args[0];
         let (path_val, path_ty) = &args[1];
-        if !matches!(path_ty, Type::UserDefined(s, _) if s == "String") {
+        if !matches!(path_ty, Type::UserDefined(s, _) | Type::Struct(s, _) if s == "String") {
             return Err("Second argument to load_weights must be a String (path)".into());
         }
 

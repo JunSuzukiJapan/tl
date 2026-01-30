@@ -24,8 +24,8 @@ impl Linear {
     fn step(self, lr: f32) {
         let gw = self.weight.grad();
         let gb = self.bias.grad();
-        self.weight = (self.weight - gw * lr).detach(true);
-        self.bias = (self.bias - gb * lr).detach(true);
+        self.weight = (self.weight - gw * lr).detach();
+        self.bias = (self.bias - gb * lr).detach();
     }
 }
 
