@@ -85,7 +85,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  if name != "String" {
                      // eprintln!("DEBUG: Top Level Unregister generation for {}", name);
                  }
-                 let cast_ptr = self.builder.build_pointer_cast(val.into_pointer_value(), self.context.ptr_type(inkwell::AddressSpace::default()), "cast_unreg_simul").unwrap();
+                let cast_ptr = self.builder.build_pointer_cast(val.into_pointer_value(), self.context.ptr_type(inkwell::AddressSpace::default()), "cast_unreg_simul").unwrap();
                  
                  // Debug trace: unregister
                  let size_val = self.context.i64_type().const_int(0, false);
@@ -1284,7 +1284,61 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (mut val_ir, mut val_ty) = if let Some((r, t)) = dps_result {
                     (r, t)
                 } else {
-                    self.compile_expr(value)?
+                    // Check for HashMap::new() with type annotation to perform correct monomorphization
+                    let mut handled = false;
+                    let mut res = (self.context.i64_type().const_zero().into(), Type::Void);
+
+                    if let Some(target_ty) = type_annotation {
+                        if let ExprKind::StaticMethodCall(t_ty, _m_name, args) = &value.inner {
+                            let _type_name_matches = match t_ty {
+                                Type::UserDefined(n, _) | Type::Struct(n, _) => n == "HashMap",
+                                _ => false,
+                            };
+
+                            let mut effective_target = None;
+                            let target_is_hashmap = match target_ty {
+                                Type::UserDefined(n, args) | Type::Struct(n, args) => {
+                                    if n == "HashMap" && args.len() == 2 {
+                                        effective_target = Some(target_ty.clone());
+                                        true
+                                    } else if n.starts_with("HashMap_") {
+                                        // Handle mangled name: HashMap_String_i64, etc.
+                                        let parts: Vec<&str> = n.split('_').collect();
+                                        if parts.len() >= 3 && parts[0] == "HashMap" {
+                                            let key_ty = if parts[1] == "String" { Type::UserDefined("String".to_string(), vec![]) } else { Type::UserDefined(parts[1].to_string(), vec![]) };
+                                            let val_ty = if parts[2] == "i64" { Type::I64 } 
+                                                else if parts[2] == "String" { Type::UserDefined("String".to_string(), vec![]) }
+                                                else if parts[2] == "Tensor" { Type::UserDefined("Tensor".to_string(), vec![]) } // Or handle Tensor specifically?
+                                                else { Type::UserDefined(parts[2].to_string(), vec![]) };
+                                            
+                                            effective_target = Some(Type::Struct("HashMap".to_string(), vec![key_ty, val_ty]));
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    } else {
+                                        false
+                                    }
+                                }
+                                _ => false,
+                            };
+
+                            if target_is_hashmap {
+                                if let Some(et) = effective_target {
+                                     res = self
+                                        .compile_static_method_call("HashMap", "new", args, &et)
+                                        .map_err(|e| e.to_string())?;
+                                     handled = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if handled {
+                        res
+                    } else {
+                        self.compile_expr(value)?
+                    }
                 };
                 // Ownership: Shared. The temporary (value) remains in scope and will be released at scope exit.
                 // The variable (name) acquires a NEW reference via deep_clone below.
@@ -3386,7 +3440,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Ok((res, Type::F32))
                 }
             }
-            (Type::UserDefined(s1, _), Type::UserDefined(s2, _)) if s1 == "String" && s2 == "String" => {
+            (
+                Type::UserDefined(s1, _) | Type::Struct(s1, _),
+                Type::UserDefined(s2, _) | Type::Struct(s2, _),
+            ) if s1 == "String" && s2 == "String" => {
                 match op {
                     BinOp::Add => {
                         let concat_fn = self
@@ -3401,7 +3458,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             ValueKind::Basic(v) => v,
                             _ => return Err("Invalid string concat return".into()),
                         };
-                        Ok((res_val, Type::UserDefined("String".to_string(), vec![])))
+                        Ok((res_val, Type::Struct("String".to_string(), vec![])))
                     }
                     BinOp::Eq | BinOp::Neq => {
                         let strcmp_fn = self

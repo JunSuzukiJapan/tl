@@ -2521,6 +2521,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::I64 => "I64",
                     Type::Bool => "Bool",
                     // Add other types as needed or implement a helper
+                    Type::Tensor(_, _) => "Tensor",
                     _ => return Err(format!("Cannot call static method on type {:?}", type_ty)),
                 };
                 self.compile_static_method_call(struct_name, method_name, args, &type_ty)
@@ -3533,7 +3534,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => return Err("tl_string_new returned void".into()),
         };
 
-        Ok((ptr, Type::UserDefined("String".to_string(), vec![])))
+        Ok((ptr, Type::Struct("String".to_string(), vec![])))
     }
 
     fn compile_tuple(&mut self, elements: &[Expr]) -> Result<(BasicValueEnum<'ctx>, Type), String> {
@@ -3845,7 +3846,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok((struct_ptr.into(), Type::Struct(name.to_string(), vec![])))
     }
 
-    fn compile_static_method_call(
+    pub(crate) fn compile_static_method_call(
         &mut self,
         struct_name: &str,
         method: &str,
@@ -7491,7 +7492,7 @@ fn compile_print_common<'ctx>(
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
                 .map_err(|e| e.to_string())?;
         }
-        Type::UserDefined(s, _) if s == "Tensor" => {
+        Type::UserDefined(s, _) | Type::Struct(s, _) if s == "Tensor" => {
             let fn_name = if is_newline {
                 "tl_tensor_print"
             } else {
@@ -7503,7 +7504,7 @@ fn compile_print_common<'ctx>(
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
                 .map_err(|e| e.to_string())?;
         }
-        Type::UserDefined(s, _) if s == "String" => {
+        Type::UserDefined(s, _) | Type::Struct(s, _) if s == "String" => {
             let fn_name = if is_newline {
                 "tl_print_string"
             } else {

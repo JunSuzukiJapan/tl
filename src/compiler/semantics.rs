@@ -1817,7 +1817,7 @@ impl SemanticAnalyzer {
             ExprKind::Int(_) => Ok(Type::I64), // Default integer literal type
             ExprKind::Float(_) => Ok(Type::F32), // Default float literal type
             ExprKind::Bool(_) => Ok(Type::Bool),
-            ExprKind::StringLiteral(_) => Ok(Type::UserDefined("String".to_string(), vec![])), // Placeholder
+            ExprKind::StringLiteral(_) => Ok(Type::Struct("String".to_string(), vec![])),
             ExprKind::Symbol(_) => Ok(Type::Entity),
             ExprKind::LogicVar(_) => Ok(Type::Entity),
             ExprKind::Wildcard => Ok(Type::Entity), // Wildcard treated as Entity type? Or generic?
@@ -2551,10 +2551,10 @@ impl SemanticAnalyzer {
                     }
                     let string_ty = self.check_expr(&mut args[0])?;
                     let index_ty = self.check_expr(&mut args[1])?;
-                    if string_ty != Type::UserDefined("String".to_string(), vec![]) {
+                    if string_ty != Type::Struct("String".to_string(), vec![]) {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::UserDefined("String".to_string(), vec![]),
+                                expected: Type::Struct("String".to_string(), vec![]),
                                 found: string_ty,
                             },
                             Some(args[0].span.clone()),
@@ -2569,7 +2569,7 @@ impl SemanticAnalyzer {
                             Some(args[1].span.clone()),
                         );
                     }
-                    return Ok(Type::UserDefined("String".to_string(), vec![])); // Returns a single character as a String
+                    return Ok(Type::Struct("String".to_string(), vec![])); // Returns a single character as a String
                 } else if name == "len" {
                     if args.len() != 1 {
                         return self.err(
@@ -2582,12 +2582,12 @@ impl SemanticAnalyzer {
                         );
                     }
                     let arg_ty = self.check_expr(&mut args[0])?;
-                    if arg_ty != Type::UserDefined("String".to_string(), vec![])
+                    if arg_ty != Type::Struct("String".to_string(), vec![])
                         && !matches!(arg_ty, Type::Tensor(_, _))
                     {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::UserDefined("String".to_string(), vec![]),
+                                expected: Type::Struct("String".to_string(), vec![]),
                                 found: arg_ty,
                             },
                             Some(args[0].span.clone()),
@@ -2607,7 +2607,7 @@ impl SemanticAnalyzer {
                     }
                     let _t0 = self.check_expr(&mut args[0])?;
                     let _t1 = self.check_expr(&mut args[1])?;
-                    return Ok(Type::UserDefined("File".to_string(), vec![]));
+                    return Ok(Type::Struct("File".to_string(), vec![]));
                 }
                 if name == "tl_file_read_string" {
                     if args.len() != 1 {
@@ -2621,7 +2621,7 @@ impl SemanticAnalyzer {
                         );
                     }
                     let _t0 = self.check_expr(&mut args[0])?;
-                    return Ok(Type::UserDefined("String".to_string(), vec![]));
+                    return Ok(Type::Struct("String".to_string(), vec![]));
                 }
                 if name == "tl_file_write_string" {
                     if args.len() != 2 {
@@ -2664,7 +2664,7 @@ impl SemanticAnalyzer {
                         );
                     }
                     let _t0 = self.check_expr(&mut args[0])?;
-                    return Ok(Type::UserDefined("String".to_string(), vec![]));
+                    return Ok(Type::Struct("String".to_string(), vec![]));
                 } else if name == "tl_args_count" {
                     if !args.is_empty() {
                         return self.err(
@@ -2698,7 +2698,7 @@ impl SemanticAnalyzer {
                             Some(args[0].span.clone()),
                         );
                     }
-                    return Ok(Type::UserDefined("String".to_string(), vec![]));
+                    return Ok(Type::Struct("String".to_string(), vec![]));
                 } else if name == "tl_string_to_i64" {
                     if args.len() != 1 {
                         return self.err(
@@ -2711,10 +2711,10 @@ impl SemanticAnalyzer {
                         );
                     }
                     let arg_ty = self.check_expr(&mut args[0])?;
-                    if arg_ty != Type::UserDefined("String".to_string(), vec![]) {
+                    if arg_ty != Type::Struct("String".to_string(), vec![]) {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::UserDefined("String".to_string(), vec![]),
+                                expected: Type::Struct("String".to_string(), vec![]),
                                 found: arg_ty,
                             },
                             Some(args[0].span.clone()),
@@ -3136,10 +3136,10 @@ impl SemanticAnalyzer {
                         );
                     }
                     let t = self.check_expr(&mut args[0])?;
-                    if !matches!(&t, Type::UserDefined(s, _) if s == "String") {
+                    if !matches!(&t, Type::Struct(s, _) if s == "String") {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::UserDefined("String".into(), vec![]),
+                                expected: Type::Struct("String".into(), vec![]),
                                 found: t,
                             },
                             Some(args[0].span.clone()),
@@ -3539,7 +3539,7 @@ impl SemanticAnalyzer {
                                 );
                             }
                             check_all_args(args)?;
-                            return Ok(Type::UserDefined("String".to_string(), vec![]));
+                            return Ok(Type::Struct("String".to_string(), vec![]));
                         }
                         "tl_gguf_load" => {
                             if arg_len != 1 {
@@ -3553,7 +3553,7 @@ impl SemanticAnalyzer {
                                 );
                             }
                             check_all_args(args)?;
-                            return Ok(Type::UserDefined("Map".to_string(), vec![]));
+                            return Ok(Type::Struct("Map".to_string(), vec![]));
                         }
                         "tl_tensor_map_get_quantized" => {
                             if arg_len != 2 {
@@ -3838,7 +3838,7 @@ impl SemanticAnalyzer {
                                     return self.err(
                                         SemanticError::TypeMismatch {
                                             expected: expected_type.clone(),
-                                            found: arg_type,
+                                            found: arg_type.clone(),
                                         },
                                         Some(arg.span.clone()),
                                     );

@@ -860,15 +860,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                  } else {
                      return Err("Only pointer keys supported for HashMap currently".into());
                  }
-                 
-                 // Cast Val -> void_ptr (if Struct/Tensor)
-                 if val_val.is_pointer_value() {
-                     let casted = self.builder.build_pointer_cast(val_val.into_pointer_value(), void_ptr_ty, "val_cast").unwrap();
-                     call_args.push(casted.into());
-                 } else {
-                     return Err("Only pointer values supported for HashMap currently".into());
-                 }
-            },
+                                  // Cast Val -> void_ptr (if Struct/Tensor) or Int -> void_ptr
+                  if val_val.is_pointer_value() {
+                      let casted = self.builder.build_pointer_cast(val_val.into_pointer_value(), void_ptr_ty, "val_cast").unwrap();
+                      call_args.push(casted.into());
+                  } else if val_val.is_int_value() {
+                      let casted = self.builder.build_int_to_ptr(val_val.into_int_value(), void_ptr_ty, "val_int_cast").unwrap();
+                      call_args.push(casted.into());
+                  } else {
+                      return Err("Only pointer or integer values supported for HashMap currently".into());
+                  }
+             },
             "get" | "remove" | "contains_key" => {
                  call_args.push(wrapper_fn.get_nth_param(0).unwrap().into()); // Map
                  let key_val = wrapper_fn.get_nth_param(1).unwrap();
@@ -893,12 +895,20 @@ impl<'ctx> CodeGenerator<'ctx> {
              };
              
              if method_name == "get" || method_name == "remove" {
-                 // Runtime returns void_ptr (Value*). Wrapper expects ValType (e.g. Tensor*)
+                 // Runtime returns void_ptr (Value*). Wrapper expects ValType
                  if raw_ret.is_pointer_value() {
-                     let casted = self.builder.build_pointer_cast(raw_ret.into_pointer_value(), val_llvm_ty.into_pointer_type(), "ret_cast").unwrap();
-                     self.builder.build_return(Some(&casted)).unwrap();
+                     let raw_ptr = raw_ret.into_pointer_value();
+                     if val_llvm_ty.is_pointer_type() {
+                         let casted = self.builder.build_pointer_cast(raw_ptr, val_llvm_ty.into_pointer_type(), "ret_cast").unwrap();
+                         self.builder.build_return(Some(&casted)).unwrap();
+                     } else if val_llvm_ty.is_int_type() {
+                         let casted = self.builder.build_ptr_to_int(raw_ptr, val_llvm_ty.into_int_type(), "ret_int_cast").unwrap();
+                         self.builder.build_return(Some(&casted)).unwrap();
+                     } else {
+                         return Err("Unsupported HashMap value return type".into());
+                     }
                  } else {
-                     return Err("Runtime function did not return pointer for get/remove".into());
+                     return Err("Runtime function returned non-pointer".into());
                  }
              } else {
                  self.builder.build_return(Some(&raw_ret)).unwrap();
