@@ -652,9 +652,9 @@ impl Monomorphizer {
                                    // First infer generics from args
                                    let mut type_args = Vec::new();
                                    let mut inference_map = HashMap::new();
-                                   let mut all_inferred = true;
-                                   
                                    // Map args to variant fields to infer
+                                   let all_inferred = true;
+                                   
                                    match &variant.kind {
                                         crate::compiler::ast::VariantKind::Unit => {},
                                         crate::compiler::ast::VariantKind::Tuple(types) => {
@@ -667,7 +667,7 @@ impl Monomorphizer {
                                                  }
                                              }
                                         },
-                                        crate::compiler::ast::VariantKind::Struct(fields) => {
+                                        crate::compiler::ast::VariantKind::Struct(_fields) => {
                                              // Positional args to struct definitions? 
                                              // For now assume matching order or skip inference for struct variants called as methods
                                         }
@@ -704,7 +704,7 @@ impl Monomorphizer {
 
                                    if all_inferred && !type_args.is_empty() {
                                        concrete_name = self.request_enum_instantiation(&type_name_str, type_args);
-                                   } else if let Some(Type::UserDefined(n, args)) | Some(Type::Enum(n, args)) | Some(Type::Struct(n, args)) = expected_type {
+                                   } else if let Some(Type::UserDefined(n, _args)) | Some(Type::Enum(n, _args)) | Some(Type::Struct(n, _args)) = expected_type {
                                        // Fallback: If expected type is already concrete (e.g. Option_I64) matching this generic
                                        if n.starts_with(&format!("{}_", type_name_str)) {
                                             concrete_name = n.clone();

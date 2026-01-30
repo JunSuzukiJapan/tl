@@ -1,5 +1,4 @@
 use crate::compiler::builtin_loader::{BuiltinLoader, BuiltinTypeData};
-use crate::compiler::codegen::type_manager::TypeManager;
 
 pub const SOURCE: &str = include_str!("result.tl");
 

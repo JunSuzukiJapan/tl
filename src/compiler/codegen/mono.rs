@@ -856,7 +856,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let call = self.builder.build_call(runtime_fn, &call_args, "");
         
         // Handle Return
-        if let Some(ret_t) = ret_type {
+        if let Some(_ret_t) = ret_type {
              let raw_ret = match call.unwrap().try_as_basic_value() {
                  inkwell::values::ValueKind::Basic(v) => v,
                  _ => return Err("Expected basic return value".into()),
