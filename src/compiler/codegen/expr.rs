@@ -85,64 +85,6 @@ pub fn compile_option_none<'ctx>(
 
 
 
-pub fn compile_vec_new<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    target_type: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    // Determine element type from target_type hint
-    let inner_type = if let Some(target) = target_type {
-        match target {
-            Type::Vec(inner) => *inner.clone(),
-            Type::UserDefined(_, args) | Type::Struct(_, args) => {
-                 if !args.is_empty() { args[0].clone() } else { Type::Void }
-            }
-            _ => Type::Void,
-        }
-    } else {
-        Type::Void
-    };
-
-    let fn_name = match inner_type {
-        Type::U8 => "tl_vec_u8_new",
-        Type::I64 => "tl_vec_i64_new",
-        Type::F32 => "tl_vec_f32_new",
-        _ => "tl_vec_ptr_new",
-    };
-
-    let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
-    let call = codegen.builder.build_call(fn_val, &[], "vec_new").map_err(|e| e.to_string())?;
-    
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from vec.new()".into()),
-    };
-
-    Ok((res, Type::Vec(Box::new(inner_type))))
-}
-
-pub fn compile_hashmap_new<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    target_type: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let fn_val = codegen.module.get_function("tl_hashmap_new").ok_or("tl_hashmap_new not found")?;
-    let call = codegen.builder.build_call(fn_val, &[], "hashmap_new").map_err(|e| e.to_string())?;
-    
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from hashmap.new()".into()),
-    };
-    
-    // Return with proper type if hinted
-    let ret_type = if let Some(ty) = target_type {
-        ty.clone()
-    } else {
-        Type::UserDefined("HashMap".to_string(), vec![])
-    };
-
-    Ok((res, ret_type))
-}
 
 
 
@@ -258,180 +200,6 @@ pub fn compile_path_exists<'ctx>(
 
 
 
-// Vec Instance Methods
-pub fn compile_vec_len<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    instance_val: BasicValueEnum<'ctx>,
-    instance_ty: Type,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if !args.is_empty() { return Err("Vec::len takes no arguments".into()); }
-    let inner_ty = if let Type::Vec(inner) = instance_ty {
-        *inner
-    } else {
-        Type::Void // Should be handled by TypeManager logic or type check
-    };
-    
-    let fn_name = match inner_ty {
-        Type::U8 => "tl_vec_u8_len",
-        Type::I64 => "tl_vec_i64_len",
-        Type::F32 => "tl_vec_f32_len",
-        _ => "tl_vec_ptr_len",
-    };
-    let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
-    let call = codegen.builder.build_call(fn_val, &[instance_val.into()], "vec_len").map_err(|e| e.to_string())?;
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from Vec::len".into()),
-    };
-    Ok((res, Type::I64))
-}
-
-pub fn compile_vec_push<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    instance_val: BasicValueEnum<'ctx>,
-    instance_ty: Type,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 { return Err("Vec::push requires 1 argument".into()); }
-    let (val, _ty) = args[0].clone();
-    let inner_ty = if let Type::Vec(inner) = instance_ty {
-        *inner
-    } else {
-        Type::Void
-    };
-    
-    // cast if necessary (for ptr types to void*)
-    let _arg_val = if matches!(inner_ty, Type::U8 | Type::I64 | Type::F32) {
-        val
-    } else {
-        // Cast to ptr? Logic in existing code:
-        // "tl_vec_ptr_push" takes (vec, ptr).
-        // LLVM pointer to pointer cast is implicit? No, explicit usually.
-        // Existing logic likely handled casting.
-        val
-    };
-
-    let fn_name = match inner_ty {
-        Type::U8 => "tl_vec_u8_push",
-        Type::I64 => "tl_vec_i64_push",
-        Type::F32 => "tl_vec_f32_push",
-        _ => "tl_vec_ptr_push",
-    };
-    let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
-    
-    // Check if cast is required for ptr push
-    let actual_arg = if fn_name == "tl_vec_ptr_push" {
-         if val.is_pointer_value() {
-            codegen.builder.build_pointer_cast(val.into_pointer_value(), codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap().into()
-         } else {
-             val
-         }
-    } else {
-        val
-    };
-
-    codegen.builder.build_call(fn_val, &[instance_val.into(), actual_arg.into()], "vec_push").map_err(|e| e.to_string())?;
-    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
-}
-
-pub fn compile_vec_pop<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    instance_val: BasicValueEnum<'ctx>,
-    instance_ty: Type,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if !args.is_empty() { return Err("Vec::pop takes no arguments".into()); }
-    let inner_ty = if let Type::Vec(inner) = instance_ty {
-        *inner
-    } else {
-        Type::Void
-    };
-    
-    let fn_name = match inner_ty {
-        Type::U8 => "tl_vec_u8_pop",
-        Type::I64 => "tl_vec_i64_pop",
-        Type::F32 => "tl_vec_f32_pop",
-        _ => "tl_vec_ptr_pop",
-    };
-    let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
-    let call = codegen.builder.build_call(fn_val, &[instance_val.into()], "vec_pop").map_err(|e| e.to_string())?;
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from Vec::pop".into()),
-    };
-    Ok((res, inner_ty))
-}
-
-pub fn compile_vec_get<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    instance_val: BasicValueEnum<'ctx>,
-    instance_ty: Type,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 { return Err("Vec::get requires 1 argument (index)".into()); }
-    let index_val = args[0].0;
-    
-    let inner_ty = if let Type::Vec(inner) = instance_ty {
-        *inner
-    } else {
-        Type::Void
-    };
-    
-    let fn_name = match inner_ty {
-        Type::U8 => "tl_vec_u8_get",
-        Type::I64 => "tl_vec_i64_get",
-        Type::F32 => "tl_vec_f32_get",
-        _ => "tl_vec_ptr_get",
-    };
-    let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
-    
-    let call = codegen.builder.build_call(fn_val, &[instance_val.into(), index_val.into()], "vec_get").map_err(|e| e.to_string())?;
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from Vec::get".into()),
-    };
-    Ok((res, inner_ty))
-}
-
-pub fn compile_vec_set<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    instance_val: BasicValueEnum<'ctx>,
-    instance_ty: Type,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 2 { return Err("Vec::set requires 2 arguments (index, value)".into()); }
-    let index_val = args[0].0;
-    let value_val = args[1].0;
-    
-    let inner_ty = if let Type::Vec(inner) = instance_ty {
-        *inner
-    } else {
-        Type::Void
-    };
-    
-    let fn_name = match inner_ty {
-        Type::U8 => "tl_vec_u8_set",
-        Type::I64 => "tl_vec_i64_set",
-        Type::F32 => "tl_vec_f32_set",
-        _ => "tl_vec_ptr_set",
-    };
-    let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
-    
-    // cast if needed (for ptr methods)
-    let actual_val = if fn_name == "tl_vec_ptr_set" {
-         if value_val.is_pointer_value() {
-              codegen.builder.build_pointer_cast(value_val.into_pointer_value(), codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap().into()
-         } else {
-             value_val
-         }
-    } else {
-         value_val
-    };
-
-    codegen.builder.build_call(fn_val, &[instance_val.into(), index_val.into(), actual_val.into()], "vec_set").map_err(|e| e.to_string())?;
-    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
-}
 
 pub type BuiltinFnEval = for<'a, 'ctx> fn(
     &'a mut CodeGenerator<'ctx>,
@@ -1513,23 +1281,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.static_methods
             .insert("Param".to_string(), param_static);
 
-        // --- HashMap Static Methods ---
-        let mut hashmap_static = StaticMethodManager::new();
-        hashmap_static.register_uneval("new", compile_hashmap_new_static);
-        self.static_methods
-            .insert("HashMap".to_string(), hashmap_static);
-
-        // --- HashMap Instance Methods ---
-        // HashMap is UserDefined, so it doesn't automatically fall into "Tensor" category.
-        // We must register instance methods here.
-        let mut hashmap_inst = InstanceMethodManager::new();
-        hashmap_inst.register_eval("insert", compile_hashmap_insert);
-        hashmap_inst.register_eval("get", compile_hashmap_get);
-        hashmap_inst.register_eval("remove", compile_hashmap_remove);
-        hashmap_inst.register_eval("contains_key", compile_hashmap_contains_key);
-        hashmap_inst.register_eval("len", compile_hashmap_len);
-        hashmap_inst.register_eval("clear", compile_hashmap_clear);
-        self.instance_methods.insert("HashMap".to_string(), hashmap_inst);
     }
 
     pub fn load_struct_i64_field(
@@ -4242,7 +3993,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
-        // 1. Resolve Mangled Name
+
+        // 2. Resolve Mangled Name
         let simple_type_name = if struct_name.contains("::") {
             struct_name.split("::").last().unwrap()
         } else {
@@ -4251,8 +4003,42 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mangled_name = format!("tl_{}_{}", simple_type_name, method);
         let stdlib_name = format!("tl_{}_{}", simple_type_name.to_lowercase(), method);
 
-        // 2. Lookup Function
-        let (func, actual_name) = if let Some(f) = self.module.get_function(&mangled_name) {
+        // 3. Lookup Function (Chain)
+        // 3a. Generic Lookup
+        let mut resolved_generics = vec![];
+
+        let generic_result: Option<(inkwell::values::FunctionValue<'ctx>, String)> = if self.generic_impls.contains_key(type_name) {
+             let generics = if let Type::UserDefined(n, args) | Type::Struct(n, args) = target_type {
+                 if n == type_name {
+                     if args.is_empty() && type_name == "HashMap" {
+                         vec![
+                             Type::UserDefined("String".to_string(), vec![]),
+                             Type::UserDefined("Tensor".to_string(), vec![])
+                         ]
+                     } else {
+                         args.clone()
+                     }
+                 } else {
+                     vec![]
+                 }
+             } else {
+                 vec![]
+             };
+             
+             resolved_generics = generics.clone();
+
+             if let Ok(name) = self.monomorphize_method(type_name, method, &generics) {
+                 self.module.get_function(&name).map(|f| (f, name))
+             } else {
+                 None
+             }
+        } else {
+            None
+        };
+
+        let (func, actual_name) = if let Some((f, name)) = generic_result {
+             (f, name)
+        } else if let Some(f) = self.module.get_function(&mangled_name) {
             (f, mangled_name)
         } else if let Some(f) = self.module.get_function(&stdlib_name) {
             (f, stdlib_name)
@@ -4322,7 +4108,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // 3. Generic Fallback: Compile Args & Handle SRET
         // Get return type - first check registered method_return_types, then fall back to signature inference
-        let ret_ty = if let Some(ret) = self.method_return_types.get(&actual_name) {
+        let ret_ty = if struct_name == "HashMap" && method == "new" && !resolved_generics.is_empty() {
+             Type::Struct("HashMap".to_string(), resolved_generics.clone())
+        } else if let Some(ret) = self.method_return_types.get(&actual_name) {
             ret.clone()
         } else {
             self.get_return_type_from_signature(func)
@@ -9381,261 +9169,3 @@ fn compile_tensor_reshape_uneval<'ctx>(
     Ok((res, new_ty))
 }
 
-fn compile_hashmap_new_static<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: &[Expr],
-    _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if !args.is_empty() {
-        return Err("HashMap::new takes no arguments".into());
-    }
-    let fn_val = codegen
-        .module
-        .get_function("tl_hashmap_new")
-        .ok_or("tl_hashmap_new not found")?;
-    let call = codegen
-        .builder
-        .build_call(fn_val, &[], "map_new")
-        .map_err(|e| e.to_string())?;
-    
-    let val = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from tl_hashmap_new".into()),
-    };
-    Ok((val, Type::UserDefined("HashMap".to_string(), vec![])))
-}
-
-pub fn compile_hashmap_insert<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    map_val: BasicValueEnum<'ctx>,
-    _map_ty: Type,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 2 {
-        return Err("HashMap::insert takes 2 arguments".into());
-    }
-    let (key_val, key_ty) = &args[0];
-    let (val_val, val_ty) = &args[1];
-
-    // Ensure key is string
-    let is_string = matches!(key_ty, Type::UserDefined(n, _) if n == "String");
-    if !is_string {
-        return Err(format!("HashMap key type must be String (runtime restriction), found {:?}", key_ty));
-    }
-    // Cast value to void*
-    let void_ptr = if val_val.is_pointer_value() {
-        codegen.builder.build_pointer_cast(
-            val_val.into_pointer_value(),
-            codegen.context.ptr_type(inkwell::AddressSpace::default()),
-            "val_void"
-        ).map_err(|e| e.to_string())?
-    } else if val_val.is_int_value() {
-        // Int -> Ptr
-        codegen.builder.build_int_to_ptr(
-            val_val.into_int_value(),
-            codegen.context.ptr_type(inkwell::AddressSpace::default()),
-            "val_int_ptr"
-        ).map_err(|e| e.to_string())?
-    } else if val_val.is_float_value() {
-        // Float -> Bitcast(Int) -> Ptr
-        let float_val = val_val.into_float_value();
-        let bit_size = float_val.get_type().get_bit_width();
-        let int_type = codegen.context.custom_width_int_type(bit_size);
-        let as_int = codegen.builder.build_bit_cast(float_val, int_type, "float_cast").unwrap().into_int_value();
-        codegen.builder.build_int_to_ptr(
-            as_int,
-            codegen.context.ptr_type(inkwell::AddressSpace::default()),
-            "val_float_ptr"
-        ).map_err(|e| e.to_string())?
-    } else {
-        return Err(format!("Unsupported type for HashMap value: {:?}", val_ty));
-    };
-
-    let fn_val = codegen.module.get_function("tl_hashmap_insert").ok_or("tl_hashmap_insert not found")?;
-    codegen.builder.build_call(fn_val, &[map_val.into(), (*key_val).into(), void_ptr.into()], "").map_err(|e| e.to_string())?;
-    
-    Ok((codegen.context.const_struct(&[], false).into(), Type::Void))
-}
-
-pub fn compile_hashmap_get<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    map_val: BasicValueEnum<'ctx>,
-    map_ty: Type,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 {
-        return Err("HashMap::get takes 1 argument".into());
-    }
-    let (_key_val, key_ty) = &args[0];
-    let is_string = matches!(key_ty, Type::UserDefined(n, _) if n == "String");
-    if !is_string {
-        return Err(format!("HashMap key type must be String (runtime restriction), found {:?}", key_ty));
-    }
-
-    let fn_val = codegen.module.get_function("tl_hashmap_get").ok_or("tl_hashmap_get not found")?;
-    let call = codegen.builder.build_call(fn_val, &[map_val.into(), args[0].0.into()], "get_res").map_err(|e| e.to_string())?;
-    
-    let ptr_val = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-        _ => return Err("Invalid return from tl_hashmap_get".into()),
-    };
-
-    // Determine value type V from HashMap<K, V>
-    let value_type = match &map_ty {
-        Type::UserDefined(name, args) | Type::Struct(name, args) if name == "HashMap" && args.len() == 2 => {
-            args[1].clone()
-        }
-        _ => Type::Tensor(Box::new(Type::F32), 0), // Fallback
-    };
-
-    let ret_val: BasicValueEnum = match &value_type {
-        Type::I64 | Type::Usize => {
-            codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_i64").map_err(|e| e.to_string())?.into()
-        }
-        Type::I32 => {
-             // Cast to i64 then truncate? Or assuming stored as generic ptr-sized int?
-             // Since we use int_to_ptr with native size, ptr_to_int returns i64 (on 64bit). 
-             // We cast to target int type.
-             let as_i64 = codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_raw").map_err(|e| e.to_string())?;
-             codegen.builder.build_int_cast(as_i64, codegen.context.i32_type(), "val_i32").unwrap().into()
-        }
-        Type::F64 => {
-             let as_int = codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_raw").map_err(|e| e.to_string())?;
-             codegen.builder.build_bit_cast(as_int, codegen.context.f64_type(), "val_f64").unwrap().into()
-        }
-        Type::F32 => {
-             // 32-bit float stored in 64-bit pointer? 
-             // Truncate logic depends on how we stored it.
-             // We stored via custom_width_int_type(32) -> int_to_ptr.
-             // So retrieving: ptr_to_int(64) -> truncate(32) -> bitcast(f32).
-             let as_i64 = codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_raw").map_err(|e| e.to_string())?;
-             let as_i32 = codegen.builder.build_int_cast(as_i64, codegen.context.custom_width_int_type(32), "val_trunc").unwrap();
-             codegen.builder.build_bit_cast(as_i32, codegen.context.f32_type(), "val_f32").unwrap().into()
-        }
-        Type::Bool => {
-             let as_int = codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_raw").map_err(|e| e.to_string())?;
-             codegen.builder.build_int_cast(as_int, codegen.context.bool_type(), "val_bool").unwrap().into()
-        }
-        _ => {
-            // Pointer types: pointer_cast
-            let llvm_ty = codegen.get_llvm_type(&value_type)?;
-            if llvm_ty.is_pointer_type() {
-                 codegen.builder.build_pointer_cast(ptr_val, llvm_ty.into_pointer_type(), "val_cast").unwrap().into()
-            } else {
-                 return Err(format!("Unsupported HashMap value type for retrieval: {:?}", value_type));
-            }
-        }
-    };
-
-    Ok((ret_val, value_type))
-}
-
-pub fn compile_hashmap_remove<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    map_val: BasicValueEnum<'ctx>,
-    map_ty: Type,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 {
-        return Err("HashMap::remove takes 1 argument".into());
-    }
-    let (_key_val, key_ty) = &args[0];
-    let is_string = matches!(key_ty, Type::UserDefined(n, _) if n == "String");
-    if !is_string {
-        return Err(format!("HashMap key type must be String (runtime restriction), found {:?}", key_ty));
-    }
-    let fn_val = codegen.module.get_function("tl_hashmap_remove").ok_or("tl_hashmap_remove not found")?;
-    let call = codegen.builder.build_call(fn_val, &[map_val.into(), args[0].0.into()], "rem_res").map_err(|e| e.to_string())?;
-    
-    let ptr_val = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-        _ => return Err("Invalid return from tl_hashmap_remove".into()),
-    };
-
-    // Determine value type V from HashMap<K, V>
-    let value_type = match &map_ty {
-        Type::UserDefined(name, args) | Type::Struct(name, args) if name == "HashMap" && args.len() == 2 => {
-            args[1].clone()
-        }
-        _ => Type::Tensor(Box::new(Type::F32), 0),
-    };
-
-    let ret_val: BasicValueEnum = match &value_type {
-        Type::I64 | Type::Usize => {
-            codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_i64").map_err(|e| e.to_string())?.into()
-        }
-        Type::I32 => {
-             let as_i64 = codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_raw").map_err(|e| e.to_string())?;
-             codegen.builder.build_int_cast(as_i64, codegen.context.i32_type(), "val_i32").unwrap().into()
-        }
-        Type::F64 => {
-             let as_int = codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_raw").map_err(|e| e.to_string())?;
-             codegen.builder.build_bit_cast(as_int, codegen.context.f64_type(), "val_f64").unwrap().into()
-        }
-        Type::F32 => {
-             let as_i64 = codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_raw").map_err(|e| e.to_string())?;
-             let as_i32 = codegen.builder.build_int_cast(as_i64, codegen.context.custom_width_int_type(32), "val_trunc").unwrap();
-             codegen.builder.build_bit_cast(as_i32, codegen.context.f32_type(), "val_f32").unwrap().into()
-        }
-        Type::Bool => {
-             let as_int = codegen.builder.build_ptr_to_int(ptr_val, codegen.context.i64_type(), "val_raw").map_err(|e| e.to_string())?;
-             codegen.builder.build_int_cast(as_int, codegen.context.bool_type(), "val_bool").unwrap().into()
-        }
-        _ => {
-            let llvm_ty = codegen.get_llvm_type(&value_type)?;
-            if llvm_ty.is_pointer_type() {
-                 codegen.builder.build_pointer_cast(ptr_val, llvm_ty.into_pointer_type(), "val_cast").unwrap().into()
-            } else {
-                 return Err(format!("Unsupported HashMap value type for retrieval: {:?}", value_type));
-            }
-        }
-    };
-
-    Ok((ret_val, value_type))
-}
-
-pub fn compile_hashmap_contains_key<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    map_val: BasicValueEnum<'ctx>,
-    _map_ty: Type,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let (_key_val, key_ty) = &args[0];
-    let is_string = matches!(key_ty, Type::UserDefined(n, _) if n == "String");
-    if !is_string {
-        return Err(format!("HashMap key type must be String (runtime restriction), found {:?}", key_ty));
-    }
-    let fn_val = codegen.module.get_function("tl_hashmap_contains_key").ok_or("tl_hashmap_contains_key not found")?;
-    let call = codegen.builder.build_call(fn_val, &[map_val.into(), args[0].0.into()], "contains_res").map_err(|e| e.to_string())?;
-    let val = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from tl_hashmap_contains_key".into()),
-    };
-    Ok((val, Type::Bool))
-}
-
-pub fn compile_hashmap_len<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    map_val: BasicValueEnum<'ctx>,
-    _map_ty: Type,
-    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let fn_val = codegen.module.get_function("tl_hashmap_len").ok_or("tl_hashmap_len not found")?;
-    let call = codegen.builder.build_call(fn_val, &[map_val.into()], "len_res").map_err(|e| e.to_string())?;
-    let val = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from tl_hashmap_len".into()),
-    };
-    Ok((val, Type::I64))
-}
-
-pub fn compile_hashmap_clear<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    map_val: BasicValueEnum<'ctx>,
-    _map_ty: Type,
-    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let fn_val = codegen.module.get_function("tl_hashmap_clear").ok_or("tl_hashmap_clear not found")?;
-    codegen.builder.build_call(fn_val, &[map_val.into()], "").map_err(|e| e.to_string())?;
-    Ok((codegen.context.const_struct(&[], false).into(), Type::Void))
-}

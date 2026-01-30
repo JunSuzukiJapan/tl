@@ -1,16 +1,9 @@
-use crate::compiler::ast::{StructDef, Type};
-// use crate::compiler::codegen::expr; // For future method migration
-
-pub fn get_hashmap_struct_def() -> StructDef {
-    // struct HashMap<K, V> { ptr: ptr<T> (unused), len: I64 }
-    StructDef {
-        name: "HashMap".to_string(),
-        fields: vec![
-            ("ptr".to_string(), Type::I64), // Placeholder
-            ("len".to_string(), Type::I64),
-        ],
-        generics: vec!["K".to_string(), "V".to_string()],
-    }
-}
+use crate::compiler::builtin_loader::{BuiltinLoader, BuiltinTypeData};
 
 pub const SOURCE: &str = include_str!("hashmap.tl");
+
+pub fn load_hashmap_data() -> BuiltinTypeData {
+    BuiltinLoader::load_builtin_type(SOURCE, "HashMap")
+        .expect("Failed to load HashMap type data")
+}
+

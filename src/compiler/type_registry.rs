@@ -109,10 +109,8 @@ impl TypeRegistry {
         self.register_ml_methods(); // Tokenizer, KVCache, Map
         
         // Register generic type parameters
-        self.generics.insert("Vec".to_string(), vec!["T".to_string()]);
-        // self.generics.insert("Option".to_string(), vec!["T".to_string()]); // Replaced by register_ast_impls
-        self.generics.insert("HashMap".to_string(), vec!["K".to_string(), "V".to_string()]);
-        self.generics.insert("Map".to_string(), vec!["K".to_string(), "V".to_string()]);
+        // Note: Structs defined in .tl (Vec, Option, Result, HashMap) have generics loaded from AST.
+        // This registry is now primarily for Tensor and Primitives.
     }
 
     /// Register Tensor methods

@@ -17,7 +17,6 @@ pub const CLEANUP_FULL: u8 = 1;
 pub const CLEANUP_FINALIZE: u8 = 2;
 pub const CLEANUP_STACK: u8 = 3;
 
-pub mod builtin_impls;
 pub mod builtins;
 pub mod expr;
 pub mod kb;
@@ -141,9 +140,18 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
         codegen.generic_impls.entry("Vec".to_string()).or_default().extend(vec_data.impl_blocks);
 
-        // Register builtin generic impls (HashMap, etc.)
-        builtin_impls::register_builtin_structs(&mut codegen.struct_defs);
-        builtin_impls::register_builtin_impls(&mut codegen.generic_impls);
+        // Load builtins via TypeManager (HashMap)
+        let hashmap_data = builtin_types::hashmap::load_hashmap_data();
+        codegen.type_manager.register_builtin(hashmap_data.clone());
+        
+        if let Some(def) = hashmap_data.struct_def {
+            codegen.struct_defs.insert(def.name.clone(), def);
+        }
+        codegen.generic_impls.entry("HashMap".to_string()).or_default().extend(hashmap_data.impl_blocks);
+
+        // Remove legacy builtin_impls calls (Fully Migrated)
+        // builtin_impls::register_builtin_structs(&mut codegen.struct_defs);
+        // builtin_impls::register_builtin_impls(&mut codegen.generic_impls);
         
         // Compile the struct defs we just added
         let vec_defs = codegen.struct_defs.values().cloned().collect::<Vec<_>>();
@@ -474,25 +482,10 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
 
-        // Register Vec Type
-        let mut vec_type = type_manager::CodeGenType::new("Vec");
-        vec_type.register_static_method("new", expr::StaticMethod::Evaluated(expr::compile_vec_new));
-        vec_type.register_instance_method("len", expr::InstanceMethod::Evaluated(expr::compile_vec_len));
-        vec_type.register_instance_method("push", expr::InstanceMethod::Evaluated(expr::compile_vec_push));
-        vec_type.register_instance_method("pop", expr::InstanceMethod::Evaluated(expr::compile_vec_pop));
-        vec_type.register_instance_method("get", expr::InstanceMethod::Evaluated(expr::compile_vec_get));
-        vec_type.register_instance_method("set", expr::InstanceMethod::Evaluated(expr::compile_vec_set));
-        self.type_manager.register_type(vec_type);
+        // Register Vec Type - Migrated to BuiltinTypeData (see new() logic)
+        // Manual registration removed to support AST-based extern dispatch.
 
-        let mut hashmap_type = type_manager::CodeGenType::new("HashMap");
-        hashmap_type.register_static_method("new", expr::StaticMethod::Evaluated(expr::compile_hashmap_new));
-        hashmap_type.register_instance_method("insert", expr::InstanceMethod::Evaluated(expr::compile_hashmap_insert));
-        hashmap_type.register_instance_method("get", expr::InstanceMethod::Evaluated(expr::compile_hashmap_get));
-        hashmap_type.register_instance_method("remove", expr::InstanceMethod::Evaluated(expr::compile_hashmap_remove));
-        hashmap_type.register_instance_method("contains_key", expr::InstanceMethod::Evaluated(expr::compile_hashmap_contains_key));
-        hashmap_type.register_instance_method("len", expr::InstanceMethod::Evaluated(expr::compile_hashmap_len));
-        hashmap_type.register_instance_method("clear", expr::InstanceMethod::Evaluated(expr::compile_hashmap_clear));
-        self.type_manager.register_type(hashmap_type);
+
 
         // Register LLM Types (Tokenizer, KVCache)
         builtin_types::llm::register_llm_types(&mut self.type_manager);

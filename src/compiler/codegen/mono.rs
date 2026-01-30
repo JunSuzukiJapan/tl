@@ -16,6 +16,13 @@ impl<'ctx> CodeGenerator<'ctx> {
         let impls = self.generic_impls.get(struct_name)
              .ok_or_else(|| format!("No generic impls found for struct {}", struct_name))?;
 
+        if struct_name == "HashMap" {
+             if generic_args.len() != 2 {
+                 return Err(format!("HashMap expects 2 generic args, got {}", generic_args.len()));
+             }
+             return self.ensure_hashmap_method(&generic_args[0], &generic_args[1], method_name);
+        }
+
         // Find method in impls
         let mut target_method = None;
         let mut target_impl = None;
@@ -747,6 +754,134 @@ impl<'ctx> CodeGenerator<'ctx> {
         opaque_struct.set_body(&field_types, false);
         
         Ok(opaque_struct)
+    }
+
+    pub fn ensure_hashmap_method(
+        &mut self,
+        key_ty: &Type,
+        val_ty: &Type,
+        method_name: &str,
+    ) -> Result<String, String> {
+        let suffix = format!("{}_{}", self.type_to_suffix(key_ty), self.type_to_suffix(val_ty));
+        let mangled_fn_name = format!("tl_HashMap_{}_{}", suffix, method_name);
+        
+        if self.module.get_function(&mangled_fn_name).is_some() {
+            return Ok(mangled_fn_name);
+        }
+
+        let map_ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let key_llvm_ty = self.get_llvm_type(key_ty)?;
+        let val_llvm_ty = self.get_llvm_type(val_ty)?;
+        
+        let void_ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i8_ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let bool_ty = self.context.bool_type();
+
+        let (param_types, ret_type, run_fn_name): (Vec<BasicMetadataTypeEnum>, Option<inkwell::types::BasicTypeEnum>, &str) = match method_name {
+            "new" => (vec![], Some(map_ptr_ty.into()), "tl_hashmap_new"),
+            "len" => (vec![map_ptr_ty.into()], Some(i64_ty.into()), "tl_hashmap_len"),
+            "clear" => (vec![map_ptr_ty.into()], Some(bool_ty.into()), "tl_hashmap_clear"),
+            "insert" => (vec![map_ptr_ty.into(), key_llvm_ty.into(), val_llvm_ty.into()], Some(bool_ty.into()), "tl_hashmap_insert"),
+            "get" => (vec![map_ptr_ty.into(), key_llvm_ty.into()], Some(val_llvm_ty.into()), "tl_hashmap_get"),
+            "remove" => (vec![map_ptr_ty.into(), key_llvm_ty.into()], Some(val_llvm_ty.into()), "tl_hashmap_remove"),
+            "contains_key" => (vec![map_ptr_ty.into(), key_llvm_ty.into()], Some(bool_ty.into()), "tl_hashmap_contains_key"),
+            _ => return Err(format!("Unknown HashMap method: {}", method_name)),
+        };
+
+        // Create Wrapper
+        let fn_type = if let Some(ret) = ret_type {
+             if ret.is_array_type() { panic!("Array return not supported"); }
+             match ret {
+                 inkwell::types::BasicTypeEnum::IntType(i) => i.fn_type(&param_types, false),
+                 inkwell::types::BasicTypeEnum::FloatType(f) => f.fn_type(&param_types, false),
+                 inkwell::types::BasicTypeEnum::PointerType(p) => p.fn_type(&param_types, false),
+                 _ => return Err("Unsupported return type".into()),
+             }
+        } else {
+             self.context.void_type().fn_type(&param_types, false)
+        };
+        
+        let wrapper_fn = self.module.add_function(&mangled_fn_name, fn_type, None);
+        let entry_bb = self.context.append_basic_block(wrapper_fn, "entry");
+        let saved_block = self.builder.get_insert_block(); 
+        self.builder.position_at_end(entry_bb);
+        
+        let runtime_fn = self.module.get_function(run_fn_name).ok_or(format!("Runtime function {} not found", run_fn_name))?;
+        
+        // Prepare args
+        let mut call_args = Vec::new();
+        match method_name {
+            "new" => {},
+            "len" | "clear" => {
+                 // Arg 0: Map
+                 call_args.push(wrapper_fn.get_nth_param(0).unwrap().into());
+            },
+            "insert" => {
+                 call_args.push(wrapper_fn.get_nth_param(0).unwrap().into()); // Map
+                 let key_val = wrapper_fn.get_nth_param(1).unwrap();
+                 let val_val = wrapper_fn.get_nth_param(2).unwrap();
+                 
+                 // Cast Key -> i8_ptr (if String) or box?
+                 // Assuming String
+                 if key_val.is_pointer_value() {
+                     let casted = self.builder.build_pointer_cast(key_val.into_pointer_value(), i8_ptr_ty, "key_cast").unwrap();
+                     call_args.push(casted.into());
+                 } else {
+                     return Err("Only pointer keys supported for HashMap currently".into());
+                 }
+                 
+                 // Cast Val -> void_ptr (if Struct/Tensor)
+                 if val_val.is_pointer_value() {
+                     let casted = self.builder.build_pointer_cast(val_val.into_pointer_value(), void_ptr_ty, "val_cast").unwrap();
+                     call_args.push(casted.into());
+                 } else {
+                     return Err("Only pointer values supported for HashMap currently".into());
+                 }
+            },
+            "get" | "remove" | "contains_key" => {
+                 call_args.push(wrapper_fn.get_nth_param(0).unwrap().into()); // Map
+                 let key_val = wrapper_fn.get_nth_param(1).unwrap();
+                 // Cast Key
+                 if key_val.is_pointer_value() {
+                     let casted = self.builder.build_pointer_cast(key_val.into_pointer_value(), i8_ptr_ty, "key_cast").unwrap();
+                     call_args.push(casted.into());
+                 } else {
+                     return Err("Only pointer keys supported for HashMap currently".into());
+                 }
+            }
+            _ => {}
+        }
+        
+        let call = self.builder.build_call(runtime_fn, &call_args, "");
+        
+        // Handle Return
+        if let Some(ret_t) = ret_type {
+             let raw_ret = match call.unwrap().try_as_basic_value() {
+                 inkwell::values::ValueKind::Basic(v) => v,
+                 _ => return Err("Expected basic return value".into()),
+             };
+             
+             if method_name == "get" || method_name == "remove" {
+                 // Runtime returns void_ptr (Value*). Wrapper expects ValType (e.g. Tensor*)
+                 if raw_ret.is_pointer_value() {
+                     let casted = self.builder.build_pointer_cast(raw_ret.into_pointer_value(), val_llvm_ty.into_pointer_type(), "ret_cast").unwrap();
+                     self.builder.build_return(Some(&casted)).unwrap();
+                 } else {
+                     return Err("Runtime function did not return pointer for get/remove".into());
+                 }
+             } else {
+                 self.builder.build_return(Some(&raw_ret)).unwrap();
+             }
+        } else {
+             self.builder.build_return(None).unwrap();
+        }
+
+        if let Some(bb) = saved_block {
+            self.builder.position_at_end(bb);
+        }
+        
+        Ok(mangled_fn_name)
     }
 
 }
