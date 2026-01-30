@@ -121,6 +121,7 @@ impl Monomorphizer {
         }
         for e in &module.enums {
             if !e.generics.is_empty() {
+                eprintln!("DEBUG: Collected generic enum {}", e.name);
                 self.generic_enums.insert(e.name.clone(), e.clone());
             }
         }
@@ -129,8 +130,8 @@ impl Monomorphizer {
     fn scan_module(&mut self, module: &mut Module) {
         // 1. Process impls logic FIRST so they are available for resolution
         for mut impl_block in module.impls.drain(..) {
-            let is_generic_target = if let Type::Struct(name, _) | Type::UserDefined(name, _) = &impl_block.target_type {
-                self.generic_structs.contains_key(name)
+            let is_generic_target = if let Type::Struct(name, _) | Type::UserDefined(name, _) | Type::Enum(name, _) = &impl_block.target_type {
+                self.generic_structs.contains_key(name) || self.generic_enums.contains_key(name)
             } else {
                 false
             };
@@ -168,7 +169,19 @@ impl Monomorphizer {
     
     fn resolve_type(&mut self, ty: &Type) -> Type {
         match ty {
-            Type::UserDefined(name, args) | Type::Struct(name, args) => {
+            Type::UserDefined(name, args) | Type::Struct(name, args) | Type::Enum(name, args) => {
+                 // Normalize primitives
+                 if args.is_empty() {
+                     match name.as_str() {
+                         "I64" => return Type::I64,
+                         "F64" => return Type::F64,
+                         "F32" => return Type::F32,
+                         "Bool" => return Type::Bool,
+                         "Void" => return Type::Void,
+                         _ => {}
+                     }
+                 }
+
                  if !args.is_empty() {
                      // Check if this is a generic struct instantiation
                      if self.generic_structs.contains_key(name) {
@@ -271,6 +284,7 @@ impl Monomorphizer {
     }
 
      fn rewrite_expr(&mut self, expr: &mut ExprKind, subst: &HashMap<String, Type>, expected_type: Option<&Type>) {
+         // eprintln!("DEBUG: rewrite_expr {:?}", expr);
          match expr {
              ExprKind::StructInit(name, explicit_generics, fields) => {
                  // 0. Resolve explicit generics
@@ -445,6 +459,7 @@ impl Monomorphizer {
                  return;
              }
               ExprKind::EnumInit { enum_name, variant_name, payload } => {
+                  eprintln!("DEBUG: EnumInit entry name={} variant={}", enum_name, variant_name);
                   if let Some(def) = self.generic_enums.get(enum_name) {
                       if let Some(v_def) = def.variants.iter().find(|v| v.name == *variant_name) {
                           let mut inferred_map = HashMap::new();
@@ -574,6 +589,7 @@ impl Monomorphizer {
                   }
               }
               ExprKind::StaticMethodCall(type_ty, method_name, args) => {
+                          eprintln!("DEBUG: StaticMethodCall entry type={:?} method={}", type_ty, method_name);
                           *type_ty = self.substitute_type(type_ty, subst);
                           *type_ty = self.resolve_type(type_ty);
                           for arg in args.iter_mut() {
@@ -623,10 +639,141 @@ impl Monomorphizer {
                                       if all_inferred && !type_args.is_empty() {
                                           let concrete_name = self.request_struct_instantiation(&type_name_str, type_args);
                                           *type_ty = Type::UserDefined(concrete_name, vec![]);
-                                      }
+                                       }
                                   }
                               }
-                          }
+                           } else if let Some(def) = self.generic_enums.get(&type_name_str).cloned() {
+                               // Enum Logic - Rewrite to EnumInit
+                               let mut best_impl: Option<&ImplBlock> = None;
+                               
+                               // 1. Try to find if it matches a Variant (Constructor)
+                               if let Some(variant) = def.variants.iter().find(|v| v.name == *method_name) {
+                                   // It is a variant constructor! Rewrite to EnumInit.
+                                   // First infer generics from args
+                                   let mut type_args = Vec::new();
+                                   let mut inference_map = HashMap::new();
+                                   let mut all_inferred = true;
+                                   
+                                   // Map args to variant fields to infer
+                                   match &variant.kind {
+                                        crate::compiler::ast::VariantKind::Unit => {},
+                                        crate::compiler::ast::VariantKind::Tuple(types) => {
+                                             for (i, arg_expr) in args.iter().enumerate() {
+                                                 if i < types.len() {
+                                                     let param_ty = &types[i];
+                                                     if let Some(val_ty) = self.infer_expr_type(&arg_expr.inner) {
+                                                         self.unify_types(param_ty, &val_ty, &mut inference_map);
+                                                     }
+                                                 }
+                                             }
+                                        },
+                                        crate::compiler::ast::VariantKind::Struct(fields) => {
+                                             // Positional args to struct definitions? 
+                                             // For now assume matching order or skip inference for struct variants called as methods
+                                        }
+                                   }
+
+                                   
+                                   for param in &def.generics {
+                                       if let Some(ty) = inference_map.get(param) {
+                                           type_args.push(ty.clone());
+                                       } else {
+                                           // Fallback: Infer from expected_type
+                                           let mut inferred_from_expected = None;
+                                           if let Some(Type::UserDefined(n, args)) | Some(Type::Enum(n, args)) | Some(Type::Struct(n, args)) = expected_type {
+                                               if n == &type_name_str && args.len() == def.generics.len() {
+                                                    // Find index of param
+                                                    if let Some(idx) = def.generics.iter().position(|r| r == param) {
+                                                         inferred_from_expected = Some(args[idx].clone());
+                                                    }
+                                               }
+                                           }
+
+                                           if let Some(ty) = inferred_from_expected.as_ref() {
+                                                type_args.push(ty.clone());
+                                           } else {
+                                                all_inferred = false;
+                                           }
+                                       }
+                                   }
+                                   
+                                   // Try to infer concrete name if arguments inference failed
+                                   let mut concrete_name = String::new();
+
+                                   if all_inferred && !type_args.is_empty() {
+                                       concrete_name = self.request_enum_instantiation(&type_name_str, type_args);
+                                   } else if let Some(Type::UserDefined(n, args)) | Some(Type::Enum(n, args)) | Some(Type::Struct(n, args)) = expected_type {
+                                       // Fallback: If expected type is already concrete (e.g. Option_I64) matching this generic
+                                       if n.starts_with(&format!("{}_", type_name_str)) {
+                                            concrete_name = n.clone();
+                                       }
+                                   }
+
+                                   if !concrete_name.is_empty() {
+                                        // Construct Payload
+                                       let payload = match &variant.kind {
+                                            crate::compiler::ast::VariantKind::Unit => EnumVariantInit::Unit,
+                                            crate::compiler::ast::VariantKind::Tuple(_) => {
+                                                EnumVariantInit::Tuple(args.clone())
+                                            },
+                                            crate::compiler::ast::VariantKind::Struct(_) => {
+                                                // Hard to map positional to struct fields without names
+                                                // Fallback to Tuple? No, syntax error.
+                                                // For Option/Result (Tuple variants), this is fine.
+                                                EnumVariantInit::Unit // Placeholder/Error
+                                            }
+                                       };
+                                       
+                                       // REWRITE EXPR
+                                       *expr = ExprKind::EnumInit {
+                                           enum_name: concrete_name,
+                                           variant_name: method_name.clone(),
+                                           payload: payload,
+                                       };
+                                       return; // Done
+                                   }
+                               }
+
+                               // 2. If not variant, look for impl methods (as before)
+                               for impl_block in &self.generic_impls {
+                                  if let Type::Struct(target, _) | Type::UserDefined(target, _) | Type::Enum(target, _) = &impl_block.target_type {
+                                      if target.as_str() == type_name_str.as_str() {
+                                          if impl_block.methods.iter().any(|m| m.name == *method_name) {
+                                              best_impl = Some(impl_block);
+                                              break;
+                                          }
+                                      }
+                                  }
+                               }
+
+                               if let Some(impl_block) = best_impl {
+                                   if let Some(method) = impl_block.methods.iter().find(|m| m.name == *method_name) {
+                                       let mut type_args = Vec::new();
+                                       let mut inference_map = HashMap::new();
+                                       let mut all_inferred = true;
+                                       
+                                       for (i, (arg_val, _)) in args.iter().zip(&method.args).enumerate() {
+                                           let param_ty = &method.args[i].1;
+                                           if let Some(val_ty) = self.infer_expr_type(&arg_val.inner) {
+                                               self.unify_types(param_ty, &val_ty, &mut inference_map);
+                                           }
+                                       }
+                                       
+                                       for param in &def.generics {
+                                           if let Some(ty) = inference_map.get(param) {
+                                               type_args.push(ty.clone());
+                                           } else {
+                                               all_inferred = false;
+                                           }
+                                       }
+                                       
+                                       if all_inferred && !type_args.is_empty() {
+                                           let concrete_name = self.request_enum_instantiation(&type_name_str, type_args);
+                                           *type_ty = Type::UserDefined(concrete_name, vec![]);
+                                       }
+                                   }
+                               }
+                           }
                           
                           if type_name_str.as_str() == "Tensor" {
                                // ignore
@@ -678,7 +825,7 @@ impl Monomorphizer {
              let mut subst = HashMap::new();
              let mut matches = false;
              
-             if let Type::Struct(target, target_args) | Type::UserDefined(target, target_args) = &impl_block.target_type {
+             if let Type::Struct(target, target_args) | Type::UserDefined(target, target_args) | Type::Enum(target, target_args) = &impl_block.target_type {
                  if target == name {
                      // Check args match length
                      // If target has generic params, unifying them with concrete args gives substitution
@@ -849,6 +996,9 @@ impl Monomorphizer {
             }
             
             self.concrete_enums.push(new_def);
+            
+            // Also instantiate associated impl blocks
+            self.instantiate_impls(name, args);
          }
          Ok(())
     }
@@ -876,8 +1026,10 @@ impl Monomorphizer {
             // Substitute signature
             for (_, ty) in &mut new_def.args {
                 *ty = self.substitute_type(ty, &subst);
+                *ty = self.resolve_type(ty);
             }
             new_def.return_type = self.substitute_type(&new_def.return_type, &subst);
+            new_def.return_type = self.resolve_type(&new_def.return_type);
             
             // Rewrite Body
             // Push new scope for arguments

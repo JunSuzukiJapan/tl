@@ -492,7 +492,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         builtin_types::io::register_io_types(&mut self.type_manager);
         builtin_types::system::register_system_types(&mut self.type_manager);
         builtin_types::tensor::register_tensor_types(&mut self.type_manager);
-        builtin_types::option::register_option_types(&mut self.type_manager);
+
         builtin_types::llm::register_llm_types(&mut self.type_manager);
         builtin_types::result::register_result_types(&mut self.type_manager);
         builtin_types::string::register_string_types(&mut self.type_manager);
@@ -992,7 +992,6 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     fn compile_impl_blocks(&mut self, impls: &[ImplBlock]) -> Result<(), String> {
         // Pass 1: Declare all methods (Prototypes) and register return types
-        // Pass 1: Declare all methods (Prototypes) and register return types
         for imp in impls {
             // Check if generic impl
             if !imp.generics.is_empty() {
@@ -1000,6 +999,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::Struct(n, _) | Type::UserDefined(n, _) | Type::Enum(n, _) => n.clone(),
                     _ => return Err("Invalid impl target type".to_string()),
                 };
+                eprintln!("DEBUG: compile_impl_blocks sees impl for {}", target_name);
                 self.generic_impls.entry(target_name).or_default().push(imp.clone());
                 continue;
             }

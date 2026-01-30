@@ -45,6 +45,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         for (param, arg) in imp.generics.iter().zip(generic_args) {
              subst_map.insert(param.clone(), arg.clone());
         }
+        if struct_name == "Option" {
+            eprintln!("DEBUG: monomorphize_method Option::{}", method_name);
+            eprintln!("DEBUG: generic_args: {:?}", generic_args);
+            eprintln!("DEBUG: imp.generics: {:?}", imp.generics);
+            eprintln!("DEBUG: subst_map: {:?}", subst_map);
+        }
 
         // Mangle name
         // tl_Rect_i64_area
@@ -82,7 +88,11 @@ impl<'ctx> CodeGenerator<'ctx> {
         for (_, ty) in &mut new_method.args {
             *ty = full_substitutor.substitute_type(ty);
         }
+        let old_ret = new_method.return_type.clone();
         new_method.return_type = full_substitutor.substitute_type(&new_method.return_type);
+        if struct_name == "Option" {
+             eprintln!("DEBUG: return_type subst: {:?} -> {:?}", old_ret, new_method.return_type);
+        }
         new_method.body = new_method.body.iter().map(|s| full_substitutor.substitute_stmt(s)).collect();
         
         // Compile

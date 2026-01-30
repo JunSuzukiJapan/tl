@@ -5,8 +5,31 @@ enum Option<T> {
 }
 
 impl<T> Option<T> {
-    extern fn is_some(self) -> bool;
-    extern fn is_none(self) -> bool;
-    extern fn unwrap(self) -> T;
-    extern fn unwrap_or(self, default: T) -> T;
+    fn is_some(self) -> bool {
+        match self {
+            Option::Some(x) => true,
+            Option::None => false,
+        }
+    }
+
+    fn is_none(self) -> bool {
+        match self {
+            Option::Some(x) => false,
+            Option::None => true,
+        }
+    }
+
+    fn unwrap(self) -> T {
+        match self {
+            Option::Some(x) => x,
+            Option::None => self.unwrap(),
+        }
+    }
+
+    fn unwrap_or(self, default: T) -> T {
+        match self {
+            Option::Some(x) => x,
+            Option::None => default,
+        }
+    }
 }
