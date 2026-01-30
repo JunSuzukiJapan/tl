@@ -1621,10 +1621,31 @@ impl<'ctx> CodeGenerator<'ctx> {
                          self.builder.build_return(None).map_err(|e| e.to_string())?;
                     } else {
                         // IMPORTANT: Unregister return value (same as StmtKind::Return)
-                        // If not SRET, we assume returning by value (or pointer ownership transfer)
-                        // Note: For Tensors, "Returning by Value" means returning the pointer.
-                        // And we must unregister it from scope so it doesn't get freed.
-                        self.emit_recursive_unregister(val, &ty)?;
+                        // Use tl_tensor_prepare_return if available
+                        
+                        // FIX: Mark temp no cleanup (like StmtKind::Return)
+                        self.mark_temp_no_cleanup(val);
+
+                        let mut final_val = val; 
+                        match &ty {
+                            Type::Tensor(_, _) => {
+                                if let Some(prepare_fn) = self.module.get_function("tl_tensor_prepare_return") {
+                                    let ptr = val.into_pointer_value();
+                                    let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                                    let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_prep_ret").unwrap();
+                                    let call = self.builder.build_call(prepare_fn, &[cast_ptr.into()], "ret_ptr").unwrap();
+                                    use inkwell::values::ValueKind;
+                                    if let ValueKind::Basic(basic_val) = call.try_as_basic_value() {
+                                        final_val = basic_val;
+                                    }
+                                } else {
+                                     self.emit_recursive_unregister(val, &ty)?;
+                                }
+                            }
+                            _ => {
+                                self.emit_recursive_unregister(val, &ty)?;
+                            }
+                        }
 
                         self.emit_all_scopes_cleanup();
 
@@ -1637,7 +1658,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
 
                         self.builder
-                            .build_return(Some(&val))
+                            .build_return(Some(&final_val))
                             .map_err(|e| e.to_string())?;
                     }
                     return Ok(()); // RETURN EARLY - Function is done

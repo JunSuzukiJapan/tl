@@ -1054,6 +1054,9 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_mem_register_tensor", reg_struct_type);
     add_fn("tl_mem_unregister", reg_struct_type);
 
+    let prepare_ret_type = void_ptr.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_tensor_prepare_return", prepare_ret_type);
+
     // Pool / Arena
     let pool_acq = void_ptr.fn_type(&[i64_type.into()], false);
     add_fn("tl_pool_acquire", pool_acq);
@@ -1459,6 +1462,12 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_release") {
         execution_engine
             .add_global_mapping(&f, runtime::memory_manager::tl_tensor_release as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_prepare_return") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::tl_tensor_prepare_return as usize,
+        );
     }
     if let Some(f) = module.get_function("tl_tensor_len") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_len as usize);

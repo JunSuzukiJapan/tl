@@ -404,7 +404,9 @@ pub extern "C" fn tl_tensor_new_i64(
     use crate::error::RuntimeError;
 
     let res = std::panic::catch_unwind(|| {
+        println!("DEBUG: tl_tensor_new_i64 rank={}", rank);
         let shape_slice = unsafe { slice::from_raw_parts(shape, rank) };
+        println!("DEBUG: tl_tensor_new_i64 shape={:?}", shape_slice);
 
         let num_elements: usize = shape_slice.iter().product();
         let data_slice = unsafe { slice::from_raw_parts(data, num_elements) };
@@ -662,7 +664,7 @@ pub extern "C" fn tl_varbuilder_get_from_tensor(
             let shape_data = t
                 .flatten_all()
                 .map_err(|e| RuntimeError::InternalError(e.to_string()))?
-                .to_vec1::<f32>()
+                .to_vec1::<i64>()
                 .map_err(|e| RuntimeError::InternalError(e.to_string()))?
                 .iter()
                 .map(|&x| x as usize)
@@ -1329,6 +1331,7 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) -> FreeOutcome {
         if let Ok(mut pool) = memory_manager::TENSOR_POOL.lock() {
             match pool.release(t, num_elements, dtype_id, device_id) {
                 memory_manager::PoolOutcome::Pooled => {
+                    // println!("DEBUG: Pool tensor {:p}", t);
                     std::ptr::drop_in_place(t);
                     return FreeOutcome::Pooled;
                 }
@@ -1430,6 +1433,30 @@ pub extern "C" fn tl_vec_u8_read_i32_be(ptr: *mut Vec<u8>, idx: i64) -> i64 {
         let sub = &vec[idx..idx + 4];
         let val = u32::from_be_bytes(sub.try_into().unwrap());
         val as i64
+    }
+}
+
+
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_prepare_return(ptr: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    if ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    
+    // Check if in arena
+    if arena::tl_arena_contains(ptr as *mut c_void) {
+        println!("DEBUG: prepare_return CLONE arena ptr={:p}", ptr);
+        // Clone to Heap
+        let new_ptr = tl_tensor_clone(ptr);
+        // Clone registers it in current scope. Unregister to pass ownership to caller.
+        memory_manager::tl_mem_unregister(new_ptr as *mut c_void);
+        new_ptr
+    } else {
+        println!("DEBUG: prepare_return UNREG heap ptr={:p}", ptr);
+        // Heap/Pool. Unregister to pass ownership to caller.
+        memory_manager::tl_mem_unregister(ptr as *mut c_void);
+        ptr
     }
 }
 
@@ -4156,6 +4183,8 @@ pub extern "C" fn tl_tensor_add_4d(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -
     result
 }
 
+
+
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_matmul_4d(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     eprintln!("DEBUG: tl_tensor_matmul_4d called, a={:?}, b={:?}", a.is_null(), b.is_null());
@@ -4179,6 +4208,8 @@ pub extern "C" fn tl_tensor_matmul_4d(a: *mut OpaqueTensor, b: *mut OpaqueTensor
     eprintln!("DEBUG: tl_tensor_matmul_4d result={:?}", result.is_null());
     result
 }
+
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_get_1d(
