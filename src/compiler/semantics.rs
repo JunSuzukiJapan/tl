@@ -1491,11 +1491,46 @@ impl SemanticAnalyzer {
                     // Normalize the type annotation
                     let ann = self.resolve_user_type(ann_raw);
                     
-                    if !self.are_types_compatible(&ann, &inferred_type) {
+                    // Refine inferred_type if it's an Enum with placeholders ("T") and annotation is concrete
+                    // This handles cases like `let r: Result<I64, String> = Result::Err("e");`
+                    // where inferred is `Result<T, String>` (T is placeholder) but we know T=I64 from annotation.
+                    let mut refined_inferred_type = inferred_type.clone();
+                    if let (Type::Enum(inf_name, inf_args), Type::Enum(ann_name, ann_args)) = (&inferred_type, &ann) {
+                        if inf_name == ann_name && inf_args.len() == ann_args.len() {
+                            if let ExprKind::EnumInit { generics, .. } = &mut value.inner {
+                                // We have access to the Expr here!
+                                if let Some(def) = self.enums.get(inf_name) {
+                                     let mut changed = false;
+                                     let mut new_args = inf_args.clone();
+                                     
+                                     for (i, (inf_arg, ann_arg)) in inf_args.iter().zip(ann_args.iter()).enumerate() {
+                                         // Check if inf_arg is a placeholder generic param
+                                         // e.g. Type::Struct("T", []) where "T" is in def.generics
+                                         if let Type::Struct(name, _) = inf_arg {
+                                             if def.generics.contains(name) {
+                                                 // It's a placeholder!
+                                                 // Replace with annotation
+                                                  new_args[i] = ann_arg.clone();
+                                                  changed = true;
+                                             }
+                                         }
+                                     }
+                                     
+                                     if changed {
+                                          refined_inferred_type = Type::Enum(inf_name.clone(), new_args.clone());
+                                          // Also update the AST!
+                                          *generics = new_args;
+                                     }
+                                }
+                            }
+                        }
+                    }
+
+                    if !self.are_types_compatible(&ann, &refined_inferred_type) {
                         return self.err(
                             SemanticError::TypeMismatch {
                                 expected: ann.clone(),
-                                found: inferred_type,
+                                found: refined_inferred_type,
                             },
                             Some(stmt.span.clone()),
                         );
@@ -1895,57 +1930,59 @@ impl SemanticAnalyzer {
                                }
                            };
 
+                           // 3. Infer Generics
+                           // If explicit generics provided (e.g. Option<I64>::Some), use them.
+                           let final_generics = if !generic_args.is_empty() {
+                               generic_args.clone()
+                           } else {
+                               // Else try to infer from args
+                               // Get Enum Def to know generic param names
+                               let enum_def = self.enums.get(&enum_name).expect("Enum definition should exist if variant was found");
+                               if enum_def.generics.is_empty() {
+                                   vec![]
+                               } else {
+                                   // Simple Inference: Map Generic Name -> Concrete Type
+                                   let mut inference_map: std::collections::HashMap<String, Type> = std::collections::HashMap::new();
+                                   
+                                   if let crate::compiler::ast::VariantKind::Tuple(ref param_types) = variant_def.kind {
+                                        for (param_ty, arg_ty) in param_types.iter().zip(checked_arg_types.iter()) {
+                                            // Recursive match function
+                                            fn unify(param: &Type, arg: &Type, map: &mut std::collections::HashMap<String, Type>) {
+                                                match (param, arg) {
+                                                    (Type::Struct(name, _), _) => {
+                                                         map.insert(name.clone(), arg.clone());
+                                                    }
+                                                    (Type::Vec(p_inner), Type::Vec(a_inner)) => unify(p_inner, a_inner, map),
+                                                    (Type::Tensor(p_inner, _), Type::Tensor(a_inner, _)) => unify(p_inner, a_inner, map),
+                                                    (Type::TensorShaped(p_inner, _), Type::TensorShaped(a_inner, _)) => unify(p_inner, a_inner, map),
+                                                    _ => {}
+                                                }
+                                            }
+                                            unify(param_ty, arg_ty, &mut inference_map);
+                                        }
+                                   }
+                                   
+                                   // Construct concrete args in order
+                                   let mut inferred_args = Vec::new();
+                                   for g_name in &enum_def.generics {
+                                       if let Some(ty) = inference_map.get(g_name) {
+                                           inferred_args.push(ty.clone());
+                                       } else {
+                                           inferred_args.push(Type::Struct(g_name.clone(), vec![]));
+                                       }
+                                   }
+                                   inferred_args
+                               }
+                           };
+
                            expr.inner = ExprKind::EnumInit {
                                enum_name: enum_name.clone(),
                                variant_name: method_name,
+                               generics: final_generics.clone(),
                                payload
                            };
                            
-                           // 3. Infer Generics
-                           // If explicit generics provided (e.g. Option<I64>::Some), use them.
-                           if !generic_args.is_empty() {
-                               return Ok(Type::Enum(enum_name.clone(), generic_args));
-                           }
-                           
-                           // Else try to infer from args
-                           // Get Enum Def to know generic param names
-                           let enum_def = self.enums.get(&enum_name).expect("Enum definition should exist if variant was found");
-                           if enum_def.generics.is_empty() {
-                               return Ok(Type::Enum(enum_name.clone(), vec![]));
-                           }
-
-                           // Simple Inference: Map Generic Name -> Concrete Type
-                           let mut inference_map: std::collections::HashMap<String, Type> = std::collections::HashMap::new();
-                           
-                           if let crate::compiler::ast::VariantKind::Tuple(ref param_types) = variant_def.kind {
-                                for (param_ty, arg_ty) in param_types.iter().zip(checked_arg_types.iter()) {
-                                    // Recursive match function
-                                    fn unify(param: &Type, arg: &Type, map: &mut std::collections::HashMap<String, Type>) {
-                                        match (param, arg) {
-                                            (Type::Struct(name, _), _) => {
-                                                 map.insert(name.clone(), arg.clone());
-                                            }
-                                            (Type::Vec(p_inner), Type::Vec(a_inner)) => unify(p_inner, a_inner, map),
-                                            (Type::Tensor(p_inner, _), Type::Tensor(a_inner, _)) => unify(p_inner, a_inner, map),
-                                            (Type::TensorShaped(p_inner, _), Type::TensorShaped(a_inner, _)) => unify(p_inner, a_inner, map),
-                                            _ => {}
-                                        }
-                                    }
-                                    unify(param_ty, arg_ty, &mut inference_map);
-                                }
-                           }
-                           
-                           // Construct concrete args in order
-                           let mut inferred_args = Vec::new();
-                           for g_name in &enum_def.generics {
-                               if let Some(ty) = inference_map.get(g_name) {
-                                   inferred_args.push(ty.clone());
-                               } else {
-                                   inferred_args.push(Type::Struct(g_name.clone(), vec![]));
-                               }
-                           }
-                           
-                           return Ok(Type::Enum(enum_name.clone(), inferred_args));
+                           return Ok(Type::Enum(enum_name.clone(), final_generics));
                        }
                   }
 
@@ -2111,6 +2148,16 @@ impl SemanticAnalyzer {
                     Ok(Type::Struct(name.clone(), generic_args))
                 } else if let Some((enum_def, variant_def)) = self.resolve_enum_variant(name) {
                     // It is an Enum Variant! Transform to EnumInit.
+                    
+                    // Resolve explicit generics for Enum
+                    // Note: Full inference from fields is omitted for now, assuming explicit generics or defaults.
+                    // If we need field-based inference for Struct Variants, we should copy logic from StructInit.
+                    let generic_args: Vec<Type> = if !explicit_generics.is_empty() {
+                         explicit_generics.iter().map(|t| t.clone()).collect()
+                    } else {
+                         vec![]
+                    };
+
                     let fields_owned = std::mem::take(fields);
                     
                     // Validate fields against variant definition here or later?
@@ -2148,6 +2195,7 @@ impl SemanticAnalyzer {
                     expr.inner = ExprKind::EnumInit {
                         enum_name: enum_def.name.clone(),
                         variant_name: variant_def.name.clone(),
+                        generics: generic_args.clone(), // Use inferred/resolved generics from StructInit logic
                         payload,
                     };
                     // Re-check as EnumInit
@@ -2162,6 +2210,7 @@ impl SemanticAnalyzer {
             ExprKind::EnumInit {
                 enum_name,
                 variant_name,
+                generics,
                 payload,
             } => {
                 let enum_def = self
@@ -2185,7 +2234,7 @@ impl SemanticAnalyzer {
                 // Check payload
                 match (payload, &variant_def.kind) {
                      (crate::compiler::ast::EnumVariantInit::Unit, crate::compiler::ast::VariantKind::Unit) => {
-                          Ok(Type::Enum(enum_name.clone(), vec![])) // Generics? match enum generics
+                          Ok(Type::Enum(enum_name.clone(), generics.clone())) // Generics? match enum generics
                      },
                      (crate::compiler::ast::EnumVariantInit::Tuple(exprs), crate::compiler::ast::VariantKind::Tuple(types)) => {
                           if exprs.len() != types.len() {
@@ -2197,7 +2246,7 @@ impl SemanticAnalyzer {
                            for e in exprs {
                                let _ = self.check_expr(e)?;
                            }
-                           Ok(Type::Enum(enum_name.clone(), vec![]))
+                           Ok(Type::Enum(enum_name.clone(), generics.clone()))
                      },
                      (crate::compiler::ast::EnumVariantInit::Struct(fields), crate::compiler::ast::VariantKind::Struct(def_fields)) => {
                          let mut initialized_fields = HashSet::new();
@@ -2474,6 +2523,7 @@ impl SemanticAnalyzer {
                     expr.inner = ExprKind::EnumInit {
                         enum_name: enum_def.name.clone(),
                         variant_name: variant_def.name.clone(),
+                        generics: vec![], // Unknown/Empty for now unless we do bidirectional inference
                         payload: crate::compiler::ast::EnumVariantInit::Unit,
                     };
                     return self.check_expr(expr);

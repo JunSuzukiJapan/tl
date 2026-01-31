@@ -97,7 +97,7 @@ impl GenericResolver {
     /// BUT, the caller should pass in 'generic_ty' constructed from StructDef which KNOWS T is a parameter.
     /// Impl: We treat any UserDefined(Name, []) as potentially generic if we are in "generic mode".
     /// To be safe, the caller knows `generic_ty` comes from a definition where T is a generic param.
-    fn is_likely_generic_param(name: &str) -> bool {
+    fn is_likely_generic_param(_name: &str) -> bool {
         // Simple heuristic for now, or just assume all empty-arg user types in 'gen' are params
         // But 'String' is UserDefined("String", []) often. 
         // We should handle standard types as non-generics?

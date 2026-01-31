@@ -462,7 +462,7 @@ impl Monomorphizer {
                  }
                  return;
              }
-              ExprKind::EnumInit { enum_name, variant_name, payload } => {
+              ExprKind::EnumInit { enum_name, variant_name, generics: _, payload } => {
                   eprintln!("DEBUG: EnumInit entry name={} variant={}", enum_name, variant_name);
                   if let Some(def) = self.generic_enums.get(enum_name) {
                       if let Some(v_def) = def.variants.iter().find(|v| v.name == *variant_name) {
@@ -734,6 +734,7 @@ impl Monomorphizer {
                                        *expr = ExprKind::EnumInit {
                                            enum_name: concrete_name,
                                            variant_name: method_name.clone(),
+                                           generics: vec![],
                                            payload: payload,
                                        };
                                        return; // Done

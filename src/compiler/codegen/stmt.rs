@@ -3808,7 +3808,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .ok_or(format!("Enum {} definition not found", name))?;
                 self.emit_enum_deep_clone(val, enum_def)
             }
-            Type::Struct(name, _) | Type::Struct(name, _) => {
+            Type::Struct(name, _) => {
                 // Check if it is an Enum
                 if let Some(enum_def) = self.enum_defs.get(name) {
                     return self.emit_enum_deep_clone(val, enum_def);
@@ -4206,7 +4206,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::Struct(_, _) | Type::Enum(_, _) | Type::Struct(_, _) | Type::Tuple(_) | Type::Vec(_) => self
+                        Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) | Type::Vec(_) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),

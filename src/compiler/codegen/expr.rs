@@ -1748,6 +1748,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             ExprKind::EnumInit {
                 enum_name,
                 variant_name,
+                generics,
                 payload,
             } => {
                 let enum_def = self
@@ -2070,7 +2071,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      _ => return Err(format!("Mismatch between variant definition {:?} and init payload {:?}", variant_def.kind, payload)),
                 }
 
-                Ok((alloca.into(), Type::Enum(enum_name.clone(), vec![])))
+                Ok((alloca.into(), Type::Enum(enum_name.clone(), generics.clone())))
             }
             ExprKind::Match {
                 expr: subject_expr,

@@ -833,7 +833,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Only for types that would be freed recursively
                 if matches!(
                     ty,
-                    Type::Tensor(_, _) | Type::Struct(_, _) | Type::Struct(_, _)
+                    Type::Tensor(_, _) | Type::Struct(_, _)
                 ) {
                     let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
                     let null_ptr = ptr_type.const_null();

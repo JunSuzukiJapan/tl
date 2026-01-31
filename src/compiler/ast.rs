@@ -312,6 +312,7 @@ pub enum ExprKind {
     EnumInit {
         enum_name: String,
         variant_name: String,
+        generics: Vec<Type>, // Inferred/Explicit generics
         payload: EnumVariantInit,
     },
 
