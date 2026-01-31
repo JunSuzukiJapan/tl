@@ -127,12 +127,13 @@ pub extern "C" fn tl_string_contains(haystack: *mut crate::StringStruct, needle:
 /// Get character at index from string (returns Unicode Scalar Value as i32, or 0 if out of bounds)
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_char_at(s: *mut crate::StringStruct, index: i64) -> i32 {
-    if s.is_null() || index < 0 {
+    if s.is_null() {
         return 0;
     }
     unsafe {
         if (*s).ptr.is_null() { return 0; }
         let s_str = CStr::from_ptr((*s).ptr).to_string_lossy();
+        if index < 0 { return 0; }
         let idx = index as usize;
         if let Some(c) = s_str.chars().nth(idx) {
             c as i32

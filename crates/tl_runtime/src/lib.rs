@@ -2209,6 +2209,8 @@ pub extern "C" fn tl_string_print(s: *mut StringStruct) {
     }
 }
 
+
+
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_display_string(s: *mut crate::StringStruct) {
     if s.is_null() {
@@ -2227,15 +2229,21 @@ pub extern "C" fn tl_display_string(s: *mut crate::StringStruct) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_print_char(c: u8) {
-    let c_char = c as char;
-    println!("{}", c_char);
+pub extern "C" fn tl_print_char(c: i32) {
+    if let Some(ch) = std::char::from_u32(c as u32) {
+        println!("{}", ch);
+    } else {
+        println!("\u{FFFD}");
+    }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_display_char(c: u8) {
-    let c_char = c as char;
-    print!("{}", c_char);
+pub extern "C" fn tl_display_char(c: i32) {
+    if let Some(ch) = std::char::from_u32(c as u32) {
+        print!("{}", ch);
+    } else {
+        print!("\u{FFFD}");
+    }
     let _ = std::io::stdout().flush();
 }
 
@@ -3646,18 +3654,15 @@ pub struct StringStruct {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_new(s: *const std::os::raw::c_char) -> *mut StringStruct {
-    // println!("tl_string_new input ptr: {:p}", s);
     if s.is_null() {
         return std::ptr::null_mut();
     }
     unsafe {
         let c_str = std::ffi::CStr::from_ptr(s);
         let s_slice = c_str.to_string_lossy().into_owned();
-        // println!("tl_string_new content: '{}'", s_slice);
 
         let new_c_str = std::ffi::CString::new(s_slice).unwrap();
         let ptr = new_c_str.into_raw(); 
-        // println!("tl_string_new allocated ptr: {:p}", ptr);
         
         let len = libc::strlen(ptr) as i64;
         
@@ -3667,7 +3672,6 @@ pub extern "C" fn tl_string_new(s: *const std::os::raw::c_char) -> *mut StringSt
         (*struct_ptr).ptr = ptr;
         (*struct_ptr).len = len;
         
-        // println!("tl_string_new struct ptr: {:p}", struct_ptr);
         struct_ptr
     }
 }

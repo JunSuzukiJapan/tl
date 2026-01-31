@@ -5428,6 +5428,15 @@ impl SemanticAnalyzer {
                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
                         return Some(Ok(Type::Bool));
                     }
+                    "char_at" => {
+                         if args.len() != 1 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "String::char_at".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        return Some(Ok(Type::Char("Char".to_string())));
+                    }
                     _ => None
                 }
             }

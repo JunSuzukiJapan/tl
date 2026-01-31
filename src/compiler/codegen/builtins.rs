@@ -50,7 +50,8 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_print_i32", print_i32_type.clone());
     add_fn("tl_display_i32", print_i32_type);
 
-    let print_char_type = void_type.fn_type(&[context.i8_type().into()], false);
+    // tl_print_char(c: i32)
+    let print_char_type = void_type.fn_type(&[i32_type.into()], false);
     add_fn("tl_print_char", print_char_type.clone());
     add_fn("tl_display_char", print_char_type);
 
@@ -492,6 +493,10 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_string_from_char(c: i32) -> *mut c_char
     let from_char_type = i8_ptr.fn_type(&[i32_type.into()], false);
     add_fn("tl_string_from_char", from_char_type);
+
+    // tl_string_char_at(s: *const c_char, index: i64) -> i32 (char)
+    let char_at_type = i32_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_string_char_at", char_at_type);
 
     // tl_string_eq(s1: *mut StringStruct, s2: *mut StringStruct) -> bool
     let string_eq_type = context.bool_type().fn_type(&[void_ptr.into(), void_ptr.into()], false);

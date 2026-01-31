@@ -5869,22 +5869,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let len_val = self.builder.build_load(self.context.i64_type(), len_ptr, "len").map_err(|e| e.to_string())?;
                     return Ok((len_val, Type::I64));
                 }
-                "char_at" => {
-                    if args.len() != 1 { return Err("char_at takes 1 arg".into()); }
-                    let (idx_val, _) = self.compile_expr(&args[0])?;
-                    let fn_val = self.module.get_function("tl_string_char_at").ok_or("tl_string_char_at missing")?;
-                    
-                    let lhs_ptr_val = obj_val.into_pointer_value();
-                    let lhs_inner_ptr_ptr = self.builder.build_struct_gep(str_struct_ty, lhs_ptr_val, 0, "lhs_str_ptr").map_err(|_| "Failed to GEP String lhs")?;
-                    let lhs_ptr = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), lhs_inner_ptr_ptr, "lhs_ptr").map_err(|e| e.to_string())?;
-                    
-                    let call = self.builder.build_call(fn_val, &[lhs_ptr.into(), idx_val.into()], "char_at").map_err(|e| e.to_string())?;
-                     let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from char_at".into()),
-                    };
-                    return Ok((res, Type::Char("Char".to_string())));
-                }
+
                 _ => {}
             }
         }
@@ -7107,8 +7092,9 @@ fn compile_print_common<'ctx>(
              // If we need a cast:
              let arg_casted = if arg_val.is_int_value() {
                  let int_val = arg_val.into_int_value();
-                 if int_val.get_type().get_bit_width() > 8 {
-                      codegen.builder.build_int_truncate(int_val, codegen.context.i8_type(), "char_trunc").unwrap().into()
+                 let i32_type = codegen.context.i32_type();
+                 if int_val.get_type() != i32_type {
+                      codegen.builder.build_int_cast(int_val, i32_type, "char_cast").unwrap().into()
                  } else {
                       (*arg_val).into()
                  }
