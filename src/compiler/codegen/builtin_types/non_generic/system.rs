@@ -9,6 +9,7 @@ pub fn register_system_types(manager: &mut TypeManager) {
     // Time
     system.register_evaluated_static_method("time", compile_system_time);
     system.register_evaluated_static_method("sleep", compile_system_sleep);
+    system.register_evaluated_static_method("exit", compile_system_exit);
     
     // Memory / Stats
     system.register_evaluated_static_method("memory_mb", compile_memory_mb);
@@ -53,7 +54,35 @@ fn compile_system_sleep<'ctx>(
      // Usually semantic analyzer casts, but let's assume valid input for now.
     codegen.builder.build_call(fn_val, &[arg_val.into()], "").map_err(|e| e.to_string())?;
     
-    // Return void (0 i64)
+    let void_val = codegen.context.i64_type().const_int(0, false).into();
+    Ok((void_val, Type::Void))
+}
+
+fn compile_system_exit<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("System::exit requires 1 argument (code)".into()); }
+    let fn_val = codegen.module.get_function("tl_system_exit").unwrap_or_else(|| {
+         let void_ty = codegen.context.void_type();
+         let i64_ty = codegen.context.i64_type();
+         let ft = void_ty.fn_type(&[i64_ty.into()], false);
+         codegen.module.add_function("tl_system_exit", ft, None)
+    });
+    
+    // fn_val is FunctionValue directly
+
+    let arg_val = args[0].0;
+    let i64_val = if arg_val.is_int_value() {
+         arg_val.into_int_value()
+    } else {
+         return Err("System::exit argument must be int".into());
+    };
+
+    codegen.builder.build_call(fn_val, &[i64_val.into()], "").map_err(|e| e.to_string())?;
+    
+    // Return void (unreachable ideally, but void for checks)
     let void_val = codegen.context.i64_type().const_int(0, false).into();
     Ok((void_val, Type::Void))
 }

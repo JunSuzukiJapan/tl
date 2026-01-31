@@ -4770,6 +4770,7 @@ impl SemanticAnalyzer {
                     }
                     ("System", "time") => Ok(Type::F32),
                     ("System", "sleep") => Ok(Type::Void),
+                    ("System", "exit") => Ok(Type::Void),
                     ("System", "memory_mb") => Ok(Type::I64),
                     ("System", "metal_pool_bytes") => Ok(Type::I64),
                     ("System", "metal_pool_mb") => Ok(Type::I64),
@@ -5403,6 +5404,28 @@ impl SemanticAnalyzer {
         obj_type: &Type,
     ) -> Option<Result<Type, TlError>> {
         match type_name {
+            "String" => {
+                match method {
+                    "len" => {
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "String::len".into(), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        return Some(Ok(Type::I64));
+                    }
+                    "contains" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "String::contains".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        return Some(Ok(Type::Bool));
+                    }
+                    _ => None
+                }
+            }
             "Tensor" => {
                 // Common Tensor ops returning Tensor
                 match method {

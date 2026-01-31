@@ -79,7 +79,7 @@ pub enum Token {
     CharType,
 
     // Identifiers
-    #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())]
+    #[regex(r"[a-zA-Z][a-zA-Z0-9_]*|_[a-zA-Z0-9_]+", |lex| lex.slice().to_string())]
     Identifier(String),
 
     // Literals
@@ -175,7 +175,7 @@ pub enum Token {
     #[token(":-")]
     Entails,
     
-    #[token("_", priority = 3)]
+    #[token("_")]
     Underscore,
     #[token("?")]
     Question,
@@ -287,6 +287,18 @@ mod tests {
             Token::Let,
             Token::Mut,
             Token::Identifier("match_errors".to_string()), // Critical test case
+        ]);
+    }
+
+    #[test]
+    fn test_snake_case_identifiers() {
+        let input = "from_int String::from_int";
+        let tokens: Vec<Token> = tokenize(input).into_iter().map(|r| r.unwrap().token).collect();
+        assert_eq!(tokens, vec![
+            Token::Identifier("from_int".to_string()),
+            Token::StringType,
+            Token::DoubleColon,
+            Token::Identifier("from_int".to_string()),
         ]);
     }
 

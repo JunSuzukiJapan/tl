@@ -1287,7 +1287,9 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, String> {
         let struct_name = match obj_ty {
             Type::Struct(name, _) => name.clone(),
-            _ => return Err(format!("Expected struct type for field {}", field_name)),
+            Type::Vec(_) => "Vec".to_string(),
+            Type::String(_) => "String".to_string(),
+            _ => return Err(format!("Expected struct type for field {} (got {:?})", field_name, obj_ty)),
         };
 
         let simple_struct_name = if struct_name.contains("::") {
@@ -1295,6 +1297,37 @@ impl<'ctx> CodeGenerator<'ctx> {
         } else {
             struct_name.as_str()
         };
+
+        if simple_struct_name == "String" {
+            if field_name == "ptr" {
+                 // String is { i64 ptr } basically, or { i8* }
+                 // We need to load field 0.
+                 // We don't have struct def, so we construct field access manually or assume index 0.
+                 // Actually this helper uses struct_def to find index.
+                 // Let's mock index 0.
+                 let field_idx = 0;
+                 // Proceed to GEP below using struct_name or opaque?
+                 // Wait, build_struct_gep needs StructType.
+                 // If String is Opaque in struct_types, GEP fails.
+                 // We need to cast obj_val to { i64 }* or { i8* }* ?
+                 // String in runtime is usually crate::StringStruct which is opaque to LLVM?
+                 // If we cast to i64* (pointer to i64), and load.
+                 // The "ptr" field usually holds the address (i64 or i8*).
+                 // io.rs expects i64.
+                 
+                 let ptr = obj_val.into_pointer_value();
+                 let i64_ptr_ty = self.context.i64_type().ptr_type(inkwell::AddressSpace::default());
+                 let cast_ptr = self.builder.build_pointer_cast(ptr, i64_ptr_ty, "cast_str_ptr").map_err(|e| e.to_string())?;
+                 
+                 let val = self.builder.build_load(self.context.i64_type(), cast_ptr, "str_ptr_val").map_err(|e| e.to_string())?;
+                 return Ok(val);
+            } else if field_name == "len" || field_name == "cap" {
+                 // Basic String struct might have len/cap? 
+                 // Current implementation seems to rely on runtime functions for len.
+                 // io.rs only asks for "ptr".
+                 return Err("String len/cap not directly accessible via field".into());
+            }
+        }
 
         let struct_def = self
             .struct_defs

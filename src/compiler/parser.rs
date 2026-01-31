@@ -99,7 +99,30 @@ pub fn identifier(input: Input) -> IResult<Input, String, ParserError> {
 // Match primitive identifiers if they are parsed as tokens?
 // Lexer emits keywords for f32, etc. So "f32" is Token::F32Type.
 // We need to match Token::F32Type -> Type::F32.
-
+// Helper for path segments (Identifier or Type keywords used as namespace)
+fn identifier_or_type_token(input: Input) -> IResult<Input, String, ParserError> {
+    match input.first() {
+        Some(tok) => match &tok.token {
+            Token::Identifier(s) => Ok((&input[1..], s.clone())),
+            Token::StringType => Ok((&input[1..], "String".to_string())),
+            Token::CharType => Ok((&input[1..], "Char".to_string())),
+            Token::F32Type => Ok((&input[1..], "f32".to_string())),
+            Token::F64Type => Ok((&input[1..], "f64".to_string())),
+            Token::I32Type => Ok((&input[1..], "i32".to_string())),
+            Token::I64Type => Ok((&input[1..], "i64".to_string())),
+            Token::BoolType => Ok((&input[1..], "bool".to_string())),
+            Token::VoidType => Ok((&input[1..], "void".to_string())), // Unlikely but consistent
+            _ => Err(nom::Err::Error(ParserError {
+                input,
+                kind: ParseErrorKind::UnexpectedToken("Identifier or Type".to_string()),
+            })),
+        },
+        None => Err(nom::Err::Error(ParserError {
+            input,
+            kind: ParseErrorKind::UnexpectedToken("EOF".to_string()),
+        })),
+    }
+}
 // Entry point wrapper (Temporary adapter for existing tests expecting string)
 // We need to change the public API `parse` to take `&str` but use `tokenize` internally.
 
@@ -344,8 +367,8 @@ fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
     // - { ... }            -> Struct/Enum init
     // - other              -> Error (not a valid path-based atom)
     
-    // Parse first identifier
-    let (mut rest, first) = identifier(input)?;
+    // Parse first identifier (or typetoken)
+    let (mut rest, first) = identifier_or_type_token(input)?;
     let mut path_segments = vec![first.clone()];
     let mut generics: Vec<Type> = vec![];
     
@@ -361,7 +384,7 @@ fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
     // Collect :: identifier<generics>? segments
     loop {
         if let Ok((rest2, _)) = expect_token(Token::DoubleColon)(rest) {
-            if let Ok((rest3, seg)) = identifier(rest2) {
+            if let Ok((rest3, seg)) = identifier_or_type_token(rest2) {
                 path_segments.push(seg);
                 rest = rest3;
                 // Check for generics after this segment

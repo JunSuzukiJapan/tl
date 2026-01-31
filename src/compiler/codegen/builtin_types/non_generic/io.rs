@@ -48,14 +48,16 @@ fn compile_file_write<'ctx>(
     let (path_val, path_ty) = &args[0];
     let (content_val, content_ty) = &args[1];
 
-    let extract_ptr = |_codegen: &mut CodeGenerator<'ctx>, val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, String> {
+    let extract_ptr = |codegen: &mut CodeGenerator<'ctx>, val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, String> {
         if matches!(ty, Type::String(_)) {
-             // Type::String is now Opaque Pointer to StringStruct
-             if val.is_pointer_value() {
-                 Ok(val.into_pointer_value().into())
-             } else {
-                 return Err("String value is not a pointer".into());
-             }
+             let struct_ty = Type::String("String".to_string());
+             let ptr_int = codegen.load_struct_i64_field(val, &struct_ty, "ptr")?;
+             let ptr = codegen.builder.build_int_to_ptr(
+                 ptr_int.into_int_value(),
+                 codegen.context.ptr_type(inkwell::AddressSpace::default()),
+                 "str_ptr"
+             ).map_err(|e| e.to_string())?;
+             Ok(ptr.into())
         } else {
              return Err(format!("Expected String argument, got {:?}", ty));
         }
@@ -331,7 +333,17 @@ pub fn compile_file_read_binary<'ctx>(
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from File::read_binary".into()),
     };
-    Ok((res, Type::Vec(Box::new(Type::U8))))
+    
+    // Cast void* to Vec*
+    let vec_struct_ty = codegen.struct_types.get("Vec").ok_or("Vec type not found")?;
+    let vec_ptr_ty = vec_struct_ty.ptr_type(inkwell::AddressSpace::default());
+    let vec_ptr = codegen.builder.build_pointer_cast(
+        res.into_pointer_value(),
+        vec_ptr_ty,
+        "vec_cast"
+    ).map_err(|e| e.to_string())?;
+
+    Ok((vec_ptr.into(), Type::Vec(Box::new(Type::U8))))
 }
 
 pub fn compile_file_read_string<'ctx>(

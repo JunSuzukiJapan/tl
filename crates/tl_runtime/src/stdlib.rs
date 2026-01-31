@@ -542,3 +542,8 @@ pub extern "C" fn tl_system_time() -> f32 {
 pub extern "C" fn tl_system_sleep(seconds: f32) {
     std::thread::sleep(std::time::Duration::from_secs_f32(seconds));
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_system_exit(code: i64) {
+    std::process::exit(code as i32);
+}
