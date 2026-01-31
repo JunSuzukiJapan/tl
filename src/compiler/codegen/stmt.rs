@@ -915,7 +915,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_unreg_vec").unwrap();
                 self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
             }
-            Type::Enum(name, _) => {
+            Type::Enum(_name, _) => {
                  let ptr = val.into_pointer_value();
                  let unreg_fn = self.module.get_function("tl_mem_unregister")
                     .ok_or("tl_mem_unregister not found")?;
