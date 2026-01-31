@@ -6,6 +6,9 @@ use inkwell::values::BasicValueEnum;
 
 
 
+
+pub const SOURCE: &str = include_str!("llm_types.tl");
+
 pub fn register_llm_types(manager: &mut TypeManager) {
     // Register Tokenizer
     let mut tokenizer = CodeGenType::new("Tokenizer");
@@ -85,16 +88,17 @@ fn compile_tokenizer_new<'ctx>(
     
     let path_ptr = match path_ty {
         Type::String(_) => {
-             match path_val {
-                 inkwell::values::BasicValueEnum::PointerValue(p) => p,
-                 _ => return Err("path must be pointer".into()),
-             }
+             // Extract ptr from String struct
+             codegen.load_struct_i64_field(*path_val, path_ty, "ptr")?
+                .into_int_value()
         },
         _ => return Err(format!("Tokenizer::new expects String argument, got {:?}", path_ty)),
     };
 
+    let path_ptr_val = codegen.builder.build_int_to_ptr(path_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "path_str_ptr").map_err(|e| e.to_string())?;
+
     let fn_val = codegen.module.get_function("tl_tokenizer_new").ok_or("tl_tokenizer_new not found")?;
-    let call = codegen.builder.build_call(fn_val, &[inkwell::values::BasicMetadataValueEnum::from(*path_ptr)], "tok_new").map_err(|e| e.to_string())?;
+    let call = codegen.builder.build_call(fn_val, &[inkwell::values::BasicMetadataValueEnum::from(path_ptr_val)], "tok_new").map_err(|e| e.to_string())?;
     let handle = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from Tokenizer::new".into()),
@@ -145,15 +149,15 @@ fn compile_tokenizer_encode<'ctx>(
     
     let prompt_ptr = match prompt_ty {
         Type::String(_) => {
-             match prompt_val {
-                 inkwell::values::BasicValueEnum::PointerValue(p) => p,
-                 _ => return Err("prompt must be pointer".into()),
-             }
+             // Extract ptr from String struct
+             codegen.load_struct_i64_field(*prompt_val, prompt_ty, "ptr")?
+                .into_int_value()
         },
         _ => return Err("Tokenizer::encode expects String argument".into()),
     };
+    let prompt_ptr_val = codegen.builder.build_int_to_ptr(prompt_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "prompt_str_ptr").map_err(|e| e.to_string())?;
     let fn_val = codegen.module.get_function("tl_tokenizer_encode").ok_or("tl_tokenizer_encode not found")?;
-    let call = codegen.builder.build_call(fn_val, &[handle.into(), inkwell::values::BasicMetadataValueEnum::from(*prompt_ptr)], "tok_encode").map_err(|e| e.to_string())?;
+    let call = codegen.builder.build_call(fn_val, &[handle.into(), inkwell::values::BasicMetadataValueEnum::from(prompt_ptr_val)], "tok_encode").map_err(|e| e.to_string())?;
     // check_tensor_result(val, msg) is method of codegen.
     let res = codegen.check_tensor_result(call, "tok_encode_error")?;
     Ok((res, Type::Tensor(Box::new(Type::I64), 0)))
@@ -170,10 +174,19 @@ fn compile_tokenizer_decode<'ctx>(
     let (ids_val, _) = args[0];
     let fn_val = codegen.module.get_function("tl_tokenizer_decode").ok_or("tl_tokenizer_decode not found")?;
     let call = codegen.builder.build_call(fn_val, &[handle.into(), ids_val.into()], "tok_decode").map_err(|e| e.to_string())?;
-    let res = match call.try_as_basic_value() {
+    let char_ptr = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from Tokenizer::decode".into()),
     };
+    
+    // Wrap char* in String struct using tl_string_new
+    let string_new_fn = codegen.module.get_function("tl_string_new").ok_or("tl_string_new not found")?;
+    let str_call = codegen.builder.build_call(string_new_fn, &[char_ptr.into()], "tok_decode_str").map_err(|e| e.to_string())?;
+    let res = match str_call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from tl_string_new".into()),
+    };
+
     Ok((res, Type::String("String".to_string())))
 }
 

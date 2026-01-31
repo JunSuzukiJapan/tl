@@ -668,7 +668,9 @@ fn load_builtins() -> Result<tl_lang::compiler::ast::Module> {
         builtin_types::vec::SOURCE,
         builtin_types::hashmap::SOURCE,
         builtin_types::option::SOURCE,
+
         builtin_types::result::SOURCE,
+        builtin_types::llm::SOURCE,
     ];
 
     let mut combined = tl_lang::compiler::ast::Module {
