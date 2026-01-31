@@ -3204,7 +3204,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 if matches!(
                     then_result.1,
-                    Type::Tensor(_, _) | Type::Struct(_, _) | Type::Tuple(_)
+                    Type::Tensor(_, _) | Type::Struct(_, _) | Type::Tuple(_) | Type::String(_)
                 ) {
                     // Logic:
                     // 1. Check AST of last stmt.
@@ -3287,7 +3287,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 if matches!(
                     else_result.1,
-                    Type::Tensor(_, _) | Type::Struct(_, _) | Type::Tuple(_)
+                    Type::Tensor(_, _) | Type::Struct(_, _) | Type::Tuple(_) | Type::String(_)
                 ) {
                     // Logic:
                     // 1. Check AST of last stmt.
@@ -3353,7 +3353,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Type::Bool => self.context.bool_type().into(),
                         Type::Tensor(_, _)
                         | Type::Struct(_, _)
-                        
+                        | Type::String(_)
                         | Type::Tuple(_) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
@@ -3381,7 +3381,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         res_ty,
                         Type::Tensor(_, _)
                             | Type::Struct(_, _)
-
+                            | Type::String(_)
                             | Type::Tuple(_)
                     ) {
                         self.emit_register_tensor(res_val, &res_ty)?;
@@ -3398,7 +3398,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                         if let Type::Tensor(_, _) = res_ty {
                             // Already called emit_register_tensor above
-                        } else if let Type::Struct(_, _) = &res_ty {
+                        } else if let Type::Struct(_, _) | Type::String(_) = &res_ty {
                             if let Some(reg_fn) = self.module.get_function("tl_mem_register_struct")
                             {
                                 let ptr = res_val.into_pointer_value();
@@ -5739,128 +5739,15 @@ impl<'ctx> CodeGenerator<'ctx> {
             ], false);
 
             match method {
-                "concat" => {
-                    if args.len() != 1 {
-                        return Err("String::concat requires 1 argument".into());
-                    }
-                    let (other_val, other_ty) = self.compile_expr(&args[0])?;
 
-                    let concat_fn = self
-                        .module
-                        .get_function("tl_string_concat")
-                        .ok_or("tl_string_concat not found")?;
-
-                    // LHS ptr
-                    let lhs_ptr_val = obj_val.into_pointer_value();
-                    let lhs_inner_ptr_ptr = self.builder.build_struct_gep(str_struct_ty, lhs_ptr_val, 0, "lhs_str_ptr").map_err(|_| "Failed to GEP String lhs")?;
-                    let lhs_ptr = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), lhs_inner_ptr_ptr, "lhs_ptr").map_err(|e| e.to_string())?;
-
-                    let rhs_ptr = match other_ty {
-                        Type::String(_) => {
-                             let rhs_ptr_val = other_val.into_pointer_value();
-                             let rhs_inner_ptr_ptr = self.builder.build_struct_gep(str_struct_ty, rhs_ptr_val, 0, "rhs_str_ptr").map_err(|_| "Failed to GEP String rhs")?;
-                             self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), rhs_inner_ptr_ptr, "rhs_ptr").map_err(|e| e.to_string())?
-                        },
-                        Type::Char(_) => {
-                            let char_to_str_fn = self.module.get_function("tl_string_from_char").ok_or("tl_string_from_char missing")?;
-                            let call = self.builder.build_call(char_to_str_fn, &[other_val.into()], "char_str").map_err(|e| e.to_string())?;
-                            match call.try_as_basic_value() {
-                                inkwell::values::ValueKind::Basic(v) => v,
-                                _ => return Err("tl_string_from_char returned void".into()),
-                            }
-                        },
-                        _ => return Err(format!("Cannot concatenate String with {:?}", other_ty)),
-                    };
-
-                    let call = self
-                        .builder
-                        .build_call(concat_fn, &[lhs_ptr.into(), rhs_ptr.into()], "str_concat")
-                        .map_err(|e| e.to_string())?;
-                    let res_ptr = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from String::concat".into()),
-                    };
-                    
-                    let len_fn = self.module.get_function("tl_string_len").ok_or("tl_string_len not found")?;
-                    let len_call = self.builder.build_call(len_fn, &[res_ptr.into()], "new_len").map_err(|e| e.to_string())?;
-                    let len_val = match len_call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from tl_string_len".into()),
-                    };
-
-                    // Construct String struct
-                    let str_alloca = self.builder.build_alloca(str_struct_ty, "new_str").map_err(|e| e.to_string())?;
-                    
-                    let ptr_gep = self.builder.build_struct_gep(str_struct_ty, str_alloca, 0, "ptr_gep").map_err(|_| "GEP failed")?;
-                    self.builder.build_store(ptr_gep, res_ptr).map_err(|e| e.to_string())?;
-                    
-                    let len_gep = self.builder.build_struct_gep(str_struct_ty, str_alloca, 1, "len_gep").map_err(|_| "GEP failed")?;
-                    self.builder.build_store(len_gep, len_val).map_err(|e| e.to_string())?;
-
-                    return Ok((str_alloca.into(), Type::String("String".to_string())));
-                }
-                "contains" => {
-                    if args.len() != 1 {
-                        return Err("String::contains requires 1 argument".into());
-                    }
-                    let (needle_val, _) = self.compile_expr(&args[0])?;
-                    let fn_val = self
-                        .module
-                        .get_function("tl_string_contains")
-                        .ok_or("tl_string_contains not found")?;
-                    
-                    let lhs_ptr_val = obj_val.into_pointer_value();
-                    let lhs_inner_ptr_ptr = self.builder.build_struct_gep(str_struct_ty, lhs_ptr_val, 0, "lhs_str_ptr").map_err(|_| "Failed to GEP String lhs")?;
-                    let lhs_ptr = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), lhs_inner_ptr_ptr, "lhs_ptr").map_err(|e| e.to_string())?;
-
-                    let rhs_ptr_val = needle_val.into_pointer_value();
-                    let rhs_inner_ptr_ptr = self.builder.build_struct_gep(str_struct_ty, rhs_ptr_val, 0, "rhs_str_ptr").map_err(|_| "Failed to GEP String rhs")?;
-                    let rhs_ptr = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), rhs_inner_ptr_ptr, "rhs_ptr").map_err(|e| e.to_string())?;
-
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[lhs_ptr.into(), rhs_ptr.into()], "str_contains")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from String::contains".into()),
-                    };
-                    return Ok((res, Type::Bool));
-                }
-                "to_i64" => {
-                    if !args.is_empty() {
-                        return Err("String::to_i64 requires 0 arguments".into());
-                    }
-                    let fn_val = self
-                        .module
-                        .get_function("tl_string_to_i64")
-                        .ok_or("tl_string_to_i64 not found")?;
-                    
-                    let lhs_ptr_val = obj_val.into_pointer_value();
-                    let lhs_inner_ptr_ptr = self.builder.build_struct_gep(str_struct_ty, lhs_ptr_val, 0, "lhs_str_ptr").map_err(|_| "Failed to GEP String lhs")?;
-                    let lhs_ptr = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), lhs_inner_ptr_ptr, "lhs_ptr").map_err(|e| e.to_string())?;
-
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[lhs_ptr.into()], "str_to_i64")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from String::to_i64".into()),
-                    };
-                    return Ok((res, Type::I64));
-                }
                 "print" | "display" => {
                     let fn_val = self
                         .module
                         .get_function("tl_print_string")
                         .ok_or("tl_print_string not found")?;
                     
-                    let lhs_ptr_val = obj_val.into_pointer_value();
-                    let lhs_inner_ptr_ptr = self.builder.build_struct_gep(str_struct_ty, lhs_ptr_val, 0, "lhs_str_ptr").map_err(|_| "Failed to GEP String lhs")?;
-                    let lhs_ptr = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), lhs_inner_ptr_ptr, "lhs_ptr").map_err(|e| e.to_string())?;
-
-                    self.builder.build_call(fn_val, &[lhs_ptr.into()], "").map_err(|e| e.to_string())?;
+                    // Pass struct pointer directly
+                    self.builder.build_call(fn_val, &[obj_val.into()], "").map_err(|e| e.to_string())?;
                     return Ok((self.context.i64_type().const_zero().into(), Type::Void));
                 }
                 "len" => {

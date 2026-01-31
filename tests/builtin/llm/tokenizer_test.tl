@@ -2,7 +2,18 @@
 fn main() {
     println("Testing Tokenizer...");
 
-    let tokenizer_path = "tests/fixtures/llm/tokenizer.json";
+    let path1 = "tests/fixtures/llm/tokenizer.json";
+    let path2 = "../../../fixtures/llm/tokenizer.json";
+    let tokenizer_path = if File::exists(path1) { 
+        path1 
+    } else { 
+        path2 
+    };
+    
+    if !File::exists(tokenizer_path) {
+        println("Error: tokenizer.json not found at {} or {}", path1, path2);
+        return;
+    }
     
     // 1. Test new
     let tokenizer = Tokenizer::new(tokenizer_path);

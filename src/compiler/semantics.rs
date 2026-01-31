@@ -4798,6 +4798,20 @@ impl SemanticAnalyzer {
                         }
                         Ok(Type::Void)
                     }
+                    ("String", "from_int") => {
+                         if args.len() != 1 {
+                            return self.err(
+                                SemanticError::ArgumentCountMismatch {
+                                    name: "String::from_int".into(),
+                                    expected: 1,
+                                    found: args.len(),
+                                },
+                                Some(expr.span.clone()),
+                            );
+                        }
+                        self.check_expr(&mut args[0])?;
+                        Ok(Type::String("String".to_string()))
+                    }
                     ("Http", "get") => Ok(Type::String("String".to_string())),
                     ("Http", "download") => Ok(Type::Bool),
                     ("Image", "load_grayscale") => Ok(Type::Vec(Box::new(Type::U8))),
@@ -4818,7 +4832,7 @@ impl SemanticAnalyzer {
                     ("File", "download") => Ok(Type::Bool),
                     ("File", "read_binary") => Ok(Type::Vec(Box::new(Type::U8))),
                     ("Path", "exists") => Ok(Type::Bool),
-                    ("String", "from_int") => Ok(Type::String("String".to_string())),
+
                     // --- New Static Methods for Refactor ---
                     ("Tensor", "zeros") => {
                         // Tensor::zeros(shape, requires_grad)
@@ -5428,6 +5442,15 @@ impl SemanticAnalyzer {
                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
                         return Some(Ok(Type::Bool));
                     }
+                    "concat" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "String::concat".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        return Some(Ok(Type::String("String".to_string())));
+                    }
                     "char_at" => {
                          if args.len() != 1 {
                              return Some(self.err(SemanticError::ArgumentCountMismatch {
@@ -5436,6 +5459,23 @@ impl SemanticAnalyzer {
                         }
                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
                         return Some(Ok(Type::Char("Char".to_string())));
+                    }
+                    "to_i64" => {
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "String::to_i64".into(), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        return Some(Ok(Type::I64));
+                    }
+                    "print" | "display" => {
+                         // Accepts 0 explicitly, but effectively takes self
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("String::{}", method), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        return Some(Ok(Type::Void));
                     }
                     _ => None
                 }
