@@ -50,26 +50,16 @@ fn compile_file_write<'ctx>(
     let (content_val, content_ty) = &args[1];
 
     let extract_ptr = |codegen: &mut CodeGenerator<'ctx>, val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, String> {
-        let ptr_int_val = if let Type::Struct(name, _) = ty {
-            if name == "String" {
-                let v = codegen.load_struct_i64_field(val, ty, "ptr")?;
-                v.into_int_value()
-            } else {
-                return Err("Expected String argument".into());
-            }
-        } else if matches!(ty, Type::String) {
-             let struct_ty = Type::Struct("String".to_string(), vec![]);
-             let v = codegen.load_struct_i64_field(val, &struct_ty, "ptr")?;
-             v.into_int_value()
+        if matches!(ty, Type::String(_)) {
+             // Type::String is now Opaque Pointer to StringStruct
+             if val.is_pointer_value() {
+                 Ok(val.into_pointer_value().into())
+             } else {
+                 return Err("String value is not a pointer".into());
+             }
         } else {
              return Err(format!("Expected String argument, got {:?}", ty));
-        };
-        let ptr = codegen.builder.build_int_to_ptr(
-            ptr_int_val,
-            codegen.context.ptr_type(inkwell::AddressSpace::default()),
-            "str_ptr"
-        ).map_err(|e| e.to_string())?;
-        Ok(ptr.into())
+        }
     };
 
     let path_ptr = extract_ptr(codegen, *path_val, path_ty)?;
@@ -115,7 +105,7 @@ fn compile_env_get<'ctx>(
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from Env::get".into()),
     };
-    Ok((res, Type::Struct("String".to_string(), vec![])))
+    Ok((res, Type::String("String".to_string())))
 }
 
 fn compile_http_get<'ctx>(
@@ -130,7 +120,7 @@ fn compile_http_get<'ctx>(
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from Http::get".into()),
     };
-    Ok((res, Type::Struct("String".to_string(), vec![])))
+    Ok((res, Type::String("String".to_string())))
 }
 
 fn compile_path_exists<'ctx>(
@@ -145,14 +135,7 @@ fn compile_path_exists<'ctx>(
     let tl_path_new = codegen.module.get_function("tl_path_new").ok_or("tl_path_new not found")?;
     let (path_val, path_ty) = &args[0]; // String (i8*)
     
-    let path_ptr_val = if let Type::Struct(name, _) = path_ty {
-        if name == "String" {
-            let val = codegen.load_struct_i64_field(*path_val, path_ty, "ptr")?;
-            val.into_int_value()
-        } else {
-             return Err("Path::exists argument must be String".into());
-        }
-    } else if matches!(path_ty, Type::String) {
+    let path_ptr_val = if matches!(path_ty, Type::String(_)) {
         // eprintln!("DEBUG: File::open compiling path String val={:?} ty={:?}", path_val, path_ty);
         if !path_val.is_pointer_value() {
             return Err(format!("File::open path must be a pointer, got {:?}", path_val));
@@ -209,55 +192,30 @@ pub fn compile_file_open<'ctx>(
     
     // Arg 0: Path
     let (path_val, path_ty) = &args[0];
-    let path_ptr_val = if let Type::Struct(name, _) = path_ty {
-        if name == "String" {
-            let val = codegen.load_struct_i64_field(*path_val, path_ty, "ptr")?;
-            val.into_int_value()
+    let path_ptr = if matches!(path_ty, Type::String(_)) {
+        if path_val.is_pointer_value() {
+             path_val.into_pointer_value()
         } else {
-             return Err("File::open argument 1 must be String".into());
+             return Err("path must be pointer".into());
         }
-    } else if matches!(path_ty, Type::String) {
-        // eprintln!("DEBUG: File::open compiling path String val={:?} ty={:?}", path_val, path_ty);
-        if !path_val.is_pointer_value() {
-            return Err(format!("File::open path must be a pointer, got {:?}", path_val));
-        }
-        // eprintln!("DEBUG: File::open compiling path String val={:?} ty={:?}", path_val, path_ty);
-        if !path_val.is_pointer_value() {
-            return Err(format!("File::open path must be a pointer, got {:?}", path_val));
-        }
-        let ptr = path_val.into_pointer_value();
-        codegen.builder.build_ptr_to_int(ptr, codegen.context.i64_type(), "ptr_int").map_err(|e| e.to_string())?
     } else {
          return Err("File::open argument 1 must be String".into());
     };
-    let path_ptr = codegen.builder.build_int_to_ptr(
-        path_ptr_val,
-        codegen.context.ptr_type(inkwell::AddressSpace::default()),
-        "path_ptr"
-    ).map_err(|e| e.to_string())?;
 
     // Arg 1: Mode
     let (mode_val, mode_ty) = &args[1];
-    let mode_ptr_val = if let Type::Struct(name, _) = mode_ty {
-        if name == "String" {
-            let val = codegen.load_struct_i64_field(*mode_val, mode_ty, "ptr")?;
-            val.into_int_value()
-        } else {
-             return Err("File::open argument 2 must be String".into());
-        }
-    } else if matches!(mode_ty, Type::String) {
-        let ptr = mode_val.into_pointer_value();
-        codegen.builder.build_ptr_to_int(ptr, codegen.context.i64_type(), "ptr_int").map_err(|e| e.to_string())?
+    let mode_ptr = if matches!(mode_ty, Type::String(_)) {
+         match mode_val {
+             inkwell::values::BasicValueEnum::PointerValue(p) => p,
+             _ => return Err("mode must be pointer".into()),
+         }
     } else {
          return Err("File::open argument 2 must be String".into());
     };
-    let mode_ptr = codegen.builder.build_int_to_ptr(
-        mode_ptr_val,
-        codegen.context.ptr_type(inkwell::AddressSpace::default()),
-        "mode_ptr"
-    ).map_err(|e| e.to_string())?;
 
-    let call = codegen.builder.build_call(fn_val, &[path_ptr.into(), mode_ptr.into()], "file_open").map_err(|e| e.to_string())?;
+// Replace the whole match block or just the buggy line if possible.
+// Actually, in io.rs:225, it was path_ptr.into().
+    let call = codegen.builder.build_call(fn_val, &[inkwell::values::BasicMetadataValueEnum::from(path_ptr), inkwell::values::BasicMetadataValueEnum::from(*mode_ptr)], "file_open").map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from File::open".into()),
@@ -274,27 +232,16 @@ pub fn compile_file_exists<'ctx>(
     let fn_val = codegen.module.get_function("tl_file_exists_i64").ok_or("tl_file_exists_i64 not found")?;
     
     let (path_val, path_ty) = &args[0];
-    let path_ptr_val = if let Type::Struct(name, _) = path_ty {
-        if name == "String" {
-            let val = codegen.load_struct_i64_field(*path_val, path_ty, "ptr")?;
-            val.into_int_value()
-        } else {
-             return Err("File::exists expects String argument".into());
+    let path_ptr = if matches!(path_ty, Type::String(_)) {
+        match path_val {
+            inkwell::values::BasicValueEnum::PointerValue(p) => p,
+            _ => return Err("path must be pointer".into()),
         }
-    } else if matches!(path_ty, Type::String) {
-        let struct_ty = Type::Struct("String".to_string(), vec![]);
-        let v = codegen.load_struct_i64_field(*path_val, &struct_ty, "ptr")?;
-        v.into_int_value()
     } else {
          return Err("File::exists expects String argument".into());
     };
-    let path_ptr = codegen.builder.build_int_to_ptr(
-        path_ptr_val,
-        codegen.context.ptr_type(inkwell::AddressSpace::default()),
-        "path_ptr"
-    ).map_err(|e| e.to_string())?;
 
-    let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], "file_exists").map_err(|e| e.to_string())?;
+    let call = codegen.builder.build_call(fn_val, &[inkwell::values::BasicMetadataValueEnum::from(*path_ptr)], "file_exists").map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
         _ => return Err("Invalid return from File::exists".into()),
@@ -311,15 +258,8 @@ pub fn compile_file_read_static<'ctx>(
     if args.len() != 1 { return Err("File::read requires 1 argument".into()); }
     
     let (path_val, path_ty) = &args[0];
-    let path_ptr_val = if let Type::Struct(name, _) = path_ty {
-        if name == "String" {
-            let v = codegen.load_struct_i64_field(*path_val, path_ty, "ptr")?;
-            v.into_int_value()
-        } else {
-            return Err("Expected String argument".into());
-        }
-    } else if matches!(path_ty, Type::String) {
-         let struct_ty = Type::Struct("String".to_string(), vec![]);
+    let path_ptr_val = if matches!(path_ty, Type::String(_)) {
+         let struct_ty = Type::String("String".to_string());
          let v = codegen.load_struct_i64_field(*path_val, &struct_ty, "ptr")?;
          v.into_int_value()
     } else {
@@ -338,7 +278,7 @@ pub fn compile_file_read_static<'ctx>(
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from File::read".into()),
     };
-    Ok((res, Type::Struct("String".to_string(), vec![])))
+    Ok((res, Type::String("String".to_string())))
 }
 
 pub fn compile_file_download<'ctx>(
@@ -349,15 +289,8 @@ pub fn compile_file_download<'ctx>(
     if args.len() != 2 { return Err("File::download requires 2 arguments".into()); }
     
     let extract_ptr = |codegen: &mut CodeGenerator<'ctx>, val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, String> {
-        let ptr_int_val = if let Type::Struct(name, _) = ty {
-            if name == "String" {
-                let v = codegen.load_struct_i64_field(val, ty, "ptr")?;
-                v.into_int_value()
-            } else {
-                return Err("Expected String argument".into());
-            }
-        } else if matches!(ty, Type::String) {
-             let struct_ty = Type::Struct("String".to_string(), vec![]);
+        let ptr_int_val = if matches!(ty, Type::String(_)) {
+             let struct_ty = Type::String("String".to_string());
              let v = codegen.load_struct_i64_field(val, &struct_ty, "ptr")?;
              v.into_int_value()
         } else {
@@ -415,7 +348,7 @@ pub fn compile_file_read_string<'ctx>(
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from File::read_string".into()),
     };
-    Ok((res, Type::Struct("String".to_string(), vec![])))
+    Ok((res, Type::String("String".to_string())))
 }
 
 pub fn compile_file_write_string<'ctx>(

@@ -191,7 +191,7 @@ mod tests {
         let generic_ty = t_struct("Map", vec![t_param("K"), t_param("V")]);
         
         let tensor_conc = t_tensor(t_f32(), 2);
-        let string_conc = Type::String;
+        let string_conc = Type::String("String".to_string());
         let conc = t_struct("Map", vec![string_conc.clone(), tensor_conc.clone()]);
         
         let bindings = GenericResolver::resolve_bindings(&generic_ty, &conc).unwrap();

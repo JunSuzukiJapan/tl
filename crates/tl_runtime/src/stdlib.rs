@@ -6,13 +6,19 @@ use std::os::raw::c_char;
 // --- Strings ---
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_string_free(s: *mut c_char) {
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_free(s: *mut crate::StringStruct) {
     if s.is_null() {
         return;
     }
     unsafe {
-        crate::tl_log_free(s as *const c_void, std::ptr::null(), 0);
-        let _ = CString::from_raw(s);
+        // Free the inner buffer
+        if !(*s).ptr.is_null() {
+             let _ = CString::from_raw((*s).ptr);
+        }
+        // Free the struct itself
+        let layout = std::alloc::Layout::new::<crate::StringStruct>();
+        std::alloc::dealloc(s as *mut u8, layout);
     }
 }
 

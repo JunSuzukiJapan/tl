@@ -132,6 +132,8 @@ fn parse_primitive_type(input: Input) -> IResult<Input, Type, ParserError> {
         value(Type::Bool, expect_token(Token::BoolType)),
         value(Type::Usize, expect_token(Token::UsizeType)),
         value(Type::Void, expect_token(Token::VoidType)),
+        value(Type::String("String".to_string()), expect_token(Token::StringType)),
+        value(Type::Char("Char".to_string()), expect_token(Token::CharType)),
     ))(input)
 }
 

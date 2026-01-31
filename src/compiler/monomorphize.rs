@@ -178,10 +178,10 @@ impl Monomorphizer {
                          "F32" => return Type::F32,
                          "Bool" => return Type::Bool,
                          "Void" => return Type::Void,
-                         "String" => return Type::String,
-                         "Char" => return Type::Char,
-                         "string" => return Type::String,
-                         "char" => return Type::Char,
+                         "String" => return Type::String("String".to_string()),
+                         "Char" => return Type::Char("Char".to_string()),
+                         "string" => return Type::String("String".to_string()),
+                         "char" => return Type::Char("Char".to_string()),
                          "i64" => return Type::I64,
                          "f32" => return Type::F32,
                          "bool" => return Type::Bool,
@@ -1092,11 +1092,11 @@ impl Monomorphizer {
                  }
                  let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
                  match name.as_str() {
-                     "String" if new_args.is_empty() => Type::String,
+                     "String" if new_args.is_empty() => Type::String("String".to_string()),
                      "I64" if new_args.is_empty() => Type::I64,
                      "Bool" if new_args.is_empty() => Type::Bool,
                      "F32" if new_args.is_empty() => Type::F32,
-                     "Char" if new_args.is_empty() => Type::Char,
+                     "Char" if new_args.is_empty() => Type::Char("Char".to_string()),
                      _ => Type::Struct(name.clone(), new_args)
                  }
              },
@@ -1115,8 +1115,8 @@ impl Monomorphizer {
             Type::F64 => "f64".to_string(),
             Type::F32 => "f32".to_string(),
             Type::Bool => "bool".to_string(),
-            Type::String => "string".to_string(),
-            Type::Char => "char".to_string(),
+            Type::String(_) => "string".to_string(),
+            Type::Char(_) => "char".to_string(),
             Type::I32 => "i32".to_string(),
             Type::I8 => "i8".to_string(),
             Type::U8 => "u8".to_string(),
@@ -1143,7 +1143,7 @@ impl Monomorphizer {
             ExprKind::Int(_) => Some(Type::I64),
             ExprKind::Float(_) => Some(Type::F32), // Match Semantics default (F32)
             ExprKind::Bool(_) => Some(Type::Bool),
-            ExprKind::StringLiteral(_) => Some(Type::String),
+            ExprKind::StringLiteral(_) => Some(Type::String("String".to_string())),
             ExprKind::Variable(name) => {
                 for scope in self.scopes.iter().rev() {
                     if let Some(ty) = scope.get(name) {

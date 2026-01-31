@@ -83,27 +83,18 @@ fn compile_tokenizer_new<'ctx>(
     }
     let (path_val, path_ty) = &args[0];
     
-    let path_ptr_val = match path_ty {
-        Type::Struct(name, _) if name == "String" => {
-            let val = codegen.load_struct_i64_field(*path_val, path_ty, "ptr")?;
-            val.into_int_value()
-        },
-        Type::String => {
-             let struct_ty = Type::Struct("String".to_string(), vec![]);
-             let val = codegen.load_struct_i64_field(*path_val, &struct_ty, "ptr")?;
-             val.into_int_value()
+    let path_ptr = match path_ty {
+        Type::String(_) => {
+             match path_val {
+                 inkwell::values::BasicValueEnum::PointerValue(p) => p,
+                 _ => return Err("path must be pointer".into()),
+             }
         },
         _ => return Err(format!("Tokenizer::new expects String argument, got {:?}", path_ty)),
     };
 
-    let path_ptr = codegen.builder.build_int_to_ptr(
-        path_ptr_val,
-        codegen.context.ptr_type(inkwell::AddressSpace::default()),
-        "path_ptr"
-    ).map_err(|e| e.to_string())?;
-
     let fn_val = codegen.module.get_function("tl_tokenizer_new").ok_or("tl_tokenizer_new not found")?;
-    let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], "tok_new").map_err(|e| e.to_string())?;
+    let call = codegen.builder.build_call(fn_val, &[inkwell::values::BasicMetadataValueEnum::from(*path_ptr)], "tok_new").map_err(|e| e.to_string())?;
     let handle = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from Tokenizer::new".into()),
@@ -152,26 +143,17 @@ fn compile_tokenizer_encode<'ctx>(
     let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
     let (prompt_val, prompt_ty) = &args[0];
     
-    let prompt_ptr_val = match prompt_ty {
-        Type::Struct(name, _) if name == "String" => {
-            let val = codegen.load_struct_i64_field(*prompt_val, prompt_ty, "ptr")?;
-            val.into_int_value()
-        },
-        Type::String => {
-             let struct_ty = Type::Struct("String".to_string(), vec![]);
-             let val = codegen.load_struct_i64_field(*prompt_val, &struct_ty, "ptr")?;
-             val.into_int_value()
+    let prompt_ptr = match prompt_ty {
+        Type::String(_) => {
+             match prompt_val {
+                 inkwell::values::BasicValueEnum::PointerValue(p) => p,
+                 _ => return Err("prompt must be pointer".into()),
+             }
         },
         _ => return Err("Tokenizer::encode expects String argument".into()),
     };
-
-    let prompt_ptr = codegen.builder.build_int_to_ptr(
-        prompt_ptr_val,
-        codegen.context.ptr_type(inkwell::AddressSpace::default()),
-        "prompt_ptr"
-    ).map_err(|e| e.to_string())?;
     let fn_val = codegen.module.get_function("tl_tokenizer_encode").ok_or("tl_tokenizer_encode not found")?;
-    let call = codegen.builder.build_call(fn_val, &[handle.into(), prompt_ptr.into()], "tok_encode").map_err(|e| e.to_string())?;
+    let call = codegen.builder.build_call(fn_val, &[handle.into(), inkwell::values::BasicMetadataValueEnum::from(*prompt_ptr)], "tok_encode").map_err(|e| e.to_string())?;
     // check_tensor_result(val, msg) is method of codegen.
     let res = codegen.check_tensor_result(call, "tok_encode_error")?;
     Ok((res, Type::Tensor(Box::new(Type::I64), 0)))
@@ -192,7 +174,7 @@ fn compile_tokenizer_decode<'ctx>(
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from Tokenizer::decode".into()),
     };
-    Ok((res, Type::String))
+    Ok((res, Type::String("String".to_string())))
 }
 
 // KVCache Static Methods

@@ -4,7 +4,7 @@ pub mod system;
 pub mod tensor;
 pub mod option;
 pub mod result;
-pub mod string;
+// pub mod string; // Removed
 pub mod vec;
 pub mod hashmap;
 pub mod primitives;

@@ -672,7 +672,7 @@ fn load_builtins() -> Result<tl_lang::compiler::ast::Module> {
         builtin_types::tensor::SOURCE,
         builtin_types::llm::SOURCE,
         builtin_types::io::SOURCE,
-        builtin_types::string::SOURCE,
+        // builtin_types::string::SOURCE, // Removed
         builtin_types::primitives::SOURCE,
     ];
 

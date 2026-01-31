@@ -73,6 +73,10 @@ pub enum Token {
     UsizeType,
     #[token("void")]
     VoidType,
+    #[token("String")]
+    StringType,
+    #[token("Char")]
+    CharType,
 
     // Identifiers
     #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())]

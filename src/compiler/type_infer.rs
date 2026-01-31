@@ -161,7 +161,7 @@ impl TypeInferencer {
             ExprKind::Int(_) => Ok(Type::I64),
             ExprKind::Float(_) => Ok(Type::F32),
             ExprKind::Bool(_) => Ok(Type::Bool),
-            ExprKind::StringLiteral(_) => Ok(Type::String),
+            ExprKind::StringLiteral(_) => Ok(Type::String("String".to_string())),
 
             ExprKind::Variable(name) => self
                 .var_types

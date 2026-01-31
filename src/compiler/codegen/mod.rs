@@ -172,19 +172,19 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn register_builtin_return_types(&mut self) {
         // Path
         self.method_return_types.insert("tl_path_new".to_string(), Type::Struct("Path".to_string(), vec![]));
-        self.method_return_types.insert("tl_path_to_string".to_string(), Type::String);
+        self.method_return_types.insert("tl_path_to_string".to_string(), Type::String("String".to_string()));
         self.method_return_types.insert("tl_path_join".to_string(), Type::Struct("Path".to_string(), vec![]));
         
         // String
-        self.method_return_types.insert("tl_string_new".to_string(), Type::String);
+        self.method_return_types.insert("tl_string_new".to_string(), Type::String("String".to_string()));
 
         // File
         self.method_return_types.insert("tl_file_open".to_string(), Type::Struct("File".to_string(), vec![]));
-        self.method_return_types.insert("tl_file_read_string".to_string(), Type::String);
+        self.method_return_types.insert("tl_file_read_string".to_string(), Type::String("String".to_string()));
         self.method_return_types.insert("tl_file_write_string".to_string(), Type::Void);
-        self.method_return_types.insert("tl_args_get".to_string(), Type::String);
-        self.method_return_types.insert("tl_env_get".to_string(), Type::String);
-        self.method_return_types.insert("tl_string_char_at".to_string(), Type::Char);
+        self.method_return_types.insert("tl_args_get".to_string(), Type::String("String".to_string()));
+        self.method_return_types.insert("tl_env_get".to_string(), Type::String("String".to_string()));
+        self.method_return_types.insert("tl_string_char_at".to_string(), Type::Char("Char".to_string()));
         
         // Map / HashMap (treated as structs but return pointers, so we must register them to avoid Tensor default)
         self.method_return_types.insert("tl_tensor_map_new".to_string(), Type::Struct("Map".to_string(), vec![]));
@@ -510,8 +510,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         // builtin_types::string::register_string_types(&mut self.type_manager); (Deprecated direct call, use loader pattern)
         // builtin_types::string::register_string_types(&mut self.type_manager); (Deprecated direct call, use loader pattern)
         // builtin_types::string::register_string_types(&mut self.type_manager); (Deprecated direct call, use loader pattern)
-        let string_data = builtin_types::string::load_string_data();
-        self.type_manager.register_builtin(string_data.clone());
         // Do NOT register generic_impls for String here. String methods are intrinsics in expr.rs. 
         // Registering them would cause CodeGen to generate empty function bodies for extern methods.
         // self.generic_impls.entry("String".to_string()).or_default().extend(string_data.impl_blocks);
@@ -563,7 +561,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      if let Type::Struct(name, _) = ty {
                         // Opaque Handles check (formerly UserDefined logic)
                         match name.as_str() {
-                            "String" => {} // Should be Type::String usually
+                            "String" => {} // Should be Type::String("String".to_string()) usually
                             "File" | "Path" => {}
                             "Env" | "Http" => {}
                             "Map" | "HashMap" | "Tokenizer" | "KVCache" | 
@@ -886,6 +884,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .context
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(), // OpaqueTensor*
+                    Type::String(_) => self
+                        .context
+                        .ptr_type(inkwell::AddressSpace::default())
+                        .into(),
+                    Type::Char(_) => self.context.i32_type().into(),
                     Type::Struct(name, _) | Type::Struct(name, _) => {
                         // Extract simple name from module path (e.g., "mnist_common::Linear" -> "Linear")
                         let simple_name = if name.contains("::") {
@@ -893,7 +896,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         } else {
                             name.as_str()
                         };
-                        if self.struct_types.contains_key(simple_name) || name == "String" {
+                        if self.struct_types.contains_key(simple_name) {
                             self.context
                                 .ptr_type(inkwell::AddressSpace::default())
                                 .into()
@@ -968,11 +971,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::String => self
+                        Type::String(_) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::Char => self.context.i32_type().into(),
+                        Type::Char(_) => self.context.i32_type().into(),
                         _ => {
                             return Err(format!(
                                 "Unsupported type in enum variant {}: {:?}",
@@ -1071,11 +1074,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::String => self
+                        Type::String(_) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::Char => self.context.i32_type().into(),
+                        Type::Char(_) => self.context.i32_type().into(),
                         _ => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
@@ -1103,11 +1106,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .fn_type(&param_types, false),
-                        Type::String => self
+                        Type::String(_) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .fn_type(&param_types, false),
-                        Type::Char => self.context.i32_type().fn_type(&param_types, false),
+                        Type::Char(_) => self.context.i32_type().fn_type(&param_types, false),
                         _ => self.context.void_type().fn_type(&param_types, false),
                     }
                 };
@@ -1455,11 +1458,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .context
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
-                Type::String => self
+                Type::String(_) => self
                     .context
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
-                Type::Char => self.context.i32_type().into(),
+                Type::Char(_) => self.context.i32_type().into(),
                 _ => self.context.i64_type().into(),
             };
             args_types.push(arg_ty);
@@ -1485,12 +1488,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),
                 ),
-                Type::String => Some(
+                Type::String(_) => Some(
                     self.context
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),
                 ),
-                Type::Char => Some(self.context.i32_type().into()),
+                Type::Char(_) => Some(self.context.i32_type().into()),
                 _ => Some(self.context.i64_type().into()),
             };
             match ret_type {

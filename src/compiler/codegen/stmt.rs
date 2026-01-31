@@ -80,11 +80,20 @@ impl<'ctx> CodeGenerator<'ctx> {
             .ok_or("tl_mem_unregister not found")?;
 
         match ty {
-            // Type::Struct(name, _) if name == "String" => {} // DO NOT Skip String. It must be unregistered.
+            Type::String(_) => {
+                 let cast_ptr = self.builder.build_pointer_cast(val.into_pointer_value(), self.context.ptr_type(inkwell::AddressSpace::default()), "cast_unreg_simul").unwrap();
+                 
+                 // Debug trace: unregister
+                 let size_val = self.context.i64_type().const_int(0, false);
+                 self.emit_log_alloc(cast_ptr.into(), size_val).ok();
+
+                 self.builder
+                    .build_call(unreg_fn, &[cast_ptr.into()], "")
+                    .map_err(|e| e.to_string())?;
+            }
             Type::Struct(name, _) | Type::Struct(name, _) => {
-                 if name != "String" {
-                     // eprintln!("DEBUG: Top Level Unregister generation for {}", name);
-                 }
+                 // eprintln!("DEBUG: Top Level Unregister generation for {}", name);
+
                 let cast_ptr = self.builder.build_pointer_cast(val.into_pointer_value(), self.context.ptr_type(inkwell::AddressSpace::default()), "cast_unreg_simul").unwrap();
                  
                  // Debug trace: unregister
@@ -106,9 +115,6 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         match ty {
             Type::Struct(name, _) | Type::Struct(name, _) => {
-                if name == "String" {
-                    return Ok(());
-                }
                 // Extract simple name from module path (e.g., "mnist_common::Linear" -> "Linear")
                 let simple_name = if name.contains("::") {
                     name.split("::").last().unwrap()
@@ -511,7 +517,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                              "f32" => Type::F32,
                              "u8"  => Type::U8,
                              "bool" => Type::Bool,
-                             "String" => Type::Struct("String".to_string(), vec![]),
+                             "String" => Type::String("String".to_string()),
                              _ => Type::Struct(suffix.to_string(), vec![]),
                          }
                     } else {
@@ -519,46 +525,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                          Type::I64
                     };
                     return self.emit_recursive_free(val, &Type::Vec(Box::new(inner_ty)), super::CLEANUP_FULL);
-                }
-
-                // Handle String cleanup
-                if name == "String" {
-                    let free_fn = self
-                        .module
-                        .get_function("tl_string_free")
-                        .or_else(|| {
-                             let void_ty = self.context.void_type();
-                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                             let ft = void_ty.fn_type(&[ptr_ty.into()], false);
-                             Some(self.module.add_function("tl_string_free", ft, None))
-                        })
-                        .ok_or("tl_string_free not found")?;
-                    
-                    let ptr = val.into_pointer_value();
-                    
-                    // Emit log free (optional, the runtime fn also logs, but consistenct with other types?)
-                    // Runtime fn logs. No need to log here twice OR runtime one is better.
-                    // But emit_recursive_free usually logs? 
-                    // L451 logs for Tensor.
-                    // Let's rely on runtime valid pointer.
-                    // But we should check null.
-                    
-                    // Runtime null check
-                    let current_block = self.builder.get_insert_block().unwrap();
-                    let func = current_block.get_parent().unwrap();
-                    let free_block = self.context.append_basic_block(func, "free_string");
-                    let merge_block = self.context.append_basic_block(func, "after_string_free");
-
-                    let is_null = self.builder.build_is_null(ptr, "is_null_str").map_err(|e| e.to_string())?;
-                    self.builder.build_conditional_branch(is_null, merge_block, free_block).map_err(|e| e.to_string())?;
-
-                    self.builder.position_at_end(free_block);
-                    let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_str").unwrap();
-                    self.builder.build_call(free_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
-                    self.builder.build_unconditional_branch(merge_block).unwrap();
-
-                    self.builder.position_at_end(merge_block);
-                    return Ok(());
                 }
 
                 // Extract simple name from module path
@@ -730,6 +696,38 @@ impl<'ctx> CodeGenerator<'ctx> {
                 
                 self.builder.position_at_end(merge_block);
             }
+            Type::String(_) => {
+                  let free_fn = self
+                        .module
+                        .get_function("tl_string_free")
+                        .or_else(|| {
+                             let void_ty = self.context.void_type();
+                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                             let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                             Some(self.module.add_function("tl_string_free", ft, None))
+                        })
+                        .ok_or("tl_string_free not found")?;
+                  
+                  let ptr = val.into_pointer_value();
+                  
+                  // Runtime null check
+                  let current_block = self.builder.get_insert_block().unwrap();
+                  let func = current_block.get_parent().unwrap();
+                  let free_block = self.context.append_basic_block(func, "free_string");
+                  let merge_block = self.context.append_basic_block(func, "after_string_free");
+
+                  let is_null = self.builder.build_is_null(ptr, "is_null_str").map_err(|e| e.to_string())?;
+                  self.builder.build_conditional_branch(is_null, merge_block, free_block).map_err(|e| e.to_string())?;
+
+                  self.builder.position_at_end(free_block);
+                  // Cast to opaque pointer if needed (though StringStruct* is ptr)
+                  let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_str").unwrap();
+                  self.builder.build_call(free_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
+                  self.builder.build_unconditional_branch(merge_block).unwrap();
+
+                  self.builder.position_at_end(merge_block);
+                  return Ok(());
+            }
             Type::Vec(inner_ty) => {
                 // Only support Vec<Tensor> or Vec<Struct> (pointer-sized elements) for now
                 if matches!(
@@ -866,7 +864,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  let struct_ty = self.context.struct_type(&llvm_types, false);
                  
                  for (i, ty) in elem_types.iter().enumerate() {
-                      if matches!(ty, Type::Tensor(_, _) | Type::Struct(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Vec(_) | Type::Tuple(_)) {
+                      if matches!(ty, Type::Tensor(_, _) | Type::String(_) | Type::Struct(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Vec(_) | Type::Tuple(_)) {
                            let f_ptr = self.builder.build_struct_gep(struct_ty, ptr, i as u32, "tup_elem").unwrap();
                            let load = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "load").unwrap();
                            self.emit_recursive_free(load, ty, super::CLEANUP_FULL)?;
@@ -1305,9 +1303,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                                         // Handle mangled name: HashMap_String_i64, etc.
                                         let parts: Vec<&str> = n.split('_').collect();
                                         if parts.len() >= 3 && parts[0] == "HashMap" {
-                                            let key_ty = if parts[1] == "String" { Type::Struct("String".to_string(), vec![]) } else { Type::Struct(parts[1].to_string(), vec![]) };
+                                            let key_ty = if parts[1] == "String" { Type::String("String".to_string()) } else { Type::Struct(parts[1].to_string(), vec![]) };
                                             let val_ty = if parts[2] == "i64" { Type::I64 } 
-                                                else if parts[2] == "String" { Type::Struct("String".to_string(), vec![]) }
+                                                else if parts[2] == "String" { Type::String("String".to_string()) }
                                                 else if parts[2] == "Tensor" { Type::Struct("Tensor".to_string(), vec![]) } // Or handle Tensor specifically?
                                                 else { Type::Struct(parts[2].to_string(), vec![]) };
                                             
@@ -3363,7 +3361,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     inkwell::values::ValueKind::Basic(v) => v,
                     _ => return Err("Invalid string concat return".into()),
                 };
-                Ok((res_val, Type::String))
+                Ok((res_val, Type::String("String".to_string())))
             }
             BinOp::Eq | BinOp::Neq => {
                 let streq_fn = self
@@ -3404,7 +3402,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         match (&lhs_type, &rhs_type) {
             // String Concatenation
-            (Type::String, Type::String) if op == BinOp::Add => {
+            (Type::String(_), Type::String(_)) if op == BinOp::Add => {
                 let concat_fn = self
                     .module
                     .get_function("tl_string_concat")
@@ -3417,9 +3415,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     inkwell::values::ValueKind::Basic(v) => v,
                     _ => return Err("tl_string_concat returned void".into()),
                 };
-                Ok((res, Type::String))
+                Ok((res, Type::String("String".to_string())))
             }
-            (Type::String, Type::Char) if op == BinOp::Add => {
+            (Type::String(_), Type::Char(_)) if op == BinOp::Add => {
                  let char_to_str_fn = self.module.get_function("tl_string_from_char").ok_or("tl_string_from_char missing")?;
                  let call_c = self.builder.build_call(char_to_str_fn, &[rhs.into()], "char_str").map_err(|e| e.to_string())?;
                  let rhs_str = match call_c.try_as_basic_value() {
@@ -3439,9 +3437,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     inkwell::values::ValueKind::Basic(v) => v,
                     _ => return Err("tl_string_concat returned void".into()),
                  };
-                 Ok((res, Type::String))
+                 Ok((res, Type::String("String".to_string())))
             }
-            (Type::Char, Type::String) if op == BinOp::Add => {
+            (Type::Char(_), Type::String(_)) if op == BinOp::Add => {
                  let char_to_str_fn = self.module.get_function("tl_string_from_char").ok_or("tl_string_from_char missing")?;
                  let call_c = self.builder.build_call(char_to_str_fn, &[lhs.into()], "char_str").map_err(|e| e.to_string())?;
                  let lhs_str = match call_c.try_as_basic_value() {
@@ -3461,7 +3459,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     inkwell::values::ValueKind::Basic(v) => v,
                     _ => return Err("tl_string_concat returned void".into()),
                  };
-                 Ok((res, Type::String))
+                 Ok((res, Type::String("String".to_string())))
             }
             (Type::I64, Type::I64) => {
                 let l = lhs.into_int_value();
@@ -3566,11 +3564,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Ok((res, Type::F32))
                 }
             }
-            (Type::String, Type::String) => self.compile_string_bin_op(lhs, rhs, op),
-            // Legacy Struct("string") compatibility
-            (Type::Struct(n, _), Type::String) if n == "string" || n == "String" => self.compile_string_bin_op(lhs, rhs, op),
-            (Type::String, Type::Struct(n, _)) if n == "string" || n == "String" => self.compile_string_bin_op(lhs, rhs, op),
-            (Type::Struct(n1, _), Type::Struct(n2, _)) if (n1 == "string" || n1 == "String") && (n2 == "string" || n2 == "String") => self.compile_string_bin_op(lhs, rhs, op),
+            (Type::String(_), Type::String(_)) => self.compile_string_bin_op(lhs, rhs, op),
 
             (Type::Bool, Type::Bool) => {
                 let l = lhs.into_int_value();
@@ -3591,7 +3585,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .map_err(|e| e.to_string())?;
                 Ok((res.into(), Type::Bool))
             }
-            (Type::Char, Type::Char) => {
+            (Type::Char(_), Type::Char(_)) => {
                 let l = lhs.into_int_value();
                 let r = rhs.into_int_value();
                 let res = match op {
@@ -3801,6 +3795,43 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Return the SAME pointer
                 Ok(val)
             }
+            Type::String(_) => {
+                // String Deep Clone
+                // Uses tl_string_new("") + tl_string_concat(val, empty)
+                // 1. Create empty string object
+                let empty_cstr = self.builder.build_global_string_ptr("", "empty_cstr").unwrap();
+                let string_new_fn = self.module.get_function("tl_string_new")
+                    .or_else(|| {
+                         // Declare if missing
+                         let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                         let fn_type = ptr_ty.fn_type(&[ptr_ty.into()], false);
+                         Some(self.module.add_function("tl_string_new", fn_type, None))
+                    })
+                    .ok_or("tl_string_new not found")?;
+                    
+                let empty_call = self.builder.build_call(string_new_fn, &[empty_cstr.as_pointer_value().into()], "empty_str").map_err(|e| e.to_string())?;
+                let empty_str_obj = match empty_call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                    _ => return Err("tl_string_new returned void".into()),
+                };
+
+                // 2. Deep Clone via Concat
+                let string_concat_fn = self.module.get_function("tl_string_concat")
+                     .ok_or("tl_string_concat not found")?;
+                let val_ptr = val.into_pointer_value();
+                let clone_call = self.builder.build_call(string_concat_fn, &[val_ptr.into(), empty_str_obj.into()], "str_clone").map_err(|e| e.to_string())?;
+                let clone_res = match clone_call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v,
+                    _ => return Err("tl_string_concat returned void".into()),
+                };
+
+                // 3. Free empty string object
+                let string_free_fn = self.module.get_function("tl_string_free")
+                    .ok_or("tl_string_free not found")?;
+                self.builder.build_call(string_free_fn, &[empty_str_obj.into()], "").map_err(|e| e.to_string())?;
+
+                Ok(clone_res)
+            }
             Type::Enum(name, _) => {
                 let enum_def = self
                     .enum_defs
@@ -3814,52 +3845,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     return self.emit_enum_deep_clone(val, enum_def);
                 }
 
-                // HACK: Built-in types (String, File) are opaque pointers
-                if name == "String" {
-                    // String Deep Clone: s + ""
-                    let string_ty = self.module.get_struct_type("String").ok_or("String type not found")?;
-
-                    // 1. Create empty string struct ("")
-                    let empty_ptr = self.builder.build_global_string_ptr("", "empty_const").unwrap().as_pointer_value();
-                    let empty_ptr_i64 = self.builder.build_ptr_to_int(empty_ptr, self.context.i64_type(), "empty_ptr_i64").map_err(|e| e.to_string())?;
-                    let len_zero = self.context.i64_type().const_zero();
-                    
-                    let mut empty_struct = string_ty.const_zero();
-                    empty_struct = self.builder.build_insert_value(empty_struct, empty_ptr_i64, 0, "empty_s_ptr").map_err(|e| e.to_string())?.into_struct_value();
-                    empty_struct = self.builder.build_insert_value(empty_struct, len_zero, 1, "empty_s_len").map_err(|e| e.to_string())?.into_struct_value();
-
-                    // 2. Store empty struct to stack (pass by ptr for 2nd arg)
-                    let empty_alloca = self.builder.build_alloca(string_ty, "empty_alloca").map_err(|e| e.to_string())?;
-                    self.builder.build_store(empty_alloca, empty_struct).map_err(|e| e.to_string())?;
-
-                    // 3. Call tl_string_concat(val, &empty)
-                    let concat_fn = self.module.get_function("tl_string_concat").ok_or("tl_string_concat not found")?;
-                    let call = self.builder.build_call(concat_fn, &[val.into(), empty_alloca.into()], "str_clone").map_err(|e| e.to_string())?;
-                    
-                    // 4. Result is i8* (pointer to new string buffer)
-                    let new_ptr = match call.try_as_basic_value() {
-                         inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-                         _ => return Err("tl_string_concat returned void".into()),
-                    };
-
-                    // 5. Wrap result in String struct
-                    let new_ptr_i64 = self.builder.build_ptr_to_int(new_ptr, self.context.i64_type(), "new_ptr_i64").map_err(|e| e.to_string())?;
-                    
-                    // Extract length from original string (since clone matches length)
-                    let len_val = if val.is_struct_value() {
-                        self.builder.build_extract_value(val.into_struct_value(), 1, "src_len").map_err(|e| e.to_string())?
-                    } else {
-                        // Fallback/Error? Should be struct.
-                         return Err("String clone source not a struct".into());
-                    };
-
-                    let mut res_struct = string_ty.const_zero();
-                    res_struct = self.builder.build_insert_value(res_struct, new_ptr_i64, 0, "res_s_ptr").map_err(|e| e.to_string())?.into_struct_value();
-                    res_struct = self.builder.build_insert_value(res_struct, len_val, 1, "res_s_len").map_err(|e| e.to_string())?.into_struct_value();
-
-                    return Ok(res_struct.into());
-
-                } else if name == "File" {
+                // HACK: Built-in types (File) are opaque pointers
+                if name == "File" {
                     // File handle cannot be deeply cloned easily. Return shallow copy (pointer).
                     return Ok(val);
                 } else if name == "Path" {

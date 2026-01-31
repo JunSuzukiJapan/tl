@@ -283,8 +283,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Bool => "bool".to_string(),
             Type::Usize => "usize".to_string(),
             Type::Void => "void".to_string(),
-            Type::String => "string".to_string(),
-            Type::Char => "char".to_string(),
+            Type::String(_) => "string".to_string(),
+            Type::Char(_) => "char".to_string(),
             Type::Struct(name, args) | Type::Struct(name, args) => {
                 if args.is_empty() {
                     name.clone()
@@ -351,10 +351,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(self.context.ptr_type(AddressSpace::default()).into())
             }
 
-            Type::String => {
+            Type::String(_) => {
                 Ok(self.context.ptr_type(AddressSpace::default()).into())
             }
-            Type::Char => {
+            Type::Char(_) => {
                 Ok(self.context.i32_type().into())
             }
 
@@ -367,6 +367,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     "f32" => return Ok(self.context.f32_type().into()),
                     "f64" => return Ok(self.context.f64_type().into()),
                     "usize" => return Ok(self.context.i64_type().into()),
+                    "String" => return Ok(self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into()),
                     _ => {}
                 }
 
@@ -478,12 +479,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
                 
                 match name.as_str() {
-                    "String" if new_args.is_empty() => Type::String,
-                    "Char" if new_args.is_empty() => Type::Char,
+                    "String" if new_args.is_empty() => Type::String("String".to_string()),
+                    "Char" if new_args.is_empty() => Type::Char("Char".to_string()),
                     "I64" if new_args.is_empty() => Type::I64,
                     "Bool" if new_args.is_empty() => Type::Bool,
                     "F32" if new_args.is_empty() => Type::F32,
-                    "string" if new_args.is_empty() => Type::String, // Catch leaks
+                    "string" if new_args.is_empty() => Type::String("String".to_string()), // Catch leaks
                     _ => Type::Struct(name.clone(), new_args)
                 }
             }
@@ -521,8 +522,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             "is_empty" => Type::Bool,
             "pop" | "get" | "remove" => {
                 match element_type {
-                    Type::Struct(n, _) if n == "String" || n == "string" => Type::String,
-                    Type::String => Type::String,
+                    Type::String(_) => Type::String("String".to_string()),
                     _ => element_type.clone(),
                 }
             },
@@ -537,13 +537,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::I64 => format!("tl_vec_i64_{}", method_name),
             Type::F32 => format!("tl_vec_f32_{}", method_name),
             Type::U8 => format!("tl_vec_u8_{}", method_name), // New U8 support
-            Type::String => {
-                 match method_name {
-                     "contains" | "pop" | "insert" | "remove" | "clear" | "is_empty" => format!("tl_vec_string_{}", method_name),
-                     _ => format!("tl_vec_ptr_{}", method_name),
-                 }
-            },
-            Type::Struct(name, _) if name == "String" || name == "string" => {
+            Type::String(_) => {
                  match method_name {
                      "contains" | "pop" | "insert" | "remove" | "clear" | "is_empty" => format!("tl_vec_string_{}", method_name),
                      _ => format!("tl_vec_ptr_{}", method_name),
@@ -841,8 +835,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             "clear" | "insert" | "contains_key" => Type::Bool,
             "get" | "remove" => {
                 match val_ty {
-                    Type::Struct(n, _) if n == "String" || n == "string" => Type::String,
-                    Type::String => Type::String,
+                    Type::String(_) => Type::String("String".to_string()),
                     _ => val_ty.clone(),
                 }
             },

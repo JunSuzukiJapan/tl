@@ -355,11 +355,11 @@ impl SemanticAnalyzer {
                 
                 // Normalize primitives immediately
                 match name.as_str() {
-                    "String" if new_args.is_empty() => Type::String,
+                    "String" if new_args.is_empty() => Type::String("String".to_string()),
                     "I64" if new_args.is_empty() => Type::I64,
                     "Bool" if new_args.is_empty() => Type::Bool,
                     "F32" if new_args.is_empty() => Type::F32,
-                    "Char" if new_args.is_empty() => Type::Char,
+                    "Char" if new_args.is_empty() => Type::Char("Char".to_string()),
                     _ => Type::Struct(name.clone(), new_args)
                 }
             }
@@ -449,8 +449,8 @@ impl SemanticAnalyzer {
                     "BF16" => return Type::BF16,
                     "Bool" => return Type::Bool,
                     "Void" => return Type::Void,
-                    "String" => return Type::String,
-                    "Char" => return Type::Char,
+                    "String" => return Type::String("String".to_string()),
+                    "Char" => return Type::Char("Char".to_string()),
                     "Usize" => return Type::Usize,
                     "U8" => return Type::U8,
                     "U16" => return Type::U16,
@@ -1998,8 +1998,8 @@ impl SemanticAnalyzer {
             ExprKind::Int(_) => Ok(Type::I64), // Default integer literal type
             ExprKind::Float(_) => Ok(Type::F32), // Default float literal type
             ExprKind::Bool(_) => Ok(Type::Bool),
-            ExprKind::StringLiteral(_) => Ok(Type::String),
-            ExprKind::CharLiteral(_) => Ok(Type::Char),
+            ExprKind::StringLiteral(_) => Ok(Type::String("String".to_string())),
+            ExprKind::CharLiteral(_) => Ok(Type::Char("Char".to_string())),
             ExprKind::Symbol(_) => Ok(Type::Entity),
             ExprKind::LogicVar(_) => Ok(Type::Entity),
             ExprKind::Wildcard => Ok(Type::Entity), // Wildcard treated as Entity type? Or generic?
@@ -2553,10 +2553,10 @@ impl SemanticAnalyzer {
                     Ok(result_ty)
                 } else {
                     match (&left, &right) {
-                        (Type::String, Type::String) => Ok(Type::String),
-                        (Type::String, Type::Char) => Ok(Type::String),
-                        (Type::Char, Type::String) => Ok(Type::String),
-                        (Type::Char, Type::Char) => Ok(Type::String), // Optional: Char + Char -> String?
+                        (Type::String(_), Type::String(_)) => Ok(Type::String("String".to_string())),
+                        (Type::String(_), Type::Char(_)) => Ok(Type::String("String".to_string())),
+                        (Type::Char(_), Type::String(_)) => Ok(Type::String("String".to_string())),
+                        (Type::Char(_), Type::Char(_)) => Ok(Type::String("String".to_string())), // Optional: Char + Char -> String?
                         (Type::Tensor(inner, _rank), val) if **inner == *val => Ok(result_ty),
                         (val, Type::Tensor(inner, _rank)) if **inner == *val => {
                             // Scalar * Tensor -> Tensor
@@ -2674,7 +2674,7 @@ impl SemanticAnalyzer {
                         if !matches!(&args[0].inner, ExprKind::StringLiteral(_)) {
                             return self.err(
                                 SemanticError::TypeMismatch {
-                                    expected: Type::String,
+                                    expected: Type::String("String".to_string()),
                                     found: Type::Void, // Hacky message?
                                 },
                                 Some(args[0].span.clone()),
@@ -2706,7 +2706,7 @@ impl SemanticAnalyzer {
                         );
                     }
                     self.check_expr(&mut args[0])?;
-                    return Ok(Type::String);
+                    return Ok(Type::String("String".to_string()));
                 }
 
                 // --- StdLib Phase 1 ---
@@ -2736,7 +2736,7 @@ impl SemanticAnalyzer {
                             Some(args[0].span.clone()),
                         );
                     }
-                    return Ok(Type::String);
+                    return Ok(Type::String("String".to_string()));
                 } else if name == "char_at" {
                     if args.len() != 2 {
                         return self.err(
@@ -2750,10 +2750,10 @@ impl SemanticAnalyzer {
                     }
                     let string_ty = self.check_expr(&mut args[0])?;
                     let index_ty = self.check_expr(&mut args[1])?;
-                    if string_ty != Type::String {
+                    if !matches!(string_ty, Type::String(_)) {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::String,
+                                expected: Type::String("String".to_string()),
                                 found: string_ty,
                             },
                             Some(args[0].span.clone()),
@@ -2768,7 +2768,7 @@ impl SemanticAnalyzer {
                             Some(args[1].span.clone()),
                         );
                     }
-                    return Ok(Type::Char); // Returns Type::Char
+                    return Ok(Type::Char("Char".to_string())); // Returns Type::Char(_)
                 } else if name == "len" {
                     if args.len() != 1 {
                         return self.err(
@@ -2781,12 +2781,12 @@ impl SemanticAnalyzer {
                         );
                     }
                     let arg_ty = self.check_expr(&mut args[0])?;
-                    if arg_ty != Type::String
+                    if !matches!(arg_ty, Type::String(_))
                         && !matches!(arg_ty, Type::Tensor(_, _))
                     {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::String,
+                                expected: Type::String("String".to_string()),
                                 found: arg_ty,
                             },
                             Some(args[0].span.clone()),
@@ -2820,7 +2820,7 @@ impl SemanticAnalyzer {
                         );
                     }
                     let _t0 = self.check_expr(&mut args[0])?;
-                    return Ok(Type::String);
+                    return Ok(Type::String("String".to_string()));
                 }
                 if name == "tl_file_write_string" {
                     if args.len() != 2 {
@@ -2863,7 +2863,7 @@ impl SemanticAnalyzer {
                         );
                     }
                     let _t0 = self.check_expr(&mut args[0])?;
-                    return Ok(Type::String);
+                    return Ok(Type::String("String".to_string()));
                 } else if name == "tl_args_count" {
                     if !args.is_empty() {
                         return self.err(
@@ -2897,7 +2897,7 @@ impl SemanticAnalyzer {
                             Some(args[0].span.clone()),
                         );
                     }
-                    return Ok(Type::String);
+                    return Ok(Type::String("String".to_string()));
                 } else if name == "tl_string_to_i64" {
                     if args.len() != 1 {
                         return self.err(
@@ -2910,10 +2910,10 @@ impl SemanticAnalyzer {
                         );
                     }
                     let arg_ty = self.check_expr(&mut args[0])?;
-                    if arg_ty != Type::String {
+                    if !matches!(arg_ty, Type::String(_)) {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::String,
+                                expected: Type::String("String".to_string()),
                                 found: arg_ty,
                             },
                             Some(args[0].span.clone()),
@@ -3335,10 +3335,10 @@ impl SemanticAnalyzer {
                         );
                     }
                     let t = self.check_expr(&mut args[0])?;
-                    if !matches!(&t, Type::Struct(s, _) if s == "String") {
+                    if !matches!(&t, Type::String(_)) {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::String,
+                                expected: Type::String("String".to_string()),
                                 found: t,
                             },
                             Some(args[0].span.clone()),
@@ -3501,7 +3501,7 @@ impl SemanticAnalyzer {
                             Some(args[0].span.clone()),
                         );
                     }
-                    return Ok(Type::String);
+                    return Ok(Type::String("String".to_string()));
                 } else if name == "varbuilder_get" {
                     return self.err(
                         SemanticError::FunctionNotFound(
@@ -3610,8 +3610,7 @@ impl SemanticAnalyzer {
                     // Arg 0: Tensor OR Struct
                     match t0 {
                         Type::Tensor(_, _) => {}
-                        Type::Struct(ref s, _) if s != "String" => {}
-                        Type::Struct(_, _) => {}
+                        Type::String(_) => {}
                         _ => {
                             return self.err(
                                 SemanticError::TypeMismatch {
@@ -3623,10 +3622,10 @@ impl SemanticAnalyzer {
                         }
                     }
 
-                    if !matches!(t1, Type::Struct(ref s, _) if s == "String") {
+                    if !matches!(t1, Type::String(_)) {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::String,
+                                expected: Type::String("String".to_string()),
                                 found: t1,
                             },
                             Some(args[1].span.clone()),
@@ -3636,10 +3635,10 @@ impl SemanticAnalyzer {
                 } else if name == "load_weights" {
                     if args.len() == 1 {
                         let t0 = self.check_expr(&mut args[0])?;
-                        if !matches!(t0, Type::Struct(ref s, _) if s == "String") {
+                        if !matches!(t0, Type::String(_)) {
                             return self.err(
                                 SemanticError::TypeMismatch {
-                                    expected: Type::String,
+                                    expected: Type::String("String".to_string()),
                                     found: t0,
                                 },
                                 Some(expr.span.clone()),
@@ -3650,10 +3649,8 @@ impl SemanticAnalyzer {
                         let t0 = self.check_expr(&mut args[0])?;
                         let t1 = self.check_expr(&mut args[1])?;
                         match (t0, t1.clone()) {
-                            (Type::Struct(ref s, _), _) if s != "String" => {}
-                            (Type::Struct(_, _), _) => {}
-                            (Type::String, Type::Char) => return Ok(Type::String),
-                            (Type::Char, Type::String) => return Ok(Type::String),
+                            (Type::String(_), Type::Char(_)) => return Ok(Type::String("String".to_string())),
+                            (Type::Char(_), Type::String(_)) => return Ok(Type::String("String".to_string())),
                             (t0_actual, _) => {
                                 return self.err(
                                     SemanticError::TypeMismatch {
@@ -3664,10 +3661,10 @@ impl SemanticAnalyzer {
                                 );
                             }
                         }
-                        if !matches!(t1, Type::String) {
+                        if !matches!(t1, Type::String(_)) {
                             return self.err(
                                 SemanticError::TypeMismatch {
-                                    expected: Type::String,
+                                    expected: Type::String("String".to_string()),
                                     found: t1,
                                 },
                                 Some(args[1].span.clone()),
@@ -3740,7 +3737,7 @@ impl SemanticAnalyzer {
                                 );
                             }
                             check_all_args(args)?;
-                            return Ok(Type::String);
+                            return Ok(Type::String("String".to_string()));
                         }
                         "tl_gguf_load" => {
                             if arg_len != 1 {
@@ -3852,7 +3849,7 @@ impl SemanticAnalyzer {
                                 );
                             }
                             check_all_args(args)?;
-                            return Ok(Type::String);
+                            return Ok(Type::String("String".to_string()));
                         }
                         "tl_write_file" | "tl_download_file" => {
                             if arg_len != 2 {
@@ -3908,7 +3905,7 @@ impl SemanticAnalyzer {
                                 );
                             }
                             check_all_args(args)?;
-                            return Ok(Type::String);
+                            return Ok(Type::String("String".to_string()));
                         }
                         "tl_string_from_int" => {
                             if arg_len != 1 {
@@ -3922,7 +3919,7 @@ impl SemanticAnalyzer {
                                 );
                             }
                             check_all_args(args)?;
-                            return Ok(Type::String);
+                            return Ok(Type::String("String".to_string()));
                         }
                         "tl_string_contains" => {
                             if arg_len != 2 {
@@ -4790,7 +4787,7 @@ impl SemanticAnalyzer {
                     ("System", "pool_count") => Ok(Type::I64),
                     ("System", "refcount_count") => Ok(Type::I64),
                     ("System", "scope_depth") => Ok(Type::I64),
-                    ("Env", "get") => Ok(Type::String),
+                    ("Env", "get") => Ok(Type::String("String".to_string())),
                     ("Env", "set") => {
                         if args.len() != 2 {
                             return self.err(
@@ -4804,13 +4801,13 @@ impl SemanticAnalyzer {
                         }
                         Ok(Type::Void)
                     }
-                    ("Http", "get") => Ok(Type::String),
+                    ("Http", "get") => Ok(Type::String("String".to_string())),
                     ("Http", "download") => Ok(Type::Bool),
                     ("Image", "load_grayscale") => Ok(Type::Vec(Box::new(Type::U8))),
                     ("Image", "width") => Ok(Type::I64),
                     ("Image", "height") => Ok(Type::I64),
                     ("Args", "count") => Ok(Type::I64),
-                    ("Args", "get") => Ok(Type::String),
+                    ("Args", "get") => Ok(Type::String("String".to_string())),
                     ("Arena", "get_offset") => Ok(Type::I64),
                     ("Arena", "alloc") => Ok(Type::I64),
                     ("Arena", "init") => Ok(Type::Void),
@@ -4819,12 +4816,12 @@ impl SemanticAnalyzer {
                     ("KVCache", "new") => Ok(Type::Struct("KVCache".into(), vec![])),
                     ("Map", "load") => Ok(Type::Struct("Map".into(), vec![])),
                     ("File", "exists") => Ok(Type::Bool),
-                    ("File", "read") => Ok(Type::String),
+                    ("File", "read") => Ok(Type::String("String".to_string())),
                     ("File", "write") => Ok(Type::Bool),
                     ("File", "download") => Ok(Type::Bool),
                     ("File", "read_binary") => Ok(Type::Vec(Box::new(Type::U8))),
                     ("Path", "exists") => Ok(Type::Bool),
-                    ("String", "from_int") => Ok(Type::String),
+                    ("String", "from_int") => Ok(Type::String("String".to_string())),
                     // --- New Static Methods for Refactor ---
                     ("Tensor", "zeros") => {
                         // Tensor::zeros(shape, requires_grad)
@@ -4969,10 +4966,10 @@ impl SemanticAnalyzer {
                             );
                         }
                         let t0 = self.check_expr(&mut args[0])?;
-                        if !matches!(t0, Type::Struct(ref s, _) if s == "String") {
+                        if !matches!(t0, Type::String(_)) {
                             return self.err(
                                 SemanticError::TypeMismatch {
-                                    expected: Type::String,
+                                    expected: Type::String("String".to_string()),
                                     found: t0,
                                 },
                                 Some(args[0].span.clone()),
