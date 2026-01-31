@@ -3591,6 +3591,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .map_err(|e| e.to_string())?;
                 Ok((res.into(), Type::Bool))
             }
+            (Type::Char, Type::Char) => {
+                let l = lhs.into_int_value();
+                let r = rhs.into_int_value();
+                let res = match op {
+                    BinOp::Eq => {
+                        self.builder
+                            .build_int_compare(inkwell::IntPredicate::EQ, l, r, "eqtmp")
+                    }
+                    BinOp::Neq => {
+                        self.builder
+                            .build_int_compare(inkwell::IntPredicate::NE, l, r, "neqtmp")
+                    }
+                    _ => return Err("Unsupported char op".into()),
+                }
+                .map_err(|e| e.to_string())?;
+                Ok((res.into(), Type::Bool))
+            }
             (
                 Type::Tensor(_, _)
                 | Type::Struct(..),

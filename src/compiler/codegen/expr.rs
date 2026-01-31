@@ -2487,6 +2487,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::F32 => "F32",
                     Type::I64 => "I64",
                     Type::Bool => "Bool",
+                    Type::String => "String",
                     // Add other types as needed or implement a helper
                     Type::Tensor(_, _) => "Tensor",
                     _ => return Err(format!("Cannot call static method on type {:?}", type_ty)),
