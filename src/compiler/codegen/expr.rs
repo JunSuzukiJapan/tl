@@ -7434,6 +7434,35 @@ fn compile_print_common<'ctx>(
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
                 .map_err(|e| e.to_string())?;
         }
+        Type::Char => {
+             let fn_name = if is_newline {
+                 "tl_print_char"
+             } else {
+                 "tl_display_char"
+             }; // Char is u8 internally (from char_at)
+             // Check if arg is Int(8/32/64) or Ptr? generic is usually Any/U64
+             // char_at returns Char which usually maps to i8/u8. 
+             // If arg_val is i8, we might need cast if function expects i32/u8?
+             // Runtime signatures in lib.rs define what expectations are.
+             let fn_val = codegen.module.get_function(fn_name).unwrap();
+             
+             // If we need a cast:
+             let arg_casted = if arg_val.is_int_value() {
+                 let int_val = arg_val.into_int_value();
+                 if int_val.get_type().get_bit_width() > 8 {
+                      codegen.builder.build_int_truncate(int_val, codegen.context.i8_type(), "char_trunc").unwrap().into()
+                 } else {
+                      (*arg_val).into()
+                 }
+             } else {
+                 (*arg_val).into()
+             };
+
+             codegen
+                 .builder
+                 .build_call(fn_val, &[arg_casted], "print_call")
+                 .map_err(|e| e.to_string())?;
+        }
         Type::I32 => {
             let fn_name = if is_newline {
                 "tl_print_i32"
@@ -7807,34 +7836,10 @@ fn compile_print_formatted<'ctx>(
         for (i, part) in parts.iter().enumerate() {
             // 1. Print literal part
             if !part.is_empty() {
-                let s_val = codegen.context.const_string(part.as_bytes(), true);
-                let global = codegen.module.add_global(
-                    s_val.get_type(),
-                    Some(inkwell::AddressSpace::default()),
-                    "fmt_part",
-                );
-                global.set_initializer(&s_val);
-                global.set_linkage(inkwell::module::Linkage::Internal);
-                global.set_constant(true);
-
-                let ptr = unsafe {
-                    codegen
-                        .builder
-                        .build_in_bounds_gep(
-                            s_val.get_type(),
-                            global.as_pointer_value(),
-                            &[
-                                codegen.context.i64_type().const_int(0, false),
-                                codegen.context.i64_type().const_int(0, false),
-                            ],
-                            "str_ptr",
-                        )
-                        .map_err(|e| e.to_string())?
-                };
-
+                let (str_val, _) = codegen.compile_string_literal(part)?;
                 codegen
                     .builder
-                    .build_call(display_fn, &[ptr.into()], "print_part")
+                    .build_call(display_fn, &[str_val.into()], "print_part")
                     .map_err(|e| e.to_string())?;
             }
 
@@ -7958,7 +7963,7 @@ fn compile_string_char_at<'ctx>(
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid char_at return".into()),
     };
-    Ok((res, Type::String))
+    Ok((res, Type::Char))
 }
 
 fn compile_string_len<'ctx>(

@@ -50,6 +50,10 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_print_i32", print_i32_type.clone());
     add_fn("tl_display_i32", print_i32_type);
 
+    let print_char_type = void_type.fn_type(&[context.i8_type().into()], false);
+    add_fn("tl_print_char", print_char_type.clone());
+    add_fn("tl_display_char", print_char_type);
+
     let print_f32_type = void_type.fn_type(&[f32_type.into()], false);
     add_fn("tl_print_f32", print_f32_type.clone());
     add_fn("tl_display_f32", print_f32_type);

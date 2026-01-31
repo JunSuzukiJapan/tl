@@ -2229,6 +2229,19 @@ pub extern "C" fn tl_display_string(s: *mut crate::StringStruct) {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn tl_print_char(c: u8) {
+    let c_char = c as char;
+    println!("{}", c_char);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_display_char(c: u8) {
+    let c_char = c as char;
+    print!("{}", c_char);
+    let _ = std::io::stdout().flush();
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_set_device(device_ptr: *const std::ffi::c_void) {
     if device_ptr.is_null() {
         return;
