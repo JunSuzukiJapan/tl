@@ -8,7 +8,10 @@ struct Block { an: RMSNorm, ffn: RMSNorm, at: Attention, mlp: MLP }
 
 // --- App Impls ---
 impl Linear {
-    fn from_map(m: Map, k: String) -> Linear { Linear { w: m.get(k).transpose_2d(0, 1) } }
+    fn from_map(m: Map, k: String) -> Linear { 
+        let t: Tensor<f32, 2> = m.get(k);
+        Linear { w: t.transpose_2d(0, 1) } 
+    }
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { 
         x.matmul(self.w) 
     }

@@ -1,3 +1,6 @@
+struct String {
+    ptr: i64
+}
 
 impl String {
     extern fn len(self) -> i64;

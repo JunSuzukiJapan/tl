@@ -1,8 +1,8 @@
 
 // --- Struct Definitions ---
-struct Tokenizer { _h: i64 }
-struct KVCache { _h: i64 }
-struct File {} 
+struct MyTokenizer { _h: i64 }
+struct MyKVCache { _h: i64 }
+struct MyFile {} 
 // struct Map { _d: i64 }
 // Dummy struct to act as namespace for Tensor operations
 // struct Tensor {}
@@ -132,7 +132,6 @@ fn main() {
     let tokenizer_path = "~/.llm/models/llama3/tokenizer.json";
     
     let config_path = "chatbot_config.txt";
-    
     // Try config first
     if File::exists(config_path) {
         let saved_path = File::read(config_path);
@@ -142,54 +141,7 @@ fn main() {
     }
 
     if !File::exists(model_path) {
-        println("Model file not found at:");
-        println(model_path);
-        println("Please select:");
-        println("1. Download Model");
-        println("2. Load from another folder");
-        
-        while true {
-            let choice = read_line("Select [1/2]> ");
-            if choice == "1" {
-                println("Downloading model...");
-                println("Enter download directory path (or press Enter for default ~/.llm/models/):");
-                let dl_dir_in = read_line("Path> ");
-                let dl_dir = if dl_dir_in == "" { "~/.llm/models/" } else { dl_dir_in };
-                
-                let filename = "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf";
-                let save_path = string_concat(dl_dir, filename);
-                
-                let url = "https://huggingface.co/lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf";
-                if File::download(url, save_path) {
-                    println("Download complete.");
-                    model_path = save_path;
-                    let f = File::open(config_path, "w");
-                    f.write_string(model_path);
-                    f.close();
-                    break;
-                } else {
-                    println("Download failed.");
-                    println("Please try manual download from:");
-                    println(url);
-                    return;
-                }
-            } else {
-                if choice == "2" {
-                    let new_path = read_line("Enter model absolute path> ");
-                    if File::exists(new_path) {
-                        model_path = new_path;
-                        let f = File::open(config_path, "w");
-                        f.write_string(model_path);
-                        f.close();
-                        break;
-                    } else {
-                        println("File not found. Please try again.");
-                    }
-                } else {
-                    println("Invalid selection.");
-                }
-            }
-        }
+        // ...
     }
     
     let weights = Map::load(model_path);
@@ -204,7 +156,6 @@ fn main() {
     println("Loaded output head");
     let emb = weights.get("token_embd.weight");
     println("Loaded embedding");
-    
     while true {
         println("Mem: {} MB (pool={}, in_use={})", System::memory_mb(), System::pool_count(), System::refcount_count());
         let input_str = read_line("User> ");
@@ -215,9 +166,10 @@ fn main() {
         let p1 = "<|start_header_id|>user<|end_header_id|>\n\n";
         let p2 = "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n";
         let prompt = string_concat(p1, string_concat(input_str, p2));
+        // let prompt = "hello";
         
         let mut tokens = tok.encode(prompt);
-        let cache = KVCache::new(32); 
+        let cache = KVCache::new(32);  
         let mut cur_tokens = tokens.clone();
         let mut gen_idx = 0;
         let mut gen_str = "";
@@ -257,5 +209,6 @@ fn main() {
         }
         println("");
         // cache.free(); // Automatic cleanup handles this
+        println("debug: loop end");
     }
 }

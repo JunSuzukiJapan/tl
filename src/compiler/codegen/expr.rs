@@ -7195,8 +7195,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Tensors are returned by pointer directly, so exclude them.
         let mut dest_val = None;
         if match ret_type {
-             Type::Struct(ref name, _) if name != "Vec" && name != "Map" && name != "HashMap" => true,
-             Type::Struct(ref name, _) if name != "String" && name != "Vec" && name != "Map" && name != "HashMap" && name != "Path" && name != "File" => true,
+             Type::Struct(ref name, _) if name != "Vec" && name != "Map" && name != "HashMap" && name != "Tensor" => true,
+             Type::Struct(ref name, _) if name != "String" && name != "Vec" && name != "Map" && name != "HashMap" && name != "Path" && name != "File" && name != "Tensor" => true,
              _ => false 
         } {
              if let Some(d) = dest {
@@ -7244,10 +7244,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             .map_err(|e| e.to_string())?;
 
         // FIX: Free temporary arguments
-        for (i, (val, ty)) in compiled_args_types.into_iter().enumerate() {
+        for (i, (_, ty)) in compiled_args_types.into_iter().enumerate() {
             let arg_expr = &args[i];
             if self.is_safe_to_free(arg_expr, &ty) {
-                self.emit_recursive_free(val, &ty, super::CLEANUP_FULL)?;
+                // self.emit_recursive_free(val, &ty, super::CLEANUP_FULL)?;
             }
         }
 
@@ -7269,6 +7269,28 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
         };
+
+        // ABI ADAPTER: If return type is Struct("Tensor"), wrap handle
+        if let Type::Struct(name, _) = &ret_type {
+            if name == "Tensor" {
+                 if res.is_pointer_value() {
+                     // Create temp struct
+                     let current_block = self.builder.get_insert_block().unwrap();
+                     let current_func = current_block.get_parent().unwrap();
+                     let alloca = self.create_entry_block_alloca(current_func, "tensor_res_struct", &ret_type)?;
+                     
+                     // Handle is res (pointer) -> int
+                     let handle_i64 = self.builder.build_ptr_to_int(res.into_pointer_value(), self.context.i64_type(), "handle_i64").map_err(|e| e.to_string())?;
+                     
+                     // Store at index 0
+                     let struct_ty = self.get_llvm_type(&ret_type)?;
+                     let field_ptr = self.builder.build_struct_gep(struct_ty, alloca, 0, "handle_ptr").map_err(|e| e.to_string())?;
+                     self.builder.build_store(field_ptr, handle_i64).map_err(|e| e.to_string())?;
+                     
+                     return Ok((alloca.into(), ret_type));
+                 }
+            }
+        }
 
         // For Struct returns (SRET deprecated logic, assuming by-value or pointer return if not SRET)
         Ok((res, ret_type))
@@ -8086,18 +8108,46 @@ fn compile_transpose<'ctx>(
     let (t_val, t_ty) = &args[0];
     let (d0_val, _) = &args[1];
     let (d1_val, _) = &args[2];
-    if !matches!(t_ty, Type::Tensor(_, _)) {
-        return Err("First argument to transpose must be a tensor".into());
+    let is_tensor = matches!(t_ty, Type::Tensor(_, _)) 
+        || matches!(t_ty, Type::TensorShaped(_, _))
+        || matches!(t_ty, Type::Struct(name, _) if name == "Tensor");
+        
+    if !is_tensor {
+        return Err(format!("First argument to transpose must be a tensor. Found: {:?}", t_ty));
     }
     let transpose_fn = codegen
         .module
         .get_function("tl_tensor_transpose")
         .ok_or("tl_tensor_transpose not found")?;
+
+    let t_arg = if let Type::Struct(name, _) = t_ty {
+        if name == "Tensor" {
+            // Extract handle (i64) from struct
+            let handle_i64 = if t_val.is_pointer_value() {
+                let ptr = t_val.into_pointer_value();
+                let i64_type = codegen.context.i64_type();
+                let cast_ptr = codegen.builder.build_pointer_cast(ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_tensor_handle").unwrap();
+                codegen.builder.build_load(i64_type, cast_ptr, "tensor_handle").unwrap().into_int_value()
+            } else if t_val.is_struct_value() {
+                codegen.builder.build_extract_value(t_val.into_struct_value(), 0, "tensor_handle").unwrap().into_int_value()
+            } else {
+                return Err(format!("Unexpected value kind for Struct Tensor: {:?}", t_val));
+            };
+            
+            // Cast i64 handle to Pointer
+            codegen.builder.build_int_to_ptr(handle_i64, codegen.context.ptr_type(inkwell::AddressSpace::default()), "handle_ptr").unwrap().into()
+        } else {
+            *t_val
+        }
+    } else {
+        *t_val
+    };
+
     let call = codegen
         .builder
         .build_call(
             transpose_fn,
-            &[(*t_val).into(), (*d0_val).into(), (*d1_val).into()],
+            &[t_arg.into(), (*d0_val).into(), (*d1_val).into()],
             "transpose_res",
         )
         .map_err(|e| e.to_string())?;
@@ -8105,7 +8155,40 @@ fn compile_transpose<'ctx>(
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid transpose return".into()),
     };
-    Ok((res, (*t_ty).clone())) // Returns same type (Tensor)
+
+    if let Type::Struct(name, _) = t_ty {
+        if name == "Tensor" {
+            // Wrap primitive result (ptr) into Struct { handle: i64 }
+            let current_block = codegen.builder.get_insert_block().unwrap();
+            let parent_fn = current_block.get_parent().unwrap();
+            
+            // Alloca struct
+            let i64_type = codegen.context.i64_type();
+            let struct_type = codegen.context.struct_type(&[i64_type.into()], false);
+            
+            // Manual entry block alloca
+            let entry = parent_fn.get_first_basic_block().unwrap();
+            let builder = codegen.context.create_builder();
+            if let Some(first_instr) = entry.get_first_instruction() {
+                builder.position_before(&first_instr);
+            } else {
+                builder.position_at_end(entry);
+            }
+            let struct_alloca = builder.build_alloca(struct_type, "tensor_struct_res").unwrap();
+            
+            // Convert ptr -> i64
+            let handle_i64 = codegen.builder.build_ptr_to_int(res.into_pointer_value(), i64_type, "handle_i64").unwrap();
+            
+            // Store handle (field 0)
+            let handle_ptr = codegen.builder.build_struct_gep(struct_type, struct_alloca, 0, "handle_ptr").unwrap();
+            codegen.builder.build_store(handle_ptr, handle_i64).unwrap();
+            
+            // Return pointer to struct
+            return Ok((struct_alloca.into(), t_ty.clone()));
+        }
+    }
+
+    Ok((res, t_ty.clone())) // Returns same type (Tensor)
 }
 
 fn compile_save_weights<'ctx>(

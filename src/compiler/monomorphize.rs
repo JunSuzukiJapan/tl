@@ -201,7 +201,7 @@ impl Monomorphizer {
                      if self.generic_enums.contains_key(name) {
                           let concrete_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
                           let mangled = self.request_enum_instantiation(name, concrete_args);
-                          return Type::Struct(mangled, vec![]);
+                          return Type::Enum(mangled, vec![]);
                      }
                  }
                  // Recurse for args even if not generic struct (e.g. unknown type?)

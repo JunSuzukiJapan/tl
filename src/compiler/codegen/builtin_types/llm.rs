@@ -20,9 +20,58 @@ pub fn register_llm_types(manager: &mut TypeManager) {
     kv_cache.register_instance_method("free", InstanceMethod::Evaluated(compile_kv_cache_free));
     kv_cache.register_instance_method("get_k", InstanceMethod::Evaluated(compile_kv_cache_get_k));
     kv_cache.register_instance_method("get_v", InstanceMethod::Evaluated(compile_kv_cache_get_v));
+    kv_cache.register_instance_method("update", InstanceMethod::Evaluated(compile_kv_cache_update));
     manager.register_type(kv_cache);
 }
 
+// ... existing static methods ...
+
+// ... existing instance methods ...
+
+
+
+fn compile_kv_cache_update<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 3 { return Err("KVCache::update requires 3 arguments".into()); }
+    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
+    
+    let (layer_val, _) = args[0];
+    let (k_val, k_ty) = &args[1];
+    let (v_val, v_ty) = &args[2];
+
+    // Helper to extract tensor pointer
+    let mut get_tensor_ptr = |val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, String> {
+        let ptr_val = if let Type::Struct(name, _) = ty {
+            if name == "Tensor" {
+                 let h = codegen.load_struct_i64_field(val, ty, "handle")?;
+                 codegen.builder.build_int_to_ptr(h.into_int_value(), codegen.context.ptr_type(inkwell::AddressSpace::default()), "handle_ptr").map_err(|e| e.to_string())?
+            } else {
+                 return Err("Expected Tensor argument".into());
+            }
+        } else if let Type::Tensor(_, _) = ty {
+             if val.is_pointer_value() {
+                 val.into_pointer_value()
+             } else {
+                 return Err("Expected Tensor pointer".into());
+             }
+        } else {
+             return Err(format!("Expected Tensor argument, got {:?}", ty));
+        };
+        Ok(ptr_val.into())
+    };
+
+    let k_ptr = get_tensor_ptr(*k_val, k_ty)?;
+    let v_ptr = get_tensor_ptr(*v_val, v_ty)?;
+
+    let fn_val = codegen.module.get_function("tl_kv_cache_update").ok_or("tl_kv_cache_update not found")?;
+    codegen.builder.build_call(fn_val, &[handle.into(), layer_val.into(), k_ptr, v_ptr], "").map_err(|e| e.to_string())?;
+    
+    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
+}
 // Tokenizer Static Methods
 fn compile_tokenizer_new<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
@@ -34,16 +83,17 @@ fn compile_tokenizer_new<'ctx>(
     }
     let (path_val, path_ty) = &args[0];
     
-    // Extract ptr from String struct
-    let path_ptr_val = if let Type::Struct(name, _) = path_ty {
-        if name == "String" {
+    let path_ptr_val = match path_ty {
+        Type::Struct(name, _) if name == "String" => {
             let val = codegen.load_struct_i64_field(*path_val, path_ty, "ptr")?;
             val.into_int_value()
-        } else {
-             return Err("Tokenizer::new expects String argument".into());
-        }
-    } else {
-         return Err("Tokenizer::new expects String argument".into());
+        },
+        Type::String => {
+             let struct_ty = Type::Struct("String".to_string(), vec![]);
+             let val = codegen.load_struct_i64_field(*path_val, &struct_ty, "ptr")?;
+             val.into_int_value()
+        },
+        _ => return Err(format!("Tokenizer::new expects String argument, got {:?}", path_ty)),
     };
 
     let path_ptr = codegen.builder.build_int_to_ptr(
@@ -102,15 +152,17 @@ fn compile_tokenizer_encode<'ctx>(
     let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
     let (prompt_val, prompt_ty) = &args[0];
     
-    let prompt_ptr_val = if let Type::Struct(name, _) = prompt_ty {
-        if name == "String" {
+    let prompt_ptr_val = match prompt_ty {
+        Type::Struct(name, _) if name == "String" => {
             let val = codegen.load_struct_i64_field(*prompt_val, prompt_ty, "ptr")?;
             val.into_int_value()
-        } else {
-             return Err("Tokenizer::encode expects String argument".into());
-        }
-    } else {
-         return Err("Tokenizer::encode expects String argument".into());
+        },
+        Type::String => {
+             let struct_ty = Type::Struct("String".to_string(), vec![]);
+             let val = codegen.load_struct_i64_field(*prompt_val, &struct_ty, "ptr")?;
+             val.into_int_value()
+        },
+        _ => return Err("Tokenizer::encode expects String argument".into()),
     };
 
     let prompt_ptr = codegen.builder.build_int_to_ptr(

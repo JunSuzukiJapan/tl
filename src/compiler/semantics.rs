@@ -466,6 +466,9 @@ impl SemanticAnalyzer {
             let resolved_args: Vec<Type> = args.iter().map(|a| self.resolve_user_type(a)).collect();
 
             if self.structs.contains_key(&resolved_name) {
+                if resolved_name == "Option" {
+                     eprintln!("DEBUG: Option found in structs! This causes it to be resolved as Struct instead of Enum.");
+                }
                 return Type::Struct(resolved_name, resolved_args);
             }
             if self.enums.contains_key(&resolved_name) {
@@ -1835,6 +1838,125 @@ impl SemanticAnalyzer {
 
 
     pub fn check_expr(&mut self, expr: &mut Expr) -> Result<Type, TlError> {
+        if let ExprKind::StaticMethodCall(_, _, _) = &expr.inner {
+             let inner = std::mem::replace(&mut expr.inner, ExprKind::Wildcard);
+             if let ExprKind::StaticMethodCall(type_name, method_name, mut args) = inner {
+                  // Resolve type logic
+                  let type_name = self.resolve_user_type(&type_name);
+                  
+                  // 1. Check Enum Constructor
+                  let variant_def_opt = if let Type::Enum(ref enum_name, _) = type_name {
+                      self.enums.get(enum_name).and_then(|def| 
+                          def.variants.iter().find(|v| v.name == method_name).cloned()
+                      )
+                  } else { None };
+
+                   if let Some(variant_def) = variant_def_opt {
+                       if let Type::Enum(enum_name, generic_args) = type_name {
+                           // Note: generic_args here come from the TYPE (Option::Some), which are usually empty.
+                           // We need to infer them from arguments if they are empty.
+                           
+                           // 1. Validate args and get types
+                           let mut checked_arg_types = Vec::new();
+                           for arg in args.iter_mut() {
+                               checked_arg_types.push(self.check_expr(arg)?);
+                           }
+
+                           // 2. Validate Payload Compatibility & Construct Payload
+                           let payload = match variant_def.kind {
+                               crate::compiler::ast::VariantKind::Unit => {
+                                   if !args.is_empty() {
+                                       return self.err(
+                                           SemanticError::ArgumentCountMismatch { 
+                                               name: format!("{}::{}", enum_name, method_name),
+                                               expected: 0,
+                                               found: args.len()
+                                           },
+                                           Some(expr.span.clone())
+                                       );
+                                   }
+                                   crate::compiler::ast::EnumVariantInit::Unit
+                               },
+                               crate::compiler::ast::VariantKind::Tuple(ref types) => {
+                                   if args.len() != types.len() {
+                                       return self.err(
+                                           SemanticError::ArgumentCountMismatch { 
+                                               name: format!("{}::{}", enum_name, method_name),
+                                               expected: types.len(),
+                                               found: args.len()
+                                           },
+                                           Some(expr.span.clone())
+                                       );
+                                   }
+                                   crate::compiler::ast::EnumVariantInit::Tuple(args)
+                               },
+                               crate::compiler::ast::VariantKind::Struct(_) => {
+                                    return self.err(SemanticError::Generic("Struct variant construction via call not supported".into()), Some(expr.span.clone()));
+                               }
+                           };
+
+                           expr.inner = ExprKind::EnumInit {
+                               enum_name: enum_name.clone(),
+                               variant_name: method_name,
+                               payload
+                           };
+                           
+                           // 3. Infer Generics
+                           // If explicit generics provided (e.g. Option<I64>::Some), use them.
+                           if !generic_args.is_empty() {
+                               return Ok(Type::Enum(enum_name.clone(), generic_args));
+                           }
+                           
+                           // Else try to infer from args
+                           // Get Enum Def to know generic param names
+                           let enum_def = self.enums.get(&enum_name).expect("Enum definition should exist if variant was found");
+                           if enum_def.generics.is_empty() {
+                               return Ok(Type::Enum(enum_name.clone(), vec![]));
+                           }
+
+                           // Simple Inference: Map Generic Name -> Concrete Type
+                           let mut inference_map: std::collections::HashMap<String, Type> = std::collections::HashMap::new();
+                           
+                           if let crate::compiler::ast::VariantKind::Tuple(ref param_types) = variant_def.kind {
+                                for (param_ty, arg_ty) in param_types.iter().zip(checked_arg_types.iter()) {
+                                    // Recursive match function
+                                    fn unify(param: &Type, arg: &Type, map: &mut std::collections::HashMap<String, Type>) {
+                                        match (param, arg) {
+                                            (Type::Struct(name, _), _) => {
+                                                 map.insert(name.clone(), arg.clone());
+                                            }
+                                            (Type::Vec(p_inner), Type::Vec(a_inner)) => unify(p_inner, a_inner, map),
+                                            (Type::Tensor(p_inner, _), Type::Tensor(a_inner, _)) => unify(p_inner, a_inner, map),
+                                            (Type::TensorShaped(p_inner, _), Type::TensorShaped(a_inner, _)) => unify(p_inner, a_inner, map),
+                                            _ => {}
+                                        }
+                                    }
+                                    unify(param_ty, arg_ty, &mut inference_map);
+                                }
+                           }
+                           
+                           // Construct concrete args in order
+                           let mut inferred_args = Vec::new();
+                           for g_name in &enum_def.generics {
+                               if let Some(ty) = inference_map.get(g_name) {
+                                   inferred_args.push(ty.clone());
+                               } else {
+                                   inferred_args.push(Type::Struct(g_name.clone(), vec![]));
+                               }
+                           }
+                           
+                           return Ok(Type::Enum(enum_name.clone(), inferred_args));
+                       }
+                  }
+
+                  // Restore if nothing matched
+                  expr.inner = ExprKind::StaticMethodCall(type_name, method_name, args);
+             } else {
+                 // Should be unreachable if we entered the if
+                 expr.inner = inner;
+             }
+        }
+
         match &mut expr.inner {
             ExprKind::Int(_) => Ok(Type::I64), // Default integer literal type
             ExprKind::Float(_) => Ok(Type::F32), // Default float literal type
@@ -4354,11 +4476,14 @@ impl SemanticAnalyzer {
                         // Fallback
                         let _ = self.check_expr(&mut args[0])?;
                     }
-
-                    // Check arg 1
+                    
+                    // Check arg 1 and return its type
                     let arg1_type = self.check_expr(&mut args[1])?;
                     return Ok(arg1_type);
                 }
+                
+                // (Enum Constructor logic moved to check_expr entry)
+
 
                 // Check arguments first
                 for arg in args.iter_mut() {

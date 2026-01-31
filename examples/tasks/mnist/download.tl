@@ -1,7 +1,7 @@
 // MNIST Dataset Downloader
 // Downloads the MNIST dataset files from the official mirror
 
-struct File {}
+// File is built-in
 
 fn main() {
     let base_url = "https://storage.googleapis.com/cvdf-datasets/mnist/";

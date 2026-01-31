@@ -126,6 +126,18 @@ fn compile_path_exists<'ctx>(
         } else {
              return Err("Path::exists argument must be String".into());
         }
+    } else if matches!(path_ty, Type::String) {
+        // eprintln!("DEBUG: File::open compiling path String val={:?} ty={:?}", path_val, path_ty);
+        if !path_val.is_pointer_value() {
+            return Err(format!("File::open path must be a pointer, got {:?}", path_val));
+        }
+        // eprintln!("DEBUG: File::open compiling path String val={:?} ty={:?}", path_val, path_ty);
+        if !path_val.is_pointer_value() {
+            return Err(format!("File::open path must be a pointer, got {:?}", path_val));
+        }
+        let ptr = path_val.into_pointer_value();
+        // Just cast pointer to int to pass through
+        codegen.builder.build_ptr_to_int(ptr, codegen.context.i64_type(), "ptr_int").map_err(|e| e.to_string())?
     } else {
          return Err("Path::exists argument must be String".into());
     };
@@ -178,6 +190,17 @@ pub fn compile_file_open<'ctx>(
         } else {
              return Err("File::open argument 1 must be String".into());
         }
+    } else if matches!(path_ty, Type::String) {
+        // eprintln!("DEBUG: File::open compiling path String val={:?} ty={:?}", path_val, path_ty);
+        if !path_val.is_pointer_value() {
+            return Err(format!("File::open path must be a pointer, got {:?}", path_val));
+        }
+        // eprintln!("DEBUG: File::open compiling path String val={:?} ty={:?}", path_val, path_ty);
+        if !path_val.is_pointer_value() {
+            return Err(format!("File::open path must be a pointer, got {:?}", path_val));
+        }
+        let ptr = path_val.into_pointer_value();
+        codegen.builder.build_ptr_to_int(ptr, codegen.context.i64_type(), "ptr_int").map_err(|e| e.to_string())?
     } else {
          return Err("File::open argument 1 must be String".into());
     };
@@ -196,6 +219,9 @@ pub fn compile_file_open<'ctx>(
         } else {
              return Err("File::open argument 2 must be String".into());
         }
+    } else if matches!(mode_ty, Type::String) {
+        let ptr = mode_val.into_pointer_value();
+        codegen.builder.build_ptr_to_int(ptr, codegen.context.i64_type(), "ptr_int").map_err(|e| e.to_string())?
     } else {
          return Err("File::open argument 2 must be String".into());
     };
@@ -229,6 +255,17 @@ pub fn compile_file_exists<'ctx>(
         } else {
              return Err("File::exists expects String argument".into());
         }
+    } else if matches!(path_ty, Type::String) {
+        // eprintln!("DEBUG: File::open compiling path String val={:?} ty={:?}", path_val, path_ty);
+        if !path_val.is_pointer_value() {
+            return Err(format!("File::open path must be a pointer, got {:?}", path_val));
+        }
+        // eprintln!("DEBUG: File::open compiling path String val={:?} ty={:?}", path_val, path_ty);
+        if !path_val.is_pointer_value() {
+            return Err(format!("File::open path must be a pointer, got {:?}", path_val));
+        }
+        let ptr = path_val.into_pointer_value();
+        codegen.builder.build_ptr_to_int(ptr, codegen.context.i64_type(), "ptr_int").map_err(|e| e.to_string())?
     } else {
          return Err("File::exists expects String argument".into());
     };
