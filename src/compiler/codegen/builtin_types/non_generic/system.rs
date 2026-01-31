@@ -8,20 +8,20 @@ pub fn register_system_types(manager: &mut TypeManager) {
     let mut system = CodeGenType::new("System");
     
     // Time
-    system.register_static_method("time", expr::StaticMethod::Evaluated(compile_system_time));
-    system.register_static_method("sleep", expr::StaticMethod::Evaluated(compile_system_sleep));
+    system.register_evaluated_static_method("time", compile_system_time);
+    system.register_evaluated_static_method("sleep", compile_system_sleep);
     
     // Memory / Stats
-    system.register_static_method("memory_mb", expr::StaticMethod::Evaluated(compile_memory_mb));
-    system.register_static_method("pool_count", expr::StaticMethod::Evaluated(compile_pool_count));
-    system.register_static_method("refcount_count", expr::StaticMethod::Evaluated(compile_refcount_count));
-    system.register_static_method("scope_depth", expr::StaticMethod::Evaluated(compile_scope_depth));
+    system.register_evaluated_static_method("memory_mb", compile_memory_mb);
+    system.register_evaluated_static_method("pool_count", compile_pool_count);
+    system.register_evaluated_static_method("refcount_count", compile_refcount_count);
+    system.register_evaluated_static_method("scope_depth", compile_scope_depth);
     
     // Metal
-    system.register_static_method("metal_pool_bytes", expr::StaticMethod::Evaluated(compile_metal_pool_bytes));
-    system.register_static_method("metal_pool_mb", expr::StaticMethod::Evaluated(compile_metal_pool_mb));
-    system.register_static_method("metal_pool_count", expr::StaticMethod::Evaluated(compile_metal_pool_count));
-    system.register_static_method("metal_sync", expr::StaticMethod::Evaluated(compile_metal_sync));
+    system.register_evaluated_static_method("metal_pool_bytes", compile_metal_pool_bytes);
+    system.register_evaluated_static_method("metal_pool_mb", compile_metal_pool_mb);
+    system.register_evaluated_static_method("metal_pool_count", compile_metal_pool_count);
+    system.register_evaluated_static_method("metal_sync", compile_metal_sync);
 
     manager.register_type(system);
 }

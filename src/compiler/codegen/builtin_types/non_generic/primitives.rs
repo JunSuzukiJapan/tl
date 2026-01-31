@@ -1,7 +1,7 @@
 
 use crate::compiler::codegen::type_manager::{CodeGenType, TypeManager};
 
-pub const SOURCE: &str = include_str!("primitives.tl");
+
 
 pub fn register_primitive_types(manager: &mut TypeManager) {
     // Register types for CodeGen to recognize them (though they are built-ins)

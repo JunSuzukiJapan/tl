@@ -485,20 +485,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
 
-        // Register LLM Types (Tokenizer, KVCache)
-        builtin_types::llm::register_llm_types(&mut self.type_manager);
 
-        // Register System Type (Static Methods only)
-        let mut system_type = type_manager::CodeGenType::new("System");
-        system_type.register_static_method("memory_mb", expr::StaticMethod::Evaluated(expr::compile_system_memory_mb));
-        system_type.register_static_method("metal_pool_bytes", expr::StaticMethod::Evaluated(expr::compile_system_metal_pool_bytes));
-        system_type.register_static_method("metal_pool_mb", expr::StaticMethod::Evaluated(expr::compile_system_metal_pool_mb));
-        system_type.register_static_method("metal_pool_count", expr::StaticMethod::Evaluated(expr::compile_system_metal_pool_count));
-        system_type.register_static_method("metal_sync", expr::StaticMethod::Evaluated(expr::compile_system_metal_sync));
-        system_type.register_static_method("pool_count", expr::StaticMethod::Evaluated(expr::compile_system_pool_count));
-        system_type.register_static_method("refcount_count", expr::StaticMethod::Evaluated(expr::compile_system_refcount_count));
-        system_type.register_static_method("scope_depth", expr::StaticMethod::Evaluated(expr::compile_system_scope_depth));
-        self.type_manager.register_type(system_type);
 
         // Register IO Types (File, Path, Env, Http)
         builtin_types::io::register_io_types(&mut self.type_manager);

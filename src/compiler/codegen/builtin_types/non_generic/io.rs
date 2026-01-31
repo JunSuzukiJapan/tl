@@ -5,35 +5,35 @@ use crate::compiler::ast::Type;
 use inkwell::values::BasicValueEnum;
 use inkwell::IntPredicate;
 
-pub const SOURCE: &str = include_str!("io.tl");
+
 
 pub fn register_io_types(manager: &mut TypeManager) {
     // File
     let mut file = CodeGenType::new("File");
-    file.register_static_method("open", expr::StaticMethod::Evaluated(compile_file_open));
-    file.register_static_method("exists", expr::StaticMethod::Evaluated(compile_file_exists));
-    file.register_static_method("read", expr::StaticMethod::Evaluated(compile_file_read_static));
-    file.register_static_method("write", expr::StaticMethod::Evaluated(compile_file_write));
-    file.register_static_method("download", expr::StaticMethod::Evaluated(compile_file_download));
-    file.register_static_method("read_binary", expr::StaticMethod::Evaluated(compile_file_read_binary));
-    file.register_instance_method("read_string", expr::InstanceMethod::Evaluated(compile_file_read_string));
-    file.register_instance_method("write_string", expr::InstanceMethod::Evaluated(compile_file_write_string));
-    file.register_instance_method("close", expr::InstanceMethod::Evaluated(compile_file_close));
+    file.register_evaluated_static_method("open", compile_file_open);
+    file.register_evaluated_static_method("exists", compile_file_exists);
+    file.register_evaluated_static_method("read", compile_file_read_static);
+    file.register_evaluated_static_method("write", compile_file_write);
+    file.register_evaluated_static_method("download", compile_file_download);
+    file.register_evaluated_static_method("read_binary", compile_file_read_binary);
+    file.register_evaluated_instance_method("read_string", compile_file_read_string);
+    file.register_evaluated_instance_method("write_string", compile_file_write_string);
+    file.register_evaluated_instance_method("close", compile_file_close);
     manager.register_type(file);
 
     // Path
     let mut path = CodeGenType::new("Path");
-    path.register_static_method("exists", expr::StaticMethod::Evaluated(compile_path_exists));
+    path.register_evaluated_static_method("exists", compile_path_exists);
     manager.register_type(path);
 
     // Env
     let mut env = CodeGenType::new("Env");
-    env.register_static_method("get", expr::StaticMethod::Evaluated(compile_env_get));
+    env.register_evaluated_static_method("get", compile_env_get);
     manager.register_type(env);
 
     // Http
     let mut http = CodeGenType::new("Http");
-    http.register_static_method("get", expr::StaticMethod::Evaluated(compile_http_get));
+    http.register_evaluated_static_method("get", compile_http_get);
     manager.register_type(http);
 }
 

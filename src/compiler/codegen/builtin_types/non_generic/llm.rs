@@ -4,23 +4,23 @@ use crate::compiler::ast::Type;
 use inkwell::values::BasicValueEnum;
 
 
-pub const SOURCE: &str = include_str!("llm.tl");
+
 
 pub fn register_llm_types(manager: &mut TypeManager) {
     // Register Tokenizer
     let mut tokenizer = CodeGenType::new("Tokenizer");
-    tokenizer.register_static_method("new", StaticMethod::Evaluated(compile_tokenizer_new));
-    tokenizer.register_instance_method("encode", InstanceMethod::Evaluated(compile_tokenizer_encode));
-    tokenizer.register_instance_method("decode", InstanceMethod::Evaluated(compile_tokenizer_decode));
+    tokenizer.register_evaluated_static_method("new", compile_tokenizer_new);
+    tokenizer.register_evaluated_instance_method("encode", compile_tokenizer_encode);
+    tokenizer.register_evaluated_instance_method("decode", compile_tokenizer_decode);
     manager.register_type(tokenizer);
 
     // Register KVCache
     let mut kv_cache = CodeGenType::new("KVCache");
-    kv_cache.register_static_method("new", StaticMethod::Evaluated(compile_kv_cache_new));
-    kv_cache.register_instance_method("free", InstanceMethod::Evaluated(compile_kv_cache_free));
-    kv_cache.register_instance_method("get_k", InstanceMethod::Evaluated(compile_kv_cache_get_k));
-    kv_cache.register_instance_method("get_v", InstanceMethod::Evaluated(compile_kv_cache_get_v));
-    kv_cache.register_instance_method("update", InstanceMethod::Evaluated(compile_kv_cache_update));
+    kv_cache.register_evaluated_static_method("new", compile_kv_cache_new);
+    kv_cache.register_evaluated_instance_method("free", compile_kv_cache_free);
+    kv_cache.register_evaluated_instance_method("get_k", compile_kv_cache_get_k);
+    kv_cache.register_evaluated_instance_method("get_v", compile_kv_cache_get_v);
+    kv_cache.register_evaluated_instance_method("update", compile_kv_cache_update);
     manager.register_type(kv_cache);
 }
 

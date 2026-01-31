@@ -1,5 +1,7 @@
 use std::collections::HashMap;
-pub use crate::compiler::codegen::expr::{StaticMethod, InstanceMethod};
+pub use crate::compiler::codegen::expr::{
+    StaticMethod, InstanceMethod, StaticMethodEval, StaticMethodUneval, InstanceMethodEval, InstanceMethodUneval
+};
 
 /// Represents a type definition within the CodeGenerator, managing its methods.
 pub struct CodeGenType {
@@ -21,8 +23,24 @@ impl CodeGenType {
         self.static_methods.insert(name.to_string(), method);
     }
     
+    pub fn register_evaluated_static_method(&mut self, name: &str, method: crate::compiler::codegen::type_manager::StaticMethodEval) {
+        self.static_methods.insert(name.to_string(), StaticMethod::Evaluated(method));
+    }
+
+    pub fn register_unevaluated_static_method(&mut self, name: &str, method: crate::compiler::codegen::type_manager::StaticMethodUneval) {
+        self.static_methods.insert(name.to_string(), StaticMethod::Unevaluated(method));
+    }
+
     pub fn register_instance_method(&mut self, name: &str, method: InstanceMethod) {
         self.instance_methods.insert(name.to_string(), method);
+    }
+
+    pub fn register_evaluated_instance_method(&mut self, name: &str, method: crate::compiler::codegen::type_manager::InstanceMethodEval) {
+        self.instance_methods.insert(name.to_string(), InstanceMethod::Evaluated(method));
+    }
+
+    pub fn register_unevaluated_instance_method(&mut self, name: &str, method: crate::compiler::codegen::type_manager::InstanceMethodUneval) {
+        self.instance_methods.insert(name.to_string(), InstanceMethod::Unevaluated(method));
     }
 
     pub fn get_static_method(&self, name: &str) -> Option<&StaticMethod> {

@@ -4,20 +4,20 @@ use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::{Type, Expr, ExprKind};
 use inkwell::values::{BasicValueEnum, ValueKind, BasicValue};
 
-pub const SOURCE: &str = include_str!("tensor.tl");
+
 
 pub fn register_tensor_types(manager: &mut TypeManager) {
     let mut tensor = CodeGenType::new("Tensor");
     
     // Unevaluated static methods (for literal optimizations)
-    tensor.register_static_method("zeros", expr::StaticMethod::Unevaluated(compile_tensor_zeros));
-    tensor.register_static_method("ones", expr::StaticMethod::Unevaluated(compile_ones));
-    tensor.register_static_method("randn", expr::StaticMethod::Unevaluated(compile_randn));
+    tensor.register_unevaluated_static_method("zeros", compile_tensor_zeros);
+    tensor.register_unevaluated_static_method("ones", compile_ones);
+    tensor.register_unevaluated_static_method("randn", compile_randn);
     
     // Evaluated static methods
-    tensor.register_static_method("load", expr::StaticMethod::Evaluated(compile_load_tensor));
-    tensor.register_static_method("clear_grads", expr::StaticMethod::Evaluated(compile_clear_grads));
-    tensor.register_static_method("from_vec_u8", expr::StaticMethod::Evaluated(compile_from_vec_u8));
+    tensor.register_evaluated_static_method("load", compile_load_tensor);
+    tensor.register_evaluated_static_method("clear_grads", compile_clear_grads);
+    tensor.register_evaluated_static_method("from_vec_u8", compile_from_vec_u8);
 
     manager.register_type(tensor);
 }

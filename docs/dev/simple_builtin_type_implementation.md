@@ -6,30 +6,17 @@ TL言語に**ジェネリックでない単純な組み込み型**（例: 独自
 
 ## 概要
 
-単純な組み込み型の実装は、従来の手動連携方式（Manual FFI）で行います。
+単純な組み込み型の実装は、以下の手順で行います。
+メソッドの探索・呼び出しには**TypeManager**を使用し、ジェネリック型と統一されたインターフェースで管理します。
 
 1.  **Runtime (`crates/tl_runtime`)**: 実際の処理を行うRust関数をFFI互換 (`extern "C"`) で実装する。
-2.  **Compiler Semantics (`src/compiler/type_registry.rs`, `semantics.rs`)**: コンパイラの型システムにメソッドのシグネチャ情報を登録する。
-3.  **Compiler Codegen (`src/compiler/codegen/builtins.rs`, `expr.rs`)**: LLVMコード生成のためにRuntime関数を宣言し、呼び出しロジックを調整する。
-
-## 基本概念：組み込み型の透明性と完全な登録
-
-組み込み型は、**あくまでも便利だから最初から組み込まれてるユーザー定義型の一種でしかありません**。
-
-したがって、システム（コンパイラ・ランタイム）に対して**不透明なブラックボックスであってはなりません**。
-**システムに組み込み型の中身が直接わからないのであれば、システムがそのすべてを把握できるように詳細に登録し、ユーザー定義型と同じ仕組みで管理しなければなりません。**
-
-具体的には以下の情報の「完全な登録」により、不透明性を排除する必要があります：
-1.  **振る舞い**: メソッドのシグネチャ（引数と戻り値の型）
-2.  **メモリ管理**: 確保と**解放（Free）**の仕組み
-
-システムが組み込み型を特別扱いするのではなく、登録された情報に基づいてユーザー定義型と同等に扱えるように設計する必要があります。
+2.  **Compiler Codegen (`TypeManager`)**: `TypeManager` に型とメソッドを登録する。**実装が既に存在する（Runtime関数がある）メソッド**として登録する点がポイントです。
 
 ---
 
 ## 手順 1: Runtimeの実装
 
-まず、`crates/tl_runtime/src/stdlib.rs`（または機能ごとの適切なファイル）に、メソッドの実体となる関数を実装します。
+従来通り、`crates/tl_runtime/src/stdlib.rs`（または機能ごとの適切なファイル）に、メソッドの実体となる関数を実装します。
 
 ### 1. 関数の宣言
 関数は `#[unsafe(no_mangle)]` 属性と `pub extern "C"` を付けて宣言し、C ABI で呼び出せるようにします。
@@ -47,64 +34,92 @@ Rustの標準型そのままではなく、FFI境界を越えられる型を使�
 
 ---
 
-## 手順 2: Compilerへの登録
+## 手順 2: Compilerへの登録 (TypeManager)
 
-### 1. TypeRegistry (インスタンスメソッド)
-`src/compiler/type_registry.rs` にメソッドシグネチャを登録します。
+`src/compiler/codegen/builtin_types/non_generic` ディレクトリ内に新しいモジュール（例: `mytype.rs`）を作成し、`TypeManager` への登録処理を記述します。
+
+### 1. モジュールの作成と登録関数の定義
 
 ```rust
-// new() -> MyType (TypeRegistryにも登録しておくと整理しやすいが、実動作は後述のStaticMethodCallで処理される場合が多い)
-// insert, get 等のインスタンスメソッドはここで必須
-// 例:
-// map_methods.insert("process".to_string(), ...);
+use crate::compiler::codegen::type_manager::{CodeGenType, TypeManager};
+use crate::compiler::codegen::expr;
+// その他必要なインポート
+
+pub fn register_my_types(manager: &mut TypeManager) {
+    let mut my_type = CodeGenType::new("MyType");
+
+    // Static Method の登録
+    my_type.register_static_method(
+        "new", 
+        expr::StaticMethod::Evaluated(compile_mytype_new)
+    );
+
+    // Instance Method の登録
+    my_type.register_instance_method(
+        "process", 
+        expr::InstanceMethod::Evaluated(compile_mytype_process)
+    );
+
+    manager.register_type(my_type);
+}
 ```
 
-### 2. Static Method (`Type::new()`) の登録
-`MyType::new()` のようなスタティックメソッドをサポートするには、`src/compiler/semantics.rs` の `check_expr` (StaticMethodCall処理) のフォールバックロジックに追加が必要です。
+### 2. メソッドの種類について (Evaluated vs Unevaluated)
+
+TypeManagerに登録するメソッドには大きく分けて2種類あります。単純な組み込み型では主に **`Evaluated`** を使用します。
+
+*   **`Evaluated` (実装済みメソッド)**:
+    *   Runtime側に実装（`tl_mytype_...`）が存在し、コンパイラは引数を評価した後、単にそのRuntime関数を呼び出すコードを生成します。
+    *   単純な組み込み型は通常これを使用します。
+    *   登録時に `expr::StaticMethod::Evaluated` または `expr::InstanceMethod::Evaluated` を使用します。
+
+*   **`Unevaluated` (ジェネリック/コンパイラマジック)**:
+    *   コンパイラ内で特殊な処理（ASTの操作や特殊なIR生成）が必要な場合に使用します。例えば `Tensor` のリテラル処理など。
+    *   引数が評価される前の状態で渡されます。
+
+### 3. コンパイル関数の実装
+
+各メソッドに対応するコンパイル関数（`compile_mytype_new` など）を実装します。ここでLLVM IRを生成してRuntime関数を呼び出します。
 
 ```rust
-// src/compiler/semantics.rs lines ~4640 (Fallback logic)
-("MyType", "new") => {
-    // 引数チェックなど
-    Ok(Type::UserDefined("MyType".to_string(), vec![]))
+fn compile_mytype_new<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    // 1. Runtime関数の取得
+    let fn_val = codegen.module.get_function("tl_mytype_new")
+        .ok_or("tl_mytype_new not found")?;
+
+    // 2. 引数の準備 (必要に応じてキャストなど)
+    // ...
+
+    // 3. 関数呼び出し (Builder::build_call)
+    let call = codegen.builder.build_call(fn_val, &[], "new_res")
+        .map_err(|e| e.to_string())?;
+
+    // 4. 戻り値の処理
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return".into()),
+    };
+
+    Ok((res, Type::Struct("MyType".to_string(), vec![])))
 }
 ```
 
 ---
 
-## 手順 3: Compilerの実装 (Codegen)
+## 手順 3: モジュールの統合
 
-### 1. Runtime関数の宣言 (`src/compiler/codegen/builtins.rs`)
-
-`declare_runtime_functions` に Runtime関数のシグネチャを LLVM `FunctionType` として登録します。
-`module.add_function` で追加された関数は、`CodeGenerator` の `get_return_type_from_signature` メソッドによって自動的に戻り値の型が推論されます（`fn_return_types` への手動登録は不要になりました）。
-
-### 2. Static Method のコンパイル (`src/compiler/codegen/expr.rs`)
-
-スタティックメソッドのコード生成ロジックを追加します。`compile_static_method_call` メソッドを編集します。
-
-```rust
-// src/compiler/codegen/expr.rs
-
-if type_name == "MyType" && method_name == "new" {
-     let fn_val = self.module.get_function("tl_mytype_new").unwrap();
-     let call = self.builder.build_call(fn_val, &[], "mytype_new")?;
-     // ... 戻り値処理 ...
-     return Ok((res, ty.clone()));
-}
-```
-
-### 3. SRET (Struct Return) の除外設定
-
-ポインタを直接返す型（`HashMap`, `Vec` 等）は、SRET最適化を除外する必要があります。
-`codegen/mod.rs` と `codegen/expr.rs` の判定ロジックに型名を追加してください。
+1.  作成したモジュール（`mytype.rs`）を `src/compiler/codegen/builtin_types/non_generic/mod.rs` に追加します。
+2.  `src/compiler/codegen/mod.rs` (または `builtin_types/mod.rs` の初期化処理) で、`register_my_types` を呼び出して登録を有効にします。
 
 ---
 
 ## チェックリスト
-1. [ ] Runtime関数実装 (FFI)
-2. [ ] Semantics: TypeRegistry (インスタンスメソッド)
-3. [ ] Semantics: `semantics.rs` (スタティックメソッド `MyType::new`)
-4. [ ] Codegen: `builtins.rs` (宣言 & 戻り値型登録)
-5. [ ] Codegen: `expr.rs` (`compile_static_method_call`)
-6. [ ] Codegen: SRET除外設定
+1. [ ] Runtime関数実装 (FFI, `stdlib.rs`)
+2. [ ] Codegen: `non_generic` ディレクトリにモジュール作成
+3. [ ] Codegen: `TypeManager` への登録 (`Evaluated` を使用)
+4. [ ] Codegen: コンパイル関数 (LLVM IR生成, Runtime関数呼び出し) の実装
+5. [ ] Codegen: モジュールの公開と初期化処理への追加
