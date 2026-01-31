@@ -1,4 +1,4 @@
-use crate::compiler::codegen::type_manager::{CodeGenType, TypeManager, InstanceMethod, StaticMethod};
+use crate::compiler::codegen::type_manager::{CodeGenType, TypeManager};
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
 use inkwell::values::BasicValueEnum;

@@ -2203,9 +2203,7 @@ pub extern "C" fn tl_print_string(s: *mut crate::StringStruct) {
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_print(s: *mut StringStruct) {
     if !s.is_null() {
-        unsafe {
-            tl_print_string(s);
-        }
+        tl_print_string(s);
     } else {
         println!("tl_string_print: NULL struct");
     }
@@ -3154,7 +3152,7 @@ pub extern "C" fn tl_tensor_map_insert(
 }
 
 #[unsafe(no_mangle)]
-#[unsafe(no_mangle)]
+
 pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *mut StringStruct) {
     unsafe {
         if path.is_null() {

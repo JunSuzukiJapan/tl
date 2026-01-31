@@ -507,7 +507,11 @@ pub fn declare_runtime_functions<'ctx>(
     // If function returns void*, then build_call returns void*.
     // But expr.rs expects pointer to StringStruct. void* is fine.
     let new_string_type = void_ptr.fn_type(&[i8_ptr.into()], false);
+    let new_string_type = void_ptr.fn_type(&[i8_ptr.into()], false);
     add_fn("tl_string_new", new_string_type);
+    
+    // tl_string_free(s: *mut StringStruct) -> void
+    add_fn("tl_string_free", free_type);
 
     // tl_tensor_len(t: *mut) -> i64
     let len_type = i64_type.fn_type(&[void_ptr.into()], false);

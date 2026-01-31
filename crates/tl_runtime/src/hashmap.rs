@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::CStr;
-use std::os::raw::{c_char, c_void};
+use std::os::raw::c_void;
 
 /// Wrapper struct for HashMap to be used in TL.
 /// Keys are Strings, Values are opaque pointers (void*).

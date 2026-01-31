@@ -1203,13 +1203,7 @@ impl Monomorphizer {
             (Type::Tensor(inner_g, _), Type::Tensor(inner_c, _)) => {
                 self.unify_types(inner_g, inner_c, map);
             }
-            (Type::Struct(_, args_g), Type::Struct(_, args_c)) => {
-                if args_g.len() == args_c.len() {
-                    for (a, b) in args_g.iter().zip(args_c) {
-                        self.unify_types(a, b, map);
-                    }
-                }
-            }
+
             (Type::Vec(inner_g), Type::Vec(inner_c)) => {
                 self.unify_types(inner_g, inner_c, map);
             }

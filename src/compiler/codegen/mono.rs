@@ -285,7 +285,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Void => "void".to_string(),
             Type::String(_) => "string".to_string(),
             Type::Char(_) => "char".to_string(),
-            Type::Struct(name, args) | Type::Struct(name, args) => {
+            Type::Struct(name, args) => {
                 if args.is_empty() {
                     name.clone()
                 } else {
@@ -358,7 +358,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(self.context.i32_type().into())
             }
 
-            Type::Struct(name, _args) | Type::Struct(name, _args) => {
+            Type::Struct(name, _args) => {
                 // Compatibility: Handle primitives parsed as UserDefined
                 match name.as_str() {
                     "bool" => return Ok(self.context.bool_type().into()),
@@ -367,7 +367,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     "f32" => return Ok(self.context.f32_type().into()),
                     "f64" => return Ok(self.context.f64_type().into()),
                     "usize" => return Ok(self.context.i64_type().into()),
-                    "String" => return Ok(self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into()),
+                    "String" => return Ok(self.context.ptr_type(inkwell::AddressSpace::default()).into()),
                     _ => {}
                 }
 
@@ -488,10 +488,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     _ => Type::Struct(name.clone(), new_args)
                 }
             }
-            Type::Struct(name, args) => {
-                let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
-                Type::Struct(name.clone(), new_args)
-            }
+
             Type::Vec(inner) => Type::Vec(Box::new(self.substitute_type(inner, subst))),
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.substitute_type(inner, subst)), *rank),
             Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.substitute_type(t, subst)).collect()),

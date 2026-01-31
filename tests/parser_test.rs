@@ -175,7 +175,7 @@ fn test_postfix() {
     // Static Method
     if let ExprKind::StaticMethodCall(type_name, method, _) = p_expr("MyType::new()") {
         // assert_eq!(type_name, "MyType"); // Legacy
-        assert_eq!(type_name, Type::UserDefined("MyType".to_string(), vec![]));
+        assert_eq!(type_name, Type::Struct("MyType".to_string(), vec![]));
         assert_eq!(method, "new");
     } else {
         panic!("Expected StaticMethodCall");
@@ -323,7 +323,6 @@ fn test_top_level() {
     assert_eq!(module.impls.len(), 1);
     // assert_eq!(module.impls[0].target_type, "Point");
     match &module.impls[0].target_type {
-        Type::UserDefined(name, _) => assert_eq!(name, "Point"),
         Type::Struct(name, _) => assert_eq!(name, "Point"),
         _ => panic!("Expected UserDefined or Struct type"),
     }

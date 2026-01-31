@@ -1852,7 +1852,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                             Type::Tensor(_, _)
                             | Type::Struct(_, _)
                             | Type::Enum(_, _)
-                            | Type::Struct(_, _)
                             | Type::Vec(_) => self
                                 .context
                                 .ptr_type(inkwell::AddressSpace::default())
@@ -1908,15 +1907,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let should_deep_clone = match f_ty {
                             Type::Tensor(_, _) => !is_rvalue,
                             Type::Struct(_, _) => !is_rvalue,
-                            Type::Struct(n, args) => {
-                                if n == "String" { panic!("Struct(String) found in codegen fields"); }
-                                if args.is_empty() && (n == "I64" || n == "F64" || n == "I32" || n == "F32" || n == "Bool" || n == "Usize" || n == "Entity" ||
-                                   n == "i64" || n == "f64" || n == "i32" || n == "f32" || n == "bool" || n == "usize") {
-                                       false
-                                } else {
-                                       !is_rvalue
-                                }
-                            }
                             _ => false,
                         };
                         if should_deep_clone {
@@ -2080,14 +2070,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let should_deep_clone = match f_ty {
                                 Type::Tensor(_, _) => !is_rvalue,
                                 Type::Struct(_, _) => !is_rvalue,
-                                Type::Struct(n, args) => {
-                                    if args.is_empty() && (n == "I64" || n == "F64" || n == "I32" || n == "F32" || n == "Bool" || n == "Usize" || n == "Entity" ||
-                                       n == "i64" || n == "f64" || n == "i32" || n == "f32" || n == "bool" || n == "usize") {
-                                           false
-                                    } else {
-                                           !is_rvalue
-                                    }
-                                }
                                 _ => false,
                             };
                             if should_deep_clone {
@@ -3481,8 +3463,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             // 1. If usage is Temporary (in cleanup list): Remove from list = Move logic (ownership transfer).
             // 2. If usage is Variable/L-Value (NOT in cleanup list): It's a Copy. We MUST Increment RefCount.
             
-            // Use try_consume_temp for proper pointer comparison (not BasicValueEnum direct comparison)
-            // This fixes the bug where BinOp results aren't found in the temps list
             let moved = self.try_consume_temp(val);
 
             if !moved {
@@ -4975,7 +4955,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Type::F32 => self.context.f32_type().into(),
                 Type::I64 => self.context.i64_type().into(),
                 Type::Bool => self.context.bool_type().into(),
-                Type::String(_) => self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into(),
+                Type::String(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                 _ => self
                     .context
                     .ptr_type(inkwell::AddressSpace::default())
@@ -5188,15 +5168,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                         | Type::String(_) => {
                              self.emit_deep_clone(f_val, &concrete_ty)?
                         }
-                        Type::Struct(n, args) if args.is_empty() => {
-                            if n == "I64" || n == "F64" || n == "I32" || n == "F32" || n == "Bool" || n == "Usize" || n == "Entity" ||
-                               n == "i64" || n == "f64" || n == "i32" || n == "f32" || n == "bool" || n == "usize" {
-                                   f_val
-                            } else {
-                                   self.emit_deep_clone(f_val, &concrete_ty)?
-                            }
-                        }
-                        Type::Struct(_, _) => self.emit_deep_clone(f_val, &concrete_ty)?,
                         _ => f_val,
                     };
                     self.builder.build_store(alloca, stored_val).unwrap();
@@ -5236,15 +5207,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                                  | Type::String(_) => {
                                       self.emit_deep_clone(f_val, &concrete_ty)?
                                  }
-                                 Type::Struct(n, args) if args.is_empty() => {
-                                     if n == "I64" || n == "F64" || n == "I32" || n == "F32" || n == "Bool" || n == "Usize" || n == "Entity" ||
-                                        n == "i64" || n == "f64" || n == "i32" || n == "f32" || n == "bool" || n == "usize" {
-                                            f_val
-                                     } else {
-                                            self.emit_deep_clone(f_val, &concrete_ty)?
-                                     }
-                                 }
-                                 Type::Struct(_, _) => self.emit_deep_clone(f_val, &concrete_ty)?,
                                  _ => f_val,
                              }; 
                              self.builder.build_store(alloca, stored_val).unwrap();
@@ -7231,7 +7193,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Tensors are returned by pointer directly, so exclude them.
         let mut dest_val = None;
         let uses_sret = match ret_type {
-             Type::Struct(ref name, _) => false,
+             Type::Struct(_, _) => false,
              _ => false 
         };
         // eprintln!("DEBUG: compile_fn_call_dps name={} ret={:?} uses_sret={}", final_resolved_name, ret_type, uses_sret);
@@ -7393,7 +7355,7 @@ fn compile_checkpoint<'ctx>(
 
         // Get struct type
         let struct_name = match obj_ty {
-            Type::Struct(n, _) | Type::Struct(n, _) => n,
+            Type::Struct(n, _) => n,
             _ => return Err("checkpoint arg 1 must be object.method".into()),
         };
 
@@ -8323,7 +8285,6 @@ fn compile_load_weights<'ctx>(
 
         let struct_name_opt = match &s_ty {
             Type::Struct(s, _) => Some(s.clone()),
-            Type::Struct(s, _) => Some(s.clone()),
             _ => None,
         };
 
@@ -8381,7 +8342,7 @@ fn compile_register_modules<'ctx>(
     }
     let (val, ty) = &args[0];
     match ty {
-        Type::Struct(sname, _) | Type::Struct(sname, _) => {
+        Type::Struct(sname, _) => {
             codegen.gen_register_params(*val, &sname, "".to_string())?;
             return Ok((codegen.context.i64_type().const_zero().into(), Type::Void));
         }
@@ -8436,7 +8397,7 @@ fn compile_load_all_params<'ctx>(
     let path_val = if args.len() == 2 {
         let (struct_val, struct_ty) = &args[0];
         let struct_name = match struct_ty {
-            Type::Struct(s, _) | Type::Struct(s, _) => s,
+            Type::Struct(s, _) => s,
             _ => return Err("Expected struct as first arg".into()),
         };
         codegen.gen_register_params(*struct_val, &struct_name, "".to_string())?;
@@ -8490,7 +8451,7 @@ fn compile_save_all_params<'ctx>(
     let path_val = if args.len() == 2 {
         let (struct_val, struct_ty) = &args[0];
         let struct_name = match struct_ty {
-            Type::Struct(s, _) | Type::Struct(s, _) => s,
+            Type::Struct(s, _) => s,
             _ => return Err("Expected struct as first arg".into()),
         };
         codegen.gen_register_params(*struct_val, &struct_name, "".to_string())?;

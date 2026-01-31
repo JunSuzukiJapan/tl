@@ -475,6 +475,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn register_builtins(&mut self) {
         // Register destructors
         self.destructors.insert("HashMap".to_string(), "tl_hashmap_free".to_string());
+        self.destructors.insert("String".to_string(), "tl_string_free".to_string());
 
 
 
@@ -876,7 +877,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),
                     Type::Char(_) => self.context.i32_type().into(),
-                    Type::Struct(name, _) | Type::Struct(name, _) => {
+                    Type::Struct(name, _) => {
                         // Extract simple name from module path (e.g., "mnist_common::Linear" -> "Linear")
                         let simple_name = if name.contains("::") {
                             name.split("::").last().unwrap()
@@ -944,7 +945,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::Struct(_, _) | Type::Enum(_, _) | Type::Struct(_, _) => {
+                        Type::Struct(_, _) | Type::Enum(_, _) => {
                             // Objects are pointers
                             self.context
                                 .ptr_type(inkwell::AddressSpace::default())
@@ -1057,7 +1058,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::Struct(_, _) | Type::Struct(_, _) => self
+                        Type::Struct(_, _) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
@@ -1089,7 +1090,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .fn_type(&param_types, false),
-                        Type::Struct(_, _) | Type::Struct(_, _) | Type::Tuple(_) | Type::Enum(_, _) | Type::Vec(_) => self
+                        Type::Struct(_, _) | Type::Tuple(_) | Type::Enum(_, _) | Type::Vec(_) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .fn_type(&param_types, false),
@@ -1453,7 +1454,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .context
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
-                Type::Struct(_, _) | Type::Struct(_, _) | Type::Enum(_, _) => self
+                Type::Struct(_, _) | Type::Enum(_, _) => self
                     .context
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
@@ -1482,7 +1483,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),
                 ),
-                Type::Struct(_, _) | Type::Struct(_, _) | Type::Enum(_, _) => Some(
+                Type::Struct(_, _) | Type::Enum(_, _) => Some(
                     self.context
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),
@@ -1532,6 +1533,15 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Run Liveness Analysis
         self.function_analysis = Some(crate::compiler::liveness::LivenessAnalyzer::analyze(func));
+
+        // RESET STATE for new function to prevent leaking temporaries/variables from previous functions
+        self.variables.clear();
+        self.variables.push(std::collections::HashMap::new());
+        self.temporaries.clear();
+        self.temporaries.push(Vec::new());
+        self.variable_liveness.clear();
+        self.variable_liveness.push(std::collections::HashMap::new());
+        self.loop_stack.clear();
 
         // Initialize entry block
         let entry = self.context.append_basic_block(function, "entry");
@@ -1717,19 +1727,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 }
                             }
                             Type::Struct(_, _) => {
-                                // UAF FIX: Unregister Structs being returned (Shallow Unregister)
-                                // This applies to both Variables (CLEANUP_NONE above) and Temporary Expressions.
-                                if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
-                                     let ptr = val.into_pointer_value();
-                                     let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                                     // val is already the Struct* (from compile_expr)
-                                     let cast_ptr = self.builder.build_pointer_cast(
-                                         ptr,
-                                         ptr_type,
-                                         "cast_unreg"
-                                     ).unwrap(); 
-                                     self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
-                                }
+                                // Recursive Unregister (Deep)
+                                // This ensures fields (Tensors) are removed from Runtime Scope
+                                // preventing Double Free when scope exits.
+                                self.emit_recursive_unregister(val, &ty)?;
                             }
                             _ => {
                                 self.emit_recursive_unregister(val, &ty)?;
