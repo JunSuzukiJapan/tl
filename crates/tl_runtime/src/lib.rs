@@ -2181,14 +2181,17 @@ pub extern "C" fn tl_i32_is_negative(v: i32) -> bool {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_print_string(s: *const std::os::raw::c_char) {
+pub extern "C" fn tl_print_string(s: *mut crate::StringStruct) {
     if s.is_null() {
-        // println!("tl_print_string: NULL");
         return;
     }
-    // println!("tl_print_string input ptr: {:p}", s);
     unsafe {
-        if let Ok(c_str) = std::ffi::CStr::from_ptr(s).to_str() {
+        if (*s).ptr.is_null() {
+             // println!("tl_print_string: Inner NULL");
+             return;
+        }
+        let ptr = (*s).ptr;
+        if let Ok(c_str) = std::ffi::CStr::from_ptr(ptr).to_str() {
             println!("{}", c_str);
             let _ = std::io::stdout().flush();
         } else {
@@ -2201,7 +2204,7 @@ pub extern "C" fn tl_print_string(s: *const std::os::raw::c_char) {
 pub extern "C" fn tl_string_print(s: *mut StringStruct) {
     if !s.is_null() {
         unsafe {
-            tl_print_string((*s).ptr);
+            tl_print_string(s);
         }
     } else {
         println!("tl_string_print: NULL struct");
@@ -2209,14 +2212,18 @@ pub extern "C" fn tl_string_print(s: *mut StringStruct) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_display_string(s: *const std::os::raw::c_char) {
+pub extern "C" fn tl_display_string(s: *mut crate::StringStruct) {
     if s.is_null() {
         return;
     }
     unsafe {
-        if let Ok(c_str) = std::ffi::CStr::from_ptr(s).to_str() {
+        if (*s).ptr.is_null() { return; }
+        let ptr = (*s).ptr;
+        if let Ok(c_str) = std::ffi::CStr::from_ptr(ptr).to_str() {
             print!("{}", c_str);
             let _ = std::io::stdout().flush();
+        } else {
+             print!("(invalid utf-8)");
         }
     }
 }
@@ -3065,23 +3072,24 @@ pub extern "C" fn tl_tensor_contiguous(t: *mut OpaqueTensor) -> *mut OpaqueTenso
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_save(t: *mut OpaqueTensor, path: *const std::os::raw::c_char) {
+pub extern "C" fn tl_tensor_save(t: *mut OpaqueTensor, path: *mut StringStruct) {
     use std::ffi::CStr;
     let tensor = unwrap_tensor_void!(t);
     unsafe {
-        let path_str = CStr::from_ptr(path).to_str().unwrap();
+        if path.is_null() || (*path).ptr.is_null() { return; }
+        let path_str = CStr::from_ptr((*path).ptr).to_str().unwrap();
         let mut tensors = std::collections::HashMap::new();
         tensors.insert("tensor".to_string(), tensor.clone());
         candle_core::safetensors::save(&tensors, path_str).unwrap();
-        // println!("Saved tensor to {}", path_str);
     }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_load(path: *const std::os::raw::c_char) -> *mut OpaqueTensor {
+pub extern "C" fn tl_tensor_load(path: *mut StringStruct) -> *mut OpaqueTensor {
     use std::ffi::CStr;
     unsafe {
-        let path_str = CStr::from_ptr(path).to_str().unwrap();
+        if path.is_null() || (*path).ptr.is_null() { return std::ptr::null_mut(); }
+        let path_str = CStr::from_ptr((*path).ptr).to_str().unwrap();
         let device = get_device();
         let tensors = candle_core::safetensors::load(path_str, &device).unwrap();
         let tensor = tensors
@@ -3113,7 +3121,7 @@ pub extern "C" fn tl_tensor_map_new() -> *mut OpaqueTensorMap {
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_insert(
     map: *mut OpaqueTensorMap,
-    name: *const std::os::raw::c_char,
+    name: *mut StringStruct,
     tensor: *mut OpaqueTensor,
 ) {
     if map.is_null() || name.is_null() || tensor.is_null() {
@@ -3123,8 +3131,9 @@ pub extern "C" fn tl_tensor_map_insert(
     let t_ref = unwrap_tensor_void!(tensor);
 
     unsafe {
+        if (*name).ptr.is_null() { return; }
         let map_ref = &mut (*map).0;
-        let c_str = std::ffi::CStr::from_ptr(name);
+        let c_str = std::ffi::CStr::from_ptr((*name).ptr);
         let key = c_str.to_string_lossy().into_owned();
 
         map_ref.insert(key, LoadedTensor::Standard(t_ref.clone()));
@@ -3132,25 +3141,51 @@ pub extern "C" fn tl_tensor_map_insert(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *const std::os::raw::c_char) {
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *mut StringStruct) {
     unsafe {
+        if path.is_null() {
+            eprintln!("tl_tensor_map_save: path struct is NULL");
+            return;
+        }
+        if (*path).ptr.is_null() {
+            eprintln!("tl_tensor_map_save: internal string ptr is NULL");
+            return;
+        }
+        let p_str = std::ffi::CStr::from_ptr((*path).ptr).to_string_lossy();
+        // eprintln!("DEBUG: tl_tensor_map_save path='{}'", p_str);
+
+        if map.is_null() {
+            eprintln!("tl_tensor_map_save: map is NULL");
+            return;
+        }
+
         let map_ref = &(*map).0;
         let mut save_map = std::collections::HashMap::new();
+        // eprintln!("DEBUG: Saving map with {} entries", map_ref.len());
         for (k, v) in map_ref.iter() {
             if let LoadedTensor::Standard(t) = v {
+                // eprintln!("DEBUG: Saving tensor '{}'", k);
                 save_map.insert(k.clone(), t.clone());
             }
         }
-        let p_str = std::ffi::CStr::from_ptr(path).to_str().unwrap();
-        candle_core::safetensors::save(&save_map, p_str).unwrap();
-        // println!("Saved model to {}", p_str);
+        
+        match candle_core::safetensors::save(&save_map, p_str.as_ref()) {
+            Ok(_) => {
+                // eprintln!("DEBUG: Successfully saved to '{}'", p_str);
+            },
+            Err(e) => {
+                eprintln!("tl_tensor_map_save ERROR: Failed to save to '{}': {}", p_str, e);
+            }
+        }
     }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_map_load(path: *const std::os::raw::c_char) -> *mut OpaqueTensorMap {
+pub extern "C" fn tl_tensor_map_load(path: *mut StringStruct) -> *mut OpaqueTensorMap {
     unsafe {
-        let p_str = std::ffi::CStr::from_ptr(path).to_str().unwrap();
+        if path.is_null() || (*path).ptr.is_null() { return std::ptr::null_mut(); }
+        let p_str = std::ffi::CStr::from_ptr((*path).ptr).to_str().unwrap();
         // eprintln!("DEBUG: tl_tensor_map_load path: '{}'", p_str);
         let mut loaded_map = std::collections::HashMap::new();
 
@@ -3226,11 +3261,12 @@ pub extern "C" fn tl_tensor_cat_i64(
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_get(
     map: *mut OpaqueTensorMap,
-    name: *const std::os::raw::c_char,
+    name: *mut StringStruct,
 ) -> *mut OpaqueTensor {
     unsafe {
+        if map.is_null() || name.is_null() || (*name).ptr.is_null() { return std::ptr::null_mut(); }
         let map_ref = &(*map).0;
-        let c_str = std::ffi::CStr::from_ptr(name);
+        let c_str = std::ffi::CStr::from_ptr((*name).ptr);
         let key = c_str.to_string_lossy();
         
         if let Some(loaded) = map_ref.get(key.as_ref()) {
@@ -3271,10 +3307,11 @@ pub extern "C" fn tl_tensor_map_free(map: *mut OpaqueTensorMap) {
     }
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_save_all_params(path: *const std::os::raw::c_char) {
+pub extern "C" fn tl_save_all_params(path: *mut StringStruct) {
     use std::ffi::CStr;
     unsafe {
-        let path_str = CStr::from_ptr(path).to_str().unwrap();
+        if path.is_null() || (*path).ptr.is_null() { return; }
+        let path_str = CStr::from_ptr((*path).ptr).to_str().unwrap();
         let varmap = GLOBAL_VAR_MAP.lock().unwrap();
         let data = varmap.data();
         let data_guard = data.lock().unwrap();
@@ -3291,10 +3328,11 @@ pub extern "C" fn tl_save_all_params(path: *const std::os::raw::c_char) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_load_all_params(path: *const std::os::raw::c_char) {
+pub extern "C" fn tl_load_all_params(path: *mut StringStruct) {
     use std::ffi::CStr;
     unsafe {
-        let path_str = CStr::from_ptr(path).to_str().unwrap();
+        if path.is_null() || (*path).ptr.is_null() { return; }
+        let path_str = CStr::from_ptr((*path).ptr).to_str().unwrap();
         let device = get_device();
 
         match candle_core::safetensors::load(path_str, &device) {
@@ -3326,19 +3364,20 @@ pub extern "C" fn tl_load_all_params(path: *const std::os::raw::c_char) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_add_parameter(name: *const std::os::raw::c_char, t: *mut OpaqueTensor) {
+pub extern "C" fn tl_add_parameter(name: *mut StringStruct, t: *mut OpaqueTensor) {
     use std::ffi::CStr;
     unsafe {
+        if name.is_null() || (*name).ptr.is_null() { return; }
         println!(
             "tl_add_parameter called for {} with ptr {:p}",
-            CStr::from_ptr(name).to_string_lossy(),
+            CStr::from_ptr((*name).ptr).to_string_lossy(),
             t
         );
         if t.is_null() {
             println!("ERROR: tl_add_parameter got NULL ptr");
             return;
         }
-        let name_str = CStr::from_ptr(name).to_str().unwrap().to_string();
+        let name_str = CStr::from_ptr((*name).ptr).to_str().unwrap().to_string();
         let tensor_wrapper = &*t;
 
         // Check if OpaqueTensor already has a Var associated
@@ -4245,7 +4284,7 @@ pub extern "C" fn tl_tensor_matmul_4d(a: *mut OpaqueTensor, b: *mut OpaqueTensor
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_get_1d(
     map: *mut OpaqueTensorMap, 
-    name: *const std::os::raw::c_char
+    name: *mut StringStruct
 ) -> *mut OpaqueTensor {
     tl_tensor_map_get(map, name)
 }
@@ -4410,13 +4449,21 @@ pub extern "C" fn tl_vec_string_contains(ptr: *mut Vec<*mut std::ffi::c_void>, v
     let vec = unsafe { &*ptr };
     
     // Deep comparison for strings
-    let val_cstr = unsafe { std::ffi::CStr::from_ptr(val as *const std::os::raw::c_char) };
-    
-    for &item in vec.iter() {
-        if item.is_null() { continue; }
-        let item_cstr = unsafe { std::ffi::CStr::from_ptr(item as *const std::os::raw::c_char) };
-        if item_cstr == val_cstr {
-            return true;
+    // val is StringStruct*
+    let val_struct = val as *mut crate::StringStruct;
+    unsafe {
+        if (*val_struct).ptr.is_null() { return false; }
+        let val_cstr = std::ffi::CStr::from_ptr((*val_struct).ptr);
+
+        for &item in vec.iter() {
+            if item.is_null() { continue; }
+            let item_struct = item as *mut crate::StringStruct;
+            if (*item_struct).ptr.is_null() { continue; }
+            let item_cstr = std::ffi::CStr::from_ptr((*item_struct).ptr);
+            
+            if item_cstr == val_cstr {
+                return true;
+            }
         }
     }
     false

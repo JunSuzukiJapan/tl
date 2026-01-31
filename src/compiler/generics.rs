@@ -33,7 +33,7 @@ impl GenericResolver {
         match (generic_ty, conc) {
             // Case 1: Generic parameter (e.g. T) matching any concrete type
             // This handles UserDefined("T", []) matching Struct("Point", []), I64, etc.
-            (Type::UserDefined(name, args), conc_ty) if args.is_empty() && Self::is_likely_generic_param(name) => {
+            (Type::Struct(name, args), conc_ty) if args.is_empty() && Self::is_likely_generic_param(name) => {
                 // Check if already bound
                 if let Some(existing) = bindings.get(name) {
                      if !Self::types_equivalent(existing, conc_ty) {
@@ -47,13 +47,8 @@ impl GenericResolver {
             
             // Case 2: Matching structs/user types
             // Case 2: Matching structs/user types
-            (Type::UserDefined(n1, args1), Type::UserDefined(n2, args2)) 
-            | (Type::Struct(n1, args1), Type::Struct(n2, args2))
+            (Type::Struct(n1, args1), Type::Struct(n2, args2))
             | (Type::Enum(n1, args1), Type::Enum(n2, args2))
-            | (Type::UserDefined(n1, args1), Type::Struct(n2, args2))
-            | (Type::Struct(n1, args1), Type::UserDefined(n2, args2))
-            | (Type::UserDefined(n1, args1), Type::Enum(n2, args2))
-            | (Type::Enum(n1, args1), Type::UserDefined(n2, args2))
             | (Type::Struct(n1, args1), Type::Enum(n2, args2))
             | (Type::Enum(n1, args1), Type::Struct(n2, args2)) => {
                 if n1 != n2 {
@@ -109,7 +104,6 @@ impl GenericResolver {
         // Actually, Type has variants for I64 etc. UserDefined is for structs.
         // If 'String' is UserDefined, we need to be careful.
         // In this codebase, String is UserDefined("String", vec![]).
-        if name == "String" { return false; }
         return true; 
     }
 
@@ -125,10 +119,7 @@ impl GenericResolver {
             (Type::Void, Type::Void) => true,
             
             // UserDefined("Point", []) is equivalent to Struct("Point", [])
-            (Type::UserDefined(n1, a1), Type::Struct(n2, a2))
-            | (Type::Struct(n1, a1), Type::UserDefined(n2, a2))
-            | (Type::UserDefined(n1, a1), Type::UserDefined(n2, a2))
-            | (Type::Struct(n1, a1), Type::Struct(n2, a2)) => {
+            (Type::Struct(n1, a1), Type::Struct(n2, a2)) => {
                 n1 == n2 && a1.len() == a2.len() && 
                     a1.iter().zip(a2.iter()).all(|(x, y)| Self::types_equivalent(x, y))
             }
@@ -148,16 +139,13 @@ impl GenericResolver {
     /// Substitutes generic parameters in `ty` using `bindings`.
     pub fn apply_bindings(ty: &Type, bindings: &HashMap<String, Type>) -> Type {
         match ty {
-            Type::UserDefined(name, args) => {
+
+            Type::Struct(name, args) => {
                 if args.is_empty() {
                     if let Some(concrete) = bindings.get(name) {
                         return concrete.clone();
                     }
                 }
-                let new_args = args.iter().map(|a| Self::apply_bindings(a, bindings)).collect();
-                Type::UserDefined(name.clone(), new_args)
-            }
-            Type::Struct(name, args) => {
                 let new_args = args.iter().map(|a| Self::apply_bindings(a, bindings)).collect();
                 Type::Struct(name.clone(), new_args)
             }
@@ -179,7 +167,7 @@ mod tests {
     use super::*;
 
     // Helper to create types
-    fn t_param(n: &str) -> Type { Type::UserDefined(n.to_string(), vec![]) }
+    fn t_param(n: &str) -> Type { Type::Struct(n.to_string(), vec![]) }
     fn t_struct(n: &str, args: Vec<Type>) -> Type { Type::Struct(n.to_string(), args) }
     fn t_vec(t: Type) -> Type { Type::Vec(Box::new(t)) }
     fn t_i64() -> Type { Type::I64 }
@@ -203,7 +191,7 @@ mod tests {
         let generic_ty = t_struct("Map", vec![t_param("K"), t_param("V")]);
         
         let tensor_conc = t_tensor(t_f32(), 2);
-        let string_conc = Type::UserDefined("String".into(), vec![]);
+        let string_conc = Type::String;
         let conc = t_struct("Map", vec![string_conc.clone(), tensor_conc.clone()]);
         
         let bindings = GenericResolver::resolve_bindings(&generic_ty, &conc).unwrap();

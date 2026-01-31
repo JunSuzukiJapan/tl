@@ -171,7 +171,7 @@ pub fn parse_type(input: Input) -> IResult<Input, Type, ParserError> {
             ),
             Type::Tuple,
         ),
-        // User defined: identifier<generics?>
+            // User defined: identifier<generics?> -> Now Struct
         map(
             tuple((
                 identifier,
@@ -181,7 +181,7 @@ pub fn parse_type(input: Input) -> IResult<Input, Type, ParserError> {
                     expect_token(Token::Gt),
                 )),
             )),
-            |(name, generics)| Type::UserDefined(name, generics.unwrap_or_default()),
+            |(name, generics)| Type::Struct(name, generics.unwrap_or_default()),
         ),
     ))(input)
 }
@@ -398,7 +398,7 @@ fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
             // Static method call: Type::method() or mod::Type::method()
             let method = path_segments.pop().unwrap();
             let type_name = path_segments.join("::");
-            let ty = Type::UserDefined(type_name, generics);
+            let ty = Type::Struct(type_name, generics);
             return Ok((rest4, Spanned::new(ExprKind::StaticMethodCall(ty, method, args), crate::compiler::error::Span::default())));
         } else {
             // Single identifier + () - not a path-based atom, it's a fn call
@@ -472,7 +472,7 @@ fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
         // This could be Type::Variant with no args (unit or tuple-variant with 0 args)
         let variant = path_segments.pop().unwrap();
         let type_name = path_segments.join("::");
-        let ty = Type::UserDefined(type_name, generics);
+        let ty = Type::Struct(type_name, generics);
         // Emit as static method call with empty args (for tuple variant)
         // Note: This may need adjustment based on how enum variants are handled elsewhere
         return Ok((rest, Spanned::new(ExprKind::StaticMethodCall(ty, variant, vec![]), crate::compiler::error::Span::default())));
@@ -1086,7 +1086,7 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
          if let Ok((rest2, _)) = expect_token(Token::DoubleColon)(rest) {
              let (rest3, method) = identifier(rest2)?;
              // Enum Pattern: Type::Variant ...
-             if let Type::UserDefined(name, _) = ty {
+             if let Type::Struct(name, _) = ty {
                   if let Ok((rest4, _)) = expect_token(Token::LBrace)(rest3) {
                       // Struct Pattern { field: var, ... }
                       let (rest5, bindings_vec) = separated_list0(
@@ -1123,7 +1123,7 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
          } else {
              // Just Type (Identifier). `None`. `Some`.
              // Treat as EnumPattern with empty enum_name?
-             if let Type::UserDefined(name, _) = ty {
+             if let Type::Struct(name, _) = ty {
                   // Check for { or (
                   if let Ok((rest2, _)) = expect_token(Token::LBrace)(rest) {
                       let (rest3, bindings_vec) = separated_list0(

@@ -101,8 +101,8 @@ pub enum Type {
     // Tuple type: (Type, Type, ...)
     Tuple(Vec<Type>),
 
-    // Generic placeholder or unresolved type
-    UserDefined(String, Vec<Type>), // Name, Generic Args
+    // Generic placeholder or unresolved type (Merged into Struct)
+    // UserDefined(String, Vec<Type>), // REMOVED
 
     Void, // For functions returning nothing
     Undefined(u64), // For unresolved generics (unique ID)
@@ -133,7 +133,7 @@ impl Type {
             Type::Enum(n, _) => n.clone(),
             Type::ScalarArray(_, _) => "ScalarArray".to_string(),
             Type::Tuple(_) => "Tuple".to_string(), // Or handle specially? TypeRegistry didn't support Tuple generic methods usually.
-            Type::UserDefined(n, _) => n.clone(),
+            // Type::UserDefined(n, _) => n.clone(), // REMOVED
             Type::Void => "Void".to_string(),
             Type::Undefined(_) => "Undefined".to_string(),
             Type::TypeVar(_) => "TypeVar".to_string(),

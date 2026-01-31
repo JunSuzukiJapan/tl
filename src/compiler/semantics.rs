@@ -338,7 +338,7 @@ impl SemanticAnalyzer {
     fn is_moveable_type(&self, ty: &Type) -> bool {
         matches!(
             ty,
-            Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _)
+            Type::Tensor(_, _) | Type::Struct(_, _)
         )
     }
 
@@ -347,19 +347,21 @@ impl SemanticAnalyzer {
     // Helper to resolve a name based on current scope aliases and module context
     fn substitute_generics(&self, ty: &Type, subst: &HashMap<String, Type>) -> Type {
         match ty {
-            Type::UserDefined(name, args) => {
+            Type::Struct(name, args) => {
                 if let Some(replacement) = subst.get(name) {
-                    // What if replacement has args and we have args? 
-                    // e.g. T<U> replaced by List<X>.
-                    // For now assume T is parameter without args in usage, or T is fully applied replacement.
                     return replacement.clone();
                 }
-                let new_args = args.iter().map(|a| self.substitute_generics(a, subst)).collect();
-                Type::UserDefined(name.clone(), new_args)
-            }
-            Type::Struct(name, args) => {
-                let new_args = args.iter().map(|a| self.substitute_generics(a, subst)).collect();
-                Type::Struct(name.clone(), new_args)
+                let new_args: Vec<Type> = args.iter().map(|a| self.substitute_generics(a, subst)).collect();
+                
+                // Normalize primitives immediately
+                match name.as_str() {
+                    "String" if new_args.is_empty() => Type::String,
+                    "I64" if new_args.is_empty() => Type::I64,
+                    "Bool" if new_args.is_empty() => Type::Bool,
+                    "F32" if new_args.is_empty() => Type::F32,
+                    "Char" if new_args.is_empty() => Type::Char,
+                    _ => Type::Struct(name.clone(), new_args)
+                }
             }
             Type::Enum(name, args) => {
                 let new_args = args.iter().map(|a| self.substitute_generics(a, subst)).collect();
@@ -434,18 +436,27 @@ impl SemanticAnalyzer {
     }
 
     fn resolve_user_type(&self, ty: &Type) -> Type {
-        if let Type::UserDefined(name, args) = ty {
-            // Normalize primitive types disguised as UserDefined
+        // Now everything that was UserDefined is Struct
+        if let Type::Struct(name, args) = ty {
+            // Normalize primitive types disguised as Struct
             if args.is_empty() {
                 match name.as_str() {
                     "I64" => return Type::I64,
                     "I32" => return Type::I32,
                     "F32" => return Type::F32,
                     "F64" => return Type::F64,
+                    "F16" => return Type::F16,
+                    "BF16" => return Type::BF16,
                     "Bool" => return Type::Bool,
                     "Void" => return Type::Void,
                     "String" => return Type::String,
                     "Char" => return Type::Char,
+                    "Usize" => return Type::Usize,
+                    "U8" => return Type::U8,
+                    "U16" => return Type::U16,
+                    "U32" => return Type::U32,
+                    "I8" => return Type::I8,
+                    "Entity" => return Type::Entity,
                     _ => {}
                 }
             }
@@ -455,18 +466,15 @@ impl SemanticAnalyzer {
             let resolved_args: Vec<Type> = args.iter().map(|a| self.resolve_user_type(a)).collect();
 
             if self.structs.contains_key(&resolved_name) {
-                // println!("DEBUG: resolve_user_type '{}' -> Struct", resolved_name);
                 return Type::Struct(resolved_name, resolved_args);
             }
             if self.enums.contains_key(&resolved_name) {
                 return Type::Enum(resolved_name, resolved_args);
             }
-            // Keep as UserDefined if not found (or for Self/generics)
-            Type::UserDefined(resolved_name, resolved_args)
+            // Keep as Struct if not found (or for Self/generics)
+            Type::Struct(resolved_name, resolved_args)
         } else {
             // Check other types that might contain subtypes (Tuple, Tensor, etc)
-            // For now simple clone, but ideally recursion needed?
-            // Yes, strict recursion is better.
             match ty {
                 Type::Tensor(inner, r) => Type::Tensor(Box::new(self.resolve_user_type(inner)), *r),
                 Type::TensorShaped(inner, dims) => Type::TensorShaped(Box::new(self.resolve_user_type(inner)), dims.clone()),
@@ -521,7 +529,7 @@ impl SemanticAnalyzer {
 
                 // Resolve generics
                 let generic_args = enum_def.generics.iter()
-                    .map(|n| Type::UserDefined(n.clone(), vec![]))
+                    .map(|n| Type::Struct(n.clone(), vec![]))
                     .collect();
                 let generic_structure = Type::Enum(enum_name.to_string(), generic_args);
                 
@@ -566,7 +574,7 @@ impl SemanticAnalyzer {
                           }
                           Ok(Some(variant_idx))
                      },
-                     _ => Err(SemanticError::TypeMismatch{ expected: Type::UserDefined("Matching Variant Kind".into(), vec![]), found: Type::UserDefined("Invalid Pattern".into(), vec![]) })
+                     _ => Err(SemanticError::TypeMismatch{ expected: Type::Struct("Matching Variant Kind".into(), vec![]), found: Type::Struct("Invalid Pattern".into(), vec![]) })
                 }
             }
         }
@@ -1160,7 +1168,7 @@ impl SemanticAnalyzer {
             let mut m = method.clone();
             // Resolve 'Self' in args to target_type, and resolve other types
             for (_, arg_ty) in &mut m.args {
-                if let &mut Type::UserDefined(ref n, _) = arg_ty {
+                if let &mut Type::Struct(ref n, _) = arg_ty {
                     if n == "Self" {
                         *arg_ty = impl_block.target_type.clone();
                         continue;
@@ -1170,7 +1178,7 @@ impl SemanticAnalyzer {
                 *arg_ty = self.resolve_user_type(arg_ty);
             }
             // Resolve return type as well
-            if let Type::UserDefined(ref n, _) = m.return_type {
+            if let Type::Struct(ref n, _) = m.return_type {
                 if n == "Self" {
                     m.return_type = impl_block.target_type.clone();
                 } else {
@@ -1231,7 +1239,7 @@ impl SemanticAnalyzer {
         self.enter_scope();
 
         // Set expected return type for this function (resolve first)
-        let resolved_return_type = if let Type::UserDefined(ref n, _) = func.return_type {
+        let resolved_return_type = if let Type::Struct(ref n, _) = func.return_type {
             if n == "Self" && self_type.is_some() {
                 self_type.clone().unwrap()
             } else {
@@ -1246,7 +1254,7 @@ impl SemanticAnalyzer {
 
         // Register arguments
         for (name, ty) in &mut func.args {
-            let actual_ty = if let &mut Type::UserDefined(ref type_name, _) = ty {
+            let actual_ty = if let &mut Type::Struct(ref type_name, _) = ty {
                 if type_name == "Self" {
                     // Resolve Self -> Actual Type
                     self_type.clone().ok_or_else(|| {
@@ -1306,12 +1314,12 @@ impl SemanticAnalyzer {
                 // Check object type and verify it's a struct
                 let obj_type = self.check_expr(obj)?;
                 let struct_name = match obj_type {
-                    Type::UserDefined(name, _) => name,
+                    Type::Struct(name, _) => name,
                     Type::Struct(name, _) => name,
                     _ => {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::UserDefined("Struct".into(), vec![]),
+                                expected: Type::Struct("Struct".into(), vec![]),
                                 found: obj_type,
                             },
                             Some(stmt.span.clone()),
@@ -1321,7 +1329,7 @@ impl SemanticAnalyzer {
 
                 // Verify struct and field exist
                 // Need to resolve struct_name? Usually FieldAccess object type is already resolved by check_expr logic?
-                // Type::UserDefined("Name") -> Name should be fully qualified if check_expr(obj) did its job.
+                // Type::Struct("Name") -> Name should be fully qualified if check_expr(obj) did its job.
                 // But check_expr returns Type. If Type comes from AST, it might simple name.
                 // The Type returned by check_expr comes from:
                 // - ExprKind::StructInit -> looked up strict name (resolved).
@@ -1916,7 +1924,7 @@ impl SemanticAnalyzer {
                         // Infer generics
                         // Helper closure to unify
                         let mut unify = |t1: &Type, t2: &Type| -> bool {
-                            if let Type::UserDefined(n1, _) = t1 {
+                            if let Type::Struct(n1, _) = t1 {
                                 if struct_def.generics.contains(n1) {
                                     if let Some(existing) = inferred_generics.get(n1) {
                                         return self.are_types_compatible(existing, t2);
@@ -1975,7 +1983,7 @@ impl SemanticAnalyzer {
                     
                     // Resolve generics
                     let generic_args: Vec<Type> = struct_def.generics.iter().map(|g| {
-                        inferred_generics.get(g).cloned().unwrap_or_else(|| Type::UserDefined(g.clone(), vec![]))
+                        inferred_generics.get(g).cloned().unwrap_or_else(|| Type::Struct(g.clone(), vec![]))
                     }).collect();
 
                     Ok(Type::Struct(name.clone(), generic_args))
@@ -2001,8 +2009,8 @@ impl SemanticAnalyzer {
                               // For now, let's assume StructInit syntax only maps to Struct Variant.
                               return self.err(
                                   SemanticError::TypeMismatch {
-                                      expected: Type::UserDefined("Struct Variant".into(), vec![]),
-                                      found: Type::UserDefined("Tuple/Unit Variant".into(), vec![]),
+                                      expected: Type::Struct("Struct Variant".into(), vec![]),
+                                      found: Type::Struct("Tuple/Unit Variant".into(), vec![]),
                                   },
                                   Some(expr.span.clone())
                               );
@@ -2097,7 +2105,7 @@ impl SemanticAnalyzer {
                          Ok(Type::Enum(enum_name.clone(), vec![]))
                      },
                      _ => {
-                          self.err(SemanticError::TypeMismatch{ expected: Type::UserDefined("Correct Variant Kind".into(), vec![]), found: Type::UserDefined("Invalid Init".into(), vec![]) }, Some(expr.span.clone()))
+                          self.err(SemanticError::TypeMismatch{ expected: Type::Struct("Correct Variant Kind".into(), vec![]), found: Type::Struct("Invalid Init".into(), vec![]) }, Some(expr.span.clone()))
                      }
                 }
             }
@@ -2107,14 +2115,14 @@ impl SemanticAnalyzer {
             } => {
                 let subject_type = self.check_expr(subject_expr)?;
                 let enum_name = match &subject_type {
-                    Type::UserDefined(n, _) | Type::Enum(n, _) => n.clone(),
+                    Type::Struct(n, _) | Type::Enum(n, _) => n.clone(),
                     _ => {
-                        return self.err(
+                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::UserDefined("Enum".into(), vec![]),
-                                found: subject_type,
+                                expected: Type::Enum("EnumName".into(), vec![]),
+                                found: subject_type.clone(),
                             },
-                            Some(subject_expr.span.clone()),
+                             Some(subject_expr.span.clone()),
                         );
                     }
                 };
@@ -2206,11 +2214,11 @@ impl SemanticAnalyzer {
             } => {
                 let subject_type = self.check_expr(subject_expr)?;
                 let enum_name = match &subject_type {
-                    Type::UserDefined(n, _) | Type::Enum(n, _) => n.clone(),
+                    Type::Struct(n, _) | Type::Enum(n, _) => n.clone(),
                     _ => {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::UserDefined("Enum".into(), vec![]),
+                                expected: Type::Struct("Enum".into(), vec![]),
                                 found: subject_type,
                             },
                             Some(subject_expr.span.clone()),
@@ -2335,8 +2343,8 @@ impl SemanticAnalyzer {
                     if !matches!(variant_def.kind, crate::compiler::ast::VariantKind::Unit) {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::UserDefined("Unit Variant".into(), vec![]),
-                                found: Type::UserDefined("Struct/Tuple Variant".into(), vec![]),
+                                expected: Type::Struct("Unit Variant".into(), vec![]),
+                                found: Type::Struct("Struct/Tuple Variant".into(), vec![]),
                             },
                             Some(expr.span.clone()),
                         );
@@ -2606,7 +2614,7 @@ impl SemanticAnalyzer {
                     {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::Struct("String".to_string(), vec![]),
+                                expected: Type::String,
                                 found: arg_ty,
                             },
                             Some(args[0].span.clone()),
@@ -2640,7 +2648,7 @@ impl SemanticAnalyzer {
                         );
                     }
                     let _t0 = self.check_expr(&mut args[0])?;
-                    return Ok(Type::Struct("String".to_string(), vec![]));
+                    return Ok(Type::String);
                 }
                 if name == "tl_file_write_string" {
                     if args.len() != 2 {
@@ -2683,7 +2691,7 @@ impl SemanticAnalyzer {
                         );
                     }
                     let _t0 = self.check_expr(&mut args[0])?;
-                    return Ok(Type::Struct("String".to_string(), vec![]));
+                    return Ok(Type::String);
                 } else if name == "tl_args_count" {
                     if !args.is_empty() {
                         return self.err(
@@ -2717,7 +2725,7 @@ impl SemanticAnalyzer {
                             Some(args[0].span.clone()),
                         );
                     }
-                    return Ok(Type::Struct("String".to_string(), vec![]));
+                    return Ok(Type::String);
                 } else if name == "tl_string_to_i64" {
                     if args.len() != 1 {
                         return self.err(
@@ -2730,10 +2738,10 @@ impl SemanticAnalyzer {
                         );
                     }
                     let arg_ty = self.check_expr(&mut args[0])?;
-                    if arg_ty != Type::Struct("String".to_string(), vec![]) {
+                    if arg_ty != Type::String {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::Struct("String".to_string(), vec![]),
+                                expected: Type::String,
                                 found: arg_ty,
                             },
                             Some(args[0].span.clone()),
@@ -3158,7 +3166,7 @@ impl SemanticAnalyzer {
                     if !matches!(&t, Type::Struct(s, _) if s == "String") {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::Struct("String".into(), vec![]),
+                                expected: Type::String,
                                 found: t,
                             },
                             Some(args[0].span.clone()),
@@ -3321,7 +3329,7 @@ impl SemanticAnalyzer {
                             Some(args[0].span.clone()),
                         );
                     }
-                    return Ok(Type::UserDefined("String".to_string(), vec![]));
+                    return Ok(Type::String);
                 } else if name == "varbuilder_get" {
                     return self.err(
                         SemanticError::FunctionNotFound(
@@ -3430,12 +3438,12 @@ impl SemanticAnalyzer {
                     // Arg 0: Tensor OR Struct
                     match t0 {
                         Type::Tensor(_, _) => {}
-                        Type::UserDefined(ref s, _) if s != "String" => {}
+                        Type::Struct(ref s, _) if s != "String" => {}
                         Type::Struct(_, _) => {}
                         _ => {
                             return self.err(
                                 SemanticError::TypeMismatch {
-                                    expected: Type::UserDefined("Tensor or Struct".into(), vec![]),
+                                    expected: Type::Struct("Tensor or Struct".into(), vec![]),
                                     found: t0,
                                 },
                                 Some(expr.span.clone()),
@@ -3443,10 +3451,10 @@ impl SemanticAnalyzer {
                         }
                     }
 
-                    if !matches!(t1, Type::UserDefined(ref s, _) if s == "String") {
+                    if !matches!(t1, Type::Struct(ref s, _) if s == "String") {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::UserDefined("String".into(), vec![]),
+                                expected: Type::String,
                                 found: t1,
                             },
                             Some(args[1].span.clone()),
@@ -3456,10 +3464,10 @@ impl SemanticAnalyzer {
                 } else if name == "load_weights" {
                     if args.len() == 1 {
                         let t0 = self.check_expr(&mut args[0])?;
-                        if !matches!(t0, Type::UserDefined(ref s, _) if s == "String") {
+                        if !matches!(t0, Type::Struct(ref s, _) if s == "String") {
                             return self.err(
                                 SemanticError::TypeMismatch {
-                                    expected: Type::UserDefined("String".into(), vec![]),
+                                    expected: Type::String,
                                     found: t0,
                                 },
                                 Some(expr.span.clone()),
@@ -3470,24 +3478,24 @@ impl SemanticAnalyzer {
                         let t0 = self.check_expr(&mut args[0])?;
                         let t1 = self.check_expr(&mut args[1])?;
                         match (t0, t1.clone()) {
-                            (Type::UserDefined(ref s, _), _) if s != "String" => {}
+                            (Type::Struct(ref s, _), _) if s != "String" => {}
                             (Type::Struct(_, _), _) => {}
                             (Type::String, Type::Char) => return Ok(Type::String),
                             (Type::Char, Type::String) => return Ok(Type::String),
                             (t0_actual, _) => {
                                 return self.err(
                                     SemanticError::TypeMismatch {
-                                        expected: Type::UserDefined("Struct".into(), vec![]),
+                                        expected: Type::Struct("Struct".into(), vec![]),
                                         found: t0_actual,
                                     },
                                     Some(expr.span.clone()),
                                 );
                             }
                         }
-                        if !matches!(t1, Type::UserDefined(ref s, _) if s == "String") {
+                        if !matches!(t1, Type::String) {
                             return self.err(
                                 SemanticError::TypeMismatch {
-                                    expected: Type::UserDefined("String".into(), vec![]),
+                                    expected: Type::String,
                                     found: t1,
                                 },
                                 Some(args[1].span.clone()),
@@ -3560,7 +3568,7 @@ impl SemanticAnalyzer {
                                 );
                             }
                             check_all_args(args)?;
-                            return Ok(Type::Struct("String".to_string(), vec![]));
+                            return Ok(Type::String);
                         }
                         "tl_gguf_load" => {
                             if arg_len != 1 {
@@ -3672,7 +3680,7 @@ impl SemanticAnalyzer {
                                 );
                             }
                             check_all_args(args)?;
-                            return Ok(Type::UserDefined("String".to_string(), vec![]));
+                            return Ok(Type::String);
                         }
                         "tl_write_file" | "tl_download_file" => {
                             if arg_len != 2 {
@@ -3728,7 +3736,7 @@ impl SemanticAnalyzer {
                                 );
                             }
                             check_all_args(args)?;
-                            return Ok(Type::UserDefined("String".to_string(), vec![]));
+                            return Ok(Type::String);
                         }
                         "tl_string_from_int" => {
                             if arg_len != 1 {
@@ -3742,7 +3750,7 @@ impl SemanticAnalyzer {
                                 );
                             }
                             check_all_args(args)?;
-                            return Ok(Type::UserDefined("String".to_string(), vec![]));
+                            return Ok(Type::String);
                         }
                         "tl_string_contains" => {
                             if arg_len != 2 {
@@ -3832,7 +3840,7 @@ impl SemanticAnalyzer {
 
                             if !func.generics.is_empty() {
                                  let mut unify = |t1: &Type, t2: &Type| -> bool {
-                                    if let Type::UserDefined(n1, _) = t1 {
+                                    if let Type::Struct(n1, _) = t1 {
                                         if func.generics.contains(n1) {
                                             if let Some(existing) = inferred_generics.get(n1) {
                                                 return self.are_types_compatible(existing, t2);
@@ -3871,11 +3879,11 @@ impl SemanticAnalyzer {
                     if !func.generics.is_empty() {
                         fn substitute(ty: &Type, map: &HashMap<String, Type>) -> Type {
                             match ty {
-                                Type::UserDefined(n, args) => {
+                                Type::Struct(n, args) => {
                                     if let Some(val) = map.get(n) {
                                         val.clone()
                                     } else {
-                                        Type::UserDefined(n.clone(), args.iter().map(|a| substitute(a, map)).collect())
+                                        Type::Struct(n.clone(), args.iter().map(|a| substitute(a, map)).collect())
                                     }
                                 }
                                 Type::Tensor(inner, r) => Type::Tensor(Box::new(substitute(inner, map)), *r),
@@ -3918,7 +3926,7 @@ impl SemanticAnalyzer {
                             );
                         }
                     }
-                    return Ok(Type::UserDefined(name.clone(), vec![]));
+                    return Ok(Type::Struct(name.clone(), vec![]));
                 } else if let Some(relation) = self.relations.get(name).cloned() {
                     // Logic Query / Relation Call
                     // relation.args gives us expected arity (excluding mask).
@@ -4252,7 +4260,7 @@ impl SemanticAnalyzer {
                 // Handle Vec::new() -> Vec<T> or Vec<Void> (polymorphic empty vec)
                 let is_vec = match type_name {
                     Type::Vec(_) => true,
-                    Type::UserDefined(n, _) if n == "Vec" => true,
+                    Type::Struct(n, _) if n == "Vec" => true,
                     Type::Struct(n, _) if n == "Vec" => true,
                     _ => false,
                 };
@@ -4261,7 +4269,7 @@ impl SemanticAnalyzer {
                     // Extract the inner type from Vec<T> if specified
                     let inner_type = match type_name {
                         Type::Vec(inner) => Some(inner.as_ref().clone()),
-                        Type::UserDefined(_, args) | Type::Struct(_, args) => {
+                        Type::Struct(_, args) | Type::Struct(_, args) => {
                             if args.len() == 1 {
                                 Some(args[0].clone())
                             } else {
@@ -4282,7 +4290,7 @@ impl SemanticAnalyzer {
 
                 // Handle HashMap::new() -> HashMap<K, V> (inferred)
                 let is_hashmap = match type_name {
-                    Type::UserDefined(n, _) if n == "HashMap" => true,
+                    Type::Struct(n, _) if n == "HashMap" => true,
                     Type::Struct(n, _) if n == "HashMap" => true,
                     _ => false,
                 };
@@ -4290,7 +4298,7 @@ impl SemanticAnalyzer {
                 if is_hashmap && method_name == "new" {
                     // Extract inner types if specified: HashMap<K, V>::new()
                     let (key_type, val_type) = match type_name {
-                         Type::UserDefined(_, args) | Type::Struct(_, args) => {
+                         Type::Struct(_, args) | Type::Struct(_, args) => {
                              if args.len() == 2 {
                                  (args[0].clone(), args[1].clone())
                              } else {
@@ -4326,7 +4334,7 @@ impl SemanticAnalyzer {
                         // Check obj type
                         if let Ok(obj_type) = self.check_expr(obj) {
                             let t_name_opt = match obj_type {
-                                Type::UserDefined(n, _) => Some(n),
+                                Type::Struct(n, _) => Some(n),
                                 Type::Struct(n, _) => Some(n),
                                 Type::Tensor(_, _) => Some("Tensor".to_string()),
                                 _ => None,
@@ -4400,7 +4408,7 @@ impl SemanticAnalyzer {
                              let mut inferred_generics: HashMap<String, Type> = HashMap::new();
 
                              // 1. Contextual inference from explicit generics (e.g. Result<I64, String>::Ok(...))
-                             if let Type::UserDefined(_, provided_generics) = type_name {
+                             if let Type::Struct(_, provided_generics) = type_name {
                                  if provided_generics.len() == enum_def.generics.len() {
                                      for (ename, ptype) in enum_def.generics.iter().zip(provided_generics.iter()) {
                                          inferred_generics.insert(ename.clone(), ptype.clone());
@@ -4415,7 +4423,7 @@ impl SemanticAnalyzer {
                                       let expected_def = &types[i];
                                       
                                       // Simple inference: If expected is "T", then T = arg_type.
-                                      if let Type::UserDefined(n, empty) = expected_def {
+                                      if let Type::Struct(n, empty) = expected_def {
                                           if empty.is_empty() && enum_def.generics.contains(n) {
                                                if !inferred_generics.contains_key(n) {
                                                    inferred_generics.insert(n.clone(), arg_type.clone());
@@ -4434,7 +4442,7 @@ impl SemanticAnalyzer {
                              
                              // 4. Construct return type
                              let final_generics: Vec<Type> = enum_def.generics.iter().map(|g| inferred_generics[g].clone()).collect();
-                             return Ok(Type::UserDefined(enum_def.name.clone(), final_generics));
+                             return Ok(Type::Struct(enum_def.name.clone(), final_generics));
                         }
                     }
 
@@ -4481,7 +4489,7 @@ impl SemanticAnalyzer {
                         
                         if !struct_generics.is_empty() || !func.generics.is_empty() {
                              let mut unify = |t1: &Type, t2: &Type| -> bool {
-                                if let Type::UserDefined(n1, _) = t1 {
+                                if let Type::Struct(n1, _) = t1 {
                                     if struct_generics.contains(n1) || func.generics.contains(n1) {
                                         if let Some(existing) = inferred_generics.get(n1) {
                                             return self.are_types_compatible(existing, t2);
@@ -4520,11 +4528,11 @@ impl SemanticAnalyzer {
                     if !struct_generics.is_empty() || !func.generics.is_empty() {
                         fn substitute(ty: &Type, map: &HashMap<String, Type>) -> Type {
                             match ty {
-                                Type::UserDefined(n, args) => {
+                                Type::Struct(n, args) => {
                                     if let Some(val) = map.get(n) {
                                         val.clone()
                                     } else {
-                                        Type::UserDefined(n.clone(), args.iter().map(|a| substitute(a, map)).collect())
+                                        Type::Struct(n.clone(), args.iter().map(|a| substitute(a, map)).collect())
                                     }
                                 }
                                 Type::Tensor(inner, r) => Type::Tensor(Box::new(substitute(inner, map)), *r),
@@ -4545,7 +4553,7 @@ impl SemanticAnalyzer {
                     }
                     // Resolve return type: if it's Self or short name, use method's impl target type
                     let resolved_return = match &func.return_type {
-                        Type::UserDefined(ret_name, _) => {
+                        Type::Struct(ret_name, _) => {
                             let type_key = type_name.get_base_name();
                             if ret_name == "Self"
                                 || ret_name == type_key.split("::").last().unwrap_or(&type_key)
@@ -4580,7 +4588,7 @@ impl SemanticAnalyzer {
                                 Some(expr.span.clone()),
                             );
                         }
-                        Ok(Type::UserDefined("File".to_string(), vec![]))
+                        Ok(Type::Struct("File".to_string(), vec![]))
                     }
                     // Existing code was checking UserDefined("String").
                     // I will replace that.
@@ -4595,7 +4603,7 @@ impl SemanticAnalyzer {
                                 Some(expr.span.clone()),
                             );
                         }
-                        Ok(Type::UserDefined("Path".to_string(), vec![]))
+                        Ok(Type::Struct("Path".to_string(), vec![]))
                     }
                     ("System", "time") => Ok(Type::F32),
                     ("System", "sleep") => Ok(Type::Void),
@@ -4634,7 +4642,7 @@ impl SemanticAnalyzer {
                     ("Arena", "is_active") => Ok(Type::Bool),
                     ("Tokenizer", "new") => Ok(Type::Struct("Tokenizer".into(), vec![])),
                     ("KVCache", "new") => Ok(Type::Struct("KVCache".into(), vec![])),
-                    ("Map", "load") => Ok(Type::UserDefined("Map".into(), vec![])),
+                    ("Map", "load") => Ok(Type::Struct("Map".into(), vec![])),
                     ("File", "exists") => Ok(Type::Bool),
                     ("File", "read") => Ok(Type::String),
                     ("File", "write") => Ok(Type::Bool),
@@ -4786,10 +4794,10 @@ impl SemanticAnalyzer {
                             );
                         }
                         let t0 = self.check_expr(&mut args[0])?;
-                        if !matches!(t0, Type::UserDefined(ref s, _) if s == "String") {
+                        if !matches!(t0, Type::Struct(ref s, _) if s == "String") {
                             return self.err(
                                 SemanticError::TypeMismatch {
-                                    expected: Type::UserDefined("String".into(), vec![]),
+                                    expected: Type::String,
                                     found: t0,
                                 },
                                 Some(args[0].span.clone()),
@@ -4955,7 +4963,7 @@ impl SemanticAnalyzer {
                             // Try check_expr on obj
                             if let Ok(obj_type) = self.check_expr(obj) {
                                 let type_name = match obj_type {
-                                    Type::UserDefined(n, _) => Some(n),
+                                    Type::Struct(n, _) => Some(n),
                                     Type::Struct(n, _) => Some(n),
                                     Type::Tensor(_, _) => Some("Tensor".to_string()),
                                     _ => None,
@@ -5037,12 +5045,12 @@ impl SemanticAnalyzer {
             ExprKind::FieldAccess(obj, field_name) => {
                 let obj_type = self.check_expr(obj)?;
                 let (name, args) = match &obj_type {
-                    Type::UserDefined(n, a) => (n.clone(), a.clone()),
+                    Type::Struct(n, a) => (n.clone(), a.clone()),
                     Type::Struct(n, a) => (n.clone(), a.clone()),
                     _ => {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::UserDefined("Struct".into(), vec![]),
+                                expected: Type::Struct("Struct".into(), vec![]),
                                 found: obj_type,
                             },
                             Some(expr.span.clone()),
@@ -5117,7 +5125,7 @@ impl SemanticAnalyzer {
 
                 // 1. Resolve type name key
                 let type_name = match &obj_type {
-                    Type::UserDefined(name, _) => name.clone(),
+                    Type::Struct(name, _) => name.clone(),
                     Type::Struct(name, _) => name.clone(),
                     Type::Enum(name, _) => name.clone(),
                     _ => obj_type.get_base_name(),
@@ -5153,7 +5161,7 @@ impl SemanticAnalyzer {
                             }
                         }
                         // Handle UserDefined
-                        if let Type::UserDefined(name, inner_args) = &obj_type {
+                        if let Type::Struct(name, inner_args) = &obj_type {
                              if let Some(def) = self.structs.get(name) {
                                 for (i, param) in def.generics.iter().enumerate() {
                                     if i < inner_args.len() {
@@ -5255,8 +5263,6 @@ impl SemanticAnalyzer {
             {
                 true
             }
-            (Type::UserDefined(n, _), Type::Tensor(_, _)) if n == "Tensor" => true,
-            (Type::Tensor(_, _), Type::UserDefined(n, _)) if n == "Tensor" => true,
             (Type::Struct(n, _), Type::Tensor(_, _)) if n == "Tensor" => true,
             (Type::Tensor(_, _), Type::Struct(n, _)) if n == "Tensor" => true,
             // Allow I32/I64/F32/F64 inter-compatibility for some operations
@@ -5274,26 +5280,12 @@ impl SemanticAnalyzer {
                 }
                 true
             }
-            (Type::UserDefined(n1, args1), Type::Struct(n2, args2)) => {
-                 n1 == n2 && self.are_generic_args_compatible(args1, args2)
-            }
-            (Type::Struct(n1, args1), Type::UserDefined(n2, args2)) => {
-                 n1 == n2 && self.are_generic_args_compatible(args1, args2)
-            }
-            (Type::UserDefined(n1, args1), Type::Enum(n2, args2)) => {
-                 n1 == n2 && self.are_generic_args_compatible(args1, args2)
-            }
-            (Type::Enum(n1, args1), Type::UserDefined(n2, args2)) => {
-                 n1 == n2 && self.are_generic_args_compatible(args1, args2)
-            }
+            // Struct-UserDefined mix removed
             (Type::Enum(n1, args1), Type::Enum(n2, args2)) => {
                  n1 == n2 && self.are_generic_args_compatible(args1, args2)
             }
             (Type::Struct(n1, args1), Type::Struct(n2, args2)) => {
-                 n1 == n2 && self.are_generic_args_compatible(args1, args2)
-            }
-            (Type::UserDefined(n1, args1), Type::UserDefined(n2, args2)) => {
-                let name_match = if n1 == n2 {
+                 let name_match = if n1 == n2 {
                     true
                 } else {
                     // Partial match for module imports: "Linear" vs "mod::Linear"
@@ -5301,6 +5293,7 @@ impl SemanticAnalyzer {
                 };
                 name_match && self.are_generic_args_compatible(args1, args2)
             }
+            // UserDefined logic merged into Struct above
 
             // Promotions
             (Type::F64, Type::F32) => true,
@@ -5315,7 +5308,7 @@ impl SemanticAnalyzer {
                     self.are_types_compatible(inner1, inner2)
                 }
             }
-            (Type::Vec(inner), Type::UserDefined(n, args)) | (Type::UserDefined(n, args), Type::Vec(inner)) => {
+            (Type::Vec(inner), Type::Struct(n, args)) | (Type::Struct(n, args), Type::Vec(inner)) => {
                 if n == "Vec" {
                     if matches!(inner.as_ref(), Type::Void) {
                         // Vec<Void> is compatible with any Vec<T>

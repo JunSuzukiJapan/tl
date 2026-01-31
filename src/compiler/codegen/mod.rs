@@ -171,15 +171,15 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     fn register_builtin_return_types(&mut self) {
         // Path
-        self.method_return_types.insert("tl_path_new".to_string(), Type::UserDefined("Path".to_string(), vec![]));
+        self.method_return_types.insert("tl_path_new".to_string(), Type::Struct("Path".to_string(), vec![]));
         self.method_return_types.insert("tl_path_to_string".to_string(), Type::String);
-        self.method_return_types.insert("tl_path_join".to_string(), Type::UserDefined("Path".to_string(), vec![]));
+        self.method_return_types.insert("tl_path_join".to_string(), Type::Struct("Path".to_string(), vec![]));
         
         // String
         self.method_return_types.insert("tl_string_new".to_string(), Type::String);
 
         // File
-        self.method_return_types.insert("tl_file_open".to_string(), Type::UserDefined("File".to_string(), vec![]));
+        self.method_return_types.insert("tl_file_open".to_string(), Type::Struct("File".to_string(), vec![]));
         self.method_return_types.insert("tl_file_read_string".to_string(), Type::String);
         self.method_return_types.insert("tl_file_write_string".to_string(), Type::Void);
         self.method_return_types.insert("tl_args_get".to_string(), Type::String);
@@ -285,7 +285,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     pub(crate) fn add_temp_with_mode(&mut self, val: BasicValueEnum<'ctx>, ty: Type, mode: u8) {
         // Only track types that need freeing
         match &ty {
-            Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Vec(_) | Type::Tuple(_) | Type::Enum(_, _) => {
+            Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Struct(_, _) | Type::Vec(_) | Type::Tuple(_) | Type::Enum(_, _) => {
                  self.temporaries.last_mut().expect("No temporary context").push((val, ty, mode));
             }
             _ => {}
@@ -560,38 +560,31 @@ impl<'ctx> CodeGenerator<'ctx> {
         if let Some(scope) = self.variables.get(scope_idx) {
             for (_name, (val_enum, ty, cleanup_mode)) in scope {
                 if *cleanup_mode != CLEANUP_NONE {
-                    if let Type::UserDefined(name, _) = ty {
-                        let ptr = val_enum.into_pointer_value();
-                        let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                        if let Ok(obj_val) = self.builder.build_load(load_type, ptr, "obj_to_free")
-                        {
-                            match name.as_str() {
-                                "String" => {}
-                                "File" | "Path" => {}
-                                "Env" | "Http" => {}
-                                "Map" | "HashMap" | "Tokenizer" | "KVCache" | 
-                                "Block" | "RMSNorm" | "Attention" | "MLP" => {}
-                                _ => {
-                                    // Pass cleanup_mode to recursive free
-                                    let _ = self.emit_recursive_free(obj_val, ty, *cleanup_mode);
+                     if let Type::Struct(name, _) = ty {
+                        // Opaque Handles check (formerly UserDefined logic)
+                        match name.as_str() {
+                            "String" => {} // Should be Type::String usually
+                            "File" | "Path" => {}
+                            "Env" | "Http" => {}
+                            "Map" | "HashMap" | "Tokenizer" | "KVCache" | 
+                            "Block" | "RMSNorm" | "Attention" | "MLP" => {}
+                            _ => {
+                                // Structs in TL now follow "Reference Semantics" for their members.
+                                // We do NOT recursively free members when the Struct itself goes out of scope.
+                                // This prevents Double Free issues when Structs are copied (shallow copy).
+                                // The Struct wrapper itself (if any) is allocated on stack/alloca so it's fine.
+                                // Members (Tensors, Maps) are ref-counted or managed elsewhere (or leaked safely).
+                                
+                                // However, Struct("Tensor") MUST be freed because it holds a handle.
+                                if name == "Tensor" {
+                                    let ptr = val_enum.into_pointer_value();
+                                    let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                                    if let Ok(struct_val) =
+                                        self.builder.build_load(load_type, ptr, "tensor_to_free")
+                                    {
+                                        let _ = self.emit_recursive_free(struct_val, ty, *cleanup_mode);
+                                    }
                                 }
-                            }
-                        }
-                    } else if let Type::Struct(name, _) = ty {
-                        // Structs in TL now follow "Reference Semantics" for their members.
-                        // We do NOT recursively free members when the Struct itself goes out of scope.
-                        // This prevents Double Free issues when Structs are copied (shallow copy).
-                        // The Struct wrapper itself (if any) is allocated on stack/alloca so it's fine.
-                        // Members (Tensors, Maps) are ref-counted or managed elsewhere (or leaked safely).
-                        
-                        // However, Struct("Tensor") MUST be freed because it holds a handle.
-                        if name == "Tensor" {
-                            let ptr = val_enum.into_pointer_value();
-                            let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                            if let Ok(struct_val) =
-                                self.builder.build_load(load_type, ptr, "tensor_to_free")
-                            {
-                                let _ = self.emit_recursive_free(struct_val, ty, *cleanup_mode);
                             }
                         }
                     } else if matches!(ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Tuple(_) | Type::Vec(_)) {
@@ -840,7 +833,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Only for types that would be freed recursively
                 if matches!(
                     ty,
-                    Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _)
+                    Type::Tensor(_, _) | Type::Struct(_, _) | Type::Struct(_, _)
                 ) {
                     let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
                     let null_ptr = ptr_type.const_null();
@@ -893,7 +886,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .context
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(), // OpaqueTensor*
-                    Type::Struct(name, _) | Type::UserDefined(name, _) => {
+                    Type::Struct(name, _) | Type::Struct(name, _) => {
                         // Extract simple name from module path (e.g., "mnist_common::Linear" -> "Linear")
                         let simple_name = if name.contains("::") {
                             name.split("::").last().unwrap()
@@ -961,7 +954,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::Struct(_, _) | Type::Enum(_, _) | Type::UserDefined(_, _) => {
+                        Type::Struct(_, _) | Type::Enum(_, _) | Type::Struct(_, _) => {
                             // Objects are pointers
                             self.context
                                 .ptr_type(inkwell::AddressSpace::default())
@@ -975,6 +968,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
+                        Type::String => self
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
+                        Type::Char => self.context.i32_type().into(),
                         _ => {
                             return Err(format!(
                                 "Unsupported type in enum variant {}: {:?}",
@@ -1051,7 +1049,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Add regular arguments
                 for (_arg_name, arg_ty) in &method.args {
-                    let resolved_ty = if let Type::UserDefined(name, _) = arg_ty {
+                    let resolved_ty = if let Type::Struct(name, _) = arg_ty {
                         if name == "Self" {
                             imp.target_type.clone()
                         } else {
@@ -1069,10 +1067,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::Struct(_, _) | Type::UserDefined(_, _) => self
+                        Type::Struct(_, _) | Type::Struct(_, _) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
+                        Type::String => self
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
+                        Type::Char => self.context.i32_type().into(),
                         _ => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
@@ -1096,10 +1099,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .fn_type(&param_types, false),
-                        Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Tuple(_) | Type::Enum(_, _) | Type::Vec(_) => self
+                        Type::Struct(_, _) | Type::Struct(_, _) | Type::Tuple(_) | Type::Enum(_, _) | Type::Vec(_) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .fn_type(&param_types, false),
+                        Type::String => self
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .fn_type(&param_types, false),
+                        Type::Char => self.context.i32_type().fn_type(&param_types, false),
                         _ => self.context.void_type().fn_type(&param_types, false),
                     }
                 };
@@ -1107,7 +1115,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let _function = self.module.add_function(&mangled_name, fn_type, None);
                 
                 // Register return type for this method
-                let return_type = if let Type::UserDefined(n, _) = &method.return_type {
+                let return_type = if let Type::Struct(n, _) = &method.return_type {
                     if n == "Self" {
                         imp.target_type.clone()
                     } else {
@@ -1183,7 +1191,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Get params and store them (skip sret param if present)
                 for (i, (arg_name, arg_ty)) in method.args.iter().enumerate() {
-                    let resolved_ty = if let Type::UserDefined(name, _) = arg_ty {
+                    let resolved_ty = if let Type::Struct(name, _) = arg_ty {
                         if name == "Self" {
                             imp.target_type.clone()
                         } else {
@@ -1413,12 +1421,12 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Check if this function returns a struct (requires sret)
         // Check if this function returns a struct (requires sret)
-        // Check if this function        // matches!(func.return_type, Type::Struct(_, _) | Type::UserDefined(_, _))
+        // Check if this function        // matches!(func.return_type, Type::Struct(_, _) | Type::Struct(_, _))
         // Let's assume Structs needs SRET, but Tensors do NOT.
         // String is a pointer, so exclusion is needed.
         let uses_sret = match &func.return_type {
             Type::Struct(name, _) if name != "Vec" && name != "Map" && name != "HashMap" => true,
-            Type::UserDefined(name, _) if name != "String" && name != "Vec" && name != "Map" && name != "HashMap" && name != "Path" && name != "File" => true, 
+            Type::Struct(name, _) if name != "Vec" && name != "Map" && name != "HashMap" && name != "Path" && name != "File" => true, 
             _ => false,
         };
 
@@ -1443,10 +1451,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .context
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
-                Type::UserDefined(_, _) | Type::Struct(_, _) | Type::Enum(_, _) => self
+                Type::Struct(_, _) | Type::Struct(_, _) | Type::Enum(_, _) => self
                     .context
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
+                Type::String => self
+                    .context
+                    .ptr_type(inkwell::AddressSpace::default())
+                    .into(),
+                Type::Char => self.context.i32_type().into(),
                 _ => self.context.i64_type().into(),
             };
             args_types.push(arg_ty);
@@ -1467,11 +1480,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),
                 ),
-                Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Enum(_, _) => Some(
+                Type::Struct(_, _) | Type::Struct(_, _) | Type::Enum(_, _) => Some(
                     self.context
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),
                 ),
+                Type::String => Some(
+                    self.context
+                        .ptr_type(inkwell::AddressSpace::default())
+                        .into(),
+                ),
+                Type::Char => Some(self.context.i32_type().into()),
                 _ => Some(self.context.i64_type().into()),
             };
             match ret_type {
@@ -1545,7 +1564,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Check if this function uses sret
         let uses_sret = match &func.return_type {
              Type::Struct(name, _) if name != "Vec" && name != "Map" && name != "HashMap" => true,
-             Type::UserDefined(name, _) if name != "Vec" && name != "Map" && name != "HashMap" => true,
+             Type::Struct(name, _) if name != "Vec" && name != "Map" && name != "HashMap" => true,
              _ => false,
         };
         let param_offset = if uses_sret { 1 } else { 0 };

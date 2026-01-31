@@ -80,8 +80,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             .ok_or("tl_mem_unregister not found")?;
 
         match ty {
-            // Type::UserDefined(name, _) if name == "String" => {} // DO NOT Skip String. It must be unregistered.
-            Type::Struct(name, _) | Type::UserDefined(name, _) => {
+            // Type::Struct(name, _) if name == "String" => {} // DO NOT Skip String. It must be unregistered.
+            Type::Struct(name, _) | Type::Struct(name, _) => {
                  if name != "String" {
                      // eprintln!("DEBUG: Top Level Unregister generation for {}", name);
                  }
@@ -105,7 +105,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         match ty {
-            Type::Struct(name, _) | Type::UserDefined(name, _) => {
+            Type::Struct(name, _) | Type::Struct(name, _) => {
                 if name == "String" {
                     return Ok(());
                 }
@@ -130,7 +130,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             Type::Tensor(_, _)
                                 | Type::TensorShaped(_, _)
                                 | Type::Struct(_, _)
-                                | Type::UserDefined(_, _)
+                                | Type::Struct(_, _)
                                 | Type::Enum(_, _)
                                 | Type::Vec(_)
                                 | Type::Tuple(_)
@@ -172,7 +172,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         ty: &Type,
     ) -> Result<(), String> {
         match ty {
-            Type::Struct(name, _) | Type::UserDefined(name, _) => {
+            Type::Struct(name, _) | Type::Struct(name, _) => {
                 let struct_def = self
                     .struct_defs
                     .get(name)
@@ -199,7 +199,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Type::I64 => self.context.i64_type().into(),
                         Type::I32 => self.context.i32_type().into(),
                         Type::Bool => self.context.bool_type().into(),
-                        Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _) => self
+                        Type::Tensor(_, _) | Type::Struct(_, _) | Type::Struct(_, _) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
@@ -223,7 +223,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Type::Tensor(_, _)
                             | Type::TensorShaped(_, _)
                             | Type::Struct(_, _)
-                            | Type::UserDefined(_, _)
+                            | Type::Struct(_, _)
                             | Type::Enum(_, _)
                             | Type::Vec(_)
                             | Type::Tuple(_)
@@ -348,7 +348,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .context
                                     .ptr_type(inkwell::AddressSpace::default())
                                     .into(),
-                                Type::Struct(_, _) | Type::Enum(_, _) | Type::UserDefined(_, _) => self
+                                Type::Struct(_, _) | Type::Enum(_, _) | Type::Struct(_, _) => self
                                     .context
                                     .ptr_type(inkwell::AddressSpace::default())
                                     .into(),
@@ -378,7 +378,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 Type::Tensor(_, _)
                                     | Type::TensorShaped(_, _)
                                     | Type::Struct(_, _)
-                                    | Type::UserDefined(_, _)
+                                    | Type::Struct(_, _)
                                     | Type::Enum(_, _)
                                     | Type::Vec(_)
                                     | Type::Tuple(_)
@@ -477,7 +477,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
                 self.builder.position_at_end(merge_block);
             }
-            Type::Struct(name, _) | Type::UserDefined(name, _) => {
+            Type::Struct(name, _) | Type::Struct(name, _) => {
                 // Handle Tensor specially
                 if name == "Tensor" {
                     return self.emit_recursive_free(val, &Type::Tensor(Box::new(Type::F32), 1), mode);
@@ -489,7 +489,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // 2. The container is freed via tl_vec_void_free (Box::from_raw) to avoid malloc/free mismatch crash.
                 if name.starts_with("Vec") {
                     let inner_ty = if name == "Vec" {
-                         if let Type::UserDefined(_, args) = ty {
+                         if let Type::Struct(_, args) = ty {
                              if !args.is_empty() {
                                   args[0].clone()
                              } else {
@@ -511,8 +511,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                              "f32" => Type::F32,
                              "u8"  => Type::U8,
                              "bool" => Type::Bool,
-                             "String" => Type::UserDefined("String".to_string(), vec![]),
-                             _ => Type::UserDefined(suffix.to_string(), vec![]),
+                             "String" => Type::Struct("String".to_string(), vec![]),
+                             _ => Type::Struct(suffix.to_string(), vec![]),
                          }
                     } else {
                          // Fallback for random Structs starting with Vec...
@@ -603,7 +603,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             Type::Tensor(_, _)
                             | Type::TensorShaped(_, _)
                             | Type::Struct(_, _)
-                            | Type::UserDefined(_, _)
+                            | Type::Struct(_, _)
                             | Type::Enum(_, _)
                             | Type::Vec(_)
                             | Type::Tuple(_) => {
@@ -690,7 +690,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Type::Tensor(_, _)
                         | Type::TensorShaped(_, _)
                         | Type::Struct(_, _)
-                        | Type::UserDefined(_, _)
+                        | Type::Struct(_, _)
                         | Type::Enum(_, _)
                         | Type::Vec(_)
                         | Type::Tuple(_) => {
@@ -840,7 +840,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             Type::Tuple(elem_types) => {
                  // Check if any element needs freeing
-                 let needs_free = elem_types.iter().any(|t| matches!(t, Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _)));
+                 let needs_free = elem_types.iter().any(|t| matches!(t, Type::Tensor(_, _) | Type::Struct(_, _) | Type::Struct(_, _)));
                  if !needs_free {
                      return Ok(());
                  }
@@ -858,7 +858,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                          Type::I64 => self.context.i64_type().into(),
                          Type::I32 => self.context.i32_type().into(),
                          Type::Bool => self.context.bool_type().into(),
-                         Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Enum(_, _) | Type::Vec(_) | Type::Tuple(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
+                         Type::Tensor(_, _) | Type::Struct(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Vec(_) | Type::Tuple(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                           Type::Void => self.context.i8_type().into(),
                          _ => self.context.i64_type().into(), // Placeholder, potentially unsafe if not matching
                      });
@@ -866,7 +866,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  let struct_ty = self.context.struct_type(&llvm_types, false);
                  
                  for (i, ty) in elem_types.iter().enumerate() {
-                      if matches!(ty, Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Enum(_, _) | Type::Vec(_) | Type::Tuple(_)) {
+                      if matches!(ty, Type::Tensor(_, _) | Type::Struct(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Vec(_) | Type::Tuple(_)) {
                            let f_ptr = self.builder.build_struct_gep(struct_ty, ptr, i as u32, "tup_elem").unwrap();
                            let load = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "load").unwrap();
                            self.emit_recursive_free(load, ty, super::CLEANUP_FULL)?;
@@ -922,7 +922,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (obj_val, obj_ty) = self.compile_expr(obj)?;
                 let struct_name = match obj_ty {
                     Type::Struct(name, _) => name,
-                    Type::UserDefined(name, _) => name,
+                    Type::Struct(name, _) => name,
                     _ => return Err(format!("Field assignment on non-struct type {:?}", obj_ty)),
                 };
 
@@ -1032,7 +1032,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Free old value if it's a structural type (Tensor/Struct)
                 if matches!(
                     field_type,
-                    Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _)
+                    Type::Tensor(_, _) | Type::Struct(_, _) | Type::Struct(_, _)
                 ) {
                     let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                     let current_val = self
@@ -1086,7 +1086,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      match val_ty {
                         Type::Tensor(_, _) 
                         | Type::Struct(_, _) 
-                        | Type::UserDefined(_, _) 
+                        | Type::Struct(_, _) 
                         | Type::Enum(_, _) 
                         | Type::Vec(_) => {
                             let inc_fn = self.module.get_function("tl_ptr_inc_ref")
@@ -1113,7 +1113,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Ownership transfer
                 if let Some(f) = self.module.get_function("tl_mem_unregister") {
                     let should_unregister = match &field_type {
-                        Type::Tensor(_, _) | Type::Struct(_, _) | Type::UserDefined(_, _) => true,
+                        Type::Tensor(_, _) | Type::Struct(_, _) | Type::Struct(_, _) => true,
                         _ => false,
                     };
                     if should_unregister {
@@ -1291,13 +1291,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if let Some(target_ty) = type_annotation {
                         if let ExprKind::StaticMethodCall(t_ty, _m_name, args) = &value.inner {
                             let _type_name_matches = match t_ty {
-                                Type::UserDefined(n, _) | Type::Struct(n, _) => n == "HashMap",
+                                Type::Struct(n, _) | Type::Struct(n, _) => n == "HashMap",
                                 _ => false,
                             };
 
                             let mut effective_target = None;
                             let target_is_hashmap = match target_ty {
-                                Type::UserDefined(n, args) | Type::Struct(n, args) => {
+                                Type::Struct(n, args) | Type::Struct(n, args) => {
                                     if n == "HashMap" && args.len() == 2 {
                                         effective_target = Some(target_ty.clone());
                                         true
@@ -1305,11 +1305,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                                         // Handle mangled name: HashMap_String_i64, etc.
                                         let parts: Vec<&str> = n.split('_').collect();
                                         if parts.len() >= 3 && parts[0] == "HashMap" {
-                                            let key_ty = if parts[1] == "String" { Type::UserDefined("String".to_string(), vec![]) } else { Type::UserDefined(parts[1].to_string(), vec![]) };
+                                            let key_ty = if parts[1] == "String" { Type::Struct("String".to_string(), vec![]) } else { Type::Struct(parts[1].to_string(), vec![]) };
                                             let val_ty = if parts[2] == "i64" { Type::I64 } 
-                                                else if parts[2] == "String" { Type::UserDefined("String".to_string(), vec![]) }
-                                                else if parts[2] == "Tensor" { Type::UserDefined("Tensor".to_string(), vec![]) } // Or handle Tensor specifically?
-                                                else { Type::UserDefined(parts[2].to_string(), vec![]) };
+                                                else if parts[2] == "String" { Type::Struct("String".to_string(), vec![]) }
+                                                else if parts[2] == "Tensor" { Type::Struct("Tensor".to_string(), vec![]) } // Or handle Tensor specifically?
+                                                else { Type::Struct(parts[2].to_string(), vec![]) };
                                             
                                             effective_target = Some(Type::Struct("HashMap".to_string(), vec![key_ty, val_ty]));
                                             true
@@ -1354,12 +1354,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                         && matches!(val_ty, Type::ScalarArray(_, _))
                     {
                         let (_v, _t) = self.ensure_tensor_v2(value, 0)?;
-                    } else if let Type::UserDefined(n, args) = target_ty {
+                    } else if let Type::Struct(n, args) = target_ty {
                          if n.starts_with("Vec") || n == "HashMap" {
                              // Fix for Vec::new() -> Vec<Void> / HashMap::new() -> HashMap being assigned to typed var
                              let is_match = match &val_ty {
                                  Type::Vec(_) => true,
-                                 Type::UserDefined(vn, _) | Type::Struct(vn, _) => vn == "Vec" || vn == "HashMap",
+                                 Type::Struct(vn, _) | Type::Struct(vn, _) => vn == "Vec" || vn == "HashMap",
                                  _ => false
                              };
                              if is_match {
@@ -1367,15 +1367,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                              }
                          } else if n == "Option" && args.len() == 1 {
                              // Fix for Option::none() -> Option<I64> being assigned to Option<T>
-                             if let Type::UserDefined(vn, vargs) = &val_ty {
+                             if let Type::Struct(vn, vargs) = &val_ty {
                                  if vn == "Option" && vargs.len() == 1 {
                                      // Normalize Generic Argument if needed (e.g. UserDefined("I64") -> I64)
                                      // This happens because Codegen sees raw AST type annotations.
                                      let mut normalized_target = target_ty.clone();
-                                     if let Type::UserDefined(_, inner_args) = &mut normalized_target {
+                                     if let Type::Struct(_, inner_args) = &mut normalized_target {
                                          if inner_args.len() == 1 {
                                             let inner = &inner_args[0];
-                                            if let Type::UserDefined(name, empty) = inner {
+                                            if let Type::Struct(name, empty) = inner {
                                                 if empty.is_empty() {
                                                     let norm = match name.as_str() {
                                                         "I64" => Some(Type::I64),
@@ -1414,7 +1414,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                              if matches!(val_inner.as_ref(), Type::Void) {
                                  val_ty = Type::Vec(target_inner.clone());
                              }
-                         } else if let Type::UserDefined(ref vn, _) = val_ty {
+                         } else if let Type::Struct(ref vn, _) = val_ty {
                              if vn == "Vec" {
                                  val_ty = Type::Vec(target_inner.clone());
                              }
@@ -1425,7 +1425,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                              // Check if val_ty is Vec<Void> or UserDefined("Vec", [Void])
                              let is_vec_void = match &val_ty {
                                  Type::Vec(inner) => matches!(inner.as_ref(), Type::Void),
-                                 Type::UserDefined(vn, vargs) if vn == "Vec" => {
+                                 Type::Struct(vn, vargs) if vn == "Vec" => {
                                      vargs.is_empty() || vargs.iter().any(|a| matches!(a, Type::Void))
                                  }
                                  _ => false,
@@ -1435,12 +1435,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                              }
                          } else if sn == "HashMap" && sargs.len() == 2 {
                              // Fix for HashMap::new() -> HashMap (no args)
-                             if matches!(val_ty, Type::UserDefined(ref vn, ref vargs) if vn == "HashMap" && vargs.is_empty()) {
+                             if matches!(val_ty, Type::Struct(ref vn, ref vargs) if vn == "HashMap" && vargs.is_empty()) {
                                  val_ty = target_ty.clone();
                              }
                         } else if sn == "Option" && sargs.len() == 1 {
                              // Fix for Option::none() -> Option<I64> being assigned to Option<T>
-                             if let Type::UserDefined(vn, vargs) = &val_ty {
+                             if let Type::Struct(vn, vargs) = &val_ty {
                                  if vn == "Option" && vargs.len() == 1 {
                                      // Force target type
                                      val_ty = target_ty.clone();
@@ -1495,7 +1495,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let should_deep_clone = match &val_ty {
                     Type::Tensor(_, _) | Type::TensorShaped(_, _) => !is_rvalue, // Clone only if L-value
-                    Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Enum(_, _) | Type::Vec(_) | Type::Tuple(_) => {
+                    Type::Struct(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Vec(_) | Type::Tuple(_) => {
                         // Structs/UserDefined/Enum/Vec/Tuple: Pointer copy vs Deep Clone
                         // If R-value, we own the pointer. Move.
                         !is_rvalue
@@ -1589,7 +1589,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             ).unwrap();
                             self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
                         }
-                        Type::Struct(ref name, _) | Type::UserDefined(ref name, _) if name != "String" && name != "File" && name != "Path" && name != "Map" && name != "Tokenizer" && name != "KVCache" => {
+                        Type::Struct(ref name, _) | Type::Struct(ref name, _) if name != "String" && name != "File" && name != "Path" && name != "Map" && name != "Tokenizer" && name != "KVCache" => {
                             let inc_fn = self.module.get_function("tl_ptr_inc_ref")
                                 .or_else(|| {
                                     let void_ty = self.context.void_type();
@@ -1642,7 +1642,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // DEBUG TRACE: Log assignment to variable
                 match &val_ty {
-                    Type::Struct(sname, _) | Type::UserDefined(sname, _) => {
+                    Type::Struct(sname, _) | Type::Struct(sname, _) => {
                          if sname.contains("GPT") {
                              let size_val = self.context.i64_type().const_int(0, false);
                              self.emit_log_alloc(val_ir, size_val).ok();
@@ -1711,7 +1711,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                         .unwrap();
                                 }
                             }
-                            Type::Struct(_, _) | Type::UserDefined(_, _) => {
+                            Type::Struct(_, _) | Type::Struct(_, _) => {
                                 // CRITICAL FIX: Unregister struct from scope to transfer ownership to caller.
                                 // Without this, exit_scope will free the struct before the caller can use it.
                                 // CRITICAL FIX: recursively unregister struct fields (like Tensors)
@@ -2136,7 +2136,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      match val_type {
                          Type::Tensor(_, _) 
                          | Type::Struct(_, _) 
-                         | Type::UserDefined(_, _) 
+                         | Type::Struct(_, _) 
                          | Type::Enum(_, _) 
                          | Type::Vec(_) => {
                              let inc_fn = self.module.get_function("tl_ptr_inc_ref")
@@ -2172,7 +2172,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // Free old value if it is a Struct OR Tensor
                         if matches!(
                             var_type,
-                            Type::Struct(_, _) | Type::UserDefined(_, _) | Type::Tensor(_, _)
+                            Type::Struct(_, _) | Type::Struct(_, _) | Type::Tensor(_, _)
                         ) {
                              if found_should_free != super::CLEANUP_NONE {
                                  let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
@@ -2283,7 +2283,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     self.builder
                                         .build_call(f, &[new_val_basic.into()], "")
                                         .map_err(|e| e.to_string())?;
-                                } else if matches!(var_type, Type::Struct(_, _) | Type::UserDefined(_, _))
+                                } else if matches!(var_type, Type::Struct(_, _) | Type::Struct(_, _))
                                 {
                                     // Recursive unregister for struct fields
                                     self.emit_recursive_unregister(new_val_basic, &var_type)?;
@@ -3174,7 +3174,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 match &ty {
                     Type::Struct(_, _)
-                    | Type::UserDefined(_, _)
+                    | Type::Struct(_, _)
                     | Type::Tensor(_, _)
                     | Type::TensorShaped(_, _)
                     | Type::Enum(_, _)
@@ -3341,6 +3341,56 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         let res_ptr = res_val.into_pointer_value();
         Ok((res_ptr.into(), tensor_ty))
+    }
+
+    fn compile_string_bin_op(
+        &self,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+        op: BinOp,
+    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        match op {
+            BinOp::Add => {
+                let concat_fn = self
+                    .module
+                    .get_function("tl_string_concat")
+                    .ok_or("tl_string_concat not found")?;
+                let res = self
+                    .builder
+                    .build_call(concat_fn, &[lhs.into(), rhs.into()], "strconcat")
+                    .map_err(|e| e.to_string())?;
+                let res_val = match res.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v,
+                    _ => return Err("Invalid string concat return".into()),
+                };
+                Ok((res_val, Type::String))
+            }
+            BinOp::Eq | BinOp::Neq => {
+                let streq_fn = self
+                    .module
+                    .get_function("tl_string_eq")
+                    .ok_or("tl_string_eq not found")?;
+                let cmp = self
+                    .builder
+                    .build_call(streq_fn, &[lhs.into(), rhs.into()], "streq_res")
+                    .map_err(|e| e.to_string())?;
+
+                let cmp_val = match cmp.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                    _ => return Err("Invalid tl_string_eq return".into()),
+                };
+                
+                let res = match op {
+                    BinOp::Eq => cmp_val,
+                    BinOp::Neq => self.builder
+                        .build_not(cmp_val, "strneq")
+                        .map_err(|e| e.to_string())?,
+                    _ => unreachable!(),
+                };
+                Ok((res.into(), Type::Bool))
+            }
+            _ => Err("Only ==, !=, and + supported for Strings".into()),
+        }
     }
 
     // Helper for BinOp
@@ -3516,62 +3566,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Ok((res, Type::F32))
                 }
             }
-            (
-                Type::UserDefined(s1, _) | Type::Struct(s1, _),
-                Type::UserDefined(s2, _) | Type::Struct(s2, _),
-            ) if s1 == "String" && s2 == "String" => {
-                match op {
-                    BinOp::Add => {
-                        let concat_fn = self
-                            .module
-                            .get_function("tl_string_concat")
-                            .ok_or("tl_string_concat not found")?;
-                        let res = self
-                            .builder
-                            .build_call(concat_fn, &[lhs.into(), rhs.into()], "strconcat")
-                            .map_err(|e| e.to_string())?;
-                        let res_val = match res.try_as_basic_value() {
-                            ValueKind::Basic(v) => v,
-                            _ => return Err("Invalid string concat return".into()),
-                        };
-                        Ok((res_val, Type::Struct("String".to_string(), vec![])))
-                    }
-                    BinOp::Eq | BinOp::Neq => {
-                        let strcmp_fn = self
-                            .module
-                            .get_function("strcmp")
-                            .ok_or("strcmp not found")?;
-                        let cmp = self
-                            .builder
-                            .build_call(strcmp_fn, &[lhs.into(), rhs.into()], "strcmp_res")
-                            .map_err(|e| e.to_string())?;
-
-                        let cmp_val = match cmp.try_as_basic_value() {
-                            ValueKind::Basic(v) => v.into_int_value(),
-                            _ => return Err("Invalid strcmp return".into()),
-                        };
-                        let zero = self.context.i32_type().const_zero();
-                        let res = match op {
-                            BinOp::Eq => self.builder.build_int_compare(
-                                inkwell::IntPredicate::EQ,
-                                cmp_val,
-                                zero,
-                                "streq",
-                            ),
-                            BinOp::Neq => self.builder.build_int_compare(
-                                inkwell::IntPredicate::NE,
-                                cmp_val,
-                                zero,
-                                "strneq",
-                            ),
-                            _ => unreachable!(),
-                        }
-                        .map_err(|e| e.to_string())?;
-                        Ok((res.into(), Type::Bool))
-                    }
-                    _ => Err("Only ==, !=, and + supported for Strings".into()),
-                }
-            }
+            (Type::String, Type::String) => self.compile_string_bin_op(lhs, rhs, op),
+            // Legacy Struct("string") compatibility
+            (Type::Struct(n, _), Type::String) if n == "string" || n == "String" => self.compile_string_bin_op(lhs, rhs, op),
+            (Type::String, Type::Struct(n, _)) if n == "string" || n == "String" => self.compile_string_bin_op(lhs, rhs, op),
+            (Type::Struct(n1, _), Type::Struct(n2, _)) if (n1 == "string" || n1 == "String") && (n2 == "string" || n2 == "String") => self.compile_string_bin_op(lhs, rhs, op),
 
             (Type::Bool, Type::Bool) => {
                 let l = lhs.into_int_value();
@@ -3598,9 +3597,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Type::Tensor(_, _)
                 | Type::Struct(..),
             ) if (matches!(lhs_type, Type::Tensor(_, _))
-                || (matches!(&lhs_type, Type::Struct(n, _) | Type::UserDefined(n, _) if n == "Tensor")))
+                || (matches!(&lhs_type, Type::Struct(n, _) | Type::Struct(n, _) if n == "Tensor")))
                 && (matches!(rhs_type, Type::Tensor(_, _))
-                    || (matches!(&rhs_type, Type::Struct(n, _) | Type::UserDefined(n, _) if n == "Tensor"))) =>
+                    || (matches!(&rhs_type, Type::Struct(n, _) | Type::Struct(n, _) if n == "Tensor"))) =>
             {
                 let l = lhs.into_pointer_value();
                 let r = rhs.into_pointer_value();
@@ -3659,13 +3658,13 @@ impl<'ctx> CodeGenerator<'ctx> {
             (Type::Tensor(inner, _), Type::F32) if **inner == Type::F32 => {
                  self.compile_tensor_scalar_op(lhs, lhs_type, rhs, rhs_type, op, true)
             }
-            (Type::Struct(name, _), Type::F32) | (Type::UserDefined(name, _), Type::F32) if name == "Tensor" => {
+            (Type::Struct(name, _), Type::F32) | (Type::Struct(name, _), Type::F32) if name == "Tensor" => {
                  self.compile_tensor_scalar_op(lhs, lhs_type, rhs, rhs_type, op, true)
             }
             (Type::F32, Type::Tensor(inner, _)) if **inner == Type::F32 => {
                  self.compile_tensor_scalar_op(lhs, lhs_type, rhs, rhs_type, op, false)
             }
-            (Type::F32, Type::Struct(name, _)) | (Type::F32, Type::UserDefined(name, _)) if name == "Tensor" => {
+            (Type::F32, Type::Struct(name, _)) | (Type::F32, Type::Struct(name, _)) if name == "Tensor" => {
                  self.compile_tensor_scalar_op(lhs, lhs_type, rhs, rhs_type, op, false)
             }
             // ScalarArray operations: convert to Tensor and use tensor ops
@@ -3792,7 +3791,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .ok_or(format!("Enum {} definition not found", name))?;
                 self.emit_enum_deep_clone(val, enum_def)
             }
-            Type::Struct(name, _) | Type::UserDefined(name, _) => {
+            Type::Struct(name, _) | Type::Struct(name, _) => {
                 // Check if it is an Enum
                 if let Some(enum_def) = self.enum_defs.get(name) {
                     return self.emit_enum_deep_clone(val, enum_def);
@@ -3957,7 +3956,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Type::Tensor(_, _)
                         | Type::TensorShaped(_, _)
                         | Type::Struct(_, _)
-                        | Type::UserDefined(_, _)
+                        | Type::Struct(_, _)
                         | Type::Enum(_, _)
                         | Type::Vec(_)
                         | Type::Tuple(_) => {
@@ -4190,7 +4189,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::Struct(_, _) | Type::Enum(_, _) | Type::UserDefined(_, _) | Type::Tuple(_) | Type::Vec(_) => self
+                        Type::Struct(_, _) | Type::Enum(_, _) | Type::Struct(_, _) | Type::Tuple(_) | Type::Vec(_) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),

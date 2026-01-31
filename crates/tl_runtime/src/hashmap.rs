@@ -32,25 +32,26 @@ extern "C" fn hashmap_dtor_shim(ptr: *mut c_void) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_hashmap_insert(map: *mut TLHashMap, key: *const c_char, value: *mut c_void) {
+pub extern "C" fn tl_hashmap_insert(map: *mut TLHashMap, key: *mut crate::StringStruct, value: *mut c_void) {
     if map.is_null() || key.is_null() {
         return;
     }
-    let key_str = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
-    
     unsafe {
+        if (*key).ptr.is_null() { return; }
+        let key_str = CStr::from_ptr((*key).ptr).to_string_lossy().into_owned();
         (*map).inner.insert(key_str, value);
     }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_hashmap_get(map: *mut TLHashMap, key: *const c_char) -> *mut c_void {
+pub extern "C" fn tl_hashmap_get(map: *mut TLHashMap, key: *mut crate::StringStruct) -> *mut c_void {
     if map.is_null() || key.is_null() {
         return std::ptr::null_mut();
     }
-    let key_str = unsafe { CStr::from_ptr(key).to_string_lossy() };
     
     unsafe {
+        if (*key).ptr.is_null() { return std::ptr::null_mut(); }
+        let key_str = CStr::from_ptr((*key).ptr).to_string_lossy();
         match (*map).inner.get(key_str.as_ref()) {
             Some(&val) => val,
             None => std::ptr::null_mut(),
@@ -59,13 +60,14 @@ pub extern "C" fn tl_hashmap_get(map: *mut TLHashMap, key: *const c_char) -> *mu
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_hashmap_remove(map: *mut TLHashMap, key: *const c_char) -> *mut c_void {
+pub extern "C" fn tl_hashmap_remove(map: *mut TLHashMap, key: *mut crate::StringStruct) -> *mut c_void {
     if map.is_null() || key.is_null() {
         return std::ptr::null_mut();
     }
-    let key_str = unsafe { CStr::from_ptr(key).to_string_lossy() };
     
     unsafe {
+        if (*key).ptr.is_null() { return std::ptr::null_mut(); }
+        let key_str = CStr::from_ptr((*key).ptr).to_string_lossy();
         match (*map).inner.remove(key_str.as_ref()) {
             Some(val) => val,
             None => std::ptr::null_mut(),
@@ -74,13 +76,14 @@ pub extern "C" fn tl_hashmap_remove(map: *mut TLHashMap, key: *const c_char) -> 
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_hashmap_contains_key(map: *mut TLHashMap, key: *const c_char) -> bool {
+pub extern "C" fn tl_hashmap_contains_key(map: *mut TLHashMap, key: *mut crate::StringStruct) -> bool {
     if map.is_null() || key.is_null() {
         return false;
     }
-    let key_str = unsafe { CStr::from_ptr(key).to_string_lossy() };
     
     unsafe {
+        if (*key).ptr.is_null() { return false; }
+        let key_str = CStr::from_ptr((*key).ptr).to_string_lossy();
         (*map).inner.contains_key(key_str.as_ref())
     }
 }

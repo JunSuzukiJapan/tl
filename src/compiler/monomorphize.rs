@@ -130,7 +130,7 @@ impl Monomorphizer {
     fn scan_module(&mut self, module: &mut Module) {
         // 1. Process impls logic FIRST so they are available for resolution
         for mut impl_block in module.impls.drain(..) {
-            let is_generic_target = if let Type::Struct(name, _) | Type::UserDefined(name, _) | Type::Enum(name, _) = &impl_block.target_type {
+            let is_generic_target = if let Type::Struct(name, _) | Type::Enum(name, _) = &impl_block.target_type {
                 self.generic_structs.contains_key(name) || self.generic_enums.contains_key(name)
             } else {
                 false
@@ -169,7 +169,7 @@ impl Monomorphizer {
     
     fn resolve_type(&mut self, ty: &Type) -> Type {
         match ty {
-            Type::UserDefined(name, args) | Type::Struct(name, args) | Type::Enum(name, args) => {
+            Type::Struct(name, args) | Type::Enum(name, args) => {
                  // Normalize primitives
                  if args.is_empty() {
                      match name.as_str() {
@@ -178,6 +178,13 @@ impl Monomorphizer {
                          "F32" => return Type::F32,
                          "Bool" => return Type::Bool,
                          "Void" => return Type::Void,
+                         "String" => return Type::String,
+                         "Char" => return Type::Char,
+                         "string" => return Type::String,
+                         "char" => return Type::Char,
+                         "i64" => return Type::I64,
+                         "f32" => return Type::F32,
+                         "bool" => return Type::Bool,
                          _ => {}
                      }
                  }
@@ -188,23 +195,20 @@ impl Monomorphizer {
                          let concrete_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
                          let mangled = self.request_struct_instantiation(name, concrete_args);
                          // Return as UserDefined with NO args (concrete name)
-                         return Type::UserDefined(mangled, vec![]); 
+                         return Type::Struct(mangled, vec![]); 
                      }
                      // Check enum
                      if self.generic_enums.contains_key(name) {
                           let concrete_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
                           let mangled = self.request_enum_instantiation(name, concrete_args);
-                          return Type::UserDefined(mangled, vec![]);
+                          return Type::Struct(mangled, vec![]);
                      }
                  }
                  // Recurse for args even if not generic struct (e.g. unknown type?)
                  let new_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
-                 if matches!(ty, Type::Struct(_, _)) {
                      Type::Struct(name.clone(), new_args)
-                 } else {
-                     Type::UserDefined(name.clone(), new_args)
                  }
-            }
+
             // Recursive resolution
             Type::Tensor(inner, r) => Type::Tensor(Box::new(self.resolve_type(inner)), *r),
             Type::Vec(inner) => Type::Vec(Box::new(self.resolve_type(inner))),
@@ -306,7 +310,7 @@ impl Monomorphizer {
                      }
                  }
                  // 2. Try context inference if not resolved
-                 else if let Some(Type::UserDefined(expected_name, _)) | Some(Type::Struct(expected_name, _)) = expected_type {
+                  else if let Some(Type::Struct(expected_name, _)) = expected_type {
                      if expected_name.starts_with(name.as_str()) {
                          *name = expected_name.clone();
                      } else {
@@ -603,7 +607,7 @@ impl Monomorphizer {
                               // Find implementation handling this call
                               let mut best_impl: Option<&ImplBlock> = None;
                               for impl_block in &self.generic_impls {
-                                  if let Type::Struct(target, _) | Type::UserDefined(target, _) = &impl_block.target_type {
+                                  if let Type::Struct(target, _) = &impl_block.target_type {
                                       if target.as_str() == type_name_str.as_str() {
                                           if impl_block.methods.iter().any(|m| m.name == *method_name) {
                                               best_impl = Some(impl_block);
@@ -638,7 +642,7 @@ impl Monomorphizer {
                                       
                                       if all_inferred && !type_args.is_empty() {
                                           let concrete_name = self.request_struct_instantiation(&type_name_str, type_args);
-                                          *type_ty = Type::UserDefined(concrete_name, vec![]);
+                                          *type_ty = Type::Struct(concrete_name, vec![]);
                                        }
                                   }
                               }
@@ -680,7 +684,7 @@ impl Monomorphizer {
                                        } else {
                                            // Fallback: Infer from expected_type
                                            let mut inferred_from_expected = None;
-                                           if let Some(Type::UserDefined(n, args)) | Some(Type::Enum(n, args)) | Some(Type::Struct(n, args)) = expected_type {
+                                           if let Some(Type::Enum(n, args)) | Some(Type::Struct(n, args)) = expected_type {
                                                if n == &type_name_str && args.len() == def.generics.len() {
                                                     // Find index of param
                                                     if let Some(idx) = def.generics.iter().position(|r| r == param) {
@@ -704,7 +708,7 @@ impl Monomorphizer {
 
                                    if all_inferred && !type_args.is_empty() {
                                        concrete_name = self.request_enum_instantiation(&type_name_str, type_args);
-                                   } else if let Some(Type::UserDefined(n, _args)) | Some(Type::Enum(n, _args)) | Some(Type::Struct(n, _args)) = expected_type {
+                                   } else if let Some(Type::Enum(n, _args)) | Some(Type::Struct(n, _args)) = expected_type {
                                        // Fallback: If expected type is already concrete (e.g. Option_I64) matching this generic
                                        if n.starts_with(&format!("{}_", type_name_str)) {
                                             concrete_name = n.clone();
@@ -738,7 +742,7 @@ impl Monomorphizer {
 
                                // 2. If not variant, look for impl methods (as before)
                                for impl_block in &self.generic_impls {
-                                  if let Type::Struct(target, _) | Type::UserDefined(target, _) | Type::Enum(target, _) = &impl_block.target_type {
+                                  if let Type::Struct(target, _) | Type::Enum(target, _) = &impl_block.target_type {
                                       if target.as_str() == type_name_str.as_str() {
                                           if impl_block.methods.iter().any(|m| m.name == *method_name) {
                                               best_impl = Some(impl_block);
@@ -771,7 +775,7 @@ impl Monomorphizer {
                                        
                                        if all_inferred && !type_args.is_empty() {
                                            let concrete_name = self.request_enum_instantiation(&type_name_str, type_args);
-                                           *type_ty = Type::UserDefined(concrete_name, vec![]);
+                                           *type_ty = Type::Struct(concrete_name, vec![]);
                                        }
                                    }
                                }
@@ -827,7 +831,7 @@ impl Monomorphizer {
              let mut subst = HashMap::new();
              let mut matches = false;
              
-             if let Type::Struct(target, target_args) | Type::UserDefined(target, target_args) | Type::Enum(target, target_args) = &impl_block.target_type {
+             if let Type::Struct(target, target_args) | Type::Enum(target, target_args) = &impl_block.target_type {
                  if target == name {
                      // Check args match length
                      // If target has generic params, unifying them with concrete args gives substitution
@@ -847,11 +851,11 @@ impl Monomorphizer {
              }
              
              if matches {
-                 subst.insert("Self".to_string(), Type::UserDefined(concrete_struct_name.clone(), vec![]));
+                 subst.insert("Self".to_string(), Type::Struct(concrete_struct_name.clone(), vec![]));
                  
                  let mut new_impl = impl_block.clone();
                  new_impl.generics.clear();
-                 new_impl.target_type = Type::UserDefined(concrete_struct_name.clone(), vec![]);
+                 new_impl.target_type = Type::Struct(concrete_struct_name.clone(), vec![]);
                  
                  // Rewrite methods
                  for method in &mut new_impl.methods {
@@ -1079,15 +1083,22 @@ impl Monomorphizer {
 
     fn substitute_type(&self, ty: &Type, subst: &HashMap<String, Type>) -> Type {
         match ty {
-            Type::UserDefined(name, args) => {
+
+             Type::Tensor(inner, r) => Type::Tensor(Box::new(self.substitute_type(inner, subst)), *r),
+             Type::Struct(name, args) => {
                  if let Some(replacement) = subst.get(name) {
                      return replacement.clone();
                  }
-                 let new_args = args.iter().map(|a| self.substitute_type(a, subst)).collect();
-                 Type::UserDefined(name.clone(), new_args)
-            }
-             Type::Tensor(inner, r) => Type::Tensor(Box::new(self.substitute_type(inner, subst)), *r),
-             Type::Struct(name, args) => Type::Struct(name.clone(), args.iter().map(|a| self.substitute_type(a, subst)).collect()),
+                 let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
+                 match name.as_str() {
+                     "String" if new_args.is_empty() => Type::String,
+                     "I64" if new_args.is_empty() => Type::I64,
+                     "Bool" if new_args.is_empty() => Type::Bool,
+                     "F32" if new_args.is_empty() => Type::F32,
+                     "Char" if new_args.is_empty() => Type::Char,
+                     _ => Type::Struct(name.clone(), new_args)
+                 }
+             },
              // ... other recursive cases
              _ => ty.clone()
         }
@@ -1103,7 +1114,18 @@ impl Monomorphizer {
             Type::F64 => "f64".to_string(),
             Type::F32 => "f32".to_string(),
             Type::Bool => "bool".to_string(),
-            Type::Struct(name, args) | Type::UserDefined(name, args) => {
+            Type::String => "string".to_string(),
+            Type::Char => "char".to_string(),
+            Type::I32 => "i32".to_string(),
+            Type::I8 => "i8".to_string(),
+            Type::U8 => "u8".to_string(),
+            Type::U16 => "u16".to_string(),
+            Type::U32 => "u32".to_string(),
+            Type::Usize => "usize".to_string(),
+            Type::Entity => "entity".to_string(),
+            Type::Void => "void".to_string(),
+            Type::Vec(inner) => format!("vec_{}", self.mangle_type(inner)),
+            Type::Struct(name, args) => {
                  if args.is_empty() {
                      name.clone()
                  } else {
@@ -1120,7 +1142,7 @@ impl Monomorphizer {
             ExprKind::Int(_) => Some(Type::I64),
             ExprKind::Float(_) => Some(Type::F32), // Match Semantics default (F32)
             ExprKind::Bool(_) => Some(Type::Bool),
-            ExprKind::StringLiteral(_) => Some(Type::UserDefined("String".to_string(), vec![])),
+            ExprKind::StringLiteral(_) => Some(Type::String),
             ExprKind::Variable(name) => {
                 for scope in self.scopes.iter().rev() {
                     if let Some(ty) = scope.get(name) {
@@ -1130,7 +1152,7 @@ impl Monomorphizer {
                 None
             }
             ExprKind::BinOp(lhs, _, _) => self.infer_expr_type(&lhs.inner), // Assume LHS determines type (mostly true)
-            ExprKind::StructInit(name, _, _) => Some(Type::UserDefined(name.clone(), vec![])), // Could be Generic?
+            ExprKind::StructInit(name, _, _) => Some(Type::Struct(name.clone(), vec![])), // Could be Generic?
             // FnCall return type inference requires looking up the function
             ExprKind::FnCall(name, _) => {
                 // If it's a concrete function we already processed
@@ -1155,7 +1177,7 @@ impl Monomorphizer {
     // Helper to unify generic param with concrete type
     fn unify_types(&self, generic: &Type, concrete: &Type, map: &mut HashMap<String, Type>) {
         match (generic, concrete) {
-            (Type::UserDefined(name, args), _) => {
+            (Type::Struct(name, args), _) => {
                 // If this UserDefined is actually a generic parameter (T)
                 // We assume generic parameters are represented as UserDefined in current AST for "T"
                 
@@ -1168,7 +1190,7 @@ impl Monomorphizer {
                     } else {
                         // verify consistency?
                     }
-                } else if let Type::UserDefined(c_name, c_args) = concrete {
+                } else if let Type::Struct(c_name, c_args) = concrete {
                     // T<A> vs List<B> ?
                     if name == c_name && args.len() == c_args.len() {
                         for (a, b) in args.iter().zip(c_args) {
@@ -1193,4 +1215,6 @@ impl Monomorphizer {
             _ => {}
         }
     }
+
+
 }

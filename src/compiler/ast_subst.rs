@@ -12,28 +12,17 @@ impl TypeSubstitutor {
 
     pub fn substitute_type(&self, ty: &Type) -> Type {
         match ty {
-            Type::UserDefined(name, args) => {
-                if let Some(s) = self.subst.get(name) {
-                    if args.is_empty() {
-                        return s.clone();
-                    }
-                    // If name is T and we have args? T<U> is invalid for simple generics usually,
-                    // unless T is a higher-kinded type which we probably don't support yet.
-                    // But if it's Struct<T> and mapping has T->i64, we need recursive subst.
-                    // Wait, Type::UserDefined is "Name", [Args].
-                    // If mapping has "T" -> i64.
-                    // And we see UserDefined("T", []), we return i64.
-                    // If we see UserDefined("Vec", [UserDefined("T", [])]), we recurse.
-                }
-                
-                // Recurse on args
-                let new_args = args.iter().map(|a| self.substitute_type(a)).collect();
-                Type::UserDefined(name.clone(), new_args)
-            }
+            // UserDefined removed
+
             Type::Vec(inner) => Type::Vec(Box::new(self.substitute_type(inner))),
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.substitute_type(inner)), *rank),
             Type::TensorShaped(inner, dims) => Type::TensorShaped(Box::new(self.substitute_type(inner)), dims.clone()),
             Type::Struct(name, args) => {
+                if let Some(s) = self.subst.get(name) {
+                     if args.is_empty() {
+                         return s.clone();
+                     }
+                }
                 let new_args = args.iter().map(|a| self.substitute_type(a)).collect();
                 Type::Struct(name.clone(), new_args)
             }

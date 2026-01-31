@@ -46,7 +46,7 @@ impl BuiltinLoader {
         let impl_blocks: Vec<ImplBlock> = module.impls.into_iter()
             .filter(|i| {
                 match &i.target_type {
-                    Type::UserDefined(name, _) | Type::Struct(name, _) | Type::Enum(name, _) => name == type_name,
+                    Type::Struct(name, _) | Type::Enum(name, _) => name == type_name,
                     _ => false,
                 }
             })

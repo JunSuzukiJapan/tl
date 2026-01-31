@@ -489,6 +489,10 @@ pub fn declare_runtime_functions<'ctx>(
     let from_char_type = i8_ptr.fn_type(&[i32_type.into()], false);
     add_fn("tl_string_from_char", from_char_type);
 
+    // tl_string_eq(s1: *mut StringStruct, s2: *mut StringStruct) -> bool
+    let string_eq_type = context.bool_type().fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_string_eq", string_eq_type);
+
     // tl_string_new(s: *const c_char) -> *mut StringStruct
     // StringStruct is { ptr, len }, pointer to it is void* (or specific struct type?)
     // In LLVM IR we invoke it as returning pointer to { i8*, i64 }.
@@ -622,6 +626,9 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_string_char_at") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_char_at as usize);
+    }
+    if let Some(f) = module.get_function("tl_string_eq") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_eq as usize);
     }
 
     // tl_checkpoint(ctx: *mut, func: *mut, input: *mut) -> *mut

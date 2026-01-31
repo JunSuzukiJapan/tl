@@ -140,7 +140,7 @@ fn compile_tokenizer_decode<'ctx>(
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from Tokenizer::decode".into()),
     };
-    Ok((res, Type::UserDefined("String".to_string(), vec![])))
+    Ok((res, Type::String))
 }
 
 // KVCache Static Methods

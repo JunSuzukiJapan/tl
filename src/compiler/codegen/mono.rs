@@ -89,7 +89,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // In valid TL AST, Self is usually pre-resolved or UserDefined("Self", [])?
         // Let's assume UserDefined("Self") is handled by substitution if we map "Self" -> ConcreteType.
         
-        let concrete_self = Type::UserDefined(struct_name.to_string(), generic_args.to_vec());
+        let concrete_self = Type::Struct(struct_name.to_string(), generic_args.to_vec());
         // Add Self to substitution map if not already present
         // Actually TypeSubstitutor might need special handling for Self?
         // Or we just add it to the map.
@@ -207,7 +207,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         map: &mut HashMap<String, Type>,
     ) -> Result<(), String> {
          match (expected, actual) {
-             (Type::UserDefined(name, args), _) => {
+             (Type::Struct(name, args), _) => {
                  // If It's a Type Parameter (no args), infer it.
                  // Need to know if 'name' is a generic param.
                  // For now assume if it's in the generic list it is.
@@ -232,7 +232,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      return Ok(());
                  }
                  // If recursive generic (e.g. MyStruct<T>)
-                 if let Type::UserDefined(act_name, act_args) = actual {
+                 if let Type::Struct(act_name, act_args) = actual {
                      if name != act_name || args.len() != act_args.len() {
                           return Err("Type mismatch or arity mismatch".into());
                      }
@@ -283,7 +283,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Bool => "bool".to_string(),
             Type::Usize => "usize".to_string(),
             Type::Void => "void".to_string(),
-            Type::Struct(name, args) | Type::UserDefined(name, args) => {
+            Type::String => "string".to_string(),
+            Type::Char => "char".to_string(),
+            Type::Struct(name, args) | Type::Struct(name, args) => {
                 if args.is_empty() {
                     name.clone()
                 } else {
@@ -356,7 +358,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(self.context.i32_type().into())
             }
 
-            Type::Struct(name, _args) | Type::UserDefined(name, _args) => {
+            Type::Struct(name, _args) | Type::Struct(name, _args) => {
                 // Compatibility: Handle primitives parsed as UserDefined
                 match name.as_str() {
                     "bool" => return Ok(self.context.bool_type().into()),
@@ -399,7 +401,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     /// This version takes &mut self and can create new struct definitions.
     pub fn get_or_monomorphize_type(&mut self, ty: &Type) -> Result<BasicTypeEnum<'ctx>, String> {
         match ty {
-            Type::Struct(name, args) | Type::UserDefined(name, args) if !args.is_empty() => {
+            Type::Struct(name, args) | Type::Struct(name, args) if !args.is_empty() => {
                 // Generic struct: monomorphize
                 let _ = self.monomorphize_struct(name, args)?;
                 Ok(self.context.ptr_type(AddressSpace::default()).into())
@@ -465,7 +467,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     /// Substitute type parameters in a type using the given substitution map.
     fn substitute_type(&self, ty: &Type, subst: &HashMap<String, Type>) -> Type {
         match ty {
-            Type::UserDefined(name, args) => {
+            Type::Struct(name, args) => {
                 // Check if this is a type parameter
                 if args.is_empty() {
                     if let Some(replacement) = subst.get(name) {
@@ -474,7 +476,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 // Recursively substitute in args
                 let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
-                Type::UserDefined(name.clone(), new_args)
+                
+                match name.as_str() {
+                    "String" if new_args.is_empty() => Type::String,
+                    "Char" if new_args.is_empty() => Type::Char,
+                    "I64" if new_args.is_empty() => Type::I64,
+                    "Bool" if new_args.is_empty() => Type::Bool,
+                    "F32" if new_args.is_empty() => Type::F32,
+                    "string" if new_args.is_empty() => Type::String, // Catch leaks
+                    _ => Type::Struct(name.clone(), new_args)
+                }
             }
             Type::Struct(name, args) => {
                 let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
@@ -494,6 +505,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         element_type: &Type,
         method_name: &str,
     ) -> Result<String, String> {
+        // println!("DEBUG: ensure_vec_method called for '{}' on type {:?}", method_name, element_type);
         let suffix = self.type_to_suffix(element_type);
         let mangled_fn_name = format!("tl_Vec_{}_{}", suffix, method_name);
         
@@ -507,19 +519,36 @@ impl<'ctx> CodeGenerator<'ctx> {
             "push" | "clear" | "set" | "insert" => Type::Void,
             "len" | "read_i32_be" => Type::I64,
             "is_empty" => Type::Bool,
-            "pop" | "get" | "remove" => element_type.clone(),
-            "to_tensor_2d" => Type::Tensor(Box::new(Type::F32), 2), // Default rank 2?
+            "pop" | "get" | "remove" => {
+                match element_type {
+                    Type::Struct(n, _) if n == "String" || n == "string" => Type::String,
+                    Type::String => Type::String,
+                    _ => element_type.clone(),
+                }
+            },
+            "to_tensor_2d" => Type::Tensor(Box::new(Type::F32), 2), 
             "contains" => Type::Bool,
-            _ => Type::Void, // Fallback
+            _ => Type::Void, 
         };
         self.method_return_types.insert(mangled_fn_name.clone(), tl_ret_ty);
-        
+
         // Determine which core runtime function to delegate to
         let core_fn_name = match element_type {
             Type::I64 => format!("tl_vec_i64_{}", method_name),
             Type::F32 => format!("tl_vec_f32_{}", method_name),
             Type::U8 => format!("tl_vec_u8_{}", method_name), // New U8 support
-            Type::UserDefined(name, _) | Type::Struct(name, _) if name == "String" => format!("tl_vec_string_{}", method_name),
+            Type::String => {
+                 match method_name {
+                     "contains" | "pop" | "insert" | "remove" | "clear" | "is_empty" => format!("tl_vec_string_{}", method_name),
+                     _ => format!("tl_vec_ptr_{}", method_name),
+                 }
+            },
+            Type::Struct(name, _) if name == "String" || name == "string" => {
+                 match method_name {
+                     "contains" | "pop" | "insert" | "remove" | "clear" | "is_empty" => format!("tl_vec_string_{}", method_name),
+                     _ => format!("tl_vec_ptr_{}", method_name),
+                 }
+            },
             _ => format!("tl_vec_ptr_{}", method_name), // Pointer-based for structs/others
         };
         
@@ -810,7 +839,13 @@ impl<'ctx> CodeGenerator<'ctx> {
             "new" => Type::Struct("HashMap".to_string(), vec![key_ty.clone(), val_ty.clone()]),
             "len" => Type::I64,
             "clear" | "insert" | "contains_key" => Type::Bool,
-            "get" | "remove" => val_ty.clone(),
+            "get" | "remove" => {
+                match val_ty {
+                    Type::Struct(n, _) if n == "String" || n == "string" => Type::String,
+                    Type::String => Type::String,
+                    _ => val_ty.clone(),
+                }
+            },
             _ => Type::Void,
         };
         self.method_return_types.insert(mangled_fn_name.clone(), tl_ret_ty);
