@@ -822,7 +822,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .builder
                         .build_int_add(idx_val, i64_type.const_int(1, false), "next_i")
                         .map_err(|e| e.to_string())?;
-                    idx_phi.add_incoming(&[(&next_idx, body_bb)]);
+                    let current_end_bb = self.builder.get_insert_block().unwrap();
+                    idx_phi.add_incoming(&[(&next_idx, current_end_bb)]);
                     self.builder
                         .build_unconditional_branch(loop_bb)
                         .map_err(|e| e.to_string())?;

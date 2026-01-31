@@ -1649,6 +1649,36 @@ impl<'ctx> CodeGenerator<'ctx> {
         false
     }
 
+
+    fn emit_retain(&self, val: BasicValueEnum<'ctx>, ty: &Type) -> Result<(), String> {
+        match ty {
+            Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
+                let acquire_fn = self.module.get_function("tl_tensor_acquire")
+                    .ok_or("tl_tensor_acquire not found")?;
+                let ptr = val.into_pointer_value();
+                let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_aq").map_err(|e| e.to_string())?;
+                self.builder.build_call(acquire_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
+            }
+            Type::Struct(_, _) | Type::String(_) | Type::Enum(_, _) | Type::Vec(_) => {
+                let inc_fn = self.module.get_function("tl_ptr_inc_ref")
+                    .or_else(|| {
+                         let void_ty = self.context.void_type();
+                         let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                         let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                         Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
+                    })
+                    .ok_or("tl_ptr_inc_ref decl failed")?;
+                let ptr = val.into_pointer_value();
+                let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_inc").map_err(|e| e.to_string())?;
+                self.builder.build_call(inc_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     pub(crate) fn compile_expr(
         &mut self,
         expr: &Expr,
@@ -2424,6 +2454,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .builder
                         .build_load(llvm_ty, field_ptr, field)
                         .map_err(|e| e.to_string())?;
+                    self.emit_retain(loaded, &field_ty)?; // FIX: Acquire ownership
                     Ok((loaded, field_ty.clone()))
                 } else if obj_val.is_struct_value() {
                     let struct_val = obj_val.into_struct_value();
@@ -2431,6 +2462,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .builder
                         .build_extract_value(struct_val, field_idx as u32, field)
                         .map_err(|e| e.to_string())?;
+                    self.emit_retain(extracted, &field_ty)?; // FIX: Acquire ownership
                     Ok((extracted, field_ty.clone()))
                 } else {
                     Err("Cannot access field of non-pointer and non-struct value".into())
@@ -2479,6 +2511,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .map_err(|e| e.to_string())?;
                             return Ok((loaded, ty.clone()));
                         } else {
+                            // Regular Variable - Retain ownership for caller
+                            self.emit_retain(*val, ty)?; 
                             return Ok((*val, ty.clone()));
                         }
                     }
@@ -7196,11 +7230,13 @@ impl<'ctx> CodeGenerator<'ctx> {
         // DPS: If return type is Struct (and SRET enabled), handle hidden dest argument
         // Tensors are returned by pointer directly, so exclude them.
         let mut dest_val = None;
-        if match ret_type {
-             Type::Struct(ref name, _) if name != "Vec" && name != "Map" && name != "HashMap" && name != "Tensor" => true,
-             Type::Struct(ref name, _) if name != "String" && name != "Vec" && name != "Map" && name != "HashMap" && name != "Path" && name != "File" && name != "Tensor" => true,
+        let uses_sret = match ret_type {
+             Type::Struct(ref name, _) => false,
              _ => false 
-        } {
+        };
+        // eprintln!("DEBUG: compile_fn_call_dps name={} ret={:?} uses_sret={}", final_resolved_name, ret_type, uses_sret);
+        eprintln!("DEBUG: compile_fn_call_dps name={} ret={:?} uses_sret={}", final_resolved_name, ret_type, uses_sret);
+        if uses_sret {
              if let Some(d) = dest {
                  dest_val = Some(d);
              } else {

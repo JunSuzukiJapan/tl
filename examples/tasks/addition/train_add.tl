@@ -16,11 +16,21 @@ fn my_embedding(indices: Tensor<f32, 2>, w: Tensor<f32, 2>, V: i64) -> Tensor<f3
         let idx = flat_indices[t] as i64;
         one_hot[t, idx] = 1.0;
     }
-    let one_hot_d = one_hot.detach(true);
+    let one_hot_d = one_hot.detach();
     
+    print("DEBUG: my_embedding matmul");
+    print("DEBUG: one_hot_d:");
+    one_hot_d.print();
+    print("DEBUG: w:");
+    w.print();
     let out_flat = one_hot_d.matmul(w);
     out_flat.reshape([1, 12, 128])
-}
+} 
+// ...
+// ...
+    fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
+        my_embedding(i, self.w, self.vocab_size) 
+    }
 
 // Causal Mask (tril()の代替)
 fn get_causal_mask(size: i64) -> Tensor<f32, 2> {
@@ -32,7 +42,7 @@ fn get_causal_mask(size: i64) -> Tensor<f32, 2> {
             }
         }
     }
-    return mask.detach(true);
+    return mask.detach();
 }
 
 // Cross Entropy (手動実装)
@@ -51,19 +61,21 @@ fn my_cross_entropy(logits: Tensor<f32, 3>, targets: Tensor<f32, 2>) -> Tensor<f
         let t = targets_flat[i] as i64;
         mask[i, t] = 1.0;
     }
-    let mask_d = mask.detach(true);
+    let mask_d = mask.detach();
     
     let selected = mask_d * log_probs_flat;
+    print("DEBUG: my_cross_entropy selected calculated");
     let sum_log_probs = selected.sumall();
+    print("DEBUG: my_cross_entropy sumall calculated");
     
     // -1 * mean を計算
     let mut neg_one: Tensor<f32, 1> = Tensor::randn([1], false) * 0.0;
     neg_one[0] = -1.0;
-    let neg_one_d = neg_one.detach(true);
+    let neg_one_d = neg_one.detach();
     
     let mut n_float: Tensor<f32, 1> = Tensor::randn([1], false) * 0.0;
     n_float[0] = 12.0;
-    let n_float_d = n_float.detach(true);
+    let n_float_d = n_float.detach();
     
     let mean = sum_log_probs / n_float_d;
     let neg_mean = mean * neg_one_d;
@@ -78,49 +90,21 @@ fn my_cross_entropy(logits: Tensor<f32, 3>, targets: Tensor<f32, 2>) -> Tensor<f
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
-        Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)) 
+        Linear((Tensor::randn([i, o], true)*0.1).detach(), (Tensor::randn([o], true)*0.0).detach()) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         x.matmul(self.W) + self.b 
     } 
-    fn step(self, lr: f32) -> Linear { 
+    fn update(self, lr: f32) -> Linear { 
         let mut s = self; 
-        s.W = (s.W - s.W.grad() * lr).detach(true); 
-        s.b = (s.b - s.b.grad() * lr).detach(true); 
+        s.W = (s.W - s.W.grad() * lr).detach(); 
+        s.b = (s.b - s.b.grad() * lr).detach(); 
         s 
     } 
 }
 
-struct Embedding { w: Tensor<f32, 2>, vocab_size: i64 }
-impl Embedding { 
-    fn new(v: i64, d: i64) -> Embedding { 
-        Embedding((Tensor::randn([v, d], true)*0.1).detach(true), v) 
-    } 
-    fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
-        my_embedding(i, self.w, self.vocab_size) 
-    } 
-    fn step(self, lr: f32) -> Embedding { 
-        let mut s = self; 
-        s.w = (s.w - s.w.grad() * lr).detach(true); 
-        s 
-    } 
-}
 
-struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
-impl LayerNorm { 
-    fn new(d: i64) -> LayerNorm { 
-        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)) 
-    } 
-    fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        x * self.w + self.b 
-    } 
-    fn step(self, lr: f32) -> LayerNorm { 
-        let mut s = self; 
-        s.w = (s.w - s.w.grad() * lr).detach(true);
-        s.b = (s.b - s.b.grad() * lr).detach(true); 
-        s 
-    } 
-}
+
 
 struct CausalSelfAttention { q_proj: Linear, k_proj: Linear, v_proj: Linear, p_proj: Linear }
 impl CausalSelfAttention { 
@@ -143,12 +127,12 @@ impl CausalSelfAttention {
         let y = attn_weights.matmul(v); 
         self.p_proj.forward(y) 
     } 
-    fn step(self, lr: f32) -> CausalSelfAttention { 
+    fn update(self, lr: f32) -> CausalSelfAttention { 
         let mut s = self; 
-        s.q_proj = s.q_proj.step(lr); 
-        s.k_proj = s.k_proj.step(lr); 
-        s.v_proj = s.v_proj.step(lr); 
-        s.p_proj = s.p_proj.step(lr); 
+        s.q_proj = s.q_proj.update(lr); 
+        s.k_proj = s.k_proj.update(lr); 
+        s.v_proj = s.v_proj.update(lr); 
+        s.p_proj = s.p_proj.update(lr); 
         s 
     } 
 }
@@ -161,67 +145,68 @@ impl MLP {
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         self.p.forward(self.f.forward(x).relu()) 
     } 
-    fn step(self, lr: f32) -> MLP { 
+    fn update(self, lr: f32) -> MLP { 
         let mut s = self; 
-        s.f = s.f.step(lr); 
-        s.p = s.p.step(lr); 
+        s.f = s.f.update(lr); 
+        s.p = s.p.update(lr); 
         s 
     } 
 }
 
-struct Block { l1: LayerNorm, a: CausalSelfAttention, l2: LayerNorm, m: MLP }
+struct Block { a: CausalSelfAttention, m: MLP }
 impl Block { 
     fn new(d: i64) -> Block { 
-        Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)) 
+        Block(CausalSelfAttention::new(d), MLP::new(d)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        let x = x + self.a.forward(self.l1.forward(x)); 
-        x + self.m.forward(self.l2.forward(x)) 
+        let x = x + self.a.forward(x); 
+        x + self.m.forward(x) 
     } 
-    fn step(self, lr: f32) -> Block { 
+    fn update(self, lr: f32) -> Block { 
         let mut s = self; 
-        s.l1 = s.l1.step(lr); 
-        s.a = s.a.step(lr); 
-        s.l2 = s.l2.step(lr); 
-        s.m = s.m.step(lr); 
+        s.a = s.a.update(lr); 
+        s.m = s.m.update(lr); 
         s 
     } 
 }
 
 // 3-Layer GPT
-struct GPT { w: Embedding, wp: Embedding, b1: Block, b2: Block, b3: Block, l: LayerNorm, h: Linear }
+// struct GPT { w: Embedding, wp: Embedding, b1: Block, b2: Block, b3: Block, l: LayerNorm, h: Linear }
+// struct GPT { b1: Block, b2: Block, b3: Block, l: LayerNorm, h: Linear }
+struct GPT { b1: Block, b2: Block, b3: Block, h: Linear }
 impl GPT { 
     fn new(v: i64, d: i64) -> GPT { 
         GPT(
-            Embedding::new(v, d), 
-            Embedding::new(12, d), 
+            // Embedding::new(v, d), 
+            // Embedding::new(12, d), 
             Block::new(d), 
             Block::new(d), 
             Block::new(d), 
-            LayerNorm::new(d), 
+            // LayerNorm::new(d), 
             Linear::new(d, v)
         ) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
         let pos = pos_data.reshape([1, 12]);
-        let tok_emb = self.w.forward(i);
-        let pos_emb = self.wp.forward(pos);
-        let x = tok_emb + pos_emb;
+        // let tok_emb = self.w.forward(i);
+        // let pos_emb = self.wp.forward(pos);
+        let x = Tensor::randn([1, 12, 128], false); // dummy x
         let x = self.b1.forward(x);
         let x = self.b2.forward(x);
         let x = self.b3.forward(x);
-        self.h.forward(self.l.forward(x)) 
+        // self.h.forward(self.l.forward(x)) 
+        self.h.forward(x)
     } 
-    fn step(self, lr: f32) -> GPT { 
+    fn update(self, lr: f32) -> GPT { 
         let s = self; 
-        s.w = s.w.step(lr); 
-        s.wp = s.wp.step(lr); 
-        s.b1 = s.b1.step(lr); 
-        s.b2 = s.b2.step(lr); 
-        s.b3 = s.b3.step(lr); 
-        s.l = s.l.step(lr); 
-        s.h = s.h.step(lr); 
+        // s.w = s.w.update(lr); 
+        // s.wp = s.wp.update(lr); 
+        s.b1 = s.b1.update(lr); 
+        s.b2 = s.b2.update(lr); 
+        s.b3 = s.b3.update(lr); 
+        // s.l = s.l.update(lr); 
+        s.h = s.h.update(lr); 
         s 
     } 
 }
@@ -272,7 +257,7 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
     let loss = my_cross_entropy(logits, Y);
     
     loss.backward();
-    model = model.step(lr);
+    model = model.update(lr);
     model
 }
 

@@ -11,12 +11,12 @@ impl Linear {
         // so we assign to intermediate variables and avoid BinOp in struct fields.
         let w_base = Tensor::randn([i, o], true);
         let w = w_base * 0.001;
-        let w_d = w.detach(true);
+        let w_d = w.detach();
         print("w_d after detach:");
         print(w_d);
         
         let b_base = Tensor::zeros([o], true);
-        let b_d = b_base.detach(true);
+        let b_d = b_base.detach();
         print("b_d after detach:");
         print(b_d);
         
@@ -35,8 +35,8 @@ impl Linear {
         let s = self;
         let gW = s.W.grad();
         let gb = s.b.grad();
-        s.W = (s.W - gW * lr).detach(true);
-        s.b = (s.b - gb * lr).detach(true);
+        s.W = (s.W - gW * lr).detach();
+        s.b = (s.b - gb * lr).detach();
         s
     }
 }

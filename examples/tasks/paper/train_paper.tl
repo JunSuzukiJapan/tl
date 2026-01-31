@@ -3,7 +3,7 @@ struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
         // 0.1
-        return Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)); 
+        return Linear((Tensor::randn([i, o], true)*0.1).detach(), (Tensor::randn([o], true)*0.0).detach()); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         x.matmul(self.W) + self.b 
@@ -12,8 +12,8 @@ impl Linear {
         let s = self; 
         let gW = s.W.grad(); 
         let gb = s.b.grad(); 
-        s.W = (s.W - gW * lr).detach(true); 
-        s.b = (s.b - gb * lr).detach(true); 
+        s.W = (s.W - gW * lr).detach(); 
+        s.b = (s.b - gb * lr).detach(); 
         s 
     } 
 }
@@ -21,7 +21,7 @@ impl Linear {
 struct Embedding { w: Tensor<f32, 2> }
 impl Embedding { 
     fn new(v: i64, d: i64) -> Embedding { 
-        Embedding((Tensor::randn([v, d], true)*0.1).detach(true)) 
+        Embedding((Tensor::randn([v, d], true)*0.1).detach()) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         i.embedding(self.w) 
@@ -29,7 +29,7 @@ impl Embedding {
     fn step(self, lr: f32) -> Embedding { 
         let s = self; 
         let g = s.w.grad(); 
-        s.w = (s.w - g * lr).detach(true); 
+        s.w = (s.w - g * lr).detach(); 
         s 
     } 
 }
@@ -37,7 +37,7 @@ impl Embedding {
 struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
 impl LayerNorm { 
     fn new(d: i64) -> LayerNorm { 
-        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)) 
+        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(), (Tensor::randn([d], true)*0.0).detach()) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         x + self.b 
@@ -45,7 +45,7 @@ impl LayerNorm {
     fn step(self, lr: f32) -> LayerNorm { 
         let s = self; 
         let gb = s.b.grad(); 
-        s.b = (s.b - gb * lr).detach(true); 
+        s.b = (s.b - gb * lr).detach(); 
         s 
     } 
 }

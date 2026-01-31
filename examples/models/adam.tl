@@ -49,7 +49,7 @@ impl Adam {
         
         // Explicit Detach Mechanism to reset graph tracking for next iteration
         let w_next = model.W - update;
-        let w_leaf = w_next.detach(true);
+        let w_leaf = w_next.detach();
         model.W = w_leaf;
 
         // b update
@@ -70,7 +70,7 @@ impl Adam {
         let updateb = step_sizeb * self.lr;
         
         let b_next = model.b - updateb;
-        let b_leaf = b_next.detach(true);
+        let b_leaf = b_next.detach();
         model.b = b_leaf;
     }
 }

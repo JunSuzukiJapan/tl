@@ -31,7 +31,7 @@ fn my_embedding(indices: Tensor<f32, 2>, w: Tensor<f32, 2>, V: i64) -> Tensor<f3
         let mut idx = flat_indices[t] as i64;
         one_hot[t, idx] = 1.0;
     }
-    let one_hot_d = one_hot.detach(true);
+    let one_hot_d = one_hot.detach();
     
     let out_flat = one_hot_d.matmul(w);
     out_flat.reshape([1, 12, 128])
@@ -47,7 +47,7 @@ fn get_causal_mask(size: i64) -> Tensor<f32, 2> {
             }
         }
     }
-    return mask.detach(true);
+    return mask.detach();
 }
 
 // ---------------
@@ -57,7 +57,7 @@ fn get_causal_mask(size: i64) -> Tensor<f32, 2> {
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
-        Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)) 
+        Linear((Tensor::randn([i, o], true)*0.1).detach(), (Tensor::randn([o], true)*0.0).detach()) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         x.matmul(self.W) + self.b 
@@ -67,7 +67,7 @@ impl Linear {
 struct Embedding { w: Tensor<f32, 2>, vocab_size: i64 }
 impl Embedding { 
     fn new(v: i64, d: i64) -> Embedding { 
-        Embedding((Tensor::randn([v, d], true)*0.1).detach(true), v) 
+        Embedding((Tensor::randn([v, d], true)*0.1).detach(), v) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         my_embedding(i, self.w, self.vocab_size) 
@@ -77,7 +77,7 @@ impl Embedding {
 struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
 impl LayerNorm { 
     fn new(d: i64) -> LayerNorm { 
-        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)) 
+        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(), (Tensor::randn([d], true)*0.0).detach()) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         x * self.w + self.b 

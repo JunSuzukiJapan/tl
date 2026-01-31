@@ -1225,18 +1225,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let (val, ty) = self.compile_expr(expr)?;
                             
                             // FIX: Logic parity with compile_function implicit return
-                            self.mark_temp_no_cleanup(val);
-                            
-                            if val.is_pointer_value() {
-                                let ptr = val.into_pointer_value();
+                            // FIX: Logic parity with compile_function implicit return
+                            if let ExprKind::Variable(name) = &expr.inner {
                                 for scope in self.variables.iter_mut().rev() {
-                                    for (_, (v, _, cleanup)) in scope.iter_mut() {
-                                        if v.is_pointer_value() && v.into_pointer_value() == ptr {
-                                            *cleanup = CLEANUP_NONE;
-                                        }
+                                    if let Some((_, _, cleanup)) = scope.get_mut(name) {
+                                        *cleanup = CLEANUP_NONE;
+                                        // Unregister handled in match block below
+                                        break;
                                     }
                                 }
                             }
+                            // Also mark temp no cleanup (for direct expressions)
+                            self.mark_temp_no_cleanup(val);
 
                             let mut final_val = val;
                             match &ty {
@@ -1252,6 +1252,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                                         }
                                     } else {
                                          self.emit_recursive_unregister(val, &ty)?;
+                                    }
+                                }
+                                Type::Struct(_, _) => {
+                                    // FIX: Unregister Structs being returned (Shallow Unregister)
+                                    // This applies to both Variables (CLEANUP_NONE above) and Temporary Expressions usually.
+                                    // Ownership is transferred to caller.
+                                    if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                                         let ptr = val.into_pointer_value();
+                                         let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                                         // val is already the Struct* (from compile_expr)
+                                         let cast_ptr = self.builder.build_pointer_cast(
+                                             ptr,
+                                             ptr_type,
+                                             "cast_unreg"
+                                         ).unwrap(); 
+                                         self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
                                     }
                                 }
                                 _ => {
@@ -1427,11 +1443,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Check if this function        // matches!(func.return_type, Type::Struct(_, _) | Type::Struct(_, _))
         // Let's assume Structs needs SRET, but Tensors do NOT.
         // String is a pointer, so exclusion is needed.
-        let uses_sret = match &func.return_type {
-            Type::Struct(name, _) if name != "Vec" && name != "Map" && name != "HashMap" => true,
-            Type::Struct(name, _) if name != "Vec" && name != "Map" && name != "HashMap" && name != "Path" && name != "File" => true, 
-            _ => false,
-        };
+        let uses_sret = false;
 
         let mut args_types = Vec::new();
 
@@ -1565,11 +1577,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
         // Check if this function uses sret
-        let uses_sret = match &func.return_type {
-             Type::Struct(name, _) if name != "Vec" && name != "Map" && name != "HashMap" => true,
-             Type::Struct(name, _) if name != "Vec" && name != "Map" && name != "HashMap" => true,
-             _ => false,
-        };
+        let uses_sret = false;
         let param_offset = if uses_sret { 1 } else { 0 };
 
         if uses_sret {
@@ -1690,21 +1698,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // IMPORTANT: Unregister return value (same as StmtKind::Return)
                         // Use tl_tensor_prepare_return if available
                         
-                        // FIX: Mark temp no cleanup (like StmtKind::Return)
-                        self.mark_temp_no_cleanup(val);
-
-                        // FIX: Also check variables scope for pointer match (Parity with StmtKind::Return)
-                        if val.is_pointer_value() {
-                            let ptr = val.into_pointer_value();
+                        // FIX: Logic parity with compile_function implicit return
+                        // println!("DEBUG: implicit return expr: {:?}", expr.inner);
+                        if let ExprKind::Variable(name) = &expr.inner {
+                            // println!("DEBUG: It is a variable: {}", name);
                             for scope in self.variables.iter_mut().rev() {
-                                // Find precise match for pointer value
-                                for (_, (v, _, cleanup)) in scope.iter_mut() {
-                                    if v.is_pointer_value() && v.into_pointer_value() == ptr {
-                                        *cleanup = CLEANUP_NONE;
-                                    }
+                                if let Some((_, _, cleanup)) = scope.get_mut(name) {
+                                    *cleanup = CLEANUP_NONE;
+                                    // Unregister handled in match block below
+                                    break;
                                 }
                             }
                         }
+                        // Also mark temp no cleanup (for direct expressions)
+                        self.mark_temp_no_cleanup(val);
 
                         let mut final_val = val; 
                         match &ty {
@@ -1720,6 +1727,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     }
                                 } else {
                                      self.emit_recursive_unregister(val, &ty)?;
+                                }
+                            }
+                            Type::Struct(_, _) => {
+                                // UAF FIX: Unregister Structs being returned (Shallow Unregister)
+                                // This applies to both Variables (CLEANUP_NONE above) and Temporary Expressions.
+                                if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                                     let ptr = val.into_pointer_value();
+                                     let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                                     // val is already the Struct* (from compile_expr)
+                                     let cast_ptr = self.builder.build_pointer_cast(
+                                         ptr,
+                                         ptr_type,
+                                         "cast_unreg"
+                                     ).unwrap(); 
+                                     self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
                                 }
                             }
                             _ => {

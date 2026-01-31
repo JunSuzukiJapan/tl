@@ -10,7 +10,7 @@ struct Linear {
 impl Linear {
     fn new(i: i64, o: i64) -> Linear {
         // Xavier initialization-ish
-        return Linear((Tensor::randn([i, o], true) * 0.1).detach(true), (Tensor::randn([o], true) * 0.0).detach(true));
+        return Linear((Tensor::randn([i, o], true) * 0.1).detach(), (Tensor::randn([o], true) * 0.0).detach());
     }
     
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
@@ -21,8 +21,8 @@ impl Linear {
         let s = self;
         let gWg = s.W.grad();
         let gbg = s.b.grad();
-        s.W = (s.W - gWg * lr).detach(true);
-        s.b = (s.b - gbg * lr).detach(true);
+        s.W = (s.W - gWg * lr).detach();
+        s.b = (s.b - gbg * lr).detach();
         s
     }
 }
@@ -33,7 +33,7 @@ struct Embedding {
 
 impl Embedding {
     fn new(v: i64, d: i64) -> Embedding {
-        Embedding((Tensor::randn([v, d], true) * 0.1).detach(true))
+        Embedding((Tensor::randn([v, d], true) * 0.1).detach())
     }
     
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> {
@@ -43,7 +43,7 @@ impl Embedding {
     fn step(self, lr: f32) -> Embedding {
         let s = self;
         let g = s.w.grad();
-        s.w = (s.w - g * lr).detach(true);
+        s.w = (s.w - g * lr).detach();
         s
     }
 }
@@ -55,7 +55,7 @@ struct LayerNorm {
 
 impl LayerNorm {
     fn new(d: i64) -> LayerNorm {
-        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true))
+        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(), (Tensor::randn([d], true)*0.0).detach())
     }
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
         x * self.w + self.b
@@ -64,8 +64,8 @@ impl LayerNorm {
         let s = self;
         let gw = s.w.grad();
         let gb = s.b.grad();
-        s.w = (s.w - gw * lr).detach(true);
-        s.b = (s.b - gb * lr).detach(true);
+        s.w = (s.w - gw * lr).detach();
+        s.b = (s.b - gb * lr).detach();
         s
     }
 }
