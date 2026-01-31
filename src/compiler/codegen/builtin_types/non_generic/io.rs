@@ -49,7 +49,7 @@ fn compile_file_write<'ctx>(
     let (path_val, path_ty) = &args[0];
     let (content_val, content_ty) = &args[1];
 
-    let extract_ptr = |codegen: &mut CodeGenerator<'ctx>, val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, String> {
+    let extract_ptr = |_codegen: &mut CodeGenerator<'ctx>, val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, String> {
         if matches!(ty, Type::String(_)) {
              // Type::String is now Opaque Pointer to StringStruct
              if val.is_pointer_value() {

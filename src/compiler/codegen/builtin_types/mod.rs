@@ -1,10 +1,5 @@
-pub mod llm;
-pub mod io;
-pub mod system;
-pub mod tensor;
-pub mod option;
-pub mod result;
-// pub mod string; // Removed
-pub mod vec;
-pub mod hashmap;
-pub mod primitives;
+pub mod generic;
+pub mod non_generic;
+
+pub use generic::*;
+pub use non_generic::*;
