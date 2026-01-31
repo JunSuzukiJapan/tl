@@ -321,6 +321,7 @@ pub fn compile_file_download<'ctx>(
     Ok((ok.into(), Type::Bool))
 }
 
+#[allow(deprecated)]
 pub fn compile_file_read_binary<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,

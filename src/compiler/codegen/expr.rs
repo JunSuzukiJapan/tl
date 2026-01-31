@@ -944,14 +944,36 @@ fn compile_tensor_div_assign<'ctx>(
     ))
 }
 
-
+#[allow(deprecated)]
 fn compile_varbuilder_get_static<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: &[Expr],
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     // Arg 0: Name (String)
-    let (name_val, _) = codegen.compile_expr(&args[0])?;
+    let (name_val, name_ty) = codegen.compile_expr(&args[0])?;
+    let name_ptr = if let Type::String(_) = name_ty {
+        // String is { i64 ptr } or similar. extraction needed.
+        // Assuming String struct layout: Field 0 is ptr (i64).
+        let ptr_to_struct = name_val.into_pointer_value();
+        let i64_ptr_ty = codegen.context.i64_type().ptr_type(inkwell::AddressSpace::default());
+        let ptr_to_first_field = codegen
+            .builder
+            .build_pointer_cast(ptr_to_struct, i64_ptr_ty, "str_ptr_cast")
+            .unwrap();
+        let str_addr_i64 = codegen
+            .builder
+            .build_load(codegen.context.i64_type(), ptr_to_first_field, "str_addr")
+            .unwrap()
+            .into_int_value();
+        let i8_ptr_ty = codegen.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+        codegen
+            .builder
+            .build_int_to_ptr(str_addr_i64, i8_ptr_ty, "cstr_ptr")
+            .unwrap()
+    } else {
+         return Err("VarBuilder::get name must be String".into());
+    };
 
     // Arg 1..: Shape
     let i64_type = codegen.context.i64_type();
@@ -1091,7 +1113,7 @@ fn compile_varbuilder_get_static<'ctx>(
         .build_call(
             f,
             &[
-                name_val.into(),
+                name_ptr.into(),
                 i64_type.const_int(rank as u64, false).into(),
                 shape_alloca.into(),
             ],
@@ -1279,6 +1301,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     }
 
+    #[allow(deprecated)]
     pub fn load_struct_i64_field(
         &mut self,
         obj_val: BasicValueEnum<'ctx>,
@@ -1305,7 +1328,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  // We don't have struct def, so we construct field access manually or assume index 0.
                  // Actually this helper uses struct_def to find index.
                  // Let's mock index 0.
-                 let field_idx = 0;
+                //  let field_idx = 0;
                  // Proceed to GEP below using struct_name or opaque?
                  // Wait, build_struct_gep needs StructType.
                  // If String is Opaque in struct_types, GEP fails.
@@ -2201,6 +2224,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .build_float_compare(inkwell::FloatPredicate::UNE, f, zero, "cast")
                             .map_err(|e| e.to_string())?;
                         Ok((b.into(), Type::Bool))
+                    }
+                    // U8 Casts
+                    (Type::I64, Type::Struct(name, _)) | (Type::I32, Type::Struct(name, _)) if name == "u8" => {
+                         let i = val.into_int_value();
+                         let truncated = self.builder.build_int_cast(i, self.context.i8_type(), "cast_u8").map_err(|e| e.to_string())?;
+                         Ok((truncated.into(), target_type.clone()))
+                    }
+                    (Type::F32, Type::Struct(name, _)) if name == "u8" => {
+                         let f = val.into_float_value();
+                         let i = self.builder.build_float_to_unsigned_int(f, self.context.i8_type(), "cast_u8").map_err(|e| e.to_string())?;
+                         Ok((i.into(), target_type.clone()))
+                    }
+                     (Type::I64, Type::U8) | (Type::I32, Type::U8) => {
+                         let i = val.into_int_value();
+                         let truncated = self.builder.build_int_cast(i, self.context.i8_type(), "cast_u8").map_err(|e| e.to_string())?;
+                         Ok((truncated.into(), Type::U8))
+                    }
+                    (Type::F32, Type::U8) => {
+                         let f = val.into_float_value();
+                         let i = self.builder.build_float_to_unsigned_int(f, self.context.i8_type(), "cast_u8").map_err(|e| e.to_string())?;
+                         Ok((i.into(), Type::U8))
                     }
                     (Type::ScalarArray(elem_ty, len), Type::Tensor(target_elem, _)) => {
                         // Convert ScalarArray to Tensor and then cast if necessary
@@ -3896,6 +3940,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok((struct_ptr.into(), Type::Struct(name.to_string(), vec![])))
     }
 
+    #[allow(deprecated)]
     pub(crate) fn compile_static_method_call(
         &mut self,
         struct_name: &str,
@@ -4261,6 +4306,19 @@ impl<'ctx> CodeGenerator<'ctx> {
             let (val, ty) = if let Type::ScalarArray(_, _) = ty {
                 let (new_val, new_ty) = self.ensure_tensor_v2(arg, 0)?;
                 (new_val.try_into().unwrap(), new_ty)
+            } else if type_name == "VarBuilder" {
+                 if let Type::String(_) = ty {
+                     // VarBuilder methods expect char* (i8*) not String struct
+                     let ptr_to_struct = val.into_pointer_value();
+                     let i64_ptr_ty = self.context.i64_type().ptr_type(inkwell::AddressSpace::default());
+                     let ptr_to_first_field = self.builder.build_pointer_cast(ptr_to_struct, i64_ptr_ty, "str_ptr_cast").unwrap();
+                     let str_addr_i64 = self.builder.build_load(self.context.i64_type(), ptr_to_first_field, "str_addr").unwrap().into_int_value();
+                     let i8_ptr_ty = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+                     let char_ptr = self.builder.build_int_to_ptr(str_addr_i64, i8_ptr_ty, "cstr_ptr").unwrap();
+                     (char_ptr.into(), ty)
+                 } else {
+                     (val, ty)
+                 }
             } else {
                 (val, ty)
             };
@@ -5831,464 +5889,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
-        // Special Handling for Tensor methods
-        let tensor_elem_ty_opt = match &obj_ty {
-            Type::Tensor(elem_ty, _) => Some(elem_ty.clone()),
-            Type::Struct(name, _) if name == "Tensor" => Some(Box::new(Type::F32)),
-            _ => None,
-        };
-
-        if let Some(elem_ty) = tensor_elem_ty_opt {
-            match method {
-                "to_i64" => {
-                    if !args.is_empty() {
-                        return Err("Tensor::to_i64 requires 0 arguments".into());
-                    }
-                    if matches!(elem_ty.as_ref(), Type::I64) {
-                        return Ok((obj_val, obj_ty.clone()));
-                    }
-                    let fn_val = self
-                        .module
-                        .get_function("tl_tensor_to_i64")
-                        .ok_or("tl_tensor_to_i64 not found")?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[obj_val.into()], "tensor_to_i64")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from Tensor::to_i64".into()),
-                    };
-                    return Ok((res, Type::Tensor(Box::new(Type::I64), 0)));
-                }
-                "cuda" => {
-                    let fn_val = self
-                        .module
-                        .get_function("tl_tensor_to_device")
-                        .ok_or("tl_tensor_to_device not found")?;
-                    let (dev_str_val, _) = self.compile_string_literal("cuda")?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[obj_val.into(), dev_str_val.into()], "cuda_res")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from cuda()".into()),
-                    };
-
-
-                    return Ok((res, obj_ty.clone()));
-                }
-                "cpu" => {
-                    let fn_val = self
-                        .module
-                        .get_function("tl_tensor_to_device")
-                        .ok_or("tl_tensor_to_device not found")?;
-                    let (dev_str_val, _) = self.compile_string_literal("cpu")?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[obj_val.into(), dev_str_val.into()], "cpu_res")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from cpu()".into()),
-                    };
-
-
-                    return Ok((res, obj_ty.clone()));
-                }
-                "item" => {
-                    let is_int = matches!(
-                        elem_ty.as_ref(),
-                        Type::I64 | Type::I32 | Type::U32 | Type::U8
-                    );
-                    let fn_name = if is_int {
-                        "tl_tensor_item_i64"
-                    } else {
-                        "tl_tensor_item"
-                    };
-                    let fn_val = self
-                        .module
-                        .get_function(fn_name)
-                        .ok_or(format!("{} not found", fn_name))?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[obj_val.into()], "item_res")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from item()".into()),
-                    };
-                    let ret_ty = if is_int { Type::I64 } else { Type::F32 };
-                    return Ok((res, ret_ty));
-                }
-                "max" | "min" | "mean" | "argmax" | "argmin" | "sum" => {
-                    if !args.is_empty() {
-                        let suffix = if method == "argmax" || method == "argmin" {
-                            ""
-                        } else {
-                            "_dim"
-                        };
-                        let fn_name = format!("tl_tensor_{}{}", method, suffix);
-                        let fn_val = self
-                            .module
-                            .get_function(&fn_name)
-                            .ok_or(format!("{} not found", fn_name))?;
-
-                        let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> =
-                            Vec::new();
-                        call_args.push(obj_val.into());
-
-                        let (dim_val, _) = self.compile_expr(&args[0])?;
-                        call_args.push(dim_val.into());
-
-                        let keep_val = if args.len() > 1 {
-                            let (k, _) = self.compile_expr(&args[1])?;
-                            k.into()
-                        } else {
-                            self.context.bool_type().const_int(0, false).into()
-                        };
-                        call_args.push(keep_val);
-
-                        let call = self
-                            .builder
-                            .build_call(fn_val, &call_args, "reduce_res")
-                            .map_err(|e| e.to_string())?;
-                        let res = match call.try_as_basic_value() {
-                            inkwell::values::ValueKind::Basic(v) => v,
-                            _ => return Err(format!("Invalid return from {}()", method).into()),
-                        };
-    
-
-                        return Ok((res, obj_ty.clone()));
-                    } else {
-                        if method == "argmax" || method == "argmin" {
-                            return Err(format!("{} requires arguments", method));
-                        }
-                        // Fallback to no-dim version
-                        let fn_name = format!("tl_tensor_{}", method);
-                        let fn_val = self
-                            .module
-                            .get_function(&fn_name)
-                            .ok_or(format!("{} not found", fn_name))?;
-
-                        let call = self
-                            .builder
-                            .build_call(fn_val, &[obj_val.into()], "reduce_res")
-                            .map_err(|e| e.to_string())?;
-                        let res = match call.try_as_basic_value() {
-                            inkwell::values::ValueKind::Basic(v) => v,
-                            _ => return Err(format!("Invalid return from {}()", method).into()),
-                        };
-
-                        return Ok((res, obj_ty.clone()));
-                    }
-                }
-                "sumall" => {
-                    let fn_val = self
-                        .module
-                        .get_function("tl_tensor_sum")
-                        .ok_or("tl_tensor_sum not found")?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[obj_val.into()], "sum_res")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from sumall()".into()),
-                    };
-                    return Ok((res, obj_ty.clone()));
-                }
-                "detach" => {
-                    let fn_val = self
-                        .module
-                        .get_function("tl_tensor_detach")
-                        .ok_or("tl_tensor_detach not found")?;
-                    let req_grad = self.context.bool_type().const_int(0, false);
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[obj_val.into(), req_grad.into()], "detach_res")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from detach()".into()),
-                    };
-
-
-                    return Ok((res, obj_ty.clone()));
-                }
-                "tril" => {
-                    let fn_val = self
-                        .module
-                        .get_function("tl_tensor_tril")
-                        .ok_or("tl_tensor_tril not found")?;
-
-                    if args.len() != 1 {
-                        return Err("tril requires 1 argument (diagonal)".into());
-                    }
-
-                    let (diag_val, diag_ty) = self.compile_expr(&args[0])?;
-                    let diag_i32 = match diag_ty {
-                        Type::I64 => self
-                            .builder
-                            .build_int_cast(
-                                diag_val.into_int_value(),
-                                self.context.i32_type(),
-                                "tril_diag_cast",
-                            )
-                            .unwrap(),
-                        Type::I32 => diag_val.into_int_value(),
-                        _ => return Err("tril argument must be integer".into()),
-                    };
-
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[obj_val.into(), diag_i32.into()], "tril_res")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from tril()".into()),
-                    };
-
-
-                    return Ok((res, obj_ty.clone()));
-                }
-                "mul" | "add" | "sub" | "div" => {
-                    if args.len() != 1 {
-                        return Err(format!("{} requires 1 argument", method));
-                    }
-                    // scalar handling: ensure_tensor_v2 handles scalar->tensor conversion
-                    let (rhs_val, _) = self.ensure_tensor_v2(&args[0], 0)?;
-
-                    let fn_name = match method {
-                        "mul" => "tl_tensor_mul",
-                        "add" => "tl_tensor_add",
-                        "sub" => "tl_tensor_sub",
-                        "div" => "tl_tensor_div",
-                        _ => unreachable!(),
-                    };
-                    let fn_val = self
-                        .module
-                        .get_function(fn_name)
-                        .ok_or(format!("{} not found", fn_name))?;
-
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[obj_val.into(), rhs_val.into()], "binop_res")
-                        .map_err(|e| e.to_string())?;
-
-
-                    let res = self.check_tensor_result(call, "binop_error")?;
-
-
-
-                    // Note: ensure_tensor_v2 result might need freeing if it was promoted
-                    // But currently arguments cleanup loop handles args[0].
-                    // ensure_tensor_v2 might create new tensor if scalar.
-                    // If so, that new tensor is not in 'args'.
-                    // However, ensure_tensor_v2 logic usually registers tensor.
-                    // If we don't return it, we should verify leaks.
-                    // For now, assuming standard cleanup logic suffices or small leak (scalar tensor).
-
-                    return Ok((res, obj_ty.clone()));
-                }
-                "contiguous" => {
-                    let fn_val = self
-                        .module
-                        .get_function("tl_tensor_contiguous")
-                        .ok_or("tl_tensor_contiguous not found")?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[obj_val.into()], "cont_res")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from contiguous()".into()),
-                    };
-
-
-                    return Ok((res, obj_ty.clone()));
-                }
-                "conv2d" => {
-                    let fn_val = self
-                        .module
-                        .get_function("tl_tensor_conv2d")
-                        .ok_or("tl_tensor_conv2d not found")?;
-
-                    if args.len() != 3 {
-                        return Err("conv2d requires 3 arguments: weight, padding, stride".into());
-                    }
-
-                    // Arg 0: weight (Tensor)
-                    let (weight_val, weight_ty) = self.compile_expr(&args[0])?;
-                    if !matches!(weight_ty, Type::Tensor(_, _)) {
-                        return Err("conv2d arg 0 (weight) must be Tensor".into());
-                    }
-
-                    // Arg 1: padding (Int)
-                    let (pad_val, pad_ty) = self.compile_expr(&args[1])?;
-                    let pad_i64 = match pad_ty {
-                        Type::I64 => pad_val.into_int_value(),
-                        Type::I32 => self
-                            .builder
-                            .build_int_z_extend(
-                                pad_val.into_int_value(),
-                                self.context.i64_type(),
-                                "ext",
-                            )
-                            .unwrap(),
-                        _ => return Err("conv2d arg 1 (padding) must be Integer".into()),
-                    };
-
-                    // Arg 2: stride (Int)
-                    let (stride_val, stride_ty) = self.compile_expr(&args[2])?;
-                    let stride_i64 = match stride_ty {
-                        Type::I64 => stride_val.into_int_value(),
-                        Type::I32 => self
-                            .builder
-                            .build_int_z_extend(
-                                stride_val.into_int_value(),
-                                self.context.i64_type(),
-                                "ext",
-                            )
-                            .unwrap(),
-                        _ => return Err("conv2d arg 2 (stride) must be Integer".into()),
-                    };
-
-                    let call = self
-                        .builder
-                        .build_call(
-                            fn_val,
-                            &[
-                                obj_val.into(),
-                                weight_val.into(),
-                                pad_i64.into(),
-                                stride_i64.into(),
-                            ],
-                            "conv_res",
-                        )
-                        .map_err(|e| e.to_string())?;
-
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from conv2d()".into()),
-                    };
-
-
-                    return Ok((res, obj_ty.clone()));
-                }
-                "clamp" => {
-                    let fn_val = self
-                        .module
-                        .get_function("tl_tensor_clamp")
-                        .ok_or("tl_tensor_clamp not found")?;
-
-                    if args.len() != 2 {
-                        return Err("clamp requires 2 arguments: min, max".into());
-                    }
-
-                    // Arg 0: min (f32)
-                    let (min_val, min_ty) = self.compile_expr(&args[0])?;
-                    let min_f32 = match min_ty {
-                        Type::F32 => min_val.into_float_value(),
-                        Type::F64 => self
-                            .builder
-                            .build_float_trunc(
-                                min_val.into_float_value(),
-                                self.context.f32_type(),
-                                "trunc",
-                            )
-                            .unwrap(),
-                        _ => return Err("clamp arg 0 (min) must be Float".into()),
-                    };
-
-                    // Arg 1: max (f32)
-                    let (max_val, max_ty) = self.compile_expr(&args[1])?;
-                    let max_f32 = match max_ty {
-                        Type::F32 => max_val.into_float_value(),
-                        Type::F64 => self
-                            .builder
-                            .build_float_trunc(
-                                max_val.into_float_value(),
-                                self.context.f32_type(),
-                                "trunc",
-                            )
-                            .unwrap(),
-                        _ => return Err("clamp arg 1 (max) must be Float".into()),
-                    };
-
-                    let call = self
-                        .builder
-                        .build_call(
-                            fn_val,
-                            &[obj_val.into(), min_f32.into(), max_f32.into()],
-                            "clamp_res",
-                        )
-                        .map_err(|e| e.to_string())?;
-
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from clamp()".into()),
-                    };
-
-
-                    return Ok((res, obj_ty.clone()));
-                }
-                "clone" => {
-                    let fn_val = self
-                        .module
-                        .get_function("tl_tensor_clone")
-                        .ok_or("tl_tensor_clone not found")?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[obj_val.into()], "clone_res")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from clone()".into()),
-                    };
-
-
-                    return Ok((res, obj_ty.clone()));
-                }
-                "grad" => {
-                    let fn_val = self
-                        .module
-                        .get_function("tl_tensor_grad")
-                        .ok_or("tl_tensor_grad not found")?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[obj_val.into()], "grad_res")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from grad()".into()),
-                    };
-
-
-                    return Ok((res, obj_ty.clone()));
-                }
-                "matmul_quantized" => {
-                    if args.len() != 1 {
-                        return Err("matmul_quantized requires 1 argument".into());
-                    }
-                    let (weight_val, _) = self.compile_expr(&args[0])?;
-                    let fn_val = self
-                        .module
-                        .get_function("tl_qtensor_matmul")
-                        .ok_or("tl_qtensor_matmul not found")?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[obj_val.into(), weight_val.into()], "qmatmul_res")
-                        .map_err(|e| e.to_string())?;
-
-                    let res = self.check_tensor_result(call, "qmatmul_error")?;
-
-                    return Ok((res, obj_ty.clone()));
-                }
-                _ => {}
-            }
-        }
+        // Special Handling for Tensor methods was removed in favor of TypeManager registration.
+        // See builtin_types/non_generic/tensor.rs for method implementations.
 
         // 4. Generic Fallback (Struct Methods / Mangled Names)
         let struct_name = match &obj_ty {

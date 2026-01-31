@@ -4402,6 +4402,11 @@ impl SemanticAnalyzer {
                     (Type::I64, Type::Bool) => Ok(Type::Bool),
                     (Type::Bool, Type::F32) => Ok(Type::F32),
                     (Type::F32, Type::Bool) => Ok(Type::Bool),
+                    (Type::I64, Type::Struct(name, _)) if name == "u8" => Ok(target_type.clone()),
+                    (Type::I32, Type::Struct(name, _)) if name == "u8" => Ok(target_type.clone()),
+                    (Type::F32, Type::Struct(name, _)) if name == "u8" => Ok(target_type.clone()),
+                    (Type::I64, Type::U8) => Ok(Type::U8), // Just in case it's Type::U8
+                    (Type::I32, Type::U8) => Ok(Type::U8),
                     _ => self.err(
                         SemanticError::TypeMismatch {
                             expected: target_type.clone(),
@@ -5554,6 +5559,100 @@ impl SemanticAnalyzer {
                             }, None));
                         }
                         return Some(Ok(Type::Void));
+                    }
+                    "add" | "sub" | "mul" | "div" | "conv2d" => {
+                         if args.len() != 1 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("Tensor::{}", method), expected: 1, found: args.len()
+                            }, None));
+                         }
+                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                         return Some(Ok(obj_type.clone()));
+                    }
+                    "add_assign" | "sub_assign" => {
+                         if args.len() != 1 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("Tensor::{}", method), expected: 1, found: args.len()
+                            }, None));
+                         }
+                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                         return Some(Ok(Type::Void));
+                    }
+                    "contiguous" | "cuda" | "cpu" => {
+                         if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("Tensor::{}", method), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        return Some(Ok(obj_type.clone()));
+                    }
+                    "item" => {
+                         if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::item".into(), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        // If we knew inner type, we could return it.
+                        // For now return F32 as generic scalar, or check obj_type.
+                        if let Type::Tensor(inner, _) = obj_type {
+                            return Some(Ok(*inner.clone()));
+                        }
+                        return Some(Ok(Type::F32));
+                    }
+                    "to_i64" => {
+                         if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::to_i64".into(), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        if let Type::Tensor(_, rank) = obj_type {
+                            return Some(Ok(Type::Tensor(Box::new(Type::I64), *rank)));
+                        }
+                        return Some(Ok(Type::Tensor(Box::new(Type::I64), 0)));
+                    }
+                    "argmax" | "argmin" => {
+                        // Allow 0 or 1 args
+                        if args.len() > 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("Tensor::{}", method), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                             if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        return Some(Ok(Type::Tensor(Box::new(Type::I64), 0))); 
+                    }
+                    "clamp" => {
+                        // min, max
+                         if args.len() != 2 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::clamp".into(), expected: 2, found: args.len()
+                            }, None));
+                         }
+                         for arg in args.iter_mut() {
+                             if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                         }
+                         return Some(Ok(obj_type.clone()));
+                    }
+                    "save" => {
+                         if args.len() != 1 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::save".into(), expected: 1, found: args.len()
+                            }, None));
+                         }
+                         // Arg should be String
+                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                         return Some(Ok(Type::Void));
+                    }
+                    "to" => {
+                         if args.len() != 1 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::to".into(), expected: 1, found: args.len()
+                            }, None));
+                         }
+                         // Arg should be String
+                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                         return Some(Ok(obj_type.clone()));
                     }
                     _ => None
                 }

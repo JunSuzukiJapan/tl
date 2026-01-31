@@ -339,6 +339,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::F32 => Ok(self.context.f32_type().into()),
             Type::F64 => Ok(self.context.f64_type().into()),
             Type::Bool => Ok(self.context.bool_type().into()),
+            Type::U8 => Ok(self.context.i8_type().into()), // Added U8 support
             Type::Usize => Ok(self.context.i64_type().into()), // usize as i64
             Type::Void => panic!("Void type encountered in get_llvm_type"),
             
@@ -367,6 +368,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     "f32" => return Ok(self.context.f32_type().into()),
                     "f64" => return Ok(self.context.f64_type().into()),
                     "usize" => return Ok(self.context.i64_type().into()),
+                    "u8" => return Ok(self.context.i8_type().into()), // Added u8 support
                     "String" => return Ok(self.context.ptr_type(inkwell::AddressSpace::default()).into()),
                     _ => {}
                 }
