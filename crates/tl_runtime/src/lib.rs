@@ -2183,13 +2183,28 @@ pub extern "C" fn tl_i32_is_negative(v: i32) -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_print_string(s: *const std::os::raw::c_char) {
     if s.is_null() {
+        // println!("tl_print_string: NULL");
         return;
     }
+    // println!("tl_print_string input ptr: {:p}", s);
     unsafe {
         if let Ok(c_str) = std::ffi::CStr::from_ptr(s).to_str() {
             println!("{}", c_str);
             let _ = std::io::stdout().flush();
+        } else {
+             println!("tl_print_string: Invalid UTF-8");
         }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_print(s: *mut StringStruct) {
+    if !s.is_null() {
+        unsafe {
+            tl_print_string((*s).ptr);
+        }
+    } else {
+        println!("tl_string_print: NULL struct");
     }
 }
 
@@ -3573,19 +3588,37 @@ pub extern "C" fn tl_vec_u8_free(ptr: *mut Vec<u8>) {
 }
 
 // String helper
+#[repr(C)]
+pub struct StringStruct {
+    pub ptr: *mut std::os::raw::c_char,
+    pub len: i64,
+}
+
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_string_new(s: *const std::os::raw::c_char) -> *mut std::os::raw::c_char {
-    // println!("tl_string_new via mod.rs: {:p}", s);
+pub extern "C" fn tl_string_new(s: *const std::os::raw::c_char) -> *mut StringStruct {
+    // println!("tl_string_new input ptr: {:p}", s);
     if s.is_null() {
         return std::ptr::null_mut();
     }
     unsafe {
-        let len = libc::strlen(s);
-        let dest = libc::malloc(len + 1) as *mut std::os::raw::c_char;
-        if !dest.is_null() {
-            libc::strcpy(dest, s);
-        }
-        dest
+        let c_str = std::ffi::CStr::from_ptr(s);
+        let s_slice = c_str.to_string_lossy().into_owned();
+        // println!("tl_string_new content: '{}'", s_slice);
+
+        let new_c_str = std::ffi::CString::new(s_slice).unwrap();
+        let ptr = new_c_str.into_raw(); 
+        // println!("tl_string_new allocated ptr: {:p}", ptr);
+        
+        let len = libc::strlen(ptr) as i64;
+        
+        // Allocate struct
+        let layout = std::alloc::Layout::new::<StringStruct>();
+        let struct_ptr = std::alloc::alloc(layout) as *mut StringStruct;
+        (*struct_ptr).ptr = ptr;
+        (*struct_ptr).len = len;
+        
+        // println!("tl_string_new struct ptr: {:p}", struct_ptr);
+        struct_ptr
     }
 }
 

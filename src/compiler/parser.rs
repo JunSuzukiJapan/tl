@@ -190,13 +190,14 @@ pub fn parse_type(input: Input) -> IResult<Input, Type, ParserError> {
 // --- Literals ---
 pub fn parse_literal(input: Input) -> IResult<Input, Expr, ParserError> {
     let (input, token) = satisfy_token(|t| matches!(t, 
-        Token::IntLiteral(_) | Token::FloatLiteral(_) | Token::StringLiteral(_) | Token::True | Token::False
+        Token::IntLiteral(_) | Token::FloatLiteral(_) | Token::StringLiteral(_) | Token::CharLiteral(_) | Token::True | Token::False
     ))(input)?;
     
     let kind = match token.token {
         Token::IntLiteral(n) => ExprKind::Int(n),
         Token::FloatLiteral(f) => ExprKind::Float(f),
         Token::StringLiteral(s) => ExprKind::StringLiteral(s),
+        Token::CharLiteral(c) => ExprKind::CharLiteral(c),
         Token::True => ExprKind::Bool(true),
         Token::False => ExprKind::Bool(false),
         _ => unreachable!(),
@@ -759,6 +760,10 @@ fn parse_binary_logic(input: Input) -> IResult<Input, Expr, ParserError> {
 }
 
 // --- Statements ---
+
+// Primitive Types
+
+
 
 fn parse_let_or_tensor_decl(input: Input) -> IResult<Input, Stmt, ParserError> {
     let (input, _) = expect_token(Token::Let)(input)?;

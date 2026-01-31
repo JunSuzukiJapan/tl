@@ -100,25 +100,33 @@ pub extern "C" fn tl_string_contains(haystack: *const c_char, needle: *const c_c
 }
 
 /// Get character at index from string (returns ASCII code, or 0 if out of bounds)
+/// Get character at index from string (returns Unicode Scalar Value as i32, or 0 if out of bounds)
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_string_char_at(s: *const c_char, index: i64) -> *mut c_char {
-    eprintln!("DEBUG: tl_string_char_at s={:p} index={}", s, index);
+pub extern "C" fn tl_string_char_at(s: *const c_char, index: i64) -> i32 {
     if s.is_null() || index < 0 {
-        return std::ptr::null_mut();
+        return 0;
     }
     let s_str = unsafe { CStr::from_ptr(s).to_string_lossy() };
-    eprintln!("DEBUG: s_str len={}", s_str.len());
     let idx = index as usize;
-    if idx >= s_str.len() {
-        return std::ptr::null_mut();
-    }
-    // Note: This assumes byte indexing for now, or we can use chars().nth()
-    // Using chars().nth() handles UTF-8 correctly but is O(N)
     if let Some(c) = s_str.chars().nth(idx) {
-        let char_str = c.to_string();
-        let ptr = std::ffi::CString::new(char_str).unwrap().into_raw();
-        crate::tl_log_alloc(ptr as *const c_void, 0, std::ptr::null(), 0);
-        ptr
+        c as i32
+    } else {
+        0
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_from_char(c: i32) -> *mut c_char {
+    if let Some(ch) = std::char::from_u32(c as u32) {
+        let s = ch.to_string();
+        match CString::new(s) {
+            Ok(c_str) => {
+                let ptr = c_str.into_raw();
+                crate::tl_log_alloc(ptr as *const c_void, 0, std::ptr::null(), 0);
+                ptr
+            }
+            Err(_) => std::ptr::null_mut(),
+        }
     } else {
         std::ptr::null_mut()
     }
@@ -133,6 +141,8 @@ pub extern "C" fn tl_string_len(s: *const c_char) -> i64 {
     let s_str = unsafe { CStr::from_ptr(s).to_string_lossy() };
     s_str.len() as i64
 }
+
+
 
 // --- File I/O ---
 

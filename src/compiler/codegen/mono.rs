@@ -349,6 +349,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(self.context.ptr_type(AddressSpace::default()).into())
             }
 
+            Type::String => {
+                Ok(self.context.ptr_type(AddressSpace::default()).into())
+            }
+            Type::Char => {
+                Ok(self.context.i32_type().into())
+            }
+
             Type::Struct(name, _args) | Type::UserDefined(name, _args) => {
                 // Compatibility: Handle primitives parsed as UserDefined
                 match name.as_str() {
@@ -362,7 +369,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
 
                 // Handle special types
-                if name == "String" || name == "File" || name == "Path" || name == "Env" || name == "Http" {
+                if name == "File" || name == "Path" || name == "Env" || name == "Http" {
                     return Ok(self.context.ptr_type(AddressSpace::default()).into());
                 }
                 // All structs are pointer types

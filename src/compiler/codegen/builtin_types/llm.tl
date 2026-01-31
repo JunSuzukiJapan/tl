@@ -5,6 +5,7 @@ struct Map { handle: i64 }
 struct VarBuilder { handle: i64 }
 
 impl Tokenizer {
+    extern fn new(path: String) -> Tokenizer;
     extern fn encode(self, text: String) -> Tensor;
     extern fn decode(self, tokens: Tensor) -> String;
     extern fn token_id(self, token: String) -> i64;
@@ -13,6 +14,7 @@ impl Tokenizer {
 }
 
 impl KVCache {
+    extern fn new(n_layers: i64) -> KVCache;
     extern fn get_k(self, layer: i64) -> Tensor;
     extern fn get_v(self, layer: i64) -> Tensor;
     extern fn update(self, layer: i64, k: Tensor, v: Tensor) -> ();
@@ -20,6 +22,7 @@ impl KVCache {
 }
 
 impl Map {
+    extern fn load(path: String) -> Map;
     extern fn get(self, key: String) -> Tensor;
     extern fn get_1d(self, key: String) -> Tensor;
     extern fn get_quantized(self, key: String) -> Tensor; 

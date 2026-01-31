@@ -1570,8 +1570,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                      // L-Value copy -> IncRef
                      match val_ty {
                         Type::Tensor(_, _) 
-                        | Type::Struct(_, _) 
-                        | Type::UserDefined(_, _) 
                         | Type::Enum(_, _) 
                         | Type::Vec(_) => {
                             let inc_fn = self.module.get_function("tl_ptr_inc_ref")
@@ -1588,6 +1586,24 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 ptr,
                                 self.context.ptr_type(inkwell::AddressSpace::default()),
                                 "void_cast_inc_let"
+                            ).unwrap();
+                            self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
+                        }
+                        Type::Struct(ref name, _) | Type::UserDefined(ref name, _) if name != "String" && name != "File" && name != "Path" && name != "Map" && name != "Tokenizer" && name != "KVCache" => {
+                            let inc_fn = self.module.get_function("tl_ptr_inc_ref")
+                                .or_else(|| {
+                                    let void_ty = self.context.void_type();
+                                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                                    let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                                    Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
+                                })
+                                .expect("tl_ptr_inc_ref decl failed");
+
+                            let ptr = val_ir.into_pointer_value();
+                            let void_ptr = self.builder.build_pointer_cast(
+                                ptr,
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "void_cast_inc_let_st"
                             ).unwrap();
                             self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
                         }
@@ -3337,6 +3353,66 @@ impl<'ctx> CodeGenerator<'ctx> {
         op: BinOp,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         match (&lhs_type, &rhs_type) {
+            // String Concatenation
+            (Type::String, Type::String) if op == BinOp::Add => {
+                let concat_fn = self
+                    .module
+                    .get_function("tl_string_concat")
+                    .ok_or("tl_string_concat not found")?;
+                let call = self
+                    .builder
+                    .build_call(concat_fn, &[lhs.into(), rhs.into()], "str_concat")
+                    .map_err(|e| e.to_string())?;
+                let res = match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v,
+                    _ => return Err("tl_string_concat returned void".into()),
+                };
+                Ok((res, Type::String))
+            }
+            (Type::String, Type::Char) if op == BinOp::Add => {
+                 let char_to_str_fn = self.module.get_function("tl_string_from_char").ok_or("tl_string_from_char missing")?;
+                 let call_c = self.builder.build_call(char_to_str_fn, &[rhs.into()], "char_str").map_err(|e| e.to_string())?;
+                 let rhs_str = match call_c.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v,
+                    _ => return Err("tl_string_from_char returned void".into()),
+                 };
+                 
+                let concat_fn = self
+                    .module
+                    .get_function("tl_string_concat")
+                    .ok_or("tl_string_concat not found")?;
+                let call = self
+                    .builder
+                    .build_call(concat_fn, &[lhs.into(), rhs_str.into()], "str_concat")
+                    .map_err(|e| e.to_string())?;
+                 let res = match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v,
+                    _ => return Err("tl_string_concat returned void".into()),
+                 };
+                 Ok((res, Type::String))
+            }
+            (Type::Char, Type::String) if op == BinOp::Add => {
+                 let char_to_str_fn = self.module.get_function("tl_string_from_char").ok_or("tl_string_from_char missing")?;
+                 let call_c = self.builder.build_call(char_to_str_fn, &[lhs.into()], "char_str").map_err(|e| e.to_string())?;
+                 let lhs_str = match call_c.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v,
+                    _ => return Err("tl_string_from_char returned void".into()),
+                 };
+                 
+                let concat_fn = self
+                    .module
+                    .get_function("tl_string_concat")
+                    .ok_or("tl_string_concat not found")?;
+                let call = self
+                    .builder
+                    .build_call(concat_fn, &[lhs_str.into(), rhs.into()], "str_concat")
+                    .map_err(|e| e.to_string())?;
+                 let res = match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v,
+                    _ => return Err("tl_string_concat returned void".into()),
+                 };
+                 Ok((res, Type::String))
+            }
             (Type::I64, Type::I64) => {
                 let l = lhs.into_int_value();
                 let r = rhs.into_int_value();
@@ -3724,30 +3800,49 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // HACK: Built-in types (String, File) are opaque pointers
                 if name == "String" {
-                    // Deep clone string -> strdup (via tl_string_concat("", s) or similar)
-                    // We can use tl_string_concat(s, "")
-                    let concat_fn = self
-                        .module
-                        .get_function("tl_string_concat")
-                        .ok_or("tl_string_concat not found")?;
+                    // String Deep Clone: s + ""
+                    let string_ty = self.module.get_struct_type("String").ok_or("String type not found")?;
 
-                    let s_ptr = val.into_pointer_value();
-                    let empty = self
-                        .builder
-                        .build_global_string_ptr("", "empty_str")
-                        .unwrap()
-                        .as_pointer_value();
+                    // 1. Create empty string struct ("")
+                    let empty_ptr = self.builder.build_global_string_ptr("", "empty_const").unwrap().as_pointer_value();
+                    let empty_ptr_i64 = self.builder.build_ptr_to_int(empty_ptr, self.context.i64_type(), "empty_ptr_i64").map_err(|e| e.to_string())?;
+                    let len_zero = self.context.i64_type().const_zero();
+                    
+                    let mut empty_struct = string_ty.const_zero();
+                    empty_struct = self.builder.build_insert_value(empty_struct, empty_ptr_i64, 0, "empty_s_ptr").map_err(|e| e.to_string())?.into_struct_value();
+                    empty_struct = self.builder.build_insert_value(empty_struct, len_zero, 1, "empty_s_len").map_err(|e| e.to_string())?.into_struct_value();
 
-                    let call_site = self
-                        .builder
-                        .build_call(concat_fn, &[s_ptr.into(), empty.into()], "str_clone")
-                        .unwrap();
+                    // 2. Store empty struct to stack (pass by ptr for 2nd arg)
+                    let empty_alloca = self.builder.build_alloca(string_ty, "empty_alloca").map_err(|e| e.to_string())?;
+                    self.builder.build_store(empty_alloca, empty_struct).map_err(|e| e.to_string())?;
 
-                    let new_str = match call_site.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Failed to clone string".to_string()),
+                    // 3. Call tl_string_concat(val, &empty)
+                    let concat_fn = self.module.get_function("tl_string_concat").ok_or("tl_string_concat not found")?;
+                    let call = self.builder.build_call(concat_fn, &[val.into(), empty_alloca.into()], "str_clone").map_err(|e| e.to_string())?;
+                    
+                    // 4. Result is i8* (pointer to new string buffer)
+                    let new_ptr = match call.try_as_basic_value() {
+                         inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                         _ => return Err("tl_string_concat returned void".into()),
                     };
-                    return Ok(new_str);
+
+                    // 5. Wrap result in String struct
+                    let new_ptr_i64 = self.builder.build_ptr_to_int(new_ptr, self.context.i64_type(), "new_ptr_i64").map_err(|e| e.to_string())?;
+                    
+                    // Extract length from original string (since clone matches length)
+                    let len_val = if val.is_struct_value() {
+                        self.builder.build_extract_value(val.into_struct_value(), 1, "src_len").map_err(|e| e.to_string())?
+                    } else {
+                        // Fallback/Error? Should be struct.
+                         return Err("String clone source not a struct".into());
+                    };
+
+                    let mut res_struct = string_ty.const_zero();
+                    res_struct = self.builder.build_insert_value(res_struct, new_ptr_i64, 0, "res_s_ptr").map_err(|e| e.to_string())?.into_struct_value();
+                    res_struct = self.builder.build_insert_value(res_struct, len_val, 1, "res_s_len").map_err(|e| e.to_string())?.into_struct_value();
+
+                    return Ok(res_struct.into());
+
                 } else if name == "File" {
                     // File handle cannot be deeply cloned easily. Return shallow copy (pointer).
                     return Ok(val);

@@ -252,6 +252,7 @@ impl LivenessAnalyzer {
             | ExprKind::Int(_)
             | ExprKind::Bool(_)
             | ExprKind::StringLiteral(_)
+            | ExprKind::CharLiteral(_)
             | ExprKind::Symbol(_)
             | ExprKind::LogicVar(_)
             | ExprKind::Wildcard => {}

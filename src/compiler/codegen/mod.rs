@@ -172,21 +172,19 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn register_builtin_return_types(&mut self) {
         // Path
         self.method_return_types.insert("tl_path_new".to_string(), Type::UserDefined("Path".to_string(), vec![]));
-        self.method_return_types.insert("tl_path_to_string".to_string(), Type::UserDefined("String".to_string(), vec![]));
+        self.method_return_types.insert("tl_path_to_string".to_string(), Type::String);
         self.method_return_types.insert("tl_path_join".to_string(), Type::UserDefined("Path".to_string(), vec![]));
         
         // String
-        self.method_return_types.insert("tl_string_new".to_string(), Type::UserDefined("String".to_string(), vec![]));
+        self.method_return_types.insert("tl_string_new".to_string(), Type::String);
 
         // File
         self.method_return_types.insert("tl_file_open".to_string(), Type::UserDefined("File".to_string(), vec![]));
-        self.method_return_types.insert("tl_file_read_string".to_string(), Type::UserDefined("String".to_string(), vec![]));
+        self.method_return_types.insert("tl_file_read_string".to_string(), Type::String);
         self.method_return_types.insert("tl_file_write_string".to_string(), Type::Void);
-        self.method_return_types.insert("tl_file_close".to_string(), Type::Void);
-
-        // Env
-        self.method_return_types.insert("tl_env_get".to_string(), Type::UserDefined("String".to_string(), vec![]));
-        self.method_return_types.insert("tl_env_set".to_string(), Type::Void);
+        self.method_return_types.insert("tl_args_get".to_string(), Type::String);
+        self.method_return_types.insert("tl_env_get".to_string(), Type::String);
+        self.method_return_types.insert("tl_string_char_at".to_string(), Type::Char);
         
         // Map / HashMap (treated as structs but return pointers, so we must register them to avoid Tensor default)
         self.method_return_types.insert("tl_tensor_map_new".to_string(), Type::Struct("Map".to_string(), vec![]));
@@ -509,7 +507,14 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         builtin_types::llm::register_llm_types(&mut self.type_manager);
         // builtin_types::result::register_result_types(&mut self.type_manager);
-        builtin_types::string::register_string_types(&mut self.type_manager);
+        // builtin_types::string::register_string_types(&mut self.type_manager); (Deprecated direct call, use loader pattern)
+        // builtin_types::string::register_string_types(&mut self.type_manager); (Deprecated direct call, use loader pattern)
+        // builtin_types::string::register_string_types(&mut self.type_manager); (Deprecated direct call, use loader pattern)
+        let string_data = builtin_types::string::load_string_data();
+        self.type_manager.register_builtin(string_data.clone());
+        // Do NOT register generic_impls for String here. String methods are intrinsics in expr.rs. 
+        // Registering them would cause CodeGen to generate empty function bodies for extern methods.
+        // self.generic_impls.entry("String".to_string()).or_default().extend(string_data.impl_blocks);
 
 
 
@@ -1540,7 +1545,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Check if this function uses sret
         let uses_sret = match &func.return_type {
              Type::Struct(name, _) if name != "Vec" && name != "Map" && name != "HashMap" => true,
-             Type::UserDefined(name, _) if name != "String" && name != "Vec" && name != "Map" && name != "HashMap" => true,
+             Type::UserDefined(name, _) if name != "Vec" && name != "Map" && name != "HashMap" => true,
              _ => false,
         };
         let param_offset = if uses_sret { 1 } else { 0 };

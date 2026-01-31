@@ -444,6 +444,8 @@ impl SemanticAnalyzer {
                     "F64" => return Type::F64,
                     "Bool" => return Type::Bool,
                     "Void" => return Type::Void,
+                    "String" => return Type::String,
+                    "Char" => return Type::Char,
                     _ => {}
                 }
             }
@@ -575,6 +577,8 @@ impl SemanticAnalyzer {
         self.check_stratified_negation(module)?;
         self.check_module_bodies(module, "")?;
 
+
+
         // Context: Inject Device enum if not present
         let builtin_enums = ["Device"];
         for name in builtin_enums {
@@ -595,6 +599,8 @@ impl SemanticAnalyzer {
             // Note: register_module_symbols populated self.structs.
             self.structs.insert(struct_def.name.clone(), struct_def.clone());
         }
+
+
 
         Ok(())
     }
@@ -1138,7 +1144,8 @@ impl SemanticAnalyzer {
         let final_target_name = impl_block.target_type.get_base_name();
 
         // Check if target struct/enum exists
-        if !self.structs.contains_key(&final_target_name) && !self.enums.contains_key(&final_target_name) {
+        let is_primitive = matches!(final_target_name.as_str(), "String" | "Char");
+        if !is_primitive && !self.structs.contains_key(&final_target_name) && !self.enums.contains_key(&final_target_name) {
             return self.err(
                 SemanticError::StructNotFound(final_target_name.clone()),
                 None,
@@ -1824,7 +1831,8 @@ impl SemanticAnalyzer {
             ExprKind::Int(_) => Ok(Type::I64), // Default integer literal type
             ExprKind::Float(_) => Ok(Type::F32), // Default float literal type
             ExprKind::Bool(_) => Ok(Type::Bool),
-            ExprKind::StringLiteral(_) => Ok(Type::Struct("String".to_string(), vec![])),
+            ExprKind::StringLiteral(_) => Ok(Type::String),
+            ExprKind::CharLiteral(_) => Ok(Type::Char),
             ExprKind::Symbol(_) => Ok(Type::Entity),
             ExprKind::LogicVar(_) => Ok(Type::Entity),
             ExprKind::Wildcard => Ok(Type::Entity), // Wildcard treated as Entity type? Or generic?
@@ -2365,6 +2373,10 @@ impl SemanticAnalyzer {
                     Ok(result_ty)
                 } else {
                     match (&left, &right) {
+                        (Type::String, Type::String) => Ok(Type::String),
+                        (Type::String, Type::Char) => Ok(Type::String),
+                        (Type::Char, Type::String) => Ok(Type::String),
+                        (Type::Char, Type::Char) => Ok(Type::String), // Optional: Char + Char -> String?
                         (Type::Tensor(inner, _rank), val) if **inner == *val => Ok(result_ty),
                         (val, Type::Tensor(inner, _rank)) if **inner == *val => {
                             // Scalar * Tensor -> Tensor
@@ -2482,7 +2494,7 @@ impl SemanticAnalyzer {
                         if !matches!(&args[0].inner, ExprKind::StringLiteral(_)) {
                             return self.err(
                                 SemanticError::TypeMismatch {
-                                    expected: Type::UserDefined("StringLiteral".into(), vec![]),
+                                    expected: Type::String,
                                     found: Type::Void, // Hacky message?
                                 },
                                 Some(args[0].span.clone()),
@@ -2514,7 +2526,7 @@ impl SemanticAnalyzer {
                         );
                     }
                     self.check_expr(&mut args[0])?;
-                    return Ok(Type::UserDefined("String".to_string(), vec![]));
+                    return Ok(Type::String);
                 }
 
                 // --- StdLib Phase 1 ---
@@ -2544,7 +2556,7 @@ impl SemanticAnalyzer {
                             Some(args[0].span.clone()),
                         );
                     }
-                    return Ok(Type::UserDefined("String".to_string(), vec![]));
+                    return Ok(Type::String);
                 } else if name == "char_at" {
                     if args.len() != 2 {
                         return self.err(
@@ -2558,10 +2570,10 @@ impl SemanticAnalyzer {
                     }
                     let string_ty = self.check_expr(&mut args[0])?;
                     let index_ty = self.check_expr(&mut args[1])?;
-                    if string_ty != Type::Struct("String".to_string(), vec![]) {
+                    if string_ty != Type::String {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::Struct("String".to_string(), vec![]),
+                                expected: Type::String,
                                 found: string_ty,
                             },
                             Some(args[0].span.clone()),
@@ -2576,7 +2588,7 @@ impl SemanticAnalyzer {
                             Some(args[1].span.clone()),
                         );
                     }
-                    return Ok(Type::Struct("String".to_string(), vec![])); // Returns a single character as a String
+                    return Ok(Type::Char); // Returns Type::Char
                 } else if name == "len" {
                     if args.len() != 1 {
                         return self.err(
@@ -2589,7 +2601,7 @@ impl SemanticAnalyzer {
                         );
                     }
                     let arg_ty = self.check_expr(&mut args[0])?;
-                    if arg_ty != Type::Struct("String".to_string(), vec![])
+                    if arg_ty != Type::String
                         && !matches!(arg_ty, Type::Tensor(_, _))
                     {
                         return self.err(
@@ -3457,14 +3469,16 @@ impl SemanticAnalyzer {
                     } else if args.len() == 2 {
                         let t0 = self.check_expr(&mut args[0])?;
                         let t1 = self.check_expr(&mut args[1])?;
-                        match t0 {
-                            Type::UserDefined(ref s, _) if s != "String" => {}
-                            Type::Struct(_, _) => {}
-                            _ => {
+                        match (t0, t1.clone()) {
+                            (Type::UserDefined(ref s, _), _) if s != "String" => {}
+                            (Type::Struct(_, _), _) => {}
+                            (Type::String, Type::Char) => return Ok(Type::String),
+                            (Type::Char, Type::String) => return Ok(Type::String),
+                            (t0_actual, _) => {
                                 return self.err(
                                     SemanticError::TypeMismatch {
                                         expected: Type::UserDefined("Struct".into(), vec![]),
-                                        found: t0,
+                                        found: t0_actual,
                                     },
                                     Some(expr.span.clone()),
                                 );
@@ -4568,6 +4582,8 @@ impl SemanticAnalyzer {
                         }
                         Ok(Type::UserDefined("File".to_string(), vec![]))
                     }
+                    // Existing code was checking UserDefined("String").
+                    // I will replace that.
                     ("Path", "new") => {
                         if args.len() != 1 {
                             return self.err(
@@ -4591,7 +4607,7 @@ impl SemanticAnalyzer {
                     ("System", "pool_count") => Ok(Type::I64),
                     ("System", "refcount_count") => Ok(Type::I64),
                     ("System", "scope_depth") => Ok(Type::I64),
-                    ("Env", "get") => Ok(Type::UserDefined("String".into(), vec![])),
+                    ("Env", "get") => Ok(Type::String),
                     ("Env", "set") => {
                         if args.len() != 2 {
                             return self.err(
@@ -4605,13 +4621,13 @@ impl SemanticAnalyzer {
                         }
                         Ok(Type::Void)
                     }
-                    ("Http", "get") => Ok(Type::UserDefined("String".into(), vec![])),
+                    ("Http", "get") => Ok(Type::String),
                     ("Http", "download") => Ok(Type::Bool),
                     ("Image", "load_grayscale") => Ok(Type::Vec(Box::new(Type::U8))),
                     ("Image", "width") => Ok(Type::I64),
                     ("Image", "height") => Ok(Type::I64),
                     ("Args", "count") => Ok(Type::I64),
-                    ("Args", "get") => Ok(Type::UserDefined("String".into(), vec![])),
+                    ("Args", "get") => Ok(Type::String),
                     ("Arena", "get_offset") => Ok(Type::I64),
                     ("Arena", "alloc") => Ok(Type::I64),
                     ("Arena", "init") => Ok(Type::Void),
@@ -4620,12 +4636,12 @@ impl SemanticAnalyzer {
                     ("KVCache", "new") => Ok(Type::Struct("KVCache".into(), vec![])),
                     ("Map", "load") => Ok(Type::UserDefined("Map".into(), vec![])),
                     ("File", "exists") => Ok(Type::Bool),
-                    ("File", "read") => Ok(Type::UserDefined("String".into(), vec![])),
+                    ("File", "read") => Ok(Type::String),
                     ("File", "write") => Ok(Type::Bool),
                     ("File", "download") => Ok(Type::Bool),
                     ("File", "read_binary") => Ok(Type::Vec(Box::new(Type::U8))),
                     ("Path", "exists") => Ok(Type::Bool),
-                    ("String", "from_int") => Ok(Type::UserDefined("String".into(), vec![])),
+                    ("String", "from_int") => Ok(Type::String),
                     // --- New Static Methods for Refactor ---
                     ("Tensor", "zeros") => {
                         // Tensor::zeros(shape, requires_grad)

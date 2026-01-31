@@ -66,6 +66,8 @@ pub enum Type {
     F16,
     BF16,
     Bool,
+    String,
+    Char,
     I32,
     I64,
     I8,
@@ -114,6 +116,8 @@ impl Type {
             Type::F16 => "F16".to_string(),
             Type::BF16 => "BF16".to_string(),
             Type::Bool => "Bool".to_string(),
+            Type::String => "String".to_string(),
+            Type::Char => "Char".to_string(),
             Type::I32 => "I32".to_string(),
             Type::I64 => "I64".to_string(),
             Type::I8 => "I8".to_string(),
@@ -258,6 +262,7 @@ pub enum ExprKind {
     Int(i64),
     Bool(bool),
     StringLiteral(String),
+    CharLiteral(char),
     Tuple(Vec<Expr>),            // (a, b, c)
     Range(Box<Expr>, Box<Expr>), // start..end
     TensorComprehension {

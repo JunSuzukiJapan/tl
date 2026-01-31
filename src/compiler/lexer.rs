@@ -92,6 +92,12 @@ pub enum Token {
     })]
     StringLiteral(String),
 
+    #[regex(r"'([^'\\]|\\.)'", |lex| {
+        let s = lex.slice();
+        s.chars().nth(1).unwrap() // Simple char extraction
+    })]
+    CharLiteral(char),
+
     // Symbols
     #[token("(")]
     LParen,

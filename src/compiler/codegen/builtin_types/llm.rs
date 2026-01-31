@@ -32,10 +32,28 @@ fn compile_tokenizer_new<'ctx>(
     if args.len() != 1 {
         return Err("Tokenizer::new requires 1 argument".into());
     }
-    let path_val = args[0].0;
+    let (path_val, path_ty) = &args[0];
     
+    // Extract ptr from String struct
+    let path_ptr_val = if let Type::Struct(name, _) = path_ty {
+        if name == "String" {
+            let val = codegen.load_struct_i64_field(*path_val, path_ty, "ptr")?;
+            val.into_int_value()
+        } else {
+             return Err("Tokenizer::new expects String argument".into());
+        }
+    } else {
+         return Err("Tokenizer::new expects String argument".into());
+    };
+
+    let path_ptr = codegen.builder.build_int_to_ptr(
+        path_ptr_val,
+        codegen.context.ptr_type(inkwell::AddressSpace::default()),
+        "path_ptr"
+    ).map_err(|e| e.to_string())?;
+
     let fn_val = codegen.module.get_function("tl_tokenizer_new").ok_or("tl_tokenizer_new not found")?;
-    let call = codegen.builder.build_call(fn_val, &[path_val.into()], "tok_new").map_err(|e| e.to_string())?;
+    let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], "tok_new").map_err(|e| e.to_string())?;
     let handle = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from Tokenizer::new".into()),
@@ -66,8 +84,8 @@ fn compile_tokenizer_new<'ctx>(
     
     let struct_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "tokenizer_ptr").map_err(|e| e.to_string())?;
     
-    let field_idx = struct_def.fields.iter().position(|(n, _)| n == "_h").ok_or("Field _h not found in Tokenizer")?;
-    let field_ptr = codegen.builder.build_struct_gep(struct_type, struct_ptr, field_idx as u32, "tokenizer_h").map_err(|e| e.to_string())?;
+    let field_idx = struct_def.fields.iter().position(|(n, _)| n == "handle").ok_or("Field handle not found in Tokenizer")?;
+    let field_ptr = codegen.builder.build_struct_gep(struct_type, struct_ptr, field_idx as u32, "tokenizerhandle").map_err(|e| e.to_string())?;
     codegen.builder.build_store(field_ptr, handle).map_err(|e| e.to_string())?;
     
     Ok((struct_ptr.into(), Type::Struct("Tokenizer".to_string(), vec![])))
@@ -81,10 +99,27 @@ fn compile_tokenizer_encode<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 { return Err("Tokenizer::encode requires 1 argument".into()); }
-    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "_h")?;
-    let (prompt_val, _) = args[0];
+    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
+    let (prompt_val, prompt_ty) = &args[0];
+    
+    let prompt_ptr_val = if let Type::Struct(name, _) = prompt_ty {
+        if name == "String" {
+            let val = codegen.load_struct_i64_field(*prompt_val, prompt_ty, "ptr")?;
+            val.into_int_value()
+        } else {
+             return Err("Tokenizer::encode expects String argument".into());
+        }
+    } else {
+         return Err("Tokenizer::encode expects String argument".into());
+    };
+
+    let prompt_ptr = codegen.builder.build_int_to_ptr(
+        prompt_ptr_val,
+        codegen.context.ptr_type(inkwell::AddressSpace::default()),
+        "prompt_ptr"
+    ).map_err(|e| e.to_string())?;
     let fn_val = codegen.module.get_function("tl_tokenizer_encode").ok_or("tl_tokenizer_encode not found")?;
-    let call = codegen.builder.build_call(fn_val, &[handle.into(), prompt_val.into()], "tok_encode").map_err(|e| e.to_string())?;
+    let call = codegen.builder.build_call(fn_val, &[handle.into(), prompt_ptr.into()], "tok_encode").map_err(|e| e.to_string())?;
     // check_tensor_result(val, msg) is method of codegen.
     let res = codegen.check_tensor_result(call, "tok_encode_error")?;
     Ok((res, Type::Tensor(Box::new(Type::I64), 0)))
@@ -97,7 +132,7 @@ fn compile_tokenizer_decode<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 { return Err("Tokenizer::decode requires 1 argument".into()); }
-    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "_h")?;
+    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
     let (ids_val, _) = args[0];
     let fn_val = codegen.module.get_function("tl_tokenizer_decode").ok_or("tl_tokenizer_decode not found")?;
     let call = codegen.builder.build_call(fn_val, &[handle.into(), ids_val.into()], "tok_decode").map_err(|e| e.to_string())?;
@@ -151,8 +186,8 @@ fn compile_kv_cache_new<'ctx>(
     
     let struct_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "kvcache_ptr").map_err(|e| e.to_string())?;
     
-    let field_idx = struct_def.fields.iter().position(|(n, _)| n == "_h").ok_or("Field _h not found in KVCache")?;
-    let field_ptr = codegen.builder.build_struct_gep(struct_type, struct_ptr, field_idx as u32, "kvcache_h").map_err(|e| e.to_string())?;
+    let field_idx = struct_def.fields.iter().position(|(n, _)| n == "handle").ok_or("Field handle not found in KVCache")?;
+    let field_ptr = codegen.builder.build_struct_gep(struct_type, struct_ptr, field_idx as u32, "kvcachehandle").map_err(|e| e.to_string())?;
     codegen.builder.build_store(field_ptr, handle).map_err(|e| e.to_string())?;
     
     Ok((struct_ptr.into(), Type::Struct("KVCache".to_string(), vec![])))
@@ -165,7 +200,7 @@ fn compile_kv_cache_free<'ctx>(
     instance_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "_h")?;
+    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
     let fn_val = codegen.module.get_function("tl_kv_cache_free").ok_or("tl_kv_cache_free not found")?;
     codegen.builder.build_call(fn_val, &[handle.into()], "kv_free").map_err(|e| e.to_string())?;
     Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
@@ -178,7 +213,7 @@ fn compile_kv_cache_get_k<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 { return Err("KVCache::get_k requires 1 argument".into()); }
-    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "_h")?;
+    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
     let (layer_val, _) = args[0];
     let fn_val = codegen.module.get_function("tl_kv_cache_get_k").ok_or("tl_kv_cache_get_k not found")?;
     let call = codegen.builder.build_call(fn_val, &[handle.into(), layer_val.into()], "kv_get_k").map_err(|e| e.to_string())?;
@@ -193,7 +228,7 @@ fn compile_kv_cache_get_v<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 { return Err("KVCache::get_v requires 1 argument".into()); }
-    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "_h")?;
+    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
     let (layer_val, _) = args[0];
     let fn_val = codegen.module.get_function("tl_kv_cache_get_v").ok_or("tl_kv_cache_get_v not found")?;
     let call = codegen.builder.build_call(fn_val, &[handle.into(), layer_val.into()], "kv_get_v").map_err(|e| e.to_string())?;

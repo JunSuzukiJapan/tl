@@ -52,13 +52,13 @@ impl BuiltinLoader {
             })
             .collect();
 
-        if struct_def.is_none() && enum_def.is_none() {
+        if struct_def.is_none() && enum_def.is_none() && impl_blocks.is_empty() {
             // It might be acceptable if we only have impls (extension methods on existing type?), 
             // but for "Builtin Type Definition" we usually expect the type def too.
             // For now, allow it but log? Or return error?
             // "Type not found in source" sounds reasonable.
             return Err(TlError::Parse { 
-                kind: crate::compiler::error::ParseErrorKind::Generic(format!("Type '{}' not found in source", type_name)),
+                kind: crate::compiler::error::ParseErrorKind::Generic(format!("Type '{}' not found in source and no impl blocks found", type_name)),
                 span: None
             });
         }

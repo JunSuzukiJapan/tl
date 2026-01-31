@@ -115,9 +115,27 @@ fn compile_path_exists<'ctx>(
     if args.len() != 1 { return Err("Path::exists requires 1 argument".into()); }
     
     // 1. Convert String (i8*) to PathBuf
+    // 1. Convert String (i8*) to PathBuf
     let tl_path_new = codegen.module.get_function("tl_path_new").ok_or("tl_path_new not found")?;
-    let path_val = args[0].0; // String (i8*)
-    let path_buf_call = codegen.builder.build_call(tl_path_new, &[path_val.into()], "path_new").map_err(|e| e.to_string())?;
+    let (path_val, path_ty) = &args[0]; // String (i8*)
+    
+    let path_ptr_val = if let Type::Struct(name, _) = path_ty {
+        if name == "String" {
+            let val = codegen.load_struct_i64_field(*path_val, path_ty, "ptr")?;
+            val.into_int_value()
+        } else {
+             return Err("Path::exists argument must be String".into());
+        }
+    } else {
+         return Err("Path::exists argument must be String".into());
+    };
+    let path_ptr = codegen.builder.build_int_to_ptr(
+        path_ptr_val,
+        codegen.context.ptr_type(inkwell::AddressSpace::default()),
+        "path_ptr_pb"
+    ).map_err(|e| e.to_string())?;
+
+    let path_buf_call = codegen.builder.build_call(tl_path_new, &[path_ptr.into()], "path_new").map_err(|e| e.to_string())?;
     
     let path_buf_ptr = match path_buf_call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
@@ -150,7 +168,44 @@ pub fn compile_file_open<'ctx>(
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 2 { return Err("File::open requires 2 arguments".into()); }
     let fn_val = codegen.module.get_function("tl_file_open").ok_or("tl_file_open not found")?;
-    let call = codegen.builder.build_call(fn_val, &[args[0].0.into(), args[1].0.into()], "file_open").map_err(|e| e.to_string())?;
+    
+    // Arg 0: Path
+    let (path_val, path_ty) = &args[0];
+    let path_ptr_val = if let Type::Struct(name, _) = path_ty {
+        if name == "String" {
+            let val = codegen.load_struct_i64_field(*path_val, path_ty, "ptr")?;
+            val.into_int_value()
+        } else {
+             return Err("File::open argument 1 must be String".into());
+        }
+    } else {
+         return Err("File::open argument 1 must be String".into());
+    };
+    let path_ptr = codegen.builder.build_int_to_ptr(
+        path_ptr_val,
+        codegen.context.ptr_type(inkwell::AddressSpace::default()),
+        "path_ptr"
+    ).map_err(|e| e.to_string())?;
+
+    // Arg 1: Mode
+    let (mode_val, mode_ty) = &args[1];
+    let mode_ptr_val = if let Type::Struct(name, _) = mode_ty {
+        if name == "String" {
+            let val = codegen.load_struct_i64_field(*mode_val, mode_ty, "ptr")?;
+            val.into_int_value()
+        } else {
+             return Err("File::open argument 2 must be String".into());
+        }
+    } else {
+         return Err("File::open argument 2 must be String".into());
+    };
+    let mode_ptr = codegen.builder.build_int_to_ptr(
+        mode_ptr_val,
+        codegen.context.ptr_type(inkwell::AddressSpace::default()),
+        "mode_ptr"
+    ).map_err(|e| e.to_string())?;
+
+    let call = codegen.builder.build_call(fn_val, &[path_ptr.into(), mode_ptr.into()], "file_open").map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from File::open".into()),
@@ -165,7 +220,25 @@ pub fn compile_file_exists<'ctx>(
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 { return Err("File::exists requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_file_exists_i64").ok_or("tl_file_exists_i64 not found")?;
-    let call = codegen.builder.build_call(fn_val, &[args[0].0.into()], "file_exists").map_err(|e| e.to_string())?;
+    
+    let (path_val, path_ty) = &args[0];
+    let path_ptr_val = if let Type::Struct(name, _) = path_ty {
+        if name == "String" {
+            let val = codegen.load_struct_i64_field(*path_val, path_ty, "ptr")?;
+            val.into_int_value()
+        } else {
+             return Err("File::exists expects String argument".into());
+        }
+    } else {
+         return Err("File::exists expects String argument".into());
+    };
+    let path_ptr = codegen.builder.build_int_to_ptr(
+        path_ptr_val,
+        codegen.context.ptr_type(inkwell::AddressSpace::default()),
+        "path_ptr"
+    ).map_err(|e| e.to_string())?;
+
+    let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], "file_exists").map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
         _ => return Err("Invalid return from File::exists".into()),

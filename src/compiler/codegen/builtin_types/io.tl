@@ -35,3 +35,5 @@ impl Env {
 impl Http {
     extern fn get(url: String) -> String;
 }
+
+extern fn read_line(prompt: String) -> String;

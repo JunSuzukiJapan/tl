@@ -398,6 +398,9 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_mul", bin_type);
 
     let print_type = void_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_print_string", print_type.clone());
+    add_fn("tl_string_print", print_type.clone());
+    add_fn("tl_display_string", print_type.clone());
     add_fn("tl_tensor_print", print_type.clone());
     add_fn("tl_tensor_display", print_type.clone());
     add_fn("tl_tensor_print_1", print_type.clone());
@@ -477,6 +480,26 @@ pub fn declare_runtime_functions<'ctx>(
     let contains_ptr_type = context.bool_type().fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_vec_ptr_contains", contains_ptr_type);
     add_fn("tl_vec_string_contains", contains_ptr_type);
+
+    // tl_string_len(s: *const c_char) -> i64
+    let len_str_type = i64_type.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_string_len", len_str_type);
+    
+    // tl_string_from_char(c: i32) -> *mut c_char
+    let from_char_type = i8_ptr.fn_type(&[i32_type.into()], false);
+    add_fn("tl_string_from_char", from_char_type);
+
+    // tl_string_new(s: *const c_char) -> *mut StringStruct
+    // StringStruct is { ptr, len }, pointer to it is void* (or specific struct type?)
+    // In LLVM IR we invoke it as returning pointer to { i8*, i64 }.
+    // So we can declare it returning ptr.
+    // The struct type definition is local in expr.rs usually, but we can treat as void* here for declaration?
+    // No, expr.rs casts return value anyway? 
+    // Wait, expr.rs uses build_call. The return type of the FUNCTION matches build_call expectation.
+    // If function returns void*, then build_call returns void*.
+    // But expr.rs expects pointer to StringStruct. void* is fine.
+    let new_string_type = void_ptr.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_string_new", new_string_type);
 
     // tl_tensor_len(t: *mut) -> i64
     let len_type = i64_type.fn_type(&[void_ptr.into()], false);
@@ -566,6 +589,39 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_write_file") {
         execution_engine.add_global_mapping(&f, runtime::tl_write_file as usize);
+    }
+
+    // String mappings
+    if let Some(f) = module.get_function("tl_string_new") {
+        execution_engine.add_global_mapping(&f, runtime::tl_string_new as usize);
+    }
+    if let Some(f) = module.get_function("tl_print_string") {
+        execution_engine.add_global_mapping(&f, runtime::tl_print_string as usize);
+    }
+    // Add mapping for legacy/extern default name
+    if let Some(f) = module.get_function("tl_string_print") {
+        execution_engine.add_global_mapping(&f, runtime::tl_string_print as usize);
+    }
+    if let Some(f) = module.get_function("tl_display_string") {
+        execution_engine.add_global_mapping(&f, runtime::tl_display_string as usize);
+    }
+    if let Some(f) = module.get_function("tl_string_concat") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_concat as usize);
+    }
+    if let Some(f) = module.get_function("tl_string_len") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_len as usize);
+    }
+    if let Some(f) = module.get_function("tl_string_from_char") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_char as usize);
+    }
+    if let Some(f) = module.get_function("tl_string_to_i64") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_to_i64 as usize);
+    }
+    if let Some(f) = module.get_function("tl_string_contains") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_contains as usize);
+    }
+    if let Some(f) = module.get_function("tl_string_char_at") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_char_at as usize);
     }
 
     // tl_checkpoint(ctx: *mut, func: *mut, input: *mut) -> *mut
