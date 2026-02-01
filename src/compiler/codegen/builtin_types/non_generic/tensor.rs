@@ -10,79 +10,108 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     let mut tensor = CodeGenType::new("Tensor");
     
     // Unevaluated static methods (for literal optimizations)
-    tensor.register_unevaluated_static_method("zeros", compile_tensor_zeros, vec![Type::Struct("Vec".into(), vec![Type::I64]), Type::Bool], Type::Tensor(Box::new(Type::F32), 0));
-    tensor.register_unevaluated_static_method("ones", compile_ones, vec![Type::Struct("Vec".into(), vec![Type::I64]), Type::Bool], Type::Tensor(Box::new(Type::F32), 0));
-    tensor.register_unevaluated_static_method("randn", compile_randn, vec![Type::Struct("Vec".into(), vec![Type::I64]), Type::Bool], Type::Tensor(Box::new(Type::F32), 0));
+    // Unevaluated static methods (for literal optimizations)
+    // zeros(shape: Tensor, requires_grad: Bool) -> tl_tensor_ptr_bool_zeros
+    // zeros(shape: Tensor) -> tl_tensor_ptr_zeros
+    let shape_type = Type::Tensor(Box::new(Type::I64), 1);
+
+    tensor.register_unevaluated_static_method("tl_tensor_ptr_bool_zeros", compile_tensor_zeros, vec![shape_type.clone(), Type::Bool], Type::Tensor(Box::new(Type::F32), 0));
+    tensor.register_unevaluated_static_method("tl_tensor_ptr_bool_ones", compile_ones, vec![shape_type.clone(), Type::Bool], Type::Tensor(Box::new(Type::F32), 0));
+    tensor.register_unevaluated_static_method("tl_tensor_ptr_bool_randn", compile_randn, vec![shape_type.clone(), Type::Bool], Type::Tensor(Box::new(Type::F32), 0));
+
+    // 1-arg Overloads
+    tensor.register_unevaluated_static_method("tl_tensor_ptr_zeros", compile_tensor_zeros, vec![shape_type.clone()], Type::Tensor(Box::new(Type::F32), 0));
+    tensor.register_unevaluated_static_method("tl_tensor_ptr_ones", compile_ones, vec![shape_type.clone()], Type::Tensor(Box::new(Type::F32), 0));
+    tensor.register_unevaluated_static_method("tl_tensor_ptr_randn", compile_randn, vec![shape_type.clone()], Type::Tensor(Box::new(Type::F32), 0));
     
     // Evaluated static methods
-    tensor.register_evaluated_static_method("load", compile_load_tensor, vec![Type::String("String".to_string())], Type::Tensor(Box::new(Type::F32), 1));
-    tensor.register_evaluated_static_method("clear_grads", compile_clear_grads, vec![], Type::Void);
-    tensor.register_evaluated_static_method("from_vec_u8", compile_from_vec_u8, vec![Type::Struct("Vec".into(), vec![Type::U8]), Type::Struct("Vec".into(), vec![Type::I64])], Type::Tensor(Box::new(Type::F32), 0));
+    // Evaluated static methods
+    // load(path: String) -> tl_tensor_string_load
+    tensor.register_evaluated_static_method("tl_tensor_string_load", compile_load_tensor, vec![Type::String("String".to_string())], Type::Tensor(Box::new(Type::F32), 1));
+    // clear_grads() -> tl_tensor_clear_grads
+    tensor.register_evaluated_static_method("tl_tensor_clear_grads", compile_clear_grads, vec![], Type::Void);
+    // from_vec_u8(u8s: Vec, shape: Vec) -> tl_tensor_ptr_ptr_from_vec_u8 (Vec is Struct->"ptr")
+    tensor.register_evaluated_static_method("tl_tensor_ptr_ptr_from_vec_u8", compile_from_vec_u8, vec![Type::Struct("Vec".into(), vec![Type::U8]), Type::Struct("Vec".into(), vec![Type::I64])], Type::Tensor(Box::new(Type::F32), 0));
 
     // Instance methods
     // NOTE: Signatures here are proxies. Semantics check for Tensor is currently bypassed (handled by hardcoded match)
     // to support overloading.
     let any_tensor = Type::Tensor(Box::new(Type::F32), 0);
 
-    tensor.register_evaluated_instance_method("sumall", compile_tensor_sumall, vec![], any_tensor.clone());
-    tensor.register_evaluated_instance_method("detach", compile_tensor_detach, vec![], any_tensor.clone());
-    tensor.register_evaluated_instance_method("tril", compile_tensor_tril, vec![Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_sumall", compile_tensor_sumall, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_detach", compile_tensor_detach, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_i64_tril", compile_tensor_tril, vec![Type::I64], any_tensor.clone());
     
-    // Binary ops
-    tensor.register_evaluated_instance_method("mul", compile_tensor_mul, vec![any_tensor.clone()], any_tensor.clone());
-    tensor.register_evaluated_instance_method("add", compile_tensor_add, vec![any_tensor.clone()], any_tensor.clone());
-    tensor.register_evaluated_instance_method("sub", compile_tensor_sub, vec![any_tensor.clone()], any_tensor.clone());
-    tensor.register_evaluated_instance_method("div", compile_tensor_div, vec![any_tensor.clone()], any_tensor.clone());
+    // Binary ops: mul(Tensor) -> tl_tensor_ptr_mul
+    tensor.register_evaluated_instance_method("tl_tensor_ptr_mul", compile_tensor_mul, vec![any_tensor.clone()], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_ptr_add", compile_tensor_add, vec![any_tensor.clone()], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_ptr_sub", compile_tensor_sub, vec![any_tensor.clone()], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_ptr_div", compile_tensor_div, vec![any_tensor.clone()], any_tensor.clone());
     
-    tensor.register_evaluated_instance_method("contiguous", compile_tensor_contiguous, vec![], any_tensor.clone());
-    tensor.register_evaluated_instance_method("conv2d", compile_tensor_conv2d, vec![any_tensor.clone(), Type::I64, Type::I64], any_tensor.clone());
-    tensor.register_evaluated_instance_method("clamp", compile_tensor_clamp, vec![Type::I64, Type::I64], any_tensor.clone()); // Simplification
-    tensor.register_evaluated_instance_method("clone", compile_tensor_clone, vec![], any_tensor.clone());
-    tensor.register_evaluated_instance_method("grad", compile_tensor_grad, vec![], any_tensor.clone());
-    tensor.register_evaluated_instance_method("matmul_quantized", compile_tensor_matmul_quantized, vec![any_tensor.clone()], any_tensor.clone());
-    tensor.register_evaluated_instance_method("to_i64", compile_tensor_to_i64, vec![], Type::Tensor(Box::new(Type::I64), 0));
-    tensor.register_evaluated_instance_method("cuda", compile_tensor_cuda, vec![], any_tensor.clone());
-    tensor.register_evaluated_instance_method("cpu", compile_tensor_cpu, vec![], any_tensor.clone());
-    tensor.register_evaluated_instance_method("item", compile_tensor_item, vec![], Type::F32);
+    tensor.register_evaluated_instance_method("tl_tensor_contiguous", compile_tensor_contiguous, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_ptr_i64_i64_conv2d", compile_tensor_conv2d, vec![any_tensor.clone(), Type::I64, Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_i64_i64_clamp", compile_tensor_clamp, vec![Type::I64, Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_clone", compile_tensor_clone, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_grad", compile_tensor_grad, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_ptr_matmul_quantized", compile_tensor_matmul_quantized, vec![any_tensor.clone()], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_to_i64", compile_tensor_to_i64, vec![], Type::Tensor(Box::new(Type::I64), 0));
+    tensor.register_evaluated_instance_method("tl_tensor_cuda", compile_tensor_cuda, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_cpu", compile_tensor_cpu, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_item", compile_tensor_item, vec![], Type::F32);
+    tensor.register_evaluated_instance_method("tl_tensor_shape", compile_tensor_shape, vec![], Type::Struct("Vec".into(), vec![Type::I64]));
+
     
-    // Reduce ops with potential overloading (using 0-arg version as default for registration, but semantics overwrites)
-    tensor.register_evaluated_instance_method("max", compile_tensor_max_impl, vec![], any_tensor.clone());
-    tensor.register_evaluated_instance_method("min", compile_tensor_min_impl, vec![], any_tensor.clone());
-    tensor.register_evaluated_instance_method("mean", compile_tensor_mean_impl, vec![], any_tensor.clone());
-    tensor.register_evaluated_instance_method("sum", compile_tensor_sum_impl, vec![], any_tensor.clone());
-    tensor.register_evaluated_instance_method("argmax", compile_tensor_argmax_impl, vec![Type::I64], any_tensor.clone()); // argmax(dim)
-    tensor.register_evaluated_instance_method("argmin", compile_tensor_argmin_impl, vec![Type::I64], any_tensor.clone());
+    // Reduce ops with potential overloading
+    tensor.register_evaluated_instance_method("tl_tensor_max", compile_tensor_max_impl, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_min", compile_tensor_min_impl, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_mean", compile_tensor_mean_impl, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_sum", compile_tensor_sum_impl, vec![], any_tensor.clone());
+
+    // Overloads for reduction ops (dim, keepdim)
+    tensor.register_evaluated_instance_method("tl_tensor_i64_max", compile_tensor_max_impl, vec![Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_i64_min", compile_tensor_min_impl, vec![Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_i64_mean", compile_tensor_mean_impl, vec![Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_i64_sum", compile_tensor_sum_impl, vec![Type::I64], any_tensor.clone());
+
+    tensor.register_evaluated_instance_method("tl_tensor_i64_bool_max", compile_tensor_max_impl, vec![Type::I64, Type::Bool], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_i64_bool_min", compile_tensor_min_impl, vec![Type::I64, Type::Bool], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_i64_bool_mean", compile_tensor_mean_impl, vec![Type::I64, Type::Bool], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_i64_bool_sum", compile_tensor_sum_impl, vec![Type::I64, Type::Bool], any_tensor.clone());
+    
+    tensor.register_evaluated_instance_method("tl_tensor_i64_argmax", compile_tensor_argmax_impl, vec![Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tl_tensor_i64_argmin", compile_tensor_argmin_impl, vec![Type::I64], any_tensor.clone());
     
     // Legacy support for methods that might be missing or handled via generics?
     // save, reshape, to, transpose are missing from logical list?
     // Checking expr.rs list...
     // Found: save, reshape, to, transpose
-    tensor.register_evaluated_instance_method("save", compile_tensor_save, vec![Type::String("String".to_string())], Type::Void);
-    tensor.register_evaluated_instance_method("reshape", compile_tensor_reshape, vec![Type::Struct("Vec".into(), vec![Type::I64])], Type::Tensor(Box::new(Type::F32), 0));
+    tensor.register_evaluated_instance_method("tl_tensor_string_save", compile_tensor_save, vec![Type::String("String".to_string())], Type::Void);
+    // reshape takes Vec<I64> -> ptr
+    tensor.register_evaluated_instance_method("tl_tensor_ptr_reshape", compile_tensor_reshape, vec![Type::Struct("Vec".into(), vec![Type::I64])], Type::Tensor(Box::new(Type::F32), 0));
     // to(device: String) -> Tensor
     tensor.register_evaluated_instance_method(
-        "to", 
+        "tl_tensor_string_to", 
         compile_tensor_to_device,
         vec![Type::String("String".to_string())],
         Type::Tensor(Box::new(Type::F32), 0)
     );
     // transpose(d0: I64, d1: I64) -> Tensor
     tensor.register_evaluated_instance_method(
-        "transpose", 
+        "tl_tensor_i64_i64_transpose", 
         compile_tensor_transpose,
         vec![Type::I64, Type::I64],
         Type::Tensor(Box::new(Type::F32), 0)
     );
     // add_assign(val: Tensor) -> Void
     tensor.register_evaluated_instance_method(
-        "add_assign", 
+        "tl_tensor_ptr_add_assign", 
         compile_tensor_add_assign,
         vec![Type::Tensor(Box::new(Type::F32), 0)],
         Type::Void
     );
     // sub_assign(val: Tensor) -> Void
     tensor.register_evaluated_instance_method(
-        "sub_assign", 
+        "tl_tensor_ptr_sub_assign", 
         compile_tensor_sub_assign,
         vec![Type::Tensor(Box::new(Type::F32), 0)],
         Type::Void
@@ -207,6 +236,27 @@ fn compile_tensor_sub_assign<'ctx>(
         codegen.context.i64_type().const_int(0, false).into(),
         Type::Void,
     ))
+}
+
+
+
+fn compile_tensor_shape<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function("tl_tensor_shape").ok_or("tl_tensor_shape not found")?;
+    let res = match codegen
+        .builder
+        .build_call(fn_val, &[obj_val.into()], "shape_res")
+        .map_err(|e| e.to_string())?
+        .try_as_basic_value()
+    {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from shape()".into()),
+    };
+    Ok((res, Type::Struct("Vec".into(), vec![Type::I64])))
 }
 
 fn compile_tensor_sumall<'ctx>(

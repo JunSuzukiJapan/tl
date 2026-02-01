@@ -2531,6 +2531,10 @@ pub fn declare_runtime_functions<'ctx>(
     let to_i64_type = void_ptr.fn_type(&[void_ptr.into()], false);
     module.add_function("tl_tensor_to_i64", to_i64_type, None);
 
+    // tl_tensor_shape(t: *mut) -> *mut Vec
+    let shape_type = void_ptr.fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_tensor_shape", shape_type, None);
+
     // tl_load_all_params(path: *const i8) -> void
     let load_all_type = void_type.fn_type(&[i8_ptr.into()], false);
     module.add_function("tl_load_all_params", load_all_type, None);
