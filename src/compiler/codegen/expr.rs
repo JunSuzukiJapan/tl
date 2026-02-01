@@ -1,6 +1,6 @@
 use super::CodeGenerator;
 use crate::compiler::ast::*;
-use inkwell::types::BasicType;
+
 use inkwell::values::*;
 use std::collections::{HashMap, HashSet};
 
@@ -652,9 +652,7 @@ fn compile_tensor_slice<'ctx>(
     if args.len() != 2 {
         return Err("slice requires 2 arguments".into());
     }
-    if matches!(obj_ty, Type::ScalarArray(_, _)) {
-        return Err("slice() does not support ScalarArray. Convert to Tensor first using Tensor::new() or similar".into());
-    }
+
 
     let (start_val, _) = args[0].clone();
     let (len_val, _) = args[1].clone();
@@ -1138,7 +1136,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  Type::Struct(name.clone(), inner_args.iter().map(|t| self.substitute_type_generic(t, generics, args)).collect())
             }
              Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.substitute_type_generic(inner, generics, args)), *rank),
-             Type::Vec(inner) => Type::Vec(Box::new(self.substitute_type_generic(inner, generics, args))),
+
              _ => ty.clone(),
         }
     }
@@ -1310,7 +1308,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, String> {
         let struct_name = match obj_ty {
             Type::Struct(name, _) => name.clone(),
-            Type::Vec(_) => "Vec".to_string(),
+
             Type::String(_) => "String".to_string(),
             _ => return Err(format!("Expected struct type for field {} (got {:?})", field_name, obj_ty)),
         };
@@ -1716,7 +1714,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_aq").map_err(|e| e.to_string())?;
                 self.builder.build_call(acquire_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
             }
-            Type::Struct(_, _) | Type::String(_) | Type::Enum(_, _) | Type::Vec(_) => {
+            Type::Struct(_, _) | Type::String(_) | Type::Enum(_, _) => {
                 let inc_fn = self.module.get_function("tl_ptr_inc_ref")
                     .or_else(|| {
                          let void_ty = self.context.void_type();
@@ -1907,8 +1905,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             Type::Bool => self.context.bool_type().into(),
                             Type::Tensor(_, _)
                             | Type::Struct(_, _)
-                            | Type::Enum(_, _)
-                            | Type::Vec(_) => self
+                            | Type::Enum(_, _) => self
                                 .context
                                 .ptr_type(inkwell::AddressSpace::default())
                                 .into(),
@@ -2002,11 +1999,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 Type::F32 => self.context.f32_type().into(),
                                 Type::I64 => self.context.i64_type().into(),
                                 Type::Bool => self.context.bool_type().into(),
-                                Type::Tensor(_, _)
-                                | Type::Struct(_, _)
-                                | Type::Enum(_, _)
-
-                                | Type::Vec(_) => self
+                                Type::Struct(_, _)
+                                | Type::Enum(_, _) => self
                                     .context
                                     .ptr_type(inkwell::AddressSpace::default())
                                     .into(),
@@ -2077,9 +2071,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 Type::Bool => self.context.bool_type().into(),
                                 Type::Tensor(_, _)
                                 | Type::Struct(_, _)
-                                | Type::Enum(_, _)
-
-                                | Type::Vec(_) => self
+                                | Type::Enum(_, _) => self
                                     .context
                                     .ptr_type(inkwell::AddressSpace::default())
                                     .into(),
@@ -2246,97 +2238,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                          let i = self.builder.build_float_to_unsigned_int(f, self.context.i8_type(), "cast_u8").map_err(|e| e.to_string())?;
                          Ok((i.into(), Type::U8))
                     }
-                    (Type::ScalarArray(elem_ty, len), Type::Tensor(target_elem, _)) => {
-                        // Convert ScalarArray to Tensor and then cast if necessary
-                        let tensor_val = match elem_ty.as_ref() {
-                            Type::I64 => {
-                                let from_fn = self
-                                    .module
-                                    .get_function("tl_tensor_from_i64_array")
-                                    .ok_or("tl_tensor_from_i64_array not found")?;
-                                let len_val = self
-                                    .context
-                                    .i64_type()
-                                    .const_int(format!("{}", len).parse().unwrap(), false);
-                                // val is pointer to [i64; N]
-                                let ptr = val.into_pointer_value();
-                                // cast to i64*
-                                let i64_ptr_ty =
-                                    self.context.ptr_type(inkwell::AddressSpace::default());
-                                let cast_ptr = self
-                                    .builder
-                                    .build_pointer_cast(ptr, i64_ptr_ty, "cast_ptr")
-                                    .map_err(|e| e.to_string())?;
-
-                                let call = self
-                                    .builder
-                                    .build_call(
-                                        from_fn,
-                                        &[cast_ptr.into(), len_val.into()],
-                                        "t_from_arr",
-                                    )
-                                    .map_err(|e| e.to_string())?;
-                                match call.try_as_basic_value() {
-                                    inkwell::values::ValueKind::Basic(v) => v,
-                                    _ => return Err("Invalid return from tensor creation".into()),
-                                }
-                            }
-                            _ => {
-                                return Err(format!(
-                                    "Unsupported ScalarArray element type {:?}",
-                                    elem_ty
-                                ))
-                            }
-                        };
-
-                        if *elem_ty == *target_elem {
-                            // self.emit_register_tensor(tensor_val, target_type)?;
-
-                            Ok((tensor_val, target_type.clone()))
-                        } else {
-                            // Cast the newly created tensor
-                            match target_elem.as_ref() {
-                                Type::F32 => {
-                                    let cast_fn = self
-                                        .module
-                                        .get_function("tl_tensor_to_f32")
-                                        .ok_or("tl_tensor_to_f32 not found")?;
-                                    let call = self
-                                        .builder
-                                        .build_call(cast_fn, &[tensor_val.into()], "cast_t")
-                                        .map_err(|e| e.to_string())?;
-                                    let res = match call.try_as_basic_value() {
-                                        ValueKind::Basic(v) => v,
-                                        _ => return Err("Invalid return".into()),
-                                    };
-                                    // self.emit_register_tensor(res, target_type)?;
-
-                                    Ok((res, target_type.clone()))
-                                }
-                                Type::I64 => {
-                                    let cast_fn = self
-                                        .module
-                                        .get_function("tl_tensor_to_i64")
-                                        .ok_or("tl_tensor_to_i64 not found")?;
-                                    let call = self
-                                        .builder
-                                        .build_call(cast_fn, &[tensor_val.into()], "cast_t")
-                                        .map_err(|e| e.to_string())?;
-                                    let res = match call.try_as_basic_value() {
-                                        ValueKind::Basic(v) => v,
-                                        _ => return Err("Invalid return".into()),
-                                    };
-                                    // self.emit_register_tensor(res, target_type)?;
-
-                                    Ok((res, target_type.clone()))
-                                }
-                                _ => Err(format!(
-                                    "Unsupported tensor cast target: {:?}",
-                                    target_elem
-                                )),
-                            }
-                        }
-                    }
                     (Type::Tensor(_, _), Type::Tensor(inner_dst, _)) => match inner_dst.as_ref() {
                         Type::F32 => {
                             let cast_fn = self
@@ -2500,7 +2401,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Type::Char(_) => self.context.i32_type().into(),
                         Type::Struct(_, _) 
  
-                        | Type::Vec(_)
+
                         | Type::Enum(_, _)
                         | Type::Tuple(_) => self
                             .context
@@ -2534,22 +2435,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                         if val.is_pointer_value() {
                             let ptr = val.into_pointer_value();
 
-                            // ScalarArray: load the pointer from alloca (it stores ptr to global)
-                            if let Type::ScalarArray(_, _) = ty {
-                                let ptr_type =
-                                    self.context.ptr_type(inkwell::AddressSpace::default());
-                                let loaded_ptr = self
-                                    .builder
-                                    .build_load(ptr_type, ptr, &format!("{}_ptr", name))
-                                    .map_err(|e| e.to_string())?;
-                                return Ok((loaded_ptr, ty.clone()));
-                            }
-
                             let llvm_ty: inkwell::types::BasicTypeEnum = match ty {
                                 Type::I64 => self.context.i64_type().into(),
                                 Type::F32 => self.context.f32_type().into(),
                                 Type::Bool => self.context.bool_type().into(),
-                                Type::Tensor(_, _) | Type::Vec(_) | Type::String(_) => self
+                                Type::Tensor(_, _) | Type::String(_) => self
                                     .context
                                     .ptr_type(inkwell::AddressSpace::default())
                                     .into(),
@@ -2664,58 +2554,24 @@ impl<'ctx> CodeGenerator<'ctx> {
             ExprKind::IndexAccess(target, indices) => {
                 let (val, val_type) = self.compile_expr(target)?;
                 match val_type {
-                    // OPTIMIZATION: ScalarArray direct access (no runtime call)
-                    Type::ScalarArray(elem_type, len) => {
-                        if indices.len() != 1 {
-                            return Err("ScalarArray only supports 1D index".into());
-                        }
-
-                        let llvm_elem_type: inkwell::types::BasicTypeEnum = match elem_type.as_ref()
-                        {
-                            Type::I64 => self.context.i64_type().into(),
-                            Type::I32 => self.context.i32_type().into(),
-                            Type::F32 => self.context.f32_type().into(),
-                            _ => self.context.f32_type().into(),
+                    Type::Struct(ref name, ref args) if name == "Vec" || name.starts_with("Vec_") => {
+                        let elem_type = if name == "Vec" {
+                             if args.is_empty() { return Err("Vec missing generic arg".into()); }
+                             args[0].clone()
+                        } else {
+                             let suffix = &name[4..];
+                             match suffix {
+                                 "i64" => Type::I64,
+                                 "f32" => Type::F32,
+                                 "bool" => Type::Bool,
+                                 _ => Type::Struct(suffix.to_string(), vec![])
+                             }
                         };
-                        let i64_type = self.context.i64_type();
-                        let _array_type = llvm_elem_type.array_type(len as u32);
-                        let array_ptr = val.into_pointer_value();
-
-                        let (idx_val, idx_ty) = self.compile_expr(&indices[0])?;
-                        let idx_int = match idx_ty {
-                            Type::I64 => idx_val.into_int_value(),
-                            Type::I32 => self
-                                .builder
-                                .build_int_z_extend(idx_val.into_int_value(), i64_type, "zext")
-                                .map_err(|e| e.to_string())?,
-                            _ => return Err("Index must be integer".into()),
-                        };
-
-                        // Direct GEP into array
-                        let elem_ptr = unsafe {
-                            self.builder
-                                .build_in_bounds_gep(
-                                    llvm_elem_type,
-                                    array_ptr,
-                                    &[idx_int],
-                                    "scalar_elem_ptr",
-                                )
-                                .map_err(|e| e.to_string())?
-                        };
-
-                        let loaded = self
-                            .builder
-                            .build_load(llvm_elem_type, elem_ptr, "scalar_elem")
-                            .map_err(|e| e.to_string())?;
-
-                        Ok((loaded, *elem_type))
-                    }
-                    Type::Vec(elem_type) => {
                          if indices.len() != 1 {
                             return Err("Vec only supports 1D index".into());
                         }
 
-                        let llvm_elem_type = self.get_llvm_type(elem_type.as_ref())?;
+                        let llvm_elem_type = self.get_llvm_type(&elem_type)?;
                         let i64_type = self.context.i64_type();
                         let vec_ptr = val.into_pointer_value();
 
@@ -2729,12 +2585,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                             _ => return Err("Index must be integer".into()),
                         };
 
+                        let i64_type = self.context.i64_type();
+                        let vec_struct_ty = self.context.struct_type(&[i64_type.into(), i64_type.into(), i64_type.into()], false);
+                        let ptr_field_addr = self.builder.build_struct_gep(vec_struct_ty, vec_ptr, 1, "vec_ptr_field")
+                            .map_err(|e| e.to_string())?;
+
+                        let ptr_int = self.builder
+                            .build_load(self.context.i64_type(), ptr_field_addr, "vec_ptr_val")
+                            .map_err(|e| e.to_string())?
+                            .into_int_value();
+                        
+                        let elem_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                        let buffer_ptr = self.builder
+                            .build_int_to_ptr(ptr_int, elem_ptr_ty, "vec_buffer_ptr")
+                            .map_err(|e| e.to_string())?;
+
                         // Direct GEP into generic buffer
                         let elem_ptr = unsafe {
                             self.builder
                                 .build_in_bounds_gep(
                                     llvm_elem_type,
-                                    vec_ptr,
+                                    buffer_ptr,
                                     &[idx_int],
                                     "vec_elem_ptr",
                                 )
@@ -2746,7 +2617,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .build_load(llvm_elem_type, elem_ptr, "vec_elem")
                             .map_err(|e| e.to_string())?;
 
-                        Ok((loaded, *elem_type.clone()))
+                        Ok((loaded, elem_type))
                     }
                     Type::Tensor(inner, _) => {
                         // Prepare indices array
@@ -2946,7 +2817,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         };
                         Ok((res, Type::F32))
                     }
-                    _ => Err("Index access only on Tensor or ScalarArray".into()),
+                    _ => Err("Index access only on Tensor".into()),
                 }
             }
             ExprKind::UnOp(op, expr) => {
@@ -3547,9 +3418,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 match _ty {
                     Type::Tensor(_, _) 
                     | Type::Struct(_, _) 
-                    | Type::Enum(_, _) 
-                    | Type::Vec(_)
-                    | Type::String(_) => {
+
+                    | Type::Enum(_, _) => {
                         let inc_fn = self.module.get_function("tl_ptr_inc_ref")
                             .or_else(|| {
                                 let void_ty = self.context.void_type();
@@ -3953,254 +3823,83 @@ impl<'ctx> CodeGenerator<'ctx> {
         let method_name = method;
 
 
-        // Try TypeManager first
+        // 1. Try TypeManager (AST-defined methods)
         let method_enum = self.type_manager.get_type(type_name)
              .and_then(|t| t.get_static_method(method))
              .copied();
 
         if let Some(method_enum) = method_enum {
              match method_enum {
-                     StaticMethod::Evaluated(func) => {
-                         let mut compiled_args = Vec::new();
-                         for arg in args {
-                             compiled_args.push(self.compile_expr(arg)?);
-                         }
-                         return func(self, compiled_args, Some(target_type));
+                 StaticMethod::Evaluated(func) => {
+                     let mut compiled_args = Vec::new();
+                     for arg in args {
+                         compiled_args.push(self.compile_expr(arg)?);
                      }
-                     StaticMethod::Unevaluated(func) => {
-                         return func(self, args, Some(target_type));
-                     }
+                     return func(self, compiled_args, Some(target_type));
                  }
-            }
+                 StaticMethod::Unevaluated(func) => {
+                     return func(self, args, Some(target_type));
+                 }
+             }
+        }
+        
+        // 2. Generic Resolver Fallback
+        // Resolves to runtime function: tl_{type}_{generics}_{method}
+        let resolver_generics = match target_type {
 
-        // Result<T, E>
-        if struct_name == "Result" {
-             // Pre-compile arguments to infer types if needed
+            Type::Struct(n, args) => {
+                 if n == type_name { args.clone() } else { vec![] }
+            },
+            Type::Enum(n, args) => {
+                 if n == type_name { args.clone() } else { vec![] }
+            },
+            _ => vec![],
+        };
+        
+        // Remove Type::Map handling as it doesn't exist.
+        
+        let runtime_fn_name = crate::compiler::codegen::builtin_types::resolver::resolve_static_method_name(
+            type_name, 
+            method, 
+            &resolver_generics
+        );
+        
+        if let Some(fn_val) = self.module.get_function(&runtime_fn_name) {
              let mut compiled_args = Vec::new();
-             for arg_expr in args {
-                 compiled_args.push(self.compile_expr(arg_expr)?);
+             for arg in args {
+                 compiled_args.push(self.compile_expr(arg)?);
              }
-
-             // Extract generics
-             let (t_ty, e_ty) = match target_type {
-                 Type::Struct(_, gens) | Type::Enum(_, gens) => {
-                     if gens.len() == 2 {
-                         (gens[0].clone(), gens[1].clone())
-                     } else {
-                         // Fallback inference: Infer from arguments
-                         if method == "Ok" && !compiled_args.is_empty() {
-                              (compiled_args[0].1.clone(), Type::Void)
-                         } else if method == "Err" && !compiled_args.is_empty() {
-                              (Type::Void, compiled_args[0].1.clone())
-                         } else {
-                              (Type::I64, Type::I64) 
-                         }
-                     }
-                 }
-                 _ => {
-                      if method == "Ok" && !compiled_args.is_empty() {
-                           (compiled_args[0].1.clone(), Type::Void)
-                      } else if method == "Err" && !compiled_args.is_empty() {
-                           (Type::Void, compiled_args[0].1.clone())
-                      } else {
-                           (Type::I64, Type::I64)
-                      }
-                 }
-             };
-
-             // Build fields: tag + payloads
-             let mut fields = vec![self.context.i32_type().into()]; // Tag
+             let call_args: Vec<inkwell::values::BasicMetadataValueEnum> = compiled_args.iter().map(|(v,_)| (*v).into()).collect();
              
-             let mut t_idx = 0;
-             let mut e_idx = 0;
-             
-             // Append T if not void
-             if t_ty != Type::Void {
-                 fields.push(self.get_llvm_type(&t_ty)?);
-                 t_idx = fields.len() - 1;
-             }
-             
-             // Append E if not void
-             if e_ty != Type::Void {
-                 fields.push(self.get_llvm_type(&e_ty)?);
-                 e_idx = fields.len() - 1;
-             }
-
-             let result_struct_ty = self.context.struct_type(&fields, false);
-             let ptr = self.builder.build_alloca(result_struct_ty, "result_val").unwrap();
-             
-             // Set tag
-             let tag_ptr = self.builder.build_struct_gep(result_struct_ty, ptr, 0, "tag_ptr").unwrap();
-             let tag_val = if method == "Ok" { 0 } else { 1 };
-             self.builder.build_store(tag_ptr, self.context.i32_type().const_int(tag_val, false)).unwrap();
-             
-             // Set payload via method
-             if method == "Ok" {
-                 if args.len() != 1 { return Err("Ok expects 1 arg".into()); }
-                 if t_ty != Type::Void {
-                      let val = compiled_args[0].0;
-                      let t_ptr = self.builder.build_struct_gep(result_struct_ty, ptr, t_idx as u32, "t_ptr").unwrap();
-                      self.builder.build_store(t_ptr, val).unwrap();
-                 }
-             } else if method == "Err" {
-                 if args.len() != 1 { return Err("Err expects 1 arg".into()); }
-                 if e_ty != Type::Void {
-                      let val = compiled_args[0].0;
-                      let e_ptr = self.builder.build_struct_gep(result_struct_ty, ptr, e_idx as u32, "e_ptr").unwrap();
-                      self.builder.build_store(e_ptr, val).unwrap();
-                 }
-             } else {
-                 return Err("Unknown Result method".into());
-             }
-             
-             let result_type = Type::Enum("Result".to_string(), vec![t_ty, e_ty]);
-             return Ok((ptr.into(), result_type));
-        }
-
-
-        let simple_struct_name = struct_name.split('<').next().unwrap_or(struct_name);
-        let ty = Type::Struct(simple_struct_name.to_string(), vec![]); // Reconstruct a basic Type for old logic
-
-        // Handle Vec<T>::new()
-        let inner_opt = match &ty {
-            Type::Vec(inner) => Some(inner.clone()),
-
-            Type::Struct(n, args) if n == "Vec" => {
-                if args.is_empty() {
-                    Some(Box::new(Type::I64))
-                } else if args.len() == 1 {
-                    Some(Box::new(args[0].clone()))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        };
-
-        if let Some(inner) = inner_opt {
-            if method_name == "new" {
-                 let fn_name = match inner.as_ref() {
-                     Type::U8 => "tl_vec_u8_new",
-                     Type::I64 => "tl_vec_i64_new",
-                     Type::F32 => "tl_vec_f32_new",
-                     Type::String(_) => "tl_vec_string_new",
-                     _ => "tl_vec_ptr_new",
-                 };
-                 let fn_val = self.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
-                 let call = self.builder.build_call(fn_val, &[], "vec_new").map_err(|e| e.to_string())?;
-                 let res = match call.try_as_basic_value() {
-                     inkwell::values::ValueKind::Basic(v) => v,
-                     _ => return Err("Invalid return from vec.new()".into()),
-                 };
-                 // For ptr, no cast needed as it returns void* equivalent (or Vec<void*> ptr) which is opaque ptr?
-                 // But wait, tl_vec_ptr_new returns *mut Vec<*mut c_void>.
-                 // LLVM sees it as pointer.
-                 // We might need to pointer cast if strict typing is used.
-                 // But in TL runtime, all objects are pointers.
-                 // Return correct type Vec<inner> instead of ty.clone() which may be Vec<Void>
-                 return Ok((res, Type::Vec(inner)));
-            }
-        }
-
-
-
-
-
-
-
-        if type_name == "Map" && method_name == "load" {
-            if args.len() != 1 {
-                return Err("Map::load requires 1 argument".into());
-            }
-            let (path_val, _) = self.compile_expr(&args[0])?;
-            let fn_val = self
-                .module
-                .get_function("tl_gguf_load")
-                .ok_or("tl_gguf_load not found")?;
-            let call = self
-                .builder
-                .build_call(fn_val, &[path_val.into()], "map_load")
+             let call = self.builder.build_call(fn_val, &call_args, "static_call")
                 .map_err(|e| e.to_string())?;
-            let res = match call.try_as_basic_value() {
-                inkwell::values::ValueKind::Basic(v) => v,
-                _ => return Err("Invalid return from Map::load".into()),
-            };
-            return Ok((res, Type::Struct("Map".to_string(), vec![])));
-        }
-
-
-
-
-
-
-
-        // 1. StaticMethodManager Lookup
-        let method_opt = self
-            .static_methods
-            .get(type_name)
-            .and_then(|m| m.get(method_name))
-            .copied();
-        if let Some(method) = method_opt {
-            match method {
-                StaticMethod::Evaluated(func) => {
-                    let mut compiled_args = Vec::with_capacity(args.len());
-                    let mut compiled_args_types = Vec::with_capacity(args.len());
-                    for arg in args {
-                        let (val, ty) = self.compile_expr(arg)?;
-                        // Auto-conversion: ScalarArray -> Tensor (Generic Rule)
-                        let (val, ty) = if let Type::ScalarArray(_, _) = ty {
-                            let (new_val, new_ty) = self.ensure_tensor_v2(arg, 0)?;
-                            (new_val.try_into().unwrap(), new_ty)
-                        } else {
-                            (val, ty)
-                        };
-                        compiled_args.push((val, ty.clone()));
-                        compiled_args_types.push((val, ty));
-                    }
-                    let res = func(self, compiled_args, Some(target_type));
-
-                    return res;
-                }
-                StaticMethod::Unevaluated(func) => {
-                    return func(self, args, Some(target_type));
-                }
-            }
-        }
-
-
-        // 2. Resolve Mangled Name
-        let simple_type_name = if struct_name.contains("::") {
-            struct_name.split("::").last().unwrap()
-        } else {
-            &struct_name
-        };
-        let mangled_name = format!("tl_{}_{}", simple_type_name, method);
-        let stdlib_name = format!("tl_{}_{}", simple_type_name.to_lowercase(), method);
-
-        // 3. Lookup Function (Chain)
-        // 3a. Generic Lookup
-        let mut resolved_generics = vec![];
-
-        let generic_result: Option<(inkwell::values::FunctionValue<'ctx>, String)> = if self.generic_impls.contains_key(type_name) {
-             let generics = if let Type::Struct(n, args) = target_type {
-                 if n == type_name {
-                     if args.is_empty() && type_name == "HashMap" {
-                         vec![
-                             Type::String("String".to_string()),
-                             Type::Struct("Tensor".to_string(), vec![])
-                         ]
-                     } else {
-                         args.clone()
-                     }
-                 } else {
-                     vec![]
-                 }
-             } else {
-                 vec![]
+                
+             let res_val = match call.try_as_basic_value() {
+                 inkwell::values::ValueKind::Basic(v) => v,
+                 _ => self.context.i64_type().const_int(0, false).into(), // Void/Unit/Ptr return
              };
              
-             resolved_generics = generics.clone();
+             // For constructors, return target_type.
+             // For other methods, we might need correct return type.
+             // But existing hardcoded logic often returned target_type or hardcoded.
+             // We'll trust target_type for now if it's a constructor-like call, 
+             // but strictly we should know the function signature.
+             // Given limitations, we return target_type for constructors (new) 
+             // and infer or fallback for others?
+             // Actually, if we resolved via resolver, we assume it matches.
+             // Let's return target_type if method == "new", else ?
+             // The old Vec logic returned target_type.
+             
+             return Ok((res_val, target_type.clone()));
+        }
 
+        // 3. User Generic Fallback (Monomorphize)
+        let generics = match target_type {
+            Type::Struct(n, args) if n == type_name => args.clone(),
+            _ => vec![],
+        };
+        
+        let generic_result = if self.generic_impls.contains_key(type_name) {
              if let Ok(name) = self.monomorphize_method(type_name, method, &generics) {
                  self.module.get_function(&name).map(|f| (f, name))
              } else {
@@ -4209,6 +3908,14 @@ impl<'ctx> CodeGenerator<'ctx> {
         } else {
             None
         };
+        
+        let simple_type_name = if struct_name.contains("::") {
+            struct_name.split("::").last().unwrap()
+        } else {
+            &struct_name
+        };
+        let mangled_name = format!("tl_{}_{}", simple_type_name, method);
+        let stdlib_name = format!("tl_{}_{}", simple_type_name.to_lowercase(), method);
 
         let (func, actual_name) = if let Some((f, name)) = generic_result {
              (f, name)
@@ -4282,9 +3989,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // 3. Generic Fallback: Compile Args & Handle SRET
         // Get return type - first check registered method_return_types, then fall back to signature inference
-        let ret_ty = if struct_name == "HashMap" && method == "new" && !resolved_generics.is_empty() {
-             Type::Struct("HashMap".to_string(), resolved_generics.clone())
-        } else if let Some(ret) = self.method_return_types.get(&actual_name) {
+        // 3. Generic Fallback: Compile Args & Handle SRET
+        // Get return type - first check registered method_return_types, then fall back to signature inference
+        let ret_ty = if let Some(ret) = self.method_return_types.get(&actual_name) {
             ret.clone()
         } else {
             self.get_return_type_from_signature(func)
@@ -4302,11 +4009,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut compiled_args_types = Vec::with_capacity(args.len());
         for arg in args {
             let (val, ty) = self.compile_expr(arg)?;
-            // Auto-conversion: ScalarArray -> Tensor (Generic Rule)
-            let (val, ty) = if let Type::ScalarArray(_, _) = ty {
-                let (new_val, new_ty) = self.ensure_tensor_v2(arg, 0)?;
-                (new_val.try_into().unwrap(), new_ty)
-            } else if type_name == "VarBuilder" {
+
+            let (val, ty) = if type_name == "VarBuilder" {
                  if let Type::String(_) = ty {
                      // VarBuilder methods expect char* (i8*) not String struct
                      let ptr_to_struct = val.into_pointer_value();
@@ -4667,19 +4371,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         let (flat_data, shape, all_ints) = flatten_const(elements)?;
         let rank = shape.len();
         let len = flat_data.len();
-
-        // OPTIMIZATION: For small 1D constant tensors (≤8 elements), use heap-based scalar array
-        // DISABLED: This causes ABI mismatch with functions expecting OpaqueTensor* (Tensor<T,N>).
-        // Until ScalarArray can be auto-converted or functions support it, we must force OpaqueTensor.
-        if false && rank == 1 && len <= 8 && len > 0 {
-            let (_elem_ty, _llvm_elem_type): (Type, inkwell::types::BasicTypeEnum) = if all_ints {
-                (Type::I64, self.context.i64_type().into())
-            } else {
-                (Type::F32, self.context.f32_type().into())
-            };
-            // ... dead code ...
-            return Err("Optimization disabled".into());
-        }
 
         // Fall back to standard tensor creation for larger tensors (and now all tensors)
         let len = len as u64;
@@ -5326,7 +5017,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             Type::Enum(name, args) => Type::Enum(name.clone(), args.iter().map(|t| self.substitute_type_simple_bind(t, subst)).collect()),
             Type::Tensor(t, rank) => Type::Tensor(Box::new(self.substitute_type_simple_bind(t, subst)), *rank),
-            Type::Vec(t) => Type::Vec(Box::new(self.substitute_type_simple_bind(t, subst))),
+
             Type::String(_) => Type::String("String".to_string()),
             _ => ty.clone()
         }
@@ -5496,7 +5187,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             ExprKind::IndexAccess(target, indices) => {
                 // Target should be ExprKind::Ident for variable access
                 // Instead of compiling, look up the variable directly
-                let (tensor_ptr, is_scalar_array, array_len) = match &target.inner {
+                let tensor_ptr = match &target.inner {
                     ExprKind::Variable(name) => {
                         let (val, ty) = self
                             .lookup_variable(name)
@@ -5505,23 +5196,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                         match ty {
                             Type::Tensor(_, _) => {
                                 // val is a pointer to the tensor pointer
-                                let loaded = self
-                                    .builder
+                                self.builder
                                     .build_load(
                                         self.context.ptr_type(inkwell::AddressSpace::default()),
                                         val.into_pointer_value(),
                                         name,
                                     )
                                     .map_err(|e| e.to_string())?
-                                    .into_pointer_value();
-                                (loaded, false, 0)
+                                    .into_pointer_value()
                             }
-                            Type::ScalarArray(_, len) => {
-                                // For ScalarArray, val is pointer to alloca storing pointer to array
-                                // We don't need the runtime pointer for bounds, just the length
-                                (val.into_pointer_value(), true, len)
-                            }
-
                             _ => return Err("Expected tensor variable".into()),
                         }
                     }
@@ -5536,27 +5219,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                         ExprKind::Int(_) | ExprKind::Float(_) => continue,
                         ExprKind::Variable(name) => {
                             if !bounds.contains_key(name) {
-                                let dim_size = if is_scalar_array {
-                                    if i == 0 {
-                                        self.context.i64_type().const_int(array_len as u64, false)
-                                    } else {
-                                        return Err("ScalarArray only has 1 dimension".into());
-                                    }
-                                } else {
-                                    let dim_idx_val =
-                                        self.context.i64_type().const_int(i as u64, false);
-                                    let call_result = self
-                                        .builder
-                                        .build_call(
-                                            dim_fn,
-                                            &[tensor_ptr.into(), dim_idx_val.into()],
-                                            "dim_size",
-                                        )
-                                        .map_err(|e| e.to_string())?;
-                                    match call_result.try_as_basic_value() {
-                                        ValueKind::Basic(v) => v.into_int_value(),
-                                        _ => return Err("Invalid dim return".into()),
-                                    }
+                                let dim_idx_val =
+                                    self.context.i64_type().const_int(i as u64, false);
+                                let call_result = self
+                                    .builder
+                                    .build_call(
+                                        dim_fn,
+                                        &[tensor_ptr.into(), dim_idx_val.into()],
+                                        "dim_size",
+                                    )
+                                    .map_err(|e| e.to_string())?;
+                                let dim_size = match call_result.try_as_basic_value() {
+                                    ValueKind::Basic(v) => v.into_int_value(),
+                                    _ => return Err("Invalid dim return".into()),
                                 };
                                 bounds.insert(name.clone(), dim_size);
                             }
@@ -5766,7 +5441,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // 4. Generic Fallback (Struct Methods / Mangled Names)
         let struct_name = match &obj_ty {
-            Type::Vec(_) => "Vec".to_string(),
+
             Type::Struct(name, _) | Type::Enum(name, _) => name.clone(),
             Type::Tensor(_, _) => "Tensor".to_string(),
             Type::String(_) => "String".to_string(),
@@ -5817,10 +5492,12 @@ impl<'ctx> CodeGenerator<'ctx> {
              } else {
                  match &obj_ty {
                      Type::Struct(_, args) | Type::Enum(_, args) => args.clone(),
-                     Type::Vec(inner) => vec![*inner.clone()],
+
                      _ => vec![],
                  }
              };
+
+
              // Try monomorphize
              match self.monomorphize_method(&type_name, method, &generics) {
                  Ok(name) => {
@@ -6100,11 +5777,6 @@ impl<'ctx> CodeGenerator<'ctx> {
               "slice" => {
                   if args.len() != 2 {
                       return Err("slice requires 2 arguments".into());
-                  }
-
-                  // slice() only works on Tensors, not ScalarArrays
-                  if matches!(obj_ty, Type::ScalarArray(_, _)) {
-                      return Err("slice() does not support ScalarArray. Convert to Tensor first using Tensor::new() or similar".into());
                   }
 
                   let (start_val, _) = self.compile_expr(&args[0])?;
@@ -6613,13 +6285,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 BuiltinFn::Evaluated(func) => {
                     let mut compiled_args = Vec::with_capacity(args.len());
                     for arg in args {
-                        let (mut val, mut ty) = self.compile_expr(arg)?;
-                        // Auto-convert ScalarArray to Tensor for consistency
-                        if let Type::ScalarArray(_, _) = ty {
-                            let (new_val, new_ty) = self.ensure_tensor_v2(arg, 0)?;
-                            val = new_val.try_into().unwrap();
-                            ty = new_ty;
-                        }
+                        let (val, ty) = self.compile_expr(arg)?;
                         compiled_args.push((val, ty));
                     }
                     return func(self, compiled_args);
@@ -6651,12 +6317,8 @@ impl<'ctx> CodeGenerator<'ctx> {
              let mut args_vec = Vec::new();
              let mut arg_types = Vec::new();
              for arg in args {
-                  let (mut val, mut ty) = self.compile_expr(arg)?;
-                  if let Type::ScalarArray(_, _) = ty {
-                        let (new_val, new_ty) = self.ensure_tensor_v2(arg, 0)?;
-                        val = new_val.try_into().unwrap();
-                        ty = new_ty;
-                  }
+                  let (val, ty) = self.compile_expr(arg)?;
+
                   args_vec.push((val, ty.clone()));
                   arg_types.push(ty);
              }
@@ -6728,17 +6390,11 @@ impl<'ctx> CodeGenerator<'ctx> {
              }
         } else {
             for arg in args {
-                let (mut val, mut ty) = self.compile_expr(arg)?;
+                let (val, ty) = self.compile_expr(arg)?;
 
                 // Move Semantics disabled: function arguments remain valid after calls.
 
-                // Auto-convert ScalarArray to Tensor
-                // Functions in Runtime expecting Tensor arguments need OpaqueTensor*, not [T; N]*
-                if let Type::ScalarArray(_, _) = ty {
-                    let (new_val, new_ty) = self.ensure_tensor_v2(arg, 0)?;
-                    val = new_val.try_into().unwrap(); // BasicValueEnum
-                    ty = new_ty;
-                }
+
 
                 compiled_args_vals.push(val.into());
                 compiled_args_types.push((val, ty));
@@ -7145,85 +6801,6 @@ fn compile_print_common<'ctx>(
                 return Err(format!("{} not found (add to init)", fn_name).into());
             }
         },
-        Type::ScalarArray(elem_type, len) => {
-            let i64_type = codegen.context.i64_type();
-            let i32_type = codegen.context.i32_type();
-            let f32_type = codegen.context.f32_type();
-
-            let (llvm_elem_type, print_fn_name): (inkwell::types::BasicTypeEnum, &str) =
-                match elem_type.as_ref() {
-                    Type::I64 => (
-                        i64_type.into(),
-                        if is_newline {
-                            "tl_print_i64"
-                        } else {
-                            "tl_display_i64"
-                        },
-                    ),
-                    Type::I32 => (
-                        i32_type.into(),
-                        if is_newline {
-                            "tl_print_i32"
-                        } else {
-                            "tl_display_i32"
-                        },
-                    ),
-                    Type::F64 => (
-                        codegen.context.f64_type().into(),
-                        if is_newline {
-                            "tl_print_f64"
-                        } else {
-                            "tl_display_f64"
-                        },
-                    ),
-                    Type::Bool => (
-                        codegen.context.bool_type().into(),
-                        if is_newline {
-                            "tl_print_bool"
-                        } else {
-                            "tl_display_bool"
-                        },
-                    ),
-                    _ => (
-                        f32_type.into(),
-                        if is_newline {
-                            "tl_print_f32"
-                        } else {
-                            "tl_display_f32"
-                        },
-                    ),
-                };
-
-            let print_fn = codegen
-                .module
-                .get_function(print_fn_name)
-                .ok_or(format!("{} not found", print_fn_name))?;
-
-            let array_ptr = (*arg_val).into_pointer_value();
-            let typed_ptr_type = codegen.context.ptr_type(inkwell::AddressSpace::default());
-            let typed_ptr = codegen
-                .builder
-                .build_pointer_cast(array_ptr, typed_ptr_type, "print_typed_ptr")
-                .map_err(|e| e.to_string())?;
-
-            for i in 0..*len {
-                let idx = i64_type.const_int(i as u64, false);
-                let elem_ptr = unsafe {
-                    codegen
-                        .builder
-                        .build_in_bounds_gep(llvm_elem_type, typed_ptr, &[idx], "elem_ptr")
-                        .map_err(|e| e.to_string())?
-                };
-                let elem_val = codegen
-                    .builder
-                    .build_load(llvm_elem_type, elem_ptr, "elem_val")
-                    .map_err(|e| e.to_string())?;
-                codegen
-                    .builder
-                    .build_call(print_fn, &[elem_val.into()], "print_elem")
-                    .map_err(|e| e.to_string())?;
-            }
-        }
         _ => return Err(format!("Cannot print type {:?}", arg_type)),
     }
     Ok((
@@ -8001,7 +7578,7 @@ fn compile_varbuilder_get<'ctx>(
     let (rank, shape_ptr) = if args.len() == 2
         && matches!(
             codegen.compile_expr(&args[1])?.1,
-            Type::Tensor(_, _) | Type::ScalarArray(_, _)
+            Type::Tensor(_, _)
         ) {
         let (shape_val, arg1_ty) = codegen.compile_expr(&args[1])?;
         let (num_elements, shape_vals) = match &arg1_ty {
@@ -8033,19 +7610,6 @@ fn compile_varbuilder_get<'ctx>(
                     _ => return Err("varbuilder_get shape must be a literal array".into()),
                 }
             }
-            Type::ScalarArray(_, l) => match &args[1].inner {
-                ExprKind::TensorLiteral(elements) | ExprKind::TensorConstLiteral(elements) => (
-                    *l,
-                    elements
-                        .iter()
-                        .map(|e| {
-                            let (val, _) = codegen.compile_expr(e)?;
-                            Ok(val)
-                        })
-                        .collect::<Result<Vec<_>, String>>()?,
-                ),
-                _ => return Err("varbuilder_get shape must be a literal array".into()),
-            },
             _ => unreachable!(),
         };
 

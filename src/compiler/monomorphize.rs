@@ -192,7 +192,7 @@ impl Monomorphizer {
 
             // Recursive resolution
             Type::Tensor(inner, r) => Type::Tensor(Box::new(self.resolve_type(inner)), *r),
-            Type::Vec(inner) => Type::Vec(Box::new(self.resolve_type(inner))),
+
             Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.resolve_type(t)).collect()),
             Type::TensorShaped(inner, dims) => Type::TensorShaped(Box::new(self.resolve_type(inner)), dims.clone()),
             _ => ty.clone()
@@ -1113,7 +1113,7 @@ impl Monomorphizer {
             Type::Usize => "usize".to_string(),
             Type::Entity => "entity".to_string(),
             Type::Void => "void".to_string(),
-            Type::Vec(inner) => format!("vec_{}", self.mangle_type(inner)),
+
             Type::Struct(name, args) => {
                  if args.is_empty() {
                      name.clone()
@@ -1194,13 +1194,10 @@ impl Monomorphizer {
                 self.unify_types(inner_g, inner_c, map);
             }
 
-            (Type::Vec(inner_g), Type::Vec(inner_c)) => {
-                self.unify_types(inner_g, inner_c, map);
-            }
             _ => {}
         }
     }
 
 
-}
 
+}

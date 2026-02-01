@@ -287,7 +287,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     pub(crate) fn add_temp_with_mode(&mut self, val: BasicValueEnum<'ctx>, ty: Type, mode: u8) {
         // Only track types that need freeing
         match &ty {
-            Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Struct(_, _) | Type::Vec(_) | Type::Tuple(_) | Type::Enum(_, _) => {
+            Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Struct(_, _) | Type::Tuple(_) | Type::Enum(_, _) => {
                  self.temporaries.last_mut().expect("No temporary context").push((val, ty, mode));
             }
             _ => {}
@@ -575,7 +575,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 }
                             }
                         }
-                    } else if matches!(ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Tuple(_) | Type::Vec(_)) {
+                    } else if matches!(ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Tuple(_)) {
                          // Tuple and Vec also need loading from Alloca
                         let ptr = val_enum.into_pointer_value();
                         let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
@@ -894,10 +894,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             return Err(format!("Struct {} not found", name));
                         }
                     }
-                    Type::Vec(_) => self
-                        .context
-                        .ptr_type(inkwell::AddressSpace::default())
-                        .into(),
+
                     _ => {
                         return Err(format!(
                             "Unsupported field type in struct {}: {:?}",
@@ -953,10 +950,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .ptr_type(inkwell::AddressSpace::default())
                                 .into()
                         }
-                        Type::Vec(_) => self
-                            .context
-                            .ptr_type(inkwell::AddressSpace::default())
-                            .into(),
                         Type::Tuple(_) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
@@ -1092,7 +1085,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .fn_type(&param_types, false),
-                        Type::Struct(_, _) | Type::Tuple(_) | Type::Enum(_, _) | Type::Vec(_) => self
+                        Type::Struct(_, _) | Type::Tuple(_) | Type::Enum(_, _) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .fn_type(&param_types, false),

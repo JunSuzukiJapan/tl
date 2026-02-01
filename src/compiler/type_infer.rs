@@ -290,10 +290,6 @@ impl TypeInferencer {
                 Ok(())
             }
 
-            // Vec types: unify inner
-            (Type::Vec(inner1), Type::Vec(inner2)) => {
-                self.unify_types(*inner1.clone(), *inner2.clone())
-            }
 
             // Mixed Tensor and TensorShaped
             (Type::Tensor(inner1, rank), Type::TensorShaped(inner2, dims))
@@ -346,7 +342,7 @@ impl TypeInferencer {
                     dims.into_iter().map(|d| self.apply_dim_subst(d)).collect();
                 Type::TensorShaped(Box::new(self.apply_type_subst(*inner)), resolved_dims)
             }
-            Type::Vec(inner) => Type::Vec(Box::new(self.apply_type_subst(*inner))),
+
             other => other,
         }
     }

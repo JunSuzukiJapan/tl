@@ -14,7 +14,7 @@ impl TypeSubstitutor {
         match ty {
             // UserDefined removed
 
-            Type::Vec(inner) => Type::Vec(Box::new(self.substitute_type(inner))),
+
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.substitute_type(inner)), *rank),
             Type::TensorShaped(inner, dims) => Type::TensorShaped(Box::new(self.substitute_type(inner)), dims.clone()),
             Type::Struct(name, args) => {
@@ -34,7 +34,7 @@ impl TypeSubstitutor {
                 let new_types = types.iter().map(|t| self.substitute_type(t)).collect();
                 Type::Tuple(new_types)
             }
-            Type::ScalarArray(inner, size) => Type::ScalarArray(Box::new(self.substitute_type(inner)), *size),
+
             _ => ty.clone(),
         }
     }

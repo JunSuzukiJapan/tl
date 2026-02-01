@@ -602,42 +602,75 @@ fn compile_tensor_save<'ctx>(
 fn compile_tensor_reshape<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     obj: BasicValueEnum<'ctx>,
-    obj_ty: Type,
+    _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
      if args.len() != 1 { return Err("reshape requires 1 arg (shape)".into()); }
-     let fn_val = codegen.module.get_function("tl_tensor_reshape").ok_or("tl_tensor_reshape not found")?;
-     // Need to convert ScalarArray to shape ptr?
+     let (shape_val, shape_ty) = &args[0];
      // Arg[0] is shape.
      // In expr.rs, it compiled arg[0].
-     // If arg[0] is ScalarArray (ptr to [i64; N]), we need to pass rank and pointer?
-     // Wait, tl_tensor_reshape takes (tensor, rank, dims_ptr).
-     // We need to unpack ScalarArray.
-     // If ScalarArray, value is pointer to [T; N].
-     // TypeManager passes 'val' and 'ty'.
-     // We need to inspect ty to know rank.
-     
-     let (shape_val, shape_ty) = &args[0];
-     // Assuming shape_ty is Type::ScalarArray(I64, N)
-     if let Type::ScalarArray(_, size) = shape_ty {
-         // shape_val is pointer to array.
-         // Cast to i64*
-         let ptr: inkwell::values::BasicValueEnum = if shape_val.is_pointer_value() {
-              use inkwell::values::BasicValue;
-              codegen.builder.build_pointer_cast(shape_val.into_pointer_value(), codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast").map_err(|e| e.to_string())?.as_basic_value_enum()
-         } else {
-              return Err("Shape must be pointer/array".into());
-         };
-         
-         let rank_val = codegen.context.i64_type().const_int(*size as u64, false);
-         let call = codegen.builder.build_call(fn_val, &[obj.into(), rank_val.into(), ptr.into()], "reshape_res").map_err(|e| e.to_string())?;
-         let res = match call.try_as_basic_value() {
-            ValueKind::Basic(v) => v,
-            _ => return Err("Invalid return".into()),
-         };
-         return Ok((res, obj_ty)); // NOTE: Rank changes! Correct obj_ty should reflect new rank if possible? Dyn rank 0.
+
+     if let Type::Tensor(_, _) = shape_ty {
+          // Case 1: Shape is a Tensor. Use tl_tensor_reshape_new(obj, shape_tensor).
+          let fn_val = codegen.module.get_function("tl_tensor_reshape_new")
+               .ok_or("tl_tensor_reshape_new not found")?;
+          let call = codegen.builder.build_call(fn_val, &[obj.into(), shape_val.clone().into()], "reshape_res")
+               .map_err(|e| e.to_string())?;
+          let res = match call.try_as_basic_value() {
+               ValueKind::Basic(v) => v,
+               _ => return Err("Invalid return".into()),
+          };
+          return Ok((res, Type::Tensor(Box::new(Type::F32), 0))); // Dynamic rank
+     } else {
+          // Case 2: Shape is Vec. Use tl_tensor_reshape_dims(obj, ptr, rank).
+          let fn_val = codegen.module.get_function("tl_tensor_reshape_dims")
+               .ok_or("tl_tensor_reshape_dims not found")?;
+
+          let (data_ptr, rank_val) = if matches!(shape_ty, Type::Struct(n, _) if n == "Vec") {
+               // Vec
+               let vec_ptr = if shape_val.is_pointer_value() {
+                    shape_val.into_pointer_value()
+               } else {
+                    return Err("Vec shape must be pointer".into());
+               };
+
+               let i64_ty = codegen.context.i64_type();
+               let vec_struct_ty = codegen.context.struct_type(&[i64_ty.into(), i64_ty.into(), i64_ty.into()], false);
+
+               // Extract ptr (index 0)
+               let data_ptr_ptr = codegen.builder.build_struct_gep(vec_struct_ty, vec_ptr, 0, "data_ptr_ptr")
+                         .map_err(|e| e.to_string())?;
+               
+               let data_ptr_int = codegen.builder.build_load(i64_ty, data_ptr_ptr, "data_ptr_int")
+                    .map_err(|e| e.to_string())?.into_int_value();
+               
+               let data_ptr = codegen.builder.build_int_to_ptr(
+                    data_ptr_int,
+                    codegen.context.ptr_type(inkwell::AddressSpace::default()),
+                    "data_ptr"
+               ).map_err(|e| e.to_string())?;
+
+               // Extract len (index 2)
+               let len_ptr = codegen.builder.build_struct_gep(vec_struct_ty, vec_ptr, 2, "len_ptr")
+                         .map_err(|e| e.to_string())?;
+               
+               let len_val = codegen.builder.build_load(i64_ty, len_ptr, "rank_val")
+                    .map_err(|e| e.to_string())?.into_int_value();
+               
+               (data_ptr, len_val)
+          } else {
+               return Err(format!("reshape argument must be Tensor or Vec. Got: {:?}", shape_ty));
+          };
+
+          let call = codegen.builder.build_call(fn_val, &[obj.into(), data_ptr.into(), rank_val.into()], "reshape_res")
+               .map_err(|e| e.to_string())?;
+          
+          let res = match call.try_as_basic_value() {
+               ValueKind::Basic(v) => v,
+               _ => return Err("Invalid return".into()),
+          };
+          return Ok((res, Type::Tensor(Box::new(Type::F32), 0)));
      }
-     Err("reshape argument must be ScalarArray".into())
 }
 
 fn compile_tensor_to_device<'ctx>(
@@ -696,7 +729,7 @@ fn compile_from_vec_u8<'ctx>(
     // Arguments are already evaluated by GenericResolver (evaluated args mode)
     // args[0]: vec (Vec<U8>)
     // args[1]: offset (I64)
-    // args[2]: shape (ScalarArray I64)
+    // args[2]: shape (Vec<I64>)
     // args[3]: rank (I64)
     
     if args.len() != 4 {
@@ -706,7 +739,7 @@ fn compile_from_vec_u8<'ctx>(
     // Check types?
     // args[0] is Vec<U8> (pointer)
     // args[1] is I64
-    // args[2] is ScalarArray pointer
+    // args[2] is Vec<I64>
     // args[3] is I64
     
     let vec_val = args[0].0;

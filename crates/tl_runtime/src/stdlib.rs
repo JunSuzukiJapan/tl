@@ -191,13 +191,12 @@ pub extern "C" fn tl_string_len(s: *mut crate::StringStruct) -> i64 {
 // --- File I/O ---
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_file_open(path: *mut crate::StringStruct, mode: *mut crate::StringStruct) -> *mut File {
+pub extern "C" fn tl_file_open(path: *const std::os::raw::c_char, mode: *const std::os::raw::c_char) -> *mut File {
     if path.is_null() || mode.is_null() { return std::ptr::null_mut(); }
     unsafe {
-        if (*path).ptr.is_null() || (*mode).ptr.is_null() { return std::ptr::null_mut(); }
-        let path_str = CStr::from_ptr((*path).ptr).to_string_lossy();
+        let path_str = CStr::from_ptr(path).to_string_lossy();
         let expanded_path = crate::expand_tilde(&path_str);
-        let mode_str = CStr::from_ptr((*mode).ptr).to_string_lossy();
+        let mode_str = CStr::from_ptr(mode).to_string_lossy();
 
         let f = match mode_str.as_ref() {
             "r" => File::open(&expanded_path),

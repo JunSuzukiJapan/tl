@@ -243,8 +243,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                  }
                  // If structural match fails
                  // Might handle Struct vs UserDefined aliases?
+                 // Check if it's a generic struct instance matching a concrete struct
+                 // This logic might be redundant if the above arm handles it, 
+                 // but kept for "Any" matching or partial unification if needed.
+                 // For now, if we are UNIFYING, we usually want exact structure.
+                 // If `expected` is generic T and `actual` is Struct, handled by (Type::Generic, _)
+                 
+                 // If we are here, we have Struct vs something else (not Struct).
+                 // e.g. Struct vs Tensor? Error.
+                 return Err(format!("Type mismatch: Expected Struct {}, found {:?}", name, actual));
              }
-             (Type::Vec(e), Type::Vec(a)) => self.unify_types(e, a, map)?,
              (Type::Tensor(e, r), Type::Tensor(a, ar)) => {
                  if r != ar { return Err("Rank mismatch".into()); }
                  self.unify_types(e, a, map)?;
@@ -299,7 +307,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.mangle_type_name(name, args)
                 }
             }
-            Type::Vec(inner) => format!("Vec_{}", self.type_to_suffix(inner)),
+
             Type::Tensor(inner, rank) => format!("Tensor_{}_{}", self.type_to_suffix(inner), rank),
             Type::Tuple(types) => {
                 let parts: Vec<String> = types.iter().map(|t| self.type_to_suffix(t)).collect();
@@ -347,11 +355,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(self.context.ptr_type(AddressSpace::default()).into())
             }
             
-            Type::Vec(_) => {
-                // All Vec types are represented as opaque pointers to Rust Vec
-                Ok(self.context.ptr_type(AddressSpace::default()).into())
-            }
-
             Type::String(_) => {
                 Ok(self.context.ptr_type(AddressSpace::default()).into())
             }
@@ -382,10 +385,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             
             Type::Enum(_name, _args) => {
-                Ok(self.context.ptr_type(AddressSpace::default()).into())
-            }
-            
-            Type::ScalarArray(_, _) => {
                 Ok(self.context.ptr_type(AddressSpace::default()).into())
             }
             
@@ -484,7 +483,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Type::Struct(name.clone(), new_args)
             }
 
-            Type::Vec(inner) => Type::Vec(Box::new(self.substitute_type(inner, subst))),
+
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.substitute_type(inner, subst)), *rank),
             Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.substitute_type(t, subst)).collect()),
             _ => ty.clone(),

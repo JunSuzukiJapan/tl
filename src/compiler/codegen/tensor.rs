@@ -235,35 +235,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Compute element(s) to store
         // We might need to store multiple elements if body is a vector/tensor
         let elements_to_store: Vec<BasicValueEnum> = match rhs_ty {
-            Type::ScalarArray(_, len) => {
-                // For TensorLiteral, compile_expr returns a pointer to an array/alloca
-                // We need to load elements one by one
-                if len != body_elem_count {
-                    return Err(format!(
-                        "Body size mismatch: inferred {} but got {}",
-                        body_elem_count, len
-                    ));
-                }
-                let ptr = rhs_val.into_pointer_value();
-                let mut elems = Vec::new();
-                for k in 0..len {
-                    let gep = unsafe {
-                        self.builder.build_gep(
-                            f32_type,
-                            ptr,
-                            &[i64_type.const_int(k as u64, false)],
-                            "elem_ptr",
-                        )
-                    }
-                    .unwrap();
-                    let val = self
-                        .builder
-                        .build_load(f32_type, gep, "elem_val")
-                        .map_err(|e| e.to_string())?;
-                    elems.push(val);
-                }
-                elems
-            }
+
             Type::Tensor(_inner_ty, _rank) => {
                 // If the body returns a full Tensor, we use tl_tensor_get to extract scalars.
                 // This handles device transfer and flattening automatically.
@@ -509,117 +481,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         match ty {
             Type::Tensor(_, _) => Ok((val, ty)),
-            Type::ScalarArray(elem_ty, len) => {
-                let i64_type = self.context.i64_type();
-                let f32_type = self.context.f32_type();
-                let rank_val = i64_type.const_int(1, false);
 
-                let (data_ptr, tensor_type, func_name) = match elem_ty.as_ref() {
-                    Type::I64 => {
-                        let ptr = val.into_pointer_value();
-                        let i64_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                        let cast_ptr = self
-                            .builder
-                            .build_pointer_cast(ptr, i64_ptr_type, "i64_ptr_cast")
-                            .unwrap();
-
-                        (
-                            cast_ptr,
-                            Type::Tensor(Box::new(Type::I64), 1),
-                            "tl_tensor_new_i64",
-                        )
-                    }
-                    _ => {
-                        let current_block = self.builder.get_insert_block().unwrap();
-                        let parent_fn = current_block.get_parent().unwrap();
-                        let f32_array_type = f32_type.array_type(len as u32);
-                        let entry_builder = self.context.create_builder();
-                        let entry = parent_fn.get_first_basic_block().unwrap();
-                        if let Some(fi) = entry.get_first_instruction() {
-                            entry_builder.position_before(&fi);
-                        } else {
-                            entry_builder.position_at_end(entry);
-                        }
-                        let new_buf = entry_builder
-                            .build_alloca(f32_array_type, "conv_buf")
-                            .unwrap();
-
-                        for i in 0..len {
-                            let idx = i64_type.const_int(i as u64, false);
-                            let src_ptr = unsafe {
-                                self.builder
-                                    .build_in_bounds_gep(
-                                        i64_type,
-                                        val.into_pointer_value(),
-                                        &[idx],
-                                        "src",
-                                    )
-                                    .unwrap()
-                            };
-                            let loaded = self.builder.build_load(i64_type, src_ptr, "l").unwrap();
-                            let f_val = self
-                                .builder
-                                .build_signed_int_to_float(loaded.into_int_value(), f32_type, "c")
-                                .unwrap();
-                            let dst_ptr = unsafe {
-                                self.builder
-                                    .build_in_bounds_gep(f32_type, new_buf, &[idx], "dst")
-                                    .unwrap()
-                            };
-                            self.builder.build_store(dst_ptr, f_val).unwrap();
-                        }
-                        (
-                            new_buf,
-                            Type::Tensor(Box::new(Type::F32), 1),
-                            "tl_tensor_new",
-                        )
-                    }
-                };
-
-                let shape_array_type = i64_type.array_type(1);
-                let shape_alloca = self
-                    .builder
-                    .build_alloca(shape_array_type, "shape_arr")
-                    .map_err(|e| e.to_string())?;
-                let shape_elem_ptr = unsafe {
-                    self.builder
-                        .build_in_bounds_gep(
-                            shape_array_type,
-                            shape_alloca,
-                            &[i64_type.const_int(0, false), i64_type.const_int(0, false)],
-                            "shape_ptr",
-                        )
-                        .map_err(|e| e.to_string())?
-                };
-                self.builder
-                    .build_store(shape_elem_ptr, i64_type.const_int(len as u64, false))
-                    .map_err(|e| e.to_string())?;
-
-                let tensor_new_fn = self
-                    .module
-                    .get_function(func_name)
-                    .ok_or(format!("{} not found", func_name))?;
-                let shape_ptr_cast = self
-                    .builder
-                    .build_pointer_cast(
-                        shape_alloca,
-                        self.context.ptr_type(inkwell::AddressSpace::default()),
-                        "shape_ptr_cast",
-                    )
-                    .map_err(|e| e.to_string())?;
-
-                let call = self
-                    .builder
-                    .build_call(
-                        tensor_new_fn,
-                        &[data_ptr.into(), rank_val.into(), shape_ptr_cast.into()],
-                        "converted_tensor",
-                    )
-                    .map_err(|e| e.to_string())?;
-
-                let res_val = self.check_tensor_result(call, &func_name)?;
-                Ok((res_val, tensor_type))
-            }
             Type::F32 | Type::I64 => {
                 let f32_type = self.context.f32_type();
                 let current_block = self.builder.get_insert_block().unwrap();

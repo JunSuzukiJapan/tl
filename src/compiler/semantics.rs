@@ -367,7 +367,6 @@ impl SemanticAnalyzer {
                 let new_args = args.iter().map(|a| self.substitute_generics(a, subst)).collect();
                 Type::Enum(name.clone(), new_args)
             }
-            Type::Vec(inner) => Type::Vec(Box::new(self.substitute_generics(inner, subst))),
             Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.substitute_generics(t, subst)).collect()),
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.substitute_generics(inner, subst)), *rank),
             Type::TensorShaped(inner, dims) => Type::TensorShaped(Box::new(self.substitute_generics(inner, subst)), dims.clone()),
@@ -458,8 +457,8 @@ impl SemanticAnalyzer {
             match ty {
                 Type::Tensor(inner, r) => Type::Tensor(Box::new(self.resolve_user_type(inner)), *r),
                 Type::TensorShaped(inner, dims) => Type::TensorShaped(Box::new(self.resolve_user_type(inner)), dims.clone()),
-                Type::Vec(inner) => Type::Vec(Box::new(self.resolve_user_type(inner))),
-                Type::ScalarArray(inner, r) => Type::ScalarArray(Box::new(self.resolve_user_type(inner)), *r),
+
+
                 Type::Tuple(inner) => Type::Tuple(inner.iter().map(|t| self.resolve_user_type(t)).collect()),
                  _ => ty.clone()
             }
@@ -1408,12 +1407,8 @@ impl SemanticAnalyzer {
                             if self.are_types_compatible(type_annotation, inner) {
                                 final_ty = Type::Tensor(Box::new(type_annotation.clone()), rank);
                             }
-                        } else if let Type::ScalarArray(ref inner, _len) = init_ty {
-                            if self.are_types_compatible(type_annotation, inner) {
-                                final_ty = Type::Tensor(Box::new(type_annotation.clone()), 1);
-                                // ScalarArray is 1D
-                            }
                         }
+
                     } else if !self.are_types_compatible(type_annotation, &init_ty) {
                         return self.err(
                             SemanticError::TypeMismatch {
@@ -1925,10 +1920,10 @@ impl SemanticAnalyzer {
                                             // Recursive match function
                                             fn unify(param: &Type, arg: &Type, map: &mut std::collections::HashMap<String, Type>) {
                                                 match (param, arg) {
+                                                    (Type::Struct(pn, pa), Type::Struct(an, aa)) if pn == "Vec" && an == "Vec" && !pa.is_empty() && !aa.is_empty() => unify(&pa[0], &aa[0], map),
                                                     (Type::Struct(name, _), _) => {
                                                          map.insert(name.clone(), arg.clone());
                                                     }
-                                                    (Type::Vec(p_inner), Type::Vec(a_inner)) => unify(p_inner, a_inner, map),
                                                     (Type::Tensor(p_inner, _), Type::Tensor(a_inner, _)) => unify(p_inner, a_inner, map),
                                                     (Type::TensorShaped(p_inner, _), Type::TensorShaped(a_inner, _)) => unify(p_inner, a_inner, map),
                                                     _ => {}
@@ -3071,8 +3066,8 @@ impl SemanticAnalyzer {
                     }
 
                     let t0 = self.check_expr(&mut args[0])?;
-                    // Allow Tensor OR ScalarArray
-                    if !matches!(t0, Type::Tensor(_, _) | Type::ScalarArray(_, _)) {
+                    // Allow Tensor
+                    if !matches!(t0, Type::Tensor(_, _)) {
                         return self.err(
                             SemanticError::TypeMismatch {
                                 expected: Type::Tensor(Box::new(Type::Void), 0),
@@ -3084,7 +3079,7 @@ impl SemanticAnalyzer {
 
                     // Allow arg 1 to be tensor/array (old) OR args 1..N to be Int (new)
                     let t1 = self.check_expr(&mut args[1])?;
-                    if (matches!(t1, Type::Tensor(_, _)) || matches!(t1, Type::ScalarArray(_, _)))
+                    if matches!(t1, Type::Tensor(_, _))
                         && args.len() == 2
                     {
                         // OK
@@ -3106,7 +3101,7 @@ impl SemanticAnalyzer {
 
                     let inner_type = match t0 {
                         Type::Tensor(inner, _) => inner,
-                        Type::ScalarArray(inner, _) => inner,
+
                         _ => unreachable!(),
                     };
 
@@ -3325,7 +3320,7 @@ impl SemanticAnalyzer {
                             Some(args[0].span.clone()),
                         );
                     }
-                    return Ok(Type::Vec(Box::new(Type::U8)));
+                    return Ok(Type::Struct("Vec".to_string(), vec![Type::U8]));
                 } else if name == "tl_vec_u8_read_i32_be" {
                     if args.len() != 2 {
                         return self.err(
@@ -3338,13 +3333,13 @@ impl SemanticAnalyzer {
                         );
                     }
                     let t0 = self.check_expr(&mut args[0])?;
-                    if !matches!(t0, Type::Vec(ref inner) if **inner == Type::U8) {
+                    if !matches!(t0, Type::Struct(ref name, ref args) if name == "Vec" && args.len() == 1 && args[0] == Type::U8) {
                         return self.err(
                             SemanticError::TypeMismatch {
-                                expected: Type::Vec(Box::new(Type::U8)),
+                                expected: Type::Struct("Vec".to_string(), vec![Type::U8]),
                                 found: t0,
                             },
-                            Some(args[0].span.clone()),
+                        Some(args[0].span.clone()),
                         );
                     }
                     // Arg 1: Index (int)
@@ -4029,8 +4024,8 @@ impl SemanticAnalyzer {
                                     }
                                 }
                                 Type::Tensor(inner, r) => Type::Tensor(Box::new(substitute(inner, map)), *r),
-                                Type::Vec(inner) => Type::Vec(Box::new(substitute(inner, map))),
-                                Type::ScalarArray(inner, r) => Type::ScalarArray(Box::new(substitute(inner, map)), *r),
+
+
                                 Type::Tuple(ts) => Type::Tuple(ts.iter().map(|t| substitute(t, map)).collect()),
                                 _ => ty.clone() 
                             }
@@ -4161,6 +4156,13 @@ impl SemanticAnalyzer {
                 match target_type {
                     Type::Tensor(inner, _rank) => Ok(*inner), 
                     Type::Struct(name, _) if name == "Tensor" => Ok(Type::F32), // Assume F32 for opaque Tensor
+                    Type::Struct(name, args) if name == "Vec" => {
+                        if args.is_empty() {
+                            Ok(Type::Void)
+                        } else {
+                            Ok(args[0].clone())
+                        }
+                    }
                     _ => self.err(
                         SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
@@ -4403,9 +4405,8 @@ impl SemanticAnalyzer {
 
 
 
-                // Handle Vec::new() -> Vec<T> or Vec<Void> (polymorphic empty vec)
+                // Handle Vec::new() -> Vec<T>
                 let is_vec = match type_name {
-                    Type::Vec(_) => true,
                     Type::Struct(n, _) if n == "Vec" => true,
                     _ => false,
                 };
@@ -4413,7 +4414,6 @@ impl SemanticAnalyzer {
                 if is_vec && method_name == "new" {
                     // Extract the inner type from Vec<T> if specified
                     let inner_type = match type_name {
-                        Type::Vec(inner) => Some(inner.as_ref().clone()),
                         Type::Struct(_, args) => {
                             if args.len() == 1 {
                                 Some(args[0].clone())
@@ -4430,7 +4430,7 @@ impl SemanticAnalyzer {
                         _ => Type::Void,
                     };
                     
-                    return Ok(Type::Vec(Box::new(result_inner)));
+                    return Ok(Type::Struct("Vec".to_string(), vec![result_inner]));
                 }
 
                 // Handle HashMap::new() -> HashMap<K, V> (inferred)
@@ -4682,8 +4682,6 @@ impl SemanticAnalyzer {
                                     }
                                 }
                                 Type::Tensor(inner, r) => Type::Tensor(Box::new(substitute(inner, map)), *r),
-                                Type::Vec(inner) => Type::Vec(Box::new(substitute(inner, map))),
-                                Type::ScalarArray(inner, r) => Type::ScalarArray(Box::new(substitute(inner, map)), *r),
                                 Type::Tuple(ts) => Type::Tuple(ts.iter().map(|t| substitute(t, map)).collect()),
                                 _ => ty.clone() 
                             }
@@ -4791,7 +4789,7 @@ impl SemanticAnalyzer {
                     }
                     ("Http", "get") => Ok(Type::String("String".to_string())),
                     ("Http", "download") => Ok(Type::Bool),
-                    ("Image", "load_grayscale") => Ok(Type::Vec(Box::new(Type::U8))),
+                    ("Image", "load_grayscale") => Ok(Type::Struct("Vec".to_string(), vec![Type::U8])),
                     ("Image", "width") => Ok(Type::I64),
                     ("Image", "height") => Ok(Type::I64),
                     ("Args", "count") => Ok(Type::I64),
@@ -4802,12 +4800,12 @@ impl SemanticAnalyzer {
                     ("Arena", "is_active") => Ok(Type::Bool),
                     ("Tokenizer", "new") => Ok(Type::Struct("Tokenizer".into(), vec![])),
                     ("KVCache", "new") => Ok(Type::Struct("KVCache".into(), vec![])),
-                    ("Map", "load") => Ok(Type::Struct("Map".into(), vec![])),
+
                     ("File", "exists") => Ok(Type::Bool),
                     ("File", "read") => Ok(Type::String("String".to_string())),
                     ("File", "write") => Ok(Type::Bool),
                     ("File", "download") => Ok(Type::Bool),
-                    ("File", "read_binary") => Ok(Type::Vec(Box::new(Type::U8))),
+                    ("File", "read_binary") => Ok(Type::Struct("Vec".to_string(), vec![Type::U8])),
                     ("Path", "exists") => Ok(Type::Bool),
 
                     // --- New Static Methods for Refactor ---
@@ -4994,6 +4992,57 @@ impl SemanticAnalyzer {
                         }
                         let _ = self.check_expr(&mut args[0])?;
                         Ok(Type::Tensor(Box::new(Type::F32), 0))
+                    }
+                    ("Map", "load") => {
+                        if args.len() != 1 {
+                            return self.err(
+                                SemanticError::ArgumentCountMismatch {
+                                    name: "Map::load".into(),
+                                    expected: 1,
+                                    found: args.len(),
+                                },
+                                Some(expr.span.clone()),
+                            );
+                        }
+                        let t0 = self.check_expr(&mut args[0])?;
+                        if !matches!(t0, Type::String(_)) {
+                            return self.err(
+                                SemanticError::TypeMismatch {
+                                    expected: Type::String("String".to_string()),
+                                    found: t0,
+                                },
+                                Some(args[0].span.clone()),
+                            );
+                        }
+                        Ok(Type::Struct("Map".to_string(), vec![]))
+                    }
+                    ("Map", "get") | ("Map", "get_1d") | ("Map", "get_quantized") => {
+                        if args.len() != 1 {
+                             return self.err(
+                                SemanticError::ArgumentCountMismatch {
+                                    name: format!("Map::{}", method_name),
+                                    expected: 1,
+                                    found: args.len(),
+                                },
+                                Some(expr.span.clone()),
+                            );
+                        }
+                         let t0 = self.check_expr(&mut args[0])?;
+                        if !matches!(t0, Type::String(_)) {
+                            return self.err(
+                                SemanticError::TypeMismatch {
+                                    expected: Type::String("String".to_string()),
+                                    found: t0,
+                                },
+                                Some(args[0].span.clone()),
+                            );
+                        }
+                        match method_name.as_str() {
+                            "get" => Ok(Type::Tensor(Box::new(Type::F32), 0)),
+                            "get_1d" => Ok(Type::Tensor(Box::new(Type::F32), 1)),
+                            "get_quantized" => Ok(Type::Tensor(Box::new(Type::I8), 2)),
+                            _ => unreachable!(),
+                        }
                     }
                     // Param static methods
                     ("Param", "save_all") | ("Param", "load_all") => {
@@ -5246,12 +5295,17 @@ impl SemanticAnalyzer {
                 // This mimics the original behavior where empty collections are typed "Void" until first use
                 let narrowed_type = if let ExprKind::Variable(var_name) = &obj.inner {
                     match &obj_type {
-                        Type::Vec(inner) if **inner == Type::Void && method_name == "push" && !args.is_empty() => {
-                            let arg_type = self.check_expr(&mut args[0])?;
-                            if arg_type != Type::Void {
-                                let new_type = Type::Vec(Box::new(arg_type));
-                                self.update_variable(var_name.clone(), new_type.clone())?;
-                                Some(new_type)
+                        Type::Struct(name, inner_args) if name == "Vec" && !inner_args.is_empty() && inner_args[0] == Type::Void && method_name == "push" => {
+                            // Infers T from push(T)
+                            if args.len() == 1 {
+                                let arg_type = self.check_expr(&mut args[0])?;
+                                if arg_type != Type::Void {
+                                    let new_type = Type::Struct("Vec".to_string(), vec![arg_type]);
+                                    self.update_variable(var_name.clone(), new_type.clone())?;
+                                    Some(new_type)
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
                             }
@@ -5460,19 +5514,143 @@ impl SemanticAnalyzer {
             "Tensor" => {
                 // Common Tensor ops returning Tensor
                 match method {
-                    "softmax" => {
-                         // softmax(dim) or softmax()
-                         if args.len() > 1 {
-                            return Some(self.err(SemanticError::ArgumentCountMismatch {
-                                name: "Tensor::softmax".into(), expected: 1, found: args.len()
+                    "matmul_quantized" => {
+                         if args.len() != 1 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::matmul_quantized".into(), expected: 1, found: args.len()
                             }, None));
-                         }
-                         if args.len() == 1 {
-                             if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
-                         }
-                         return Some(Ok(obj_type.clone()));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::Tensor(Box::new(Type::F32), 0)))
                     }
-                    "exp" | "log" | "sin" | "cos" | "tanh" | "sqrt" | "abs" | "detach" | "grad" | "clone" | "gelu" => {
+                    "len" => {
+                         if !args.is_empty() {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::len".into(), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        Some(Ok(Type::I64))
+                    }
+                    "rms_norm" => {
+                        // rms_norm(weights, eps)
+                         if args.len() != 2 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::rms_norm".into(), expected: 2, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        if let Err(e) = self.check_expr(&mut args[1]) { return Some(Err(e)); }
+                        Some(Ok(obj_type.clone()))
+                    }
+                    "embedding" => {
+                         if args.len() != 1 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::embedding".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::Tensor(Box::new(Type::F32), 0)))
+                    }
+                    "silu" | "softmax" | "relu" | "gelu" => {
+                         if !args.is_empty() && args.len() != 1 { // softmax can take dim
+                             return Some(self.err(SemanticError::Generic("Tensor::activation expects 0 or 1 args".into()), None));
+                         }
+                         for arg in args.iter_mut() { if let Err(e) = self.check_expr(arg) { return Some(Err(e)); } }
+                         Some(Ok(obj_type.clone()))
+                    }
+                    "add" | "sub" | "mul" | "div" | "matmul" | "add_4d" | "matmul_4d" | "cat_4d" | "conv2d" => {
+                        // Binary ops (tensor or scalar)
+                         if args.len() < 1 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("Tensor::{}", method), expected: 1, found: args.len()
+                            }, None));
+                        }
+                         for arg in args.iter_mut() { if let Err(e) = self.check_expr(arg) { return Some(Err(e)); } }
+                        Some(Ok(obj_type.clone()))
+                    }
+                    "scale" => {
+                         if args.len() != 1 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::scale".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(obj_type.clone()))
+                    }
+                    "reshape" => {
+                         if args.len() != 1 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::reshape".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(obj_type.clone()))
+                    }
+                    "transpose" => {
+                         if args.len() != 2 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::transpose".into(), expected: 2, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        if let Err(e) = self.check_expr(&mut args[1]) { return Some(Err(e)); }
+                        Some(Ok(obj_type.clone()))
+                    }
+                    "narrow" => {
+                         if args.len() != 3 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::narrow".into(), expected: 3, found: args.len()
+                            }, None));
+                        }
+                         for arg in args.iter_mut() { if let Err(e) = self.check_expr(arg) { return Some(Err(e)); } }
+                        Some(Ok(obj_type.clone()))
+                    }
+                    "apply_rope" => {
+                         if args.len() != 2 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::apply_rope".into(), expected: 2, found: args.len()
+                            }, None));
+                        }
+                         for arg in args.iter_mut() { if let Err(e) = self.check_expr(arg) { return Some(Err(e)); } }
+                        Some(Ok(obj_type.clone()))
+                    }
+                    "repeat_interleave" => {
+                         if args.len() != 2 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::repeat_interleave".into(), expected: 2, found: args.len()
+                            }, None));
+                        }
+                         for arg in args.iter_mut() { if let Err(e) = self.check_expr(arg) { return Some(Err(e)); } }
+                        Some(Ok(obj_type.clone()))
+                    }
+                    "cat_i64" => {
+                         if args.len() != 2 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::cat_i64".into(), expected: 2, found: args.len()
+                            }, None));
+                        }
+                         for arg in args.iter_mut() { if let Err(e) = self.check_expr(arg) { return Some(Err(e)); } }
+                        Some(Ok(Type::Tensor(Box::new(Type::I64), 0)))
+                    }
+                    "item_i64" => {
+                         if !args.is_empty() {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::item_i64".into(), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        Some(Ok(Type::I64))
+                    }
+                    "sample" => {
+                         if args.len() != 2 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::sample".into(), expected: 2, found: args.len()
+                            }, None));
+                        }
+                         for arg in args.iter_mut() { if let Err(e) = self.check_expr(arg) { return Some(Err(e)); } }
+                        Some(Ok(Type::Tensor(Box::new(Type::I64), 0)))
+                    }
+
+                    "exp" | "log" | "sin" | "cos" | "tanh" | "sqrt" | "abs" | "detach" | "grad" | "clone" => {
                         if !args.is_empty() {
                             return Some(self.err(SemanticError::ArgumentCountMismatch {
                                 name: format!("Tensor::{}", method), expected: 0, found: args.len()
@@ -5532,52 +5710,6 @@ impl SemanticAnalyzer {
                          // Returns scalar loss
                          return Some(Ok(Type::Tensor(Box::new(Type::F32), 0)));
                     }
-                    "scale" => {
-                         if args.len() != 1 {
-                            return Some(self.err(SemanticError::ArgumentCountMismatch {
-                                name: "Tensor::scale".into(), expected: 1, found: args.len()
-                            }, None));
-                         }
-                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
-                         return Some(Ok(obj_type.clone()));
-                    }
-                    "matmul" => {
-                         if args.len() != 1 {
-                            return Some(self.err(SemanticError::ArgumentCountMismatch {
-                                name: "Tensor::matmul".into(), expected: 1, found: args.len()
-                            }, None));
-                         }
-                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
-                         return Some(Ok(Type::Tensor(Box::new(Type::F32), 0))); // Dynamic Rank for compatibility
-                    }
-                    "embedding" => {
-                         if args.len() != 1 {
-                            return Some(self.err(SemanticError::ArgumentCountMismatch {
-                                name: "Tensor::embedding".into(), expected: 1, found: args.len()
-                            }, None));
-                         }
-                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
-                         return Some(Ok(Type::Tensor(Box::new(Type::F32), 0)));
-                    }
-                    "reshape" => {
-                         for arg in args.iter_mut() {
-                             if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
-                         }
-                         // Reshape output rank is known only at runtime/const-eval.
-                         // Return dynamic rank (0) to allow compatibility with any target (e.g. Tensor<f32, 2>).
-                         return Some(Ok(Type::Tensor(Box::new(Type::F32), 0)));
-                    }
-                    "transpose" => {
-                         if args.len() != 2 {
-                             return Some(self.err(SemanticError::ArgumentCountMismatch {
-                                name: "Tensor::transpose".into(), expected: 2, found: args.len()
-                            }, None));
-                         }
-                         for arg in args.iter_mut() {
-                             if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
-                         }
-                         return Some(Ok(obj_type.clone()));
-                    }
                     "backward" => {
                         if !args.is_empty() {
                             return Some(self.err(SemanticError::ArgumentCountMismatch {
@@ -5586,15 +5718,7 @@ impl SemanticAnalyzer {
                         }
                         return Some(Ok(Type::Void));
                     }
-                    "add" | "sub" | "mul" | "div" | "conv2d" => {
-                         if args.len() != 1 {
-                             return Some(self.err(SemanticError::ArgumentCountMismatch {
-                                name: format!("Tensor::{}", method), expected: 1, found: args.len()
-                            }, None));
-                         }
-                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
-                         return Some(Ok(obj_type.clone()));
-                    }
+
                     "add_assign" | "sub_assign" => {
                          if args.len() != 1 {
                              return Some(self.err(SemanticError::ArgumentCountMismatch {
@@ -5701,7 +5825,7 @@ impl SemanticAnalyzer {
                          Some(Ok(Type::Bool))
                     }
                      "read_binary" => {
-                         Some(Ok(Type::Vec(Box::new(Type::U8))))
+                         Some(Ok(Type::Struct("Vec".to_string(), vec![Type::U8])))
                     }
                     _ => None
                 }
@@ -5724,6 +5848,38 @@ impl SemanticAnalyzer {
             "F32" => {
                 match method {
                     "abs" => Some(Ok(Type::F32)),
+                    _ => None
+                }
+            }
+            "Map" => {
+                match method {
+                    "get" => {
+                        if args.len() != 1 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Map::get".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::Tensor(Box::new(Type::F32), 0)))
+                    }
+                    "get_1d" => {
+                         if args.len() != 1 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Map::get_1d".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::Tensor(Box::new(Type::F32), 1)))
+                    }
+                    "get_quantized" => {
+                         if args.len() != 1 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Map::get_quantized".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::Tensor(Box::new(Type::Struct("i8".to_string(), vec![])), 2)))
+                    }
                     _ => None
                 }
             }
@@ -5800,29 +5956,7 @@ impl SemanticAnalyzer {
             (Type::F64, Type::F32) => true,
             (Type::F64, Type::I64) => true,
             
-            // Vec<T> compatibility with UserDefined("Vec", [T]) or Struct("Vec", [T])
-            (Type::Vec(inner1), Type::Vec(inner2)) => {
-                // Vec<Void> is compatible with any Vec<T> (polymorphic)
-                if matches!(inner1.as_ref(), Type::Void) || matches!(inner2.as_ref(), Type::Void) {
-                    true
-                } else {
-                    self.are_types_compatible(inner1, inner2)
-                }
-            }
-            (Type::Vec(inner), Type::Struct(n, args)) | (Type::Struct(n, args), Type::Vec(inner)) => {
-                if n == "Vec" {
-                    if matches!(inner.as_ref(), Type::Void) {
-                        // Vec<Void> is compatible with any Vec<T>
-                        true
-                    } else if args.len() == 1 {
-                        self.are_types_compatible(inner, &args[0])
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            }
+
 
             
             _ => false,

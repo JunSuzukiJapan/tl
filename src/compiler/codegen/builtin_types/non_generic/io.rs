@@ -349,7 +349,7 @@ pub fn compile_file_read_binary<'ctx>(
         "vec_cast"
     ).map_err(|e| e.to_string())?;
 
-    Ok((vec_ptr.into(), Type::Vec(Box::new(Type::U8))))
+    Ok((vec_ptr.into(), Type::Struct("Vec".to_string(), vec![Type::U8])))
 }
 
 pub fn compile_file_read_string<'ctx>(

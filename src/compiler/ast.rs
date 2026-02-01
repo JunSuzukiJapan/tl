@@ -86,17 +86,11 @@ pub enum Type {
     // Type variable for inference (e.g., ?T0, ?T1)
     TypeVar(u32),
 
-    // Object list: Vec<Type>
-    Vec(Box<Type>),
-
     // User defined struct
     Struct(String, Vec<Type>), // Name, Component Types (Generics)
 
     // User defined enum
     Enum(String, Vec<Type>), // Name, Component Types
-
-    // Optimized small constant array (elements up to 4, stored as scalars)
-    ScalarArray(Box<Type>, usize), // (element_type, length)
 
     // Tuple type: (Type, Type, ...)
     Tuple(Vec<Type>),
@@ -128,10 +122,9 @@ impl Type {
             Type::Entity => "Entity".to_string(),
             Type::Tensor(_, _) => "Tensor".to_string(),
             Type::TensorShaped(_, _) => "Tensor".to_string(),
-            Type::Vec(_) => "Vec".to_string(),
             Type::Struct(n, _) => n.clone(),
             Type::Enum(n, _) => n.clone(),
-            Type::ScalarArray(_, _) => "ScalarArray".to_string(),
+
             Type::Tuple(_) => "Tuple".to_string(), // Or handle specially? TypeRegistry didn't support Tuple generic methods usually.
             // Type::UserDefined(n, _) => n.clone(), // REMOVED
             Type::Void => "Void".to_string(),

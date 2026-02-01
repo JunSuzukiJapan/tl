@@ -64,9 +64,6 @@ impl GenericResolver {
             }
             
             // Case 3: Built-in wrappers
-             (Type::Vec(inner1), Type::Vec(inner2)) => {
-                 Self::resolve_recursive(inner1, inner2, bindings)
-             }
              (Type::Tensor(inner1, r1), Type::Tensor(inner2, r2)) => {
                  if r1 != r2 {
                      return Err(format!("Tensor rank mismatch: {} vs {}", r1, r2));
@@ -74,12 +71,7 @@ impl GenericResolver {
                  Self::resolve_recursive(inner1, inner2, bindings)
              }
              
-             (Type::ScalarArray(t1, l1), Type::ScalarArray(t2, l2)) => {
-                 if l1 != l2 {
-                      return Err(format!("Array length mismatch: {} vs {}", l1, l2));
-                 }
-                 Self::resolve_recursive(t1, t2, bindings)
-             }
+
 
              // Base cases: Primitives must match exactly
              (Type::I64, Type::I64) => Ok(()),
@@ -129,7 +121,7 @@ impl GenericResolver {
                     a1.iter().zip(a2.iter()).all(|(x, y)| Self::types_equivalent(x, y))
             }
             
-            (Type::Vec(i1), Type::Vec(i2)) => Self::types_equivalent(i1, i2),
+
             (Type::Tensor(i1, r1), Type::Tensor(i2, r2)) => r1 == r2 && Self::types_equivalent(i1, i2),
             
             _ => t1 == t2,
@@ -153,7 +145,7 @@ impl GenericResolver {
                 let new_args = args.iter().map(|a| Self::apply_bindings(a, bindings)).collect();
                 Type::Enum(name.clone(), new_args)
             }
-            Type::Vec(inner) => Type::Vec(Box::new(Self::apply_bindings(inner, bindings))),
+
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(Self::apply_bindings(inner, bindings)), *rank),
             
             // Recursively handle others if needed, typically these are enough
@@ -169,7 +161,7 @@ mod tests {
     // Helper to create types
     fn t_param(n: &str) -> Type { Type::Struct(n.to_string(), vec![]) }
     fn t_struct(n: &str, args: Vec<Type>) -> Type { Type::Struct(n.to_string(), args) }
-    fn t_vec(t: Type) -> Type { Type::Vec(Box::new(t)) }
+    fn t_vec(t: Type) -> Type { Type::Struct("Vec".to_string(), vec![t]) }
     fn t_i64() -> Type { Type::I64 }
     fn t_f32() -> Type { Type::F32 }
     fn t_tensor(t: Type, r: usize) -> Type { Type::Tensor(Box::new(t), r) }

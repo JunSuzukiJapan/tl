@@ -34,9 +34,9 @@ fn test_file_io() {
     let content = "Hello TL IO World\nLine 2";
     print("Content created. Len: " + String::from_int(content.len()));
     print("Writing to path: " + path);
-    // let wrote = File::write(path, content);
+    let wrote = File::write(path, content);
     print("Write finished");
-    // assert(wrote, "File::write static failed");
+    assert(wrote, "File::write static failed");
     print("Checking existence...");
     
     // Check
