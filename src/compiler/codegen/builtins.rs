@@ -13,6 +13,7 @@ pub fn declare_runtime_functions<'ctx>(
 ) {
     let i64_type = context.i64_type(); // usize
     let i32_type = context.i32_type();
+    let i8_type = context.i8_type();
     let f32_type = context.f32_type();
     let f32_ptr = context.ptr_type(AddressSpace::default());
     let usize_ptr = context.ptr_type(AddressSpace::default());
@@ -327,6 +328,14 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_release(t: *mut) -> void
     add_fn("tl_tensor_release", free_type);
 
+    // tl_tensor_data(t: *mut) -> *mut
+    let data_type = void_ptr.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_tensor_data", data_type);
+
+    // tl_tensor_numel(t: *mut) -> i64
+    let numel_type = i64_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_tensor_numel", numel_type);
+
     // tl_ptr_dec_ref(ptr: *mut) -> i32
     let dec_ref_type = i32_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_ptr_dec_ref", dec_ref_type);
@@ -361,7 +370,9 @@ pub fn declare_runtime_functions<'ctx>(
     
     let push_i64_type = void_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
     add_fn("tl_vec_i64_push", push_i64_type);
-    add_fn("tl_vec_u8_push", push_i64_type); // U8 passed as i64 usually? Or i8?
+    
+    let push_u8_type = void_type.fn_type(&[void_ptr.into(), i8_type.into()], false);
+    add_fn("tl_vec_u8_push", push_u8_type); 
 
     let push_f32_type = void_type.fn_type(&[void_ptr.into(), f32_type.into()], false);
     add_fn("tl_vec_f32_push", push_f32_type);
@@ -374,10 +385,8 @@ pub fn declare_runtime_functions<'ctx>(
     let get_i64_type = i64_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
     add_fn("tl_vec_i64_get", get_i64_type);
     
-    // u8 get returns i64? or i8?
-    // In expr.rs, we cast the result if needed. 
-    // If runtime returns i64 for u8, we are good.
-    add_fn("tl_vec_u8_get", get_i64_type);
+    let get_u8_type = i8_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_vec_u8_get", get_u8_type);
 
     let get_f32_type = f32_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
     add_fn("tl_vec_f32_get", get_f32_type);
@@ -425,7 +434,9 @@ pub fn declare_runtime_functions<'ctx>(
     // pop(vec) -> val
     let pop_i64_type = i64_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_vec_i64_pop", pop_i64_type);
-    add_fn("tl_vec_u8_pop", pop_i64_type); // u8 returns i64
+    
+    let pop_u8_type = i8_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_vec_u8_pop", pop_u8_type); 
     
     let pop_f32_type = f32_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_vec_f32_pop", pop_f32_type);
@@ -453,7 +464,9 @@ pub fn declare_runtime_functions<'ctx>(
     // remove(vec, idx) -> val
     let remove_i64_type = i64_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
     add_fn("tl_vec_i64_remove", remove_i64_type);
-    add_fn("tl_vec_u8_remove", remove_i64_type);
+    
+    let remove_u8_type = i8_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_vec_u8_remove", remove_u8_type);
 
     let remove_f32_type = f32_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
     add_fn("tl_vec_f32_remove", remove_f32_type);
@@ -465,7 +478,9 @@ pub fn declare_runtime_functions<'ctx>(
     // insert(vec, idx, val) -> void
     let insert_i64_type = void_type.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into()], false);
     add_fn("tl_vec_i64_insert", insert_i64_type);
-    add_fn("tl_vec_u8_insert", insert_i64_type);
+    
+    let insert_u8_type = void_type.fn_type(&[void_ptr.into(), i64_type.into(), i8_type.into()], false);
+    add_fn("tl_vec_u8_insert", insert_u8_type);
 
     let insert_f32_type = void_type.fn_type(&[void_ptr.into(), i64_type.into(), f32_type.into()], false);
     add_fn("tl_vec_f32_insert", insert_f32_type);
@@ -477,7 +492,9 @@ pub fn declare_runtime_functions<'ctx>(
     // contains(vec, val) -> bool
     let contains_i64_type = context.bool_type().fn_type(&[void_ptr.into(), i64_type.into()], false);
     add_fn("tl_vec_i64_contains", contains_i64_type);
-    add_fn("tl_vec_u8_contains", contains_i64_type);
+    
+    let contains_u8_type = context.bool_type().fn_type(&[void_ptr.into(), i8_type.into()], false);
+    add_fn("tl_vec_u8_contains", contains_u8_type);
 
     let contains_f32_type = context.bool_type().fn_type(&[void_ptr.into(), f32_type.into()], false);
     add_fn("tl_vec_f32_contains", contains_f32_type);
@@ -2407,7 +2424,14 @@ pub fn declare_runtime_functions<'ctx>(
     for _name in i32_binary_methods {
     }
     // Add missing types that were likely in the original file but I need to make sure are present
-                                                                    // ... complete as needed based on original CodeGen
+                                                                    // tl_vec_*_as_ptr(vec) -> *const T
+    let as_ptr_i64_type = i64_ptr.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_vec_i64_as_ptr", as_ptr_i64_type);
+
+    let as_ptr_u8_type = i8_ptr.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_vec_u8_as_ptr", as_ptr_u8_type);
+    
+    // ... complete as needed based on original CodeGen
                                                                     // tl_tensor_reshape_dims(tensor: *mut OpaqueTensor, dims: *const i64, num_dims: i64) -> *mut OpaqueTensor
     let tensor_reshape_dims_type = void_ptr.fn_type(
         &[

@@ -41,11 +41,13 @@ fn main() {
     Tensor::clear_grads();
 
     // from_vec_u8
-    println("Tensor::from_vec_u8...");
-    let mut v_u8 = Vec::new();
+    let mut v_u8: Vec<u8> = Vec<u8>::new();
     v_u8.push(10 as u8);
     v_u8.push(255 as u8);
-    let t_u8 = Tensor::from_vec_u8(v_u8, [2]);
+    let mut shape: Vec<i64> = Vec<i64>::new();
+    shape.push(1);
+    shape.push(2);
+    let t_u8 = Tensor::from_vec_u8(v_u8, shape);
     println(t_u8);
 
     println("Tensor tests passed!");

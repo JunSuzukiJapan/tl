@@ -4395,6 +4395,9 @@ impl SemanticAnalyzer {
                     (Type::F32, Type::Struct(name, _)) if name == "u8" => Ok(target_type.clone()),
                     (Type::I64, Type::U8) => Ok(Type::U8), // Just in case it's Type::U8
                     (Type::I32, Type::U8) => Ok(Type::U8),
+                    // Allow casting u8 struct (used in parser) to integer types for printing/manipulation
+                    (Type::Struct(name, _), Type::I64) if name == "u8" => Ok(Type::I64),
+                    (Type::Struct(name, _), Type::I32) if name == "u8" => Ok(Type::I32),
                     _ => self.err(
                         SemanticError::TypeMismatch {
                             expected: target_type.clone(),
@@ -4410,8 +4413,10 @@ impl SemanticAnalyzer {
                 if *type_node != resolved_type {
                     *type_node = resolved_type.clone();
                 }
-                let type_name = type_node; // Alias for following code (which expects &Type now)
-
+                // let type_name = type_node; // Move causes issues with subsequent assignment
+                // We clone the type for inspection to avoid borrowing conflicts with *type_node assignment
+                let type_name_clone = type_node.clone();
+                let type_name = &type_name_clone;
 
 
                 // Handle Vec::new() -> Vec<T>
@@ -4433,13 +4438,15 @@ impl SemanticAnalyzer {
                         _ => None,
                     };
                     
-                    // If inner type is specified and not Void, use it; otherwise use Void
+                    // If inner type is specified and not Void, use it; otherwise use Undefined to allow inference
                     let result_inner = match inner_type {
                         Some(t) if !matches!(t, Type::Void) => t,
-                        _ => Type::Void,
+                        _ => Type::Undefined(self.get_next_undefined_id()),
                     };
                     
-                    return Ok(Type::Struct("Vec".to_string(), vec![result_inner]));
+                    let new_type = Type::Struct("Vec".to_string(), vec![result_inner]);
+                    *type_node = new_type.clone(); // Update AST so codegen sees generics
+                    return Ok(new_type);
                 }
 
                 // Handle HashMap::new() -> HashMap<K, V> (inferred)

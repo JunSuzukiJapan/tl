@@ -4337,6 +4337,29 @@ pub extern "C" fn tl_tensor_map_get_1d(
 // --- Vec Pop ---
 
 #[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_i64_as_ptr(ptr: *mut Vec<i64>) -> *const i64 {
+    unsafe {
+        let vec = &*ptr;
+        vec.as_ptr()
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_u8_as_ptr(ptr: *mut Vec<u8>) -> *const u8 {
+    unsafe {
+        let vec = &*ptr;
+        vec.as_ptr()
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_f32_as_ptr(ptr: *mut Vec<f32>) -> *const f32 {
+    unsafe {
+        let vec = &*ptr;
+        vec.as_ptr()
+    }
+}
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_i64_pop(ptr: *mut Vec<i64>) -> i64 {
     if ptr.is_null() { return 0; }
     let vec = unsafe { &mut *ptr };

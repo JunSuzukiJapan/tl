@@ -2228,6 +2228,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                          let i = self.builder.build_float_to_unsigned_int(f, self.context.i8_type(), "cast_u8").map_err(|e| e.to_string())?;
                          Ok((i.into(), target_type.clone()))
                     }
+                    // u8 -> Int Casts
+                    (Type::Struct(name, _), Type::I64) if name == "u8" => {
+                         let i = val.into_int_value(); // i8
+                         let extended = self.builder.build_int_z_extend(i, self.context.i64_type(), "cast_u8_i64").map_err(|e| e.to_string())?;
+                         Ok((extended.into(), Type::I64))
+                    }
+                     (Type::Struct(name, _), Type::I32) if name == "u8" => {
+                         let i = val.into_int_value(); // i8
+                         let extended = self.builder.build_int_z_extend(i, self.context.i32_type(), "cast_u8_i32").map_err(|e| e.to_string())?;
+                         Ok((extended.into(), Type::I32))
+                    }
                      (Type::I64, Type::U8) | (Type::I32, Type::U8) => {
                          let i = val.into_int_value();
                          let truncated = self.builder.build_int_cast(i, self.context.i8_type(), "cast_u8").map_err(|e| e.to_string())?;

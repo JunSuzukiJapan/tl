@@ -17,7 +17,7 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     // Evaluated static methods
     tensor.register_evaluated_static_method("load", compile_load_tensor, vec![Type::String("String".to_string())], Type::Tensor(Box::new(Type::F32), 1));
     tensor.register_evaluated_static_method("clear_grads", compile_clear_grads, vec![], Type::Void);
-    tensor.register_evaluated_static_method("from_vec_u8", compile_from_vec_u8, vec![Type::Struct("Vec".into(), vec![Type::U8]), Type::I64, Type::Struct("Vec".into(), vec![Type::I64]), Type::I64], Type::Tensor(Box::new(Type::F32), 0));
+    tensor.register_evaluated_static_method("from_vec_u8", compile_from_vec_u8, vec![Type::Struct("Vec".into(), vec![Type::U8]), Type::Struct("Vec".into(), vec![Type::I64])], Type::Tensor(Box::new(Type::F32), 0));
 
     // Instance methods
     // NOTE: Signatures here are proxies. Semantics check for Tensor is currently bypassed (handled by hardcoded match)
@@ -759,54 +759,76 @@ fn compile_from_vec_u8<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-     // Tensor::from_vec_u8(vec, offset, shape, rank) -> Tensor
+    // Tensor::from_vec_u8(vec, shape) -> Tensor
     // Arguments are already evaluated by GenericResolver (evaluated args mode)
     // args[0]: vec (Vec<U8>)
-    // args[1]: offset (I64)
-    // args[2]: shape (Vec<I64>)
-    // args[3]: rank (I64)
+    // args[1]: shape (Vec<I64>)
+    // Implicit: offset=0, rank=shape.len()
     
-    if args.len() != 4 {
-        return Err("Tensor::from_vec_u8 requires 4 arguments (vec, offset, shape, rank)".into());
+    if args.len() != 2 {
+        return Err("Tensor::from_vec_u8 requires 2 arguments (vec, shape)".into());
     }
     
-    // Check types?
-    // args[0] is Vec<U8> (pointer)
-    // args[1] is I64
-    // args[2] is Vec<I64>
-    // args[3] is I64
-    
     let vec_val = args[0].0;
-    let offset_val = args[1].0;
-    let shape_val = args[2].0;
-    let rank_val = args[3].0;
+    let shape_raw = args[1].0; 
+    let shape_ty = args[1].1.clone();
+    
+    // We need to pass (ptr, offset, shape_data_ptr, rank)
+    // shape_data_ptr should be *const i64 (pointer to array)
+    
+    let (shape_data_ptr, rank_val) = if matches!(shape_ty, Type::Tensor(_, _)) {
+        // Handle Tensor
+        // Data ptr
+        let data_fn = codegen.module.get_function("tl_tensor_data").ok_or("tl_tensor_data not found")?;
+        let data_call = codegen.builder.build_call(data_fn, &[shape_raw.into()], "shape_data").map_err(|e| e.to_string())?;
+        let data_ptr = match data_call.try_as_basic_value() {
+            ValueKind::Basic(v) => v.into_pointer_value(),
+            _ => return Err("Invalid return from tensor data".into()),
+        };
+        
+        // Numel (rank)
+        let numel_fn = codegen.module.get_function("tl_tensor_numel").ok_or("tl_tensor_numel not found")?;
+        let numel_call = codegen.builder.build_call(numel_fn, &[shape_raw.into()], "shape_numel").map_err(|e| e.to_string())?;
+        let numel = match numel_call.try_as_basic_value() {
+            ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("Invalid return from tensor numel".into()),
+        };
+        
+        (data_ptr, numel)
+    } else {
+         // Assume Vec (pointer to struct)
+         // Call tl_vec_i64_as_ptr(vec) -> *const i64
+         let as_ptr_fn = codegen.module.get_function("tl_vec_i64_as_ptr").ok_or("tl_vec_i64_as_ptr not found")?;
+         let ptr_call = codegen.builder.build_call(as_ptr_fn, &[shape_raw.into()], "vec_ptr").map_err(|e| e.to_string())?;
+         let data_ptr = match ptr_call.try_as_basic_value() {
+             ValueKind::Basic(v) => v.into_pointer_value(),
+             _ => return Err("Invalid return from vec as_ptr".into()),
+         };
+
+         // Call tl_vec_i64_len(vec) -> usize
+         let len_fn = codegen.module.get_function("tl_vec_i64_len").ok_or("tl_vec_i64_len not found")?;
+         let len_call = codegen.builder.build_call(len_fn, &[shape_raw.into()], "vec_len").map_err(|e| e.to_string())?;
+         let rank = match len_call.try_as_basic_value() {
+             ValueKind::Basic(v) => v.into_int_value(),
+             _ => return Err("Invalid return from vec len".into()),
+         };
+         
+         (data_ptr, rank)
+    };
+    
+    let offset_val = codegen.context.i64_type().const_int(0, false);
     
     let fn_val = codegen.module.get_function("tl_tensor_from_vec_u8").ok_or("tl_tensor_from_vec_u8 not found")?;
     
     let call = codegen.builder.build_call(fn_val, &[
         vec_val.into(),
         offset_val.into(),
-        shape_val.into(),
+        shape_data_ptr.into(),
         rank_val.into()
     ], "from_vec_res").map_err(|e| e.to_string())?;
     
     let v = codegen.check_tensor_result(call, "from_vec_error")?;
     
-    // We don't know the exact rank at compile time easily unless we parse the literal.
-    // However, if we assume generic Tensor type for return, we need a Type::Tensor(Box::new(Type::F32), rank).
-    // The previous implementation used args[3] (rank expression) to determine compile-time rank?
-    // Actually the previous implementation in compile_static_method_call was accessing args[3] via compile_expr.
-    // Here we have evaluated values. We can't easily extract compile-time constant from runtime value without optimization.
-    // BUT, usually signatures like from_vec_u8 are used in specific contexts where we might rely on Type::Tensor(..., 0) as dynamic?
-    // Or we should trust the user provided rank?
-    // Wait, GenericResolver evaluates args. If rank is constant, we might not see it here as constant easily.
-    // However, TypeManager return type inference usually relies on consistent types.
-    // For now, let's assume unknown rank (0) or try to adhere to signature?
-    // The previous code returned `Type::Tensor(Box::new(Type::F32), rank_val_as_int)`?
-    // No, previous code was evaluating expressions.
-    // Let's assume dynamic rank (0) or 1 for now, as from_vec_u8 is low-level.
-    // Correct approach: Return Type::Tensor(F32, 0) which means "Any Rank" or "Dynamic"?
-    // Or maybe we should improve this later. For now, 0 or 1.
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }
 
