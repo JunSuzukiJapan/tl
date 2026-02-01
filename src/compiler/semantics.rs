@@ -4610,57 +4610,39 @@ impl SemanticAnalyzer {
                 if *type_node != resolved_type {
                     *type_node = resolved_type.clone();
                 }
-                // We clone the type for inspection to avoid borrowing conflicts with *type_node assignment
+                // Auto-fill missing generic arguments with Undefined for ALL structs
+                // Auto-fill missing generic arguments with Undefined for ALL structs
+                // 1. Inspect type (read-only)
+                let (should_update, struct_name, current_args) = if let &mut Type::Struct(ref n, ref args) = type_node {
+                    if let Some(struct_def) = self.structs.get(n) {
+                         if args.len() < struct_def.generics.len() {
+                             (true, n.clone(), args.clone())
+                         } else {
+                             (false, String::new(), vec![])
+                         }
+                    } else {
+                        (false, String::new(), vec![])
+                    }
+                } else {
+                    (false, String::new(), vec![])
+                };
+
+                // 2. Update type (write)
+                if should_update {
+                     if let Some(struct_def) = self.structs.get(&struct_name) {
+                        let mut new_args = current_args;
+                        for _ in 0..(struct_def.generics.len() - new_args.len()) {
+                            new_args.push(Type::Undefined(self.get_next_undefined_id()));
+                        }
+                        let new_type = Type::Struct(struct_name, new_args);
+                        *type_node = new_type;
+                     }
+                }
+
+                // Re-derive type_ty after potential update (to ensure we use the one with Undefineds)
                 let type_ty = type_node.clone();
                 let type_name = type_ty.get_base_name();
 
-
-                // Handle Vec::new() -> Vec<T>
-                let is_vec = matches!(type_ty, Type::Struct(ref n, _) if n == "Vec");
-                
-                if is_vec && method_name == "new" {
-                    // Extract the inner type from Vec<T> if specified
-                    let inner_type = match type_ty {
-                        Type::Struct(_, args) => {
-                            if args.len() == 1 {
-                                Some(args[0].clone())
-                            } else {
-                                None
-                            }
-                        }
-                        _ => None,
-                    };
-                    
-                    // If inner type is specified and not Void, use it; otherwise use Undefined to allow inference
-                    let result_inner = match inner_type {
-                        Some(t) if !matches!(t, Type::Void) => t,
-                        _ => Type::Undefined(self.get_next_undefined_id()),
-                    };
-                    
-                    let new_type = Type::Struct("Vec".to_string(), vec![result_inner]);
-                    *type_node = new_type.clone(); // Update AST so codegen sees generics
-                    return Ok(new_type);
-                }
-
-                // Handle HashMap::new() -> HashMap<K, V> (inferred)
-                let is_hashmap = matches!(type_ty, Type::Struct(ref n, _) if n == "HashMap");
-
-                if is_hashmap && method_name == "new" {
-                    // Extract inner types if specified: HashMap<K, V>::new()
-                    let (key_type, val_type) = match type_ty {
-                         Type::Struct(_, args) => {
-                             if args.len() == 2 {
-                                 (args[0].clone(), args[1].clone())
-                             } else {
-                                 // Infer K, V
-                                 (Type::Undefined(self.get_next_undefined_id()), Type::Undefined(self.get_next_undefined_id()))
-                             }
-                         }
-                         _ => (Type::Undefined(self.get_next_undefined_id()), Type::Undefined(self.get_next_undefined_id())),
-                    };
-                    
-                    return Ok(Type::Struct("HashMap".to_string(), vec![key_type, val_type]));
-                }
 
 
 
@@ -4778,11 +4760,9 @@ impl SemanticAnalyzer {
                          // Initialize subst from known struct generics
                          for (i, param) in struct_params.iter().enumerate() {
                              if i < struct_generics_vals.len() {
-                                 // If value is Undefined, skip (we want to infer it)
-                                 // Unless valid Undefined?
-                                 if !matches!(struct_generics_vals[i], Type::Undefined(_)) {
-                                     subst.insert(param.clone(), struct_generics_vals[i].clone());
-                                 }
+                                 // Always map the parameter to the provided argument, even if it is Undefined.
+                                 // Undefined will be unified later.
+                                 subst.insert(param.clone(), struct_generics_vals[i].clone());
                              }
                          }
 

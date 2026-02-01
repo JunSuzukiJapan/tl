@@ -11,16 +11,8 @@ pub fn resolve_static_method_name(type_name: &str, method: &str, generics: &[Typ
     parts.push("tl".to_string());
     parts.push(type_name.to_lowercase());
 
-    // Apply defaults for legacy compatibility (Vec -> Vec<i64>, HashMap -> HashMap<String, Tensor>)
-    let effective_generics = if generics.is_empty() {
-        match type_name {
-            "Vec" => vec![Type::I64],
-            "HashMap" => vec![Type::String("String".to_string()), Type::Struct("Tensor".to_string(), vec![])],
-            _ => generics.to_vec(),
-        }
-    } else {
-        generics.to_vec()
-    };
+    // Use generics as provided
+    let effective_generics = generics.to_vec();
 
     for g in &effective_generics {
         parts.push(mangle_type_segment(g));
