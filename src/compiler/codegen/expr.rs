@@ -3831,7 +3831,6 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         // Compatibility aliases for existing logic
         let type_name = struct_name;
-        let method_name = method;
 
 
         // 1. Try TypeManager (AST-defined methods)
