@@ -283,8 +283,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Bool => "bool".to_string(),
             Type::Usize => "usize".to_string(),
             Type::Void => "void".to_string(),
-            Type::String(_) => "string".to_string(),
-            Type::Char(_) => "char".to_string(),
+            Type::String(_) => "String".to_string(),
+            Type::Char(_) => "Char".to_string(),
             Type::Struct(name, args) => {
                 if args.is_empty() {
                     name.clone()
@@ -480,15 +480,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Recursively substitute in args
                 let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
                 
-                match name.as_str() {
-                    "String" if new_args.is_empty() => Type::String("String".to_string()),
-                    "Char" if new_args.is_empty() => Type::Char("Char".to_string()),
-                    "I64" if new_args.is_empty() => Type::I64,
-                    "Bool" if new_args.is_empty() => Type::Bool,
-                    "F32" if new_args.is_empty() => Type::F32,
-                    "string" if new_args.is_empty() => Type::String("String".to_string()), // Catch leaks
-                    _ => Type::Struct(name.clone(), new_args)
-                }
+                // match name.as_str() { ... } removed
+                Type::Struct(name.clone(), new_args)
             }
 
             Type::Vec(inner) => Type::Vec(Box::new(self.substitute_type(inner, subst))),
@@ -505,7 +498,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         element_type: &Type,
         method_name: &str,
     ) -> Result<String, String> {
-        // println!("DEBUG: ensure_vec_method called for '{}' on type {:?}", method_name, element_type);
         let suffix = self.type_to_suffix(element_type);
         let mangled_fn_name = format!("tl_Vec_{}_{}", suffix, method_name);
         
@@ -522,6 +514,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             "pop" | "get" | "remove" => {
                 match element_type {
                     Type::String(_) => Type::String("String".to_string()),
+                    Type::Struct(name, _) if name == "String" => return Err(format!("System error: Struct(\"String\",...) for method '{}'", method_name)),
                     _ => element_type.clone(),
                 }
             },
@@ -542,6 +535,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                      _ => format!("tl_vec_ptr_{}", method_name),
                  }
             },
+            Type::Struct(name, _) if name == "String" => {
+                return Err(format!("System error: Struct(\"String\",...) for method '{}'", method_name));
+            },
+            Type::Char(_) => format!("tl_vec_i64_{}", method_name),
+            Type::Struct(name, _) if name == "Char" => format!("tl_vec_i64_{}", method_name),
             _ => format!("tl_vec_ptr_{}", method_name), // Pointer-based for structs/others
         };
         

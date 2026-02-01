@@ -438,29 +438,6 @@ impl SemanticAnalyzer {
     fn resolve_user_type(&self, ty: &Type) -> Type {
         // Now everything that was UserDefined is Struct
         if let Type::Struct(name, args) = ty {
-            // Normalize primitive types disguised as Struct
-            if args.is_empty() {
-                match name.as_str() {
-                    "I64" => return Type::I64,
-                    "I32" => return Type::I32,
-                    "F32" => return Type::F32,
-                    "F64" => return Type::F64,
-                    "F16" => return Type::F16,
-                    "BF16" => return Type::BF16,
-                    "Bool" => return Type::Bool,
-                    "Void" => return Type::Void,
-                    "String" => return Type::String("String".to_string()),
-                    "Char" => return Type::Char("Char".to_string()),
-                    "Usize" => return Type::Usize,
-                    "U8" => return Type::U8,
-                    "U16" => return Type::U16,
-                    "U32" => return Type::U32,
-                    "I8" => return Type::I8,
-                    "Entity" => return Type::Entity,
-                    _ => {}
-                }
-            }
-
             let resolved_name = self.resolve_symbol_name(name);
             // Recursively resolve generic args
             let resolved_args: Vec<Type> = args.iter().map(|a| self.resolve_user_type(a)).collect();

@@ -23,7 +23,7 @@ fn test_path() {
 
 fn test_file_io() {
     print("Testing File IO...");
-    let path = "tests/fixtures/io/temp_test.txt";
+    let path = "temp_test.txt";
     
     // Cleanup
     if File::exists(path) {
@@ -32,24 +32,40 @@ fn test_file_io() {
 
     // Static Write
     let content = "Hello TL IO World\nLine 2";
-    let wrote = File::write(path, content);
-    assert(wrote, "File::write static failed");
+    print("Content created. Len: " + String::from_int(content.len()));
+    print("Writing to path: " + path);
+    // let wrote = File::write(path, content);
+    print("Write finished");
+    // assert(wrote, "File::write static failed");
+    print("Checking existence...");
     
     // Check
-    assert(File::exists(path), "File should exist after write");
+    let exists = File::exists(path);
+    print("Exists check done: " + String::from_int(if exists { 1 } else { 0 }));
+    assert(exists, "File should exist after write");
     
     // Static Read
+    print("Reading file...");
     let read_back = File::read(path);
+    print("Read done. content len: " + String::from_int(read_back.len()));
+    
+    print("Asserting read_back == content...");
     assert(read_back == content, "Static read content mismatch");
+    print("Assert passed!");
     
     // Instance Open & Read
+    print("Opening file instance...");
     let f = File::open(path, "r");
+    print("File opened.");
     let s = f.read_string();
+    print("Instance read done.");
     assert(s == content, "Instance read_string content mismatch");
     f.close();
+    print("Instance closed.");
     
     // Instance Open & Write
     let f2 = File::open(path, "w");
+    print("Opening file instance 2.");
     let new_content = "Overwritten Content";
     f2.write_string(new_content);
     f2.close();

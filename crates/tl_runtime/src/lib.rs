@@ -4055,21 +4055,46 @@ pub extern "C" fn tl_download_file(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_read_file(path: *const std::os::raw::c_char) -> *const std::os::raw::c_char {
+pub extern "C" fn tl_read_file(path: *const std::os::raw::c_char) -> *mut StringStruct {
     let path_str = unsafe { std::ffi::CStr::from_ptr(path).to_string_lossy() };
+    eprintln!("DEBUG: tl_read_file reading: {}", path_str);
     if let Ok(content) = std::fs::read_to_string(path_str.as_ref()) {
-        let c_string = std::ffi::CString::new(content.trim()).unwrap();
-        c_string.into_raw()
+        eprintln!("DEBUG: read content len: {}", content.len());
+        // eprintln!("DEBUG: content bytes: {:?}", content.as_bytes());
+        match std::ffi::CString::new(content.trim()) {
+            Ok(c_str) => {
+                let s = crate::tl_string_new(c_str.as_ptr());
+                unsafe {
+                    eprintln!("DEBUG: tl_read_file allocated string at {:?} with buffer {:?}", s, (*s).ptr);
+                }
+                s
+            },
+            Err(e) => {
+                eprintln!("DEBUG: CString::new failed: {}", e);
+                std::ptr::null_mut()
+            },
+        }
     } else {
-        std::ptr::null()
+        eprintln!("DEBUG: allowed read_to_string failed");
+        std::ptr::null_mut()
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_write_file(path: *const std::os::raw::c_char, content: *const std::os::raw::c_char) -> i64 {
+    if path.is_null() {
+        eprintln!("tl_write_file: path is NULL");
+        return 0;
+    }
+    if content.is_null() {
+        eprintln!("tl_write_file: content is NULL");
+        return 0;
+    }
     let path_str = unsafe { std::ffi::CStr::from_ptr(path).to_string_lossy() };
     let content_str = unsafe { std::ffi::CStr::from_ptr(content).to_string_lossy() };
     
+    // eprintln!("DEBUG: writing to {} content len {}", path_str, content_str.len());
+
     if let Ok(_) = std::fs::write(path_str.as_ref(), content_str.as_ref()) {
         1
     } else {

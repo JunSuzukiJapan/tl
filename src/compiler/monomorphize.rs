@@ -170,25 +170,6 @@ impl Monomorphizer {
     fn resolve_type(&mut self, ty: &Type) -> Type {
         match ty {
             Type::Struct(name, args) | Type::Enum(name, args) => {
-                 // Normalize primitives
-                 if args.is_empty() {
-                     match name.as_str() {
-                         "I64" => return Type::I64,
-                         "F64" => return Type::F64,
-                         "F32" => return Type::F32,
-                         "Bool" => return Type::Bool,
-                         "Void" => return Type::Void,
-                         "String" => return Type::String("String".to_string()),
-                         "Char" => return Type::Char("Char".to_string()),
-                         "string" => return Type::String("String".to_string()),
-                         "char" => return Type::Char("Char".to_string()),
-                         "i64" => return Type::I64,
-                         "f32" => return Type::F32,
-                         "bool" => return Type::Bool,
-                         _ => {}
-                     }
-                 }
-
                  if !args.is_empty() {
                      // Check if this is a generic struct instantiation
                      if self.generic_structs.contains_key(name) {
@@ -501,6 +482,7 @@ impl Monomorphizer {
                           }
                           
                           if all_inferred && !type_args.is_empty() {
+                              eprintln!("DEBUG: instantiate generic enum {} with {:?}", enum_name, type_args);
                               let concrete_enum_name = self.request_struct_instantiation(enum_name, type_args.clone());
                               *enum_name = concrete_enum_name;
                               
@@ -1037,6 +1019,7 @@ impl Monomorphizer {
             }
             new_def.return_type = self.substitute_type(&new_def.return_type, &subst);
             new_def.return_type = self.resolve_type(&new_def.return_type);
+            eprintln!("DEBUG: instantiate_function {} return_type {:?}", new_def.name, new_def.return_type);
             
             // Rewrite Body
             // Push new scope for arguments
@@ -1083,11 +1066,13 @@ impl Monomorphizer {
 
 
     fn substitute_type(&self, ty: &Type, subst: &HashMap<String, Type>) -> Type {
+        eprintln!("DEBUG: substitute_type {:?} with subst keys {:?}", ty, subst.keys());
         match ty {
 
              Type::Tensor(inner, r) => Type::Tensor(Box::new(self.substitute_type(inner, subst)), *r),
              Type::Struct(name, args) => {
                  if let Some(replacement) = subst.get(name) {
+                     eprintln!("DEBUG: substitute_type FOUND {} -> {:?}", name, replacement);
                      return replacement.clone();
                  }
                  let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
@@ -1115,8 +1100,8 @@ impl Monomorphizer {
             Type::F64 => "f64".to_string(),
             Type::F32 => "f32".to_string(),
             Type::Bool => "bool".to_string(),
-            Type::String(_) => "string".to_string(),
-            Type::Char(_) => "char".to_string(),
+            Type::String(_) => "String".to_string(),
+            Type::Char(_) => "Char".to_string(),
             Type::I32 => "i32".to_string(),
             Type::I8 => "i8".to_string(),
             Type::U8 => "u8".to_string(),
@@ -1187,6 +1172,7 @@ impl Monomorphizer {
                     // Check if 'name' is in knowledge base of generics?
                     // Currently unbound check: we just insert.
                     if !map.contains_key(name) {
+                        eprintln!("DEBUG: unify_types insert {} -> {:?}", name, concrete);
                         map.insert(name.clone(), concrete.clone());
                     } else {
                         // verify consistency?
@@ -1213,3 +1199,4 @@ impl Monomorphizer {
 
 
 }
+
