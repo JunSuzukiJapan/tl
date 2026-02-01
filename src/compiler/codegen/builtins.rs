@@ -664,6 +664,10 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::tl_report_runtime_error as usize);
     }
 
+    if let Some(f) = module.get_function("tl_tensor_replace_data") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_replace_data as usize);
+    }
+
     // tl_tensor_sum_dim(t: *mut Tensor, dim: usize, keep: bool) -> *mut OpaqueTensor
     // usize -> i64 on 64-bit
     let sum_dim_type = void_ptr.fn_type(
@@ -739,6 +743,10 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_load(path: *const i8) -> *mut Tensor
     let load_type = void_ptr.fn_type(&[i8_ptr.into()], false);
     add_fn("tl_tensor_load", load_type);
+
+    // tl_tensor_replace_data(dest: *mut Tensor, src: *mut Tensor) -> void
+    let replace_data_type = void_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_tensor_replace_data", replace_data_type);
 
     // --- Logic / Knowledge Base Builtins ---
 

@@ -6,8 +6,9 @@ pub use crate::compiler::codegen::expr::{
 /// Represents a type definition within the CodeGenerator, managing its methods.
 pub struct CodeGenType {
     pub name: String,
-    pub static_methods: HashMap<String, StaticMethod>,
-    pub instance_methods: HashMap<String, InstanceMethod>,
+    // Store (Method, ArgTypes, ReturnType)
+    pub static_methods: HashMap<String, (StaticMethod, Vec<crate::compiler::ast::Type>, crate::compiler::ast::Type)>,
+    pub instance_methods: HashMap<String, (InstanceMethod, Vec<crate::compiler::ast::Type>, crate::compiler::ast::Type)>,
 }
 
 impl CodeGenType {
@@ -19,36 +20,36 @@ impl CodeGenType {
         }
     }
 
-    pub fn register_static_method(&mut self, name: &str, method: StaticMethod) {
-        self.static_methods.insert(name.to_string(), method);
-    }
-    
-    pub fn register_evaluated_static_method(&mut self, name: &str, method: crate::compiler::codegen::type_manager::StaticMethodEval) {
-        self.static_methods.insert(name.to_string(), StaticMethod::Evaluated(method));
+    pub fn register_evaluated_static_method(&mut self, name: &str, method: crate::compiler::codegen::type_manager::StaticMethodEval, args: Vec<crate::compiler::ast::Type>, ret: crate::compiler::ast::Type) {
+        self.static_methods.insert(name.to_string(), (StaticMethod::Evaluated(method), args, ret));
     }
 
-    pub fn register_unevaluated_static_method(&mut self, name: &str, method: crate::compiler::codegen::type_manager::StaticMethodUneval) {
-        self.static_methods.insert(name.to_string(), StaticMethod::Unevaluated(method));
+    pub fn register_unevaluated_static_method(&mut self, name: &str, method: crate::compiler::codegen::type_manager::StaticMethodUneval, args: Vec<crate::compiler::ast::Type>, ret: crate::compiler::ast::Type) {
+        self.static_methods.insert(name.to_string(), (StaticMethod::Unevaluated(method), args, ret));
     }
 
-    pub fn register_instance_method(&mut self, name: &str, method: InstanceMethod) {
-        self.instance_methods.insert(name.to_string(), method);
+    pub fn register_evaluated_instance_method(&mut self, name: &str, method: crate::compiler::codegen::type_manager::InstanceMethodEval, args: Vec<crate::compiler::ast::Type>, ret: crate::compiler::ast::Type) {
+        self.instance_methods.insert(name.to_string(), (InstanceMethod::Evaluated(method), args, ret));
     }
 
-    pub fn register_evaluated_instance_method(&mut self, name: &str, method: crate::compiler::codegen::type_manager::InstanceMethodEval) {
-        self.instance_methods.insert(name.to_string(), InstanceMethod::Evaluated(method));
-    }
-
-    pub fn register_unevaluated_instance_method(&mut self, name: &str, method: crate::compiler::codegen::type_manager::InstanceMethodUneval) {
-        self.instance_methods.insert(name.to_string(), InstanceMethod::Unevaluated(method));
+    pub fn register_unevaluated_instance_method(&mut self, name: &str, method: crate::compiler::codegen::type_manager::InstanceMethodUneval, args: Vec<crate::compiler::ast::Type>, ret: crate::compiler::ast::Type) {
+        self.instance_methods.insert(name.to_string(), (InstanceMethod::Unevaluated(method), args, ret));
     }
 
     pub fn get_static_method(&self, name: &str) -> Option<&StaticMethod> {
-        self.static_methods.get(name)
+        self.static_methods.get(name).map(|(m, _, _)| m)
     }
 
     pub fn get_instance_method(&self, name: &str) -> Option<&InstanceMethod> {
-        self.instance_methods.get(name)
+        self.instance_methods.get(name).map(|(m, _, _)| m)
+    }
+
+    pub fn get_static_signature(&self, name: &str) -> Option<(&Vec<crate::compiler::ast::Type>, &crate::compiler::ast::Type)> {
+        self.static_methods.get(name).map(|(_, args, ret)| (args, ret))
+    }
+
+    pub fn get_instance_signature(&self, name: &str) -> Option<(&Vec<crate::compiler::ast::Type>, &crate::compiler::ast::Type)> {
+        self.instance_methods.get(name).map(|(_, args, ret)| (args, ret))
     }
 }
 
@@ -115,7 +116,7 @@ mod tests {
         assert_eq!(ty.name, "TestType");
         
         // Test registering instance method
-        ty.register_instance_method("test_method", InstanceMethod::Evaluated(mock_method));
+        ty.register_evaluated_instance_method("test_method", mock_method, vec![], Type::Void);
         
         let method = ty.get_instance_method("test_method");
         assert!(method.is_some());
@@ -149,7 +150,7 @@ mod tests {
         
         // Register explicit type
         let mut explicit_ty = CodeGenType::new("Explicit");
-        explicit_ty.register_instance_method("foo", InstanceMethod::Evaluated(mock_method));
+        explicit_ty.register_evaluated_instance_method("foo", mock_method, vec![], Type::Void);
         tm.register_type(explicit_ty);
         
         let retrieved = tm.get_type("Explicit").unwrap();

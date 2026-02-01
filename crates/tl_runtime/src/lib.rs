@@ -3151,6 +3151,11 @@ pub extern "C" fn tl_tensor_map_insert(
 
     unsafe {
         if (*name).ptr.is_null() { return; }
+        
+        // let c_str = std::ffi::CStr::from_ptr((*name).ptr);
+        // let key = c_str.to_string_lossy().into_owned();
+        // eprintln!("DEBUG: insert map={:p} tensor={:p} key={}", map, tensor, key);
+        // Clean implementation:
         let map_ref = &mut (*map).0;
         let c_str = std::ffi::CStr::from_ptr((*name).ptr);
         let key = c_str.to_string_lossy().into_owned();
@@ -4507,4 +4512,25 @@ pub extern "C" fn tl_vec_string_contains(ptr: *mut Vec<*mut std::ffi::c_void>, v
         }
     }
     false
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_replace_data(dest: *mut OpaqueTensor, src: *mut OpaqueTensor) {
+    unsafe {
+        if dest.is_null() || src.is_null() { return; }
+        
+        let src_tensor = match (*src).as_tensor() {
+             Ok(t) => t.clone(),
+             Err(_) => return,
+        };
+        
+        match &(*dest).0 {
+             TensorVariant::Standard(_, Some(var_arc), _) => {
+                  let _ = var_arc.set(&src_tensor);
+             },
+             _ => {
+                 (*dest).0 = TensorVariant::Standard(src_tensor, None, None);
+             }
+        }
+    }
 }

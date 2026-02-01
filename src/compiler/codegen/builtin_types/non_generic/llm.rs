@@ -10,20 +10,78 @@ use inkwell::values::BasicValueEnum;
 pub const SOURCE: &str = include_str!("llm_types.tl");
 
 pub fn register_llm_types(manager: &mut TypeManager) {
+    let string_type = Type::String("String".to_string());
+    
     // Register Tokenizer
     let mut tokenizer = CodeGenType::new("Tokenizer");
-    tokenizer.register_evaluated_static_method("new", compile_tokenizer_new);
-    tokenizer.register_evaluated_instance_method("encode", compile_tokenizer_encode);
-    tokenizer.register_evaluated_instance_method("decode", compile_tokenizer_decode);
+    // Tokenizer::new(path: String) -> Tokenizer
+    tokenizer.register_evaluated_static_method(
+        "new", 
+        compile_tokenizer_new,
+        vec![string_type.clone()],
+        Type::Struct("Tokenizer".to_string(), vec![])
+    );
+    // Tokenizer.encode(prompt: String) -> Tensor<i64>
+    tokenizer.register_evaluated_instance_method(
+        "encode", 
+        compile_tokenizer_encode,
+        vec![string_type.clone()],
+        Type::Tensor(Box::new(Type::I64), 1) // 1D tensor of IDs
+    );
+    // Tokenizer.decode(ids: Tensor<i64>) -> String
+    tokenizer.register_evaluated_instance_method(
+        "decode", 
+        compile_tokenizer_decode,
+        vec![Type::Tensor(Box::new(Type::I64), 1)],
+        string_type.clone()
+    );
     manager.register_type(tokenizer);
 
     // Register KVCache
     let mut kv_cache = CodeGenType::new("KVCache");
-    kv_cache.register_evaluated_static_method("new", compile_kv_cache_new);
-    kv_cache.register_evaluated_instance_method("free", compile_kv_cache_free);
-    kv_cache.register_evaluated_instance_method("get_k", compile_kv_cache_get_k);
-    kv_cache.register_evaluated_instance_method("get_v", compile_kv_cache_get_v);
-    kv_cache.register_evaluated_instance_method("update", compile_kv_cache_update);
+    // KVCache::new(layers: i64) -> KVCache
+    kv_cache.register_evaluated_static_method(
+        "new", 
+        compile_kv_cache_new,
+        vec![Type::I64],
+        Type::Struct("KVCache".to_string(), vec![])
+    );
+    // KVCache.free() -> Void
+    kv_cache.register_evaluated_instance_method(
+        "free", 
+        compile_kv_cache_free,
+        vec![],
+        Type::Void
+    );
+    // KVCache.get_k(layer: i64) -> Tensor<f32>
+    kv_cache.register_evaluated_instance_method(
+        "get_k", 
+        compile_kv_cache_get_k,
+        vec![Type::I64],
+        Type::Tensor(Box::new(Type::F32), 2) // Assuming 2D? (batch, dim) or (seq, dim)
+    );
+    // KVCache.get_v(layer: i64) -> Tensor<f32>
+    kv_cache.register_evaluated_instance_method(
+        "get_v", 
+        compile_kv_cache_get_v,
+        vec![Type::I64],
+        Type::Tensor(Box::new(Type::F32), 2)
+    );
+    // KVCache.update(layer: i64, k: Tensor, v: Tensor) -> Void
+    // k and v ranks depend on implementation, usually 2D or 3D. 
+    // Let's assume generic Tensor for now as runtime handles it, but signature expects specific type.
+    // Based on usage in compile_kv_cache_update, it checks if it is Tensor.
+    // I'll define it as taking Tensor<f32> with rank 0 (generic) or explicit if known. 
+    // Usually these are 2D/3D tensors. 
+    // Let's use generic Tensor<f32>.
+    let tensor_type = Type::Tensor(Box::new(Type::F32), 0); 
+    kv_cache.register_evaluated_instance_method(
+        "update", 
+        compile_kv_cache_update,
+        vec![Type::I64, tensor_type.clone(), tensor_type.clone()],
+        Type::Void
+    );
+
     manager.register_type(kv_cache);
 }
 

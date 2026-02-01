@@ -7,32 +7,137 @@ use inkwell::IntPredicate;
 
 
 pub fn register_io_types(manager: &mut TypeManager) {
+    let string_type = Type::String("String".to_string());
+    
     // File
     let mut file = CodeGenType::new("File");
-    file.register_evaluated_static_method("open", compile_file_open);
-    file.register_evaluated_static_method("exists", compile_file_exists);
-    file.register_evaluated_static_method("read", compile_file_read_static);
-    file.register_evaluated_static_method("write", compile_file_write);
-    file.register_evaluated_static_method("download", compile_file_download);
-    file.register_evaluated_static_method("read_binary", compile_file_read_binary);
-    file.register_evaluated_instance_method("read_string", compile_file_read_string);
-    file.register_evaluated_instance_method("write_string", compile_file_write_string);
-    file.register_evaluated_instance_method("close", compile_file_close);
+    
+    // File::open(path: String, mode: String) -> File
+    file.register_evaluated_static_method(
+        "open", 
+        compile_file_open, 
+        vec![string_type.clone(), string_type.clone()],
+        Type::Struct("File".to_string(), vec![])
+    );
+    
+    // File::exists(path: String) -> Bool
+    file.register_evaluated_static_method(
+        "exists", 
+        compile_file_exists, 
+        vec![string_type.clone()],
+        Type::Bool
+    );
+    
+    // File::read(path: String) -> String
+    file.register_evaluated_static_method(
+        "read", 
+        compile_file_read_static, 
+        vec![string_type.clone()],
+        string_type.clone()
+    );
+    
+    // File::write(path: String, content: String) -> Bool
+    file.register_evaluated_static_method(
+        "write", 
+        compile_file_write, 
+        vec![string_type.clone(), string_type.clone()],
+        Type::Bool
+    );
+    
+    // File::download(url: String, path: String) -> Bool
+    file.register_evaluated_static_method(
+        "download", 
+        compile_file_download, 
+        vec![string_type.clone(), string_type.clone()],
+        Type::Bool
+    );
+
+    // File::read_binary(path: String) -> Vec<u8>
+    file.register_evaluated_static_method(
+        "read_binary",
+        compile_file_read_binary,
+        vec![string_type.clone()],
+        Type::Struct("Vec".to_string(), vec![Type::U8])
+    );
+
+    // File.read_string() -> String
+    file.register_evaluated_instance_method(
+        "read_string", 
+        compile_file_read_string,
+        vec![],
+        string_type.clone()
+    );
+    
+    // File.write_string(content: String) -> Void
+    file.register_evaluated_instance_method(
+        "write_string", 
+        compile_file_write_string,
+        vec![string_type.clone()],
+        Type::Void
+    );
+    
+    // File.close() -> Void
+    file.register_evaluated_instance_method(
+        "close", 
+        compile_file_close,
+        vec![],
+        Type::Void
+    );
+    
     manager.register_type(file);
 
     // Path
     let mut path = CodeGenType::new("Path");
-    path.register_evaluated_static_method("exists", compile_path_exists);
+    // Path::exists(path: String) -> Bool
+    path.register_evaluated_static_method(
+        "exists", 
+        compile_path_exists, 
+        vec![string_type.clone()],
+        Type::Bool
+    );
+    // Path::new(path: String) -> Path
+    path.register_evaluated_static_method(
+        "new",
+        compile_path_new,
+        vec![string_type.clone()],
+        Type::Struct("Path".to_string(), vec![])
+    );
     manager.register_type(path);
 
     // Env
     let mut env = CodeGenType::new("Env");
-    env.register_evaluated_static_method("get", compile_env_get);
+    // Env::get(key: String) -> String
+    env.register_evaluated_static_method(
+        "get", 
+        compile_env_get, 
+        vec![string_type.clone()],
+        string_type.clone()
+    );
+    // Env::set(key: String, val: String) -> Void
+    env.register_evaluated_static_method(
+        "set",
+        compile_env_set,
+        vec![string_type.clone(), string_type.clone()],
+        Type::Void
+    );
     manager.register_type(env);
 
     // Http
     let mut http = CodeGenType::new("Http");
-    http.register_evaluated_static_method("get", compile_http_get);
+    // Http::get(url: String) -> String
+    http.register_evaluated_static_method(
+        "get", 
+        compile_http_get, 
+        vec![string_type.clone()],
+        string_type.clone()
+    );
+    // Http::download(url: String, path: String) -> Bool
+    http.register_evaluated_static_method(
+        "download",
+        compile_http_download,
+        vec![string_type.clone(), string_type.clone()],
+        Type::Bool
+    );
     manager.register_type(http);
 }
 
@@ -109,7 +214,81 @@ fn compile_env_get<'ctx>(
     Ok((res, Type::String("String".to_string())))
 }
 
-fn compile_http_get<'ctx>(
+
+    // ... existing compile functions ...
+
+pub fn compile_path_new<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("Path::new requires 1 argument".into()); }
+    // 1. Convert String (i8*) to PathBuf
+    let tl_path_new = codegen.module.get_function("tl_path_new").ok_or("tl_path_new not found")?;
+    let (path_val, path_ty) = &args[0]; // String (i8*)
+    
+    let path_ptr_val = if matches!(path_ty, Type::String(_)) {
+        if !path_val.is_pointer_value() {
+            return Err(format!("Path::new path must be a pointer, got {:?}", path_val));
+        }
+        let ptr = path_val.into_pointer_value();
+        // Just cast pointer to int to pass through
+        codegen.builder.build_ptr_to_int(ptr, codegen.context.i64_type(), "ptr_int").map_err(|e| e.to_string())?
+    } else {
+         return Err("Path::new argument must be String".into());
+    };
+    let path_ptr = codegen.builder.build_int_to_ptr(
+        path_ptr_val,
+        codegen.context.ptr_type(inkwell::AddressSpace::default()),
+        "path_ptr_pb"
+    ).map_err(|e| e.to_string())?;
+
+    let path_buf_call = codegen.builder.build_call(tl_path_new, &[path_ptr.into()], "path_new").map_err(|e| e.to_string())?;
+    
+    let path_buf_ptr = match path_buf_call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from tl_path_new".into()),
+    };
+    
+    Ok((path_buf_ptr, Type::Struct("Path".to_string(), vec![])))
+}
+
+pub fn compile_env_set<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 2 { return Err("Env::set requires 2 arguments".into()); }
+    let fn_val = codegen.module.get_function("tl_env_set").ok_or("tl_env_set not found (runtime)")?;
+
+    // helper to extract string ptr
+    let mut extract_ptr = |v: BasicValueEnum<'ctx>, t: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, String> {
+         if matches!(t, Type::String(_)) {
+              let v_struct = codegen.load_struct_i64_field(v, t, "ptr")?;
+              let ptr = codegen.builder.build_int_to_ptr(v_struct.into_int_value(), codegen.context.ptr_type(inkwell::AddressSpace::default()), "str_ptr").map_err(|e| e.to_string())?;
+              Ok(ptr.into())
+         } else {
+              Err("Expected String".into())
+         }
+    };
+
+    let key_ptr = extract_ptr(args[0].0, &args[0].1)?;
+    let val_ptr = extract_ptr(args[1].0, &args[1].1)?;
+
+    codegen.builder.build_call(fn_val, &[key_ptr, val_ptr], "").map_err(|e| e.to_string())?;
+    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
+}
+
+pub fn compile_http_download<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    // Reuse compile_file_download or same logic
+    compile_file_download(codegen, args, _target)
+}
+
+pub fn compile_http_get<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
@@ -124,7 +303,7 @@ fn compile_http_get<'ctx>(
     Ok((res, Type::String("String".to_string())))
 }
 
-fn compile_path_exists<'ctx>(
+pub fn compile_path_exists<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,

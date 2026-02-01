@@ -12,4 +12,5 @@ pub use non_generic::io;
 pub use non_generic::system;
 pub use non_generic::llm;
 pub use non_generic::tensor;
+pub use non_generic::param;
 // pub use non_generic::primitives; // Maybe? existing code didn't complain about primitives call, but let's be safe.

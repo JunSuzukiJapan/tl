@@ -171,6 +171,9 @@ impl Scope {
     }
 }
 
+use crate::compiler::codegen::type_manager::TypeManager;
+use crate::compiler::codegen::builtin_types::non_generic::{io, system, llm};
+
 pub struct SemanticAnalyzer {
     scopes: Vec<Scope>,                                     // Stack of scopes
     functions: HashMap<String, FunctionDef>,                // Global function registry
@@ -182,6 +185,9 @@ pub struct SemanticAnalyzer {
     current_module: String,            // Current module prefix (e.g. "a::b")
     loop_depth: usize,                 // Track nesting level of loops for break/continue
     undefined_counter: u64,            // Counter for generating unique Undefined types
+    
+    // Type Registry for Builtins
+    type_manager: TypeManager,
 }
 
 impl SemanticAnalyzer {
@@ -198,6 +204,7 @@ impl SemanticAnalyzer {
             loop_depth: 0,
 
             undefined_counter: 0,
+            type_manager: TypeManager::new(),
         };
         analyzer.declare_builtins();
         analyzer
@@ -238,10 +245,12 @@ impl SemanticAnalyzer {
         };
         self.enums.insert("Device".to_string(), device_enum);
 
-
-        // removed: Register generic structs (Vec, Map, HashMap, Option, Result) 
-        // These are now injected via source loading in main.rs
-        // This prevents DuplicateDefinition errors.
+        // Populate TypeManager with builtins for semantic checks
+        io::register_io_types(&mut self.type_manager);
+        system::register_system_types(&mut self.type_manager);
+        llm::register_llm_types(&mut self.type_manager);
+        
+        // Note: Generic builtins (Vec, Map) are handled via standard AST injection
     }
 
     pub fn enter_scope(&mut self) {
@@ -4719,60 +4728,42 @@ impl SemanticAnalyzer {
 
 
                 let type_key = type_name.get_base_name();
+                let mut ty_def_opt = None;
+                if type_key != "Tensor" && type_key != "Param" {
+                    ty_def_opt = self.type_manager.get_type(type_key.as_str());
+                }
+                if let Some(ty_def) = ty_def_opt {
+                     if let Some((sig_args, sig_ret)) = ty_def.get_static_signature(method_name) {
+                         let sig_args = sig_args.clone();
+                         let sig_ret = sig_ret.clone();
+                         
+                         if args.len() != sig_args.len() {
+                             return self.err(
+                                 SemanticError::ArgumentCountMismatch {
+                                     name: format!("{}::{}", type_key, method_name),
+                                     expected: sig_args.len(),
+                                     found: args.len(),
+                                 },
+                                 Some(expr.span.clone()),
+                             );
+                         }
+                         for (i, arg_val) in args.iter_mut().enumerate() {
+                             let val_type = self.check_expr(arg_val)?;
+                             if !self.are_types_compatible(&val_type, &sig_args[i]) {
+                                 return self.err(
+                                     SemanticError::TypeMismatch {
+                                         expected: sig_args[i].clone(),
+                                         found: val_type,
+                                     },
+                                     Some(arg_val.span.clone()),
+                                 );
+                             }
+                         }
+                         return Ok(sig_ret.clone());
+                     }
+                }
+
                 match (type_key.as_str(), method_name.as_str()) {
-                    ("File", "open") => {
-                        if args.len() != 2 {
-                            return self.err(
-                                SemanticError::ArgumentCountMismatch {
-                                    name: "File::open".into(),
-                                    expected: 2,
-                                    found: args.len(),
-                                },
-                                Some(expr.span.clone()),
-                            );
-                        }
-                        Ok(Type::Struct("File".to_string(), vec![]))
-                    }
-                    // Existing code was checking UserDefined("String").
-                    // I will replace that.
-                    ("Path", "new") => {
-                        if args.len() != 1 {
-                            return self.err(
-                                SemanticError::ArgumentCountMismatch {
-                                    name: "Path::new".into(),
-                                    expected: 1,
-                                    found: args.len(),
-                                },
-                                Some(expr.span.clone()),
-                            );
-                        }
-                        Ok(Type::Struct("Path".to_string(), vec![]))
-                    }
-                    ("System", "time") => Ok(Type::F32),
-                    ("System", "sleep") => Ok(Type::Void),
-                    ("System", "exit") => Ok(Type::Void),
-                    ("System", "memory_mb") => Ok(Type::I64),
-                    ("System", "metal_pool_bytes") => Ok(Type::I64),
-                    ("System", "metal_pool_mb") => Ok(Type::I64),
-                    ("System", "metal_pool_count") => Ok(Type::I64),
-                    ("System", "metal_sync") => Ok(Type::Void),
-                    ("System", "pool_count") => Ok(Type::I64),
-                    ("System", "refcount_count") => Ok(Type::I64),
-                    ("System", "scope_depth") => Ok(Type::I64),
-                    ("Env", "get") => Ok(Type::String("String".to_string())),
-                    ("Env", "set") => {
-                        if args.len() != 2 {
-                            return self.err(
-                                SemanticError::ArgumentCountMismatch {
-                                    name: "Env::set".into(),
-                                    expected: 2,
-                                    found: args.len(),
-                                },
-                                Some(expr.span.clone()),
-                            );
-                        }
-                        Ok(Type::Void)
-                    }
                     ("String", "from_int") => {
                          if args.len() != 1 {
                             return self.err(
@@ -4787,8 +4778,6 @@ impl SemanticAnalyzer {
                         self.check_expr(&mut args[0])?;
                         Ok(Type::String("String".to_string()))
                     }
-                    ("Http", "get") => Ok(Type::String("String".to_string())),
-                    ("Http", "download") => Ok(Type::Bool),
                     ("Image", "load_grayscale") => Ok(Type::Struct("Vec".to_string(), vec![Type::U8])),
                     ("Image", "width") => Ok(Type::I64),
                     ("Image", "height") => Ok(Type::I64),
@@ -4798,15 +4787,6 @@ impl SemanticAnalyzer {
                     ("Arena", "alloc") => Ok(Type::I64),
                     ("Arena", "init") => Ok(Type::Void),
                     ("Arena", "is_active") => Ok(Type::Bool),
-                    ("Tokenizer", "new") => Ok(Type::Struct("Tokenizer".into(), vec![])),
-                    ("KVCache", "new") => Ok(Type::Struct("KVCache".into(), vec![])),
-
-                    ("File", "exists") => Ok(Type::Bool),
-                    ("File", "read") => Ok(Type::String("String".to_string())),
-                    ("File", "write") => Ok(Type::Bool),
-                    ("File", "download") => Ok(Type::Bool),
-                    ("File", "read_binary") => Ok(Type::Struct("Vec".to_string(), vec![Type::U8])),
-                    ("Path", "exists") => Ok(Type::Bool),
 
                     // --- New Static Methods for Refactor ---
                     ("Tensor", "zeros") => {
@@ -5342,8 +5322,20 @@ impl SemanticAnalyzer {
                     _ => obj_type.get_base_name(),
                 };
 
+                // Check AST methods first, then TypeManager
                 let method_data = if let Some(methods) = self.methods.get(&type_name) {
                     methods.get(method_name).map(|m| (m.args.clone(), m.return_type.clone()))
+                } else if type_name != "Tensor" && type_name != "Param" {
+                     if let Some(ty_def) = self.type_manager.get_type(&type_name) {
+                         ty_def.get_instance_signature(method_name).map(|(args, ret)| {
+                             let args_with_names: Vec<(String, Type)> = args.iter()
+                                .map(|t| ("_".to_string(), t.clone()))
+                                .collect();
+                             (args_with_names, ret.clone())
+                         })
+                     } else {
+                         None
+                     }
                 } else {
                     None
                 };
@@ -5807,29 +5799,7 @@ impl SemanticAnalyzer {
                     _ => None
                 }
             }
-            "File" => {
-                match method {
-                    "read_string" => {
-                         if !args.is_empty() { return Some(self.err(SemanticError::ArgumentCountMismatch { name: "File::read_string".into(), expected: 0, found: args.len() }, None)); }
-                         Some(Ok(Type::String("String".to_string())))
-                    }
-                    "write_string" => {
-                         if args.len() != 1 { return Some(self.err(SemanticError::ArgumentCountMismatch { name: "File::write_string".into(), expected: 1, found: args.len() }, None)); }
-                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
-                         Some(Ok(Type::Void))
-                    }
-                     "close" => {
-                         Some(Ok(Type::Void))
-                    }
-                    "exists" => {
-                         Some(Ok(Type::Bool))
-                    }
-                     "read_binary" => {
-                         Some(Ok(Type::Struct("Vec".to_string(), vec![Type::U8])))
-                    }
-                    _ => None
-                }
-            }
+
             "Path" => {
                 match method {
                     "to_string" => Some(Ok(Type::String("String".to_string()))),

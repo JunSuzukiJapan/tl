@@ -7,21 +7,87 @@ pub fn register_system_types(manager: &mut TypeManager) {
     let mut system = CodeGenType::new("System");
     
     // Time
-    system.register_evaluated_static_method("time", compile_system_time);
-    system.register_evaluated_static_method("sleep", compile_system_sleep);
-    system.register_evaluated_static_method("exit", compile_system_exit);
+    // System::time() -> f32
+    system.register_evaluated_static_method(
+        "time", 
+        compile_system_time,
+        vec![],
+        Type::F32
+    );
+    // System::sleep(seconds: f32) -> Void
+    system.register_evaluated_static_method(
+        "sleep", 
+        compile_system_sleep,
+        vec![Type::F32],
+        Type::Void
+    );
+    // System::exit(code: i64) -> Void
+    system.register_evaluated_static_method(
+        "exit", 
+        compile_system_exit,
+        vec![Type::I64],
+        Type::Void
+    );
     
     // Memory / Stats
-    system.register_evaluated_static_method("memory_mb", compile_memory_mb);
-    system.register_evaluated_static_method("pool_count", compile_pool_count);
-    system.register_evaluated_static_method("refcount_count", compile_refcount_count);
-    system.register_evaluated_static_method("scope_depth", compile_scope_depth);
+    // System::memory_mb() -> i64
+    system.register_evaluated_static_method(
+        "memory_mb", 
+        compile_memory_mb,
+        vec![],
+        Type::I64
+    );
+    // System::pool_count() -> i64
+    system.register_evaluated_static_method(
+        "pool_count", 
+        compile_pool_count,
+        vec![],
+        Type::I64
+    );
+    // System::refcount_count() -> i64
+    system.register_evaluated_static_method(
+        "refcount_count", 
+        compile_refcount_count,
+        vec![],
+        Type::I64
+    );
+    // System::scope_depth() -> i64
+    system.register_evaluated_static_method(
+        "scope_depth", 
+        compile_scope_depth,
+        vec![],
+        Type::I64
+    );
     
     // Metal
-    system.register_evaluated_static_method("metal_pool_bytes", compile_metal_pool_bytes);
-    system.register_evaluated_static_method("metal_pool_mb", compile_metal_pool_mb);
-    system.register_evaluated_static_method("metal_pool_count", compile_metal_pool_count);
-    system.register_evaluated_static_method("metal_sync", compile_metal_sync);
+    // System::metal_pool_bytes() -> i64
+    system.register_evaluated_static_method(
+        "metal_pool_bytes", 
+        compile_metal_pool_bytes,
+        vec![],
+        Type::I64
+    );
+    // System::metal_pool_mb() -> i64
+    system.register_evaluated_static_method(
+        "metal_pool_mb", 
+        compile_metal_pool_mb,
+        vec![],
+        Type::I64
+    );
+    // System::metal_pool_count() -> i64
+    system.register_evaluated_static_method(
+        "metal_pool_count", 
+        compile_metal_pool_count,
+        vec![],
+        Type::I64
+    );
+    // System::metal_sync() -> Void
+    system.register_evaluated_static_method(
+        "metal_sync", 
+        compile_metal_sync,
+        vec![],
+        Type::Void
+    );
 
     manager.register_type(system);
 }

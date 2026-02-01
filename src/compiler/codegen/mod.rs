@@ -494,6 +494,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         builtin_types::io::register_io_types(&mut self.type_manager);
         builtin_types::system::register_system_types(&mut self.type_manager);
         builtin_types::tensor::register_tensor_types(&mut self.type_manager);
+        builtin_types::param::register_param_types(&mut self.type_manager);
 
         builtin_types::llm::register_llm_types(&mut self.type_manager);
         // builtin_types::result::register_result_types(&mut self.type_manager);
