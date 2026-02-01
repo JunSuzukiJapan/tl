@@ -122,7 +122,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let previous_block = self.builder.get_insert_block();
 
         self.compile_fn_proto(&new_method)?;
-        self.compile_fn(&new_method, &[])?;
+        self.pending_functions.push(new_method);
         
         // Restore builder position
         if let Some(block) = previous_block {
@@ -195,7 +195,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // 7. Compile
         // Need to register proto first (for recursion support etc)
         self.compile_fn_proto(&new_func)?;
-        self.compile_fn(&new_func, &[])?;
+        self.pending_functions.push(new_func);
         
         Ok(mangled_name)
     }
@@ -514,7 +514,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             "pop" | "get" | "remove" => {
                 match element_type {
                     Type::String(_) => Type::String("String".to_string()),
-                    Type::Struct(name, _) if name == "String" => return Err(format!("System error: Struct(\"String\",...) for method '{}'", method_name)),
+                    Type::Struct(name, _) if name == "String" => Type::String("String".to_string()),
                     _ => element_type.clone(),
                 }
             },
@@ -536,7 +536,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                  }
             },
             Type::Struct(name, _) if name == "String" => {
-                return Err(format!("System error: Struct(\"String\",...) for method '{}'", method_name));
+                 match method_name {
+                     "contains" | "pop" | "insert" | "remove" | "clear" | "is_empty" => format!("tl_vec_string_{}", method_name),
+                     _ => format!("tl_vec_ptr_{}", method_name),
+                 }
             },
             Type::Char(_) => format!("tl_vec_i64_{}", method_name),
             Type::Struct(name, _) if name == "Char" => format!("tl_vec_i64_{}", method_name),

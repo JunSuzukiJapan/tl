@@ -214,6 +214,9 @@ impl Monomorphizer {
                 // If type inferred or annotated, add to scope
                 let var_type = context_ty.or_else(|| self.infer_expr_type(&value.inner));
                 if let Some(ty) = var_type {
+                    if type_annotation.is_none() {
+                        *type_annotation = Some(ty.clone());
+                    }
                     if let Some(scope) = self.scopes.last_mut() {
                         scope.insert(name.clone(), ty);
                     }
@@ -1139,6 +1142,7 @@ impl Monomorphizer {
             }
             ExprKind::BinOp(lhs, _, _) => self.infer_expr_type(&lhs.inner), // Assume LHS determines type (mostly true)
             ExprKind::StructInit(name, _, _) => Some(Type::Struct(name.clone(), vec![])), // Could be Generic?
+            ExprKind::EnumInit { enum_name, generics, .. } => Some(Type::Enum(enum_name.clone(), generics.clone())),
             // FnCall return type inference requires looking up the function
             ExprKind::FnCall(name, _) => {
                 // If it's a concrete function we already processed

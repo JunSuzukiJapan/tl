@@ -57,6 +57,7 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) variable_liveness: Vec<HashMap<String, usize>>, // Parallel to variables: Last Use Time
     pub(crate) current_time: usize,
     pub(crate) type_manager: type_manager::TypeManager,
+    pub(crate) pending_functions: Vec<crate::compiler::ast::FunctionDef>,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -95,6 +96,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             variable_liveness: vec![HashMap::new()],
             current_time: 0,
             type_manager: type_manager::TypeManager::new(),
+            pending_functions: Vec::new(),
         };
 
         // Register all methods (instance and static)
@@ -1384,6 +1386,15 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
         if let Some(func) = &synthetic_main {
             self.compile_fn(func, &ast_module.tensor_decls)?;
+        }
+
+        // 5. Compile deferred functions (monomorphized on-demand)
+        // Note: compile_fn might trigger more monomorphizations, so we loop until empty.
+        while !self.pending_functions.is_empty() {
+            let batch = std::mem::take(&mut self.pending_functions);
+            for func in batch {
+                self.compile_fn(&func, &[])?;
+            }
         }
 
         // Apply LLVM optimizations

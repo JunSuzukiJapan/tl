@@ -2,20 +2,20 @@ fn main() {
     print("Testing Result<I64, I64>...");
     
     // Test Ok
-    let ok = Result::Ok(100);
-    if ok.is_ok() {
+    let ok_val = Result::Ok(100);
+    if ok_val.is_ok() {
         print("ok.is_ok(): OK");
     } else {
         print("ok.is_ok(): FAIL");
     }
     
-    if ok.is_err() {
+    if ok_val.is_err() {
         print("ok.is_err(): FAIL");
     } else {
         print("ok.is_err(): OK");
     }
     
-    if ok.unwrap() == 100 {
+    if ok_val.unwrap() == 100 {
         print("ok.unwrap(): OK");
     } else {
         print("ok.unwrap(): FAIL");
