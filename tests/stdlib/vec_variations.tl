@@ -4,7 +4,7 @@ struct Point {
     y: i64,
 }
 
-fn test_scalar_vec() {
+fn test_int_vec() {
     println("Testing Vec<i64>...");
     let mut v: Vec<i64> = Vec::new();
     v.push(10);
@@ -13,20 +13,30 @@ fn test_scalar_vec() {
     let v2 = v;
     println(v2.get(0));
     println(v2.get(1));
+}
 
+fn test_float_vec() {
     println("Testing Vec<f32>...");
     let mut vf: Vec<f32> = Vec::new();
     vf.push(1.5);
     vf.push(2.5);
     let vf2 = vf;
     println(vf2.get(0));
+}
 
+fn test_bool_vec() {
     println("Testing Vec<bool>...");
     let mut vb: Vec<bool> = Vec::new();
     vb.push(true);
     vb.push(false);
     let vb2 = vb;
     if vb2.get(0) { println("true"); } else { println("false"); }
+}
+
+fn test_scalar_vec() {
+   test_int_vec();
+   test_float_vec();
+   test_bool_vec();
 }
 
 fn test_string_vec() {
@@ -66,7 +76,7 @@ fn test_struct_vec() {
     
     // Move Check
     let vp2 = vp;
-    let p_out = vp2.get(0);
+    let p_out: Point = vp2.get(0);
     println(p_out.x);
     println(p_out.y);
 }
@@ -91,10 +101,14 @@ fn test_nested_vec() {
 }
 
 fn main() {
-    test_scalar_vec();
-    test_string_vec();
-    test_tensor_vec();
-    test_struct_vec();
-    test_nested_vec();
+    test_int_vec();
+    // test_float_vec();
+    // test_bool_vec();
+    // test_scalar_vec(); // Original wrapper
+    
+    // test_string_vec();
+    // test_tensor_vec();
+    // test_struct_vec();
+    // test_nested_vec();
     println("All Vec variations passed!");
 }

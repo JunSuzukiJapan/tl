@@ -402,6 +402,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                     return Ok(());
                 }
 
+                
+                // Define Basic Blocks Early
+                let current_block = self.builder.get_insert_block().unwrap();
+                let func = current_block.get_parent().unwrap();
+                let merge_block = self.context.append_basic_block(func, "after_free");
+
                 // Unregister from Runtime Scope (Safety against double free)
                 let ptr = val.into_pointer_value();
                 if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
@@ -410,7 +416,52 @@ impl<'ctx> CodeGenerator<'ctx> {
                      self.builder.build_call(unreg_fn, &[cast.into()], "").ok(); 
                 }
 
-                // 1. Generic Destructor Lookup (Static Method "free")
+                // 1. Stack Cleanup Mode (Jump directly to structural cleanup)
+                if mode == super::CLEANUP_STACK {
+                     // We need struct def for this
+                     // Let's defer this check until we have struct def? 
+                     // Or just handle it separately.
+                     // The original code handled it after null check.
+                }
+
+                // 2. RefCount Check (DecRef) BEFORE calling destructor
+                // Call tl_ptr_dec_ref(ptr) -> i32 (1=True/Free, 0=False/Keep)
+                let dec_ref_fn = self
+                    .module
+                    .get_function("tl_ptr_dec_ref")
+                    .ok_or("tl_ptr_dec_ref not found")?;
+                    
+                let cast_void = self.builder.build_pointer_cast(
+                    ptr, 
+                    self.context.ptr_type(inkwell::AddressSpace::default()), 
+                    "cast_void"
+                ).unwrap();
+
+                let call = self
+                    .builder
+                    .build_call(dec_ref_fn, &[cast_void.into()], "should_free")
+                    .map_err(|e| e.to_string())?;
+
+                let should_free_val = match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                    _ => return Err("tl_ptr_dec_ref returned void/invalid".to_string()),
+                };
+                    
+                let should_free = self.builder.build_int_compare(
+                    inkwell::IntPredicate::NE,
+                    should_free_val,
+                    self.context.i32_type().const_int(0, false),
+                    "should_free_bool"
+                ).map_err(|e| e.to_string())?;
+                
+                let recurse_block = self.context.append_basic_block(func, "recurse_free");
+                self.builder.build_conditional_branch(should_free, recurse_block, merge_block)
+                    .map_err(|e| e.to_string())?;
+
+                // --- Recurse Block (Destruction) ---
+                self.builder.position_at_end(recurse_block);
+
+                // 3. Generic Destructor Lookup (Static Method "free")
                 // We MUST trigger monomorphization if it's a generic struct to ensure the function exists.
                 
                 let simple_name = if name.contains("::") {
@@ -450,21 +501,26 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if let Some(fn_val) = self.module.get_function(&runtime_name) {
                          // Call it: fn free(self)
                          self.builder.build_call(fn_val, &[val.into()], "").map_err(|e| e.to_string())?;
-                         return Ok(());
+                    }
+                } else {
+                    // Legacy / Non-Generic resolver fallback (for runtime builtins not in generic_impls)
+                    let legacy_name = crate::compiler::codegen::builtin_types::resolver::resolve_static_method_name(
+                         name, "free", generic_args
+                    );
+                    if let Some(fn_val) = self.module.get_function(&legacy_name) {
+                        self.builder.build_call(fn_val, &[val.into()], "").map_err(|e| e.to_string())?;
                     }
                 }
-                
-                // Legacy / Non-Generic resolver fallback (for runtime builtins not in generic_impls)
-                let legacy_name = crate::compiler::codegen::builtin_types::resolver::resolve_static_method_name(
-                     name, "free", generic_args
-                );
-                if let Some(fn_val) = self.module.get_function(&legacy_name) {
-                    self.builder.build_call(fn_val, &[val.into()], "").map_err(|e| e.to_string())?;
-                    return Ok(());
-                }
 
-                // 2. Specialized Tensor Handling (Legacy but maintained for now)
+                // 4. Specialized Tensor Handling (Legacy but maintained for now)
                 if name == "Tensor" {
+                    // Note: Recurse free for tensor internal buffer? `emit_recursive_free` for tensor handles release.
+                    // But we are ALREADY releasing the wrapper struct here.
+                    // Tensor contents are managed by `tl_tensor_release`.
+                    // If we just free wrapper, we LEAK tensor content if wrapper owned it!
+                    // Wait, `Tensor` struct IS the handle.
+                    // If we are freeing a `Tensor` STRUCT (wrapper), we might need to release the internal one?
+                    // But `Tensor` is Opaque Pointer mostly.
                     return self.emit_recursive_free(val, &Type::Tensor(Box::new(Type::F32), 1), mode);
                 }
 
@@ -493,11 +549,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let ptr = val.into_pointer_value();
 
                 // Runtime Null Check
-                let current_block = self.builder.get_insert_block().unwrap();
-                let func = current_block.get_parent().unwrap();
                 let free_block = self.context.append_basic_block(func, "free_struct");
-                let merge_block = self.context.append_basic_block(func, "after_free");
-
+                // merge_block already defined
+                
                 let is_null = self
                     .builder
                     .build_is_null(ptr, "is_null")
@@ -544,43 +598,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
 
-                // --- FIX: Check RefCount before recursing ---
-                let recurse_block = self.context.append_basic_block(func, "recurse_free");
+                // (DecRef Logic Moved UP)
                 
-                // Call tl_ptr_dec_ref(ptr) -> i32 (1=True/Free, 0=False/Keep)
-                let dec_ref_fn = self
-                    .module
-                    .get_function("tl_ptr_dec_ref")
-                    .ok_or("tl_ptr_dec_ref not found")?;
-                    
-                let cast_void = self.builder.build_pointer_cast(
-                    ptr, 
-                    self.context.ptr_type(inkwell::AddressSpace::default()), 
-                    "cast_void"
-                ).unwrap();
-
-                let call = self
-                    .builder
-                    .build_call(dec_ref_fn, &[cast_void.into()], "should_free")
-                    .map_err(|e| e.to_string())?;
-
-                let should_free_val = match call.try_as_basic_value() {
-                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-                    _ => return Err("tl_ptr_dec_ref returned void/invalid".to_string()),
-                };
-                    
-                let should_free = self.builder.build_int_compare(
-                    inkwell::IntPredicate::NE,
-                    should_free_val,
-                    self.context.i32_type().const_int(0, false),
-                    "should_free_bool"
-                ).map_err(|e| e.to_string())?;
-                
-                self.builder.build_conditional_branch(should_free, recurse_block, merge_block)
-                    .map_err(|e| e.to_string())?;
-
-                // --- Recurse Block ---
-                self.builder.position_at_end(recurse_block);
+                // --- Recurse Block Continued ---
 
                 // Recurse fields
                 for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
