@@ -10,6 +10,7 @@ pub struct BuiltinTypeData {
     pub struct_def: Option<StructDef>,
     pub enum_def: Option<EnumDef>,
     pub impl_blocks: Vec<ImplBlock>,
+    pub extra_structs: Vec<StructDef>,
     pub destructor: Option<String>,
 }
 
@@ -26,20 +27,19 @@ impl BuiltinLoader {
     pub fn load_builtin_type(source: &str, type_name: &str) -> Result<BuiltinTypeData, TlError> {
         let module = Self::load_from_source(source)?;
         
-        let struct_def = module.structs.into_iter().find(|s| s.name == type_name);
+        // Helper to extract primary struct but keep others
+        let mut primary_struct = None;
+        let mut extra_structs = Vec::new();
         
-        // Note: module.enums might have been consumed if we iterated it. 
-        // Need to re-find if we didn't populate struct_def? 
-        // Better to iterate once?
-        // But Module fields are Vecs. `module.enums` is accessible.
-        
-        // Let's re-parse or iterate carefully.
-        // Actually `module` is owned here. We can consume fields.
-        // But we need to check both structs and enums.
-        
-        // Workaround: We loaded module. We can clone if needed, but ownership is fine.
-        // However, `struct_def` consumes `module.structs` if we use `into_iter`.
-        // Let's search inside `module`.
+        for s in module.structs {
+            if s.name == type_name {
+                primary_struct = Some(s);
+            } else {
+                extra_structs.push(s);
+            }
+        }
+
+        let struct_def = primary_struct;
         
         let enum_def = module.enums.into_iter().find(|e| e.name == type_name);
         
@@ -69,6 +69,7 @@ impl BuiltinLoader {
             struct_def,
             enum_def,
             impl_blocks,
+            extra_structs,
             destructor: None,
         })
     }

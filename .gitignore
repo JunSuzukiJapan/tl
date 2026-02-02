@@ -18,3 +18,5 @@ test_output.txt
 
 *.bin
 *.o
+vec_string_test*
+temp_*.bin

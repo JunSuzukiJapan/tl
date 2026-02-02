@@ -3257,6 +3257,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             .size_of()
             .ok_or(format!("Cannot determine size of struct {}", name))?;
 
+        // ZST Optimization (PhantomData etc): Return value directly, no malloc
+        if struct_def.fields.is_empty() {
+            return Ok((struct_type.const_zero().into(), Type::Struct(name.to_string(), generics.to_vec())));
+        }
+
         // 1. Heap Allocation
         let malloc_fn = self
             .module
@@ -3344,13 +3349,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
                             })
                             .expect("tl_ptr_inc_ref not declared");
-                        let ptr = val.into_pointer_value();
-                        let void_ptr = self.builder.build_pointer_cast(
-                            ptr,
-                            self.context.ptr_type(inkwell::AddressSpace::default()),
-                            "void_cast_inc"
-                        ).unwrap();
-                        self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
+                        
+                        // Guard against ZST
+                        if val.is_pointer_value() {
+                            let ptr = val.into_pointer_value();
+                            let void_ptr = self.builder.build_pointer_cast(
+                                ptr,
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "void_cast_inc"
+                            ).unwrap();
+                            self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
+                        }
                     }
                     _ => {} // Scalars don't need RefCount
                 }
@@ -3758,55 +3767,15 @@ impl<'ctx> CodeGenerator<'ctx> {
              }
         }
         
-        // 2. Generic Resolver Fallback
+        // 2. Generic Resolver Fallback (Removed)
         // Resolves to runtime function: tl_{type}_{generics}_{method}
-        let resolver_generics = match target_type {
 
-            Type::Struct(n, args) => {
-                 if n == type_name { args.clone() } else { vec![] }
-            },
-            Type::Enum(n, args) => {
-                 if n == type_name { args.clone() } else { vec![] }
-            },
-            _ => vec![],
-        };
         
         // Remove Type::Map handling as it doesn't exist.
         
-        let runtime_fn_name = crate::compiler::codegen::builtin_types::resolver::resolve_static_method_name(
-            type_name, 
-            method, 
-            &resolver_generics
-        );
+
         
-        if let Some(fn_val) = self.module.get_function(&runtime_fn_name) {
-             let mut compiled_args = Vec::new();
-             for arg in args {
-                 compiled_args.push(self.compile_expr(arg)?);
-             }
-             let call_args: Vec<inkwell::values::BasicMetadataValueEnum> = compiled_args.iter().map(|(v,_)| (*v).into()).collect();
-             
-             let call = self.builder.build_call(fn_val, &call_args, "static_call")
-                .map_err(|e| e.to_string())?;
-                
-             let res_val = match call.try_as_basic_value() {
-                 inkwell::values::ValueKind::Basic(v) => v,
-                 _ => self.context.i64_type().const_int(0, false).into(), // Void/Unit/Ptr return
-             };
-             
-             // For constructors, return target_type.
-             // For other methods, we might need correct return type.
-             // But existing hardcoded logic often returned target_type or hardcoded.
-             // We'll trust target_type for now if it's a constructor-like call, 
-             // but strictly we should know the function signature.
-             // Given limitations, we return target_type for constructors (new) 
-             // and infer or fallback for others?
-             // Actually, if we resolved via resolver, we assume it matches.
-             // Let's return target_type if method == "new", else ?
-             // The old Vec logic returned target_type.
-             
-             return Ok((res_val, target_type.clone()));
-        }
+
 
         // 3. User Generic Fallback (Monomorphize)
         let generics = match target_type {
@@ -3912,13 +3881,15 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.get_return_type_from_signature(func)
         };
 
-        // Check for SRET usage logic (Structs/UserDefined return types usually use SRET in this ABI)
-        // If the function definition requires SRET (hidden first arg pointer), we must allocate it.
-        // We detect this if ret_ty is Struct/UserDefined AND the function is not in the "exclude SRET" list?
-        // Or essentially if it's a struct return.
-        // The old code had a manual toggle `uses_sret = false` or similar?
-        // No, Step 201 showed `uses_sret = false; /* SRET DISABLED */`.
-        // So I'll just compile args and call.
+        // SRET Logic
+        let uses_sret = matches!(ret_ty, Type::Struct(_, _));
+        let mut sret_ptr = None;
+
+        if uses_sret {
+             let current_fn = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+             let alloca = self.create_entry_block_alloca(current_fn, "sret_temp", &ret_ty)?;
+             sret_ptr = Some(alloca);
+        }
 
         let mut compiled_args = Vec::with_capacity(args.len());
         let mut compiled_args_types = Vec::with_capacity(args.len());
@@ -3946,26 +3917,30 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // 4. Call
+        if let Some(ptr) = sret_ptr {
+             compiled_args.insert(0, ptr.into());
+        }
+
         let call = self
             .builder
             .build_call(func, &compiled_args, "static_call")
             .map_err(|e| e.to_string())?;
 
-
-
-
-        match call.try_as_basic_value() {
-            inkwell::values::ValueKind::Basic(_) => {
-                let v = self.check_tensor_result(call, "static_call_error")?;
-                // Register intermediate tensor result
-                // REMOVED REDUNDANT REGISTRATION
-
-                Ok((v, ret_ty))
-            }
-            _ => Ok((
-                self.context.i64_type().const_int(0, false).into(),
-                Type::Void,
-            )),
+        if let Some(ptr) = sret_ptr {
+             // Return SRET pointer. The "Value" of a struct token is the pointer to its memory.
+             // Loading it would unbox the content (e.g. the handle) which is wrong.
+             Ok((ptr.into(), ret_ty))
+        } else {
+             match call.try_as_basic_value() {
+                 inkwell::values::ValueKind::Basic(_) => {
+                     let v = self.check_tensor_result(call, "static_call_error")?;
+                     Ok((v, ret_ty))
+                 }
+                 _ => Ok((
+                     self.context.i64_type().const_int(0, false).into(),
+                     Type::Void,
+                 )),
+             }
         }
     }
 
@@ -6209,6 +6184,121 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
+        // Intrinsic: __builtin_unsafe_to_i64
+        if name.starts_with("__builtin_unsafe_to_i64") {
+            if args.len() != 1 {
+                return Err("__builtin_unsafe_to_i64 expects exactly 1 argument".to_string());
+            }
+            let (val, ty) = self.compile_expr(&args[0])?;
+            
+            let i64_type = self.context.i64_type();
+            let res = match val {
+                inkwell::values::BasicValueEnum::IntValue(i) => {
+                    if i.get_type().get_bit_width() == 64 {
+                        i.into()
+                    } else {
+                        // Extend (zext)
+                        self.builder.build_int_z_extend(i, i64_type, "zext").unwrap().into()
+                    }
+                }
+                inkwell::values::BasicValueEnum::PointerValue(p) => {
+                    self.builder.build_ptr_to_int(p, i64_type, "ptr2int").unwrap().into()
+                }
+                inkwell::values::BasicValueEnum::FloatValue(f) => {
+                    // Bitcast to i32 then zext to i64
+                    let i32_type = self.context.i32_type();
+                    let as_i32 = self.builder.build_bit_cast(f, i32_type, "f32cast").unwrap().into_int_value();
+                    self.builder.build_int_z_extend(as_i32, i64_type, "zext").unwrap().into()
+                }
+                _ => return Err(format!("Unsupported type for unsafe_to_i64: {:?}", ty)),
+            };
+            return Ok((res, Type::I64));
+        }
+
+        // Intrinsic: __builtin_unsafe_from_i64(val: i64, marker: PhantomData<T>) -> T
+        if name.starts_with("__builtin_unsafe_from_i64") {
+            if args.len() != 2 {
+                return Err("__builtin_unsafe_from_i64 expects 2 arguments (val, marker)".to_string());
+            }
+            let (val, _val_ty) = self.compile_expr(&args[0])?;
+            let (_, marker_ty) = self.compile_expr(&args[1])?;
+            
+            // Extract T from PhantomData<T>
+            let target_type = if let Type::Struct(name, generics) = &marker_ty {
+                if name.contains("PhantomData") && !generics.is_empty() {
+                    generics[0].clone()
+                } else {
+                    return Err(format!("Arg 2 must be PhantomData<T>, got {:?}", marker_ty));
+                }
+            } else {
+                return Err(format!("Arg 2 must be Struct PhantomData, got {:?}", marker_ty));
+            };
+
+            // Cast i64 to T
+            let res: inkwell::values::BasicValueEnum = match &target_type {
+                Type::I64 => val, // Identity
+                Type::Struct(_, _) | Type::Tensor(_, _) => {
+                    // i64 -> ptr
+                    let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                    if val.is_int_value() {
+                        self.builder.build_int_to_ptr(val.into_int_value(), ptr_type, "int2ptr").unwrap().into()
+                    } else if val.is_pointer_value() {
+                        val // Identity if already ptr? But arg 0 should be i64.
+                    } else {
+                         return Err("Input must be int or ptr".to_string());
+                    }
+                },
+                Type::Bool => {
+                     // i64 -> bool (trunc)
+                     let i1_type = self.context.bool_type();
+                     self.builder.build_int_truncate(val.into_int_value(), i1_type, "trunc_bool").unwrap().into()
+                },
+                Type::String(_) => {
+                     // i64 -> ptr
+                     let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                     self.builder.build_int_to_ptr(val.into_int_value(), ptr_type, "int2ptr_str").unwrap().into()
+                },
+                // Add more types if needed (u8, f32)
+                Type::F32 => {
+                     // i64 -> i32 -> float
+                     let i32_val = self.builder.build_int_truncate(val.into_int_value(), self.context.i32_type(), "trunc_f32").unwrap();
+                     self.builder.build_bit_cast(i32_val, self.context.f32_type(), "bitcast").unwrap().into()
+                },
+                _ => return Err(format!("Unsupported target type for from_i64: {:?}", target_type)),
+            };
+            
+            return Ok((res, target_type));
+        }
+
+        // Intrinsic: __builtin_is_ref(marker: PhantomData<T>) -> bool
+        if name.starts_with("__builtin_is_ref") {
+            if args.len() != 1 {
+                return Err("__builtin_is_ref expects 1 argument (marker)".to_string());
+            }
+            let (_, marker_ty) = self.compile_expr(&args[0])?;
+            
+            // Extract T
+            let target_type = if let Type::Struct(name, generics) = &marker_ty {
+                if name.contains("PhantomData") && !generics.is_empty() {
+                    generics[0].clone()
+                } else {
+                    return Err(format!("Arg 1 must be PhantomData<T>, got {:?}", marker_ty));
+                }
+            } else {
+                return Err(format!("Arg 1 must be Struct PhantomData, got {:?}", marker_ty));
+            };
+
+            let is_ref = match target_type {
+                Type::Struct(name, _) if name == "String" => false, // String literals crash if treated as RefCounted
+                Type::String(_) => false,
+                Type::Struct(_, _) | Type::Tensor(_, _) | Type::Ref(_) | Type::Enum(_, _) | Type::Tuple(_) => true,
+                _ => false,
+            };
+            
+            let bool_val = self.context.bool_type().const_int(if is_ref { 1 } else { 0 }, false);
+            return Ok((bool_val.into(), Type::Bool));
+        }
+
         // 2. Generic Function Call / Struct Init
         let llvm_func_name = match name {
             "slice" => "tl_tensor_slice",
@@ -6275,11 +6365,11 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Tensors are returned by pointer directly, so exclude them.
         let mut dest_val = None;
         let uses_sret = match ret_type {
-             Type::Struct(_, _) => false,
+             Type::Struct(_, _) => true,
              _ => false 
         };
+        // // eprintln!("DEBUG: compile_fn_call_dps name={} ret={:?} uses_sret={}", final_resolved_name, ret_type, uses_sret);
         // eprintln!("DEBUG: compile_fn_call_dps name={} ret={:?} uses_sret={}", final_resolved_name, ret_type, uses_sret);
-        eprintln!("DEBUG: compile_fn_call_dps name={} ret={:?} uses_sret={}", final_resolved_name, ret_type, uses_sret);
         if uses_sret {
              if let Some(d) = dest {
                  dest_val = Some(d);
@@ -6295,6 +6385,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                  compiled_args_vals.push(d.into());
              }
         }
+
+
 
         if let Some(pre_values) = precompiled_args {
              for (val, ty) in pre_values {
@@ -6313,10 +6405,24 @@ impl<'ctx> CodeGenerator<'ctx> {
                 compiled_args_types.push((val, ty));
             }
         }
+        if let Some(block) = self.builder.get_insert_block() {
+            // eprintln!("DEBUG: Block parent: {:?}", block.get_parent());
+        } else {
+             // eprintln!("DEBUG: No insert block");
+        }
+        if self.builder.get_insert_block().is_none() {
+            return Err(format!("INTERNAL ERROR: Builder has no insert block when calling {}", final_resolved_name));
+        }
+
+        for (i, arg) in compiled_args_vals.iter().enumerate() {
+             // eprintln!("DEBUG: Arg {}: {:?}", i, arg);
+        }
+        // eprintln!("DEBUG: About to build_call. Func: {:?}, Args: {}", func, compiled_args_vals.len());
+        let call_name = if ret_type == Type::Void { "" } else { "call_tmp" };
 
         let call = self
             .builder
-            .build_call(func, &compiled_args_vals, if dest_val.is_some() { "" } else { "call_tmp" })
+            .build_call(func, &compiled_args_vals, call_name)
             .map_err(|e| e.to_string())?;
 
         // FIX: Free temporary arguments

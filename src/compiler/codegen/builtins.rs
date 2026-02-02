@@ -351,6 +351,58 @@ pub fn declare_runtime_functions<'ctx>(
     let get_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
     add_fn("tl_vec_void_get", get_type);
 
+    // tl_vec_unified_*
+    // new() -> i64
+    let unified_new_type = i64_type.fn_type(&[], false);
+    add_fn("tl_vec_unified_new", unified_new_type);
+
+    // push(vec, val, is_ref)
+    let unified_push_type = void_type.fn_type(&[i64_type.into(), i64_type.into(), context.bool_type().into()], false);
+    add_fn("tl_vec_unified_push", unified_push_type);
+
+    // get(vec, idx, is_ref) -> i64
+    let unified_get_type = i64_type.fn_type(&[i64_type.into(), i64_type.into(), context.bool_type().into()], false);
+    add_fn("tl_vec_unified_get", unified_get_type);
+
+    // pop(vec, is_ref) -> i64
+    let unified_pop_type = i64_type.fn_type(&[i64_type.into(), context.bool_type().into()], false);
+    add_fn("tl_vec_unified_pop", unified_pop_type);
+
+    // len(vec) -> i64
+    let unified_len_type = i64_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_vec_unified_len", unified_len_type);
+
+    // free(vec, is_ref)
+    let unified_free_type = void_type.fn_type(&[i64_type.into(), context.bool_type().into()], false);
+    add_fn("tl_vec_unified_free", unified_free_type);
+
+    // set(vec, idx, val, is_ref)
+    let unified_set_type = void_type.fn_type(&[i64_type.into(), i64_type.into(), i64_type.into(), context.bool_type().into()], false);
+    add_fn("tl_vec_unified_set", unified_set_type);
+    
+    // Register Mappings
+    if let Some(f) = module.get_function("tl_vec_unified_new") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_unified_new as usize);
+    }
+    if let Some(f) = module.get_function("tl_vec_unified_push") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_unified_push as usize);
+    }
+    if let Some(f) = module.get_function("tl_vec_unified_get") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_unified_get as usize);
+    }
+    if let Some(f) = module.get_function("tl_vec_unified_pop") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_unified_pop as usize);
+    }
+    if let Some(f) = module.get_function("tl_vec_unified_len") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_unified_len as usize);
+    }
+    if let Some(f) = module.get_function("tl_vec_unified_free") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_unified_free as usize);
+    }
+    if let Some(f) = module.get_function("tl_vec_unified_set") {
+        execution_engine.add_global_mapping(&f, runtime::tl_vec_unified_set as usize);
+    }
+
     // tl_vec_void_free(ptr: *mut) -> void
     add_fn("tl_vec_void_free", free_type);
 

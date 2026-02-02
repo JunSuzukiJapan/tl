@@ -4195,6 +4195,8 @@ pub extern "C" fn tl_vec_ptr_get(ptr: *mut Vec<*mut std::ffi::c_void>, idx: usiz
         let vec = &*ptr;
         if idx < vec.len() { 
             let val = vec[idx];
+            // Acquire ownership (shared reference) to prevent double free upon scope exit decoding
+            memory_manager::tl_ptr_acquire(val);
             // Register in current scope (return owned reference)
             memory_manager::tl_mem_register_ptr(val);
             val 
@@ -4252,6 +4254,99 @@ pub extern "C" fn tl_vec_f32_new() -> *mut Vec<f32> {
    );
    ptr
 }
+// Unified Vec API (Generic Handle)
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_unified_new() -> *mut Vec<*mut std::ffi::c_void> {
+    eprintln!("RT: tl_vec_unified_new called");
+    let ptr = Box::into_raw(Box::new(Vec::new()));
+    ptr
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_unified_push(vec: *mut Vec<*mut std::ffi::c_void>, val: *mut std::ffi::c_void, is_ref: bool) {
+    eprintln!("RT: tl_vec_unified_push handle={:p}, val={:p}, is_ref={}", vec, val, is_ref);
+    if vec.is_null() { return; }
+    unsafe {
+        if is_ref {
+            memory_manager::tl_ptr_acquire(val);
+        }
+        (*vec).push(val);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_unified_get(vec: *mut Vec<*mut std::ffi::c_void>, idx: usize, is_ref: bool) -> *mut std::ffi::c_void {
+    if vec.is_null() { return std::ptr::null_mut(); }
+    unsafe {
+        if idx < (*vec).len() {
+            let val = (&(*vec))[idx];
+            if is_ref {
+                memory_manager::tl_ptr_acquire(val);
+                memory_manager::tl_mem_register_ptr(val);
+            }
+            val
+        } else {
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_unified_set(vec: *mut Vec<*mut std::ffi::c_void>, idx: usize, val: *mut std::ffi::c_void, is_ref: bool) {
+    if vec.is_null() { return; }
+    unsafe {
+        if idx < (*vec).len() {
+            let old = (&(*vec))[idx];
+             if is_ref {
+                 memory_manager::tl_ptr_dec_ref(old);
+                 memory_manager::tl_ptr_acquire(val);
+             }
+             (&mut (*vec))[idx] = val;
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_unified_len(vec: *mut Vec<*mut std::ffi::c_void>) -> usize {
+    if vec.is_null() { return 0; }
+    unsafe { (*vec).len() }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_unified_free(vec: *mut Vec<*mut std::ffi::c_void>, is_ref: bool) {
+    if vec.is_null() { return; }
+    unsafe {
+        let v = Box::from_raw(vec); // Drop vec
+        if is_ref {
+            for &item in v.iter() {
+                memory_manager::tl_ptr_dec_ref(item); // Note: Should we dec_ref?
+                // Vector owns the references. When vector dies, it releases ownership.
+                // tl_ptr_dec_ref decrements count.
+                // Yes.
+            }
+        }
+        // v dropped here
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_vec_unified_pop(vec: *mut Vec<*mut std::ffi::c_void>, is_ref: bool) -> *mut std::ffi::c_void {
+    if vec.is_null() { return std::ptr::null_mut(); }
+    unsafe {
+        if let Some(val) = (*vec).pop() {
+            if is_ref {
+                 // We keep ownership (from vec). But Vec released it.
+                 // We transfer to caller.
+                 // Caller should register it if escaping.
+                 memory_manager::tl_mem_register_ptr(val);
+            }
+            val
+        } else {
+            std::ptr::null_mut()
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_vec_ptr_new() -> *mut Vec<*mut std::ffi::c_void> {
    let ptr = Box::into_raw(Box::new(Vec::new()));

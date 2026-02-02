@@ -26,6 +26,9 @@ pub fn load_all_builtins(codegen: &mut CodeGenerator) {
     if let Some(def) = vec_data.struct_def {
         codegen.struct_defs.insert(def.name.clone(), def);
     }
+    for extra in vec_data.extra_structs {
+        codegen.struct_defs.insert(extra.name.clone(), extra);
+    }
     codegen.generic_impls.entry("Vec".to_string()).or_default().extend(vec_data.impl_blocks);
 
     // HashMap

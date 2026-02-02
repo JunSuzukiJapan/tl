@@ -2,6 +2,17 @@
 use logos::Logos;
 use std::fmt;
 
+// --------------------------------------------------------------------------------
+// [CRITICAL WARNING]
+// DO NOT INTRODUCE `&self` SYNTAX.
+//
+// In TL, structs are Handles (implied pointers). Passing `self` passes the Handle (pointer).
+// Passing `&self` would pass the Address of the Handle (pointer to pointer), causing
+// Runtime Segfaults because the runtime expects a direct Handle value.
+//
+// Reference: User Request 2026-02-02
+// --------------------------------------------------------------------------------
+
 #[derive(Logos, Debug, PartialEq, Clone)]
 #[logos(skip r"[ \t\n\f]+")] // Skip whitespace
 #[logos(skip r"//.*")]       // Skip line comments

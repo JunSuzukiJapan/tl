@@ -13,6 +13,17 @@ use nom::{
 // Input is a slice of SpannedTokens
 pub type Input<'a> = &'a [SpannedToken];
 
+// --------------------------------------------------------------------------------
+// [CRITICAL WARNING]
+// DO NOT INTRODUCE `&self` SYNTAX.
+//
+// In TL, structs are Handles (implied pointers). Passing `self` passes the Handle (pointer).
+// Passing `&self` would pass the Address of the Handle (pointer to pointer), causing
+// Runtime Segfaults because the runtime expects a direct Handle value.
+//
+// Reference: User Request 2026-02-02
+// --------------------------------------------------------------------------------
+
 // Custom parsing error
 // We need to map nom errors to our structures
 #[derive(Debug, PartialEq)]
@@ -1205,14 +1216,15 @@ fn parse_function_def(input: Input) -> IResult<Input, crate::compiler::ast::Func
         
         let (input, _) = expect_token(Token::LParen)(input)?;
 
-        // Handle optional self, possibly reference (&self)
+        // Handle optional self
+        // CRITICAL: &self is STRICTLY FORBIDDEN. See top of file.
         let (input, maybe_amp) = map(opt(expect_token(Token::Ampersand)), |o| o.is_some())(input)?;
         let (input, has_self) = map(opt(expect_token(Token::Self_)), |o| o.is_some())(input)?;
         
         // Validation: & without self? syntax error unless it's a type (but types are after colon)
         // If we saw &, expected self. But self is optional.
-        if maybe_amp && !has_self {
-             return Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Expected self after &".to_string()) }));
+        if maybe_amp {
+              return Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Syntax Error: Unknown syntax `&self`. TL does not support reference-to-self. Use `self`.".to_string()) }));
         }
 
         let input = if has_self {
@@ -1229,12 +1241,9 @@ fn parse_function_def(input: Input) -> IResult<Input, crate::compiler::ast::Func
         if has_self {
             // Add self
             let self_type = crate::compiler::ast::Type::Struct("Self".to_string(), vec![]);
-            let final_type = if maybe_amp {
-                crate::compiler::ast::Type::Ref(Box::new(self_type))
-            } else {
-                self_type
-            };
-            args.insert(0, ("self".to_string(), final_type));
+            // ALWAYS pass by value (Handle Copy)
+            // &self -> Ref(Self) is FORBIDDEN.
+            args.insert(0, ("self".to_string(), self_type));
         }
 
         let (input, _) = expect_token(Token::RParen)(input)?;

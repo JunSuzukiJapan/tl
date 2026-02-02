@@ -106,10 +106,30 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Type::I64 => self.context.i64_type().into(),
                         Type::I32 => self.context.i32_type().into(),
                         Type::Bool => self.context.bool_type().into(),
-                        Type::Tensor(_, _) | Type::Struct(_, _) => self
+                        Type::Tensor(_, _) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
+                        Type::Struct(name, _) => {
+                             // Check for ZST
+                            let simple_name = if name.contains("::") {
+                                name.split("::").last().unwrap()
+                            } else {
+                                name.as_str()
+                            };
+
+                            let is_zst = if let Some(def) = self.struct_defs.get(simple_name) {
+                                def.fields.is_empty()
+                            } else {
+                                false
+                            };
+
+                            if is_zst {
+                                self.context.struct_type(&[], false).into()
+                            } else {
+                                self.context.ptr_type(inkwell::AddressSpace::default()).into()
+                            }
+                        }
                         _ => self.context.i64_type().into(),
                     };
 
@@ -379,6 +399,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder.position_at_end(merge_block);
             }
             Type::Struct(name, generic_args) => {
+                // Check if it's a pointer before treating it as a heap-allocated struct
+                // Primitives like u8 might be represented as Struct("u8") but are IntValue
+                if !val.is_pointer_value() {
+                    return Ok(());
+                }
+
                 // Unregister from Runtime Scope (Safety against double free)
                 let ptr = val.into_pointer_value();
                 if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
@@ -388,17 +414,54 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
 
                 // 1. Generic Destructor Lookup (Static Method "free")
-                // Check if the type has a static method named "free" that matches the signature `fn free(self)`
-                // Use standard name resolution: tl_{lowercased_type}_{args}_free
-                let runtime_name = crate::compiler::codegen::builtin_types::resolver::resolve_static_method_name(
-                    name,
-                    "free",
-                    generic_args
-                );
+                // We MUST trigger monomorphization if it's a generic struct to ensure the function exists.
+                
+                let simple_name = if name.contains("::") {
+                    name.split("::").last().unwrap()
+                } else {
+                    name.as_str()
+                };
 
-                // Check if this runtime function exists in the module
-                if let Some(fn_val) = self.module.get_function(&runtime_name) {
-                    // Call it: fn free(self)
+                // Try monomorphization (instantiates if needed and returns mangled name)
+                let mut runtime_name_res = if !generic_args.is_empty() {
+                     self.monomorphize_method(simple_name, "free", generic_args)
+                } else {
+                     self.monomorphize_method(simple_name, "free", generic_args)
+                };
+
+                // Fallback: Demangle Vec_T generic if standard lookup failed
+                // This handles cases where Type::Struct name has already been monomorphized (e.g. "Vec_String")
+                if runtime_name_res.is_err() && simple_name.starts_with("Vec_") {
+                     let suffix = &simple_name[4..];
+                     let inner_ty = match suffix {
+                         "String" => Some(Type::Struct("String".to_string(), vec![])), 
+                         "i64" => Some(Type::I64),
+                         "i32" => Some(Type::I32),
+                         "f32" => Some(Type::F32),
+                         "u8" => Some(Type::U8),
+                         "bool" => Some(Type::Bool),
+                         _ => None,
+                     };
+                     
+                     if let Some(ty) = inner_ty {
+                          // Retry with explicit "Vec" and [T]
+                          runtime_name_res = self.monomorphize_method("Vec", "free", &[ty]);
+                     }
+                }
+
+                if let Ok(runtime_name) = runtime_name_res {
+                    if let Some(fn_val) = self.module.get_function(&runtime_name) {
+                         // Call it: fn free(self)
+                         self.builder.build_call(fn_val, &[val.into()], "").map_err(|e| e.to_string())?;
+                         return Ok(());
+                    }
+                }
+                
+                // Legacy / Non-Generic resolver fallback (for runtime builtins not in generic_impls)
+                let legacy_name = crate::compiler::codegen::builtin_types::resolver::resolve_static_method_name(
+                     name, "free", generic_args
+                );
+                if let Some(fn_val) = self.module.get_function(&legacy_name) {
                     self.builder.build_call(fn_val, &[val.into()], "").map_err(|e| e.to_string())?;
                     return Ok(());
                 }
@@ -781,6 +844,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let struct_ty = *self.struct_types.get(simple_name)
                     .ok_or(format!("Struct type {} not found", name))?;
                 
+                // ZST Check
+                if !val.is_pointer_value() {
+                    return Ok(());
+                }
+
                 let ptr = val.into_pointer_value();
 
                 // Runtime null check
@@ -1576,22 +1644,25 @@ impl<'ctx> CodeGenerator<'ctx> {
                             self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
                         }
                         Type::Struct(ref name, _) if name != "String" && name != "File" && name != "Path" && name != "Map" && name != "Tokenizer" && name != "KVCache" => {
-                            let inc_fn = self.module.get_function("tl_ptr_inc_ref")
-                                .or_else(|| {
-                                    let void_ty = self.context.void_type();
-                                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                                    let ft = void_ty.fn_type(&[ptr_ty.into()], false);
-                                    Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
-                                })
-                                .expect("tl_ptr_inc_ref decl failed");
+                            // Only inc_ref if it's a pointer (skip ZSTs)
+                            if val_ir.is_pointer_value() {
+                                let inc_fn = self.module.get_function("tl_ptr_inc_ref")
+                                    .or_else(|| {
+                                        let void_ty = self.context.void_type();
+                                        let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                                        let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                                        Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
+                                    })
+                                    .expect("tl_ptr_inc_ref decl failed");
 
-                            let ptr = val_ir.into_pointer_value();
-                            let void_ptr = self.builder.build_pointer_cast(
-                                ptr,
-                                self.context.ptr_type(inkwell::AddressSpace::default()),
-                                "void_cast_inc_let_st"
-                            ).unwrap();
-                            self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
+                                let ptr = val_ir.into_pointer_value();
+                                let void_ptr = self.builder.build_pointer_cast(
+                                    ptr,
+                                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                                    "void_cast_inc_let_st"
+                                ).unwrap();
+                                self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
+                            }
                         }
                         _ => {}
                      }
@@ -1670,6 +1741,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                     // Check if this is a struct return (uses sret)
                     let uses_sret = self.current_sret_dest.is_some();
+                    // eprintln!("DEBUG: Stmt::Return uses_sret={}", uses_sret);
 
                     // IMPORTANT: Do NOT unregister. Instead Acquire/Copy to preserve for caller.
                     // If we unregister, it releases (decrements refcount).
@@ -2064,13 +2136,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 })
                                 .expect("tl_ptr_inc_ref decl failed");
 
-                             let ptr = val.into_pointer_value();
-                             let void_ptr = self.builder.build_pointer_cast(
-                                 ptr,
-                                 self.context.ptr_type(inkwell::AddressSpace::default()),
-                                 "void_cast_inc_assign"
-                             ).unwrap();
-                             self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
+                             // GUARD: Only inc_ref if it's a pointer (skip ZST)
+                             if val.is_pointer_value() {
+                                 let ptr = val.into_pointer_value();
+                                 let void_ptr = self.builder.build_pointer_cast(
+                                     ptr,
+                                     self.context.ptr_type(inkwell::AddressSpace::default()),
+                                     "void_cast_inc_assign"
+                                 ).unwrap();
+                                 self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
+                             }
                          }
                          _ => {}
                      }
@@ -2090,7 +2165,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             var_type,
                             Type::Struct(_, _) | Type::Tensor(_, _)
                         ) {
-                             if found_should_free != super::CLEANUP_NONE {
+                             if found_should_free != super::CLEANUP_NONE && val.is_pointer_value() {
                                  let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                                  let current_val = self
                                      .builder
@@ -3653,6 +3728,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if let Some(enum_def) = self.enum_defs.get(name) {
                     return self.emit_enum_deep_clone(val, enum_def);
                 }
+                
+                println!("DEBUG: emit_deep_clone struct name={}", name);
+
+                // Handle String struct: Delegate to Type::String logic
+                if name == "String" {
+                    return self.emit_deep_clone(val, &Type::String(name.clone()));
+                }
 
                 // HACK: Built-in types (File) are opaque pointers
                 if name == "File" {
@@ -3670,6 +3752,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Instead of deep copying (malloc + loop), we treat structs like RefCounted objects (like Tensors).
                 // We acquire a reference and return the same pointer.
                 
+                // Check if it is a ZST (Value Type)
+                if !val.is_pointer_value() {
+                    return Ok(val);
+                }
+
                 // 1. Acquire reference
                 let acquire_fn = self
                     .module
