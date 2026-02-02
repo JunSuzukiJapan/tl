@@ -376,7 +376,7 @@ impl Monomorphizer {
                          }
                      }
                  }
-                 // 4. Try generic Enum (e.g. Option::Some) - LEGACY? 
+                 // 4. Try generic Enum (e.g. MyEnum::Variant) - LEGACY? 
                  // Semantics should receive StructInit and transform to EnumInit.
                  // But if Monomorphizer runs after Semantics, this case might be unreachable for valid Enums?
                  // Or maybe for un-resolved?
@@ -710,7 +710,7 @@ impl Monomorphizer {
                                             crate::compiler::ast::VariantKind::Struct(_) => {
                                                 // Hard to map positional to struct fields without names
                                                 // Fallback to Tuple? No, syntax error.
-                                                // For Option/Result (Tuple variants), this is fine.
+                                                // For arbitrary Tuple variants, this is fine.
                                                 EnumVariantInit::Unit // Placeholder/Error
                                             }
                                        };

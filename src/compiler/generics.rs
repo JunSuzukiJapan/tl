@@ -161,7 +161,7 @@ mod tests {
     // Helper to create types
     fn t_param(n: &str) -> Type { Type::Struct(n.to_string(), vec![]) }
     fn t_struct(n: &str, args: Vec<Type>) -> Type { Type::Struct(n.to_string(), args) }
-    fn t_vec(t: Type) -> Type { Type::Struct("Vec".to_string(), vec![t]) }
+
     fn t_i64() -> Type { Type::I64 }
     fn t_f32() -> Type { Type::F32 }
     fn t_tensor(t: Type, r: usize) -> Type { Type::Tensor(Box::new(t), r) }
@@ -169,8 +169,8 @@ mod tests {
     #[test]
     fn test_resolve_simple_vec() {
         // Vec<T> vs Vec<i64>
-        let generic_ty = t_vec(t_param("T"));
-        let conc = t_vec(t_i64());
+        let generic_ty = t_struct("Vec", vec![t_param("T")]);
+        let conc = t_struct("Vec", vec![t_i64()]);
         
         let bindings = GenericResolver::resolve_bindings(&generic_ty, &conc).unwrap();
         assert_eq!(bindings.get("T"), Some(&t_i64()));
@@ -194,8 +194,8 @@ mod tests {
     #[test]
     fn test_resolve_nested_generic() {
         // Vec<Vec<T>> vs Vec<Vec<f32>>
-        let generic_ty = t_vec(t_vec(t_param("T")));
-        let conc = t_vec(t_vec(t_f32()));
+        let generic_ty = t_struct("Vec", vec![t_struct("Vec", vec![t_param("T")])]);
+        let conc = t_struct("Vec", vec![t_struct("Vec", vec![t_f32()])]);
         
         let bindings = GenericResolver::resolve_bindings(&generic_ty, &conc).unwrap();
         assert_eq!(bindings.get("T"), Some(&t_f32()));
@@ -228,10 +228,10 @@ mod tests {
         let mut bindings = HashMap::new();
         bindings.insert("T".into(), t_i64());
         
-        let generic_ty = t_vec(t_param("T"));
+        let generic_ty = t_struct("Vec", vec![t_param("T")]);
         let resolved = GenericResolver::apply_bindings(&generic_ty, &bindings);
         
-        assert_eq!(resolved, t_vec(t_i64()));
+        assert_eq!(resolved, t_struct("Vec", vec![t_i64()]));
     }
     
     #[test]

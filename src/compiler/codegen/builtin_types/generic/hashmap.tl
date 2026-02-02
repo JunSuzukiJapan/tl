@@ -13,4 +13,8 @@ impl<K, V> HashMap<K, V> {
     extern fn contains_key(self, key: K) -> bool;
     extern fn len(self) -> i64;
     extern fn clear(self) -> bool;
+    
+    fn free(self) {
+        System::free_hashmap(self.ptr);
+    }
 }

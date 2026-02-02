@@ -153,7 +153,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     pub(crate) fn emit_recursive_free(
-        &self,
+        &mut self,
         val: BasicValueEnum<'ctx>,
         ty: &Type,
         mode: u8,
@@ -163,6 +163,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         match ty {
+            Type::Ref(_) => {},
             Type::Enum(name, _) => {
                 let enum_def = self
                     .enum_defs
@@ -377,162 +378,48 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
                 self.builder.position_at_end(merge_block);
             }
-            Type::Struct(name, _) => {
-                // Handle Tensor specially
+            Type::Struct(name, generic_args) => {
+                // Unregister from Runtime Scope (Safety against double free)
+                let ptr = val.into_pointer_value();
+                if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                     let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                     let cast = self.builder.build_pointer_cast(ptr, void_ptr_ty, "unreg_cast").unwrap();
+                     self.builder.build_call(unreg_fn, &[cast.into()], "").ok(); 
+                }
+
+                // 1. Generic Destructor Lookup (Static Method "free")
+                // Check if the type has a static method named "free" that matches the signature `fn free(self)`
+                // Use standard name resolution: tl_{lowercased_type}_{args}_free
+                let runtime_name = crate::compiler::codegen::builtin_types::resolver::resolve_static_method_name(
+                    name,
+                    "free",
+                    generic_args
+                );
+
+                // Check if this runtime function exists in the module
+                if let Some(fn_val) = self.module.get_function(&runtime_name) {
+                    // Call it: fn free(self)
+                    self.builder.build_call(fn_val, &[val.into()], "").map_err(|e| e.to_string())?;
+                    return Ok(());
+                }
+
+                // 2. Specialized Tensor Handling (Legacy but maintained for now)
                 if name == "Tensor" {
                     return self.emit_recursive_free(val, &Type::Tensor(Box::new(Type::F32), 1), mode);
                 }
 
-                // Fix: Vec<T> is often represented as UserDefined("Vec", [T])
-                // We must treat it as Type::Vec to ensure:
-                // 1. Elements are recursively freed
-                // 2. The container is freed via tl_vec_void_free (Box::from_raw) to avoid malloc/free mismatch crash.
-                if name.starts_with("Vec") {
-                    let inner_ty = if name == "Vec" {
-                         if let Type::Struct(_, args) = ty {
-                             if !args.is_empty() {
-                                  args[0].clone()
-                             } else {
-                                  Type::I64
-                             }
-                        } else if let Type::Struct(_, args) = ty {
-                            if !args.is_empty() {
-                                 args[0].clone()
-                            } else {
-                                 Type::I64
-                            }
-                        } else {
-                            Type::I64
-                        }
-                    } else if name.starts_with("Vec_") {
-                         let suffix = &name[4..];
-                         match suffix {
-                             "i64" => Type::I64,
-                             "f32" => Type::F32,
-                             "u8"  => Type::U8,
-                             "bool" => Type::Bool,
-                             "String" => Type::String("String".to_string()),
-                             _ => Type::Struct(suffix.to_string(), vec![]),
-                         }
-                    } else {
-                         // Fallback for random Structs starting with Vec...
-                         Type::I64
-                    };
-                    
-                    // INLINED LOGIC FROM Type::Vec
-                    // Only support Vec<Tensor> or Vec<Struct> (pointer-sized elements) for now
-                    if matches!(
-                        &inner_ty,
-                        Type::Tensor(_, _) // Structs/UserDefined are Scope-Owned, do not free in Vec
-                    ) {
-                        let len_fn = self
-                            .module
-                            .get_function("tl_vec_void_len")
-                            .ok_or("tl_vec_void_len not found")?;
-                        let free_fn = self
-                            .module
-                            .get_function("tl_vec_void_free")
-                            .ok_or("tl_vec_void_free not found")?;
-
-                        let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                        let ptr = val.into_pointer_value();
-                        let cast_ptr = self
-                            .builder
-                            .build_pointer_cast(ptr, void_ptr_type, "vec_ptr")
-                            .unwrap();
-
-                        // Get Length
-                        let len_call = self
-                            .builder
-                            .build_call(len_fn, &[cast_ptr.into()], "len")
-                            .map_err(|e| e.to_string())?;
-                        let len_val = match len_call.try_as_basic_value() {
-                            inkwell::values::ValueKind::Basic(v) => {
-                                if v.is_int_value() {
-                                    v.into_int_value()
-                                } else {
-                                    return Err(format!("len returned non-int: {:?}", v));
-                                }
-                            }
-                            _ => return Err("len call returned non-basic value".to_string()),
-                        };
-
-                        // Loop Setup
-                        let current_bb = self.builder.get_insert_block().unwrap();
-                        let func = current_bb.get_parent().unwrap();
-                        let loop_bb = self.context.append_basic_block(func, "vec_free_loop");
-                        let body_bb = self.context.append_basic_block(func, "vec_free_body");
-                        let end_bb = self.context.append_basic_block(func, "vec_free_end");
-
-                        self.builder
-                            .build_unconditional_branch(loop_bb)
-                            .map_err(|e| e.to_string())?;
-
-                        // Loop Header (Condition)
-                        self.builder.position_at_end(loop_bb);
-                        let i64_type = self.context.i64_type();
-                        let idx_phi = self
-                            .builder
-                            .build_phi(i64_type, "i")
-                            .map_err(|e| e.to_string())?;
-                        idx_phi.add_incoming(&[(&i64_type.const_int(0, false), current_bb)]);
-
-                        let idx_val = idx_phi.as_basic_value().into_int_value();
-                        let cmp = self
-                            .builder
-                            .build_int_compare(
-                                inkwell::IntPredicate::SLT,
-                                idx_val,
-                                len_val,
-                                "cmp",
-                            )
-                            .map_err(|e| e.to_string())?;
-                        self.builder
-                            .build_conditional_branch(cmp, body_bb, end_bb)
-                            .map_err(|e| e.to_string())?;
-
-                        // Body
-                        self.builder.position_at_end(body_bb);
-                        
-                        // Access Element
-                        let get_fn = self.module.get_function("tl_vec_void_get").unwrap();
-                        let call = self.builder.build_call(get_fn, &[cast_ptr.into(), idx_val.into()], "elem").map_err(|e| e.to_string())?;
-                        let elem_ptr = match call.try_as_basic_value() {
-                            inkwell::values::ValueKind::Basic(v) => v,
-                            _ => panic!("tl_vec_void_get returned non-basic"),
-                        };
-                        
-                        // Recursively free ELEMENT (Full cleanup)
-                        self.emit_recursive_free(elem_ptr, &inner_ty, super::CLEANUP_FULL)?;
-
-                        // Next Iteration
-                        let next_idx = self
-                            .builder
-                            .build_int_add(idx_val, i64_type.const_int(1, false), "next_i")
-                            .map_err(|e| e.to_string())?;
-                        let current_end_bb = self.builder.get_insert_block().unwrap();
-                        idx_phi.add_incoming(&[(&next_idx, current_end_bb)]);
-                        self.builder
-                            .build_unconditional_branch(loop_bb)
-                            .map_err(|e| e.to_string())?;
-
-                        // End
-                        self.builder.position_at_end(end_bb);
-
-                        // Free Vector Container
-                         self.builder
-                            .build_call(free_fn, &[cast_ptr.into()], "")
-                            .map_err(|e| e.to_string())?;
-                    }
-                    return Ok(());
-                }
-
+                // 3. Fallback: Structural Cleanup (Member-wise)
                 // Extract simple name from module path
                 let simple_name = if name.contains("::") {
                     name.split("::").last().unwrap()
                 } else {
                     name.as_str()
                 };
+
+                // Check if struct def exists
+                if !self.struct_defs.contains_key(simple_name) {
+                     return Ok(());
+                }
 
                 let struct_def = self
                     .struct_defs
@@ -559,8 +446,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .build_conditional_branch(is_null, merge_block, free_block)
                     .map_err(|e| e.to_string())?;
 
-                // --- FIX: Stack Cleanup Mode (sret) ---
-                // --- FIX: Stack Cleanup Mode (sret) ---
+                // Stack Cleanup Mode
                 if mode == super::CLEANUP_STACK {
                      self.builder.position_at_end(free_block);
 
@@ -596,19 +482,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 self.builder.position_at_end(free_block);
 
-                // --- FIX: Unregister from Scope to prevent double-free by tl_mem_exit_scope ---
-                // We are manually handling the cleanup here.
-                let unreg_fn = self.module.get_function("tl_mem_unregister")
-                    .ok_or("tl_mem_unregister not found")?;
-                
-                let cast_void_unreg = self.builder.build_pointer_cast(
-                    ptr, 
-                    self.context.ptr_type(inkwell::AddressSpace::default()), 
-                    "cast_void_unreg"
-                ).unwrap();
 
-                self.builder.build_call(unreg_fn, &[cast_void_unreg.into()], "")
-                    .map_err(|e| e.to_string())?;
 
                 // --- FIX: Check RefCount before recursing ---
                 let recurse_block = self.context.append_basic_block(func, "recurse_free");
@@ -770,6 +644,269 @@ impl<'ctx> CodeGenerator<'ctx> {
                       if let Some(f) = free {
                             self.builder.build_call(f, &[ptr.into()], "").unwrap();
                       }
+                 }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub(crate) fn emit_free(
+        &mut self,
+        val: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<(), String> {
+        match ty {
+            Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
+                // Check if pointer
+                if !val.is_pointer_value() {
+                    return Ok(()); // Should not happen for tensor
+                }
+                let ptr = val.into_pointer_value();
+
+                // Runtime null check
+                let current_block = self.builder.get_insert_block().unwrap();
+                let func = current_block.get_parent().unwrap();
+                let free_block = self.context.append_basic_block(func, "free_tensor");
+                let merge_block = self.context.append_basic_block(func, "after_tensor_free");
+
+                let is_null = self.builder.build_is_null(ptr, "is_null_tens").map_err(|e| e.to_string())?;
+                self.builder.build_conditional_branch(is_null, merge_block, free_block).map_err(|e| e.to_string())?;
+
+                self.builder.position_at_end(free_block);
+
+                // Call tl_ptr_dec_ref(ptr) -> i32 (1=True/Free, 0=False/Keep)
+                let dec_ref_fn = self
+                    .module
+                    .get_function("tl_ptr_dec_ref")
+                    .ok_or("tl_ptr_dec_ref not found")?;
+                    
+                let cast_void = self.builder.build_pointer_cast(
+                    ptr, 
+                    self.context.ptr_type(inkwell::AddressSpace::default()), 
+                    "cast_void"
+                ).unwrap();
+
+                let call = self
+                    .builder
+                    .build_call(dec_ref_fn, &[cast_void.into()], "should_free")
+                    .map_err(|e| e.to_string())?;
+
+                let should_free_val = match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                    _ => return Err("tl_ptr_dec_ref returned void/invalid".to_string()),
+                };
+                    
+                let should_free = self.builder.build_int_compare(
+                    inkwell::IntPredicate::NE,
+                    should_free_val,
+                    self.context.i32_type().const_int(0, false),
+                    "should_free_bool"
+                ).map_err(|e| e.to_string())?;
+
+                let recurse_block = self.context.append_basic_block(func, "recurse_free_tensor");
+                self.builder.build_conditional_branch(should_free, recurse_block, merge_block)
+                    .map_err(|e| e.to_string())?;
+
+                self.builder.position_at_end(recurse_block);
+
+                // Trace Free
+                self.emit_log_free(val)?;
+
+                let mem_free_fn = self.module.get_function("tl_mem_free")
+                     .ok_or("tl_mem_free not found")?;
+                self.builder.build_call(mem_free_fn, &[cast_void.into()], "")
+                    .map_err(|e| e.to_string())?;
+
+                self.builder
+                     .build_unconditional_branch(merge_block)
+                     .map_err(|e| e.to_string())?;
+                
+                self.builder.position_at_end(merge_block);
+            }
+            Type::String(_) => {
+                  let free_fn = self
+                        .module
+                        .get_function("tl_string_free")
+                        .or_else(|| {
+                             let void_ty = self.context.void_type();
+                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                             let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                             Some(self.module.add_function("tl_string_free", ft, None))
+                        })
+                        .ok_or("tl_string_free not found")?;
+                  
+                  let ptr = val.into_pointer_value();
+                  
+                  // Runtime null check
+                  let current_block = self.builder.get_insert_block().unwrap();
+                  let func = current_block.get_parent().unwrap();
+                  let free_block = self.context.append_basic_block(func, "free_string");
+                  let merge_block = self.context.append_basic_block(func, "after_string_free");
+
+                  let is_null = self.builder.build_is_null(ptr, "is_null_str").map_err(|e| e.to_string())?;
+                  self.builder.build_conditional_branch(is_null, merge_block, free_block).map_err(|e| e.to_string())?;
+
+                  self.builder.position_at_end(free_block);
+                  // Cast to opaque pointer if needed (though StringStruct* is ptr)
+                  let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_str").unwrap();
+                  self.builder.build_call(free_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
+                  self.builder.build_unconditional_branch(merge_block).unwrap();
+
+                  self.builder.position_at_end(merge_block);
+                  return Ok(());
+            }
+            Type::Struct(name, _) => {
+                let simple_name = if name.contains("::") {
+                    name.split("::").last().unwrap()
+                } else {
+                    name.as_str()
+                };
+
+                // Some structs might be opaque or non-existent (e.g. String wrapper)
+                if simple_name == "String" {
+                     // String is a struct but generally treated as scalar resource.
+                     // But if it is registered, we should unregister it.
+                     let ptr = val.into_pointer_value();
+                     let free_fn = self.module.get_function("tl_string_free")
+                        .ok_or("tl_string_free not found")?;
+                     let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_free_str").unwrap();
+                     self.builder.build_call(free_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
+                     return Ok(());
+                }
+
+                let struct_def = self.struct_defs.get(simple_name)
+                    .ok_or(format!("Struct def {} not found", name))?
+                    .clone();
+                let struct_ty = *self.struct_types.get(simple_name)
+                    .ok_or(format!("Struct type {} not found", name))?;
+                
+                let ptr = val.into_pointer_value();
+
+                // Runtime null check
+                let current_block = self.builder.get_insert_block().unwrap();
+                let func = current_block.get_parent().unwrap();
+                let free_block = self.context.append_basic_block(func, "free_struct");
+                let merge_block = self.context.append_basic_block(func, "after_struct_free");
+
+                let is_null = self.builder.build_is_null(ptr, "is_null_struct").map_err(|e| e.to_string())?;
+                self.builder.build_conditional_branch(is_null, merge_block, free_block).map_err(|e| e.to_string())?;
+
+                self.builder.position_at_end(free_block);
+
+                // Call tl_ptr_dec_ref(ptr) -> i32 (1=True/Free, 0=False/Keep)
+                let dec_ref_fn = self
+                    .module
+                    .get_function("tl_ptr_dec_ref")
+                    .ok_or("tl_ptr_dec_ref not found")?;
+                    
+                let cast_void = self.builder.build_pointer_cast(
+                    ptr, 
+                    self.context.ptr_type(inkwell::AddressSpace::default()), 
+                    "cast_void"
+                ).unwrap();
+
+                let call = self
+                    .builder
+                    .build_call(dec_ref_fn, &[cast_void.into()], "should_free")
+                    .map_err(|e| e.to_string())?;
+
+                let should_free_val = match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                    _ => return Err("tl_ptr_dec_ref returned void/invalid".to_string()),
+                };
+                    
+                let should_free = self.builder.build_int_compare(
+                    inkwell::IntPredicate::NE,
+                    should_free_val,
+                    self.context.i32_type().const_int(0, false),
+                    "should_free_bool"
+                ).map_err(|e| e.to_string())?;
+
+                let recurse_block = self.context.append_basic_block(func, "recurse_free_struct");
+                self.builder.build_conditional_branch(should_free, recurse_block, merge_block)
+                    .map_err(|e| e.to_string())?;
+
+                self.builder.position_at_end(recurse_block);
+
+                // Recurse fields
+                for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
+                    match f_ty {
+                        Type::Tensor(_, _)
+                        | Type::TensorShaped(_, _)
+                        | Type::Struct(_, _)
+                        | Type::Enum(_, _)
+                        | Type::Tuple(_) => {
+                            let f_ptr = self
+                                .builder
+                                .build_struct_gep(struct_ty, ptr, i as u32, "field_gep")
+                                .map_err(|e| e.to_string())?;
+                            let f_val = self
+                                .builder
+                                .build_load(
+                                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                                    f_ptr,
+                                    "field_load",
+                                )
+                                .map_err(|e| e.to_string())?;
+                            // Recursively free content (Clean FULL)
+                            self.emit_recursive_free(f_val, f_ty, super::CLEANUP_FULL)?;
+                        }
+                        _ => {}
+                    }
+                }
+                
+                // Free the Struct itself
+                let mem_free_fn = self.module.get_function("tl_mem_free")
+                     .ok_or("tl_mem_free not found")?;
+                
+                // Trace Free
+                self.emit_log_free(val)?;
+
+                self.builder.build_call(mem_free_fn, &[cast_void.into()], "")
+                    .map_err(|e| e.to_string())?;
+
+                self.builder
+                     .build_unconditional_branch(merge_block)
+                     .map_err(|e| e.to_string())?;
+                
+                self.builder.position_at_end(merge_block);
+            }
+            Type::Tuple(elem_types) => {
+                 // Check if any element needs freeing
+                 let needs_free = elem_types.iter().any(|t| matches!(t, Type::Tensor(_, _) | Type::Struct(_, _)));
+                 if !needs_free {
+                     return Ok(());
+                 }
+                 
+                 let ptr = val.into_pointer_value();
+
+                 // Reconstruct LLVM struct type for GEP
+                 let mut llvm_types = Vec::new();
+                 for ty in elem_types {
+                     llvm_types.push(match ty {
+                         Type::F32 => self.context.f32_type().into(),
+                         Type::I64 => self.context.i64_type().into(),
+                         Type::I32 => self.context.i32_type().into(),
+                         Type::Bool => self.context.bool_type().into(),
+                            Type::Tensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
+                          Type::Void => self.context.i8_type().into(),
+                         _ => self.context.i64_type().into(),
+                     });
+                 }
+                 let struct_ty = self.context.struct_type(&llvm_types, false);
+                 
+                 for (i, ty) in elem_types.iter().enumerate() {
+                      if matches!(ty, Type::Tensor(_, _) | Type::String(_) | Type::Struct(_, _)) {
+                           let f_ptr = self.builder.build_struct_gep(struct_ty, ptr, i as u32, "tup_elem").unwrap();
+                           let load = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "load").unwrap();
+                           self.emit_recursive_free(load, ty, super::CLEANUP_FULL)?;
+                      }
+                 }
+                 // Free the tuple pointer itself
+                 let free = self.module.get_function("free").or_else(|| self.module.get_function("libc_free"));
+                 if let Some(f) = free {
+                       self.builder.build_call(f, &[ptr.into()], "").unwrap();
                  }
             }
             _ => {}
@@ -1300,154 +1437,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (mut val_ir, mut val_ty) = if let Some((r, t)) = dps_result {
                     (r, t)
                 } else {
-                    // Check for HashMap::new() with type annotation to perform correct monomorphization
-                    let mut handled = false;
-                    let mut res = (self.context.i64_type().const_zero().into(), Type::Void);
-
-                    if let Some(target_ty) = type_annotation {
-                        if let ExprKind::StaticMethodCall(t_ty, _m_name, args) = &value.inner {
-                            let _type_name_matches = match t_ty {
-                                Type::Struct(n, _) => n == "HashMap",
-                                _ => false,
-                            };
-
-                            let mut effective_target = None;
-                            let target_is_hashmap = match target_ty {
-                                Type::Struct(n, args) => {
-                                    if n == "HashMap" && args.len() == 2 {
-                                        effective_target = Some(target_ty.clone());
-                                        true
-                                    } else if n.starts_with("HashMap_") {
-                                        // Handle mangled name: HashMap_String_i64, etc.
-                                        let parts: Vec<&str> = n.split('_').collect();
-                                        if parts.len() >= 3 && parts[0] == "HashMap" {
-                                            let key_ty = if parts[1] == "String" { Type::String("String".to_string()) } else { Type::Struct(parts[1].to_string(), vec![]) };
-                                            let val_ty = if parts[2] == "i64" { Type::I64 } 
-                                                else if parts[2] == "String" { Type::String("String".to_string()) }
-                                                else if parts[2] == "Tensor" { Type::Struct("Tensor".to_string(), vec![]) } // Or handle Tensor specifically?
-                                                else { Type::Struct(parts[2].to_string(), vec![]) };
-                                            
-                                            effective_target = Some(Type::Struct("HashMap".to_string(), vec![key_ty, val_ty]));
-                                            true
-                                        } else {
-                                            false
-                                        }
-                                    } else {
-                                        false
-                                    }
-                                }
-                                _ => false,
-                            };
-
-                            if target_is_hashmap {
-                                if let Some(et) = effective_target {
-                                     res = self
-                                        .compile_static_method_call("HashMap", "new", args, &et)
-                                        .map_err(|e| e.to_string())?;
-                                     handled = true;
-                                }
-                            }
-                        }
-                    }
-
-                    if handled {
-                        res
-                    } else {
-                        self.compile_expr(value)?
-                    }
+                    // Standard expression compilation
+                    self.compile_expr(value)?
                 };
+                
                 // Ownership: Shared. The temporary (value) remains in scope and will be released at scope exit.
                 // The variable (name) acquires a NEW reference via deep_clone below.
                 // We do NOT unregister the temporary. Ref 1 (Temp) + Ref 1 (Var) = 2.
                 // Temp Scope Exit -> -1. Var Scope Exit -> -1. Total 0. Safe.
 
-                // Removed: Move Semantics logic.
-                // We default to CLONE for variables (see below), so we should NOT disable cleanup for the source.
-
-
-                if let Some(target_ty) = type_annotation {
-                    if let Type::Struct(n, args) = target_ty {
-                         if n == "HashMap" || n == "Vec" || n.starts_with("Vec_") {
-                             // Fix for HashMap::new() -> HashMap being assigned to typed var
-                             let is_match = match &val_ty {
-                                 Type::Struct(vn, _) => vn == "HashMap" || vn == "Vec",
-                                 _ => false
-                             };
-                             if is_match {
-                                 val_ty = target_ty.clone();
-                             }
-                         } else if n == "Option" && args.len() == 1 {
-                             // Fix for Option::none() -> Option<I64> being assigned to Option<T>
-                             if let Type::Struct(vn, vargs) = &val_ty {
-                                 if vn == "Option" && vargs.len() == 1 {
-                                     // Normalize Generic Argument if needed (e.g. UserDefined("I64") -> I64)
-                                     // This happens because Codegen sees raw AST type annotations.
-                                     let mut normalized_target = target_ty.clone();
-                                     if let Type::Struct(_, inner_args) = &mut normalized_target {
-                                         if inner_args.len() == 1 {
-                                            let inner = &inner_args[0];
-                                            if let Type::Struct(name, empty) = inner {
-                                                if empty.is_empty() {
-                                                    let norm = match name.as_str() {
-                                                        "I64" => Some(Type::I64),
-                                                        "I32" => Some(Type::I32),
-                                                        "F64" => Some(Type::F64),
-                                                        "F32" => Some(Type::F32),
-                                                        "Bool" => Some(Type::Bool),
-                                                        "Void" => Some(Type::Void),
-                                                        _ => None
-                                                    };
-                                                    if let Some(n) = norm {
-                                                        inner_args[0] = n;
-                                                    }
-                                                }
-                                            }
-                                         }
-                                     }
-
-                                     val_ty = normalized_target;
-                                     // Cast LLVM value
-                                     if val_ir.is_pointer_value() {
-                                         let target_llvm_ty = self.get_llvm_type(&val_ty).unwrap();
-                                         let casted = self.builder.build_pointer_cast(
-                                             val_ir.into_pointer_value(), 
-                                             target_llvm_ty.into_pointer_type(), 
-                                             "option_cast"
-                                         ).unwrap();
-                                         val_ir = casted.into();
-                                     }
-                                 }
-                             }
-                         }
-                    } else if let Type::Struct(sn, sargs) = target_ty {
-                         if sn == "HashMap" && sargs.len() == 2 {
-                             // Fix for HashMap::new() -> HashMap (no args)
-                             if matches!(val_ty, Type::Struct(ref vn, ref vargs) if vn == "HashMap" && vargs.is_empty()) {
-                                 val_ty = target_ty.clone();
-                             }
-                        } else if sn == "Option" && sargs.len() == 1 {
-                             // Fix for Option::none() -> Option<I64> being assigned to Option<T>
-                             if let Type::Struct(vn, vargs) = &val_ty {
-                                 if vn == "Option" && vargs.len() == 1 {
-                                     // Force target type
-                                     val_ty = target_ty.clone();
-                                     
-                                     // Ensure pointer cast for LLVM type safety
-                                     // Both are pointers, but we want to be explicit
-                                      if val_ir.is_pointer_value() {
-                                         let target_llvm_ty = self.get_llvm_type(&val_ty).unwrap();
-                                         let casted = self.builder.build_pointer_cast(
-                                             val_ir.into_pointer_value(), 
-                                             target_llvm_ty.into_pointer_type(), 
-                                             "option_cast"
-                                         ).unwrap();
-                                         val_ir = casted.into();
-                                      }
-                                 }
-                             }
-                        }
-                    }
-                }
+                // Removed legacy hardcoded type fixups for HashMap/Vec/Option.
+                // Rely on correct type checking in semantics phase.
 
                 // Variable Assignment: Deep Clone (Struct Copy + Tensor Acquire)
                 // Optimization: R-value Move Semantics
@@ -1780,43 +1780,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let (val_ir, val_ty) = self.compile_expr(value)?;
 
                         match var_type {
-                            Type::Struct(name, args) if name == "Vec" => {
-                                let elem_ty = &args[0];
+                            Type::Struct(_, _) => {
+                                // Generic structural assignment via .set(index, value) method
+                                // Support arr[i] = val for any struct implementing set(i64, T)
                                 if idxs.len() != 1 {
-                                    return Err("Vec only supports 1D indexing".into());
-                                }
-                                // Load Vec Buffer Pointer (ptr)
-                                let ptr_type =
-                                    self.context.ptr_type(inkwell::AddressSpace::default());
-                                let vec_ptr = self
-                                    .builder
-                                    .build_load(ptr_type, var_ptr.into_pointer_value(), "vec_ptr")
-                                    .map_err(|e| e.to_string())?
-                                    .into_pointer_value();
-
-                                // Compile Index
-                                let (idx_val, idx_ty) = self.compile_expr(&idxs[0])?;
-                                let idx_int = match idx_ty {
-                                    Type::I64 => idx_val.into_int_value(),
-                                    Type::I32 => self
-                                        .builder
-                                        .build_int_z_extend(
-                                            idx_val.into_int_value(),
-                                            self.context.i64_type(),
-                                            "zext",
-                                        )
-                                        .unwrap(),
-                                    _ => return Err("Index must be integer".into()),
-                                };
-
-                                let llvm_elem_type = self.get_llvm_type(elem_ty)?;
-                                
-                                let elem_ptr = unsafe {
-                                    self.builder
-                                        .build_in_bounds_gep(
-                                            llvm_elem_type,
-                                            vec_ptr,
-                                            &[idx_int],
                                             "vec_elem_ptr",
                                         )
                                         .map_err(|e| e.to_string())?
@@ -3117,20 +3084,22 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             StmtKind::Break => {
                 // Cleanup all scopes up to loop entry before jumping
-                if let Some((_, break_block, loop_depth)) = self.loop_stack.last() {
-                    self.emit_cleanup_to_depth(*loop_depth);
+                let target = self.loop_stack.last().map(|(_, bb, depth)| (*bb, *depth));
+                if let Some((break_block, loop_depth)) = target {
+                    self.emit_cleanup_to_depth(loop_depth);
                     self.builder
-                        .build_unconditional_branch(*break_block)
+                        .build_unconditional_branch(break_block)
                         .map_err(|e| e.to_string())?;
                 }
                 Ok(())
             }
             StmtKind::Continue => {
                 // Cleanup all scopes up to loop entry before jumping
-                if let Some((continue_block, _, loop_depth)) = self.loop_stack.last() {
-                    self.emit_cleanup_to_depth(*loop_depth);
+                let target = self.loop_stack.last().map(|(bb, _, depth)| (*bb, *depth));
+                if let Some((continue_block, loop_depth)) = target {
+                    self.emit_cleanup_to_depth(loop_depth);
                     self.builder
-                        .build_unconditional_branch(*continue_block)
+                        .build_unconditional_branch(continue_block)
                         .map_err(|e| e.to_string())?;
                 }
                 Ok(())

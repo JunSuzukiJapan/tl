@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 impl<'ctx> CodeGenerator<'ctx> {
     /// On-demand monomorphization of a method for a generic struct.
+    /// On-demand monomorphization of a method for a generic struct.
     pub fn monomorphize_method(
         &mut self,
         struct_name: &str,
@@ -15,20 +16,6 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<String, String> {
         let impls = self.generic_impls.get(struct_name)
              .ok_or_else(|| format!("No generic impls found for struct {}", struct_name))?;
-
-        if struct_name == "HashMap" {
-             if generic_args.len() != 2 {
-                 return Err(format!("HashMap expects 2 generic args, got {}", generic_args.len()));
-             }
-             return self.ensure_hashmap_method(&generic_args[0], &generic_args[1], method_name);
-        }
-
-        if struct_name == "Vec" {
-             if generic_args.len() != 1 {
-                 return Err(format!("Vec expects 1 generic arg, got {}", generic_args.len()));
-             }
-             return self.ensure_vec_method(&generic_args[0], method_name);
-        }
 
         // Find method in impls
         let mut target_method = None;
@@ -59,17 +46,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         for (param, arg) in imp.generics.iter().zip(generic_args) {
              subst_map.insert(param.clone(), arg.clone());
         }
-        if struct_name == "Option" {
-            eprintln!("DEBUG: monomorphize_method Option::{}", method_name);
-            eprintln!("DEBUG: generic_args: {:?}", generic_args);
-            eprintln!("DEBUG: imp.generics: {:?}", imp.generics);
-            eprintln!("DEBUG: subst_map: {:?}", subst_map);
-        }
 
-        // Mangle name
-        // tl_Rect_i64_area
-        let suffix = generic_args.iter().map(|t| self.type_to_suffix(t)).collect::<Vec<_>>().join("_");
-        let mangled_name = format!("tl_{}_{}_{}", struct_name, suffix, method_name);
+        // Use standard mangling resolution
+        let mangled_name = crate::compiler::codegen::builtin_types::resolver::resolve_static_method_name(struct_name, method_name, generic_args);
         
         if self.module.get_function(&mangled_name).is_some() {
             return Ok(mangled_name);
@@ -81,19 +60,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         new_method.name = mangled_name.clone(); 
         new_method.generics = vec![]; // Concrete
         
-        // Fix "Self" usage and Substitute
-        // The return type, args, and body might use T or Self.
-        // Self -> Struct<Args> (UserDefined)
-        // Wait, ASTSubstitutor handles explicit Type mapping.
-        // But Self is implicit in some contexts?
-        // In valid TL AST, Self is usually pre-resolved or UserDefined("Self", [])?
-        // Let's assume UserDefined("Self") is handled by substitution if we map "Self" -> ConcreteType.
-        
         let concrete_self = Type::Struct(struct_name.to_string(), generic_args.to_vec());
-        // Add Self to substitution map if not already present
-        // Actually TypeSubstitutor might need special handling for Self?
-        // Or we just add it to the map.
-        // Let's create a new substitutor with Self included.
         let mut full_map = substitutor.subst.clone();
         full_map.insert("Self".to_string(), concrete_self);
         let full_substitutor = TypeSubstitutor::new(full_map);
@@ -102,27 +69,19 @@ impl<'ctx> CodeGenerator<'ctx> {
         for (_, ty) in &mut new_method.args {
             *ty = full_substitutor.substitute_type(ty);
         }
-        let old_ret = new_method.return_type.clone();
         new_method.return_type = full_substitutor.substitute_type(&new_method.return_type);
-        if struct_name == "Option" {
-             eprintln!("DEBUG: return_type subst: {:?} -> {:?}", old_ret, new_method.return_type);
-        }
         new_method.body = new_method.body.iter().map(|s| full_substitutor.substitute_stmt(s)).collect();
         
         // Compile
-        // Compile
-        
-        // Add to module
-        // We need to compile it as a function.
-        // Note: compile_impl_blocks usually handles name mangling "tl_Struct_method".
-        // Here we pre-mangled it to "tl_Struct_Args_method", so we can just use compile_fn?
-        // Yes, as long as compile_fn uses the name in function def.
-        
         // Save current builder position
         let previous_block = self.builder.get_insert_block();
 
         self.compile_fn_proto(&new_method)?;
-        self.pending_functions.push(new_method);
+        
+        // NEW: If extern, we are done (declaration only). Otherwise compile body.
+        if !new_method.is_extern {
+            self.pending_functions.push(new_method);
+        }
         
         // Restore builder position
         if let Some(block) = previous_block {
@@ -200,6 +159,69 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(mangled_name)
     }
 
+    /// On-demand monomorphization of a generic enum.
+    pub fn monomorphize_enum(
+        &mut self,
+        enum_name: &str,
+        generic_args: &[Type],
+    ) -> Result<String, String> {
+        // 1. Check if the enum exists in generic registry
+        let enum_def = self.enum_defs.get(enum_name)
+            .ok_or_else(|| format!("Enum {} not found", enum_name))?.clone();
+
+        // 2. Check generics
+        if enum_def.generics.len() != generic_args.len() {
+             return Err(format!("Generic count mismatch for enum {}: expected {}, got {}", 
+                 enum_name, enum_def.generics.len(), generic_args.len()));
+        }
+
+        // 3. Mangle
+        let mangled_name = self.mangle_type_name(enum_name, generic_args);
+        
+        // 4. Check if already instantiated
+        if self.enum_types.contains_key(&mangled_name) {
+             return Ok(mangled_name);
+        }
+
+        // 5. Instantiate
+        // Build substitution map
+        let mut subst_map = HashMap::new();
+        for (param, arg) in enum_def.generics.iter().zip(generic_args) {
+             subst_map.insert(param.clone(), arg.clone());
+        }
+        let substitutor = TypeSubstitutor::new(subst_map);
+
+        let mut new_def = enum_def.clone();
+        new_def.name = mangled_name.clone();
+        new_def.generics = vec![];
+
+        // Substitute variants
+        for variant in &mut new_def.variants {
+             match &mut variant.kind {
+                 crate::compiler::ast::VariantKind::Unit => {},
+                 crate::compiler::ast::VariantKind::Tuple(types) => {
+                     for t in types {
+                         *t = substitutor.substitute_type(t);
+                     }
+                 }
+                 crate::compiler::ast::VariantKind::Struct(fields) => {
+                     for (_, t) in fields {
+                         *t = substitutor.substitute_type(t);
+                     }
+                 }
+             }
+        }
+
+        // 6. Compile/Register
+        // We can reuse compile_enum_defs. It handles LLVM struct creation and map insertion.
+        self.compile_enum_defs(&[new_def.clone()])
+            .map_err(|e| e.to_string())?;
+
+        // Note: compile_enum_defs adds it to `enum_defs` and `enum_types`
+        
+        Ok(mangled_name)
+    }
+
     fn unify_types(
         &self,
         expected: &Type,
@@ -221,10 +243,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                          }
                      } else {
                          // Map it!
-                         // But wait, what if 'name' is "Vec"? We shouldn't map "Vec" to actual.
+                         // But wait, what if 'name' is a concrete type? We shouldn't map it to actual.
                          // We should only map if 'name' is in Fn generics.
                          // But unification helper doesn't know the list.
-                         // We can assume valid AST would prevent Shadowing of "Vec" by "T".
+                         // We can assume valid AST would prevent Shadowing of Types by generic params.
                          // So if we see UserDefined("T"), we map it.
                          // Ideally we should pass the set of generic params to safe guard.
                          map.insert(name.clone(), actual.clone());
@@ -318,7 +340,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     /// Mangle a method name for a generic type.
-    /// Example: mangle_generic_method("Vec", [U8], "to_tensor_2d") -> "tl_vec_u8_to_tensor_2d"
+    /// Example: mangle_generic_method("Container", [U8], "process") -> "tl_container_u8_process"
     pub fn mangle_generic_method(
         &self,
         base_type: &str,
@@ -389,6 +411,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             
             Type::Tuple(_) => {
+                Ok(self.context.ptr_type(AddressSpace::default()).into())
+            }
+
+            Type::Ref(_) => {
                 Ok(self.context.ptr_type(AddressSpace::default()).into())
             }
             
@@ -490,473 +516,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
-    /// Ensure a specialized Vec method exists for the given element type.
-    /// Returns the mangled function name.
-    pub fn ensure_vec_method(
-        &mut self,
-        element_type: &Type,
-        method_name: &str,
-    ) -> Result<String, String> {
-        let suffix = self.type_to_suffix(element_type);
-        let mangled_fn_name = format!("tl_Vec_{}_{}", suffix, method_name);
-        
-        // Check if already declared
-        if self.module.get_function(&mangled_fn_name).is_some() {
-            return Ok(mangled_fn_name);
-        }
 
-        // Register the return type for this specialized method
-        let tl_ret_ty = match method_name {
-            "push" | "clear" | "set" | "insert" => Type::Void,
-            "len" | "read_i32_be" => Type::I64,
-            "is_empty" => Type::Bool,
-            "pop" | "get" | "remove" => {
-                match element_type {
-                    Type::String(_) => Type::String("String".to_string()),
-                    Type::Struct(name, _) if name == "String" => Type::String("String".to_string()),
-                    _ => element_type.clone(),
-                }
-            },
-            "to_tensor_2d" => Type::Tensor(Box::new(Type::F32), 2), 
-            "contains" => Type::Bool,
-            _ => Type::Void, 
-        };
-        self.method_return_types.insert(mangled_fn_name.clone(), tl_ret_ty);
-
-        // Determine which core runtime function to delegate to
-        let core_fn_name = match element_type {
-            Type::I64 => format!("tl_vec_i64_{}", method_name),
-            Type::F32 => format!("tl_vec_f32_{}", method_name),
-            Type::U8 => format!("tl_vec_u8_{}", method_name), // New U8 support
-            Type::String(_) => {
-                 match method_name {
-                     "contains" | "pop" | "insert" | "remove" | "clear" | "is_empty" => format!("tl_vec_string_{}", method_name),
-                     _ => format!("tl_vec_ptr_{}", method_name),
-                 }
-            },
-            Type::Struct(name, _) if name == "String" => {
-                 match method_name {
-                     "contains" | "pop" | "insert" | "remove" | "clear" | "is_empty" => format!("tl_vec_string_{}", method_name),
-                     _ => format!("tl_vec_ptr_{}", method_name),
-                 }
-            },
-            Type::Char(_) => format!("tl_vec_i64_{}", method_name),
-            Type::Struct(name, _) if name == "Char" => format!("tl_vec_i64_{}", method_name),
-            _ => format!("tl_vec_ptr_{}", method_name), // Pointer-based for structs/others
-        };
-        
-        // If core function exists but mangled doesn't, create a wrapper function.
-        // The wrapper will have the "High Level" signature (e.g. taking T), 
-        // but calls the Lower Level runtime function (e.g. taking i8*).
-        if let Some(core_fn) = self.module.get_function(&core_fn_name) {
-             // 1. Determine Wrapper Function Type
-             // It generally follows the AST definition.
-             // Self is always Vec<T> (which is i8* at runtime).
-             // Args depend on method.
-             // We can infer args from the Core Fn for some, but specialized ones need care.
-             
-             // Core Fn Types:
-             // push(vec*, elem) -> void
-             // pop(vec*) -> elem
-             // get(vec*, idx) -> elem
-             
-             // For "ptr" variant: elem is i8*.
-             // For "i64" variant: elem is i64.
-             
-             // Wrapper should take:
-             // push(vec*, T)
-             // pop(vec*) -> T
-             // get(vec*, i64) -> T
-             
-             let vec_ptr_ty = self.context.ptr_type(AddressSpace::default());
-             let elem_llvm_ty = self.get_llvm_type(element_type)?;
-             let i64_ty = self.context.i64_type();
-             let bool_ty = self.context.bool_type();
-             
-             let (param_types, ret_type): (Vec<BasicMetadataTypeEnum>, Option<BasicTypeEnum>) = match method_name {
-                 "push" => (vec![vec_ptr_ty.into(), elem_llvm_ty.into()], None),
-                 "pop" => (vec![vec_ptr_ty.into()], Some(elem_llvm_ty)),
-                 "get" | "remove" => (vec![vec_ptr_ty.into(), i64_ty.into()], Some(elem_llvm_ty)),
-                 "len" => (vec![vec_ptr_ty.into()], Some(i64_ty.into())),
-                 "is_empty" => (vec![vec_ptr_ty.into()], Some(bool_ty.into())),
-                 "clear" => (vec![vec_ptr_ty.into()], None),
-                 // set? "set"(vec*, idx, T)
-                 "set" | "insert" => (vec![vec_ptr_ty.into(), i64_ty.into(), elem_llvm_ty.into()], None),
-                 "contains" => (vec![vec_ptr_ty.into(), elem_llvm_ty.into()], Some(bool_ty.into())),
-                 "to_tensor_2d" => (vec![vec_ptr_ty.into(), i64_ty.into(), i64_ty.into(), i64_ty.into()], Some(self.context.ptr_type(AddressSpace::default()).into())),
-                 "read_i32_be" => (vec![vec_ptr_ty.into(), i64_ty.into()], Some(i64_ty.into())),
-                 _ => return Err(format!("Unknown Vec method for wrapper gen: {}", method_name)),
-             };
-             
-             let fn_type = if let Some(ret) = ret_type {
-                 ret.fn_type(&param_types, false)
-             } else {
-                 self.context.void_type().fn_type(&param_types, false)
-             };
-             
-             let wrapper_fn = self.module.add_function(&mangled_fn_name, fn_type, None);
-             
-             // Generate body: Adapter Logic
-             let entry_bb = self.context.append_basic_block(wrapper_fn, "entry");
-             let saved_block = self.builder.get_insert_block(); 
-             self.builder.position_at_end(entry_bb);
-             
-             // Prepare args for Core Fn Call
-             let mut call_args = Vec::new();
-             
-             // Self (Arg 0) is always passed through (it's opaquely Vec*)
-             call_args.push(wrapper_fn.get_nth_param(0).unwrap().into());
-             
-             // Handle other args
-             // Basic mapping: Wrapper Arg -> Core Fn Arg
-             // If Core Fn expects i8* but Wrapper got T:
-             // - If T is Struct/String (already ptr): Bitcast T* -> i8*
-             // - If T is Scalar (and we are using ptr fallback): Alloca(T), Store(val), Bitcast Alloca -> i8*
-             
-             // Identify if we are using the generic 'ptr' backend or a specialized one
-             let is_generic_ptr_backend = core_fn_name.contains("_ptr_");
-             
-             match method_name {
-                 "push" | "contains" => {
-                     // arg 1 is 'item'
-                     let item_val = wrapper_fn.get_nth_param(1).unwrap();
-                     if is_generic_ptr_backend {
-                         // Expects i8*
-                         if item_val.is_pointer_value() {
-                             // Cast generic ptr to i8*
-                             let casted = self.builder.build_pointer_cast(
-                                 item_val.into_pointer_value(),
-                                 vec_ptr_ty,
-                                 "elem_cast"
-                             ).unwrap();
-                             call_args.push(casted.into());
-                         } else {
-                             // Spill scalar to stack
-                             let alloca = self.builder.build_alloca(elem_llvm_ty, "spill").unwrap();
-                             self.builder.build_store(alloca, item_val).unwrap();
-                             let casted = self.builder.build_pointer_cast(alloca, vec_ptr_ty, "spill_cast").unwrap();
-                             call_args.push(casted.into());
-                         }
-                     } else {
-                         // Specialized backend (i64, f32, etc)
-                         // types should match exactly or require trivial cast?
-                         // e.g. T=u8, Core=u8. T=i64, Core=i64.
-                         // But if T=bool? Core is what? U8?
-                         // If T=bool and core is U8?
-                         // Currently we only specialized for I64, F32, U8.
-                         // Bool falls back to ptr? No, Bool is 'i1', ptr backend handles 'i1' via spill?
-                         // Or we might map Bool to U8 backend?
-                         call_args.push(item_val.into());
-                     }
-                 },
-                 "get" | "remove" | "read_i32_be" => {
-                      // arg 1 is index (i64). Pass through.
-                      call_args.push(wrapper_fn.get_nth_param(1).unwrap().into());
-                 },
-                 "to_tensor_2d" => {
-                      // args 1, 2, 3 are i64. Pass through.
-                      call_args.push(wrapper_fn.get_nth_param(1).unwrap().into());
-                      call_args.push(wrapper_fn.get_nth_param(2).unwrap().into());
-                      call_args.push(wrapper_fn.get_nth_param(3).unwrap().into());
-                 },
-                 "set" | "insert" => {
-                      // arg 1 is index, arg 2 is item
-                      call_args.push(wrapper_fn.get_nth_param(1).unwrap().into());
-                      
-                      let item_val = wrapper_fn.get_nth_param(2).unwrap();
-                      if is_generic_ptr_backend {
-                         if item_val.is_pointer_value() {
-                             let casted = self.builder.build_pointer_cast(
-                                 item_val.into_pointer_value(), 
-                                 vec_ptr_ty, 
-                                 "elem_cast"
-                             ).unwrap();
-                             call_args.push(casted.into());
-                         } else {
-                             let alloca = self.builder.build_alloca(elem_llvm_ty, "spill").unwrap();
-                             self.builder.build_store(alloca, item_val).unwrap();
-                             let casted = self.builder.build_pointer_cast(alloca, vec_ptr_ty, "spill_cast").unwrap();
-                             call_args.push(casted.into());
-                         }
-                      } else {
-                          call_args.push(item_val.into());
-                      }
-                 }
-                 _ => {}
-             }
-             
-             let call = self.builder.build_call(core_fn, &call_args, "");
-             
-             // Handle Return
-             if let Some(ret) = ret_type {
-                 let raw_ret = match call.unwrap().try_as_basic_value() {
-                      inkwell::values::ValueKind::Basic(v) => v,
-                      _ => panic!("Expected basic value return"),
-                 };
-                 
-                 if is_generic_ptr_backend {
-                     if raw_ret.is_pointer_value() {
-                         let raw_ptr = raw_ret.into_pointer_value();
-                         if ret.is_pointer_type() {
-                             // Core returns i8*, wrapper returns T*. Cast i8* -> T*.
-                             // Note: with opaque pointers, this might be redundant, but keeps signature strict if typed.
-                             let casted = self.builder.build_pointer_cast(raw_ptr, ret.into_pointer_type(), "ret_cast").unwrap();
-                             self.builder.build_return(Some(&casted)).unwrap();
-                         } else {
-                             // Core returns i8*, wrapper returns T. Load T from i8*.
-                             // Cast i8* -> T* (opaque ptr)
-                             let casted_ptr = self.builder.build_pointer_cast(
-                                 raw_ptr,
-                                 self.context.ptr_type(AddressSpace::default()), 
-                                 "load_cast"
-                             ).unwrap();
-                             let loaded = self.builder.build_load(ret, casted_ptr, "ret_load").unwrap();
-                             self.builder.build_return(Some(&loaded)).unwrap();
-                         }
-                     } else {
-                         // Core returns scalar (e.g. len -> i64), wrapper returns scalar.
-                         self.builder.build_return(Some(&raw_ret)).unwrap();
-                     }
-                 } else {
-                     // Specialized backend returns T directly
-                     self.builder.build_return(Some(&raw_ret)).unwrap();
-                 }
-             } else {
-                 self.builder.build_return(None).unwrap();
-             }
-             
-             // Restore builder position
-             if let Some(bb) = saved_block {
-                 self.builder.position_at_end(bb);
-             }
-            
-            return Ok(mangled_fn_name);
-        }
-        
-        // Fallback: use generic monomorphization using AST from builtin_impls
-        if self.generic_impls.contains_key("Vec") {
-            return self.monomorphize_method("Vec", method_name, &[element_type.clone()]);
-        }
-        
-        Ok(core_fn_name)
-    }
-    /// Monomorphize a generic enum definition with concrete type arguments.
-    /// Returns the LLVM StructType for the specialized enum.
-    /// Layout strategy: { i32 (tag), Variant1Payload?, Variant2Payload?, ... }
-    pub fn monomorphize_enum(
-        &mut self,
-        base_name: &str,
-        type_args: &[Type],
-    ) -> Result<StructType<'ctx>, String> {
-        let mangled_name = self.mangle_type_name(base_name, type_args);
-        
-        // Check if already monomorphized
-        if let Some(existing) = self.enum_types.get(&mangled_name) {
-            return Ok(*existing);
-        }
-        
-        // Get the generic enum definition
-        let enum_def = self.enum_defs.get(base_name).cloned()
-            .ok_or_else(|| format!("Generic enum definition not found: {}", base_name))?;
-
-        // Build substitution map
-        let mut subst: HashMap<String, Type> = HashMap::new();
-        for (i, param_name) in enum_def.generics.iter().enumerate() {
-            if let Some(arg) = type_args.get(i) {
-                subst.insert(param_name.clone(), arg.clone());
-            }
-        }
-        
-        // Create opaque struct first (to support recursion if needed)
-        let opaque_struct = self.context.opaque_struct_type(&mangled_name);
-        self.enum_types.insert(mangled_name.clone(), opaque_struct);
-        
-        // Build fields: Tag (i32) + Payloads
-        let mut field_types = vec![self.context.i32_type().into()]; // Tag
-        
-        for variant in &enum_def.variants {
-            match &variant.kind {
-                crate::compiler::ast::VariantKind::Tuple(types) => {
-                    // For Result<T, E>, variants are Tuple([T]) and Tuple([E]).
-                    for ty in types {
-                        let substituted = self.substitute_type(ty, &subst);
-                        if substituted != Type::Void {
-                            let llvm_ty = self.get_llvm_type(&substituted)?;
-                            field_types.push(llvm_ty);
-                        }
-                    }
-                }
-                crate::compiler::ast::VariantKind::Struct(fields) => {
-                     for (_, ty) in fields {
-                        let substituted = self.substitute_type(ty, &subst);
-                        if substituted != Type::Void {
-                            let llvm_ty = self.get_llvm_type(&substituted)?;
-                             field_types.push(llvm_ty);
-                        }
-                     }
-                }
-                crate::compiler::ast::VariantKind::Unit => {}
-            }
-        }
-
-        // Set struct body
-        opaque_struct.set_body(&field_types, false);
-        
-        Ok(opaque_struct)
-    }
-
-    pub fn ensure_hashmap_method(
-        &mut self,
-        key_ty: &Type,
-        val_ty: &Type,
-        method_name: &str,
-    ) -> Result<String, String> {
-        let suffix = format!("{}_{}", self.type_to_suffix(key_ty), self.type_to_suffix(val_ty));
-        let mangled_fn_name = format!("tl_HashMap_{}_{}", suffix, method_name);
-        
-        if self.module.get_function(&mangled_fn_name).is_some() {
-            return Ok(mangled_fn_name);
-        }
-
-        let map_ptr_ty = self.context.ptr_type(AddressSpace::default());
-        let key_llvm_ty = self.get_llvm_type(key_ty)?;
-        let val_llvm_ty = self.get_llvm_type(val_ty)?;
-        
-        let void_ptr_ty = self.context.ptr_type(AddressSpace::default());
-        let i8_ptr_ty = self.context.ptr_type(AddressSpace::default());
-        let i64_ty = self.context.i64_type();
-        let bool_ty = self.context.bool_type();
-
-        // Register return type
-        let tl_ret_ty = match method_name {
-            "new" => Type::Struct("HashMap".to_string(), vec![key_ty.clone(), val_ty.clone()]),
-            "len" => Type::I64,
-            "clear" | "insert" | "contains_key" => Type::Bool,
-            "get" | "remove" => {
-                match val_ty {
-                    Type::String(_) => Type::String("String".to_string()),
-                    _ => val_ty.clone(),
-                }
-            },
-            _ => Type::Void,
-        };
-        self.method_return_types.insert(mangled_fn_name.clone(), tl_ret_ty);
-
-        let (param_types, ret_type, run_fn_name): (Vec<BasicMetadataTypeEnum>, Option<inkwell::types::BasicTypeEnum>, &str) = match method_name {
-            "new" => (vec![], Some(map_ptr_ty.into()), "tl_hashmap_new"),
-            "len" => (vec![map_ptr_ty.into()], Some(i64_ty.into()), "tl_hashmap_len"),
-            "clear" => (vec![map_ptr_ty.into()], Some(bool_ty.into()), "tl_hashmap_clear"),
-            "insert" => (vec![map_ptr_ty.into(), key_llvm_ty.into(), val_llvm_ty.into()], Some(bool_ty.into()), "tl_hashmap_insert"),
-            "get" => (vec![map_ptr_ty.into(), key_llvm_ty.into()], Some(val_llvm_ty.into()), "tl_hashmap_get"),
-            "remove" => (vec![map_ptr_ty.into(), key_llvm_ty.into()], Some(val_llvm_ty.into()), "tl_hashmap_remove"),
-            "contains_key" => (vec![map_ptr_ty.into(), key_llvm_ty.into()], Some(bool_ty.into()), "tl_hashmap_contains_key"),
-            _ => return Err(format!("Unknown HashMap method: {}", method_name)),
-        };
-
-        // Create Wrapper
-        let fn_type = if let Some(ret) = ret_type {
-             if ret.is_array_type() { panic!("Array return not supported"); }
-             match ret {
-                 inkwell::types::BasicTypeEnum::IntType(i) => i.fn_type(&param_types, false),
-                 inkwell::types::BasicTypeEnum::FloatType(f) => f.fn_type(&param_types, false),
-                 inkwell::types::BasicTypeEnum::PointerType(p) => p.fn_type(&param_types, false),
-                 _ => return Err("Unsupported return type".into()),
-             }
-        } else {
-             self.context.void_type().fn_type(&param_types, false)
-        };
-        
-        let wrapper_fn = self.module.add_function(&mangled_fn_name, fn_type, None);
-        let entry_bb = self.context.append_basic_block(wrapper_fn, "entry");
-        let saved_block = self.builder.get_insert_block(); 
-        self.builder.position_at_end(entry_bb);
-        
-        let runtime_fn = self.module.get_function(run_fn_name).ok_or(format!("Runtime function {} not found", run_fn_name))?;
-        
-        // Prepare args
-        let mut call_args = Vec::new();
-        match method_name {
-            "new" => {},
-            "len" | "clear" => {
-                 // Arg 0: Map
-                 call_args.push(wrapper_fn.get_nth_param(0).unwrap().into());
-            },
-            "insert" => {
-                 call_args.push(wrapper_fn.get_nth_param(0).unwrap().into()); // Map
-                 let key_val = wrapper_fn.get_nth_param(1).unwrap();
-                 let val_val = wrapper_fn.get_nth_param(2).unwrap();
-                 
-                 // Cast Key -> i8_ptr (if String) or box?
-                 // Assuming String
-                 if key_val.is_pointer_value() {
-                     let casted = self.builder.build_pointer_cast(key_val.into_pointer_value(), i8_ptr_ty, "key_cast").unwrap();
-                     call_args.push(casted.into());
-                 } else {
-                     return Err("Only pointer keys supported for HashMap currently".into());
-                 }
-                                  // Cast Val -> void_ptr (if Struct/Tensor) or Int -> void_ptr
-                  if val_val.is_pointer_value() {
-                      let casted = self.builder.build_pointer_cast(val_val.into_pointer_value(), void_ptr_ty, "val_cast").unwrap();
-                      call_args.push(casted.into());
-                  } else if val_val.is_int_value() {
-                      let casted = self.builder.build_int_to_ptr(val_val.into_int_value(), void_ptr_ty, "val_int_cast").unwrap();
-                      call_args.push(casted.into());
-                  } else {
-                      return Err("Only pointer or integer values supported for HashMap currently".into());
-                  }
-             },
-            "get" | "remove" | "contains_key" => {
-                 call_args.push(wrapper_fn.get_nth_param(0).unwrap().into()); // Map
-                 let key_val = wrapper_fn.get_nth_param(1).unwrap();
-                 // Cast Key
-                 if key_val.is_pointer_value() {
-                     let casted = self.builder.build_pointer_cast(key_val.into_pointer_value(), i8_ptr_ty, "key_cast").unwrap();
-                     call_args.push(casted.into());
-                 } else {
-                     return Err("Only pointer keys supported for HashMap currently".into());
-                 }
-            }
-            _ => {}
-        }
-        
-        let call = self.builder.build_call(runtime_fn, &call_args, "");
-        
-        // Handle Return
-        if let Some(_ret_t) = ret_type {
-             let raw_ret = match call.unwrap().try_as_basic_value() {
-                 inkwell::values::ValueKind::Basic(v) => v,
-                 _ => return Err("Expected basic return value".into()),
-             };
-             
-             if method_name == "get" || method_name == "remove" {
-                 // Runtime returns void_ptr (Value*). Wrapper expects ValType
-                 if raw_ret.is_pointer_value() {
-                     let raw_ptr = raw_ret.into_pointer_value();
-                     if val_llvm_ty.is_pointer_type() {
-                         let casted = self.builder.build_pointer_cast(raw_ptr, val_llvm_ty.into_pointer_type(), "ret_cast").unwrap();
-                         self.builder.build_return(Some(&casted)).unwrap();
-                     } else if val_llvm_ty.is_int_type() {
-                         let casted = self.builder.build_ptr_to_int(raw_ptr, val_llvm_ty.into_int_type(), "ret_int_cast").unwrap();
-                         self.builder.build_return(Some(&casted)).unwrap();
-                     } else {
-                         return Err("Unsupported HashMap value return type".into());
-                     }
-                 } else {
-                     return Err("Runtime function returned non-pointer".into());
-                 }
-             } else {
-                 self.builder.build_return(Some(&raw_ret)).unwrap();
-             }
-        } else {
-             self.builder.build_return(None).unwrap();
-        }
-
-        if let Some(bb) = saved_block {
-            self.builder.position_at_end(bb);
-        }
-        
-        Ok(mangled_fn_name)
-    }
 
 }
 

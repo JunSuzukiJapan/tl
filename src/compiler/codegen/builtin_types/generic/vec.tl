@@ -21,6 +21,12 @@ impl<T> Vec<T> {
     extern fn get(self, index: i64) -> T;
     extern fn is_empty(self) -> bool;
     extern fn clear(self);
+    extern fn set(self, index: i64, item: T);
+    
+    extern fn last(self) -> T;
+
+    extern fn free(self);
+    
     extern fn remove(self, index: i64) -> T;
     extern fn insert(self, index: i64, item: T);
     extern fn contains(self, item: T) -> bool;

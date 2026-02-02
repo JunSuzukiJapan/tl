@@ -89,7 +89,67 @@ pub fn register_system_types(manager: &mut TypeManager) {
         Type::Void
     );
 
+    // Internal: System::free_hashmap(ptr: i64) -> Void
+    system.register_evaluated_static_method(
+        "free_hashmap", 
+        compile_free_hashmap,
+        vec![Type::I64],
+        Type::Void
+    );
+
+    // Internal: System::free_memory(ptr: i64) -> Void
+    system.register_evaluated_static_method(
+        "free_memory", 
+        compile_free_memory,
+        vec![Type::I64],
+        Type::Void
+    );
+
     manager.register_type(system);
+}
+
+fn compile_free_memory<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("System::free_memory requires 1 argument (ptr)".into()); }
+    
+    let fn_val = codegen.module.get_function("tl_mem_free").ok_or("tl_mem_free not found")?;
+    
+    // Arg is i64, need to cast to void*
+    let ptr_int = args[0].0.into_int_value();
+    let ptr = codegen.builder.build_int_to_ptr(
+        ptr_int, 
+        codegen.context.ptr_type(inkwell::AddressSpace::default()), 
+        "mem_ptr"
+    ).map_err(|e| e.to_string())?;
+
+    codegen.builder.build_call(fn_val, &[ptr.into()], "").map_err(|e| e.to_string())?;
+    
+    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
+}
+
+fn compile_free_hashmap<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("System::free_hashmap requires 1 argument (ptr)".into()); }
+    
+    let fn_val = codegen.module.get_function("tl_hashmap_free").ok_or("tl_hashmap_free not found")?;
+    
+    // Arg is i64, need to cast to void* / hashmap*
+    let ptr_int = args[0].0.into_int_value();
+    let ptr = codegen.builder.build_int_to_ptr(
+        ptr_int, 
+        codegen.context.ptr_type(inkwell::AddressSpace::default()), 
+        "hashmap_ptr"
+    ).map_err(|e| e.to_string())?;
+
+    codegen.builder.build_call(fn_val, &[ptr.into()], "").map_err(|e| e.to_string())?;
+    
+    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
 }
 
 fn compile_system_time<'ctx>(

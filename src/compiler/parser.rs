@@ -187,6 +187,11 @@ pub fn parse_type(input: Input) -> IResult<Input, Type, ParserError> {
     alt((
         parse_primitive_type,
         parse_tensor_type,
+        // Reference type: &Type
+        map(
+            preceded(expect_token(Token::Ampersand), parse_type),
+            |t| Type::Ref(Box::new(t))
+        ),
         // Tuple type: (Type, Type, ...)
         map(
             delimited(
@@ -650,11 +655,12 @@ fn parse_cast(input: Input) -> IResult<Input, Expr, ParserError> {
 }
 
 fn parse_unary(input: Input) -> IResult<Input, Expr, ParserError> {
-    if let Ok((rest, op_tok)) = satisfy_token(|t| matches!(t, Token::Minus | Token::Not | Token::Question))(input) {
+    if let Ok((rest, op_tok)) = satisfy_token(|t| matches!(t, Token::Minus | Token::Not | Token::Question | Token::Ampersand))(input) {
         let op = match op_tok.token {
             Token::Minus => UnOp::Neg,
             Token::Not => UnOp::Not,
             Token::Question => UnOp::Query,
+            Token::Ampersand => UnOp::Ref,
             _ => unreachable!(),
         };
         let (rest, expr) = parse_unary(rest)?;
@@ -1199,8 +1205,16 @@ fn parse_function_def(input: Input) -> IResult<Input, crate::compiler::ast::Func
         
         let (input, _) = expect_token(Token::LParen)(input)?;
 
-        // Handle optional self
+        // Handle optional self, possibly reference (&self)
+        let (input, maybe_amp) = map(opt(expect_token(Token::Ampersand)), |o| o.is_some())(input)?;
         let (input, has_self) = map(opt(expect_token(Token::Self_)), |o| o.is_some())(input)?;
+        
+        // Validation: & without self? syntax error unless it's a type (but types are after colon)
+        // If we saw &, expected self. But self is optional.
+        if maybe_amp && !has_self {
+             return Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Expected self after &".to_string()) }));
+        }
+
         let input = if has_self {
              opt(expect_token(Token::Comma))(input)?.0
         } else {
@@ -1213,8 +1227,14 @@ fn parse_function_def(input: Input) -> IResult<Input, crate::compiler::ast::Func
         )(input)?;
 
         if has_self {
-            // Add self with placeholder type
-            args.insert(0, ("self".to_string(), crate::compiler::ast::Type::Struct("Self".to_string(), vec![])));
+            // Add self
+            let self_type = crate::compiler::ast::Type::Struct("Self".to_string(), vec![]);
+            let final_type = if maybe_amp {
+                crate::compiler::ast::Type::Ref(Box::new(self_type))
+            } else {
+                self_type
+            };
+            args.insert(0, ("self".to_string(), final_type));
         }
 
         let (input, _) = expect_token(Token::RParen)(input)?;

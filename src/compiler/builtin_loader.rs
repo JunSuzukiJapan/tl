@@ -10,6 +10,7 @@ pub struct BuiltinTypeData {
     pub struct_def: Option<StructDef>,
     pub enum_def: Option<EnumDef>,
     pub impl_blocks: Vec<ImplBlock>,
+    pub destructor: Option<String>,
 }
 
 pub struct BuiltinLoader;
@@ -68,6 +69,7 @@ impl BuiltinLoader {
             struct_def,
             enum_def,
             impl_blocks,
+            destructor: None,
         })
     }
 }

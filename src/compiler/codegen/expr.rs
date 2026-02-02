@@ -4,80 +4,9 @@ use crate::compiler::ast::*;
 use inkwell::values::*;
 use std::collections::{HashMap, HashSet};
 
-pub fn compile_option_some<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    _target_type: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 {
-        return Err("Option::Some requires 1 argument".into());
-    }
-    let (inner_val, inner_type) = args[0].clone();
 
-    // Create Option struct: { tag: i64, value: T }
-    let i64_type = codegen.context.i64_type();
-    let llvm_inner_type = codegen.get_llvm_type(&inner_type)?;
-    let option_struct_type = codegen.context.struct_type(&[i64_type.into(), llvm_inner_type], false);
 
-    // Allocate on stack
-    let option_ptr = codegen.builder.build_alloca(option_struct_type, "option_some")
-        .map_err(|e| e.to_string())?;
 
-    // Set tag = 1 (Some)
-    let tag_ptr = codegen.builder.build_struct_gep(option_struct_type, option_ptr, 0, "tag_ptr")
-        .map_err(|e| e.to_string())?;
-    codegen.builder.build_store(tag_ptr, i64_type.const_int(1, false))
-        .map_err(|e| e.to_string())?;
-
-    // Set value
-    let value_ptr = codegen.builder.build_struct_gep(option_struct_type, option_ptr, 1, "value_ptr")
-        .map_err(|e| e.to_string())?;
-    codegen.builder.build_store(value_ptr, inner_val)
-        .map_err(|e| e.to_string())?;
-
-    Ok((option_ptr.into(), Type::Struct("Option".to_string(), vec![inner_type])))
-}
-
-pub fn compile_option_none<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    target_type: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if !args.is_empty() {
-        return Err("Option::None takes no arguments".into());
-    }
-
-    // Default to I64 for unspecified Option type if inferrence
-    let inner_type = if let Some(Type::Struct(_, gens)) = target_type {
-        gens.first().cloned().unwrap_or(Type::String("String".to_string())) // Default or inferred
-    } else {
-        Type::String("String".to_string())
-    };
-    
-    // Create Option struct: { tag: i64, value: T }
-    let i64_type = codegen.context.i64_type();
-    let llvm_inner_type = codegen.get_llvm_type(&inner_type)?;
-    let option_struct_type = codegen.context.struct_type(&[i64_type.into(), llvm_inner_type], false);
-
-    // Allocate on stack
-    let option_ptr = codegen.builder.build_alloca(option_struct_type, "option_none")
-        .map_err(|e| e.to_string())?;
-
-    // Set tag = 0 (None)
-    let tag_ptr = codegen.builder.build_struct_gep(option_struct_type, option_ptr, 0, "tag_ptr")
-        .map_err(|e| e.to_string())?;
-    codegen.builder.build_store(tag_ptr, i64_type.const_int(0, false))
-        .map_err(|e| e.to_string())?;
-
-    // Value is undefined for None, but we zero-initialize for safety
-    let value_ptr = codegen.builder.build_struct_gep(option_struct_type, option_ptr, 1, "value_ptr")
-        .map_err(|e| e.to_string())?;
-    let zero_val = llvm_inner_type.const_zero();
-    codegen.builder.build_store(value_ptr, zero_val)
-        .map_err(|e| e.to_string())?;
-
-    Ok((option_ptr.into(), Type::Struct("Option".to_string(), vec![inner_type])))
-}
 
 
 
@@ -2293,7 +2222,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
             ExprKind::FieldAccess(obj, field) => {
-                let (obj_val, obj_ty) = self.compile_expr(obj)?;
+                let (mut obj_val, mut obj_ty) = self.compile_expr(obj)?;
+
+                // Auto-dereference Ref types (load pointer)
+                while let Type::Ref(inner) = obj_ty.clone() {
+                    let ptr = obj_val.into_pointer_value();
+                    let loaded = self.builder.build_load(
+                        self.get_llvm_type(&inner)?,
+                        ptr,
+                        "deref"
+                    ).map_err(|e| e.to_string())?;
+                    obj_val = loaded.into();
+                    obj_ty = *inner;
+                }
                 
                 // Determine struct name and generic args
                 let (base_name, generic_args) = match &obj_ty {
@@ -2316,8 +2257,8 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 /*
                 Logic:
-                1. Try looking up exact specialized name (e.g. "Vec_i64").
-                2. If not found, try base name (e.g. "Vec") effectively falling back to generic definition.
+                1. Try looking up exact specialized name (e.g. "MyStruct_i64").
+                2. If not found, try base name (e.g. "MyStruct") effectively falling back to generic definition.
                    If base name is found, we must substitutions generic params in the field type.
                 */
                 
@@ -2334,14 +2275,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .iter()
                     .position(|(n, _)| n == field)
                     .ok_or_else(|| {
-                        if base_name == "Vec" {
-                             eprintln!("DEBUG expr.rs Vec entry: {:?}", self.struct_defs.get("Vec"));
-                             eprintln!("DEBUG expr.rs actual_name: {}", base_name); // Wait actual_name is not available here easily? default to base_name?
-                             // Re-derive specialized name to debug
-                             if let Some(spec) = self.struct_defs.keys().find(|k| k.starts_with("Vec_")) {
-                                  eprintln!("DEBUG expr.rs Found specialized struct: {} with fields: {}", spec, self.struct_defs.get(spec).unwrap().fields.len());
-                             }
-                        }
+
                         format!(
                         "Field {} not found in struct {}. Available: {:?}",
                         field, base_name, struct_def.fields.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>()
@@ -2371,8 +2305,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // If struct_types doesn't have specialized name, try base name?
                 // BUT LLVM types for specialized structs might differ if fields differ (size).
                 // For Vec, size is fixed (ptr, i64, i64).
-                // So "Vec" in struct_types should be sufficient if registered?
-                // CodeGenerator registers "Vec" in init.
+                // So base struct name in struct_types should be sufficient if registered?
+                // CodeGenerator registers structs in init.
                 
                 let st_llvm_ty = if let Some(t) = self.struct_types.get(&simple_struct_name) {
                      t
@@ -2458,7 +2392,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 Type::Struct(_, _)
 
                                 | Type::Tuple(_)
-                                | Type::Enum(_, _) => self
+                                | Type::Enum(_, _) 
+                                | Type::Ref(_) => self
                                     .context
                                     .ptr_type(inkwell::AddressSpace::default())
                                     .into(),
@@ -2564,71 +2499,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             ExprKind::FnCall(name, args) => self.compile_fn_call(name, args),
             ExprKind::IndexAccess(target, indices) => {
                 let (val, val_type) = self.compile_expr(target)?;
-                match val_type {
-                    Type::Struct(ref name, ref args) if name == "Vec" || name.starts_with("Vec_") => {
-                        let elem_type = if name == "Vec" {
-                             if args.is_empty() { return Err("Vec missing generic arg".into()); }
-                             args[0].clone()
-                        } else {
-                             let suffix = &name[4..];
-                             match suffix {
-                                 "i64" => Type::I64,
-                                 "f32" => Type::F32,
-                                 "bool" => Type::Bool,
-                                 _ => Type::Struct(suffix.to_string(), vec![])
-                             }
-                        };
-                         if indices.len() != 1 {
-                            return Err("Vec only supports 1D index".into());
-                        }
-
-                        let llvm_elem_type = self.get_llvm_type(&elem_type)?;
-                        let i64_type = self.context.i64_type();
-                        let vec_ptr = val.into_pointer_value();
-
-                        let (idx_val, idx_ty) = self.compile_expr(&indices[0])?;
-                        let idx_int = match idx_ty {
-                            Type::I64 => idx_val.into_int_value(),
-                            Type::I32 => self
-                                .builder
-                                .build_int_z_extend(idx_val.into_int_value(), i64_type, "zext")
-                                .map_err(|e| e.to_string())?,
-                            _ => return Err("Index must be integer".into()),
-                        };
-
-                        let i64_type = self.context.i64_type();
-                        let vec_struct_ty = self.context.struct_type(&[i64_type.into(), i64_type.into(), i64_type.into()], false);
-                        let ptr_field_addr = self.builder.build_struct_gep(vec_struct_ty, vec_ptr, 1, "vec_ptr_field")
-                            .map_err(|e| e.to_string())?;
-
-                        let ptr_int = self.builder
-                            .build_load(self.context.i64_type(), ptr_field_addr, "vec_ptr_val")
-                            .map_err(|e| e.to_string())?
-                            .into_int_value();
-                        
-                        let elem_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                        let buffer_ptr = self.builder
-                            .build_int_to_ptr(ptr_int, elem_ptr_ty, "vec_buffer_ptr")
-                            .map_err(|e| e.to_string())?;
-
-                        // Direct GEP into generic buffer
-                        let elem_ptr = unsafe {
-                            self.builder
-                                .build_in_bounds_gep(
-                                    llvm_elem_type,
-                                    buffer_ptr,
-                                    &[idx_int],
-                                    "vec_elem_ptr",
-                                )
-                                .map_err(|e| e.to_string())?
-                        };
-
-                        let loaded = self
-                            .builder
-                            .build_load(llvm_elem_type, elem_ptr, "vec_elem")
-                            .map_err(|e| e.to_string())?;
-
-                        Ok((loaded, elem_type))
+                match val_type.clone() {
+                    Type::Struct(_, _) => {
+                         // Generic Struct Indexing -> Desugar to .get() method call
+                         self.emit_method_call(target, val, val_type, "get", indices)
                     }
                     Type::Tensor(inner, _) => {
                         // Prepare indices array
@@ -2880,6 +2754,30 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 Ok((res.into(), Type::Bool))
                             }
                             _ => Err("Not only on bool".into()),
+                        }
+                    }
+                    UnOp::Ref => {
+                        // Ref operator: &expr
+                        // Always get address. Do not return value directly.
+
+                         // For scalars (L-Value vs R-Value logic)
+                        if let ExprKind::Variable(name) = &expr.inner {
+                            // Variable: Get address from variables map
+                             for scope in self.variables.iter().rev() {
+                                if let Some((var_val, _, _)) = scope.get(name) {
+                                     // var_val is the Alloca (Pointer)
+                                     return Ok((var_val.as_basic_value_enum(), Type::Ref(Box::new(ty))));
+                                }
+                             }
+                             return Err(format!("Variable {} not found for Ref", name));
+                        } else {
+                            // R-Value: Store to temp, return address
+                            let current_block = self.builder.get_insert_block().unwrap();
+                            let func = current_block.get_parent().unwrap();
+                            let alloca = self.create_entry_block_alloca(func, "ref_tmp", &ty)?;
+                            
+                            self.builder.build_store(alloca, val).map_err(|e| e.to_string())?;
+                            return Ok((alloca.into(), Type::Ref(Box::new(ty))));
                         }
                     }
                     UnOp::Query => {
@@ -4607,8 +4505,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         // Ensure enum layout is generated
-        let enum_ty = self.monomorphize_enum(enum_name, generic_args)
+        // Ensure enum layout is generated
+        let mangled_name = self.monomorphize_enum(enum_name, generic_args)
             .map_err(|e| format!("Failed to monomorphize enum {}: {}", enum_name, e))?;
+        
+        let enum_ty = self.enum_types.get(&mangled_name).cloned()
+            .ok_or(format!("Enum LLVM type {} not found", mangled_name))?;
 
         let enum_def = self.enum_defs.get(enum_name).cloned().ok_or("Enum def not found")?;
 
@@ -5286,6 +5188,18 @@ impl<'ctx> CodeGenerator<'ctx> {
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         let (obj_val, obj_ty) = self.compile_expr(obj)?;
+        self.emit_method_call(obj, obj_val, obj_ty, method, args)
+    }
+
+    fn emit_method_call(
+        &mut self,
+        obj_expr_context: &Expr, // Passed for fallback Unevaluated methods which need AST access
+        obj_val: BasicValueEnum<'ctx>,
+        obj_ty: Type,
+        method: &str,
+        args: &[Expr],
+    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+
 
         // Try TypeManager first
         let type_name_opt = match &obj_ty {
@@ -5298,8 +5212,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         if let Some(name) = type_name_opt {
-             // Handle "Vec" specially if we want to support UserDefined("Vec") alias canonicalization? 
-             // Logic above handles it if UserDefined("Vec") returns "Vec".
+             // Handle special logical types if we want to support UserDefined alias canonicalization? 
+             // Logic above handles it if UserDefined("Custom") returns "Custom".
                           let method_enum = self.type_manager.get_type(&name)
                   .and_then(|t| t.get_instance_method(method))
                   .copied();
@@ -5314,7 +5228,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                return func(self, obj_val, obj_ty, compiled_args);
                            }
                            InstanceMethod::Unevaluated(func) => {
-                               return func(self, obj, method, args);
+                               return func(self, obj_expr_context, method, args);
                            }
                       }
                  }
@@ -5371,7 +5285,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 InstanceMethod::Unevaluated(func) => {
                     // Unevaluated methods handle their own arg compilation and cleanup
-                    return func(self, obj, method, args);
+                    return func(self, obj_expr_context, method, args);
                 }
             }
         }
@@ -5458,30 +5372,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => return Err(format!("Method {} not found on type {:?}", method, obj_ty)),
         };
 
-        let (type_name_to_check, generic_args_override) = if struct_name.starts_with("Vec_") {
-             // Attempt invalid demangling for migration support
-             let suffix = &struct_name[4..];
-             let arg_ty = if suffix == "i64" {
-                 Some(Type::I64)
-             } else if suffix == "f32" {
-                 Some(Type::F32) 
-             } else if suffix == "bool" {
-                 Some(Type::Bool)
-             } else {
-                 // Assume struct with name == suffix
-                 // This assumes suffix has no underscores from recursive types, which is BRITTLE
-                 // But sufficient for verify_vec_migration (Vec_Point)
-                 Some(Type::Struct(suffix.to_string(), vec![]))
-             };
-             if let Some(ty) = arg_ty {
-                 ("Vec".to_string(), Some(vec![ty]))
-             } else {
-                 (struct_name.clone(), None)
-             }
-        } else {
-             (struct_name.clone(), None)
-        };
-        let type_name = type_name_to_check;
+        let type_name = struct_name.clone();
 
         // Extract simple name from module path for mangling
         let simple_struct_name = if struct_name.contains("::") {
@@ -5491,20 +5382,15 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         // Try exact mangling first: tl_{Struct}_{Method}
-        // Option<T> instance methods (Direct Field Access)
+
 
 
         // Check for generic impls first
 
         let generic_func = if self.generic_impls.contains_key(&type_name) {
-             let generics = if let Some(g) = generic_args_override {
-                 g
-             } else {
-                 match &obj_ty {
-                     Type::Struct(_, args) | Type::Enum(_, args) => args.clone(),
-
-                     _ => vec![],
-                 }
+             let generics = match &obj_ty {
+                 Type::Struct(_, args) | Type::Enum(_, args) => args.clone(),
+                 _ => vec![],
              };
 
 
@@ -6247,9 +6133,20 @@ impl<'ctx> CodeGenerator<'ctx> {
             Some(inkwell::types::BasicTypeEnum::PointerType(_)) => {
                 if name.starts_with("tl_string_") {
                     Type::String("String".to_string())
+                } else if name.contains("alloc") || name.contains("init") {
+                    // Allocators return generic pointers usually
+                    // Use I64 as opaque pointer type placeholder
+                    Type::I64
                 } else {
-                    // Default to Tensor for generic pointers (hashmap values, tensors)
-                    Type::Tensor(Box::new(Type::F32), 0)
+                     // Log warning?
+                     // Verify if it's a known generic method
+                     // For now, default to I64 (opaque handle) to avoid Tensor mismatch logic
+                     // UNLESS we are sure it's a tensor method.
+                     if name.contains("tensor") {
+                         Type::Tensor(Box::new(Type::F32), 0)
+                     } else {
+                         Type::I64
+                     }
                 }
             }
             _ => Type::Void, 
@@ -6264,9 +6161,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         let (val, ty) = self.compile_fn_call_dps(name, args, None)?;
         
         let mode = match &ty {
-             Type::Struct(name, _) if name != "Vec" && name != "Map" => super::CLEANUP_STACK,
-             Type::Struct(name, _) if name != "String" && name != "Vec" && name != "Map" => super::CLEANUP_STACK,
-             _ => super::CLEANUP_FULL,
+             Type::Struct(_, _) | Type::String(_) | Type::Tensor(_, _) => super::CLEANUP_FULL,
+             _ => super::CLEANUP_STACK,
         };
         
         self.add_temp_with_mode(val, ty.clone(), mode);

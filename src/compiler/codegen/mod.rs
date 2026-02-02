@@ -42,7 +42,6 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) builtin_manager: expr::BuiltinManager,
     pub(crate) instance_methods: HashMap<String, expr::InstanceMethodManager>,
     pub(crate) static_methods: HashMap<String, expr::StaticMethodManager>,
-    pub(crate) destructors: HashMap<String, String>, // TypeName -> FreeFnName
     pub(crate) method_return_types: HashMap<String, Type>, // MangledName -> ReturnType
     pub(crate) loop_stack: Vec<(
         inkwell::basic_block::BasicBlock<'ctx>,
@@ -85,7 +84,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             builtin_manager: expr::BuiltinManager::new(),
             instance_methods: HashMap::new(),
             static_methods: HashMap::new(),
-            destructors: HashMap::new(),
             loop_stack: Vec::new(),
             method_return_types: HashMap::new(),
             relations: std::collections::HashSet::new(),
@@ -103,61 +101,16 @@ impl<'ctx> CodeGenerator<'ctx> {
         codegen.register_all_methods();
 
         // Register builtins (Enums, etc.)
-        codegen.register_builtins();
-        // Load builtins via TypeManager (Option)
-        let option_data = builtin_types::option::load_option_data();
-        codegen.type_manager.register_builtin(option_data.clone());
+        // Register builtins (Enums, Structs, etc.) - Unified Loader
+        builtin_types::load_all_builtins(&mut codegen);
         
-        // Propagate ASTs to CodeGen maps (Temporary Bridge)
-        if let Some(def) = option_data.enum_def {
-            codegen.enum_defs.insert(def.name.clone(), def.clone());
-        }
-        codegen.generic_impls.entry("Option".to_string()).or_default().extend(option_data.impl_blocks);
-
-        // Load builtins via TypeManager (Result)
-        let result_data = builtin_types::result::load_result_data();
-        codegen.type_manager.register_builtin(result_data.clone());
+        // Compile all enums loaded (including Device, Option, Result)
+        let builtin_enums = codegen.enum_defs.values().cloned().collect::<Vec<_>>();
+        codegen.compile_enum_defs(&builtin_enums).expect("Failed to compile builtin enums");
         
-        // Propagate ASTs to CodeGen maps (Temporary Bridge)
-        if let Some(def) = result_data.enum_def {
-            codegen.enum_defs.insert(def.name.clone(), def.clone());
-        }
-        codegen.generic_impls.entry("Result".to_string()).or_default().extend(result_data.impl_blocks);
-
-        let builtin_enums = vec![
-            codegen.enum_defs.get("Option").unwrap().clone(),
-            codegen.enum_defs.get("Result").unwrap().clone(),
-        ];
-        for def in &builtin_enums {
-            codegen.enum_defs.insert(def.name.clone(), def.clone());
-        }
-        codegen.compile_enum_defs(&builtin_enums).unwrap();
-        
-        // Load builtins via TypeManager (Vec)
-        let vec_data = builtin_types::vec::load_vec_data();
-        codegen.type_manager.register_builtin(vec_data.clone());
-        
-        if let Some(def) = vec_data.struct_def {
-            codegen.struct_defs.insert(def.name.clone(), def);
-        }
-        codegen.generic_impls.entry("Vec".to_string()).or_default().extend(vec_data.impl_blocks);
-
-        // Load builtins via TypeManager (HashMap)
-        let hashmap_data = builtin_types::hashmap::load_hashmap_data();
-        codegen.type_manager.register_builtin(hashmap_data.clone());
-        
-        if let Some(def) = hashmap_data.struct_def {
-            codegen.struct_defs.insert(def.name.clone(), def);
-        }
-        codegen.generic_impls.entry("HashMap".to_string()).or_default().extend(hashmap_data.impl_blocks);
-
-        // Remove legacy builtin_impls calls (Fully Migrated)
-        // builtin_impls::register_builtin_structs(&mut codegen.struct_defs);
-        // builtin_impls::register_builtin_impls(&mut codegen.generic_impls);
-        
-        // Compile the struct defs we just added
-        let vec_defs = codegen.struct_defs.values().cloned().collect::<Vec<_>>();
-        codegen.compile_struct_defs(&vec_defs).unwrap(); // This registers LLVM types.
+        // Compile all structs loaded (including Vec, HashMap)
+        let builtin_structs = codegen.struct_defs.values().cloned().collect::<Vec<_>>();
+        codegen.compile_struct_defs(&builtin_structs).expect("Failed to compile builtin structs");
 
         // Delegate to runtime module
         builtins::declare_runtime_functions(
@@ -188,9 +141,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.method_return_types.insert("tl_env_get".to_string(), Type::String("String".to_string()));
         self.method_return_types.insert("tl_string_char_at".to_string(), Type::Char("Char".to_string()));
         
-        // Map / HashMap (treated as structs but return pointers, so we must register them to avoid Tensor default)
+        // Opaque struct pointers (treated as structs but return pointers, so we must register them to avoid Tensor default)
         self.method_return_types.insert("tl_tensor_map_new".to_string(), Type::Struct("Map".to_string(), vec![]));
-        self.method_return_types.insert("tl_hashmap_new".to_string(), Type::Struct("HashMap".to_string(), vec![]));
+
     }
 
     pub fn dump_ir(&self) {
@@ -474,65 +427,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(basic_value) // Return the original pointer (which is valid here)
     }
 
-    fn register_builtins(&mut self) {
-        // Register destructors
-        self.destructors.insert("HashMap".to_string(), "tl_hashmap_free".to_string());
-        self.destructors.insert("String".to_string(), "tl_string_free".to_string());
 
-
-
-
-
-        // Register Vec Type - Migrated to BuiltinTypeData (see new() logic)
-        // Manual registration removed to support AST-based extern dispatch.
-
-
-
-
-
-        // Register IO Types (File, Path, Env, Http)
-        builtin_types::io::register_io_types(&mut self.type_manager);
-        builtin_types::system::register_system_types(&mut self.type_manager);
-        builtin_types::tensor::register_tensor_types(&mut self.type_manager);
-        builtin_types::param::register_param_types(&mut self.type_manager);
-
-        builtin_types::llm::register_llm_types(&mut self.type_manager);
-        // builtin_types::result::register_result_types(&mut self.type_manager);
-        // builtin_types::string::register_string_types(&mut self.type_manager); (Deprecated direct call, use loader pattern)
-        // builtin_types::string::register_string_types(&mut self.type_manager); (Deprecated direct call, use loader pattern)
-        // builtin_types::string::register_string_types(&mut self.type_manager); (Deprecated direct call, use loader pattern)
-        // Do NOT register generic_impls for String here. String methods are intrinsics in expr.rs. 
-        // Registering them would cause CodeGen to generate empty function bodies for extern methods.
-        // self.generic_impls.entry("String".to_string()).or_default().extend(string_data.impl_blocks);
-
-
-
-        let device_enum = EnumDef {
-            name: "Device".to_string(),
-            generics: vec![],
-            variants: vec![
-                VariantDef {
-                    name: "Auto".to_string(),
-                    kind: VariantKind::Unit,
-                },
-                VariantDef {
-                    name: "Cpu".to_string(),
-                    kind: VariantKind::Unit,
-                },
-                VariantDef {
-                    name: "Metal".to_string(),
-                    kind: VariantKind::Unit,
-                },
-                VariantDef {
-                    name: "Cuda".to_string(),
-                    kind: VariantKind::Unit,
-                },
-            ],
-        };
-        // Compile and register the builtin enum
-        // We use unwrap() here because failure to compile a builtin is a compiler bug
-        self.compile_enum_defs(&[device_enum]).unwrap();
-    }
 
     // Enter a new scope
     fn enter_scope(&mut self) {
@@ -545,64 +440,73 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     // Helper to generate free calls for variables in a specific scope index
-    fn emit_cleanup_vars_in_scope(&self, scope_idx: usize) {
-        if let Some(scope) = self.variables.get(scope_idx) {
-            for (_name, (val_enum, ty, cleanup_mode)) in scope {
-                if *cleanup_mode != CLEANUP_NONE {
-                     if let Type::Struct(name, _) = ty {
-                        // Opaque Handles check (formerly UserDefined logic)
-                        match name.as_str() {
-                            "String" => {} // Should be Type::String("String".to_string()) usually
-                            "File" | "Path" => {}
-                            "Env" | "Http" => {}
-                            "Map" | "HashMap" | "Tokenizer" | "KVCache" | 
-                            "Block" | "RMSNorm" | "Attention" | "MLP" => {}
-                            _ => {
-                                // Structs in TL now follow "Reference Semantics" for their members.
-                                // We do NOT recursively free members when the Struct itself goes out of scope.
-                                // This prevents Double Free issues when Structs are copied (shallow copy).
-                                // The Struct wrapper itself (if any) is allocated on stack/alloca so it's fine.
-                                // Members (Tensors, Maps) are ref-counted or managed elsewhere (or leaked safely).
-                                
-                                // However, Struct("Tensor") MUST be freed because it holds a handle.
-                                if name == "Tensor" {
-                                    let ptr = val_enum.into_pointer_value();
-                                    let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                                    if let Ok(struct_val) =
-                                        self.builder.build_load(load_type, ptr, "tensor_to_free")
-                                    {
-                                        let _ = self.emit_recursive_free(struct_val, ty, *cleanup_mode);
-                                    }
+    fn emit_cleanup_vars_in_scope(&mut self, scope_idx: usize) {
+        let vars = if let Some(scope) = self.variables.get(scope_idx) {
+            scope.iter().map(|(n, (v, t, m))| (n.clone(), (*v, t.clone(), *m))).collect::<Vec<_>>()
+        } else {
+            return;
+        };
+
+        for (_name, (val_enum, ty, cleanup_mode)) in vars {
+            if cleanup_mode != CLEANUP_NONE {
+                    if let Type::Struct(name, _) = &ty {
+                    // Opaque Handles check (formerly UserDefined logic)
+                    match name.as_str() {
+                        "String" => {} // Should be Type::String("String".to_string()) usually
+                        "File" | "Path" => {}
+                        "Env" | "Http" => {}
+                        "Tokenizer" | "KVCache" => {}
+                        _ => {
+                            // Structs in TL now follow "Reference Semantics" for their members.
+                            // However, Struct("Tensor") MUST be freed because it holds a handle.
+                            if name == "Tensor" {
+                                let ptr = val_enum.into_pointer_value();
+                                let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                                if let Ok(struct_val) =
+                                    self.builder.build_load(load_type, ptr, "tensor_to_free")
+                                {
+                                    let _ = self.emit_recursive_free(struct_val, &ty, cleanup_mode);
+                                }
+                            } else {
+                                // For other structs (including Vec), load handle from alloca
+                                let ptr = val_enum.into_pointer_value();
+                                let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                                if let Ok(struct_val) = self.builder.build_load(load_type, ptr, "struct_to_free") {
+                                    let _ = self.emit_recursive_free(struct_val, &ty, cleanup_mode);
                                 }
                             }
                         }
-                    } else if matches!(ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Tuple(_)) {
-                         // Tuple and Vec also need loading from Alloca
-                        let ptr = val_enum.into_pointer_value();
-                        let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                        if let Ok(val) =
-                            self.builder.build_load(load_type, ptr, "val_to_free")
-                        {
-                            let _ = self.emit_recursive_free(val, ty, *cleanup_mode);
-                        }
+                    }
+                } else if matches!(ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Tuple(_)) {
+                        // Tuple and Vec also need loading from Alloca
+                    let ptr = val_enum.into_pointer_value();
+                    let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                    if let Ok(val) =
+                        self.builder.build_load(load_type, ptr, "val_to_free")
+                    {
+                        let _ = self.emit_recursive_free(val, &ty, cleanup_mode);
                     }
                 }
             }
         }
 
         // Cleanup temporaries in this scope
-        if let Some(temps) = self.temporaries.get(scope_idx) {
-            for (val, ty, cleanup) in temps {
-                // Temporaries are always owned (CLEANUP_FULL) unless marked otherwise.
-                // They are values (pointers), not allocas.
-                if *cleanup != CLEANUP_NONE {
-                    let _ = self.emit_recursive_free(*val, ty, *cleanup);
-                }
+        let temps = if let Some(temps) = self.temporaries.get(scope_idx) {
+            temps.clone()
+        } else {
+            vec![]
+        };
+
+        for (val, ty, cleanup) in temps {
+            // Temporaries are always owned (CLEANUP_FULL) unless marked otherwise.
+            // They are values (pointers), not allocas.
+            if cleanup != CLEANUP_NONE {
+                let _ = self.emit_recursive_free(val, &ty, cleanup);
             }
         }
     }
 
-    fn emit_all_scopes_cleanup(&self) {
+    fn emit_all_scopes_cleanup(&mut self) {
         if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
             // Only clean up scopes pushed WITHIN the current function
             // Iterate in REVERSE order (from inner to outer)
@@ -620,7 +524,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     // Emit cleanup for the current scope (without popping).
-    pub(crate) fn emit_top_scope_cleanup(&self) {
+    pub(crate) fn emit_top_scope_cleanup(&mut self) {
         if self.variables.is_empty() {
             return;
         }
@@ -634,7 +538,8 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     // Emit cleanup for all scopes down to (but not including) target_depth.
-    pub(crate) fn emit_cleanup_to_depth(&self, target_depth: usize) {
+    // Emit cleanup for all scopes down to (but not including) target_depth.
+    pub(crate) fn emit_cleanup_to_depth(&mut self, target_depth: usize) {
         if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
             let mut idx = self.variables.len();
             while idx > target_depth {
@@ -842,9 +747,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         for s in structs {
             // 1. Skip empty specializations generated by TypeChecker/Semantics
             // These usually have names like Vec_i64 but no fields. We rely on generic fallback (Vec) or monomorphization to generate them correctly.
-            if (s.name.starts_with("Vec") || s.name.starts_with("HashMap") || s.name.starts_with("Map")) && s.fields.is_empty() {
-                 continue;
-            }
+
 
             // 2. Skip overwriting existing valid (non-empty) definitions with empty ones
             if let Some(existing) = self.struct_defs.get(&s.name) {
@@ -1459,7 +1362,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .context
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
-                Type::Struct(_, _) | Type::Enum(_, _) => self
+                Type::Struct(_, _) | Type::Enum(_, _) | Type::Ref(_) | Type::Tuple(_) => self
                     .context
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
@@ -1488,7 +1391,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),
                 ),
-                Type::Struct(_, _) | Type::Enum(_, _) => Some(
+                Type::Struct(_, _) | Type::Enum(_, _) | Type::Ref(_) | Type::Tuple(_) => Some(
                     self.context
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),
