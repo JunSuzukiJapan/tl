@@ -1784,14 +1784,35 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 // Generic structural assignment via .set(index, value) method
                                 // Support arr[i] = val for any struct implementing set(i64, T)
                                 if idxs.len() != 1 {
-                                            "vec_elem_ptr",
-                                        )
-                                        .map_err(|e| e.to_string())?
-                                };
-
-                                self.builder
-                                    .build_store(elem_ptr, val_ir)
-                                    .map_err(|e| e.to_string())?;
+                                    return Err("Struct indexing assignment only supports 1D indexing currently".into());
+                                }
+                                let (idx_val, _idx_ty) = self.compile_expr(&idxs[0])?;
+                                
+                                // Load the struct value (pointer)
+                                let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                                let obj_val = self.builder.build_load(ptr_type, var_ptr.into_pointer_value(), "obj_val").map_err(|e| e.to_string())?;
+                                
+                                let method_name = "set";
+   
+                                // Monomorphize 'set'
+                                let generics = if let Type::Struct(_, g) = &var_type { g.clone() } else { vec![] };
+                                
+                                let mangled_name = self.monomorphize_method(
+                                    &var_type.get_base_name(), 
+                                    method_name, 
+                                    &generics
+                                )?;
+                                
+                                let set_fn = self.module.get_function(&mangled_name).ok_or(format!("Method {} not found check impl", mangled_name))?;
+                                
+                                // Call it
+                                let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                                call_args.push(obj_val.into()); // Self
+                                call_args.push(idx_val.into()); // Index
+                                call_args.push(val_ir.into());  // Value
+                                
+                                self.builder.build_call(set_fn, &call_args, "").map_err(|e| e.to_string())?;
+                                
                                 return Ok(());
                             }
                             Type::Tensor(_, _) => {

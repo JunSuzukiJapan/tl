@@ -2500,6 +2500,96 @@ impl<'ctx> CodeGenerator<'ctx> {
             ExprKind::IndexAccess(target, indices) => {
                 let (val, val_type) = self.compile_expr(target)?;
                 match val_type.clone() {
+                    Type::Struct(name, _) if name == "Tensor" => {
+                        let rank = indices.len();
+                        let i64_type = self.context.i64_type();
+                        let array_type = i64_type.array_type(rank as u32);
+                        let current_block = self.builder.get_insert_block().unwrap();
+                        let function = current_block.get_parent().unwrap();
+                        let entry_block = function.get_first_basic_block().unwrap();
+                        let entry_builder = self.context.create_builder();
+                        if let Some(first_instr) = entry_block.get_first_instruction() {
+                            entry_builder.position_before(&first_instr);
+                        } else {
+                            entry_builder.position_at_end(entry_block);
+                        }
+
+                        let array_alloca = entry_builder
+                            .build_alloca(array_type, "idx_arr")
+                            .map_err(|e| e.to_string())?;
+
+                        for (i, idx_expr) in indices.iter().enumerate() {
+                            let (compiled_idx, ty) = self.compile_expr(idx_expr)?;
+
+                            // Ensure index is integer or float (cast if needed)
+                            let idx_val = match ty {
+                                Type::I64 => compiled_idx.into_int_value(),
+                                Type::I32 => self
+                                    .builder
+                                    .build_int_z_extend(
+                                        compiled_idx.into_int_value(),
+                                        i64_type,
+                                        "zext",
+                                    )
+                                    .map_err(|e| e.to_string())?,
+                                Type::F64 | Type::F32 => self
+                                    .builder
+                                    .build_float_to_signed_int(
+                                        compiled_idx.into_float_value(),
+                                        i64_type,
+                                        "f2i",
+                                    )
+                                    .map_err(|e| e.to_string())?,
+                                _ => return Err(format!("Invalid index type {:?}", ty)),
+                            };
+                            let idx_val = inkwell::values::BasicValueEnum::IntValue(idx_val);
+
+                            let elem_ptr = unsafe {
+                                self.builder
+                                    .build_gep(
+                                        array_type,
+                                        array_alloca,
+                                        &[
+                                            i64_type.const_int(0, false),
+                                            i64_type.const_int(i as u64, false),
+                                        ],
+                                        "idx_ptr",
+                                    )
+                                    .map_err(|e| e.to_string())?
+                            };
+                            self.builder
+                                .build_store(elem_ptr, idx_val)
+                                .map_err(|e| e.to_string())?;
+                        }
+
+                        let get_fn_name = "tl_tensor_get_f32_md";
+                        let get_fn = self.module.get_function(get_fn_name).unwrap();
+                        let tensor_ptr = val.into_pointer_value();
+                        let array_ptr = self
+                            .builder
+                            .build_pointer_cast(
+                                array_alloca,
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "arr_ptr",
+                            )
+                            .map_err(|e| e.to_string())?;
+                        let rank_val = i64_type.const_int(rank as u64, false);
+
+                        let call = self
+                            .builder
+                            .build_call(
+                                get_fn,
+                                &[tensor_ptr.into(), array_ptr.into(), rank_val.into()],
+                                "get_md_call",
+                            )
+                            .map_err(|e| e.to_string())?;
+
+                        let res = match call.try_as_basic_value() {
+                            ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid get return".into()),
+                        };
+                        Ok((res, Type::F32))
+                    }
                     Type::Struct(_, _) => {
                          // Generic Struct Indexing -> Desugar to .get() method call
                          self.emit_method_call(target, val, val_type, "get", indices)
@@ -2617,91 +2707,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                             Ok((res, res_ty))
                         }
                     }
-                    Type::Struct(name, _) if name == "Tensor" => {
-                        let rank = indices.len();
-                        let i64_type = self.context.i64_type();
-                        let array_type = i64_type.array_type(rank as u32);
-                        let current_block = self.builder.get_insert_block().unwrap();
-                        let function = current_block.get_parent().unwrap();
-                        let entry_block = function.get_first_basic_block().unwrap();
-                        let entry_builder = self.context.create_builder();
-                        if let Some(first_instr) = entry_block.get_first_instruction() {
-                            entry_builder.position_before(&first_instr);
-                        } else {
-                            entry_builder.position_at_end(entry_block);
-                        }
-                        let array_alloca = entry_builder
-                            .build_alloca(array_type, "idx_arr")
-                            .map_err(|e| e.to_string())?;
 
-                        for (i, idx_expr) in indices.iter().enumerate() {
-                            let (compiled_idx, ty) = self.compile_expr(idx_expr)?;
-                            let idx_val = match ty {
-                                Type::I64 => compiled_idx.into_int_value(),
-                                Type::I32 => self
-                                    .builder
-                                    .build_int_z_extend(
-                                        compiled_idx.into_int_value(),
-                                        i64_type,
-                                        "zext",
-                                    )
-                                    .map_err(|e| e.to_string())?,
-                                Type::F64 | Type::F32 => self
-                                    .builder
-                                    .build_float_to_signed_int(
-                                        compiled_idx.into_float_value(),
-                                        i64_type,
-                                        "f2i",
-                                    )
-                                    .map_err(|e| e.to_string())?,
-                                _ => return Err(format!("Invalid index type {:?}", ty)),
-                            };
-                            let idx_val = inkwell::values::BasicValueEnum::IntValue(idx_val);
-                            let elem_ptr = unsafe {
-                                self.builder
-                                    .build_gep(
-                                        array_type,
-                                        array_alloca,
-                                        &[
-                                            i64_type.const_int(0, false),
-                                            i64_type.const_int(i as u64, false),
-                                        ],
-                                        "idx_ptr",
-                                    )
-                                    .map_err(|e| e.to_string())?
-                            };
-                            self.builder
-                                .build_store(elem_ptr, idx_val)
-                                .map_err(|e| e.to_string())?;
-                        }
 
-                        let get_fn_name = "tl_tensor_get_f32_md";
-                        let get_fn = self.module.get_function(get_fn_name).unwrap();
-                        let tensor_ptr = val.into_pointer_value();
-                        let array_ptr = self
-                            .builder
-                            .build_pointer_cast(
-                                array_alloca,
-                                self.context.ptr_type(inkwell::AddressSpace::default()),
-                                "arr_ptr",
-                            )
-                            .map_err(|e| e.to_string())?;
-                        let rank_val = i64_type.const_int(rank as u64, false);
-
-                        let call = self
-                            .builder
-                            .build_call(
-                                get_fn,
-                                &[tensor_ptr.into(), array_ptr.into(), rank_val.into()],
-                                "get_md_call",
-                            )
-                            .map_err(|e| e.to_string())?;
-                        let res = match call.try_as_basic_value() {
-                            ValueKind::Basic(v) => v,
-                            _ => return Err("Invalid get return".into()),
-                        };
-                        Ok((res, Type::F32))
-                    }
                     _ => Err("Index access only on Tensor".into()),
                 }
             }
