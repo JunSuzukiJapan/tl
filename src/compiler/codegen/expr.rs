@@ -2404,6 +2404,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .builder
                                 .build_load(llvm_ty, ptr, name)
                                 .map_err(|e| e.to_string())?;
+
+                            // FIX: Must retain ownership for the new variable reference
+                            // Otherwise `let v2 = v` creates a second owner without IncRef -> Double Free.
+                            self.emit_retain(loaded, ty)?;
+
                             return Ok((loaded, ty.clone()));
                         } else {
                             // Regular Variable - Retain ownership for caller
