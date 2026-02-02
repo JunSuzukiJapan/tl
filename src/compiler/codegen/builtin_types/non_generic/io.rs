@@ -316,11 +316,9 @@ pub fn compile_path_exists<'ctx>(
     let (path_val, path_ty) = &args[0]; // String (i8*)
     
     let path_ptr_val = if matches!(path_ty, Type::String(_)) {
-        // eprintln!("DEBUG: File::open compiling path String val={:?} ty={:?}", path_val, path_ty);
         if !path_val.is_pointer_value() {
             return Err(format!("File::open path must be a pointer, got {:?}", path_val));
         }
-        // eprintln!("DEBUG: File::open compiling path String val={:?} ty={:?}", path_val, path_ty);
         if !path_val.is_pointer_value() {
             return Err(format!("File::open path must be a pointer, got {:?}", path_val));
         }

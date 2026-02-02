@@ -121,7 +121,7 @@ impl Monomorphizer {
         }
         for e in &module.enums {
             if !e.generics.is_empty() {
-                eprintln!("DEBUG: Collected generic enum {}", e.name);
+
                 self.generic_enums.insert(e.name.clone(), e.clone());
             }
         }
@@ -272,7 +272,6 @@ impl Monomorphizer {
     }
 
      fn rewrite_expr(&mut self, expr: &mut ExprKind, subst: &HashMap<String, Type>, expected_type: Option<&Type>) {
-         // eprintln!("DEBUG: rewrite_expr {:?}", expr);
          match expr {
              ExprKind::StructInit(name, explicit_generics, fields) => {
                  // 0. Resolve explicit generics
@@ -447,7 +446,6 @@ impl Monomorphizer {
                  return;
              }
               ExprKind::EnumInit { enum_name, variant_name, generics: _, payload } => {
-                  eprintln!("DEBUG: EnumInit entry name={} variant={}", enum_name, variant_name);
                   if let Some(def) = self.generic_enums.get(enum_name) {
                       if let Some(v_def) = def.variants.iter().find(|v| v.name == *variant_name) {
                           let mut inferred_map = HashMap::new();
@@ -485,7 +483,6 @@ impl Monomorphizer {
                           }
                           
                           if all_inferred && !type_args.is_empty() {
-                              eprintln!("DEBUG: instantiate generic enum {} with {:?}", enum_name, type_args);
                               let concrete_enum_name = self.request_struct_instantiation(enum_name, type_args.clone());
                               *enum_name = concrete_enum_name;
                               
@@ -578,7 +575,6 @@ impl Monomorphizer {
                   }
               }
               ExprKind::StaticMethodCall(type_ty, method_name, args) => {
-                          eprintln!("DEBUG: StaticMethodCall entry type={:?} method={}", type_ty, method_name);
                           *type_ty = self.substitute_type(type_ty, subst);
                           *type_ty = self.resolve_type(type_ty);
                           for arg in args.iter_mut() {
@@ -1022,7 +1018,6 @@ impl Monomorphizer {
             }
             new_def.return_type = self.substitute_type(&new_def.return_type, &subst);
             new_def.return_type = self.resolve_type(&new_def.return_type);
-            eprintln!("DEBUG: instantiate_function {} return_type {:?}", new_def.name, new_def.return_type);
             
             // Rewrite Body
             // Push new scope for arguments
@@ -1069,13 +1064,11 @@ impl Monomorphizer {
 
 
     fn substitute_type(&self, ty: &Type, subst: &HashMap<String, Type>) -> Type {
-        eprintln!("DEBUG: substitute_type {:?} with subst keys {:?}", ty, subst.keys());
         match ty {
 
              Type::Tensor(inner, r) => Type::Tensor(Box::new(self.substitute_type(inner, subst)), *r),
              Type::Struct(name, args) => {
                  if let Some(replacement) = subst.get(name) {
-                     eprintln!("DEBUG: substitute_type FOUND {} -> {:?}", name, replacement);
                      return replacement.clone();
                  }
                  let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
@@ -1176,7 +1169,6 @@ impl Monomorphizer {
                     // Check if 'name' is in knowledge base of generics?
                     // Currently unbound check: we just insert.
                     if !map.contains_key(name) {
-                        eprintln!("DEBUG: unify_types insert {} -> {:?}", name, concrete);
                         map.insert(name.clone(), concrete.clone());
                     } else {
                         // verify consistency?

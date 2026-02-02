@@ -750,7 +750,6 @@ impl SemanticAnalyzer {
         let saved_prefix = self.current_module.clone();
         self.current_module = prefix.to_string();
         
-        println!("DEBUG: check_module_bodies '{}' impls: {}", prefix, module.impls.len());
 
         // Pass 1: Register impl methods
         for i in &mut module.impls {
@@ -5100,8 +5099,11 @@ impl SemanticAnalyzer {
 
                         // Substitute return type
                         let ret_type = self.substitute_generics(&raw_return_type, &subst);
+                        if method_name.as_str() == "get" {
+                        }
                         return Ok(ret_type);
                 }
+
 
                 // 3. Fallback to Built-in/Intrinsic methods
                 if let Some(res) = self.check_builtin_method(&type_name, method_name, args, &obj_type) {

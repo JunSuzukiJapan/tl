@@ -124,11 +124,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 false
                             };
 
-                            if is_zst {
-                                self.context.struct_type(&[], false).into()
-                            } else {
-                                self.context.ptr_type(inkwell::AddressSpace::default()).into()
-                            }
+                            // ZST Strategy V3.2: Even ZSTs are treated as Pointers (NULL).
+                            self.context.ptr_type(inkwell::AddressSpace::default()).into()
                         }
                         _ => self.context.i64_type().into(),
                     };
@@ -1741,7 +1738,6 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                     // Check if this is a struct return (uses sret)
                     let uses_sret = self.current_sret_dest.is_some();
-                    // eprintln!("DEBUG: Stmt::Return uses_sret={}", uses_sret);
 
                     // IMPORTANT: Do NOT unregister. Instead Acquire/Copy to preserve for caller.
                     // If we unregister, it releases (decrements refcount).
@@ -1775,7 +1771,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 // CRITICAL FIX: recursively unregister struct fields (like Tensors)
                                 // so they are not freed by exit_scope.
                                 
-                                // DEBUG: Enabling unregister again.
                                 self.emit_recursive_unregister(val, &ty)?;
                             }
                             _ => {}
@@ -3729,7 +3724,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     return self.emit_enum_deep_clone(val, enum_def);
                 }
                 
-                println!("DEBUG: emit_deep_clone struct name={}", name);
 
                 // Handle String struct: Delegate to Type::String logic
                 if name == "String" {

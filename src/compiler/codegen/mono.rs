@@ -14,7 +14,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         method_name: &str,
         generic_args: &[Type],
     ) -> Result<String, String> {
-        // eprintln!("DEBUG: monomorphize_method entry struct={} method={}", struct_name, method_name);
         let impls = self.generic_impls.get(struct_name)
              .ok_or_else(|| format!("No generic impls found for struct {}", struct_name))?;
 
@@ -52,9 +51,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mangled_name = crate::compiler::codegen::builtin_types::resolver::resolve_static_method_name(struct_name, method_name, generic_args);
         
         if let Some(f) = self.module.get_function(&mangled_name) {
-            // eprintln!("DEBUG: mono.rs found existing function: {}", mangled_name);
              if !f.verify(true) {
-                 // eprintln!("DEBUG: EXISTING FUNCTION VERIFICATION FAILED!");
                  f.print_to_stderr();
              }
             return Ok(mangled_name);
@@ -418,13 +415,12 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 if let Some(def) = self.struct_defs.get(simple_name) {
                     if def.fields.is_empty() {
-                         // eprintln!("DEBUG: get_llvm_type detected ZST for {}", name);
-                        return Ok(self.context.struct_type(&[], false).into());
+                        // ZST = Pointer (NULL)
+                        return Ok(self.context.ptr_type(AddressSpace::default()).into());
                     }
                 }
                 
                 if name.contains("PhantomData") {
-                     // eprintln!("DEBUG: get_llvm_type falling back to PTR for {} (Def found: {})", name, self.struct_defs.contains_key(simple_name));
                 }
 
                 // All other structs are pointer types (Reference Semantics)

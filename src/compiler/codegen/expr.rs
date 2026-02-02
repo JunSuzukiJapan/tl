@@ -3257,9 +3257,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             .size_of()
             .ok_or(format!("Cannot determine size of struct {}", name))?;
 
-        // ZST Optimization (PhantomData etc): Return value directly, no malloc
+        // ZST Optimization (PhantomData etc): Return NULL, not an aggregate value.
+        // The Runtime handles NULL pointers gracefully (ignores them).
         if struct_def.fields.is_empty() {
-            return Ok((struct_type.const_zero().into(), Type::Struct(name.to_string(), generics.to_vec())));
+            let null_ptr = self.context.ptr_type(inkwell::AddressSpace::default()).const_null();
+            return Ok((null_ptr.into(), Type::Struct(name.to_string(), generics.to_vec())));
         }
 
         // 1. Heap Allocation
@@ -3886,9 +3888,56 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut sret_ptr = None;
 
         if uses_sret {
-             let current_fn = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-             let alloca = self.create_entry_block_alloca(current_fn, "sret_temp", &ret_ty)?;
-             sret_ptr = Some(alloca);
+             // OLD: Stack Allocation (alloca) -> Causes Free of Stack Pointer crash
+             // NEW: Heap Allocation (malloc + register) -> Correct for RefCounted Structs
+             
+             // 1. Get Struct Type and Size from CodeGen struct_types map
+             let (struct_name, generics) = match &ret_ty {
+                 Type::Struct(n, g) => (n, g),
+                 _ => return Err("SRET used on non-struct type".into()),
+             };
+             
+             let mangled_name = if generics.is_empty() {
+                 struct_name.to_string()
+             } else {
+                 self.mangle_type_name(struct_name, generics)
+             };
+             
+             // Simple name lookup (as done in compile_struct_init)
+             let simple_lookup_name = if mangled_name.contains("::") {
+                 mangled_name.split("::").last().unwrap().to_string()
+             } else {
+                 mangled_name.clone()
+             };
+
+             let struct_type = self.struct_types.get(&simple_lookup_name)
+                 .ok_or_else(|| format!("Struct type {} not found for SRET allocation", simple_lookup_name))?;
+             
+             let size = struct_type.size_of().ok_or("Cannot determine size for SRET struct")?;
+             
+             // 2. Malloc
+             let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
+             let size_i64 = self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").unwrap();
+             let call_malloc = self.builder.build_call(malloc_fn, &[size_i64.into()], "sret_malloc").map_err(|e| e.to_string())?;
+             
+             let raw_ptr = match call_malloc.try_as_basic_value() {
+                 inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                 _ => return Err("malloc returned void".into()),
+             };
+             
+             // 3. Register (Initialize RefCount=1, Header)
+             // Use generic name or strict name?
+             let struct_name_str = match &ret_ty {
+                 Type::Struct(n, _) => if n.contains("::") { n.split("::").last().unwrap() } else { n },
+                 _ => "AnonymousStruct",
+             };
+             let name_global = self.builder.build_global_string_ptr(struct_name_str, "struct_name").unwrap();
+             let register_fn = self.module.get_function("tl_mem_register_struct_named").ok_or("tl_mem_register_struct_named not found")?;
+             
+             let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap();
+             self.builder.build_call(register_fn, &[cast_ptr.into(), name_global.as_pointer_value().into()], "");
+
+             sret_ptr = Some(cast_ptr);
         }
 
         let mut compiled_args = Vec::with_capacity(args.len());
@@ -5050,6 +5099,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         ty: &Type,
     ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
         let builder = self.context.create_builder();
+        if ty == &Type::Void {
+        }
         let entry = function.get_first_basic_block().unwrap();
         match entry.get_first_instruction() {
             Some(first_instr) => builder.position_before(&first_instr),
@@ -5407,22 +5458,52 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Get return type (for SRET check)
         let ret_ty = if let Some(ret) = self.method_return_types.get(&final_name) {
-            ret.clone()
+             ret.clone()
         } else {
-            self.get_return_type_from_signature(func_val)
+             self.get_return_type_from_signature(func_val)
         };
 
-        // SRET Disabled for now to match legacy behavior
-        // let uses_sret = false;
+        // SRET Check
+        let uses_sret = matches!(ret_ty, Type::Struct(_, _));
+        let mut sret_ptr = None;
+
+        if uses_sret {
+             // Allocate space for partial return
+             let llvm_ty = self.get_llvm_type(&ret_ty).map_err(|e| e.to_string())?;
+             let alloca = self.builder.build_alloca(llvm_ty, "sret_temp").unwrap();
+             if let Some(instr) = alloca.as_instruction_value() {
+                 instr.set_alignment(8).ok();
+             }
+             sret_ptr = Some(alloca);
+        }
 
         let mut compiled_args_vals = Vec::with_capacity(args.len() + 1);
         let mut compiled_args_types = Vec::with_capacity(args.len());
+
+        // Push SRET Ptr if needed
+        if let Some(ptr) = sret_ptr {
+            compiled_args_vals.push(ptr.into());
+        }
 
         // Push Receiver
         compiled_args_vals.push(obj_val.into());
 
         for arg in args {
-            let (val, ty) = self.compile_expr(arg)?;
+            let (val, mut ty) = self.compile_expr(arg)?;
+            
+            // ARGUMENT PASSING FIX: Retain ownership because Callee takes ownership (and releases at end)
+            // If we don't retain, the Callee's release will free the memory while Caller still holds it (if var).
+            // We skip String because it uses manual management not compatible with refcounts map yet.
+            let should_retain = match &ty {
+                Type::Struct(n, _) if n != "String" => true,
+                Type::Enum(_, _) | Type::Tensor(_, _) | Type::Tuple(_) => true,
+                _ => false, 
+            };
+            
+            if should_retain {
+                 self.emit_retain(val, &ty)?;
+            }
+
             compiled_args_vals.push(val.into());
             compiled_args_types.push((val, ty));
         }
@@ -5434,18 +5515,21 @@ impl<'ctx> CodeGenerator<'ctx> {
             .map_err(|e| e.to_string())?;
 
         // Return handling
-        match call.try_as_basic_value() {
-            inkwell::values::ValueKind::Basic(_) => {
-                let v = self.check_tensor_result(call, "method_call_error")?;
-                // Register intermediate tensor result
-                // REMOVED REDUNDANT REGISTRATION
-
-                Ok((v, ret_ty))
+        // Return handling
+        if let Some(ptr) = sret_ptr {
+            // Return SRET pointer as value
+             Ok((ptr.into(), ret_ty))
+        } else {
+            match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(_) => {
+                    let v = self.check_tensor_result(call, "method_call_error")?;
+                    Ok((v, ret_ty))
+                }
+                _ => Ok((
+                    self.context.i64_type().const_int(0, false).into(),
+                    Type::Void,
+                )),
             }
-            _ => Ok((
-                self.context.i64_type().const_int(0, false).into(),
-                Type::Void,
-            )),
         }
     } /*
           match method {
@@ -6093,7 +6177,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // 1. Check if we have an explicit mapping for this function
         if let Some(ty) = self.method_return_types.get(name) {
-            return ty.clone();
+             return ty.clone();
         }
 
         let ret = func.get_type().get_return_type();
@@ -6368,8 +6452,6 @@ impl<'ctx> CodeGenerator<'ctx> {
              Type::Struct(_, _) => true,
              _ => false 
         };
-        // // eprintln!("DEBUG: compile_fn_call_dps name={} ret={:?} uses_sret={}", final_resolved_name, ret_type, uses_sret);
-        // eprintln!("DEBUG: compile_fn_call_dps name={} ret={:?} uses_sret={}", final_resolved_name, ret_type, uses_sret);
         if uses_sret {
              if let Some(d) = dest {
                  dest_val = Some(d);
@@ -6395,29 +6477,32 @@ impl<'ctx> CodeGenerator<'ctx> {
              }
         } else {
             for arg in args {
-                let (val, ty) = self.compile_expr(arg)?;
+                let (val, mut ty) = self.compile_expr(arg)?;
 
-                // Move Semantics disabled: function arguments remain valid after calls.
-
-
+                // ARGUMENT PASSING FIX: Retain ownership because Callee takes ownership (and releases at end)
+                let should_retain = match &ty {
+                    Type::Struct(n, _) if n != "String" => true,
+                    Type::Enum(_, _) | Type::Tensor(_, _) | Type::Tuple(_) => true,
+                    _ => false, 
+                };
+                
+                if should_retain {
+                        self.emit_retain(val, &ty)?;
+                }
 
                 compiled_args_vals.push(val.into());
                 compiled_args_types.push((val, ty));
             }
         }
         if let Some(block) = self.builder.get_insert_block() {
-            // eprintln!("DEBUG: Block parent: {:?}", block.get_parent());
         } else {
-             // eprintln!("DEBUG: No insert block");
         }
         if self.builder.get_insert_block().is_none() {
             return Err(format!("INTERNAL ERROR: Builder has no insert block when calling {}", final_resolved_name));
         }
 
         for (i, arg) in compiled_args_vals.iter().enumerate() {
-             // eprintln!("DEBUG: Arg {}: {:?}", i, arg);
         }
-        // eprintln!("DEBUG: About to build_call. Func: {:?}, Args: {}", func, compiled_args_vals.len());
         let call_name = if ret_type == Type::Void { "" } else { "call_tmp" };
 
         let call = self

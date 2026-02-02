@@ -184,3 +184,47 @@ Variables that are passed to a function or assigned as their "last use" in a sco
     3.  **所有権**: 所有権は受信側の変数や関数に効率的に転送されます。
     4.  **クリーンアップなし**: 元の変数はスコープ終了時にデクリメントされません（`CLEANUP_NONE` フラグ等で管理）、二重解放を防ぎます。
 -   **メリット**: `inc_ref` / `dec_ref` のペアを削除し、深い呼び出しチェーンにおけるパフォーマンスを劇的に向上させます。
+
+---
+
+## [English] Zero-Sized Types (ZST) Strategy (V3.2)
+
+### 1. The Problem
+Zero-Sized Types (ZSTs) like `struct Empty {}` or `PhantomData<T>` occupy 0 bytes.
+However, `malloc(0)` is behaviorally undefined (can return NULL or a unique pointer) and inconsistent across platforms.
+Historically, the compiler optimized ZSTs by returning an Aggregate Value instead of a Pointer. This violated the "Struct = Managed Pointer" invariant, causing the runtime to treat the aggregate value as an invalid address (`0x7` etc.) and crash during `free()`.
+
+### 2. The Solution: "ZST = NULL"
+To handle ZSTs safely without runtime overhead:
+-   **Compiler**: When compiling a struct initialization (`compile_struct_init`), if the struct has no fields (empty), it **returns a NULL pointer** (`i8* null`) constant. `malloc` is skipped entirely.
+-   **Runtime**: The `MemoryManager` (`inc_ref`, `dec_ref`, `register`, `release`) detects `ptr == NULL` and **returns immediately (No-Op)**.
+    -   Reference counts for ZSTs are effectively non-existent (Logically 0 or Infinite).
+    -   Double-free is impossible (freeing NULL is safe).
+    -   Key collision in RefCount map is avoided because we early-return before map access.
+
+### 3. Why NULL? (Rationale)
+-   **Performance**: Zero allocation cost. Zero tracking cost.
+-   **Safety**: Valid pointers are never NULL. NULL is universally recognized as "No Object".
+-   **Simplicity**: No need to change the runtime architecture to support "Global ZST Singletons" or "1-byte allocations".
+
+---
+
+## [Japanese] ZST (ゼロサイズ型) 戦略 (V3.2)
+
+### 1. 問題点
+`struct Empty {}` や `PhantomData<T>` などのゼロサイズ型（ZST）は0バイトのメモリを占有します。
+しかし、`malloc(0)` の挙動は未定義（NULLを返すか、ユニークなポインタを返すか）であり、プラットフォームによって異なります。
+以前のコンパイラは、ZSTをポインタではなく「Aggregate値」として返す最適化を行っていました。これは「構造体＝管理ポインタ」という不変条件に違反し、ランタイムが値を無効なアドレス（`0x7`など）として解釈し、`free()` でクラッシュさせる原因となっていました。
+
+### 2. 解決策: "ZST = NULL"
+ZSTを安全かつ低コストに扱うため、以下の戦略を採用しました：
+-   **コンパイラ**: 構造体初期化 (`compile_struct_init`) において、フィールドがない（空の）構造体の場合、**NULLポインタ** (`i8* null`) 定数を返します。`malloc` は完全にスキップされます。
+-   **ランタイム**: `MemoryManager` の各関数 (`inc_ref`, `dec_ref`, `register`, `release`) は、`ptr == NULL` を検知すると **即座にリターン（何もしない）** します。
+    -   ZSTの参照カウントは実質的に存在しません。
+    -   NULLの解放は安全であるため、二重解放は発生しません。
+    -   マップアクセス前にリターンするため、参照カウントマップでのキー衝突も回避されます。
+
+### 3. なぜNULLか？ (Rationale)
+-   **パフォーマンス**: 割り当てコストも追跡コストもゼロです。
+-   **安全性**: 有効なヒープポインタがNULLになることはありません。
+-   **単純性**: 「グローバルZSTシングルトン」や「1バイト割り当て」のような複雑な仕組みをランタイムに導入する必要がありません。

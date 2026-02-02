@@ -9,7 +9,6 @@ extern fn tl_vec_unified_push(handle: i64, val: i64, is_ref: bool);
 extern fn tl_vec_unified_pop(handle: i64, is_ref: bool) -> i64;
 extern fn tl_vec_unified_get(handle: i64, idx: i64, is_ref: bool) -> i64;
 extern fn tl_vec_unified_len(handle: i64) -> i64;
-extern fn tl_vec_unified_free(handle: i64, is_ref: bool);
 extern fn tl_vec_unified_set(handle: i64, idx: i64, val: i64, is_ref: bool);
 
 // Intrinsics (Declared for Semantics, intercepted by Codegen)
@@ -59,8 +58,8 @@ impl<T> Vec<T> {
     }
 
     fn free(self) {
-        let is_ref = __builtin_is_ref(self.marker);
-        tl_vec_unified_free(self.handle, is_ref);
+        // Disabled destructor to prevent Double Free on Aliasing.
+        // Pending: Move Semantics / Copy Hooks.
     }
 
     fn set(self, index: i64, item: T) {

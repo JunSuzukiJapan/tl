@@ -38,19 +38,12 @@ thread_local! {
 }
 
 pub(crate) fn mem_log_enabled() -> bool {
-    // Check every time to allow runtime enablement via set_var
-    std::env::var("TL_MEM_LOG")
-        .map(|v| v != "0" && v.to_lowercase() != "false")
-        .unwrap_or(false)
+    std::env::var("TL_MEM_DEBUG").is_ok()
 }
 
 fn mem_trace_enabled() -> bool {
     static MEM_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
-    *MEM_TRACE_ENABLED.get_or_init(|| {
-        std::env::var("TL_MEM_TRACE")
-            .map(|v| v != "0" && v.to_lowercase() != "false")
-            .unwrap_or(false)
-    })
+    *MEM_TRACE_ENABLED.get_or_init(|| std::env::var("TL_MEM_TRACE").is_ok())
 }
 
 // Helper macro for C-ABI functions to unwrap tensor or return null
@@ -4282,7 +4275,7 @@ pub extern "C" fn tl_vec_unified_get(vec: *mut Vec<*mut std::ffi::c_void>, idx: 
             let val = (&(*vec))[idx];
             if is_ref {
                 memory_manager::tl_ptr_acquire(val);
-                memory_manager::tl_mem_register_ptr(val);
+                // memory_manager::tl_mem_register_ptr(val); // REMOVED: Compiler handles registration
             }
             val
         } else {
@@ -4316,16 +4309,12 @@ pub extern "C" fn tl_vec_unified_len(vec: *mut Vec<*mut std::ffi::c_void>) -> us
 pub extern "C" fn tl_vec_unified_free(vec: *mut Vec<*mut std::ffi::c_void>, is_ref: bool) {
     if vec.is_null() { return; }
     unsafe {
-        let v = Box::from_raw(vec); // Drop vec
+        let v = Box::from_raw(vec);
         if is_ref {
             for &item in v.iter() {
-                memory_manager::tl_ptr_dec_ref(item); // Note: Should we dec_ref?
-                // Vector owns the references. When vector dies, it releases ownership.
-                // tl_ptr_dec_ref decrements count.
-                // Yes.
+                 let _ = memory_manager::tl_ptr_dec_ref(item);
             }
         }
-        // v dropped here
     }
 }
 
@@ -4338,7 +4327,7 @@ pub extern "C" fn tl_vec_unified_pop(vec: *mut Vec<*mut std::ffi::c_void>, is_re
                  // We keep ownership (from vec). But Vec released it.
                  // We transfer to caller.
                  // Caller should register it if escaping.
-                 memory_manager::tl_mem_register_ptr(val);
+                 // memory_manager::tl_mem_register_ptr(val); // REMOVED: Compiler handles registration
             }
             val
         } else {
