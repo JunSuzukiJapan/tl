@@ -432,7 +432,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                           // But we want runtime pointer value.
                           // We can't print runtime pointer easily from JIT without building a format string.
                           // But we CAN print the TYPE at JIT time.
-                          println!("[DEBUG_FREE] Unregister logic generated for Type: {:?}", ty);
                      }
                      let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                      let cast = self.builder.build_pointer_cast(ptr, void_ptr_ty, "unreg_cast").unwrap();
@@ -507,16 +506,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if let Some(fn_val) = self.module.get_function(&runtime_name) {
                          // Call it: fn free(self)
                          self.builder.build_call(fn_val, &[val.into()], "").map_err(|e| e.to_string())?;
+                         self.builder.build_unconditional_branch(merge_block).unwrap();
+                         self.builder.position_at_end(merge_block);
+                         return Ok(());
                     }
                 } else {
                     // Legacy / Non-Generic resolver fallback (for runtime builtins not in generic_impls)
                     let legacy_name = crate::compiler::codegen::builtin_types::resolver::resolve_static_method_name(
                          name, "free", generic_args
                     );
-                    if let Some(fn_val) = self.module.get_function(&legacy_name) {
-                        self.builder.build_call(fn_val, &[val.into()], "").map_err(|e| e.to_string())?;
-                    }
-                }
+                     if let Some(fn_val) = self.module.get_function(&legacy_name) {
+                         self.builder.build_call(fn_val, &[val.into()], "").map_err(|e| e.to_string())?;
+                         self.builder.build_unconditional_branch(merge_block).unwrap();
+                         self.builder.position_at_end(merge_block);
+                         return Ok(());
+                     }
+                 }
 
                 // 4. Specialized Tensor Handling (Legacy but maintained for now)
                 if name == "Tensor" {
@@ -587,8 +592,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                               }
                          }
 
-                        if std::env::var("TL_DEBUG_FREE").is_ok() {
-                          println!("[DEBUG_FREE] emit_recursive_free checking field {} type {:?}", i, f_ty);
+                          }
                      }
 
                      match f_ty {
@@ -3860,7 +3864,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) => self
+                        Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) | Type::String(_) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),

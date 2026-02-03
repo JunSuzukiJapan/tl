@@ -5507,7 +5507,11 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         // SRET Check
-        let uses_sret = matches!(ret_ty, Type::Struct(_, _));
+        // String is a pointer (RefCounted), handled as value return, not SRET.
+        let uses_sret = match &ret_ty {
+            Type::Struct(n, _) => n != "String",
+            _ => false,
+        };
         let mut sret_ptr = None;
 
         if uses_sret {
