@@ -13,7 +13,7 @@ pub fn declare_runtime_functions<'ctx>(
 ) {
     let i64_type = context.i64_type(); // usize
     let i32_type = context.i32_type();
-    let i8_type = context.i8_type();
+    // let i8_type = context.i8_type();
     let f32_type = context.f32_type();
     let f32_ptr = context.ptr_type(AddressSpace::default());
     let usize_ptr = context.ptr_type(AddressSpace::default());
@@ -351,117 +351,6 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_mem_free(ptr: *mut) -> void
     add_fn("tl_mem_free", free_type);
 
-    // tl_vec_void_len(ptr: *mut) -> usize
-    let len_type = i64_type.fn_type(&[void_ptr.into()], false);
-    add_fn("tl_vec_void_len", len_type);
-
-    // tl_vec_void_get(ptr: *mut, idx: usize) -> *mut
-    let get_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
-    add_fn("tl_vec_void_get", get_type);
-
-    // tl_vec_unified_*
-    // new() -> i64
-    let unified_new_type = i64_type.fn_type(&[], false);
-    add_fn("tl_vec_unified_new", unified_new_type);
-
-    // push(vec, val, is_ref)
-    let unified_push_type = void_type.fn_type(&[i64_type.into(), i64_type.into(), context.bool_type().into()], false);
-    add_fn("tl_vec_unified_push", unified_push_type);
-
-    // get(vec, idx, is_ref) -> i64
-    let unified_get_type = i64_type.fn_type(&[i64_type.into(), i64_type.into(), context.bool_type().into()], false);
-    add_fn("tl_vec_unified_get", unified_get_type);
-
-    // pop(vec, is_ref) -> i64
-    let unified_pop_type = i64_type.fn_type(&[i64_type.into(), context.bool_type().into()], false);
-    add_fn("tl_vec_unified_pop", unified_pop_type);
-
-    // len(vec) -> i64
-    let unified_len_type = i64_type.fn_type(&[i64_type.into()], false);
-    add_fn("tl_vec_unified_len", unified_len_type);
-
-    // free(vec, is_ref)
-    let unified_free_type = void_type.fn_type(&[i64_type.into(), context.bool_type().into()], false);
-    add_fn("tl_vec_unified_free", unified_free_type);
-
-    // set(vec, idx, val, is_ref)
-    let unified_set_type = void_type.fn_type(&[i64_type.into(), i64_type.into(), i64_type.into(), context.bool_type().into()], false);
-    add_fn("tl_vec_unified_set", unified_set_type);
-    
-    // Register Mappings
-    if let Some(f) = module.get_function("tl_vec_unified_new") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_unified_new as usize);
-    }
-    if let Some(f) = module.get_function("tl_vec_unified_push") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_unified_push as usize);
-    }
-    if let Some(f) = module.get_function("tl_vec_unified_get") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_unified_get as usize);
-    }
-    if let Some(f) = module.get_function("tl_vec_unified_pop") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_unified_pop as usize);
-    }
-    if let Some(f) = module.get_function("tl_vec_unified_len") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_unified_len as usize);
-    }
-    if let Some(f) = module.get_function("tl_vec_unified_free") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_unified_free as usize);
-    }
-    if let Some(f) = module.get_function("tl_vec_unified_set") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_unified_set as usize);
-    }
-
-    // Specialized Vec functions
-    // tl_vec_*_new() -> *mut Vec
-    let vec_new_type = void_ptr.fn_type(&[], false);
-    add_fn("tl_vec_ptr_new", vec_new_type);
-    add_fn("tl_vec_u8_new", vec_new_type);
-    add_fn("tl_vec_i64_new", vec_new_type);
-    add_fn("tl_vec_f32_new", vec_new_type);
-    add_fn("tl_vec_string_new", vec_new_type);
-
-    // tl_vec_*_push(vec, val)
-    let push_ptr_type = void_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
-    add_fn("tl_vec_ptr_push", push_ptr_type);
-    add_fn("tl_vec_string_push", push_ptr_type); // String handles strings as ptrs
-    
-    let push_i64_type = void_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
-    add_fn("tl_vec_i64_push", push_i64_type);
-    
-    let push_u8_type = void_type.fn_type(&[void_ptr.into(), i8_type.into()], false);
-    add_fn("tl_vec_u8_push", push_u8_type); 
-
-    let push_f32_type = void_type.fn_type(&[void_ptr.into(), f32_type.into()], false);
-    add_fn("tl_vec_f32_push", push_f32_type);
-
-    // tl_vec_*_get(vec, idx) -> val
-    let get_ptr_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
-    add_fn("tl_vec_ptr_get", get_ptr_type);
-    add_fn("tl_vec_string_get", get_ptr_type);
-
-    let get_i64_type = i64_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
-    add_fn("tl_vec_i64_get", get_i64_type);
-    
-    let get_u8_type = i8_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
-    add_fn("tl_vec_u8_get", get_u8_type);
-
-    let get_f32_type = f32_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
-    add_fn("tl_vec_f32_get", get_f32_type);
-
-    // tl_vec_*_len(vec) -> i64
-    let len_type = i64_type.fn_type(&[void_ptr.into()], false);
-    add_fn("tl_vec_ptr_len", len_type);
-    add_fn("tl_vec_string_len", len_type);
-    add_fn("tl_vec_i64_len", len_type);
-    add_fn("tl_vec_f32_len", len_type);
-    add_fn("tl_vec_u8_len", len_type);
-    
-    // tl_vec_*_free(vec)
-    add_fn("tl_vec_ptr_free", free_type);
-    add_fn("tl_vec_string_free", free_type);
-    add_fn("tl_vec_i64_free", free_type);
-    add_fn("tl_vec_f32_free", free_type);
-    add_fn("tl_vec_u8_free", free_type);
 
     // tl_tensor_add(a: *mut, b: *mut) -> *mut OpaqueTensor
     let bin_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
@@ -486,79 +375,8 @@ pub fn declare_runtime_functions<'ctx>(
     let slice_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into()], false);
     add_fn("tl_tensor_slice", slice_type);
 
-    // --- Vec Methods ---
-    
-    // pop(vec) -> val
-    let pop_i64_type = i64_type.fn_type(&[void_ptr.into()], false);
-    add_fn("tl_vec_i64_pop", pop_i64_type);
-    
-    let pop_u8_type = i8_type.fn_type(&[void_ptr.into()], false);
-    add_fn("tl_vec_u8_pop", pop_u8_type); 
-    
-    let pop_f32_type = f32_type.fn_type(&[void_ptr.into()], false);
-    add_fn("tl_vec_f32_pop", pop_f32_type);
 
-    let pop_ptr_type = void_ptr.fn_type(&[void_ptr.into()], false);
-    add_fn("tl_vec_ptr_pop", pop_ptr_type);
-    add_fn("tl_vec_string_pop", pop_ptr_type);
 
-    // clear(vec) -> void
-    let clear_type = void_type.fn_type(&[void_ptr.into()], false);
-    add_fn("tl_vec_i64_clear", clear_type);
-    add_fn("tl_vec_f32_clear", clear_type);
-    add_fn("tl_vec_ptr_clear", clear_type);
-    add_fn("tl_vec_string_clear", clear_type);
-    add_fn("tl_vec_u8_clear", clear_type);
-
-    // is_empty(vec) -> bool
-    let is_empty_type = context.bool_type().fn_type(&[void_ptr.into()], false);
-    add_fn("tl_vec_i64_is_empty", is_empty_type);
-    add_fn("tl_vec_f32_is_empty", is_empty_type);
-    add_fn("tl_vec_ptr_is_empty", is_empty_type);
-    add_fn("tl_vec_string_is_empty", is_empty_type);
-    add_fn("tl_vec_u8_is_empty", is_empty_type);
-
-    // remove(vec, idx) -> val
-    let remove_i64_type = i64_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
-    add_fn("tl_vec_i64_remove", remove_i64_type);
-    
-    let remove_u8_type = i8_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
-    add_fn("tl_vec_u8_remove", remove_u8_type);
-
-    let remove_f32_type = f32_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
-    add_fn("tl_vec_f32_remove", remove_f32_type);
-
-    let remove_ptr_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
-    add_fn("tl_vec_ptr_remove", remove_ptr_type);
-    add_fn("tl_vec_string_remove", remove_ptr_type);
-
-    // insert(vec, idx, val) -> void
-    let insert_i64_type = void_type.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into()], false);
-    add_fn("tl_vec_i64_insert", insert_i64_type);
-    
-    let insert_u8_type = void_type.fn_type(&[void_ptr.into(), i64_type.into(), i8_type.into()], false);
-    add_fn("tl_vec_u8_insert", insert_u8_type);
-
-    let insert_f32_type = void_type.fn_type(&[void_ptr.into(), i64_type.into(), f32_type.into()], false);
-    add_fn("tl_vec_f32_insert", insert_f32_type);
-
-    let insert_ptr_type = void_type.fn_type(&[void_ptr.into(), i64_type.into(), void_ptr.into()], false);
-    add_fn("tl_vec_ptr_insert", insert_ptr_type);
-    add_fn("tl_vec_string_insert", insert_ptr_type);
-
-    // contains(vec, val) -> bool
-    let contains_i64_type = context.bool_type().fn_type(&[void_ptr.into(), i64_type.into()], false);
-    add_fn("tl_vec_i64_contains", contains_i64_type);
-    
-    let contains_u8_type = context.bool_type().fn_type(&[void_ptr.into(), i8_type.into()], false);
-    add_fn("tl_vec_u8_contains", contains_u8_type);
-
-    let contains_f32_type = context.bool_type().fn_type(&[void_ptr.into(), f32_type.into()], false);
-    add_fn("tl_vec_f32_contains", contains_f32_type);
-
-    let contains_ptr_type = context.bool_type().fn_type(&[void_ptr.into(), void_ptr.into()], false);
-    add_fn("tl_vec_ptr_contains", contains_ptr_type);
-    add_fn("tl_vec_string_contains", contains_ptr_type);
 
     // tl_string_len(s: *const c_char) -> i64
     let len_str_type = i64_type.fn_type(&[i8_ptr.into()], false);
@@ -905,43 +723,7 @@ pub fn declare_runtime_functions<'ctx>(
     let map_free_type = void_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_tensor_map_free", map_free_type);
 
-    // --- HashMap Support ---
-    // tl_hashmap_new() -> *mut HashMap
-    let hashmap_new_type = void_ptr.fn_type(&[], false);
-    add_fn("tl_hashmap_new", hashmap_new_type);
 
-    // tl_hashmap_insert(map, key, value) -> bool (Workaround)
-    let hashmap_insert_type = context.bool_type().fn_type(
-        &[void_ptr.into(), i8_ptr.into(), void_ptr.into()],
-        false,
-    );
-    add_fn("tl_hashmap_insert", hashmap_insert_type);
-
-    // tl_hashmap_get(map, key) -> *mut Value
-    let hashmap_get_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
-    add_fn("tl_hashmap_get", hashmap_get_type);
-
-    // tl_hashmap_remove(map, key) -> *mut Value
-    add_fn("tl_hashmap_remove", hashmap_get_type);
-
-    // tl_hashmap_contains_key(map, key) -> bool
-    let hashmap_contains_type = context
-        .bool_type()
-        .fn_type(&[void_ptr.into(), i8_ptr.into()], false);
-    add_fn("tl_hashmap_contains_key", hashmap_contains_type);
-
-    // tl_hashmap_len(map) -> i64
-    let hashmap_len_type = i64_type.fn_type(&[void_ptr.into()], false);
-    add_fn("tl_hashmap_len", hashmap_len_type);
-
-    // tl_hashmap_clear(map) -> bool (Workaround)
-    let hashmap_clear_type = context.bool_type().fn_type(&[void_ptr.into()], false);
-    add_fn("tl_hashmap_clear", hashmap_clear_type);
-
-    // Register return types explicitly for Method Call compilation
-
-    // tl_hashmap_free(map)
-    add_fn("tl_hashmap_free", hashmap_clear_type);
 
 
     // Reshape
@@ -1629,47 +1411,7 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_len") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_len as usize);
     }
-    if let Some(f) = module.get_function("tl_vec_void_len") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_void_len as usize);
-    }
-    if let Some(f) = module.get_function("tl_vec_void_get") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_void_get as usize);
-    }
-    if let Some(f) = module.get_function("tl_vec_void_free") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_void_free as usize);
-    }
-    // Specialized Vec Mappings (New)
-    if let Some(f) = module.get_function("tl_vec_ptr_new") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_new as usize); }
-    if let Some(f) = module.get_function("tl_vec_ptr_push") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_push as usize); }
-    if let Some(f) = module.get_function("tl_vec_ptr_get") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_get as usize); }
-    if let Some(f) = module.get_function("tl_vec_ptr_len") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_len as usize); }
-    if let Some(f) = module.get_function("tl_vec_ptr_free") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_free as usize); }
 
-    if let Some(f) = module.get_function("tl_vec_i64_new") { execution_engine.add_global_mapping(&f, runtime::tl_vec_i64_new as usize); }
-    if let Some(f) = module.get_function("tl_vec_i64_push") { execution_engine.add_global_mapping(&f, runtime::tl_vec_i64_push as usize); }
-    if let Some(f) = module.get_function("tl_vec_i64_get") { execution_engine.add_global_mapping(&f, runtime::tl_vec_i64_get as usize); }
-    if let Some(f) = module.get_function("tl_vec_i64_len") { execution_engine.add_global_mapping(&f, runtime::tl_vec_i64_len as usize); }
-    if let Some(f) = module.get_function("tl_vec_i64_free") { execution_engine.add_global_mapping(&f, runtime::tl_vec_i64_free as usize); }
-
-    if let Some(f) = module.get_function("tl_vec_f32_new") { execution_engine.add_global_mapping(&f, runtime::tl_vec_f32_new as usize); }
-    if let Some(f) = module.get_function("tl_vec_f32_push") { execution_engine.add_global_mapping(&f, runtime::tl_vec_f32_push as usize); }
-    if let Some(f) = module.get_function("tl_vec_f32_get") { execution_engine.add_global_mapping(&f, runtime::tl_vec_f32_get as usize); }
-    if let Some(f) = module.get_function("tl_vec_f32_len") { execution_engine.add_global_mapping(&f, runtime::tl_vec_f32_len as usize); }
-    if let Some(f) = module.get_function("tl_vec_f32_free") { execution_engine.add_global_mapping(&f, runtime::tl_vec_f32_free as usize); }
-
-    if let Some(f) = module.get_function("tl_vec_u8_new") { execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_new as usize); }
-    if let Some(f) = module.get_function("tl_vec_u8_push") { execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_push as usize); }
-    if let Some(f) = module.get_function("tl_vec_u8_get") { execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_get as usize); }
-    if let Some(f) = module.get_function("tl_vec_u8_len") { execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_len as usize); }
-    if let Some(f) = module.get_function("tl_vec_u8_free") { execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_free as usize); }
-    if let Some(f) = module.get_function("tl_vec_u8_to_tensor_2d") { execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_to_tensor_2d as usize); }
-
-    // Aliases for String -> Ptr
-    if let Some(f) = module.get_function("tl_vec_string_new") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_new as usize); }
-    if let Some(f) = module.get_function("tl_vec_string_push") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_push as usize); }
-    if let Some(f) = module.get_function("tl_vec_string_get") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_get as usize); }
-    if let Some(f) = module.get_function("tl_vec_string_len") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_len as usize); }
-    if let Some(f) = module.get_function("tl_vec_string_free") { execution_engine.add_global_mapping(&f, runtime::tl_vec_ptr_free as usize); }
     if let Some(f) = module.get_function("tl_tensor_dim") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_dim as usize);
     }
@@ -2244,16 +1986,6 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_argmin as usize);
     }
 
-    // Vec<u8> mappings
-    if let Some(f) = module.get_function("tl_vec_u8_new") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_new as usize);
-    }
-    if let Some(f) = module.get_function("tl_vec_u8_with_capacity") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_with_capacity as usize);
-    }
-    if let Some(f) = module.get_function("tl_vec_u8_len") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_len as usize);
-    }
 
     // --- LLM Mappings ---
     if let Some(f) = module.get_function("tl_tokenizer_new") {
@@ -2338,30 +2070,14 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get as usize);
     }
 
-    if let Some(f) = module.get_function("tl_vec_u8_get") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_get as usize);
-    }
-    if let Some(f) = module.get_function("tl_vec_u8_read_i32_be") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_read_i32_be as usize);
-    }
+
     if let Some(f) = module.get_function("tl_tensor_from_vec_u8") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_from_vec_u8 as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_from_u8_labels") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_from_u8_labels as usize);
     }
-    if let Some(f) = module.get_function("tl_vec_u8_set") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_set as usize);
-    }
-    if let Some(f) = module.get_function("tl_vec_u8_push") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_push as usize);
-    }
-    if let Some(f) = module.get_function("tl_vec_u8_free") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_free as usize);
-    }
-    if let Some(f) = module.get_function("tl_vec_u8_to_tensor_2d") {
-        execution_engine.add_global_mapping(&f, runtime::tl_vec_u8_to_tensor_2d as usize);
-    }
+
 
     // Binary file I/O mappings
     if let Some(f) = module.get_function("tl_file_read_binary") {
@@ -2480,13 +2196,6 @@ pub fn declare_runtime_functions<'ctx>(
     let i32_binary_methods = ["div_euclid", "rem_euclid", "pow"];
     for _name in i32_binary_methods {
     }
-    // Add missing types that were likely in the original file but I need to make sure are present
-                                                                    // tl_vec_*_as_ptr(vec) -> *const T
-    let as_ptr_i64_type = i64_ptr.fn_type(&[void_ptr.into()], false);
-    add_fn("tl_vec_i64_as_ptr", as_ptr_i64_type);
-
-    let as_ptr_u8_type = i8_ptr.fn_type(&[void_ptr.into()], false);
-    add_fn("tl_vec_u8_as_ptr", as_ptr_u8_type);
     
     // ... complete as needed based on original CodeGen
                                                                     // tl_tensor_reshape_dims(tensor: *mut OpaqueTensor, dims: *const i64, num_dims: i64) -> *mut OpaqueTensor
@@ -3000,68 +2709,7 @@ pub fn declare_runtime_functions<'ctx>(
     module.add_function("tl_query", query_type, None);
 
 
-    // Alias Returns
 
-
-    // --- Vec<u8> support for binary data ---
-    let u8_type = context.i8_type();
-
-    // tl_vec_u8_new() -> *mut Vec<u8>
-    let vec_u8_new_type = ptr_type.fn_type(&[], false);
-    module.add_function("tl_vec_u8_new", vec_u8_new_type, None);
-
-    // tl_vec_u8_with_capacity(cap: usize) -> *mut Vec<u8>
-    let vec_u8_with_cap_type = ptr_type.fn_type(&[i64_type.into()], false);
-    module.add_function("tl_vec_u8_with_capacity", vec_u8_with_cap_type, None);
-
-    // tl_vec_u8_len(ptr) -> usize
-    let vec_u8_len_type = i64_type.fn_type(&[ptr_type.into()], false);
-    module.add_function("tl_vec_u8_len", vec_u8_len_type, None);
-
-    // tl_vec_u8_get(ptr, idx) -> u8
-    let vec_u8_get_type = u8_type.fn_type(&[ptr_type.into(), i64_type.into()], false);
-    module.add_function("tl_vec_u8_get", vec_u8_get_type, None);
-
-    // tl_vec_u8_read_i32_be(ptr, idx) -> i64
-    let vec_u8_read_i32_type = i64_type.fn_type(&[ptr_type.into(), i64_type.into()], false);
-    module.add_function("tl_vec_u8_read_i32_be", vec_u8_read_i32_type, None);
-
-    // tl_tensor_from_vec_u8(ptr, offset, shape_ptr, rank) -> tensor_ptr
-    let tensor_from_vec_type = ptr_type.fn_type(
-        &[
-            ptr_type.into(),
-            i64_type.into(),
-            ptr_type.into(),
-            i64_type.into(),
-        ],
-        false,
-    );
-    module.add_function("tl_tensor_from_vec_u8", tensor_from_vec_type, None);
-
-    // tl_tensor_from_u8_labels(ptr, offset, count) -> tensor_ptr
-    let tensor_from_labels_type =
-        ptr_type.fn_type(&[ptr_type.into(), i64_type.into(), i64_type.into()], false);
-    module.add_function("tl_tensor_from_u8_labels", tensor_from_labels_type, None);
-
-    // tl_vec_u8_set(ptr, idx, val) -> void
-    let vec_u8_set_type =
-        void_type.fn_type(&[ptr_type.into(), i64_type.into(), u8_type.into()], false);
-    module.add_function("tl_vec_u8_set", vec_u8_set_type, None);
-
-    // tl_vec_u8_push(ptr, val) -> void
-    let vec_u8_push_type = void_type.fn_type(&[ptr_type.into(), u8_type.into()], false);
-    module.add_function("tl_vec_u8_push", vec_u8_push_type, None);
-
-    // tl_vec_u8_free(ptr) -> void
-    let vec_u8_free_type = void_type.fn_type(&[ptr_type.into()], false);
-    module.add_function("tl_vec_u8_free", vec_u8_free_type, None);
-
-    // tl_vec_u8_to_tensor_2d(ptr, offset, dim0, dim1) -> tensor_ptr
-    let vec_u8_to_tensor_2d_type = ptr_type.fn_type(
-        &[ptr_type.into(), i64_type.into(), i64_type.into(), i64_type.into()],
-        false,
-    );
-    module.add_function("tl_vec_u8_to_tensor_2d", vec_u8_to_tensor_2d_type, None);
 
     // --- Binary file I/O ---
     let i8_ptr = context.ptr_type(inkwell::AddressSpace::default());

@@ -3947,7 +3947,7 @@ impl<'ctx> CodeGenerator<'ctx> {
              let register_fn = self.module.get_function("tl_mem_register_struct_named").ok_or("tl_mem_register_struct_named not found")?;
              
              let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap();
-             self.builder.build_call(register_fn, &[cast_ptr.into(), name_global.as_pointer_value().into()], "");
+             let _ = self.builder.build_call(register_fn, &[cast_ptr.into(), name_global.as_pointer_value().into()], "");
 
              sret_ptr = Some(cast_ptr);
         }
@@ -5480,13 +5480,56 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut sret_ptr = None;
 
         if uses_sret {
-             // Allocate space for partial return
-             let llvm_ty = self.get_llvm_type(&ret_ty).map_err(|e| e.to_string())?;
-             let alloca = self.builder.build_alloca(llvm_ty, "sret_temp").unwrap();
-             if let Some(instr) = alloca.as_instruction_value() {
-                 instr.set_alignment(8).ok();
-             }
-             sret_ptr = Some(alloca);
+             // OLD: Stack Allocation (alloca) -> Causes Stack Corruption
+             // NEW: Heap Allocation (malloc + register) -> Correct for RefCounted Structs/SRET
+             
+             // 1. Get Struct Type and Size from CodeGen struct_types map
+             let (struct_name, generics) = match &ret_ty {
+                 Type::Struct(n, g) => (n, g),
+                 _ => return Err("SRET used on non-struct type".into()),
+             };
+             
+             let mangled_name = if generics.is_empty() {
+                 struct_name.to_string()
+             } else {
+                 self.mangle_type_name(struct_name, generics)
+             };
+             
+             // Simple name lookup (as done in compile_struct_init)
+             let simple_lookup_name = if mangled_name.contains("::") {
+                 mangled_name.split("::").last().unwrap().to_string()
+             } else {
+                 mangled_name.clone()
+             };
+
+             let struct_type = self.struct_types.get(&simple_lookup_name)
+                 .ok_or_else(|| format!("Struct type {} not found for SRET allocation", simple_lookup_name))?;
+             
+             let size = struct_type.size_of().ok_or("Cannot determine size for SRET struct")?;
+             
+             // 2. Malloc
+             let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
+             let size_i64 = self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").unwrap();
+             let call_malloc = self.builder.build_call(malloc_fn, &[size_i64.into()], "sret_malloc").map_err(|e| e.to_string())?;
+             
+             let raw_ptr = match call_malloc.try_as_basic_value() {
+                 inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                 _ => return Err("malloc returned void".into()),
+             };
+             
+             // 3. Register (Initialize RefCount=1, Header)
+             // Use generic name or strict name?
+             let struct_name_str = match &ret_ty {
+                 Type::Struct(n, _) => if n.contains("::") { n.split("::").last().unwrap() } else { n },
+                 _ => "AnonymousStruct",
+             };
+             let name_global = self.builder.build_global_string_ptr(struct_name_str, "struct_name").unwrap();
+             let register_fn = self.module.get_function("tl_mem_register_struct_named").ok_or("tl_mem_register_struct_named not found")?;
+             
+             let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap();
+             let _ = self.builder.build_call(register_fn, &[cast_ptr.into(), name_global.as_pointer_value().into()], "");
+
+             sret_ptr = Some(cast_ptr);
         }
 
         let mut compiled_args_vals = Vec::with_capacity(args.len() + 1);
@@ -5501,7 +5544,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         compiled_args_vals.push(obj_val.into());
 
         for arg in args {
-            let (val, mut ty) = self.compile_expr(arg)?;
+            let (val, ty) = self.compile_expr(arg)?;
             
             // ARGUMENT PASSING FIX: Retain ownership because Callee takes ownership (and releases at end)
             // If we don't retain, the Callee's release will free the memory while Caller still holds it (if var).
@@ -6522,7 +6565,7 @@ impl<'ctx> CodeGenerator<'ctx> {
              }
         } else {
             for arg in args {
-                let (val, mut ty) = self.compile_expr(arg)?;
+                let (val, ty) = self.compile_expr(arg)?;
 
                 // ARGUMENT PASSING FIX: Retain ownership because Callee takes ownership (and releases at end)
                 let should_retain = match &ty {
@@ -6539,14 +6582,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 compiled_args_types.push((val, ty));
             }
         }
-        if let Some(block) = self.builder.get_insert_block() {
+        if let Some(_block) = self.builder.get_insert_block() {
         } else {
         }
         if self.builder.get_insert_block().is_none() {
             return Err(format!("INTERNAL ERROR: Builder has no insert block when calling {}", final_resolved_name));
         }
 
-        for (i, arg) in compiled_args_vals.iter().enumerate() {
+        for (_i, _arg) in compiled_args_vals.iter().enumerate() {
         }
         let call_name = if ret_type == Type::Void { "" } else { "call_tmp" };
 

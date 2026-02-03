@@ -118,7 +118,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 name.as_str()
                             };
 
-                            let is_zst = if let Some(def) = self.struct_defs.get(simple_name) {
+                            let _is_zst = if let Some(def) = self.struct_defs.get(simple_name) {
                                 def.fields.is_empty()
                             } else {
                                 false
@@ -179,7 +179,7 @@ impl<'ctx> CodeGenerator<'ctx> {
              return Ok(());
         }
 
-        if (std::env::var("TL_DEBUG_FREE").is_ok()) {
+        if std::env::var("TL_DEBUG_FREE").is_ok() {
              println!("[DEBUG_FREE] emit_recursive_free: {:?}", ty);
         }
         match ty {
@@ -414,7 +414,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Unregister from Runtime Scope (Safety against double free)
                 let ptr = val.into_pointer_value();
                 if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
-                     if (std::env::var("TL_DEBUG_FREE").is_ok()) {
+                     if std::env::var("TL_DEBUG_FREE").is_ok() {
                           // Call debug printf or just use rust println for invalid ptr?
                           // Rust println runs at compile time logic.
                           // But we want runtime pointer value.
@@ -482,7 +482,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
 
                 // Try monomorphization (instantiates if needed and returns mangled name)
-                let mut runtime_name_res = if !generic_args.is_empty() {
+                let runtime_name_res = if !generic_args.is_empty() {
                      self.monomorphize_method(simple_name, "free", generic_args)
                 } else {
                      self.monomorphize_method(simple_name, "free", generic_args)
@@ -558,7 +558,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if mode == super::CLEANUP_STACK {
                      self.builder.position_at_end(free_block);
 
-                     for (i, (name, f_ty)) in struct_def.fields.iter().enumerate() {
+                     for (i, (_name, f_ty)) in struct_def.fields.iter().enumerate() {
                          // Check ZST optimization compatibility
                          if let Type::Struct(s_name, _) = f_ty {
                               // If field struct is ZST, we didn't store a pointer, so don't try to load/free it.
@@ -570,7 +570,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                               }
                          }
 
-                        match f_ty {
+                        if std::env::var("TL_DEBUG_FREE").is_ok() {
+                          println!("[DEBUG_FREE] emit_recursive_free checking field {} type {:?}", i, f_ty);
+                     }
+
+                     match f_ty {
                             Type::Tensor(_, _)
                             | Type::TensorShaped(_, _)
                             | Type::Struct(_, _)
@@ -607,7 +611,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 
                 // --- Recurse Block Continued ---
 
-                // Recurse fields
                 for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
                      // Check ZST optimization compatibility
                      if let Type::Struct(s_name, _) = f_ty {
@@ -740,274 +743,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                       if let Some(f) = free {
                             self.builder.build_call(f, &[ptr.into()], "").unwrap();
                       }
-                 }
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    pub(crate) fn emit_free(
-        &mut self,
-        val: BasicValueEnum<'ctx>,
-        ty: &Type,
-    ) -> Result<(), String> {
-        match ty {
-            Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
-                // Check if pointer
-                if !val.is_pointer_value() {
-                    return Ok(()); // Should not happen for tensor
-                }
-                let ptr = val.into_pointer_value();
-
-                // Runtime null check
-                let current_block = self.builder.get_insert_block().unwrap();
-                let func = current_block.get_parent().unwrap();
-                let free_block = self.context.append_basic_block(func, "free_tensor");
-                let merge_block = self.context.append_basic_block(func, "after_tensor_free");
-
-                let is_null = self.builder.build_is_null(ptr, "is_null_tens").map_err(|e| e.to_string())?;
-                self.builder.build_conditional_branch(is_null, merge_block, free_block).map_err(|e| e.to_string())?;
-
-                self.builder.position_at_end(free_block);
-
-                // Call tl_ptr_dec_ref(ptr) -> i32 (1=True/Free, 0=False/Keep)
-                let dec_ref_fn = self
-                    .module
-                    .get_function("tl_ptr_dec_ref")
-                    .ok_or("tl_ptr_dec_ref not found")?;
-                    
-                let cast_void = self.builder.build_pointer_cast(
-                    ptr, 
-                    self.context.ptr_type(inkwell::AddressSpace::default()), 
-                    "cast_void"
-                ).unwrap();
-
-                let call = self
-                    .builder
-                    .build_call(dec_ref_fn, &[cast_void.into()], "should_free")
-                    .map_err(|e| e.to_string())?;
-
-                let should_free_val = match call.try_as_basic_value() {
-                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-                    _ => return Err("tl_ptr_dec_ref returned void/invalid".to_string()),
-                };
-                    
-                let should_free = self.builder.build_int_compare(
-                    inkwell::IntPredicate::NE,
-                    should_free_val,
-                    self.context.i32_type().const_int(0, false),
-                    "should_free_bool"
-                ).map_err(|e| e.to_string())?;
-
-                let recurse_block = self.context.append_basic_block(func, "recurse_free_tensor");
-                self.builder.build_conditional_branch(should_free, recurse_block, merge_block)
-                    .map_err(|e| e.to_string())?;
-
-                self.builder.position_at_end(recurse_block);
-
-                // Trace Free
-                self.emit_log_free(val)?;
-
-                let mem_free_fn = self.module.get_function("tl_mem_free")
-                     .ok_or("tl_mem_free not found")?;
-                self.builder.build_call(mem_free_fn, &[cast_void.into()], "")
-                    .map_err(|e| e.to_string())?;
-
-                self.builder
-                     .build_unconditional_branch(merge_block)
-                     .map_err(|e| e.to_string())?;
-                
-                self.builder.position_at_end(merge_block);
-            }
-            Type::String(_) => {
-                  let free_fn = self
-                        .module
-                        .get_function("tl_string_free")
-                        .or_else(|| {
-                             let void_ty = self.context.void_type();
-                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                             let ft = void_ty.fn_type(&[ptr_ty.into()], false);
-                             Some(self.module.add_function("tl_string_free", ft, None))
-                        })
-                        .ok_or("tl_string_free not found")?;
-                  
-                  let ptr = val.into_pointer_value();
-                  
-                  // Runtime null check
-                  let current_block = self.builder.get_insert_block().unwrap();
-                  let func = current_block.get_parent().unwrap();
-                  let free_block = self.context.append_basic_block(func, "free_string");
-                  let merge_block = self.context.append_basic_block(func, "after_string_free");
-
-                  let is_null = self.builder.build_is_null(ptr, "is_null_str").map_err(|e| e.to_string())?;
-                  self.builder.build_conditional_branch(is_null, merge_block, free_block).map_err(|e| e.to_string())?;
-
-                  self.builder.position_at_end(free_block);
-                  // Cast to opaque pointer if needed (though StringStruct* is ptr)
-                  let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_str").unwrap();
-                  self.builder.build_call(free_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
-                  self.builder.build_unconditional_branch(merge_block).unwrap();
-
-                  self.builder.position_at_end(merge_block);
-                  return Ok(());
-            }
-            Type::Struct(name, _) => {
-                let simple_name = if name.contains("::") {
-                    name.split("::").last().unwrap()
-                } else {
-                    name.as_str()
-                };
-
-                // Some structs might be opaque or non-existent (e.g. String wrapper)
-                if simple_name == "String" {
-                     // String is a struct but generally treated as scalar resource.
-                     // But if it is registered, we should unregister it.
-                     let ptr = val.into_pointer_value();
-                     let free_fn = self.module.get_function("tl_string_free")
-                        .ok_or("tl_string_free not found")?;
-                     let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_free_str").unwrap();
-                     self.builder.build_call(free_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
-                     return Ok(());
-                }
-
-                let struct_def = self.struct_defs.get(simple_name)
-                    .ok_or(format!("Struct def {} not found", name))?
-                    .clone();
-                let struct_ty = *self.struct_types.get(simple_name)
-                    .ok_or(format!("Struct type {} not found", name))?;
-                
-                // ZST Check
-                if !val.is_pointer_value() {
-                    return Ok(());
-                }
-
-                let ptr = val.into_pointer_value();
-
-                // Runtime null check
-                let current_block = self.builder.get_insert_block().unwrap();
-                let func = current_block.get_parent().unwrap();
-                let free_block = self.context.append_basic_block(func, "free_struct");
-                let merge_block = self.context.append_basic_block(func, "after_struct_free");
-
-                let is_null = self.builder.build_is_null(ptr, "is_null_struct").map_err(|e| e.to_string())?;
-                self.builder.build_conditional_branch(is_null, merge_block, free_block).map_err(|e| e.to_string())?;
-
-                self.builder.position_at_end(free_block);
-
-                // Call tl_ptr_dec_ref(ptr) -> i32 (1=True/Free, 0=False/Keep)
-                let dec_ref_fn = self
-                    .module
-                    .get_function("tl_ptr_dec_ref")
-                    .ok_or("tl_ptr_dec_ref not found")?;
-                    
-                let cast_void = self.builder.build_pointer_cast(
-                    ptr, 
-                    self.context.ptr_type(inkwell::AddressSpace::default()), 
-                    "cast_void"
-                ).unwrap();
-
-                let call = self
-                    .builder
-                    .build_call(dec_ref_fn, &[cast_void.into()], "should_free")
-                    .map_err(|e| e.to_string())?;
-
-                let should_free_val = match call.try_as_basic_value() {
-                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-                    _ => return Err("tl_ptr_dec_ref returned void/invalid".to_string()),
-                };
-                    
-                let should_free = self.builder.build_int_compare(
-                    inkwell::IntPredicate::NE,
-                    should_free_val,
-                    self.context.i32_type().const_int(0, false),
-                    "should_free_bool"
-                ).map_err(|e| e.to_string())?;
-
-                let recurse_block = self.context.append_basic_block(func, "recurse_free_struct");
-                self.builder.build_conditional_branch(should_free, recurse_block, merge_block)
-                    .map_err(|e| e.to_string())?;
-
-                self.builder.position_at_end(recurse_block);
-
-                // Recurse fields
-                for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
-                    match f_ty {
-                        Type::Tensor(_, _)
-                        | Type::TensorShaped(_, _)
-                        | Type::Struct(_, _)
-                        | Type::Enum(_, _)
-                        | Type::Tuple(_) => {
-                            let f_ptr = self
-                                .builder
-                                .build_struct_gep(struct_ty, ptr, i as u32, "field_gep")
-                                .map_err(|e| e.to_string())?;
-                            let f_val = self
-                                .builder
-                                .build_load(
-                                    self.context.ptr_type(inkwell::AddressSpace::default()),
-                                    f_ptr,
-                                    "field_load",
-                                )
-                                .map_err(|e| e.to_string())?;
-                            // Recursively free content (Clean FULL)
-                            self.emit_recursive_free(f_val, f_ty, super::CLEANUP_FULL)?;
-                        }
-                        _ => {}
-                    }
-                }
-                
-                // Free the Struct itself
-                let mem_free_fn = self.module.get_function("tl_mem_free")
-                     .ok_or("tl_mem_free not found")?;
-                
-                // Trace Free
-                self.emit_log_free(val)?;
-
-                self.builder.build_call(mem_free_fn, &[cast_void.into()], "")
-                    .map_err(|e| e.to_string())?;
-
-                self.builder
-                     .build_unconditional_branch(merge_block)
-                     .map_err(|e| e.to_string())?;
-                
-                self.builder.position_at_end(merge_block);
-            }
-            Type::Tuple(elem_types) => {
-                 // Check if any element needs freeing
-                 let needs_free = elem_types.iter().any(|t| matches!(t, Type::Tensor(_, _) | Type::Struct(_, _)));
-                 if !needs_free {
-                     return Ok(());
-                 }
-                 
-                 let ptr = val.into_pointer_value();
-
-                 // Reconstruct LLVM struct type for GEP
-                 let mut llvm_types = Vec::new();
-                 for ty in elem_types {
-                     llvm_types.push(match ty {
-                         Type::F32 => self.context.f32_type().into(),
-                         Type::I64 => self.context.i64_type().into(),
-                         Type::I32 => self.context.i32_type().into(),
-                         Type::Bool => self.context.bool_type().into(),
-                            Type::Tensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
-                          Type::Void => self.context.i8_type().into(),
-                         _ => self.context.i64_type().into(),
-                     });
-                 }
-                 let struct_ty = self.context.struct_type(&llvm_types, false);
-                 
-                 for (i, ty) in elem_types.iter().enumerate() {
-                      if matches!(ty, Type::Tensor(_, _) | Type::String(_) | Type::Struct(_, _)) {
-                           let f_ptr = self.builder.build_struct_gep(struct_ty, ptr, i as u32, "tup_elem").unwrap();
-                           let load = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "load").unwrap();
-                           self.emit_recursive_free(load, ty, super::CLEANUP_FULL)?;
-                      }
-                 }
-                 // Free the tuple pointer itself
-                 let free = self.module.get_function("free").or_else(|| self.module.get_function("libc_free"));
-                 if let Some(f) = free {
-                       self.builder.build_call(f, &[ptr.into()], "").unwrap();
                  }
             }
             _ => {}
@@ -1458,9 +1193,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             StmtKind::Let {
                 name,
-                type_annotation,
+                type_annotation: _, // TODO: Use this
                 value,
-                mutable: _,
+                mutable: _, // TODO: Use this
             } => {
                 let def_time = self.current_time;
 
@@ -1535,7 +1270,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 }
 
-                let (mut val_ir, mut val_ty) = if let Some((r, t)) = dps_result {
+                let (mut val_ir, val_ty) = if let Some((r, t)) = dps_result {
                     (r, t)
                 } else {
                     // Standard expression compilation

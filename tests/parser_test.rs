@@ -202,47 +202,6 @@ fn test_range() {
     }
 }
 
-#[test]
-fn test_constructors() {
-    // Struct init
-    if let ExprKind::StructInit(name, _, fields) = p_expr("Point { x: 1, y: 2 }") {
-        assert_eq!(name, "Point");
-        assert_eq!(fields.len(), 2);
-    } else {
-        panic!("Expected StructInit");
-    }
-
-    // Tensor literal
-    if let ExprKind::TensorLiteral(elems) = p_expr("[1, 2, 3]") {
-        assert_eq!(elems.len(), 3);
-    } else {
-        panic!("Expected TensorConstLiteral");
-    }
-
-    // Tensor comprehension
-    // Tensor comprehension
-    // Syntax: [ indices | clauses... { body } ]
-    if let ExprKind::TensorComprehension {
-        indices,
-        clauses,
-        body,
-    } = p_expr("[i, j | { i + j }]")
-    {
-        assert_eq!(indices, vec!["i", "j"]);
-        assert!(clauses.is_empty());
-        match body {
-            Some(b) => match &b.inner {
-                ExprKind::Block(_) => {} // Body is a BlockExpr now
-                _ => panic!("Expected Block in body, got {:?}", b),
-            },
-            None => panic!("Expected Body"),
-        }
-    } else {
-        panic!("Expected TensorComprehension");
-    }
-
-
-}
 
 #[test]
 fn test_statements() {

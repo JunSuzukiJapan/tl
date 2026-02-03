@@ -800,7 +800,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         };
 
                         // Check if it is a ZST (Zero Sized Type) by looking up definition
-                        let is_zst = if let Some(def) = self.struct_defs.get(simple_name) {
+                        let _is_zst = if let Some(def) = self.struct_defs.get(simple_name) {
                             def.fields.is_empty()
                         } else {
                              // If definition not found yet, assume pointer (safe default for forward decls?)
@@ -970,7 +970,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Pass 1: Declare all methods (Prototypes) and register return types
         for imp in impls {
             // Check if generic impl
-            let target_name = imp.target_type.get_base_name();
+            let _target_name = imp.target_type.get_base_name();
             if !imp.generics.is_empty() {
                 let target_name = imp.target_type.get_base_name();
                 self.generic_impls.entry(target_name).or_default().push(imp.clone());

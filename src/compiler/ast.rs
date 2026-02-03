@@ -85,6 +85,9 @@ pub enum Type {
 
     // Reference type: &Type
     Ref(Box<Type>),
+    
+    // Raw Pointer type: ptr<Type> (or *Type)
+    Ptr(Box<Type>),
 
     // Type variable for inference (e.g., ?T0, ?T1)
     TypeVar(u32),
@@ -137,8 +140,8 @@ impl Type {
             Type::Void => "Void".to_string(),
             Type::Undefined(_) => "Undefined".to_string(),
             Type::TypeVar(_) => "TypeVar".to_string(),
-            Type::Ref(inner) => inner.get_base_name(), // Use inner name for Ref? Or maybe just "Ref"? 
-            // Usually base name implies the nominal type. &Vec<T> base name is Vec.
+            Type::Ref(inner) => inner.get_base_name(),
+            Type::Ptr(_inner) => "Ptr".to_string(),
         }
     }
 }

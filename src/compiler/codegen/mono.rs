@@ -1,7 +1,7 @@
 use super::CodeGenerator;
 use crate::compiler::ast::Type;
 use crate::compiler::ast_subst::TypeSubstitutor;
-use inkwell::types::{BasicType, BasicTypeEnum, BasicMetadataTypeEnum, StructType};
+use inkwell::types::{BasicTypeEnum, StructType};
 use inkwell::AddressSpace;
 use std::collections::HashMap;
 

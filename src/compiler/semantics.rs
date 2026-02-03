@@ -175,7 +175,7 @@ use crate::compiler::codegen::type_manager::TypeManager;
 use crate::compiler::codegen::builtin_types::resolver::resolve_static_method_name;
 // use crate::compiler::codegen::builtin_types::register_builtin_types; // Removed invalid import
 use crate::compiler::codegen::builtin_types::non_generic::tensor::register_tensor_types;
-use crate::compiler::codegen::builtin_types::non_generic::{io, system, llm};
+use crate::compiler::codegen::builtin_types::non_generic::llm;
 use crate::compiler::builtin_loader::BuiltinTypeData;
 
 pub struct SemanticAnalyzer {
@@ -259,17 +259,10 @@ impl SemanticAnalyzer {
         llm::register_llm_types(&mut self.type_manager);
         
         // Register Generic Builtins (Vec, Map, etc.) via AST Injection
-        let vec_data = crate::compiler::codegen::builtin_types::vec::load_vec_data();
-        self.register_builtin_data(vec_data);
-
-        let hashmap_data = crate::compiler::codegen::builtin_types::hashmap::load_hashmap_data();
-        self.register_builtin_data(hashmap_data);
-
         let option_data = crate::compiler::codegen::builtin_types::option::load_option_data();
         self.register_builtin_data(option_data);
 
-        let result_data = crate::compiler::codegen::builtin_types::result::load_result_data();
-        self.register_builtin_data(result_data);
+
     }
 
     fn register_builtin_data(&mut self, data: BuiltinTypeData) {
@@ -309,19 +302,6 @@ impl SemanticAnalyzer {
         } else {
             unreachable!("No scope available")
         }
-    }
-
-    fn update_variable(&mut self, name: String, new_ty: Type) -> Result<(), TlError> {
-        for scope in self.scopes.iter_mut().rev() {
-            if let Some(symbol) = scope.get_mut(&name) {
-                if !symbol.is_mutable {
-                    return self.err(SemanticError::AssignToImmutable(name), None);
-                }
-                symbol.ty = new_ty;
-                return Ok(());
-            }
-        }
-        self.err(SemanticError::VariableNotFound(name), None)
     }
 
     fn lookup_variable(&self, name: &str) -> Result<Type, SemanticError> {
@@ -1980,7 +1960,7 @@ impl SemanticAnalyzer {
         type_name: &str,
         method: &str,
         args: &mut [crate::compiler::ast::Expr],
-        type_ty: &Type,
+        _type_ty: &Type,
     ) -> Option<Result<Type, TlError>> {
         // Check arguments first
         for arg in args.iter_mut() {
@@ -4462,7 +4442,7 @@ impl SemanticAnalyzer {
                          // codegen/expr.rs will then need to generate call to `get`.
                          
                          // Check if `get` method exists
-                         let method_name = "get".to_string();
+                        //  let method_name = "get".to_string();
                          // Lookup method logic... (duplicate of MethodCall logic simplified)
                          
                          // BUT `codegen/expr.rs` MUST also handle this.
@@ -4530,7 +4510,7 @@ impl SemanticAnalyzer {
                               }
                               
                               // 2. Check Input Args
-                              for (i, idx) in indices.iter().enumerate() {
+                              for (_i, _idx) in indices.iter().enumerate() {
                                   // We can't check_expr(&mut idx) because idx is &Expr (from ref indices).
                                   // This is a problem! `check_expr` requires mutability.
                                   // Note: The original code `ExprKind::IndexAccess(target, _indices)` ignored indices check?
@@ -4961,7 +4941,7 @@ impl SemanticAnalyzer {
                          }
 
                          // Check arguments and infer types
-                         for (i, (arg_name, arg_ty_def)) in func.args.iter().enumerate() {
+                         for (i, (_arg_name, arg_ty_def)) in func.args.iter().enumerate() {
                              let val_ty = &arg_types[i];
                              
                              // Simple inference: if arg_ty_def is "T" (Struct("T")), and val_ty is "i64", then T = i64
@@ -4983,7 +4963,7 @@ impl SemanticAnalyzer {
                          }
 
                          // Now substitute and check compatibility
-                         for (i, (arg_name, arg_ty_def)) in func.args.iter().enumerate() {
+                         for (i, (_arg_name, arg_ty_def)) in func.args.iter().enumerate() {
                              let expected = self.substitute_generics(arg_ty_def, &subst);
                              let found = &arg_types[i];
                              if !self.are_types_compatible(&expected, found) {
@@ -5001,7 +4981,7 @@ impl SemanticAnalyzer {
                          let ret_ty = self.substitute_generics(&func.return_type, &subst);
                          
                          // Update AST type node if we inferred generics
-                         if let Type::Struct(n, g) = &ret_ty {
+                         if let Type::Struct(n, _g) = &ret_ty {
                              if n == &type_name {
                                  // Update type_node to match return type (e.g. Box<i64>)
                                  // This helps CodeGen
@@ -5021,7 +5001,7 @@ impl SemanticAnalyzer {
 
                 // Try as a module function (fallback) or error
                 let full_name = format!("{}::{}", type_name, method_name);
-                if let Some(func) = self.functions.get(&full_name).cloned() {
+                if let Some(_func) = self.functions.get(&full_name).cloned() {
                      // ... Simple check implementation or just error for now to save space if not needed?
                      // Let's just return error for MethodNotFound if not built-in, 
                      // unless we restore full module logic. 
@@ -5079,7 +5059,7 @@ impl SemanticAnalyzer {
                 self.err(SemanticError::StructNotFound(name), Some(expr.span.clone()))
             }
             ExprKind::MethodCall(obj, method_name, args) => {
-                let mut obj_type = self.check_expr(obj)?;
+                let obj_type = self.check_expr(obj)?;
 
                 // Hardcoded type narrowing for Vec/HashMap removed.
                 // Rely on generic inference via Type::Undefined.
@@ -5184,7 +5164,7 @@ impl SemanticAnalyzer {
                             }, Some(expr.span.clone()));
                         }
 
-                        for (i, (expected_name, expected_type)) in args_types.iter().enumerate() {
+                        for (i, (_expected_name, expected_type)) in args_types.iter().enumerate() {
                             let found_type = self.check_expr(&mut args[i])?;
                             let substituted_expected_type = self.substitute_generics(expected_type, &subst);
 
@@ -5227,7 +5207,7 @@ impl SemanticAnalyzer {
         type_name: &str,
         method: &str,
         args: &mut [crate::compiler::ast::Expr],
-        obj_type: &Type,
+        _obj_type: &Type,
     ) -> Option<Result<Type, TlError>> {
         match type_name {
             "String" => {

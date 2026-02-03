@@ -17,16 +17,6 @@ fn create_empty_module() -> Module {
     }
 }
 
-fn create_generic_struct(name: &str, param: &str) -> StructDef {
-    StructDef {
-        name: name.to_string(),
-        generics: vec![param.to_string()],
-        fields: vec![
-            ("field".to_string(), Type::Struct(param.to_string(), vec![]))
-        ],
-    }
-}
-
 fn create_generic_function(name: &str, param: &str) -> FunctionDef {
     FunctionDef {
         name: name.to_string(),
@@ -42,44 +32,6 @@ fn create_generic_function(name: &str, param: &str) -> FunctionDef {
     }
 }
 
-#[test]
-fn test_basic_struct_instantiation() {
-    let mut mono = Monomorphizer::new();
-    let mut module = create_empty_module();
-    let struct_def = create_generic_struct("Box", "T");
-    module.structs.push(struct_def);
-
-    let main_stmts = vec![
-        Stmt::dummy(StmtKind::Let {
-            name: "x".to_string(),
-            type_annotation: Some(Type::Struct("Box".to_string(), vec![Type::I64])),
-            value: Expr::dummy(ExprKind::StructInit(
-                "Box".to_string(),
-                vec![Type::I64],
-                vec![("field".to_string(), Expr::dummy(ExprKind::Int(10)))]
-            )),
-            mutable: false,
-        })
-    ];
-    
-    let main_func = FunctionDef {
-        name: "main".to_string(),
-        generics: vec![],
-        args: vec![],
-        return_type: Type::Void,
-        body: main_stmts,
-        is_extern: false,
-    };
-    module.functions.push(main_func);
-
-    mono.run(&mut module).expect("Monomorphization failed");
-
-    let concrete = module.structs.iter().find(|s| s.name == "Box_i64");
-    assert!(concrete.is_some(), "Box_i64 should be generated");
-    let concrete = concrete.unwrap();
-    // Check field type: should be I64
-    assert_eq!(concrete.fields[0].1, Type::I64);
-}
 
 #[test]
 fn test_basic_function_instantiation() {

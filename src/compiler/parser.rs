@@ -164,10 +164,21 @@ fn parse_tensor_type(input: Input) -> IResult<Input, Type, ParserError> {
     Ok((input, Type::Tensor(Box::new(inner), rank)))
 }
 
+fn parse_ptr_type(input: Input) -> IResult<Input, Type, ParserError> {
+    // We match Identifier("ptr")
+    let (input, _) = satisfy_token(|t| matches!(t, Token::Identifier(s) if s == "ptr"))(input)?;
+    let (input, _) = expect_token(Token::Lt)(input)?;
+    let (input, inner) = parse_type(input)?;
+    let (input, _) = expect_token(Token::Gt)(input)?;
+    
+    Ok((input, Type::Ptr(Box::new(inner))))
+}
+
 pub fn parse_type(input: Input) -> IResult<Input, Type, ParserError> {
     alt((
         parse_primitive_type,
         parse_tensor_type,
+        parse_ptr_type,
         // Reference type: &Type
         map(
             preceded(expect_token(Token::Ampersand), parse_type),
