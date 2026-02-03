@@ -47,9 +47,7 @@ impl GenericResolver {
             
             // Case 2: Matching structs/user types
             // Case 2: Matching structs/user types
-            (Type::Struct(n1, args1), Type::Struct(n2, args2))
-            | (Type::Enum(n1, args1), Type::Enum(n2, args2))
-            | (Type::Struct(n1, args1), Type::Enum(n2, args2))
+            (Type::Struct(n1, args1), Type::Enum(n2, args2))
             | (Type::Enum(n1, args1), Type::Struct(n2, args2)) => {
                 if n1 != n2 {
                     return Err(format!("Type mismatch: {} vs {}", n1, n2));
@@ -62,6 +60,21 @@ impl GenericResolver {
                 }
                 Ok(())
             }
+            
+            (Type::Path(p1, args1), Type::Path(p2, args2)) => {
+                 if p1 != p2 {
+                     return Err(format!("Path mismatch: {:?} vs {:?}", p1, p2));
+                 }
+                 if args1.len() != args2.len() {
+                     return Err(format!("Generic args count mismatch: {} vs {}", args1.len(), args2.len()));
+                 }
+                 for (a1, a2) in args1.iter().zip(args2.iter()) {
+                     Self::resolve_recursive(a1, a2, bindings)?;
+                 }
+                 Ok(())
+            }
+
+            // Case 3: Built-in wrappers
             
             // Case 3: Built-in wrappers
              (Type::Tensor(inner1, r1), Type::Tensor(inner2, r2)) => {
@@ -120,6 +133,10 @@ impl GenericResolver {
                 n1 == n2 && a1.len() == a2.len() && 
                     a1.iter().zip(a2.iter()).all(|(x, y)| Self::types_equivalent(x, y))
             }
+            (Type::Path(p1, a1), Type::Path(p2, a2)) => {
+                p1 == p2 && a1.len() == a2.len() && 
+                    a1.iter().zip(a2.iter()).all(|(x, y)| Self::types_equivalent(x, y))
+            }
             
 
             (Type::Tensor(i1, r1), Type::Tensor(i2, r2)) => r1 == r2 && Self::types_equivalent(i1, i2),
@@ -144,6 +161,10 @@ impl GenericResolver {
              Type::Enum(name, args) => {
                 let new_args = args.iter().map(|a| Self::apply_bindings(a, bindings)).collect();
                 Type::Enum(name.clone(), new_args)
+            }
+            Type::Path(path, args) => {
+                let new_args = args.iter().map(|a| Self::apply_bindings(a, bindings)).collect();
+                Type::Path(path.clone(), new_args)
             }
 
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(Self::apply_bindings(inner, bindings)), *rank),

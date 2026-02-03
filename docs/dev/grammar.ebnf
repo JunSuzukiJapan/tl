@@ -1,0 +1,229 @@
+/* TL Language Grammar Definition (EBNF) */
+
+/*
+ * Note: This grammar describes the structure of the TL language.
+ * It uses a standard EBNF notation.
+ * - { ... } indicates repetition (0 or more times).
+ * - [ ... ] indicates optional elements.
+ * - ( ... ) indicates grouping.
+ * - | indicates alternatives.
+ * - "..." indicates terminal symbols (tokens).
+ */
+
+/* ========================================================================== */
+/* Lexical Tokens (Abstracted)                                                */
+/* ========================================================================== */
+
+/* Identifiers */
+ident         ::= ? [a-zA-Z_][a-zA-Z0-9_]* ? ;
+
+/* Literals */
+int_lit       ::= ? -?[0-9]+ ? ;
+float_lit     ::= ? -?[0-9]+\.[0-9]+([eE][+-]?[0-9]+)? ? ;
+string_lit    ::= ? "..." ? ;
+bool_lit      ::= "true" | "false" ;
+
+/* ========================================================================== */
+/* Top Level Structure                                                        */
+/* ========================================================================== */
+
+module        ::= { item } ;
+
+item          ::= function_def
+                | struct_def
+                | enum_def
+                | impl_block
+                | use_decl
+                | mod_decl
+                | tensor_decl_stmt
+                | datalog_rule ;
+
+/* ========================================================================== */
+/* Declarations                                                               */
+/* ========================================================================== */
+
+/* Function Definition */
+function_def  ::= [ "pub" ] [ "extern" ] "fn" ident [ generic_params ] "(" [ fn_args ] ")" [ "->" type ] ( block | ";" ) ;
+
+fn_args       ::= "self" [ "," fn_arg_list ]
+                | fn_arg_list
+                | ; /* empty */
+
+fn_arg_list   ::= fn_arg { "," fn_arg } ;
+fn_arg        ::= ident ":" type ;
+
+/* Struct Definition */
+struct_def    ::= [ "pub" ] "struct" ident [ generic_params ] "{" [ struct_fields ] "}" ;
+struct_fields ::= struct_field { "," struct_field } [ "," ] ;
+struct_field  ::= ident ":" type ;
+
+/* Enum Definition */
+enum_def      ::= [ "pub" ] "enum" ident [ generic_params ] "{" [ enum_variants ] "}" ;
+enum_variants ::= enum_variant { "," enum_variant } [ "," ] ;
+enum_variant  ::= ident [ "(" type_list ")" ]     /* Tuple variant */
+                | ident [ "{" struct_fields "}" ] /* Struct variant */
+                | ident                           /* Unit variant */
+                ;
+
+/* Implementation Block */
+impl_block    ::= "impl" [ generic_params ] type "{" { function_def } "}" ;
+
+/* Module & Use Declarations */
+mod_decl      ::= [ "pub" ] "mod" ident ";" ;
+use_decl      ::= [ "pub" ] "use" use_path ";" ;
+
+use_path      ::= use_segment { "::" use_segment } ;
+use_segment   ::= ident | "*" ;
+
+/* Datalog Rule (Logic Programming) */
+datalog_rule  ::= datalog_atom ( ":-" datalog_body ( "." | ";" ) | ( "." | ";" ) ) ;
+
+datalog_body  ::= logic_literal { "," logic_literal } ;
+logic_literal ::= [ "not" | "!" ] datalog_atom ;
+datalog_atom  ::= ( ident | "true" | "false" ) [ "(" expr_list ")" ] ;
+
+/* ========================================================================== */
+/* Statements                                                                 */
+/* ========================================================================== */
+
+stmt          ::= let_stmt
+                | tensor_decl_stmt
+                | assign_stmt
+                | return_stmt
+                | while_stmt
+                | loop_stmt
+                | for_stmt
+                | break_stmt
+                | continue_stmt
+                | expr_stmt ;
+
+/* Variable Declaration */
+let_stmt      ::= "let" [ "mut" ] ident [ ":" type ] "=" expr ";"
+                | "let" [ "mut" ] ident "[" ident_list "]" "=" expr ";" ; /* Sugar for tensor comprehension */
+
+tensor_decl_stmt ::= [ "pub" ] "tensor" ident ":" type [ "=" expr ] ";" ;
+
+/* Assignment */
+assign_stmt   ::= expr assign_op expr ";" ;
+assign_op     ::= "=" | "+=" | "-=" | "*=" | "/=" | "%=" ;
+
+/* Flow Control Statements */
+return_stmt   ::= "return" [ expr ] ";" ;
+break_stmt    ::= "break" ";" ;
+continue_stmt ::= "continue" ";" ;
+
+while_stmt    ::= "while" expr block ;
+loop_stmt     ::= "loop" block ;
+for_stmt      ::= "for" ident "in" expr block ;
+
+/* Expression Statement */
+expr_stmt     ::= expr [ ";" ] ; /* Semicolon optional for block-like expressions */
+
+/* ========================================================================== */
+/* Expressions                                                                */
+/* ========================================================================== */
+
+expr          ::= block
+                | if_expr
+                | match_expr
+                | range_expr ;
+
+block         ::= "{" { stmt } [ expr ] "}" ;
+
+if_expr       ::= "if" expr block [ "else" ( block | if_expr ) ]
+                | "if" "let" pattern "=" expr block [ "else" ( block | if_expr ) ] ;
+
+match_expr    ::= "match" expr "{" { match_arm } "}" ;
+match_arm     ::= pattern "=>" expr [ "," ] ;
+
+/* Precedence Hierarchy (Lowest to Highest) */
+
+range_expr    ::= logic_or [ ".." [ logic_or ] ]
+                | ".." [ logic_or ] ;
+
+logic_or      ::= logic_and { "||" logic_and } ;
+logic_and     ::= comparison { "&&" comparison } ;
+
+comparison    ::= bitwise_or { cmp_op bitwise_or } ;
+cmp_op        ::= "==" | "!=" | "<" | ">" | "<=" | ">=" ;
+
+bitwise_or    ::= bitwise_xor { "|" bitwise_xor } ;
+bitwise_xor   ::= bitwise_and { "^" bitwise_and } ;
+bitwise_and   ::= term { "&" term } ;
+
+term          ::= factor { term_op factor } ;
+term_op       ::= "+" | "-" ;
+
+factor        ::= cast_expr { factor_op cast_expr } ;
+factor_op     ::= "*" | "/" | "%" ;
+
+cast_expr     ::= unary { "as" type } ;
+
+unary         ::= ( "-" | "!" | "not" ) unary
+                | postfix ;
+
+postfix       ::= atom { postfix_op } ;
+postfix_op    ::= "(" [ expr_list ] ")"   /* Function Call */
+                | "[" expr "]"            /* Indexing */
+                | "." ident               /* Field Access or Method literal */
+                ;
+
+/* Atomic Expressions */
+atom          ::= int_lit | float_lit | string_lit | bool_lit
+                | ident
+                | path_expr               /* Variable, Static Call, Struct Init, Enum Variant */
+                | "self"
+                | "(" expr ")"
+                | tensor_comp_or_lit ;
+
+path_expr     ::= primitive_type "::" ident "(" [ expr_list ] ")"
+                | path [ "{" struct_init_fields "}" ] ; /* Struct Init if followed by braces, else Path/Call */
+
+struct_init_fields ::= ident ":" expr { "," ident ":" expr } [ "," ] ;
+
+/* Tensor Literals & Comprehensions */
+tensor_comp_or_lit ::= "[" tensor_inner "]" ;
+
+tensor_inner  ::= expr_list /* Literal: [1, 2, 3] */
+                | ident_list "|" comp_clauses ; /* Comprehension: [i, j | i+j] */
+
+comp_clauses  ::= comp_item { "," comp_item } ;
+comp_item     ::= ident "<-" expr /* Generator */
+                | expr ;          /* Condition or Body */
+
+/* ========================================================================== */
+/* Types                                                                      */
+/* ========================================================================== */
+
+type          ::= primitive_type
+                | path
+                | tensor_type ;
+
+primitive_type ::= "i64" | "f64" | "u8" | "bool" | "void" | "string";
+
+tensor_type   ::= "tensor" "<" type "," dims ">" ;
+dims          ::= expr_list ;
+
+path          ::= ident [ generic_args ] { "::" ident [ generic_args ] } ;
+
+/* ========================================================================== */
+/* Helpers                                                                    */
+/* ========================================================================== */
+
+generic_params ::= "<" ident_list ">" ;
+generic_args   ::= "<" type_list ">" ;
+
+ident_list     ::= ident { "," ident } ;
+type_list      ::= type { "," type } ;
+expr_list      ::= expr { "," expr } ;
+
+/* Patterns */
+pattern       ::= "_"
+                | literal
+                | path [ pattern_data ] ;
+
+pattern_data  ::= "(" ident_list ")"          /* Tuple Variant Pattern */
+                | "{" pattern_fields "}"      /* Struct Variant Pattern */
+                ;                             /* Unit Variant (no data) */
+
+pattern_fields ::= ident [ ":" ident ] { "," ident [ ":" ident ] } [ "," ] ;

@@ -107,36 +107,6 @@ pub fn identifier(input: Input) -> IResult<Input, String, ParserError> {
     }
 }
 
-// Match primitive identifiers if they are parsed as tokens?
-// Lexer emits keywords for f32, etc. So "f32" is Token::F32Type.
-// We need to match Token::F32Type -> Type::F32.
-// Helper for path segments (Identifier or Type keywords used as namespace)
-fn identifier_or_type_token(input: Input) -> IResult<Input, String, ParserError> {
-    match input.first() {
-        Some(tok) => match &tok.token {
-            Token::Identifier(s) => Ok((&input[1..], s.clone())),
-            Token::StringType => Ok((&input[1..], "String".to_string())),
-            Token::CharType => Ok((&input[1..], "Char".to_string())),
-            Token::F32Type => Ok((&input[1..], "f32".to_string())),
-            Token::F64Type => Ok((&input[1..], "f64".to_string())),
-            Token::I32Type => Ok((&input[1..], "i32".to_string())),
-            Token::I64Type => Ok((&input[1..], "i64".to_string())),
-            Token::BoolType => Ok((&input[1..], "bool".to_string())),
-            Token::VoidType => Ok((&input[1..], "void".to_string())), // Unlikely but consistent
-            _ => Err(nom::Err::Error(ParserError {
-                input,
-                kind: ParseErrorKind::UnexpectedToken("Identifier or Type".to_string()),
-            })),
-        },
-        None => Err(nom::Err::Error(ParserError {
-            input,
-            kind: ParseErrorKind::UnexpectedToken("EOF".to_string()),
-        })),
-    }
-}
-// Entry point wrapper (Temporary adapter for existing tests expecting string)
-// We need to change the public API `parse` to take `&str` but use `tokenize` internally.
-
 
 // Helper: Match anything that satisfies predicate
 pub fn satisfy_token<F>(pred: F) -> impl Fn(Input) -> IResult<Input, SpannedToken, ParserError> 
@@ -212,19 +182,51 @@ pub fn parse_type(input: Input) -> IResult<Input, Type, ParserError> {
             ),
             Type::Tuple,
         ),
-            // User defined: identifier<generics?> -> Now Struct
-        map(
-            tuple((
-                identifier,
-                opt(delimited(
-                    expect_token(Token::Lt),
-                    separated_list1(expect_token(Token::Comma), parse_type),
-                    expect_token(Token::Gt),
-                )),
-            )),
-            |(name, generics)| Type::Struct(name, generics.unwrap_or_default()),
-        ),
+        parse_type_path,
     ))(input)
+}
+
+fn parse_type_path(input: Input) -> IResult<Input, Type, ParserError> {
+    // Check for "Ref" or other keywords that might be identifiers?
+    // User type path: Ident<G>::Ident<G>
+    let (mut rest, first) = identifier(input)?;
+    let mut segments = vec![first];
+    let mut generics = vec![];
+    
+    // Generics on first segment
+    if let Ok((r, _)) = expect_token(Token::Lt)(rest) {
+         if let Ok((r2, args)) = separated_list1(expect_token(Token::Comma), parse_type)(r) {
+             if let Ok((r3, _)) = expect_token(Token::Gt)(r2) {
+                 rest = r3;
+                 generics = args;
+             }
+         }
+    }
+
+    loop {
+        if let Ok((r, _)) = expect_token(Token::DoubleColon)(rest) {
+             if let Ok((r2, seg)) = identifier(r) {
+                 rest = r2;
+                 segments.push(seg);
+                 
+                 // Generics on segment
+                 if let Ok((r3, _)) = expect_token(Token::Lt)(rest) {
+                     if let Ok((r4, args)) = separated_list1(expect_token(Token::Comma), parse_type)(r3) {
+                         if let Ok((r5, _)) = expect_token(Token::Gt)(r4) {
+                             rest = r5;
+                             generics = args;
+                         }
+                     }
+                 }
+             } else {
+                 break;
+             }
+        } else {
+             break;
+        }
+    }
+    
+    Ok((rest, Type::Path(segments, generics)))
 }
 
 
@@ -377,15 +379,26 @@ fn parse_block(input: Input) -> IResult<Input, Expr, ParserError> {
 
 
 fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
-    // Parse a path: identifier<generics>? (:: identifier<generics>?)*
-    // Then determine what it is based on what follows:
-    // - :: method ( ... )  -> Static method call on preceding type
-    // - { ... }            -> Struct/Enum init
-    // - other              -> Error (not a valid path-based atom)
-    
-    // Parse first identifier (or typetoken)
-    let (mut rest, first) = identifier_or_type_token(input)?;
-    let mut path_segments = vec![first.clone()];
+    // 1. Try Primitive Type first: i64::method()
+    if let Ok((rest, ty)) = parse_primitive_type(input) {
+        // Primitive type found. Expect :: method
+        if let Ok((rest2, _)) = expect_token(Token::DoubleColon)(rest) {
+            let (rest3, method) = identifier(rest2)?;
+            // Check for Static Method Call: i64::method(...)
+            if let Ok((rest4, _)) = expect_token(Token::LParen)(rest3) {
+                let (rest5, args) = separated_list0(expect_token(Token::Comma), parse_expr)(rest4)?;
+                let (rest6, _) = expect_token(Token::RParen)(rest5)?;
+                return Ok((rest6, Spanned::new(ExprKind::StaticMethodCall(ty, method, args), crate::compiler::error::Span::default())));
+            }
+        }
+        // If just primitive without ::, it's not a path atom we handle here (e.g. just "i64" is not expr).
+        return Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Expected :: after primitive".to_string()) }));
+    }
+
+    // 2. Parse User Defined Path: Ident<G> :: Ident<G> ...
+    // Parse first identifier
+    let (mut rest, first) = identifier(input)?;
+    let mut path_segments = vec![first];
     let mut generics: Vec<Type> = vec![];
     
     // Check for generics after first identifier: Type<T, U>
@@ -400,7 +413,7 @@ fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
     // Collect :: identifier<generics>? segments
     loop {
         if let Ok((rest2, _)) = expect_token(Token::DoubleColon)(rest) {
-            if let Ok((rest3, seg)) = identifier_or_type_token(rest2) {
+            if let Ok((rest3, seg)) = identifier(rest2) {
                 path_segments.push(seg);
                 rest = rest3;
                 // Check for generics after this segment
@@ -413,7 +426,6 @@ fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
                     }
                 }
             } else {
-                // :: but no identifier - syntax error or end of path
                 break;
             }
         } else {
@@ -421,15 +433,13 @@ fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
         }
     }
     
-    // Now path_segments contains the full path
     // Determine the pattern:
-    // - If followed by ( args ) and path has >= 2 segments:
-    //   -> Last is method, rest is type path: mod::Type::method()
-    // - If followed by ( args ) and path has 1 segment with generics:
-    //   -> This is Type<T>::method() form, but we need to handle it
-    // - If followed by { ... } and path has >= 1 segment:
-    //   -> Struct/Enum init
+    // - Followed by ( ... ) -> Static Method or Fn Call
+    // - Followed by { ... } -> Struct Init
     
+    // Type::Path creation
+    let path_ty = Type::Path(path_segments.clone(), generics.clone());
+
     if let Ok((rest2, _)) = expect_token(Token::LParen)(rest) {
         // Function/Static method call
         let (rest3, args) = separated_list0(expect_token(Token::Comma), parse_expr)(rest2)?;
@@ -437,21 +447,40 @@ fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
         
         if path_segments.len() >= 2 {
             // Static method call: Type::method() or mod::Type::method()
-            let method = path_segments.pop().unwrap();
-            let type_name = path_segments.join("::");
-            let ty = Type::Struct(type_name, generics);
+            // We need to split into Type and Method.
+            // But with Type::Path, it is ambiguous until semantics.
+            // But StaticMethodCall expects Type and Method String.
+            // Current AST ExprKind::StaticMethodCall(Type, String, Vec)
+            // We can assume last segment is method name?
+            // "Type::method" -> Type::Path(["Type"]), "method"
+            
+            let method = path_segments.last().unwrap().clone();
+            let mut type_path = path_segments.clone();
+            type_path.pop(); // Remove method
+            
+            // If type_path is empty, it was a single function call, but we checked len >= 2.
+            let ty = Type::Path(type_path, generics);
+            
             return Ok((rest4, Spanned::new(ExprKind::StaticMethodCall(ty, method, args), crate::compiler::error::Span::default())));
         } else {
-            // Single identifier + () - not a path-based atom, it's a fn call
-            // This should be handled by parse_variable + postfix
-            return Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Not a path atom (single fn call)".to_string()) }));
+            // Single identifier + () -> FnCall
+            // But wait, path_segments[0] is the function name.
+            let _func_name = path_segments[0].clone();
+
+            if !generics.is_empty() {
+                 return Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Generic function calls not supported yet".to_string()) }));
+            }
+            
+            return Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Not a path atom (single ident)".to_string()) }));
         }
     }
     
     if let Ok((rest2, _)) = expect_token(Token::LBrace)(rest) {
-        // Struct or Enum init
-        let type_name = path_segments.join("::");
+        // Struct Init: Type { ... }
+        // Use path_ty as the type.
         
+        // let type_name = path_segments.join("::"); // REMOVED
+         
         let (rest3, fields) = separated_list0(
             expect_token(Token::Comma),
             map(
@@ -462,64 +491,23 @@ fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
         let (rest3, _) = opt(expect_token(Token::Comma))(rest3)?;
         let (rest4, _) = expect_token(Token::RBrace)(rest3)?;
         
-        // Distinguish StructInit vs EnumInit (Struct Variant)
-        // Syntactically identical: Type { ... } vs Enum::Variant { ... }
-        // If path has >= 2 segments, likely Enum::Variant. But could be Mod::Struct.
-        // Ambiguity resolution needed in semantics?
-        // Current parser assumes StructInit only? No, old parser had EnumInit?
-        // AST has StructInit and EnumInit.
-        // Logic: Try to parse as StructInit for now. Semantics should convert if it resolves to an Enum Variant?
-        // Or we assume `Enum::Variant { ... }` is EnumInit.
-        // If path length > 1, let's assume it *could* be EnumInit.
-        // But Struct can be Mod::Struct.
-        // Let's produce StructInit, and rely on TypeRegistry/Semantics to re-classify?
-        // AST Refactoring plan says "EnumInit { payload: EnumVariantInit }".
-        // Let's modify `parse_path_based_atom` to check if it looks like an Enum Variant?
-        // Actually, without symbol table, we can't be sure.
-        // Wait, current parser ALREADY assumes StructInit for `{ ... }`.
-        
-        // HOWEVER, to support `Enum::Variant { ... }`, we might want to check if the LAST segment is a variant name.
-        // If so, `enum_name` = rest of path.
-        // But `Mod::Struct` has no variant name.
-        // Existing `ExprKind::EnumInit` has `enum_name` and `variant_name`.
-        // If we emit StructInit(Full::Path, ...), can we convert later?
-        // YES. StructInit(Name, ...) -> Check if Name is a Struct or (Enum, Variant).
-        // If Enum, convert to EnumInit.
-        // So for `parser.rs`, sticking to `StructInit` for `{}` syntax is safest/simplest, UNLESS we explicitly want to support distinct EnumInit syntax now.
-        // BUT, `VariantDef` changed. If we emit EnumInit, we need `EnumVariantInit::Struct(fields)`.
-        
-        // Let's assume we maintain `StructInit` here for now, as re-classifying requires semantic info.
-        // The AST change mainly affects how we *store* it if we knew it was an Enum.
-        // Wait, if `EnumInit` is used in current parser, where is it instantiated?
-        // Ah, `parse_path_based_atom` does NOT instantiate EnumInit currently in the presented code (lines 337-441).它 only emits `StructInit`.
-        // So `EnumInit` is currently UNUSED in parser? Or I missed it?
-        // Line 272 `EnumInit` existed in AST but was it used?
-        // Checking `parse_expr`: it calls `parse_path_based_atom`.
-        // `parse_path_based_atom` emits `StructInit` (line 422).
-        // It seems the legacy parser might have been different or I am missing something.
-        // Wait, line 425 mentions "Type::Variant (tuple variant with no args)".
-        // Basically, parser seems to emit StructInit or StaticMethodCall.
-        
-        // OK. I will leave `StructInit` as is for Parsing. The real change needed is in `parse_enum_def` and `parse_pattern`.
-        // `parse_pattern` USES `EnumPattern`.
-        return Ok((rest4, Spanned::new(ExprKind::StructInit(type_name, generics, fields), crate::compiler::error::Span::default())));
+        // ExprKind::StructInit now takes Type
+        return Ok((rest4, Spanned::new(ExprKind::StructInit(path_ty, fields), crate::compiler::error::Span::default())));
     }
-    
-    // Check for :: followed by identifier (but no () after) - this is an enum variant
-    // Pattern: Type::Variant (tuple variant with no args) or Type::Variant { ... } (struct variant)
-    // Actually we already consumed all :: segments above.
-    // If we get here with multiple segments and no () or {}, it might be an enum tuple variant without args
+
+    // Check for Enum Variant without args: Type::Variant
     if path_segments.len() >= 2 {
-        // This could be Type::Variant with no args (unit or tuple-variant with 0 args)
-        let variant = path_segments.pop().unwrap();
-        let type_name = path_segments.join("::");
-        let ty = Type::Struct(type_name, generics);
-        // Emit as static method call with empty args (for tuple variant)
-        // Note: This may need adjustment based on how enum variants are handled elsewhere
+        // Treat as Static Method Call with empty args? Or should AST have EnumVariant?
+        // Existing code: StaticMethodCall(ty, variant, [])
+        let variant = path_segments.last().unwrap().clone();
+        let mut type_path = path_segments.clone();
+        type_path.pop();
+        
+        let ty = Type::Path(type_path, generics);
         return Ok((rest, Spanned::new(ExprKind::StaticMethodCall(ty, variant, vec![]), crate::compiler::error::Span::default())));
     }
     
-    // Single identifier without () or {} - not a path-based atom
+    // Single identifier without suffix - handled by parse_variable
     Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Not a path atom".to_string()) }))
 }
 
@@ -1128,7 +1116,11 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
          if let Ok((rest2, _)) = expect_token(Token::DoubleColon)(rest) {
              let (rest3, method) = identifier(rest2)?;
              // Enum Pattern: Type::Variant ...
-             if let Type::Struct(name, _) = ty {
+             if let Some(name) = match ty {
+                 Type::Struct(name, _) => Some(name),
+                 Type::Path(segments, _) => Some(segments.join("::")),
+                 _ => None,
+             } {
                   if let Ok((rest4, _)) = expect_token(Token::LBrace)(rest3) {
                       // Struct Pattern { field: var, ... }
                       let (rest5, bindings_vec) = separated_list0(
@@ -1165,7 +1157,14 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
          } else {
              // Just Type (Identifier). `None`. `Some`.
              // Treat as EnumPattern with empty enum_name?
-             if let Type::Struct(name, _) = ty {
+             // Treat as EnumPattern with empty enum_name?
+             let name_opt = match ty {
+                 Type::Struct(name, _) => Some(name),
+                 Type::Path(segments, _) => Some(segments.join("::")),
+                 _ => None,
+             };
+             
+             if let Some(name) = name_opt {
                   // Check for { or (
                   if let Ok((rest2, _)) = expect_token(Token::LBrace)(rest) {
                       let (rest3, bindings_vec) = separated_list0(

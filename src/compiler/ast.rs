@@ -101,6 +101,9 @@ pub enum Type {
     // Generic placeholder or unresolved type (Merged into Struct)
     // UserDefined(String, Vec<Type>), // REMOVED
 
+    // Path type: Unresolved user type reference (Mod::Struct<T>)
+    Path(Vec<String>, Vec<Type>),
+
     Void, // For functions returning nothing
     Undefined(u64), // For unresolved generics (unique ID)
 }
@@ -127,6 +130,7 @@ impl Type {
             Type::TensorShaped(_, _) => "Tensor".to_string(),
             Type::Struct(n, _) => n.clone(),
             Type::Enum(n, _) => n.clone(),
+            Type::Path(p, _) => p.join("::"),
 
             Type::Tuple(_) => "Tuple".to_string(), // Or handle specially? TypeRegistry didn't support Tuple generic methods usually.
             // Type::UserDefined(n, _) => n.clone(), // REMOVED
@@ -303,8 +307,8 @@ pub enum ExprKind {
     Block(Vec<Stmt>),
 
 
-    // Struct Init: Name { field: value, ... }
-    StructInit(String, Vec<Type>, Vec<(String, Expr)>),
+    // Struct Init: Type { field: value, ... }
+    StructInit(Type, Vec<(String, Expr)>),
 
     // Enum Init: Enum::Variant { ... } or Enum::Variant(...)
     EnumInit {

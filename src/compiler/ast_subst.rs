@@ -34,6 +34,10 @@ impl TypeSubstitutor {
                 let new_types = types.iter().map(|t| self.substitute_type(t)).collect();
                 Type::Tuple(new_types)
             }
+            Type::Path(segments, generics) => {
+                 let new_generics = generics.iter().map(|g| self.substitute_type(g)).collect();
+                 Type::Path(segments.clone(), new_generics)
+            }
 
             _ => ty.clone(),
         }
@@ -73,10 +77,10 @@ impl TypeSubstitutor {
                 ExprKind::StaticMethodCall(new_ty, method.clone(), new_args)
             }
             
-            ExprKind::StructInit(name, generics, fields) => {
-                let new_generics = generics.iter().map(|t| self.substitute_type(t)).collect();
+            ExprKind::StructInit(ty, fields) => {
+                let new_ty = self.substitute_type(ty);
                 let new_fields = fields.iter().map(|(n, e)| (n.clone(), self.substitute_expr(e))).collect();
-                ExprKind::StructInit(name.clone(), new_generics, new_fields)
+                ExprKind::StructInit(new_ty, new_fields)
             }
             
             ExprKind::Block(stmts) => {

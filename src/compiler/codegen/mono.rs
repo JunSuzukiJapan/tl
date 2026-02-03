@@ -438,6 +438,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Ref(_) => {
                 Ok(self.context.ptr_type(AddressSpace::default()).into())
             }
+
+            Type::Path(segments, _) => {
+                 panic!("Unresolved Type::Path in codegen: {:?}. This should have been resolved to Type::Struct by semantics/monomorphizer.", segments);
+            }
             
             _ => {
                 // Default to i64 for unknown types
@@ -533,6 +537,15 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.substitute_type(inner, subst)), *rank),
             Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.substitute_type(t, subst)).collect()),
+            Type::Path(segments, args) => {
+                 if segments.len() == 1 {
+                     if let Some(replacement) = subst.get(&segments[0]) {
+                         return replacement.clone();
+                     }
+                 }
+                 let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
+                 Type::Path(segments.clone(), new_args)
+            },
             _ => ty.clone(),
         }
     }

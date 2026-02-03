@@ -340,6 +340,14 @@ pub fn declare_runtime_functions<'ctx>(
     let dec_ref_type = i32_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_ptr_dec_ref", dec_ref_type);
 
+    // tl_ptr_inc_ref(ptr: *mut) -> void
+    let inc_ref_type = void_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_ptr_inc_ref", inc_ref_type);
+
+    // tl_ptr_inc_ref_i64(addr: i64) -> void
+    let inc_ref_i64_type = void_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_ptr_inc_ref_i64", inc_ref_i64_type);
+
     // tl_mem_free(ptr: *mut) -> void
     add_fn("tl_mem_free", free_type);
 
@@ -402,9 +410,6 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_vec_unified_set") {
         execution_engine.add_global_mapping(&f, runtime::tl_vec_unified_set as usize);
     }
-
-    // tl_vec_void_free(ptr: *mut) -> void
-    add_fn("tl_vec_void_free", free_type);
 
     // Specialized Vec functions
     // tl_vec_*_new() -> *mut Vec

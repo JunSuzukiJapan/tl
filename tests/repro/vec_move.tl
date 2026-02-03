@@ -1,9 +1,6 @@
 
 // Externs
-extern fn tl_vec_unified_push(handle: i64, val: i64, is_ref: bool);
-// get is harder because unified_get returns i64, but we need to know it works.
-extern fn tl_vec_unified_get(handle: i64, idx: i64, is_ref: bool) -> i64;
-extern fn tl_vec_unified_new() -> i64;
+// Externs removed - they are now built-in
 
 struct MyVec<T> {
     handle: i64,

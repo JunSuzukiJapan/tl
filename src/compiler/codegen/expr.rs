@@ -1339,7 +1339,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Struct(_, _) => {
                 match &expr.inner {
                     // Fresh allocations are safe to free
-                    ExprKind::StaticMethodCall(_, _, _) | ExprKind::StructInit(_, _, _) => true,
+                    ExprKind::StaticMethodCall(_, _, _) | ExprKind::StructInit(_, _) => true,
                     // Variables and Fields are L-values, not safe to free
                     ExprKind::Variable(_) | ExprKind::FieldAccess(_, _) => false,
                     // Method calls: Check recursively if the receiver was safe to free.
@@ -2419,7 +2419,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 Err(format!("Variable {} not found in scopes", name))
             }
-            ExprKind::StructInit(name, generics, fields) => self.compile_struct_init(name, generics, fields),
+            ExprKind::StructInit(ty, fields) => {
+                 let (name, generics) = match ty {
+                      Type::Struct(name, generics) => (name.clone(), generics.clone()),
+                      Type::Enum(name, generics) => (name.clone(), generics.clone()), // Enums might use struct-init syntax?
+                      _ => panic!("StructInit type must be Struct or Enum, found {:?}", ty),
+                 };
+                 self.compile_struct_init(&name, &generics, fields)
+            },
             ExprKind::StaticMethodCall(type_ty, method_name, args) => {
                 let struct_name = match type_ty {
                     Type::Struct(name, _) => name,
@@ -6314,8 +6321,24 @@ impl<'ctx> CodeGenerator<'ctx> {
             
             // Extract T from PhantomData<T>
             let target_type = if let Type::Struct(name, generics) = &marker_ty {
-                if name.contains("PhantomData") && !generics.is_empty() {
-                    generics[0].clone()
+                if name.contains("PhantomData") {
+                    if !generics.is_empty() {
+                        generics[0].clone()
+                    } else if let Some(suffix) = name.strip_prefix("PhantomData_") {
+                        // Specialized
+                        match suffix {
+                            "i64" => Type::I64,
+                            "i32" => Type::I32,
+                            "f64" => Type::F64,
+                            "f32" => Type::F32,
+                            "bool" => Type::Bool,
+                            "String" => Type::String("String".to_string()),
+                            "Char" => Type::Char("Char".to_string()),
+                            _ => Type::Struct(suffix.to_string(), vec![]),
+                        }
+                    } else {
+                         return Err(format!("Arg 2 must be PhantomData<T> (specialized or generic), got {:?}", marker_ty));
+                    }
                 } else {
                     return Err(format!("Arg 2 must be PhantomData<T>, got {:?}", marker_ty));
                 }
@@ -6368,8 +6391,25 @@ impl<'ctx> CodeGenerator<'ctx> {
             
             // Extract T
             let target_type = if let Type::Struct(name, generics) = &marker_ty {
-                if name.contains("PhantomData") && !generics.is_empty() {
-                    generics[0].clone()
+                if name.contains("PhantomData") {
+                    if !generics.is_empty() {
+                        generics[0].clone()
+                    } else if let Some(suffix) = name.strip_prefix("PhantomData_") {
+                        // Specialized: PhantomData_i64, PhantomData_String, etc.
+                        match suffix {
+                            "i64" => Type::I64,
+                            "i32" => Type::I32,
+                            "f64" => Type::F64,
+                            "f32" => Type::F32,
+                            "bool" => Type::Bool,
+                            "String" => Type::String("String".to_string()),
+                            "Char" => Type::Char("Char".to_string()),
+                            _ => Type::Struct(suffix.to_string(), vec![]), // Assume struct/ref
+                        }
+                    } else {
+                         // PhantomData generic unspecialized with no args? Should not happen in monomorphized code
+                         return Err(format!("Arg 1 must be PhantomData<T> (specialized or generic), got {:?}", marker_ty));
+                    }
                 } else {
                     return Err(format!("Arg 1 must be PhantomData<T>, got {:?}", marker_ty));
                 }

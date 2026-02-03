@@ -179,6 +179,9 @@ impl<'ctx> CodeGenerator<'ctx> {
              return Ok(());
         }
 
+        if (std::env::var("TL_DEBUG_FREE").is_ok()) {
+             println!("[DEBUG_FREE] emit_recursive_free: {:?}", ty);
+        }
         match ty {
             Type::Ref(_) => {},
             Type::Enum(name, _) => {
@@ -411,6 +414,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Unregister from Runtime Scope (Safety against double free)
                 let ptr = val.into_pointer_value();
                 if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                     if (std::env::var("TL_DEBUG_FREE").is_ok()) {
+                          // Call debug printf or just use rust println for invalid ptr?
+                          // Rust println runs at compile time logic.
+                          // But we want runtime pointer value.
+                          // We can't print runtime pointer easily from JIT without building a format string.
+                          // But we CAN print the TYPE at JIT time.
+                          println!("[DEBUG_FREE] Unregister logic generated for Type: {:?}", ty);
+                     }
                      let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                      let cast = self.builder.build_pointer_cast(ptr, void_ptr_ty, "unreg_cast").unwrap();
                      self.builder.build_call(unreg_fn, &[cast.into()], "").ok(); 
@@ -477,25 +488,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                      self.monomorphize_method(simple_name, "free", generic_args)
                 };
 
-                // Fallback: Demangle Vec_T generic if standard lookup failed
-                // This handles cases where Type::Struct name has already been monomorphized (e.g. "Vec_String")
-                if runtime_name_res.is_err() && simple_name.starts_with("Vec_") {
-                     let suffix = &simple_name[4..];
-                     let inner_ty = match suffix {
-                         "String" => Some(Type::Struct("String".to_string(), vec![])), 
-                         "i64" => Some(Type::I64),
-                         "i32" => Some(Type::I32),
-                         "f32" => Some(Type::F32),
-                         "u8" => Some(Type::U8),
-                         "bool" => Some(Type::Bool),
-                         _ => None,
-                     };
-                     
-                     if let Some(ty) = inner_ty {
-                          // Retry with explicit "Vec" and [T]
-                          runtime_name_res = self.monomorphize_method("Vec", "free", &[ty]);
-                     }
-                }
+                // Fallback removed.
+                // **静的型付け言語において、フォールバックは百害あって一利なしなので、絶対にフォールバックはいれないで。**
 
                 if let Ok(runtime_name) = runtime_name_res {
                     if let Some(fn_val) = self.module.get_function(&runtime_name) {
@@ -564,7 +558,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if mode == super::CLEANUP_STACK {
                      self.builder.position_at_end(free_block);
 
-                     for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
+                     for (i, (name, f_ty)) in struct_def.fields.iter().enumerate() {
+                         // Check ZST optimization compatibility
+                         if let Type::Struct(s_name, _) = f_ty {
+                              // If field struct is ZST, we didn't store a pointer, so don't try to load/free it.
+                              let simple_s_name = if s_name.contains("::") { s_name.split("::").last().unwrap() } else { s_name.as_str() };
+                              if let Some(def) = self.struct_defs.get(simple_s_name) {
+                                   if def.fields.is_empty() {
+                                        continue;
+                                   }
+                              }
+                         }
+
                         match f_ty {
                             Type::Tensor(_, _)
                             | Type::TensorShaped(_, _)
@@ -604,6 +609,17 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Recurse fields
                 for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
+                     // Check ZST optimization compatibility
+                     if let Type::Struct(s_name, _) = f_ty {
+                          // If field struct is ZST, we didn't store a pointer, so don't try to load/free it.
+                          let simple_s_name = if s_name.contains("::") { s_name.split("::").last().unwrap() } else { s_name.as_str() };
+                          if let Some(def) = self.struct_defs.get(simple_s_name) {
+                               if def.fields.is_empty() {
+                                    continue;
+                               }
+                          }
+                     }
+
                     match f_ty {
                         Type::Tensor(_, _)
                         | Type::TensorShaped(_, _)

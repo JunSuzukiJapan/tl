@@ -195,6 +195,14 @@ impl Monomorphizer {
 
             Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.resolve_type(t)).collect()),
             Type::TensorShaped(inner, dims) => Type::TensorShaped(Box::new(self.resolve_type(inner)), dims.clone()),
+            
+            // Fix for builtins using Path
+            Type::Path(segments, args) => {
+                let name = segments.join("::");
+                let new_ty = Type::Struct(name, args.clone());
+                self.resolve_type(&new_ty)
+            }
+
             _ => ty.clone()
         }
     }
@@ -273,7 +281,20 @@ impl Monomorphizer {
 
      fn rewrite_expr(&mut self, expr: &mut ExprKind, subst: &HashMap<String, Type>, expected_type: Option<&Type>) {
          match expr {
-             ExprKind::StructInit(name, explicit_generics, fields) => {
+             ExprKind::StructInit(ty, fields) => {
+                 // Fix for builtins: resolve Path -> Struct if semantics didn't run
+                 if let Type::Path(segments, args) = ty {
+                     let name = segments.join("::");
+                     *ty = Type::Struct(name, args.clone());
+                 }
+
+                let (name, explicit_generics) = match ty {
+                    Type::Struct(n, g) => (n, g),
+                    Type::Enum(n, g) => (n, g),
+                    _ => panic!("StructInit must have Struct or Enum type in Monomorphizer, found {:?}", ty),
+                };
+
+
                  // 0. Resolve explicit generics
                  let mut resolved_generics = Vec::new();
                  if !explicit_generics.is_empty() {
@@ -934,9 +955,9 @@ impl Monomorphizer {
             let mut new_def = def.clone();
             new_def.name = mangled;
             new_def.generics.clear(); // Concrete now
-            
             for (_fname, ty) in &mut new_def.fields {
                 *ty = self.substitute_type(ty, &subst);
+                *ty = self.resolve_type(ty);
             }
             
             self.concrete_structs.push(new_def);
@@ -973,11 +994,13 @@ impl Monomorphizer {
                     crate::compiler::ast::VariantKind::Tuple(types) => {
                         for ty in types {
                             *ty = self.substitute_type(ty, &subst);
+                            *ty = self.resolve_type(ty);
                         }
                     },
                     crate::compiler::ast::VariantKind::Struct(fields) => {
                         for (_, ty) in fields {
                             *ty = self.substitute_type(ty, &subst);
+                            *ty = self.resolve_type(ty);
                         }
                     }
                 }
@@ -1082,6 +1105,15 @@ impl Monomorphizer {
                  }
              },
              // ... other recursive cases
+             Type::Path(segments, args) => {
+                 if segments.len() == 1 {
+                     if let Some(replacement) = subst.get(&segments[0]) {
+                         return replacement.clone();
+                     }
+                 }
+                 let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
+                 Type::Path(segments.clone(), new_args)
+             },
              _ => ty.clone()
         }
     }
@@ -1134,7 +1166,7 @@ impl Monomorphizer {
                 None
             }
             ExprKind::BinOp(lhs, _, _) => self.infer_expr_type(&lhs.inner), // Assume LHS determines type (mostly true)
-            ExprKind::StructInit(name, _, _) => Some(Type::Struct(name.clone(), vec![])), // Could be Generic?
+            ExprKind::StructInit(ty, _) => Some(ty.clone()),
             ExprKind::EnumInit { enum_name, generics, .. } => Some(Type::Enum(enum_name.clone(), generics.clone())),
             // FnCall return type inference requires looking up the function
             ExprKind::FnCall(name, _) => {

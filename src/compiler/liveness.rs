@@ -214,7 +214,7 @@ impl LivenessAnalyzer {
                     self.exit_scope();
                 }
             }
-            ExprKind::StructInit(_, _, fields) => {
+            ExprKind::StructInit(_, fields) => {
                 for (_, expr) in fields {
                     self.visit_expr(expr);
                 }

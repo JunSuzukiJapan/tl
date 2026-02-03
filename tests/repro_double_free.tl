@@ -14,6 +14,8 @@ fn main() {
     // access element
     let first = v.get(0);
     println("Got first");
+    println(first.x); // Should be 10
+    println(first.y); // Should be 20
     
     // Scope exit should free p1, v, and first.
     // If v.get(0) aliased p1 without refcounting, and both first/p1 are in scope,

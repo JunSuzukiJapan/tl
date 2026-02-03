@@ -475,6 +475,20 @@ impl SemanticAnalyzer {
     fn resolve_user_type(&self, ty: &Type) -> Type {
         // Now everything that was UserDefined is Struct
         if let Type::Struct(name, args) = ty {
+            // Check for primitives FIRST generic args should be empty ideally, but even if not, we force primitive?
+            // Usually primitives don't have generic args.
+            match name.as_str() {
+                "i64" => return Type::I64,
+                "i32" => return Type::I32,
+                "f64" => return Type::F64,
+                "f32" => return Type::F32,
+                "bool" => return Type::Bool,
+                "string" | "String" => return Type::String("String".to_string()),
+                "char" | "Char" => return Type::Char("Char".to_string()),
+                "void" => return Type::Void,
+                 _ => {}
+            }
+
             let resolved_name = self.resolve_symbol_name(name);
             // Recursively resolve generic args
             let resolved_args: Vec<Type> = args.iter().map(|a| self.resolve_user_type(a)).collect();
@@ -488,6 +502,55 @@ impl SemanticAnalyzer {
             }
             // Keep as Struct if not found (or for Self/generics)
             Type::Struct(resolved_name, resolved_args)
+        } else if let Type::Path(path, args) = ty {
+            // Path Resolution Logic
+            // 1. Primitive Check (if length 1)
+            if path.len() == 1 {
+                 match path[0].as_str() {
+                    "i64" => return Type::I64,
+                    "i32" => return Type::I32,
+                    "f64" => return Type::F64,
+                    "f32" => return Type::F32,
+                    "bool" => return Type::Bool,
+                    "string" | "String" => return Type::String("String".to_string()),
+                    "char" | "Char" => return Type::Char("Char".to_string()),
+                    "void" => return Type::Void,
+                    _ => {}
+                 }
+            }
+
+            // 2. Resolve Name (Namespace)
+            // Current resolve_symbol_name takes String. It probably checks imports.
+            // If we have a path, we should use it?
+            // But resolve_symbol_name might be primitive?
+            // For now, assume path.join("::") matches what's in symbol table?
+            // The user wants "Type::Struct NOT holding namespace".
+            // So if we have "std::vec::Vec", we want to resolve to "Vec" (unique ID) or "std::vec::Vec" (canonical ID)?
+            // If "std::vec::Vec" IS the canonical ID in struct_defs, then we resolve to it.
+            // The existing code uses "Vec" for Vec.
+            // Let's assume resolve_symbol_name handles aliases.
+            
+            // If path > 1, assume full path?
+            // If path == 1, use resolve_symbol_name.
+            let canonical_name = if path.len() == 1 {
+                self.resolve_symbol_name(&path[0])
+            } else {
+                path.join("::") // Fallback? Or should we resolve segments?
+            };
+            
+            // Recursively resolve generic args
+            let resolved_args: Vec<Type> = args.iter().map(|a| self.resolve_user_type(a)).collect();
+
+            if self.structs.contains_key(&canonical_name) {
+                return Type::Struct(canonical_name, resolved_args);
+            }
+            if self.enums.contains_key(&canonical_name) {
+                return Type::Enum(canonical_name, resolved_args);
+            }
+            
+            // Allow unresolved if it's a generic parameter?
+            Type::Struct(canonical_name, resolved_args)
+
         } else {
             // Check other types that might contain subtypes (Tuple, Tensor, etc)
             match ty {
@@ -597,6 +660,36 @@ impl SemanticAnalyzer {
 
     pub fn check_module(&mut self, module: &mut Module) -> Result<(), TlError> {
         self.register_module_symbols(module, "")?;
+
+        // Resolve types in struct definitions
+        for struct_def in &mut module.structs {
+            for (_, field_ty) in &mut struct_def.fields {
+                *field_ty = self.resolve_user_type(field_ty);
+            }
+            // Update struct def in self.structs registry
+            self.structs.insert(struct_def.name.clone(), struct_def.clone());
+        }
+
+        // Resolve types in enum definitions
+        for enum_def in &mut module.enums {
+            for variant in &mut enum_def.variants {
+                match &mut variant.kind {
+                    crate::compiler::ast::VariantKind::Tuple(types) => {
+                        for ty in types {
+                            *ty = self.resolve_user_type(ty);
+                        }
+                    }
+                    crate::compiler::ast::VariantKind::Struct(fields) => {
+                        for (_, ty) in fields {
+                            *ty = self.resolve_user_type(ty);
+                        }
+                    }
+                    crate::compiler::ast::VariantKind::Unit => {}
+                }
+            }
+            self.enums.insert(enum_def.name.clone(), enum_def.clone());
+        }
+
         self.check_stratified_negation(module)?;
         self.check_module_bodies(module, "")?;
 
@@ -612,16 +705,7 @@ impl SemanticAnalyzer {
             }
         }
 
-        // Resolve types in struct definitions
-        for struct_def in &mut module.structs {
-            for (_, field_ty) in &mut struct_def.fields {
-                *field_ty = self.resolve_user_type(field_ty);
-            }
-            // Update struct def in self.structs registry?
-            // self.structs is a map. Use insert to overwrite.
-            // Note: register_module_symbols populated self.structs.
-            self.structs.insert(struct_def.name.clone(), struct_def.clone());
-        }
+
 
 
 
@@ -2212,11 +2296,23 @@ impl SemanticAnalyzer {
                     self.err(SemanticError::NotATuple(ty), Some(expr.span.clone()))
                 }
             }
-            ExprKind::StructInit(name, explicit_generics, fields) => {
-                let resolved_name = self.resolve_symbol_name(name);
-                if *name != resolved_name {
-                    *name = resolved_name.clone();
-                }
+            ExprKind::StructInit(type_node, fields) => {
+                let resolved_ty = self.resolve_user_type(type_node);
+                
+                // Ensure it resolved to Struct (or Error if Path not found)
+                let (name_str, explicit_generics): (String, Vec<Type>) = if let Type::Struct(n, g) = &resolved_ty {
+                     (n.clone(), g.clone())
+                } else if let Type::Path(p, _) = &resolved_ty {
+                     // Still path? Means resolve failed or unknown
+                     return self.err(SemanticError::StructNotFound(p.join("::")), Some(expr.span.clone()));
+                } else {
+                     return self.err(SemanticError::StructNotFound(format!("{:?}", resolved_ty)), Some(expr.span.clone()));
+                };
+
+                // Update AST with resolved type
+                *type_node = resolved_ty;
+                
+                let name = &name_str; // For existing logic compatibility
 
                 if let Some(struct_def) = self.structs.get(name).cloned() {
                     let mut initialized_fields = HashSet::new();
@@ -4873,10 +4969,13 @@ impl SemanticAnalyzer {
                                  if sub.is_empty() && struct_params.contains(param_name) {
                                      // Found a match!
                                      if !subst.contains_key(param_name) {
-                                         subst.insert(param_name.clone(), val_ty.clone());
-                                     } else {
-                                         // check consistency?
-                                     }
+                                        subst.insert(param_name.clone(), val_ty.clone());
+                                    } else {
+                                        // Overwrite if existing is Undefined
+                                        if let Some(Type::Undefined(_)) = subst.get(param_name) {
+                                            subst.insert(param_name.clone(), val_ty.clone());
+                                        }
+                                    }
                                  }
                              }
                              // What if arg_ty_def is Box<T>? recurse?

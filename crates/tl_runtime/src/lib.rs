@@ -4271,11 +4271,12 @@ pub extern "C" fn tl_vec_unified_push(vec: *mut Vec<*mut std::ffi::c_void>, val:
 pub extern "C" fn tl_vec_unified_get(vec: *mut Vec<*mut std::ffi::c_void>, idx: usize, is_ref: bool) -> *mut std::ffi::c_void {
     if vec.is_null() { return std::ptr::null_mut(); }
     unsafe {
-        if idx < (*vec).len() {
-            let val = (&(*vec))[idx];
+        let v = &*vec;
+        if idx < v.len() {
+            let val_ref = &v[idx];
+            let val = *val_ref;
             if is_ref {
                 memory_manager::tl_ptr_acquire(val);
-                // memory_manager::tl_mem_register_ptr(val); // REMOVED: Compiler handles registration
             }
             val
         } else {
@@ -4288,13 +4289,15 @@ pub extern "C" fn tl_vec_unified_get(vec: *mut Vec<*mut std::ffi::c_void>, idx: 
 pub extern "C" fn tl_vec_unified_set(vec: *mut Vec<*mut std::ffi::c_void>, idx: usize, val: *mut std::ffi::c_void, is_ref: bool) {
     if vec.is_null() { return; }
     unsafe {
-        if idx < (*vec).len() {
-            let old = (&(*vec))[idx];
+        let v = &mut *vec;
+        if idx < v.len() {
+            let old_ref = &v[idx];
+            let old = *old_ref;
              if is_ref {
                  memory_manager::tl_ptr_dec_ref(old);
                  memory_manager::tl_ptr_acquire(val);
              }
-             (&mut (*vec))[idx] = val;
+             v[idx] = val;
         }
     }
 }
