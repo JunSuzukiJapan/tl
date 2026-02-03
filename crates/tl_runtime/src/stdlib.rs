@@ -186,6 +186,29 @@ pub extern "C" fn tl_string_len(s: *mut crate::StringStruct) -> i64 {
     }
 }
 
+// Hash string
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_hash_string(s: *mut crate::StringStruct) -> i64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    if s.is_null() {
+        return 0;
+    }
+    unsafe {
+        if (*s).ptr.is_null() { return 0; }
+        // Hash the bytes (content)
+        let len = (*s).len as usize;
+        let slice = std::slice::from_raw_parts((*s).ptr, len);
+
+        let mut hasher = DefaultHasher::new();
+        slice.hash(&mut hasher);
+        hasher.finish() as i64
+    }
+}
+
+
+
 
 
 // --- File I/O ---

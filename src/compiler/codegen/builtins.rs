@@ -538,6 +538,14 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_string_eq") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_eq as usize);
     }
+    
+    // tl_hash_string(s: *mut StringStruct) -> i64
+    let hash_string_type = i64_type.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_hash_string", hash_string_type);
+    
+    if let Some(f) = module.get_function("tl_hash_string") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_hash_string as usize);
+    }
 
     // tl_checkpoint(ctx: *mut, func: *mut, input: *mut) -> *mut
     let checkpoint_type =

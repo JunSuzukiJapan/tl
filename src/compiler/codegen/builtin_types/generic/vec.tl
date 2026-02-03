@@ -76,4 +76,12 @@ impl<T> Vec<T> {
         let item = self.ptr[index];
         Option::Some(item)
     }
+
+    fn set(self, index: i64, item: T) {
+        if index < 0 || index >= self.len {
+            return;
+        }
+        let p = self.ptr;
+        p[index] = item;
+    }
 }

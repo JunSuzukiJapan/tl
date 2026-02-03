@@ -666,7 +666,7 @@ fn load_builtins() -> Result<tl_lang::compiler::ast::Module> {
 
     let sources = [
         builtin_types::vec::SOURCE,
-        // builtin_types::hashmap::SOURCE,
+        builtin_types::hashmap::SOURCE,
         builtin_types::option::SOURCE,
 
         builtin_types::result::SOURCE,

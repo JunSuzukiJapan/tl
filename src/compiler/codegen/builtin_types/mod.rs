@@ -6,6 +6,7 @@ pub mod resolver;
 pub use generic::option;
 pub use generic::result;
 pub use generic::vec;
+pub use generic::hashmap;
 
 pub use non_generic::io;
 pub use non_generic::system;
@@ -42,6 +43,22 @@ pub fn load_all_builtins(codegen: &mut CodeGenerator) {
         codegen.struct_defs.insert(def.name.clone(), def);
     }
     codegen.generic_impls.entry("Vec".to_string()).or_default().extend(vec_data.impl_blocks);
+
+    // HashMap
+    let hashmap_data = generic::hashmap::load_hashmap_data();
+    codegen.type_manager.register_builtin(hashmap_data.clone());
+    if let Some(def) = hashmap_data.struct_def {
+        codegen.struct_defs.insert(def.name.clone(), def);
+    }
+    codegen.generic_impls.entry("HashMap".to_string()).or_default().extend(hashmap_data.impl_blocks);
+    
+    // Entry
+    let entry_data = generic::hashmap::load_entry_data();
+    codegen.type_manager.register_builtin(entry_data.clone());
+    if let Some(def) = entry_data.enum_def {
+        codegen.enum_defs.insert(def.name.clone(), def);
+    }
+    codegen.generic_impls.entry("Entry".to_string()).or_default().extend(entry_data.impl_blocks);
 
     // 2. Register Non-Generic Types (IO, System, LLM, Tensor, Param)
     // These register directly into TypeManager

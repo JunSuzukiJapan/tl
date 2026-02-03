@@ -522,7 +522,6 @@ fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
     Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Not a path atom".to_string()) }))
 }
 
-
 fn parse_variable(input: Input) -> IResult<Input, Expr, ParserError> {
     let (input, name) = identifier(input)?;
     Ok((input, Spanned::new(ExprKind::Variable(name), crate::compiler::error::Span::default())))
@@ -1120,8 +1119,6 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
     }
     
     // Enum Pattern (Path)
-    // Tries to parse Type (Ident or Type::Ident)
-    // Then check for { or (
     if let Ok((rest, ty)) = parse_type(input) {
          // Check for ::
          if let Ok((rest2, _)) = expect_token(Token::DoubleColon)(rest) {
@@ -1139,11 +1136,11 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
                          |input| {
                              let (input, field) = identifier(input)?;
                              if let Ok((img, _)) = expect_token(Token::Colon)(input) {
-                                 let (img, var) = identifier(img)?;
-                                 Ok((img, (field, var)))
+                                  let (img, var) = identifier(img)?;
+                                  Ok((img, (field, var)))
                              } else {
-                                 // Shorthand { field } -> field: field
-                                 Ok((input, (field.clone(), field)))
+                                  // Shorthand { field } -> field: field
+                                  Ok((input, (field.clone(), field)))
                              }
                          }
                       )(rest4)?;
@@ -1168,7 +1165,6 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
          } else {
              // Just Type (Identifier). `None`. `Some`.
              // Treat as EnumPattern with empty enum_name?
-             // Treat as EnumPattern with empty enum_name?
              let name_opt = match ty {
                  Type::Struct(name, _) => Some(name),
                  Type::Path(segments, _) => Some(segments.join("::")),
@@ -1183,10 +1179,10 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
                          |input| {
                              let (input, field) = identifier(input)?;
                              if let Ok((img, _)) = expect_token(Token::Colon)(input) {
-                                 let (img, var) = identifier(img)?;
-                                 Ok((img, (field, var)))
+                                  let (img, var) = identifier(img)?;
+                                  Ok((img, (field, var)))
                              } else {
-                                 Ok((input, (field.clone(), field)))
+                                  Ok((input, (field.clone(), field)))
                              }
                          }
                       )(rest2)?;

@@ -6437,6 +6437,49 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
+        // Intrinsic: tl_core_hash<T>(val: T) -> i64
+        if name.starts_with("tl_core_hash") {
+            if args.len() != 1 {
+                return Err("tl_core_hash expects exactly 1 argument".to_string());
+            }
+            let (val, ty) = self.compile_expr(&args[0])?;
+            let i64_type = self.context.i64_type();
+
+            let res: inkwell::values::IntValue = match &ty {
+                Type::I64 => val.into_int_value(),
+                Type::I32 | Type::Char(_) => self.builder.build_int_z_extend(val.into_int_value(), i64_type, "zext").unwrap(),
+                Type::Bool => self.builder.build_int_z_extend(val.into_int_value(), i64_type, "zext").unwrap(),
+                Type::F32 => {
+                    let i32_val = self.builder.build_bit_cast(val.into_float_value(), self.context.i32_type(), "f32_cast").unwrap().into_int_value();
+                    self.builder.build_int_z_extend(i32_val, i64_type, "zext").unwrap()
+                },
+                Type::F64 => {
+                     self.builder.build_bit_cast(val.into_float_value(), i64_type, "f64_cast").unwrap().into_int_value()
+                },
+                Type::String(_) => {
+                     let fn_val = self.module.get_function("tl_hash_string")
+                         .ok_or("tl_hash_string runtime function not found")?;
+                     let call = self.builder.build_call(fn_val, &[val.into()], "hash_call").unwrap();
+                     match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                        _ => return Err("tl_hash_string did not return a value".to_string()),
+                     }
+                },
+                Type::Struct(_, _) | Type::Enum(_, _) | Type::Ref(_) | Type::Tensor(_, _) | Type::Tuple(_) => {
+                    if val.is_pointer_value() {
+                         self.builder.build_ptr_to_int(val.into_pointer_value(), i64_type, "ptr_int").unwrap()
+                    } else {
+                         // Fallback for immediate structs (very small ones potentially? not standard in TL currently)
+                         // Return 0 to be safe/lazy, or error?
+                         return Err(format!("Hashing immediate struct/value type not supported: {:?}", ty));
+                    }
+                },
+                _ => return Err(format!("Unsupported type for hash: {:?}", ty)),
+            };
+            
+            return Ok((res.into(), Type::I64));
+        }
+
         // Intrinsic: __builtin_unsafe_to_i64
         if name.starts_with("__builtin_unsafe_to_i64") {
             if args.len() != 1 {
