@@ -2172,6 +2172,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .map_err(|e| e.to_string())?;
                         Ok((b.into(), Type::Bool))
                     }
+                    // Integer Casts
+                    (Type::I64, Type::I32) => {
+                         let i = val.into_int_value();
+                         let t = self.builder.build_int_cast(i, self.context.i32_type(), "cast_i64_i32").map_err(|e| e.to_string())?;
+                         Ok((t.into(), Type::I32))
+                    }
+                    (Type::I32, Type::I64) => {
+                         let i = val.into_int_value();
+                         let t = self.builder.build_int_z_extend(i, self.context.i64_type(), "cast_i32_i64").map_err(|e| e.to_string())?;
+                         Ok((t.into(), Type::I64))
+                    }
                     // U8 Casts
                     (Type::I64, Type::Struct(name, _)) | (Type::I32, Type::Struct(name, _)) if name == "u8" => {
                          let i = val.into_int_value();
@@ -4733,6 +4744,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             let phi_type: inkwell::types::BasicTypeEnum = match result_type {
                 Type::F32 => self.context.f32_type().into(),
                 Type::I64 => self.context.i64_type().into(),
+                Type::I32 | Type::Char(_) => self.context.i32_type().into(),
                 Type::Bool => self.context.bool_type().into(),
                 Type::String(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                 _ => self

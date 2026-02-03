@@ -790,7 +790,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .context
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),
-                    Type::Char(_) => self.context.i32_type().into(),
+                    Type::Char(_) | Type::I32 => self.context.i32_type().into(),
                     Type::Struct(name, _) => {
                         // Extract simple name from module path
                         let simple_name = if name.contains("::") {
@@ -930,6 +930,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
                         Type::Char(_) => self.context.i32_type().into(),
+                        Type::I32 => self.context.i32_type().into(),
                         _ => {
                             return Err(format!(
                                 "Unsupported type in enum variant {}: {:?}",
@@ -1067,7 +1068,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .fn_type(&param_types, false),
-                        Type::Char(_) => self.context.i32_type().fn_type(&param_types, false),
+                        Type::Char(_) | Type::I32 => self.context.i32_type().fn_type(&param_types, false),
                         _ => self.context.void_type().fn_type(&param_types, false),
                     }
                 };

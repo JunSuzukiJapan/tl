@@ -4,6 +4,7 @@ pub mod resolver;
 
 // Re-export specific modules for easier access
 pub use generic::option;
+pub use generic::result;
 
 pub use non_generic::io;
 pub use non_generic::system;
@@ -15,7 +16,7 @@ use crate::compiler::codegen::CodeGenerator;
 
 /// Load and register all built-in types into the CodeGenerator.
 pub fn load_all_builtins(codegen: &mut CodeGenerator) {
-    // 1. Load Generic Types (Option)
+    // 1. Load Generic Types (Option, Result)
 
     // Option
     let option_data = option::load_option_data();
@@ -24,6 +25,14 @@ pub fn load_all_builtins(codegen: &mut CodeGenerator) {
         codegen.enum_defs.insert(def.name.clone(), def);
     }
     codegen.generic_impls.entry("Option".to_string()).or_default().extend(option_data.impl_blocks);
+
+    // Result
+    let result_data = result::load_result_data();
+    codegen.type_manager.register_builtin(result_data.clone());
+    if let Some(def) = result_data.enum_def {
+        codegen.enum_defs.insert(def.name.clone(), def);
+    }
+    codegen.generic_impls.entry("Result".to_string()).or_default().extend(result_data.impl_blocks);
 
     // 2. Register Non-Generic Types (IO, System, LLM, Tensor, Param)
     // These register directly into TypeManager

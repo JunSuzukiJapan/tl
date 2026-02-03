@@ -1563,8 +1563,7 @@ impl SemanticAnalyzer {
                 let final_type = if let Some(ann_raw) = type_annotation {
                     // Normalize the type annotation
                     let ann = self.resolve_user_type(ann_raw);
-                    
-                    // Refine inferred_type if it's an Enum with placeholders ("T") and annotation is concrete
+
                     // This handles cases like `let r: Result<I64, String> = Result::Err("e");`
                     // where inferred is `Result<T, String>` (T is placeholder) but we know T=I64 from annotation.
                     let mut refined_inferred_type = inferred_type.clone();

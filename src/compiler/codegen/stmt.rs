@@ -3213,7 +3213,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  };
                  Ok((res, Type::String("String".to_string())))
             }
-            (Type::I64, Type::I64) => {
+            (Type::I64, Type::I64) | (Type::I32, Type::I32) => {
                 let l = lhs.into_int_value();
                 let r = rhs.into_int_value();
                 let res = match op {
@@ -3254,7 +3254,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if res.get_type().get_bit_width() == 1 {
                     Ok((res.into(), Type::Bool))
                 } else {
-                    Ok((res.into(), Type::I64))
+                    // Return type matches input type (I64 or I32)
+                    Ok((res.into(), lhs_type.clone()))
                 }
             }
             (Type::F32, Type::F32) => {
