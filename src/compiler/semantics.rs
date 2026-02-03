@@ -192,6 +192,9 @@ pub struct SemanticAnalyzer {
     
     // Type Registry for Builtins
     type_manager: TypeManager,
+
+    // Type Inference Map (Undefined ID -> Concrete Type)
+    inference_map: HashMap<u64, Type>,
 }
 
 impl SemanticAnalyzer {
@@ -209,6 +212,7 @@ impl SemanticAnalyzer {
 
             undefined_counter: 0,
             type_manager: TypeManager::new(),
+            inference_map: HashMap::new(),
         };
         analyzer.declare_builtins();
         analyzer
@@ -360,6 +364,70 @@ impl SemanticAnalyzer {
     }
 
     // --- Main Checking Logic ---
+    
+    // Unify two types, binding any Undefined(id) to the other type.
+    // Returns true if types are compatible (or unified successfully).
+    fn unify(&mut self, expected: &Type, found: &Type) -> bool {
+        // Resolve both types first using current inference map
+        let expected_res = self.resolve_inferred_type(expected);
+        let found_res = self.resolve_inferred_type(found);
+
+        match (&expected_res, &found_res) {
+            (Type::Undefined(id1), Type::Undefined(id2)) => {
+                if id1 != id2 {
+                    // Union two undefined types: bind id1 -> id2
+                    self.inference_map.insert(*id1, Type::Undefined(*id2));
+                }
+                true
+            }
+            (Type::Undefined(id), ty) | (ty, Type::Undefined(id)) => {
+                // Bind undefined to concrete type
+                // Occurs check could go here, but omitted for simplicity
+                self.inference_map.insert(*id, ty.clone());
+                true
+            }
+            (Type::Struct(n1, args1), Type::Struct(n2, args2)) => {
+                if n1 == n2 && args1.len() == args2.len() {
+                    for (a1, a2) in args1.iter().zip(args2.iter()) {
+                        if !self.unify(a1, a2) {
+                            return false;
+                        }
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
+            (Type::Tensor(t1, r1), Type::Tensor(t2, r2)) => {
+                 r1 == r2 && self.unify(t1, t2)
+            }
+             (Type::Ptr(t1), Type::Ptr(t2)) => self.unify(t1, t2),
+             // Primitive equality or other types
+             _ => expected_res == found_res
+        }
+    }
+
+    // Recursively resolve Undefined(id) using inference_map
+    fn resolve_inferred_type(&self, ty: &Type) -> Type {
+        match ty {
+            Type::Undefined(id) => {
+                if let Some(concrete) = self.inference_map.get(id) {
+                    self.resolve_inferred_type(concrete)
+                } else {
+                    ty.clone()
+                }
+            }
+            Type::Struct(name, args) => {
+                Type::Struct(name.clone(), args.iter().map(|a| self.resolve_inferred_type(a)).collect())
+            }
+            Type::Enum(name, args) => {
+                 Type::Enum(name.clone(), args.iter().map(|a| self.resolve_inferred_type(a)).collect())
+            }
+            Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.resolve_inferred_type(inner)), *rank),
+             Type::Ptr(inner) => Type::Ptr(Box::new(self.resolve_inferred_type(inner))),
+            _ => ty.clone()
+        }
+    }
 
     // Helper to resolve a name based on current scope aliases and module context
     fn substitute_generics(&self, ty: &Type, subst: &HashMap<String, Type>) -> Type {
@@ -1356,6 +1424,11 @@ impl SemanticAnalyzer {
             self.check_stmt(stmt)?;
         }
 
+        // Reify types: Replace Undefined with concrete types
+        for stmt in &mut func.body {
+             self.resolve_stmt_types(stmt);
+        }
+
         // Clear return type context
         self.current_return_type = None;
 
@@ -1557,7 +1630,19 @@ impl SemanticAnalyzer {
                         Type::Tensor(Box::new(rhs_type), free_indices.len())
                     }
                 } else {
-                    self.check_expr(value)?
+                    let mut rhs_type = self.check_expr(value)?;
+
+                    // [INFERENCE START]
+                    // If RHS is Vec::new() (or similar) and returned Undefined/Pending Generic,
+                    // we might need to handle it here if it wasn't handled in check_expr.
+                    // Currently check_expr for StaticMethodCall usually resolves to a specific type or fails.
+                    // But we want to support Vec::new() without args -> Vec<Undefined>.
+                    // This logic should be in check_expr. 
+                    // However, if we receive a struct with Undefined generics, we just let it bind.
+                    
+                    // If explicit annotation is NOT present, and RHS is generic with Undefined,
+                    // we allow it.
+                    rhs_type
                 };
 
                 let final_type = if let Some(ann_raw) = type_annotation {
@@ -1567,39 +1652,35 @@ impl SemanticAnalyzer {
                     // This handles cases like `let r: Result<I64, String> = Result::Err("e");`
                     // where inferred is `Result<T, String>` (T is placeholder) but we know T=I64 from annotation.
                     let mut refined_inferred_type = inferred_type.clone();
-                    if let (Type::Enum(inf_name, inf_args), Type::Enum(ann_name, ann_args)) = (&inferred_type, &ann) {
-                        if inf_name == ann_name && inf_args.len() == ann_args.len() {
-                            if let ExprKind::EnumInit { generics, .. } = &mut value.inner {
-                                // We have access to the Expr here!
-                                if let Some(def) = self.enums.get(inf_name) {
-                                     let mut changed = false;
-                                     let mut new_args = inf_args.clone();
-                                     
-                                     for (i, (inf_arg, ann_arg)) in inf_args.iter().zip(ann_args.iter()).enumerate() {
-                                         // Check if inf_arg is a placeholder generic param
-                                         // e.g. Type::Struct("T", []) where "T" is in def.generics
-                                         if let Type::Struct(name, _) = inf_arg {
-                                             if def.generics.contains(name) {
-                                                 // It's a placeholder!
-                                                 // Replace with annotation
-                                                  new_args[i] = ann_arg.clone();
-                                                  changed = true;
-                                             }
-                                         }
-                                     }
-                                     
-                                     if changed {
-                                          refined_inferred_type = Type::Enum(inf_name.clone(), new_args.clone());
-                                          // Also update the AST!
-                                          *generics = new_args;
-                                     }
-                                }
-                            }
+                    
+                    // Unified Inference for Generic Type vs Annotation
+                    // If inferred type has Undefined/Generic placeholders, UNIFY with Annotation.
+                    
+                    if self.unify(&ann, &refined_inferred_type) {
+                        // Unify successful. The inference_map is updated.
+                        // We should now resolve the refined inferred type using the map.
+                        refined_inferred_type = self.resolve_inferred_type(&refined_inferred_type);
+                        
+                        // We must also propagate this back to the AST if possible.
+                        // Specifically for EnumInit / StaticMethodCall.
+                        match &mut value.inner {
+                             ExprKind::EnumInit { generics, .. } => {
+                                 // For EnumInit, generics vector holds the types.
+                                 // We need to update them.
+                                 if let Type::Enum(_, concrete_args) = &refined_inferred_type {
+                                     *generics = concrete_args.clone();
+                                 }
+                             }
+                             ExprKind::StaticMethodCall(ty_node, _, _) => {
+                                 // For StaticMethodCall, type_node holds the struct type (Vec<Placeholder>)
+                                 // Update it to resolved type (Vec<i64>)
+                                 *ty_node = refined_inferred_type.clone();
+                             }
+                             _ => {}
                         }
-                    }
-
-                    if !self.are_types_compatible(&ann, &refined_inferred_type) {
-                        return self.err(
+                    } else {
+                        // Unify failed
+                         return self.err(
                             SemanticError::TypeMismatch {
                                 expected: ann.clone(),
                                 found: refined_inferred_type,
@@ -1609,20 +1690,14 @@ impl SemanticAnalyzer {
                     }
                     ann.clone()
                 } else {
+                    // No annotation: Keep inferred type (which may contain Undefined(id))
                     inferred_type
                 };
 
                 // Back-propagate final type to RHS AST if it's a generic constructor (like Vec::new)
-                match &mut value.inner {
-                    ExprKind::StaticMethodCall(ty_node, _, _) => {
-                       *ty_node = final_type.clone();
-                    }
-                    ExprKind::MethodCall { .. } => {
-                        // Method calls might need updates too if they return generics? 
-                        // But MethodCall doesn't carry a type node for return value usually.
-                        // StaticMethodCall does (target type).
-                    }
-                    _ => {}
+                // This is crucial for Monomorphizer which reads the AST.
+                if let ExprKind::StaticMethodCall(ty_node, _, _) = &mut value.inner {
+                    *ty_node = final_type.clone();
                 }
 
                 self.declare_variable(name.clone(), final_type.clone(), *mutable)?;
@@ -1771,10 +1846,10 @@ impl SemanticAnalyzer {
                 };
 
                 // Check against function return type
-                if let Some(ref expected) = self.current_return_type {
-                    if !self.are_types_compatible(expected, &found_type) {
+                if let Some(expected) = self.current_return_type.clone() {
+                    if !self.are_types_compatible(&expected, &found_type) {
                         return Err(SemanticError::TypeMismatch {
-                            expected: expected.clone(),
+                            expected: expected,
                             found: found_type,
                         }
                         .to_tl_error(Some(stmt.span.clone())));
@@ -2288,15 +2363,48 @@ impl SemanticAnalyzer {
                 } else {
                      return self.err(SemanticError::StructNotFound(format!("{:?}", resolved_ty)), Some(expr.span.clone()));
                 };
+                
+                let mut initialized_fields = std::collections::HashSet::new();
 
                 // Update AST with resolved type
                 *type_node = resolved_ty;
                 
                 let name = &name_str; // For existing logic compatibility
 
-                if let Some(struct_def) = self.structs.get(name).cloned() {
-                    let mut initialized_fields = HashSet::new();
-                    let mut inferred_generics: HashMap<String, Type> = HashMap::new();
+                // Check if struct exists
+                if let Some(struct_def) = self.structs.get(&name_str).cloned() {
+                    // 3. Infer Generics
+                    // If explicit generics provided (e.g. Option<I64>::Some), use them.
+                    let final_generics = if !explicit_generics.is_empty() {
+                        explicit_generics.clone()
+                    } else {
+                         // Auto-fill Missing Generics with Undefined
+                         if struct_def.generics.is_empty() {
+                             vec![]
+                         } else {
+                             let mut inferred_args = Vec::new();
+                             for _ in &struct_def.generics {
+                                 let id = self.get_next_undefined_id();
+                                 inferred_args.push(Type::Undefined(id));
+                             }
+                             inferred_args
+                         }
+                    };
+                    
+                    // Reconstruct type with inferred generics
+                    let final_type = Type::Struct(name_str.clone(), final_generics.clone());
+                     *type_node = final_type.clone();
+                     
+                     // Initialize inference map for fields
+                     let mut inferred_generics = HashMap::new();
+                     
+                     // Seed inference with explicit generics (or inferred ones)
+                     // Note: logic below at 2479 expects `struct_def` and `inferred_generics` and `name` to be in scope.
+                     // We need to match variable names.
+                     let explicit_generics = &final_generics; // Use final_generics as the "explicit" ones for validation
+                 
+                 // The code below (2479+) validates `explicit_generics` count so we reusing it is fine.
+
 
                     // Seed inference with explicit generics
                     if !explicit_generics.is_empty() {
@@ -4789,33 +4897,43 @@ impl SemanticAnalyzer {
                 if *type_node != resolved_type {
                     *type_node = resolved_type.clone();
                 }
+                
                 // Auto-fill missing generic arguments with Undefined for ALL structs
-                // Auto-fill missing generic arguments with Undefined for ALL structs
-                // 1. Inspect type (read-only)
-                let (should_update, struct_name, current_args) = if let &mut Type::Struct(ref n, ref args) = type_node {
-                    if let Some(struct_def) = self.structs.get(n) {
-                         if args.len() < struct_def.generics.len() {
-                             (true, n.clone(), args.clone())
-                         } else {
-                             (false, String::new(), vec![])
-                         }
-                    } else {
-                        (false, String::new(), vec![])
-                    }
-                } else {
-                    (false, String::new(), vec![])
-                };
+                if let Type::Struct(struct_name, generics) = &resolved_type {
+                     // Check if struct has generics without holding borrow
+                     let has_generics = if let Some(def) = self.structs.get(struct_name) {
+                         !def.generics.is_empty()
+                     } else {
+                         false
+                     };
 
-                // 2. Update type (write)
-                if should_update {
-                     if let Some(struct_def) = self.structs.get(&struct_name) {
-                        let mut new_args = current_args;
-                        for _ in 0..(struct_def.generics.len() - new_args.len()) {
-                            new_args.push(Type::Undefined(self.get_next_undefined_id()));
-                        }
-                        let new_type = Type::Struct(struct_name, new_args);
-                        *type_node = new_type;
+                     if generics.is_empty() && has_generics {
+                         // Case: `Vec::new()` where Vec has no args.
+                         // Generate Undefined types.
+                         let mut new_generics = Vec::new();
+                         // Clone count to drop borrow
+                         let count = if let Some(def) = self.structs.get(struct_name) {
+                             def.generics.len()
+                         } else { 0 };
+                         
+                         for _ in 0..count {
+                             let id = self.get_next_undefined_id();
+                             new_generics.push(Type::Undefined(id));
+                         }
+                             let new_type = Type::Struct(struct_name.clone(), new_generics);
+                             
+                             // Update AST
+                             *type_node = new_type.clone();
+                             // Update local resolved_type variable for subsequent checks?
+                             // We can't mutate `resolved_type` easily as it is let bound.
+                             // But we can shadowing it or handled in check call.
+                             
+                             // IMPORTANT: We need to use this new type for method lookup too, 
+                             // because `substitute_generics` depends on it.
                      }
+                
+                
+                // Reload resolved type from AST to be sure
                 }
 
                 // Re-derive type_ty after potential update (to ensure we use the one with Undefineds)
@@ -4887,8 +5005,14 @@ impl SemanticAnalyzer {
                     mangled_name = method_name.clone();
                 }
 
-                if let Some(ty_def) = self.type_manager.get_type(&type_name) {
-                     if let Some((args_sig, ret_ty)) = ty_def.get_static_signature(&mangled_name) {
+                // 3. Fallback to Type Manager (built-in Static Methods via TypeDef)
+                let signature_opt = if let Some(ty_def) = self.type_manager.get_type(&type_name) {
+                     ty_def.get_static_signature(&mangled_name).map(|(a, b)| (a.clone(), b.clone()))
+                } else {
+                     None
+                };
+
+                if let Some((args_sig, ret_ty)) = signature_opt {
                          // Update AST Name (in-place mutation)
                          *method_name = mangled_name.clone();
 
@@ -4902,15 +5026,21 @@ impl SemanticAnalyzer {
                          }
                          return Ok(ret_ty.clone());
                      }
-                }
 
                 // Temporary: Fallback to old check if not found (e.g. Vec)
                 if type_name == "Tensor" && method_name.as_str() != "zeros" && method_name.as_str() != "ones" && method_name.as_str() != "randn" {
                      return self.err(SemanticError::MethodNotFound { type_name, method_name: method_name.clone() }, Some(expr.span.clone()));
                 }
                 // Check if it is a user-defined static method in impl block
-                if let Some(methods) = self.methods.get(&type_name) {
-                    if let Some(func) = methods.get(method_name) {
+                // Check if it is a user-defined static method in impl block
+                // 1. Lookup method (immutable borrow)
+                let func_def_opt = if let Some(methods) = self.methods.get(&type_name) {
+                    methods.get(method_name).cloned()
+                } else {
+                    None
+                };
+
+                if let Some(func) = func_def_opt {
                          // Found method!
                          // Check arg count
                          if func.args.len() != args.len() {
@@ -4996,7 +5126,6 @@ impl SemanticAnalyzer {
 
                          return Ok(ret_ty);
                     }
-                }
                 
                 // 3. Fallback to Built-in/Intrinsic methods
                 if let Some(res) = self.check_builtin_static_method(&type_name, method_name, args, &type_ty) {
@@ -5332,20 +5461,42 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn are_generic_args_compatible(&self, args1: &[Type], args2: &[Type]) -> bool {
+    fn are_generic_args_compatible(&mut self, args1: &[Type], args2: &[Type]) -> bool {
         if args1.len() != args2.len() {
             return false;
         }
-        args1.iter().zip(args2).all(|(t1, t2)| self.are_types_compatible(t1, t2))
+        // Need to iterate and check, but self is mutable.
+        // We can't use zip().all(...) because closure would borrow self mutably while we hold &self? 
+        // No, iterator doesn't borrow self. Closure borrows self.
+        // But `args1` and `args2` are slices? references to Type.
+        // If Type is owned by self... `args1` is passed in.
+        
+        // Use a loop to be safe/clear with borrowing
+        for (t1, t2) in args1.iter().zip(args2.iter()) {
+            if !self.are_types_compatible(t1, t2) {
+                return false;
+            }
+        }
+        true
     }
 
-    fn are_types_compatible(&self, t1: &Type, t2: &Type) -> bool {
+    fn are_types_compatible(&mut self, t1: &Type, t2: &Type) -> bool {
+        // Optimistic check for undefined to allow inference flow
         if matches!(t1, Type::Undefined(_)) || matches!(t2, Type::Undefined(_)) {
-            return true;
+            // Attempt unification immediately
+            if self.unify(t1, t2) {
+                 return true;
+            }
         }
         if matches!(t1, Type::Void) || matches!(t2, Type::Void) {
             return true;
         }
+        
+        // Try unification for other types (generics etc)
+        if self.unify(t1, t2) {
+             return true;
+        }
+
         if t1 == t2 {
             return true;
         }
@@ -5514,6 +5665,93 @@ impl SemanticAnalyzer {
             .collect();
         free_indices.sort();
         free_indices
+    }
+
+    // Reification: resolving Undefined types in AST
+    fn resolve_stmt_types(&mut self, stmt: &mut Stmt) {
+        match &mut stmt.inner {
+            StmtKind::Let { type_annotation, value, .. } => {
+                if let Some(ann) = type_annotation {
+                    *ann = self.resolve_inferred_type(ann);
+                }
+                self.resolve_expr_types(value);
+            }
+            StmtKind::Assign { value, indices, .. } => {
+                self.resolve_expr_types(value);
+                if let Some(idxs) = indices {
+                    for idx in idxs {
+                        self.resolve_expr_types(idx);
+                    }
+                }
+            }
+            StmtKind::Expr(expr) => self.resolve_expr_types(expr),
+            StmtKind::Return(Some(expr)) => self.resolve_expr_types(expr),
+            StmtKind::While { cond, body } => {
+                self.resolve_expr_types(cond);
+                for s in body {
+                    self.resolve_stmt_types(s);
+                }
+            }
+            StmtKind::For { iterator, body, .. } => {
+                self.resolve_expr_types(iterator);
+                for s in body {
+                    self.resolve_stmt_types(s);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn resolve_expr_types(&mut self, expr: &mut Expr) {
+        match &mut expr.inner {
+             ExprKind::StaticMethodCall(ty, _, args) => {
+                 *ty = self.resolve_inferred_type(ty);
+                 for arg in args {
+                     self.resolve_expr_types(arg);
+                 }
+             }
+             ExprKind::MethodCall(obj, _, args) => {
+                 self.resolve_expr_types(obj);
+                 for arg in args {
+                     self.resolve_expr_types(arg);
+                 }
+             }
+             ExprKind::FnCall(_, args) => {
+                 for arg in args {
+                     self.resolve_expr_types(arg);
+                 }
+             }
+             ExprKind::BinOp(l, _, r) => {
+                 self.resolve_expr_types(l);
+                 self.resolve_expr_types(r);
+             }
+             ExprKind::StructInit(ty, fields) => {
+                 *ty = self.resolve_inferred_type(ty);
+                 for (_, val) in fields {
+                     self.resolve_expr_types(val);
+                 }
+             }
+             ExprKind::IndexAccess(target, _idx) => {
+                 self.resolve_expr_types(target);
+             }
+             ExprKind::IfExpr(cond, then_block, else_block_opt) => {
+                 self.resolve_expr_types(cond);
+                 for s in then_block {
+                     self.resolve_stmt_types(s);
+                 }
+                 if let Some(else_block) = else_block_opt {
+                     for s in else_block {
+                         self.resolve_stmt_types(s);
+                     }
+                 }
+             }
+             ExprKind::Block(stmts) => {
+                 for s in stmts {
+                     self.resolve_stmt_types(s);
+                 }
+             }
+             _ => {}
+        }
     }
 }
 
