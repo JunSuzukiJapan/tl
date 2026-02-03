@@ -592,8 +592,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                               }
                          }
 
-                          }
-                     }
+
 
                      match f_ty {
                             Type::Tensor(_, _)
