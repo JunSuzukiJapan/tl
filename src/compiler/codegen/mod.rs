@@ -1454,49 +1454,8 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Add regular arguments
         for (_, val) in &func.args {
-            let arg_ty: inkwell::types::BasicMetadataTypeEnum = match val {
-                Type::I64 | Type::Entity | Type::Usize => self.context.i64_type().into(),
-                Type::F32 => self.context.f32_type().into(),
-                Type::Bool => self.context.bool_type().into(),
-                Type::Tensor(_, _) => self
-                    .context
-                    .ptr_type(inkwell::AddressSpace::default())
-                    .into(),
-                Type::Struct(name, _) => {
-                    // Extract simple name
-                    let simple_name = if name.contains("::") {
-                        name.split("::").last().unwrap()
-                    } else {
-                        name.as_str()
-                    };
-
-                    let is_zst = if let Some(def) = self.struct_defs.get(simple_name) {
-                        def.fields.is_empty()
-                    } else {
-                        false
-                    };
-
-                    if is_zst {
-                         if let Some(st) = self.struct_types.get(simple_name) {
-                             st.as_basic_type_enum().into()
-                         } else {
-                             self.context.ptr_type(inkwell::AddressSpace::default()).into()
-                         }
-                    } else {
-                        self.context.ptr_type(inkwell::AddressSpace::default()).into()
-                    }
-                }
-                Type::Enum(_, _) | Type::Ref(_) | Type::Tuple(_) => self
-                    .context
-                    .ptr_type(inkwell::AddressSpace::default())
-                    .into(),
-                Type::String(_) => self
-                    .context
-                    .ptr_type(inkwell::AddressSpace::default())
-                    .into(),
-                Type::Char(_) => self.context.i32_type().into(),
-                _ => self.context.i64_type().into(),
-            };
+            let arg_ty_val = self.get_llvm_type(val).map_err(|e| format!("Error compiling arg type {:?}: {}", val, e))?;
+            let arg_ty: inkwell::types::BasicMetadataTypeEnum = arg_ty_val.into();
             args_types.push(arg_ty);
         }
 
@@ -1505,60 +1464,15 @@ impl<'ctx> CodeGenerator<'ctx> {
             // Sret functions return void
             self.context.void_type().fn_type(&args_types, false)
         } else {
-            let ret_type: Option<inkwell::types::BasicTypeEnum> = match &func.return_type {
-                Type::Void => None,
-                Type::I64 | Type::Entity | Type::Usize => Some(self.context.i64_type().into()),
-                Type::F32 => Some(self.context.f32_type().into()),
-                Type::Bool => Some(self.context.bool_type().into()),
-                Type::Tensor(_, _) => Some(
-                    self.context
-                        .ptr_type(inkwell::AddressSpace::default())
-                        .into(),
-                ),
-                Type::Struct(name, _) => {
-                         // Extract simple name
-                        let simple_name = if name.contains("::") {
-                            name.split("::").last().unwrap()
-                        } else {
-                            name.as_str()
-                        };
-
-                        let is_zst = if let Some(def) = self.struct_defs.get(simple_name) {
-                            def.fields.is_empty()
-                        } else {
-                            false
-                        };
-
-                        if is_zst {
-                             if let Some(st) = self.struct_types.get(simple_name) {
-                                 Some(st.as_basic_type_enum().into())
-                             } else {
-                                 Some(self.context.ptr_type(inkwell::AddressSpace::default()).into())
-                             }
-                        } else {
-                            Some(self.context.ptr_type(inkwell::AddressSpace::default()).into())
-                        }
-                    }
-                    Type::Enum(_, _) | Type::Ref(_) | Type::Tuple(_) => Some(
-                    self.context
-                        .ptr_type(inkwell::AddressSpace::default())
-                        .into(),
-                ),
-                Type::String(_) => Some(
-                    self.context
-                        .ptr_type(inkwell::AddressSpace::default())
-                        .into(),
-                ),
-                Type::Char(_) => Some(self.context.i32_type().into()),
-                _ => Some(self.context.i64_type().into()),
+            let ret_type: Option<inkwell::types::BasicTypeEnum> = if let Type::Void = func.return_type {
+                None
+            } else {
+                Some(self.get_llvm_type(&func.return_type).map_err(|e| format!("Error compiling return type {:?}: {}", func.return_type, e))?)
             };
+
             match ret_type {
-                Some(inkwell::types::BasicTypeEnum::IntType(i)) => i.fn_type(&args_types, false),
-                Some(inkwell::types::BasicTypeEnum::FloatType(f)) => f.fn_type(&args_types, false),
-                Some(inkwell::types::BasicTypeEnum::PointerType(p)) => {
-                    p.fn_type(&args_types, false)
-                }
-                _ => self.context.void_type().fn_type(&args_types, false),
+                Some(ty) => ty.fn_type(&args_types, false),
+                None => self.context.void_type().fn_type(&args_types, false),
             }
         };
 

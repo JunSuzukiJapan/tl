@@ -79,16 +79,22 @@ impl<'ctx> CodeGenerator<'ctx> {
         ty: &Type,
     ) -> Result<(), String> {
         match ty {
-            Type::Struct(name, _) => {
+            Type::Struct(name, generics) => {
+                let mangled_name = if generics.is_empty() {
+                    name.clone()
+                } else {
+                    self.mangle_type_name(name, generics)
+                };
+
                 let struct_def = self
                     .struct_defs
-                    .get(name)
-                    .ok_or(format!("Struct {} not found", name))?
+                    .get(&mangled_name)
+                    .ok_or(format!("Struct {} not found ({})", name, mangled_name))?
                     .clone();
                 let st_llvm_ty = *self
                     .struct_types
-                    .get(name)
-                    .ok_or(format!("LLVM struct type {} not found", name))?;
+                    .get(&mangled_name)
+                    .ok_or(format!("LLVM struct type {} not found", mangled_name))?;
 
                 for (i, (field_name, field_ty)) in struct_def.fields.iter().enumerate() {
                     let src_field_ptr = self
@@ -184,16 +190,22 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
         match ty {
             Type::Ref(_) => {},
-            Type::Enum(name, _) => {
+            Type::Enum(name, generics) => {
+                let mangled_name = if generics.is_empty() {
+                    name.clone()
+                } else {
+                    self.mangle_type_name(name, generics)
+                };
+
                 let enum_def = self
                     .enum_defs
-                    .get(name)
-                    .ok_or(format!("Enum def {} not found", name))?
+                    .get(&mangled_name)
+                    .ok_or(format!("Enum def {} not found ({})", name, mangled_name))?
                     .clone();
                 let enum_ty = *self
                     .enum_types
-                    .get(name)
-                    .ok_or(format!("Enum type {} not found", name))?;
+                    .get(&mangled_name)
+                    .ok_or(format!("Enum type {} not found ({})", name, mangled_name))?;
 
                 let ptr = val.into_pointer_value();
 
@@ -519,27 +531,32 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
 
                 // 3. Fallback: Structural Cleanup (Member-wise)
-                // Extract simple name from module path
-                let simple_name = if name.contains("::") {
-                    name.split("::").last().unwrap()
+                // Use mangled name if generic
+                let mangled_name = if generic_args.is_empty() {
+                    let simple_name = if name.contains("::") {
+                         name.split("::").last().unwrap()
+                    } else {
+                         name.as_str()
+                    };
+                    simple_name.to_string()
                 } else {
-                    name.as_str()
+                    self.mangle_type_name(name, generic_args)
                 };
 
                 // Check if struct def exists
-                if !self.struct_defs.contains_key(simple_name) {
+                if !self.struct_defs.contains_key(&mangled_name) {
                      return Ok(());
                 }
 
                 let struct_def = self
                     .struct_defs
-                    .get(simple_name)
-                    .ok_or(format!("Struct def {} not found", name))?
+                    .get(&mangled_name)
+                    .ok_or(format!("Struct def {} not found", mangled_name))?
                     .clone();
                 let struct_ty = *self
                     .struct_types
-                    .get(simple_name)
-                    .ok_or(format!("Struct type {} not found", name))?;
+                    .get(&mangled_name)
+                    .ok_or(format!("Struct type {} not found", mangled_name))?;
                 let ptr = val.into_pointer_value();
 
                 // Runtime Null Check
@@ -3482,21 +3499,32 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 Ok(clone_res)
             }
-            Type::Enum(name, _) => {
+            Type::Enum(name, generics) => {
+                let mangled_name = if generics.is_empty() {
+                    name.clone()
+                } else {
+                    self.mangle_type_name(name, generics)
+                };
+
                 let enum_def = self
                     .enum_defs
-                    .get(name)
-                    .ok_or(format!("Enum {} definition not found", name))?;
+                    .get(&mangled_name)
+                    .ok_or(format!("Enum {} definition not found ({})", name, mangled_name))?;
                 self.emit_enum_deep_clone(val, enum_def)
             }
-            Type::Struct(name, _) => {
+            Type::Struct(name, generics) => {
+                let mangled_name = if generics.is_empty() {
+                    name.clone()
+                } else {
+                    self.mangle_type_name(name, generics)
+                };
+
                 // Check if it is an Enum
-                if let Some(enum_def) = self.enum_defs.get(name) {
+                if let Some(enum_def) = self.enum_defs.get(&mangled_name) {
                     return self.emit_enum_deep_clone(val, enum_def);
                 }
                 
-
-                // Handle String struct: Delegate to Type::String logic
+                // Handle String struct
                 if name == "String" {
                     return self.emit_deep_clone(val, &Type::String(name.clone()));
                 }

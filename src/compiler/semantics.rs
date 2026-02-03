@@ -2225,7 +2225,7 @@ impl SemanticAnalyzer {
                                    inferred_args
                                }
                            };
-
+                           println!("DEBUG: semantics EnumInit enum_name='{}' generics={:?}", enum_name, final_generics);
                            expr.inner = ExprKind::EnumInit {
                                enum_name: enum_name.clone(),
                                variant_name: method_name,

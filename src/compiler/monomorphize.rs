@@ -466,8 +466,12 @@ impl Monomorphizer {
                  }
                  return;
              }
-              ExprKind::EnumInit { enum_name, variant_name, generics: _, payload } => {
-                  if let Some(def) = self.generic_enums.get(enum_name) {
+              ExprKind::EnumInit { .. } => {
+                   // DISABLE Legacy Monomorphization for Enums.
+                   // valid for "Generic Compilation" architecture.
+                   return; 
+                   /*
+                   if let Some(def) = self.generic_enums.get(enum_name) {
                       if let Some(v_def) = def.variants.iter().find(|v| v.name == *variant_name) {
                           let mut inferred_map = HashMap::new();
                           let mut all_inferred = true;
@@ -551,9 +555,9 @@ impl Monomorphizer {
                       EnumVariantInit::Struct(fields) => {
                           for (_, e) in fields { self.rewrite_expr(&mut e.inner, subst, None); }
                       }
+                      }
                   }
-                  }
-              }
+                  */
           }
           ExprKind::FnCall(name, args) => {
                   // Rewrite args first

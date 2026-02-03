@@ -1643,7 +1643,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_aq").map_err(|e| e.to_string())?;
                 self.builder.build_call(acquire_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
             }
-            Type::Struct(_, _) | Type::String(_) | Type::Enum(_, _) => {
+            Type::Struct(_, _) | Type::String(_) | Type::Enum(_, _) | Type::Path(_, _) => {
                 let inc_fn = self.module.get_function("tl_ptr_inc_ref")
                     .or_else(|| {
                          let void_ty = self.context.void_type();
@@ -1764,18 +1764,35 @@ impl<'ctx> CodeGenerator<'ctx> {
                 generics,
                 payload,
             } => {
+                println!("DEBUG: code_gen EnumInit enum_name='{}' generics={:?}", enum_name, generics);
+                // 0. specialized name handling
+                let mangled_name = if generics.is_empty() {
+                    enum_name.clone()
+                } else {
+                    self.mangle_type_name(enum_name, generics)
+                };
+
+                // 1. On-demand Monomorphization
+                if !generics.is_empty() {
+                     if !self.enum_defs.contains_key(&mangled_name) {
+                         // Monomorphize!
+                         self.monomorphize_enum(enum_name, generics).map_err(|e| e.to_string())?;
+                     }
+                }
+
                 let enum_def = self
                     .enum_defs
-                    .get(enum_name)
-                    .ok_or(format!("Enum def {} not found", enum_name))?
+                    .get(&mangled_name)
+                    .ok_or(format!("Enum def {} not found", mangled_name))?
                     .clone();
                 let enum_ty = *self
                     .enum_types
-                    .get(enum_name)
-                    .ok_or(format!("Enum type {} not found", enum_name))?;
+                    .get(&mangled_name)
+                    .ok_or(format!("Enum type {} not found", mangled_name))?;
 
-                // 1. Allocate Enum
-                // Manual malloc(i64)
+                // 2. Allocate Enum
+                // Manual malloc(size)
+                // Use mangled type for size calculation
                 let size_ptr = unsafe {
                     self.builder.build_gep(
                         enum_ty,
@@ -1789,14 +1806,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
 
                 let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
-                let alloca = match self.builder
-                    .build_call(malloc_fn, &[size.into()], &format!("enum_{}", enum_name))
+                let malloc_ptr = match self.builder
+                    .build_call(malloc_fn, &[size.into()], &format!("enum_{}", mangled_name))
                     .map_err(|e| e.to_string())?
                     .try_as_basic_value() {
                         inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
                         _ => return Err("malloc returned void".into()),
                     };
-                // alloca is *EnumStruct
+                // malloc_ptr is *EnumStruct
+                
+                // Cast to EnumType* (which is WaitStruct*)
+                let alloca = self.builder.build_pointer_cast(
+                    malloc_ptr,
+                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                    "enum_cast"
+                ).unwrap();
 
                 // 2. Store Tag
                 let variant_idx = enum_def
@@ -2060,6 +2084,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                      _ => return Err(format!("Mismatch between variant definition {:?} and init payload {:?}", variant_def.kind, payload)),
                 }
 
+                // Return the rich generic type so downstream processing (like MethodCall) 
+                // sees "Option" and [T] instead of "Option<T>" and [].
                 Ok((alloca.into(), Type::Enum(enum_name.clone(), generics.clone())))
             }
             ExprKind::Match {
@@ -2380,25 +2406,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         if val.is_pointer_value() {
                             let ptr = val.into_pointer_value();
 
-                            let llvm_ty: inkwell::types::BasicTypeEnum = match ty {
-                                Type::I64 => self.context.i64_type().into(),
-                                Type::F32 => self.context.f32_type().into(),
-                                Type::Bool => self.context.bool_type().into(),
-                                Type::Tensor(_, _) | Type::String(_) => self
-                                    .context
-                                    .ptr_type(inkwell::AddressSpace::default())
-                                    .into(),
-                                Type::Char(_) => self.context.i32_type().into(),
-                                Type::Struct(_, _)
-
-                                | Type::Tuple(_)
-                                | Type::Enum(_, _) 
-                                | Type::Ref(_) => self
-                                    .context
-                                    .ptr_type(inkwell::AddressSpace::default())
-                                    .into(),
-                                _ => self.context.i64_type().into(), // Fallback
-                            };
+                            let llvm_ty = self.get_llvm_type(ty).map_err(|e| e.to_string())?;
 
                             let loaded = self
                                 .builder
@@ -4544,12 +4552,33 @@ impl<'ctx> CodeGenerator<'ctx> {
         let (subject_val, subject_ty) = self.compile_expr(subject_expr)?;
         let (enum_name, generic_args) = match &subject_ty {
             Type::Enum(n, args) | Type::Struct(n, args) => (n, args),
-            _ => return Err("Match on non-enum".into()),
+            Type::Path(segments, args) => {
+                if let Some(n) = segments.last() {
+                    (n, args)
+                } else {
+                    return Err("Match on empty path".into());
+                }
+            }
+            _ => return Err(format!("Match on non-enum: {:?}", subject_ty)),
         };
 
         // Ensure enum layout is generated
-        // Ensure enum layout is generated
-        let mangled_name = self.monomorphize_enum(enum_name, generic_args)
+        // Check if enum is already specialized (or concrete) to avoid double-monomorphization
+        // Check if enum is already specialized (or concrete) to avoid double-monomorphization
+        let actual_generic_args = if let Some(def) = self.enum_defs.get(enum_name) {
+             if def.generics.is_empty() {
+                 &[]
+             } else {
+                 println!("DEBUG: Enum {} found but has generics: {:?}. Args: {:?}", enum_name, def.generics, generic_args);
+                 generic_args.as_slice()
+             }
+        } else {
+             println!("DEBUG: compile_match_like - Enum {} not found in enum_defs (keys count: {})", enum_name, self.enum_defs.len());
+             // Def not found yet? Try blindly.
+             generic_args.as_slice()
+        };
+
+        let mangled_name = self.monomorphize_enum(enum_name, actual_generic_args)
             .map_err(|e| format!("Failed to monomorphize enum {}: {}", enum_name, e))?;
         
         let enum_ty = self.enum_types.get(&mangled_name).cloned()
@@ -4592,12 +4621,19 @@ impl<'ctx> CodeGenerator<'ctx> {
         for (arm_idx, (pat, _)) in arms.iter().enumerate() {
             if let Pattern::EnumPattern { variant_name, .. } = pat {
                 // Fetch def 
-                let enum_def = self.enum_defs.get(enum_name).ok_or("Enum def not found")?;
+                let enum_def = self.enum_defs.get(enum_name).ok_or_else(|| format!("Enum def '{}' not found in pattern. Available: {:?}", enum_name, self.enum_defs.keys().collect::<Vec<_>>()))?;
+                
+                let simple_variant_name = if variant_name.contains("::") {
+                    variant_name.split("::").last().unwrap()
+                } else {
+                    variant_name.as_str()
+                };
+
                 let idx = enum_def
                     .variants
                     .iter()
-                    .position(|v| v.name == *variant_name)
-                    .ok_or("Enum variant not found")?;
+                    .position(|v| v.name == simple_variant_name)
+                    .ok_or_else(|| format!("Enum variant '{}' not found in {}. Available: {:?}", simple_variant_name, enum_name, enum_def.variants.iter().map(|v| &v.name).collect::<Vec<_>>()))?;
                 if used_variants.insert(idx) {
                     switch_cases.push((
                         self.context.i32_type().const_int(idx as u64, false),
@@ -4648,11 +4684,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                 ..
             } = pat
             {
+                let simple_variant_name = if variant_name.contains("::") {
+                    variant_name.split("::").last().unwrap()
+                } else {
+                    variant_name.as_str()
+                };
+
                 let variant_idx = enum_def
                     .variants
                     .iter()
-                    .position(|v| v.name == *variant_name)
-                    .ok_or("Enum variant not found")?;
+                    .position(|v| v.name == simple_variant_name)
+                    .ok_or("Enum variant not found in bindings")?;
                 self.bind_enum_pattern_fields(
                     current_func,
                     enum_ty,
@@ -4961,21 +5003,8 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
     
     fn substitute_type_simple_bind(&self, ty: &Type, subst: &HashMap<String, Type>) -> Type {
-        match ty {
-            Type::Struct(name, args) => {
-                if args.is_empty() {
-                    if let Some(replacement) = subst.get(name) {
-                        return replacement.clone();
-                    }
-                }
-                Type::Struct(name.clone(), args.iter().map(|t| self.substitute_type_simple_bind(t, subst)).collect())
-            }
-            Type::Enum(name, args) => Type::Enum(name.clone(), args.iter().map(|t| self.substitute_type_simple_bind(t, subst)).collect()),
-            Type::Tensor(t, rank) => Type::Tensor(Box::new(self.substitute_type_simple_bind(t, subst)), *rank),
-
-            Type::String(_) => Type::String("String".to_string()),
-            _ => ty.clone()
-        }
+        let substitutor = crate::compiler::ast_subst::TypeSubstitutor::new(subst.clone());
+        substitutor.substitute_type(ty)
     }
 
 /*
@@ -5412,12 +5441,14 @@ impl<'ctx> CodeGenerator<'ctx> {
         let struct_name = match &obj_ty {
 
             Type::Struct(name, _) | Type::Enum(name, _) => name.clone(),
+            Type::Path(segments, _) => if let Some(n) = segments.last() { n.clone() } else { return Err("Empty path".into()) },
             Type::Tensor(_, _) => "Tensor".to_string(),
             Type::String(_) => "String".to_string(),
             _ => return Err(format!("Method {} not found on type {:?}", method, obj_ty)),
         };
 
         let type_name = struct_name.clone();
+
 
         // Extract simple name from module path for mangling
         let simple_struct_name = if struct_name.contains("::") {
@@ -5434,7 +5465,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         let generic_func = if self.generic_impls.contains_key(&type_name) {
              let generics = match &obj_ty {
-                 Type::Struct(_, args) | Type::Enum(_, args) => args.clone(),
+                 Type::Struct(_, args) | Type::Enum(_, args) | Type::Path(_, args) => args.clone(),
                  _ => vec![],
              };
 

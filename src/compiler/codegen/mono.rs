@@ -50,10 +50,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Use standard mangling resolution
         let mangled_name = crate::compiler::codegen::builtin_types::resolver::resolve_static_method_name(struct_name, method_name, generic_args);
         
-        if let Some(f) = self.module.get_function(&mangled_name) {
-             if !f.verify(true) {
-                 f.print_to_stderr();
-             }
+        if self.module.get_function(&mangled_name).is_some() {
             return Ok(mangled_name);
         }
 
@@ -63,7 +60,11 @@ impl<'ctx> CodeGenerator<'ctx> {
         new_method.name = mangled_name.clone(); 
         new_method.generics = vec![]; // Concrete
         
-        let concrete_self = Type::Struct(struct_name.to_string(), generic_args.to_vec());
+        let concrete_self = if self.enum_defs.contains_key(struct_name) {
+            Type::Enum(struct_name.to_string(), generic_args.to_vec())
+        } else {
+            Type::Struct(struct_name.to_string(), generic_args.to_vec())
+        };
         let mut full_map = substitutor.subst.clone();
         full_map.insert("Self".to_string(), concrete_self);
         let full_substitutor = TypeSubstitutor::new(full_map);
@@ -174,6 +175,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // 2. Check generics
         if enum_def.generics.len() != generic_args.len() {
+             println!("DEBUG: monomorphize_enum mismatch. name='{}', args={:?}, def_generics={:?}", enum_name, generic_args, enum_def.generics);
              return Err(format!("Generic count mismatch for enum {}: expected {}, got {}", 
                  enum_name, enum_def.generics.len(), generic_args.len()));
         }
@@ -295,17 +297,19 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     /// Generate a mangled name for a monomorphized type.
-    /// Example: `Vec` + `[i64]` -> `Vec_i64`
+    /// Example: `Vec` + `[i64]` -> `Vec<i64>`
     pub fn mangle_type_name(&self, base_name: &str, type_args: &[Type]) -> String {
         if type_args.is_empty() {
             base_name.to_string()
         } else {
             let args_str: Vec<String> = type_args.iter().map(|t| self.type_to_suffix(t)).collect();
-            format!("{}_{}", base_name, args_str.join("_"))
+            let res = format!("{}<{}>", base_name, args_str.join(", "));
+            println!("DEBUG: mangle_type_name {} {:?} -> {}", base_name, type_args, res);
+            res
         }
     }
 
-    /// Convert a Type to a string suffix for mangling.
+    /// Convert a Type to a string representation for mangling/display.
     pub fn type_to_suffix(&self, ty: &Type) -> String {
         match ty {
             Type::I64 => "i64".to_string(),
@@ -333,10 +337,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
 
-            Type::Tensor(inner, rank) => format!("Tensor_{}_{}", self.type_to_suffix(inner), rank),
+            Type::Tensor(inner, rank) => format!("Tensor<{}, {}>", self.type_to_suffix(inner), rank),
             Type::Tuple(types) => {
                 let parts: Vec<String> = types.iter().map(|t| self.type_to_suffix(t)).collect();
-                format!("Tuple_{}", parts.join("_"))
+                format!("({})", parts.join(", "))
             }
             _ => "unknown".to_string(),
         }
@@ -439,8 +443,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(self.context.ptr_type(AddressSpace::default()).into())
             }
 
-            Type::Path(segments, _) => {
-                 panic!("Unresolved Type::Path in codegen: {:?}. This should have been resolved to Type::Struct by semantics/monomorphizer.", segments);
+            Type::Path(_segments, _) => {
+                 // Assume Path resolves to Struct/Enum which are pointers (in this phase)
+                 Ok(self.context.ptr_type(AddressSpace::default()).into())
             }
             
             _ => {

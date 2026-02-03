@@ -48,6 +48,7 @@ impl BuiltinLoader {
             .filter(|i| {
                 match &i.target_type {
                     Type::Struct(name, _) | Type::Enum(name, _) => name == type_name,
+                    Type::Path(segments, _) => segments.last().map(|s| s == type_name).unwrap_or(false),
                     _ => false,
                 }
             })

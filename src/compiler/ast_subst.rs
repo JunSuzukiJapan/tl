@@ -35,6 +35,28 @@ impl TypeSubstitutor {
                 Type::Tuple(new_types)
             }
             Type::Path(segments, generics) => {
+                 if segments.len() == 1 {
+                     if let Some(s) = self.subst.get(&segments[0]) {
+                         // If generic args exist on the param reference (e.g. T<U>), 
+                         // we might need to apply them to the substituted type?
+                         // But generic params T usually don't take args unless T is higher-kinded (not supported).
+                         // Or if s is subst to generic Struct?
+                         // If generics is empty, return s.
+                         if generics.is_empty() {
+                             return s.clone();
+                         }
+                         // If generics not empty, we are instantiating s with new generics?
+                         // e.g. T<int> where T=Vec. -> Vec<int>.
+                         if let Type::Struct(name, _) = s {
+                              let new_generics = generics.iter().map(|g| self.substitute_type(g)).collect();
+                              return Type::Struct(name.clone(), new_generics);
+                         }
+                         if let Type::Enum(name, _) = s {
+                              let new_generics = generics.iter().map(|g| self.substitute_type(g)).collect();
+                              return Type::Enum(name.clone(), new_generics);
+                         }
+                     }
+                 }
                  let new_generics = generics.iter().map(|g| self.substitute_type(g)).collect();
                  Type::Path(segments.clone(), new_generics)
             }
