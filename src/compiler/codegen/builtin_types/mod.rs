@@ -5,6 +5,7 @@ pub mod resolver;
 // Re-export specific modules for easier access
 pub use generic::option;
 pub use generic::result;
+pub use generic::vec;
 
 pub use non_generic::io;
 pub use non_generic::system;
@@ -33,6 +34,14 @@ pub fn load_all_builtins(codegen: &mut CodeGenerator) {
         codegen.enum_defs.insert(def.name.clone(), def);
     }
     codegen.generic_impls.entry("Result".to_string()).or_default().extend(result_data.impl_blocks);
+
+    // Vec
+    let vec_data = generic::vec::load_vec_data();
+    codegen.type_manager.register_builtin(vec_data.clone());
+    if let Some(def) = vec_data.struct_def {
+        codegen.struct_defs.insert(def.name.clone(), def);
+    }
+    codegen.generic_impls.entry("Vec".to_string()).or_default().extend(vec_data.impl_blocks);
 
     // 2. Register Non-Generic Types (IO, System, LLM, Tensor, Param)
     // These register directly into TypeManager

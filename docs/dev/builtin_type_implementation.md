@@ -39,6 +39,7 @@ struct Vec<T> {
     ptr: ptr<T>,  // 内部ポインタ
     cap: I64,
     len: I64,
+    // 必要に応じてアライメントなどのフィールド
 }
 
 impl Vec<T> {
@@ -126,3 +127,27 @@ pub fn create_vec_impl() -> ImplBlock {
 
 *   この方式に移行することで、`src/compiler/codegen/builtins.rs` や `builtin_impls.rs` の大部分は削除・自動化されるはずです。
 *   現在、`Option` など一部の型で発生している「コンパイラマジック（型定義が存在せず、Codegenで無理やり生成している状態）」は、この方式によって解消され、明示的な型定義を持つようになります。
+
+---
+
+## 実装時の注意点 (Lessons Learned)
+
+`Option<T>` や `Result<T, E>` の実装を通じて得られた、特に注意すべきポイントです。
+
+### 1. ランタイム関数のJITマッピング漏れに注意
+ジェネリック型（特に `Enum` や `Struct`）の操作において、コンパイラが自動生成するコード（`emit_deep_clone` や `unwrap` など）は、`tl_ptr_acquire`, `tl_ptr_inc_ref`, `tl_ptr_release` などの低レベルなメモリ管理関数を呼び出すことがあります。
+これらの関数が `tl_runtime` クレートに実装されていても、**`src/compiler/codegen/builtins.rs` でJITエンジンに明示的にマッピングされていないと、LLVM実行時にシンボルが見つからずクラッシュしたり、正しく動作しない** ことがあります。
+新しい組み込み型で複雑なメモリ操作が必要になる場合は、これらのマッピングが漏れていないか確認してください。
+
+### 2. LLVM Codegenにおける `Type::I32` の扱い
+TLの `i32` 型は、LLVM IR上でも `i32` として扱われるべきですが、以前の実装ではデフォルトで `i64` やポインタ型 (`ptr`) にフォールバックしてしまう箇所がいくつか存在しました。
+特に以下の箇所での型マッピングが正確でないと、"Invalid generated function" や "Call parameter type does not match function signature" などのLLVM検証エラーが発生します。
+
+*   **`compile_impl_blocks` / `compile_fn_proto`**: 関数の引数や戻り値の型定義。`Type::I32` を明示的に `context.i32_type()` にマップする必要があります。
+*   **`compile_struct_defs`**: 構造体のフィールド定義。
+*   **`compile_expr` (`ExprKind::FieldAccess`)**: フィールドから値をロードする際、そのフィールドの本来の型に基づいて `load` 命令の型（`i32` か `i64` かなど）を正しく指定する必要があります。
+
+### 3. Enumのジェネリクスとメモリレイアウト
+`Result<T, E>` のように複数のジェネリック型引数を持つ `Enum` を実装する場合、単相化（Monomorphization）が正しく行われているか注意が必要です。
+特に `Result<Point, String>` のような「構造体とポインタ型が混在するケース」では、タグのサイズやペイロードのアライメントが正しく計算されないと、メモリ破壊（セグフォ）の原因になります。
+AST注入方式では、TLコンパイラの標準的な構造体/Enum生成ロジックを利用するため、基本的には安全ですが、複雑なケースでは `test_result_complex.tl` のように、構造体を含むテストケースを作成して検証することを強く推奨します。

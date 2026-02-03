@@ -57,6 +57,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Instantiate
         let substitutor = TypeSubstitutor::new(subst_map);
         let mut new_method = method.clone();
+        eprintln!("DEBUG: monomorphize_method {} map keys: {:?}", method_name, substitutor.subst.keys());
         new_method.name = mangled_name.clone(); 
         new_method.generics = vec![]; // Concrete
         
@@ -370,7 +371,9 @@ impl<'ctx> CodeGenerator<'ctx> {
     /// Note: This version uses &self and does NOT perform on-demand monomorphization.
     /// For monomorphization, use `get_or_monomorphize_type` which takes &mut self.
     pub fn get_llvm_type(&self, ty: &Type) -> Result<BasicTypeEnum<'ctx>, String> {
+        // println!("DEBUG: get_llvm_type {:?}", ty);
         match ty {
+            Type::Ptr(_) => Ok(self.context.ptr_type(AddressSpace::default()).into()),
             Type::I64 | Type::Entity => Ok(self.context.i64_type().into()),
             Type::I32 => Ok(self.context.i32_type().into()),
             Type::F32 => Ok(self.context.f32_type().into()),
@@ -524,6 +527,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     
     /// Substitute type parameters in a type using the given substitution map.
     fn substitute_type(&self, ty: &Type, subst: &HashMap<String, Type>) -> Type {
+        eprintln!("DEBUG: subst {:?} with map keys {:?}", ty, subst.keys());
         match ty {
             Type::Struct(name, args) => {
                 // Check if this is a type parameter
@@ -542,7 +546,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.substitute_type(inner, subst)), *rank),
             Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.substitute_type(t, subst)).collect()),
-            Type::Path(segments, args) => {
+             Type::Path(segments, args) => {
                  if segments.len() == 1 {
                      if let Some(replacement) = subst.get(&segments[0]) {
                          return replacement.clone();
@@ -551,6 +555,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
                  Type::Path(segments.clone(), new_args)
             },
+            Type::Ptr(inner) => Type::Ptr(Box::new(self.substitute_type(inner, subst))),
             _ => ty.clone(),
         }
     }

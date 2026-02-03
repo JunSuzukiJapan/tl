@@ -202,6 +202,9 @@ impl Monomorphizer {
                 let new_ty = Type::Struct(name, args.clone());
                 self.resolve_type(&new_ty)
             }
+            
+            Type::Ptr(inner) => Type::Ptr(Box::new(self.resolve_type(inner))),
+
 
             _ => ty.clone()
         }
@@ -642,7 +645,30 @@ impl Monomorphizer {
                                           if let Some(ty) = inference_map.get(param) {
                                               type_args.push(ty.clone());
                                           } else {
-                                              all_inferred = false;
+                                              // Context-based Inference (Required for static methods like Vec::new() where args don't imply generics)
+                                              let mut inferred_via_context = false;
+                                              if let Some(Type::Struct(n, args)) = expected_type {
+                                                  // Case A: Generic Struct (Vec<i32>)
+                                                  if n == &type_name_str && args.len() == def.generics.len() {
+                                                     if let Some(idx) = def.generics.iter().position(|r| r == param) {
+                                                         type_args.push(args[idx].clone());
+                                                         inferred_via_context = true;
+                                                     }
+                                                  }
+                                                  // Case B: Already Monomorphized Struct (Vec_i32)
+                                                  else if let Some((orig_name, orig_args)) = self.reverse_struct_instances.get(n) {
+                                                      if orig_name == &type_name_str && orig_args.len() == def.generics.len() {
+                                                          if let Some(idx) = def.generics.iter().position(|r| r == param) {
+                                                              type_args.push(orig_args[idx].clone());
+                                                              inferred_via_context = true;
+                                                          }
+                                                      }
+                                                  }
+                                              }
+                                              
+                                              if !inferred_via_context {
+                                                  all_inferred = false;
+                                              }
                                           }
                                       }
                                       
@@ -801,6 +827,11 @@ impl Monomorphizer {
                   self.rewrite_expr(&mut l.inner, subst, None);
                   self.rewrite_expr(&mut r.inner, subst, None);
               }
+              ExprKind::As(expr, ty) => {
+                  self.rewrite_expr(&mut expr.inner, subst, None);
+                  *ty = self.substitute_type(ty, subst);
+                  *ty = self.resolve_type(ty);
+              }
               ExprKind::Block(stmts) => {
                   self.scopes.push(HashMap::new());
                   for s in stmts {
@@ -850,9 +881,11 @@ impl Monomorphizer {
                      // Usually impl<U> Struct<U>.
                      if target_args.len() == args.len() {
                          matches = true;
+                         eprintln!("DEBUG: instantiate_impls unifying target_args={:?} with args={:?}", target_args, args);
                          for (impl_arg, concrete_arg) in target_args.iter().zip(args) {
                              self.unify_types(impl_arg, concrete_arg, &mut subst);
                          }
+                         eprintln!("DEBUG: subst map: {:?}", subst);
                      }
                  }
              }
@@ -1112,12 +1145,21 @@ impl Monomorphizer {
              Type::Path(segments, args) => {
                  if segments.len() == 1 {
                      if let Some(replacement) = subst.get(&segments[0]) {
+                         eprintln!("DEBUG: substituted Path {} -> {:?}", segments[0], replacement);
                          return replacement.clone();
+                     } else {
+                         eprintln!("DEBUG: Path {} not found in subst {:?}", segments[0], subst.keys());
                      }
                  }
                  let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
                  Type::Path(segments.clone(), new_args)
              },
+             Type::Ptr(inner) => {
+                 eprintln!("DEBUG: substituting Ptr inner={:?}", inner);
+                 Type::Ptr(Box::new(self.substitute_type(inner, subst)))
+             },
+             Type::Ref(inner) => Type::Ref(Box::new(self.substitute_type(inner, subst))),
+
              _ => ty.clone()
         }
     }
@@ -1197,20 +1239,12 @@ impl Monomorphizer {
     fn unify_types(&self, generic: &Type, concrete: &Type, map: &mut HashMap<String, Type>) {
         match (generic, concrete) {
             (Type::Struct(name, args), _) => {
-                // If this UserDefined is actually a generic parameter (T)
-                // We assume generic parameters are represented as UserDefined in current AST for "T"
-                
-                // If simple T -> Concrete
+                // ...
                 if args.is_empty() {
-                    // Check if 'name' is in knowledge base of generics?
-                    // Currently unbound check: we just insert.
                     if !map.contains_key(name) {
-                        map.insert(name.clone(), concrete.clone());
-                    } else {
-                        // verify consistency?
+                         map.insert(name.clone(), concrete.clone());
                     }
                 } else if let Type::Struct(c_name, c_args) = concrete {
-                    // T<A> vs List<B> ?
                     if name == c_name && args.len() == c_args.len() {
                         for (a, b) in args.iter().zip(c_args) {
                             self.unify_types(a, b, map);
@@ -1218,6 +1252,15 @@ impl Monomorphizer {
                     }
                 }
             }
+             (Type::Path(segments, args), _) => {
+                 if segments.len() == 1 && args.is_empty() {
+                     let name = &segments[0];
+                     if !map.contains_key(name) {
+                         map.insert(name.clone(), concrete.clone());
+                     }
+                 }
+                 // Handle nested args?
+             }
             (Type::Tensor(inner_g, _), Type::Tensor(inner_c, _)) => {
                 self.unify_types(inner_g, inner_c, map);
             }

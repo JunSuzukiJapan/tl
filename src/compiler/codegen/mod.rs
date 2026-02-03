@@ -743,6 +743,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     fn compile_struct_defs(&mut self, structs: &[StructDef]) -> Result<(), String> {
+        // println!("DEBUG: compile_struct_defs total={}", structs.len());
         // Pass 1: Opaque
         for s in structs {
             if !s.generics.is_empty() {
@@ -777,6 +778,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             let mut field_types = Vec::new();
             for (_field_name, field_type) in &s.fields {
+                // println!("DEBUG: compile_struct_defs struct={} field={} type={:?}", s.name, field_name, field_type);
                 let llvm_type = match field_type {
                     Type::F32 => self.context.f32_type().into(),
                     Type::F64 => self.context.f64_type().into(),
@@ -791,6 +793,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),
                     Type::Char(_) | Type::I32 => self.context.i32_type().into(),
+                    Type::Ptr(_) | Type::Ref(_) | Type::Tuple(_) | Type::Path(_, _) | Type::U8 | Type::Usize => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                     Type::Struct(name, _) => {
                         // Extract simple name from module path
                         let simple_name = if name.contains("::") {
@@ -972,11 +975,14 @@ impl<'ctx> CodeGenerator<'ctx> {
         for imp in impls {
             // Check if generic impl
             let _target_name = imp.target_type.get_base_name();
+            eprintln!("DEBUG: compile_impl_blocks {} generics: {:?}", _target_name, imp.generics);
             if !imp.generics.is_empty() {
                 let target_name = imp.target_type.get_base_name();
                 self.generic_impls.entry(target_name).or_default().push(imp.clone());
                 continue;
             }
+            
+
 
             for method in &imp.methods {
                 let target_name = imp.target_type.get_base_name();
@@ -990,6 +996,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 } else {
                     format!("tl_{}_{}", simple_target, method.name)
                 };
+                if mangled_name.contains("Vec_i32") {
+                    eprintln!("DEBUG: compiling method {} in implied Vec_i32", method.name);
+                }
 
                 // Register return type for lookups by name (Critical for SRET detection)
                 self.method_return_types.insert(mangled_name.clone(), method.return_type.clone());
@@ -1095,6 +1104,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             if !imp.generics.is_empty() {
                 continue;
             }
+
+
             for method in &imp.methods {
                 let target_name = imp.target_type.get_base_name();
                 let simple_target = if target_name.contains("::") {

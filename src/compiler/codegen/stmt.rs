@@ -1844,9 +1844,49 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                                 return Ok(());
                             }
+                            Type::Ptr(_inner_ty) => {
+                                // ptr[idx] = val
+                                assert!(indices.is_some(), "Ptr indexing requires indices");
+                                let indices = indices.as_ref().unwrap();
+                                assert!(indices.len() == 1, "Multidimensional Ptr indexing not supported");
+                                let (idx_val, _) = self.compile_expr(&indices[0])?;
+                                
+                                // Load the pointer value from the variable
+                                // var_ptr is the address of the variable 'p' (stack slot).
+                                // We need the value stored in 'p', which is the pointer.
+                                let ptr_val = self.builder.build_load(
+                                     self.context.ptr_type(inkwell::AddressSpace::default()),
+                                     var_ptr.into_pointer_value(),
+                                     "load_ptr_for_index"
+                                ).unwrap().into_pointer_value();
+
+                                // Compile Value
+                                let (val_base, val_type) = self.compile_expr(value)?;
+
+                                // Clone if alias/var 
+                                let val = if matches!(value.inner, ExprKind::Variable(_) | ExprKind::FieldAccess(_, _)) 
+                                             && self.is_safe_to_free(value, &val_type) {
+                                    self.emit_deep_clone(val_base, &val_type)?
+                                } else {
+                                    val_base
+                                };
+
+                                // GEP
+                                unsafe {
+                                    let elem_ptr = self.builder.build_gep(
+                                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                                        ptr_val,
+                                        &[idx_val.into_int_value()],
+                                        "ptr_idx"
+                                    ).map_err(|e| e.to_string())?;
+                                    
+                                    self.builder.build_store(elem_ptr, val).map_err(|e| e.to_string())?;
+                                }
+                                return Ok(());
+                            }
                             _ => {
                                 return Err(
-                                    "Indexed assignment only supported for Tensor".into(),
+                                    "Indexed assignment only supported for Tensor or Ptr".into(),
                                 )
                             }
                         }

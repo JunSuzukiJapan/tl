@@ -1229,7 +1229,16 @@ fn parse_function_def(input: Input) -> IResult<Input, crate::compiler::ast::Func
         // Handle optional self
         // CRITICAL: &self is STRICTLY FORBIDDEN. See top of file.
         let (input, maybe_amp) = map(opt(expect_token(Token::Ampersand)), |o| o.is_some())(input)?;
-        let (input, has_self) = map(opt(expect_token(Token::Self_)), |o| o.is_some())(input)?;
+        let (input, has_mut) = map(opt(expect_token(Token::Mut)), |o| o.is_some())(input)?;
+        
+        // If mut is present, self MUST follow.
+        // If mut is NOT present, self MIGHT follow.
+        let (input, has_self) = if has_mut {
+             let (input, _) = expect_token(Token::Self_)(input)?;
+             (input, true)
+        } else {
+             map(opt(expect_token(Token::Self_)), |o| o.is_some())(input)?
+        };
         
         // Validation: & without self? syntax error unless it's a type (but types are after colon)
         // If we saw &, expected self. But self is optional.

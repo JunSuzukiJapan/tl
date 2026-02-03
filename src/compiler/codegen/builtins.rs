@@ -274,6 +274,10 @@ pub fn declare_runtime_functions<'ctx>(
     let free_type = void_type.fn_type(&[void_ptr.into()], false);
     add_fn("free", free_type);
 
+    // realloc(ptr: *u8, size: i64) -> *u8
+    let realloc_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("realloc", realloc_type);
+
     // tl_tensor_dim(t: *mut OpaqueTensor, dim_idx: usize) -> i64
     let dim_type = i64_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
     add_fn("tl_tensor_dim", dim_type);

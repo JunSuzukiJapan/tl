@@ -11,6 +11,7 @@ impl TypeSubstitutor {
     }
 
     pub fn substitute_type(&self, ty: &Type) -> Type {
+        eprintln!("AST_SUBST: {:?}", ty);
         match ty {
             // UserDefined removed
 
@@ -60,6 +61,9 @@ impl TypeSubstitutor {
                  let new_generics = generics.iter().map(|g| self.substitute_type(g)).collect();
                  Type::Path(segments.clone(), new_generics)
             }
+            Type::Ptr(inner) => Type::Ptr(Box::new(self.substitute_type(inner))),
+            Type::Ref(inner) => Type::Ref(Box::new(self.substitute_type(inner))),
+
 
             _ => ty.clone(),
         }

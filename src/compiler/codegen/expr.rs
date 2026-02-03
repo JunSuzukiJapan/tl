@@ -2,6 +2,7 @@ use super::CodeGenerator;
 use crate::compiler::ast::*;
 
 use inkwell::values::*;
+use inkwell::types::BasicType;
 use std::collections::{HashMap, HashSet};
 
 
@@ -2172,6 +2173,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .map_err(|e| e.to_string())?;
                         Ok((b.into(), Type::Bool))
                     }
+                    // Int to Ptr
+                    (Type::I64, Type::Ptr(_)) => {
+                        let i = val.into_int_value();
+                        let ptr = self.builder.build_int_to_ptr(i, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_int_to_ptr").map_err(|e| e.to_string())?;
+                        Ok((ptr.into(), target_type.clone()))
+                    }
+                    // Ptr to Ptr (Bitcast)
+                    (Type::Ptr(_), Type::Ptr(_)) => {
+                        if val.is_pointer_value() {
+                             let ptr = val.into_pointer_value();
+                             let new_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr_ptr").map_err(|e| e.to_string())?;
+                             Ok((new_ptr.into(), target_type.clone()))
+                        } else if val.is_int_value() {
+                             // Handle case where Ptr is represented as I64 (e.g. malloc return if signature mismatch?)
+                             let i = val.into_int_value();
+                             let new_ptr = self.builder.build_int_to_ptr(i, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_int_ptr").map_err(|e| e.to_string())?;
+                             Ok((new_ptr.into(), target_type.clone()))
+                        } else {
+                             return Err(format!("Invalid value kind for Ptr cast: {:?}", val));
+                        }
+                    }
                     // Integer Casts
                     (Type::I64, Type::I32) => {
                          let i = val.into_int_value();
@@ -2383,8 +2405,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Type::Char(_) | Type::I32 => self.context.i32_type().into(),
                         Type::Struct(_, _) 
  
-
                         | Type::Enum(_, _)
+                        | Type::Ptr(_) // FIX: Handle Ptr fields
                         | Type::Tuple(_) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
@@ -2447,6 +2469,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                  self.compile_struct_init(&name, &generics, fields)
             },
             ExprKind::StaticMethodCall(type_ty, method_name, args) => {
+                if method_name == "sizeof" {
+                     // Generic T already substituted by Monomorphizer
+                     let llvm_ty = self.get_llvm_type(type_ty).map_err(|e| e.to_string())?;
+                     let size_val = llvm_ty.size_of().ok_or(format!("Type {:?} has no size (ZST not supported)", type_ty))?;
+                     // Cast to i64 if needed? IntValue is generic, but usually i64 for size_t on 64bit
+                     // LLVM size_of returns integer type matching target's pointer width.
+                     // Our Type::I64 expects LLVM i64.
+                     return Ok((size_val.into(), Type::I64));
+                }
+
                 let struct_name = match type_ty {
                     Type::Struct(name, _) => name,
                     Type::Enum(name, _) => name,
@@ -2740,7 +2772,40 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
 
 
-                    _ => Err("Index access only on Tensor".into()),
+                    Type::Ptr(inner) => {
+                         let ptr = val.into_pointer_value();
+                         if indices.len() != 1 {
+                             return Err("Ptr indexing must be 1D".into());
+                         }
+                         let (idx_val, _) = self.compile_expr(&indices[0])?;
+                         
+                         unsafe {
+                             let elem_ptr = self.builder.build_gep(
+                                 self.context.ptr_type(inkwell::AddressSpace::default()),
+                                 ptr,
+                                 &[idx_val.into_int_value()],
+                                 "ptr_idx"
+                             ).map_err(|e| e.to_string())?;
+                             
+                             let load_ty = self.get_or_monomorphize_type(&inner)?;
+                             let val = self.builder.build_load(
+                                 load_ty,
+                                 elem_ptr,
+                                 "ptr_val"
+                             ).map_err(|e| e.to_string())?;
+                             
+                             // If it's a struct/string, should we retain/clone?
+                             // Usually reading from array is borrowing or copying.
+                             // Rust: Copy type -> Copy. non-Copy -> Move.
+                             // Here we implement Move (like *ptr).
+                             // We do NOT emit retain/clone automatically on access?
+                             // If the result is assigned to variable, assignment logic calls retain if needed?
+                             // No, assignment logic calls deep clone if safe_to_free.
+                             
+                             Ok((val, *inner.clone()))
+                         }
+                    }
+                    _ => Err("Index access only on Tensor or Ptr".into()),
                 }
             }
             ExprKind::UnOp(op, expr) => {
@@ -3776,6 +3841,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         args: &[Expr],
         target_type: &Type,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        eprintln!("DEBUG: compile_static_method_call struct_name={} type_ty={:?}", struct_name, target_type);
         // Compatibility aliases for existing logic
         let type_name = struct_name;
 
@@ -6343,6 +6409,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         args: &[Expr],
         dest: Option<BasicValueEnum<'ctx>>,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        eprintln!("DEBUG: compile_fn_call_dps name={}", name);
         // 0. Check if it's a relation query (handle module path resolution)
         let simple_name = name.split("::").last().unwrap_or(name);
 

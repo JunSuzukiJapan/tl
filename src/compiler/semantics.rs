@@ -1658,6 +1658,7 @@ impl SemanticAnalyzer {
                     // Verify var_type is Tensor
                     let (_inner_type, rank) = match &var_type {
                         Type::Tensor(inner, r) => (inner, *r),
+                        Type::Ptr(inner) => (inner, 1),
                         _ => {
                             return self.err(
                                 SemanticError::TypeMismatch {
@@ -4417,6 +4418,7 @@ impl SemanticAnalyzer {
                 let target_type = self.check_expr(target)?;
                 
                 match target_type {
+                    Type::Ptr(inner) => Ok(*inner),
                     Type::Tensor(inner, _rank) => Ok(*inner), 
                     Type::Struct(name, _) if name == "Tensor" => Ok(Type::F32), // Assume F32 for opaque Tensor
                     Type::Struct(_, _) => {
@@ -4778,6 +4780,10 @@ impl SemanticAnalyzer {
                 }
             }
             ExprKind::StaticMethodCall(type_node, method_name, args) => {
+                if method_name == "sizeof" {
+                    return Ok(Type::I64);
+                }
+
                 // Resolve the type using resolve_user_type to convert UserDefined -> Struct/Enum
                 let resolved_type = self.resolve_user_type(type_node);
                 if *type_node != resolved_type {
