@@ -1854,6 +1854,24 @@ pub fn declare_runtime_functions<'ctx>(
             runtime::memory_manager::tl_ptr_dec_ref as usize,
         );
     }
+    if let Some(f) = module.get_function("tl_ptr_inc_ref") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::memory_manager::tl_ptr_inc_ref as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_ptr_acquire") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::memory_manager::tl_ptr_acquire as usize,
+        );
+    }
+    if let Some(f) = module.get_function("tl_ptr_release") {
+        execution_engine.add_global_mapping(
+            &f,
+            runtime::memory_manager::tl_ptr_release as usize,
+        );
+    }
     if let Some(f) = module.get_function("tl_mem_free") {
         execution_engine.add_global_mapping(&f, runtime::tl_mem_free as usize);
     }

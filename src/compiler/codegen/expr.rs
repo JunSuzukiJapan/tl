@@ -2380,7 +2380,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        Type::Char(_) => self.context.i32_type().into(),
+                        Type::Char(_) | Type::I32 => self.context.i32_type().into(),
                         Type::Struct(_, _) 
  
 
