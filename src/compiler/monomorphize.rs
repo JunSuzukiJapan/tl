@@ -444,12 +444,10 @@ impl Monomorphizer {
                  // But since semantics converts to EnumInit, this branch should strictly not trigger for Enums unless semantics failed or logic differs.
                  // Given strict compilation check, I'll update it to be safe.
                  else {
-                     // ... Update logic to use VariantKind ...
+                     // Name no longer contains :: (Type::Path gives simple name)
                      let (type_name_str, variant_name_str) = {
-                        let parts: Vec<&str> = name.split("::").collect();
-                        let t = if parts.len() > 1 { parts[0].to_string() } else { name.clone() };
-                        let v = if parts.len() > 1 { parts[1].to_string() } else { "".to_string() };
-                        (t, v)
+                        // Without :: in name, assume name is just the type name
+                        (name.clone(), String::new())
                      };
 
                      if let Some(def) = self.generic_enums.get(&type_name_str) {
