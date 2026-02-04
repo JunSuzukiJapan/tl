@@ -569,12 +569,22 @@ impl SemanticAnalyzer {
 
             // 2. Resolve Name via resolve_symbol_name which handles aliases
             
-            // If path > 1, assume full path?
+            // If path > 1, check if first segment is an enum (for EnumType::Variant patterns)
             // If path == 1, use resolve_symbol_name.
             let canonical_name = if path.len() == 1 {
                 self.resolve_symbol_name(&path[0])
             } else {
-                path.last().unwrap().clone() // Use simple name, not full path
+                // Multi-segment path like Shape::Circle or std::option::Option
+                // Try first segment as an enum name
+                let first = self.resolve_symbol_name(&path[0]);
+                if self.enums.contains_key(&first) {
+                    // This is an enum variant pattern (e.g., Shape::Circle)
+                    // Return the enum type - StructInit will handle variant lookup
+                    let enum_args: Vec<Type> = args.iter().map(|a| self.resolve_user_type(a)).collect();
+                    return Type::Enum(first, enum_args);
+                }
+                // Not an enum variant, use last segment as struct name
+                path.last().unwrap().clone()
             };
             
             // Recursively resolve generic args
@@ -2134,7 +2144,56 @@ impl SemanticAnalyzer {
                 }
             }
             ExprKind::StructInit(type_node, fields) => {
+                // First check if this is an enum variant pattern (e.g., Shape::Circle { ... })
+                // before resolving, since we need both the enum name and variant name
+                if let Type::Path(path, args) = type_node {
+                    if path.len() >= 2 {
+                        // Multi-segment path like Shape::Circle - check if first segment is enum
+                        let first = self.resolve_symbol_name(&path[0]);
+                        if self.enums.contains_key(&first) {
+                            // This is an enum variant init, convert to EnumInit
+                            let variant_name = path.last().unwrap().clone();
+                            let resolved_args: Vec<Type> = args.iter().map(|a| self.resolve_user_type(a)).collect();
+                            
+                            // Transform the expression to EnumInit
+                            *expr = Spanned::new(
+                                ExprKind::EnumInit {
+                                    enum_name: first.clone(),
+                                    variant_name: variant_name.clone(),
+                                    generics: resolved_args,
+                                    payload: crate::compiler::ast::EnumVariantInit::Struct(fields.clone()),
+                                },
+                                expr.span.clone(),
+                            );
+                            // Now check the transformed EnumInit
+                            return self.check_expr(expr);
+                        }
+                    }
+                }
+                
                 let resolved_ty = self.resolve_user_type(type_node);
+                
+                // Handle Type::Enum that came from resolve_user_type 
+                if let Type::Enum(enum_name, generics) = &resolved_ty {
+                    // Need variant name from original Path
+                    if let Type::Path(path, _) = type_node {
+                        if path.len() >= 2 {
+                            let variant_name = path.last().unwrap().clone();
+                            
+                            *expr = Spanned::new(
+                                ExprKind::EnumInit {
+                                    enum_name: enum_name.clone(),
+                                    variant_name: variant_name.clone(),
+                                    generics: generics.clone(),
+                                    payload: crate::compiler::ast::EnumVariantInit::Struct(fields.clone()),
+                                },
+                                expr.span.clone(),
+                            );
+                            return self.check_expr(expr);
+                        }
+                    }
+                    return self.err(SemanticError::StructNotFound(format!("Enum {} needs variant", enum_name)), Some(expr.span.clone()));
+                }
                 
                 // Ensure it resolved to Struct (or Error if Path not found)
                 let (name_str, explicit_generics): (String, Vec<Type>) = if let Type::Struct(n, g) = &resolved_ty {
