@@ -1251,6 +1251,21 @@ impl Monomorphizer {
                  }
             }
             Type::Tensor(inner, _) => format!("Tensor_{}", self.mangle_type(inner)),
+            Type::Enum(name, args) => {
+                if args.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{}_{}", name, self.mangle_types(args))
+                }
+            }
+            Type::Path(segments, args) => {
+                let base = segments.join("_");
+                if args.is_empty() {
+                    base
+                } else {
+                    format!("{}_{}", base, self.mangle_types(args))
+                }
+            }
             _ => "unknown".to_string(),
         }
     }

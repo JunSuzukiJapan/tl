@@ -380,7 +380,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .map_err(|e| e.to_string())?;
 
                                 // Recursive calls use DEFAULT (FULL) cleanup for contents
-                                self.emit_recursive_free(f_val, f_ty, super::CLEANUP_FULL)?;
+                                // Fix: Convert Struct to Enum if it's actually an Enum (e.g. Entry_i64_i64)
+                                let effective_ty = if let Type::Struct(s_name, s_args) = f_ty {
+                                    if self.enum_defs.contains_key(s_name) {
+                                        Type::Enum(s_name.clone(), s_args.clone())
+                                    } else {
+                                        f_ty.clone()
+                                    }
+                                } else {
+                                    f_ty.clone()
+                                };
+                                self.emit_recursive_free(f_val, &effective_ty, super::CLEANUP_FULL)?;
                             }
                         }
                     }
