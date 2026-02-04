@@ -2140,6 +2140,70 @@ impl SemanticAnalyzer {
                 }
                 Some(Ok(Type::String("String".to_string())))
             }
+            // Tokenizer static methods
+            ("Tokenizer", "new") => {
+                if args.len() != 1 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Tokenizer::new".into(),
+                        expected: 1,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::Struct("Tokenizer".to_string(), vec![])))
+            }
+            // KVCache static methods
+            ("KVCache", "new") => {
+                if args.len() != 1 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "KVCache::new".into(),
+                        expected: 1,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::Struct("KVCache".to_string(), vec![])))
+            }
+            // Http static methods
+            ("Http", "get") => {
+                if args.len() != 1 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Http::get".into(),
+                        expected: 1,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::String("String".to_string())))
+            }
+            ("Http", "download") => {
+                if args.len() != 2 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Http::download".into(),
+                        expected: 2,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::Bool))
+            }
+            // Image static methods
+            ("Image", "load_grayscale") => {
+                if args.len() != 1 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Image::load_grayscale".into(),
+                        expected: 1,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::Tensor(Box::new(Type::F32), 2)))
+            }
+            ("Image", "width") | ("Image", "height") => {
+                if !args.is_empty() {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: format!("Image::{}", method),
+                        expected: 0,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::I64))
+            }
             _ => None,
         }
     }
@@ -5789,6 +5853,16 @@ impl SemanticAnalyzer {
                         }
                         Some(Ok(any_tensor.clone()))
                     }
+                    // mod: 1 arg modulo
+                    "mod" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::mod".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(any_tensor.clone()))
+                    }
                     _ => None // Others handled by TypeManager
                 }
             }
@@ -5809,9 +5883,71 @@ impl SemanticAnalyzer {
                     _ => None
                 }
             }
-            "F32" => {
+            "F32" | "F64" => {
                 match method {
-                    "abs" | "exp" | "sqrt" | "ln" | "log" | "sin" | "cos" => Some(Ok(Type::F32)),
+                    // Unary methods
+                    "abs" | "acos" | "acosh" | "asin" | "asinh" | "atan" | "atanh" 
+                    | "cbrt" | "ceil" | "cos" | "cosh" | "exp" | "exp2" | "exp_m1" 
+                    | "floor" | "fract" | "ln" | "ln_1p" | "log" | "log10" | "log2" 
+                    | "recip" | "round" | "signum" | "sin" | "sinh" | "sqrt" 
+                    | "tan" | "tanh" | "to_degrees" | "to_radians" | "trunc" => {
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("{}::{}", type_name, method), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        if type_name == "F32" { Some(Ok(Type::F32)) } else { Some(Ok(Type::F64)) }
+                    }
+                    // Binary methods
+                    "atan2" | "copysign" | "hypot" | "powf" | "pow" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("{}::{}", type_name, method), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        if type_name == "F32" { Some(Ok(Type::F32)) } else { Some(Ok(Type::F64)) }
+                    }
+                    // powi (int exponent)
+                    "powi" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("{}::powi", type_name), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        if type_name == "F32" { Some(Ok(Type::F32)) } else { Some(Ok(Type::F64)) }
+                    }
+                    _ => None
+                }
+            }
+            "I64" | "I32" => {
+                match method {
+                    "abs" | "signum" | "get_offset" | "sumall" => {
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("{}::{}", type_name, method), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        Some(Ok(Type::I64))
+                    }
+                    "is_positive" | "is_negative" => {
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("{}::{}", type_name, method), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        Some(Ok(Type::Bool))
+                    }
+                    "div_euclid" | "rem_euclid" | "pow" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("{}::{}", type_name, method), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::I64))
+                    }
                     _ => None
                 }
             }
@@ -5844,6 +5980,18 @@ impl SemanticAnalyzer {
                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
                         Some(Ok(Type::Tensor(Box::new(Type::I8), 2)))
                     }
+                    "set" => {
+                         if args.len() != 2 {
+                             return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Map::set".into(), expected: 2, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(Type::Void))
+                    }
+                    "free" => Some(Ok(Type::Void)),
                     _ => None
                 }
             }
@@ -5989,14 +6137,6 @@ impl SemanticAnalyzer {
                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
                         Some(Ok(Type::String("String".to_string())))
                     }
-                    _ => None
-                }
-            }
-            "I64" => {
-                match method {
-                    "get_offset" => Some(Ok(Type::I64)),
-                    "sumall" => Some(Ok(Type::I64)),
-                    "abs" => Some(Ok(Type::I64)),
                     _ => None
                 }
             }
