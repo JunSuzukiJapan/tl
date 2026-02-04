@@ -21,13 +21,19 @@ struct HashMap<K, V> {
 
 impl<K, V> HashMap<K, V> {
     fn new() -> HashMap<K, V> {
+        // Initialize entries with 4 Entry::Empty elements (smaller initial size)
+        let mut entries = Vec<Entry<K, V>>::with_capacity(4);
+        let mut i = 0;
+        while i < 4 {
+            entries.push(Entry<K, V>::Empty);
+            i = i + 1;
+        }
         HashMap<K, V> {
-            entries: Vec<Entry<K, V>>::with_capacity(16),
+            entries: entries,
             len: 0,
-            capacity: 16,
+            capacity: 4,
         }
     }
-
     fn len(self) -> i64 {
         self.len
     }

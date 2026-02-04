@@ -265,6 +265,9 @@ impl BuiltinManager {
         self.register_uneval("print", compile_print_uneval);
         self.register_uneval("println", compile_println_uneval);
         self.register_uneval("read_line", compile_read_line_uneval);
+        
+        // Panic function - diverging, never returns
+        self.register_uneval("panic", compile_panic_uneval);
 
         // Command line arguments
         self.register_eval("args_count", compile_args_count);
@@ -2469,6 +2472,32 @@ impl<'ctx> CodeGenerator<'ctx> {
             },
             ExprKind::StaticMethodCall(type_ty, method_name, args) => {
                 if method_name == "sizeof" {
+                     eprintln!("[DEBUG sizeof] type_ty = {:?}", type_ty);
+                     eprintln!("[DEBUG sizeof] enum_types keys = {:?}", self.enum_types.keys().collect::<Vec<_>>());
+                     
+                     // For Enum types, we need to get the actual data struct size, not pointer size
+                     if let Type::Enum(enum_name, _) = type_ty {
+                         // Look up the actual LLVM struct type from enum_types
+                         if let Some(enum_struct_type) = self.enum_types.get(enum_name) {
+                             let size_val = enum_struct_type.size_of().ok_or(format!("Enum type {} has no size", enum_name))?;
+                             eprintln!("[DEBUG sizeof] Found Enum {} -> size", enum_name);
+                             return Ok((size_val.into(), Type::I64));
+                         } else {
+                             return Err(format!("Enum type {} not found in enum_types for sizeof", enum_name));
+                         }
+                     }
+                     
+                     // For Struct types, also check if it's actually an enum (mangled name)
+                     if let Type::Struct(name, _) = type_ty {
+                         if let Some(enum_struct_type) = self.enum_types.get(name) {
+                             // It's actually an enum with a Struct type wrapper
+                             let size_val = enum_struct_type.size_of().ok_or(format!("Enum type {} has no size", name))?;
+                             eprintln!("[DEBUG sizeof] Found Struct-as-Enum {} -> size", name);
+                             return Ok((size_val.into(), Type::I64));
+                         }
+                     }
+                     
+                     eprintln!("[DEBUG sizeof] Fallback to get_llvm_type for {:?}", type_ty);
                      // Generic T already substituted by Monomorphizer
                      let llvm_ty = self.get_llvm_type(type_ty).map_err(|e| e.to_string())?;
                      let size_val = llvm_ty.size_of().ok_or(format!("Type {:?} has no size (ZST not supported)", type_ty))?;
@@ -2476,7 +2505,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      // LLVM size_of returns integer type matching target's pointer width.
                      // Our Type::I64 expects LLVM i64.
                      return Ok((size_val.into(), Type::I64));
-                }
+                 }
 
                 let struct_name = match type_ty {
                     Type::Struct(name, _) => name,
@@ -7249,6 +7278,46 @@ fn compile_read_line_uneval<'ctx>(
         _ => return Err("Invalid return from read_line".into()),
     };
     Ok((res, Type::String("String".to_string())))
+}
+
+/// Compile panic! function - prints error message, calls abort, returns Never type
+fn compile_panic_uneval<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: &[Expr],
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("panic requires 1 argument (error message)".into());
+    }
+    
+    let (msg_val, _msg_ty) = codegen.compile_expr(&args[0])?;
+    
+    // Print the panic message using tl_display_string
+    let display_fn = codegen
+        .module
+        .get_function("tl_display_string")
+        .ok_or("tl_display_string not found")?;
+    
+    // Print "[PANIC] " prefix using compile_string_literal for proper TL string format
+    let (prefix_val, _) = codegen.compile_string_literal("[PANIC] ")?;
+    codegen.builder.build_call(display_fn, &[prefix_val.into()], "").unwrap();
+    
+    // Print the actual message
+    codegen.builder.build_call(display_fn, &[msg_val.into()], "").unwrap();
+    
+    // Print newline
+    let (newline_val, _) = codegen.compile_string_literal("\n")?;
+    codegen.builder.build_call(display_fn, &[newline_val.into()], "").unwrap();
+    
+    // Call abort() to terminate the program
+    let abort_fn = codegen.module.get_function("abort").ok_or("abort function not found")?;
+    codegen.builder.build_call(abort_fn, &[], "").unwrap();
+    
+    // Insert LLVM unreachable instruction to indicate control doesn't reach here
+    codegen.builder.build_unreachable().unwrap();
+    
+    // Return a dummy value with Never type (code won't actually reach here)
+    let dummy = codegen.context.i64_type().const_zero();
+    Ok((dummy.into(), Type::Never))
 }
 
 fn compile_print_formatted<'ctx>(

@@ -278,6 +278,10 @@ pub fn declare_runtime_functions<'ctx>(
     let realloc_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
     add_fn("realloc", realloc_type);
 
+    // abort() -> void (for panic! support)
+    let abort_type = void_type.fn_type(&[], false);
+    add_fn("abort", abort_type);
+
     // tl_tensor_dim(t: *mut OpaqueTensor, dim_idx: usize) -> i64
     let dim_type = i64_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
     add_fn("tl_tensor_dim", dim_type);

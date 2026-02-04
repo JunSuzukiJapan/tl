@@ -2855,6 +2855,32 @@ impl SemanticAnalyzer {
                     self.check_expr(&mut args[0])?;
                     return Ok(Type::String("String".to_string()));
                 }
+                
+                // panic! - diverging function that never returns
+                if name == "panic" {
+                    if args.len() != 1 {
+                        return self.err(
+                            SemanticError::ArgumentCountMismatch {
+                                name: "panic".into(),
+                                expected: 1,
+                                found: args.len(),
+                            },
+                            Some(expr.span.clone()),
+                        );
+                    }
+                    let arg_ty = self.check_expr(&mut args[0])?;
+                    if !matches!(arg_ty, Type::String(_)) {
+                        return self.err(
+                            SemanticError::TypeMismatch {
+                                expected: Type::String("String".to_string()),
+                                found: arg_ty,
+                            },
+                            Some(args[0].span.clone()),
+                        );
+                    }
+                    // panic! returns Never type - it never returns normally
+                    return Ok(Type::Never);
+                }
 
                 // --- StdLib Phase 1 ---
                 // --- StdLib Static Methods ---

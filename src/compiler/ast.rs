@@ -108,6 +108,7 @@ pub enum Type {
     Path(Vec<String>, Vec<Type>),
 
     Void, // For functions returning nothing
+    Never, // For diverging expressions (panic!, unreachable, etc.)
     Undefined(u64), // For unresolved generics (unique ID)
 }
 
@@ -138,6 +139,7 @@ impl Type {
             Type::Tuple(_) => "Tuple".to_string(), // Or handle specially? TypeRegistry didn't support Tuple generic methods usually.
             // Type::UserDefined(n, _) => n.clone(), // REMOVED
             Type::Void => "Void".to_string(),
+            Type::Never => "Never".to_string(),
             Type::Undefined(_) => "Undefined".to_string(),
             Type::TypeVar(_) => "TypeVar".to_string(),
             Type::Ref(inner) => inner.get_base_name(),

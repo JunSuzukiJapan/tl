@@ -505,98 +505,62 @@ impl Monomorphizer {
                  }
                  return;
              }
-              ExprKind::EnumInit { .. } => {
-                   // DISABLE Legacy Monomorphization for Enums.
-                   // valid for "Generic Compilation" architecture.
-                   return; 
-                   /*
-                   if let Some(def) = self.generic_enums.get(enum_name) {
-                      if let Some(v_def) = def.variants.iter().find(|v| v.name == *variant_name) {
-                          let mut inferred_map = HashMap::new();
-                          let mut all_inferred = true;
-                          
-                          // Infer generics
-                          match (&*payload, &v_def.kind) {
-                              (EnumVariantInit::Unit, VariantKind::Unit) => {},
-                              (EnumVariantInit::Tuple(exprs), VariantKind::Tuple(types)) => {
-                                  for (e_val, field_ty) in exprs.iter().zip(types.iter()) {
-                                      if let Some(val_ty) = self.infer_expr_type(&e_val.inner) {
-                                          self.unify_types(field_ty, &val_ty, &mut inferred_map);
-                                      }
-                                  }
-                              },
-                              (EnumVariantInit::Struct(fields), VariantKind::Struct(def_fields)) => {
-                                  for (fname, val) in fields.iter() {
-                                     if let Some(field_ty) = def_fields.iter().find(|(f, _)| f == fname).map(|(_, t)| t) {
-                                         if let Some(val_ty) = self.infer_expr_type(&val.inner) {
-                                             self.unify_types(field_ty, &val_ty, &mut inferred_map);
-                                         }
-                                     }
-                                  }
-                              }
-                              _ => {} // Mismatch handled in semantics
-                          }
-                          
-                          let mut type_args = Vec::new();
-                          for param in &def.generics {
-                              if let Some(ty) = inferred_map.get(param) {
-                                  type_args.push(ty.clone());
-                              } else {
-                                  all_inferred = false;
-                              }
-                          }
-                          
-                          if all_inferred && !type_args.is_empty() {
-                              let concrete_enum_name = self.request_struct_instantiation(enum_name, type_args.clone());
-                              *enum_name = concrete_enum_name;
-                              
-                              // Rewrite fields with concrete types
-                              // Need to fetch concrete variant definition
-                              // Clone the variant kind to avoid borrowing self during rewrite
-                              let concrete_variant_kind = if let Some(c_def) = self.concrete_enums.iter().find(|e| e.name == *enum_name) {
-                                  if let Some(c_v) = c_def.variants.iter().find(|v| v.name == *variant_name) {
-                                      Some(c_v.kind.clone())
-                                  } else { None }
-                              } else { None };
+              ExprKind::EnumInit { enum_name, variant_name, generics, payload } => {
+                   // Process EnumInit for monomorphization
 
-                              if let Some(kind) = concrete_variant_kind {
-                                      match (&mut *payload, &kind) {
-                                           (EnumVariantInit::Tuple(exprs), VariantKind::Tuple(types)) => {
-                                                for (e, ty) in exprs.iter_mut().zip(types.iter()) {
-                                                     self.rewrite_expr(&mut e.inner, subst, Some(ty));
-                                                }
-                                                return;
-                                           },
-                                           (EnumVariantInit::Struct(fields), VariantKind::Struct(def_fields)) => {
-                                                let mut field_types_map = HashMap::new();
-                                                for (fname, fty) in def_fields {
-                                                    field_types_map.insert(fname.clone(), fty.clone());
-                                                }
-                                                for (fname, val) in fields {
-                                                     let ctx_ty = field_types_map.get(fname);
-                                                     self.rewrite_expr(&mut val.inner, subst, ctx_ty);
-                                                }
-                                                return;
-                                           },
-                                           _ => {}
-                                      }
-                                  }
-                          // Else generic default handling (rewrite children)
-                  
-                  }
-                  
-                  // Recurse children
-                  match payload {
-                      EnumVariantInit::Unit => {},
-                      EnumVariantInit::Tuple(exprs) => {
-                          for e in exprs { self.rewrite_expr(&mut e.inner, subst, None); }
-                      },
-                      EnumVariantInit::Struct(fields) => {
-                          for (_, e) in fields { self.rewrite_expr(&mut e.inner, subst, None); }
-                      }
-                      }
-                  }
-                  */
+                   
+                   // Check if all generics are unresolved (empty or all Undefined)
+                   let needs_inference = generics.is_empty() || 
+                       generics.iter().all(|t| matches!(t, Type::Undefined(_)));
+                   
+                   if needs_inference {
+                        // Handle both Type::Enum and Type::Struct (mangled enums may come as Struct)
+                        if let Some(Type::Enum(expected_name, expected_args)) | Some(Type::Struct(expected_name, expected_args)) = expected_type {
+                            if expected_name == enum_name && !expected_args.is_empty() {
+                                // Case 1: Expected type matches our enum and has generics
+                                *generics = expected_args.clone();
+
+                            } else if expected_name.starts_with(&format!("{}_", enum_name)) && expected_args.is_empty() {
+                                // Case 2: Expected type is already mangled (e.g. Option_i64 or Entry_i64_i64)
+                                // Use the mangled name directly
+                                *enum_name = expected_name.clone();
+                                generics.clear();
+
+                            }
+                        }
+                    }
+                   
+                   // Substitute and resolve any generic type params in generics
+                   for ty in generics.iter_mut() {
+                       *ty = self.substitute_type(ty, subst);
+                       *ty = self.resolve_type(ty);
+                   }
+                   
+                   // Filter out any remaining Undefined generics after resolution
+                   generics.retain(|t| !matches!(t, Type::Undefined(_)));
+                   
+                   // Request enum instantiation if we have resolved generics
+                   if !generics.is_empty() {
+                       let concrete_name = self.request_enum_instantiation(enum_name, generics.clone());
+                       *enum_name = concrete_name;
+                       // Clear generics since name is now mangled
+                       generics.clear();
+                   }
+                   
+                   // Process payload
+                   match payload {
+                       crate::compiler::ast::EnumVariantInit::Unit => {},
+                       crate::compiler::ast::EnumVariantInit::Tuple(exprs) => {
+                           for e in exprs { 
+                               self.rewrite_expr(&mut e.inner, subst, None); 
+                           }
+                       },
+                       crate::compiler::ast::EnumVariantInit::Struct(fields) => {
+                           for (_, e) in fields { 
+                               self.rewrite_expr(&mut e.inner, subst, None); 
+                           }
+                       }
+                   }
           }
           ExprKind::FnCall(name, args) => {
                   // Rewrite args first
@@ -716,10 +680,12 @@ impl Monomorphizer {
                               }
                            } else if let Some(def) = self.generic_enums.get(&type_name_str).cloned() {
                                // Enum Logic - Rewrite to EnumInit
+
                                let mut best_impl: Option<&ImplBlock> = None;
                                
                                // 1. Try to find if it matches a Variant (Constructor)
                                if let Some(variant) = def.variants.iter().find(|v| v.name == *method_name) {
+
                                    // It is a variant constructor! Rewrite to EnumInit.
                                    // First infer generics from args
                                    let mut type_args = Vec::new();
@@ -751,6 +717,7 @@ impl Monomorphizer {
                                            type_args.push(ty.clone());
                                        } else {
                                            // Fallback: Infer from expected_type
+
                                            let mut inferred_from_expected = None;
                                            if let Some(Type::Enum(n, args)) | Some(Type::Struct(n, args)) = expected_type {
                                                // Case 1: Unmangled name with generics (e.g. Option with [Entry_i64_i64])
@@ -874,9 +841,45 @@ impl Monomorphizer {
                                // ignore
                           }
                       }
-              ExprKind::MethodCall(_, _, args) => {
+              ExprKind::MethodCall(receiver, method_name, args) => {
+                  // First, rewrite the receiver
+                  self.rewrite_expr(&mut receiver.inner, subst, None);
+                  
+                  // Try to infer receiver type to get expected_type for arguments
+                  let receiver_ty = self.infer_expr_type(&receiver.inner);
+                  
+                  // Apply substitution to resolve generic type parameters
+                  let resolved_receiver_ty = receiver_ty.map(|ty| {
+                      let substituted = self.substitute_type(&ty, subst);
+                      self.resolve_type(&substituted)
+                  });
+                  
+                  // For Vec<T>.push(item), the item should have expected_type T
+                  // For other generic methods, we could do similar logic
+                  let arg_expected_type: Option<Type> = match (&resolved_receiver_ty, method_name.as_str()) {
+                      (Some(Type::Struct(name, generics)), "push") if name == "Vec" || name.starts_with("Vec_") => {
+                          // Vec<T>.push(item: T) - expected_type is T
+                          if !generics.is_empty() {
+                              Some(generics[0].clone())
+                          } else if name.starts_with("Vec_") {
+                              // Already mangled name like Vec_Entry_i64_String
+                              // Extract the inner type from the mangled name
+                              let inner = name.strip_prefix("Vec_").unwrap_or("");
+                              if !inner.is_empty() {
+                                  Some(Type::Struct(inner.to_string(), vec![]))
+                              } else {
+                                  None
+                              }
+                          } else {
+                              None
+                          }
+                      }
+                      _ => None,
+                  };
+                  
+                  // Rewrite args with expected_type if available
                   for arg in args {
-                      self.rewrite_expr(&mut arg.inner, subst, None);
+                      self.rewrite_expr(&mut arg.inner, subst, arg_expected_type.as_ref());
                   }
               }
               ExprKind::BinOp(l, _, r) => {

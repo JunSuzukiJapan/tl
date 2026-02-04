@@ -1,4 +1,5 @@
 // src/compiler/codegen/builtin_types/option.tl
+
 enum Option<T> {
     Some(T),
     None,
@@ -22,7 +23,10 @@ impl<T> Option<T> {
     fn unwrap(self) -> T {
         match self {
             Option::Some(x) => x,
-            Option::None => self.unwrap(),
+            Option::None => {
+                // panic! returns Never type, so type checker is satisfied
+                panic("called unwrap() on Option::None");
+            },
         }
     }
 

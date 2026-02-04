@@ -115,6 +115,10 @@ impl GenericResolver {
     /// Check if two types are equivalent (handles cross-variant matching like UserDefined vs Struct).
     pub fn types_equivalent(t1: &Type, t2: &Type) -> bool {
         match (t1, t2) {
+            // Never type coerces to any type (diverging expressions)
+            (Type::Never, _) => true,
+            (_, Type::Never) => true,
+            
             // Primitives must match exactly
             (Type::I64, Type::I64) => true,
             (Type::I32, Type::I32) => true,

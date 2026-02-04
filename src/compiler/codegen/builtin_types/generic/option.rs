@@ -1,6 +1,7 @@
 use crate::compiler::builtin_loader::{BuiltinLoader, BuiltinTypeData};
 use crate::compiler::ast::EnumDef;
 
+// Updated 2026-02-04: Added abort() to unwrap
 pub const SOURCE: &str = include_str!("option.tl");
 
 pub fn load_option_data() -> BuiltinTypeData {
