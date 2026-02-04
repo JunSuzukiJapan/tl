@@ -1,6 +1,10 @@
-use crate::compiler::ast::{Module, StructDef, EnumDef, ImplBlock, Type};
+use crate::compiler::ast::{
+    Module, StructDef, EnumDef, ImplBlock, Type,
+    Expr, ExprKind, Stmt, StmtKind, VariantKind, EnumVariantInit,
+};
 use crate::compiler::parser::parse_from_source;
 use crate::compiler::error::TlError;
+use std::collections::HashMap;
 
 /// Holds all necessary AST nodes for a builtin type to be registered in TypeManager.
 /// Constructed fully from source before registration to avoid lifetime issues.
@@ -21,11 +25,174 @@ impl BuiltinLoader {
     pub fn load_from_source(source: &str) -> Result<Module, TlError> {
         parse_from_source(source)
     }
+    
+    /// Perform lightweight semantic analysis on builtin module.
+    /// Converts StaticMethodCall to EnumInit for enum variant constructors.
+    fn analyze_builtin_module(module: &mut Module) {
+        // 1. Collect enum definitions from this module
+        let mut enum_registry: HashMap<String, EnumDef> = HashMap::new();
+        for e in &module.enums {
+            enum_registry.insert(e.name.clone(), e.clone());
+        }
+        
+        // 2. Transform ImplBlock method bodies
+        for impl_block in &mut module.impls {
+            for method in &mut impl_block.methods {
+                Self::transform_stmts(&mut method.body, &enum_registry);
+            }
+        }
+        
+        // 3. Transform top-level functions
+        for func in &mut module.functions {
+            Self::transform_stmts(&mut func.body, &enum_registry);
+        }
+    }
+    
+    fn transform_stmts(stmts: &mut [Stmt], enums: &HashMap<String, EnumDef>) {
+        for stmt in stmts {
+            Self::transform_stmt(stmt, enums);
+        }
+    }
+    
+    fn transform_stmt(stmt: &mut Stmt, enums: &HashMap<String, EnumDef>) {
+        match &mut stmt.inner {
+            StmtKind::Let { value, .. } => Self::transform_expr(value, enums),
+            StmtKind::Expr(e) => Self::transform_expr(e, enums),
+            StmtKind::Return(Some(e)) => Self::transform_expr(e, enums),
+            StmtKind::While { cond, body } => {
+                Self::transform_expr(cond, enums);
+                Self::transform_stmts(body, enums);
+            }
+            StmtKind::For { iterator, body, .. } => {
+                Self::transform_expr(iterator, enums);
+                Self::transform_stmts(body, enums);
+            }
+            StmtKind::Loop { body } => {
+                Self::transform_stmts(body, enums);
+            }
+            StmtKind::Assign { value, .. } => {
+                Self::transform_expr(value, enums);
+            }
+            _ => {}
+        }
+    }
+    
+    fn transform_expr(expr: &mut Expr, enums: &HashMap<String, EnumDef>) {
+        // First, recurse into children
+        match &mut expr.inner {
+            ExprKind::BinOp(l, _, r) => {
+                Self::transform_expr(l, enums);
+                Self::transform_expr(r, enums);
+            }
+            ExprKind::UnOp(_, e) => {
+                Self::transform_expr(e, enums);
+            }
+            ExprKind::MethodCall(obj, _, args) => {
+                Self::transform_expr(obj, enums);
+                for arg in args {
+                    Self::transform_expr(arg, enums);
+                }
+            }
+            ExprKind::FnCall(_, args) => {
+                for arg in args {
+                    Self::transform_expr(arg, enums);
+                }
+            }
+            ExprKind::IndexAccess(target, indices) => {
+                Self::transform_expr(target, enums);
+                for idx in indices {
+                    Self::transform_expr(idx, enums);
+                }
+            }
+            ExprKind::FieldAccess(obj, _) => {
+                Self::transform_expr(obj, enums);
+            }
+            ExprKind::Match { expr: subject, arms } => {
+                Self::transform_expr(subject, enums);
+                for (_, arm_expr) in arms {
+                    Self::transform_expr(arm_expr, enums);
+                }
+            }
+            ExprKind::Block(stmts) => {
+                Self::transform_stmts(stmts, enums);
+            }
+            ExprKind::IfExpr(cond, then_block, else_block) => {
+                Self::transform_expr(cond, enums);
+                Self::transform_stmts(then_block, enums);
+                if let Some(else_stmts) = else_block {
+                    Self::transform_stmts(else_stmts, enums);
+                }
+            }
+            ExprKind::Tuple(exprs) => {
+                for e in exprs {
+                    Self::transform_expr(e, enums);
+                }
+            }
+            ExprKind::StructInit(_, fields) => {
+                for (_, e) in fields {
+                    Self::transform_expr(e, enums);
+                }
+            }
+            ExprKind::As(e, _) => {
+                Self::transform_expr(e, enums);
+            }
+            ExprKind::Range(start, end) => {
+                Self::transform_expr(start, enums);
+                Self::transform_expr(end, enums);
+            }
+            ExprKind::StaticMethodCall(ty, method, args) => {
+                // Transform args first
+                for arg in args.iter_mut() {
+                    Self::transform_expr(arg, enums);
+                }
+                
+                // Check if this is an enum variant constructor
+                let enum_name = Self::get_type_base_name(ty);
+                if let Some(enum_def) = enums.get(&enum_name) {
+                    if let Some(variant) = enum_def.variants.iter().find(|v| &v.name == method) {
+                        // Extract generics from type
+                        let generics = match ty {
+                            Type::Struct(_, g) | Type::Enum(_, g) | Type::Path(_, g) => g.clone(),
+                            _ => vec![],
+                        };
+                        
+                        // Build payload
+                        let payload = match &variant.kind {
+                            VariantKind::Unit => EnumVariantInit::Unit,
+                            VariantKind::Tuple(_) => EnumVariantInit::Tuple(std::mem::take(args)),
+                            VariantKind::Struct(_) => EnumVariantInit::Unit, // TODO: struct variant
+                        };
+                        
+                        // Replace with EnumInit
+                        expr.inner = ExprKind::EnumInit {
+                            enum_name,
+                            variant_name: method.clone(),
+                            generics,
+                            payload,
+                        };
+                        return;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    fn get_type_base_name(ty: &Type) -> String {
+        match ty {
+            Type::Struct(name, _) | Type::Enum(name, _) => name.clone(),
+            Type::Path(segments, _) => segments.last().cloned().unwrap_or_default(),
+            _ => String::new(),
+        }
+    }
 
     /// Load a specific builtin type definition from source.
     /// Extracts the Struct/Enum definition matching `type_name` and all relevant Impl blocks.
     pub fn load_builtin_type(source: &str, type_name: &str) -> Result<BuiltinTypeData, TlError> {
-        let module = Self::load_from_source(source)?;
+        let mut module = Self::load_from_source(source)?;
+        
+        // Perform lightweight semantic analysis to convert StaticMethodCall to EnumInit
+        Self::analyze_builtin_module(&mut module);
         
         // Helper to extract primary struct but keep others
         let mut primary_struct = None;
