@@ -753,11 +753,20 @@ impl Monomorphizer {
                                            // Fallback: Infer from expected_type
                                            let mut inferred_from_expected = None;
                                            if let Some(Type::Enum(n, args)) | Some(Type::Struct(n, args)) = expected_type {
+                                               // Case 1: Unmangled name with generics (e.g. Option with [Entry_i64_i64])
                                                if n == &type_name_str && args.len() == def.generics.len() {
                                                     // Find index of param
                                                     if let Some(idx) = def.generics.iter().position(|r| r == param) {
                                                          inferred_from_expected = Some(args[idx].clone());
                                                     }
+                                               }
+                                               // Case 2: Already mangled name (e.g. Option_Entry_i64_i64 with args=[])
+                                               // In this case, we use the mangled name directly and don't need to infer generics
+                                               // since codegen will look up the type by mangled name
+                                               else if n.starts_with(&format!("{}_", type_name_str)) && args.is_empty() {
+                                                   // Signal that we should use the mangled name directly
+                                                   // Mark "skip" by using a special sentinel (we'll handle this below)
+                                                   inferred_from_expected = Some(Type::Void);
                                                }
                                            }
 
@@ -773,13 +782,24 @@ impl Monomorphizer {
                                    
                                    // Try to infer concrete name if arguments inference failed
                                    let mut concrete_name = String::new();
+                                   let mut resolved_generics = Vec::new();
 
-                                   if all_inferred && !type_args.is_empty() {
+                                   // Check if we should use mangled name directly (Type::Void sentinel)
+                                   let has_void_sentinel = type_args.iter().any(|t| matches!(t, Type::Void));
+
+                                   if all_inferred && !type_args.is_empty() && !has_void_sentinel {
+                                       resolved_generics = type_args.clone();
                                        concrete_name = self.request_enum_instantiation(&type_name_str, type_args);
-                                   } else if let Some(Type::Enum(n, _args)) | Some(Type::Struct(n, _args)) = expected_type {
-                                       // Fallback: If expected type is already concrete (e.g. Option_I64) matching this generic
+                                   } else if let Some(Type::Enum(n, args)) | Some(Type::Struct(n, args)) = expected_type {
+                                       // Fallback 1: If expected type is already concrete (e.g. Option_Entry_i64_i64) matching this generic
                                        if n.starts_with(&format!("{}_", type_name_str)) {
+                                            resolved_generics = args.clone();
                                             concrete_name = n.clone();
+                                       }
+                                       // Fallback 2: If expected type has same base name with generics (e.g. Option with [Entry_i64_i64])
+                                       else if n == &type_name_str && !args.is_empty() {
+                                            resolved_generics = args.clone();
+                                            concrete_name = self.request_enum_instantiation(&type_name_str, args.clone());
                                        }
                                    }
 
@@ -802,7 +822,7 @@ impl Monomorphizer {
                                        *expr = ExprKind::EnumInit {
                                            enum_name: concrete_name,
                                            variant_name: method_name.clone(),
-                                           generics: vec![],
+                                           generics: resolved_generics,
                                            payload: payload,
                                        };
                                        return; // Done
@@ -1290,7 +1310,17 @@ impl Monomorphizer {
                     format!("{}_{}", base, self.mangle_types(args))
                 }
             }
-            _ => "unknown".to_string(),
+            Type::Tuple(types) => {
+                if types.is_empty() {
+                    "unit".to_string() // Empty tuple is unit type
+                } else {
+                    format!("Tuple_{}", self.mangle_types(types))
+                }
+            }
+            Type::Ptr(inner) => format!("Ptr_{}", self.mangle_type(inner)),
+            _ => {
+                "unknown".to_string()
+            },
         }
     }
 
