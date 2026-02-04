@@ -6390,8 +6390,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         args: &[Expr],
         dest: Option<BasicValueEnum<'ctx>>,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        // 0. Check if it's a relation query (handle module path resolution)
-        let simple_name = name.split("::").last().unwrap_or(name);
+        // 0. Check if it's a relation query
+        let simple_name = name;
 
         if self.relations.contains(name) {
             return self.compile_relation_call(name, args);
