@@ -493,6 +493,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut subst: HashMap<String, Type> = HashMap::new();
         for (i, param_name) in struct_def.generics.iter().enumerate() {
             if let Some(arg) = type_args.get(i) {
+                eprintln!("DEBUG: monomorphize_struct {} subst {} = {:?}", base_name, param_name, arg);
                 subst.insert(param_name.clone(), arg.clone());
             }
         }
@@ -518,7 +519,25 @@ impl<'ctx> CodeGenerator<'ctx> {
         specialized_def.generics = vec![]; // No longer generic
         // Substitute field types
         specialized_def.fields = struct_def.fields.iter().map(|(name, ty)| {
-            (name.clone(), self.substitute_type(ty, &subst))
+            let substituted = self.substitute_type(ty, &subst);
+            // Fix: Convert Struct to Enum if it exists in enum_defs
+            // Check both mangled name and base name (e.g., Entry_i64_i64 → Entry)
+            let corrected = if let Type::Struct(s_name, s_args) = &substituted {
+                let is_enum = self.enum_defs.contains_key(s_name) || {
+                    // Extract base name from mangled name
+                    let base_name = s_name.split('_').next().unwrap_or(s_name);
+                    self.enum_defs.contains_key(base_name)
+                };
+                if is_enum {
+                    eprintln!("DEBUG: monomorphize_struct converting Struct {} to Enum", s_name);
+                    Type::Enum(s_name.clone(), s_args.clone())
+                } else {
+                    substituted
+                }
+            } else {
+                substituted
+            };
+            (name.clone(), corrected)
         }).collect();
         self.struct_defs.insert(mangled_name.clone(), specialized_def);
         
@@ -539,8 +558,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Recursively substitute in args
                 let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
                 
-                // match name.as_str() { ... } removed
-                Type::Struct(name.clone(), new_args)
+                // Fix: Check if this is actually an Enum
+                let is_enum = self.enum_defs.contains_key(name) || {
+                    let base_name = name.split('_').next().unwrap_or(name);
+                    self.enum_defs.contains_key(base_name)
+                };
+                if is_enum {
+                    eprintln!("DEBUG: substitute_type converting Struct {} to Enum", name);
+                    Type::Enum(name.clone(), new_args)
+                } else {
+                    Type::Struct(name.clone(), new_args)
+                }
             }
 
 

@@ -945,11 +945,20 @@ impl Monomorphizer {
              }
              
              if matches {
-                 subst.insert("Self".to_string(), Type::Struct(concrete_struct_name.clone(), vec![]));
-                 
-                 let mut new_impl = impl_block.clone();
-                 new_impl.generics.clear();
-                 new_impl.target_type = Type::Struct(concrete_struct_name.clone(), vec![]);
+                  // Preserve whether this is Struct or Enum
+                  let is_enum = matches!(&impl_block.target_type, Type::Enum(_, _));
+                  
+                  let concrete_target_type = if is_enum {
+                      Type::Enum(concrete_struct_name.clone(), vec![])
+                  } else {
+                      Type::Struct(concrete_struct_name.clone(), vec![])
+                  };
+                  
+                  subst.insert("Self".to_string(), concrete_target_type.clone());
+                  
+                  let mut new_impl = impl_block.clone();
+                  new_impl.generics.clear();
+                  new_impl.target_type = concrete_target_type;
                  
                  // Rewrite methods
                  for method in &mut new_impl.methods {
