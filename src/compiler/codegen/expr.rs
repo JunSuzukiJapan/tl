@@ -3944,6 +3944,49 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
+        // 2.5. Built-in Map::load using tl_gguf_load
+        if type_name == "Map" && method == "load" {
+            if args.len() != 1 {
+                return Err("Map::load requires 1 argument".into());
+            }
+            let (path_val, path_ty) = self.compile_expr(&args[0])?;
+            
+            // TL String is StringStruct { ptr: *c_char, len: i64 }
+            // We need to extract the ptr field for FFI
+            let cstr_ptr = if matches!(path_ty, Type::String(_)) {
+                let struct_ptr = path_val.into_pointer_value();
+                let i64_ptr_ty = self.context.i64_type().ptr_type(inkwell::AddressSpace::default());
+                let ptr_to_first_field = self.builder
+                    .build_pointer_cast(struct_ptr, i64_ptr_ty, "str_ptr_cast")
+                    .map_err(|e| e.to_string())?;
+                let str_addr_i64 = self.builder
+                    .build_load(self.context.i64_type(), ptr_to_first_field, "str_addr")
+                    .map_err(|e| e.to_string())?
+                    .into_int_value();
+                let i8_ptr_ty = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+                self.builder
+                    .build_int_to_ptr(str_addr_i64, i8_ptr_ty, "cstr_ptr")
+                    .map_err(|e| e.to_string())?
+                    .into()
+            } else {
+                path_val
+            };
+            
+            let fn_val = self
+                .module
+                .get_function("tl_gguf_load")
+                .ok_or("tl_gguf_load not found")?;
+            let call = self
+                .builder
+                .build_call(fn_val, &[cstr_ptr.into()], "map_load")
+                .map_err(|e| e.to_string())?;
+            let res = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("Invalid return from Map::load".into()),
+            };
+            return Ok((res, Type::Struct("Map".to_string(), vec![])));
+        }
+
         // 3. User Generic Fallback (Monomorphize)
         let generics = match target_type {
             Type::Struct(n, args) if n == type_name => args.clone(),
@@ -5449,7 +5492,29 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if args.len() != 1 {
                         return Err("Map::get requires 1 argument".into());
                     }
-                    let (key_val, _) = self.compile_expr(&args[0])?;
+                    let (key_val, key_ty) = self.compile_expr(&args[0])?;
+                    
+                    // TL String is StringStruct { ptr: *c_char, len: i64 }
+                    // We need to extract the ptr field for FFI
+                    let cstr_ptr = if matches!(key_ty, Type::String(_)) {
+                        let struct_ptr = key_val.into_pointer_value();
+                        let i64_ptr_ty = self.context.i64_type().ptr_type(inkwell::AddressSpace::default());
+                        let ptr_to_first_field = self.builder
+                            .build_pointer_cast(struct_ptr, i64_ptr_ty, "str_ptr_cast")
+                            .map_err(|e| e.to_string())?;
+                        let str_addr_i64 = self.builder
+                            .build_load(self.context.i64_type(), ptr_to_first_field, "str_addr")
+                            .map_err(|e| e.to_string())?
+                            .into_int_value();
+                        let i8_ptr_ty = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+                        self.builder
+                            .build_int_to_ptr(str_addr_i64, i8_ptr_ty, "cstr_ptr")
+                            .map_err(|e| e.to_string())?
+                            .into()
+                    } else {
+                        key_val
+                    };
+                    
                     let fn_name = match method {
                         "get" => "tl_tensor_map_get",
                         "get_1d" => "tl_tensor_map_get_1d",
@@ -5462,7 +5527,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .ok_or(format!("{} not found", fn_name))?;
                     let call = self
                         .builder
-                        .build_call(fn_val, &[obj_val.into(), key_val.into()], "map_get")
+                        .build_call(fn_val, &[obj_val.into(), cstr_ptr.into()], "map_get")
                         .map_err(|e| e.to_string())?;
                     let res = match call.try_as_basic_value() {
                         inkwell::values::ValueKind::Basic(v) => v,

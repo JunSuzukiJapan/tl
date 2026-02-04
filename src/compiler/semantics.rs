@@ -5656,18 +5656,6 @@ impl SemanticAnalyzer {
                         }
                         Some(Ok(Type::I64))
                     }
-                    // narrow: tensor.narrow(dim, start, len)
-                    "narrow" => {
-                        if args.len() != 3 {
-                            return Some(self.err(SemanticError::ArgumentCountMismatch {
-                                name: "Tensor::narrow".into(), expected: 3, found: args.len()
-                            }, None));
-                        }
-                        for arg in args.iter_mut() {
-                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
-                        }
-                        Some(Ok(any_tensor.clone()))
-                    }
                     // slice: tensor.slice(dim, start, end, step)
                     "slice" => {
                         if args.len() != 4 {
