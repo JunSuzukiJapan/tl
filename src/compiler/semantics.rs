@@ -1976,6 +1976,16 @@ impl SemanticAnalyzer {
                  let (elem_type, rank) = match &inner_type {
                      Type::Tensor(e, r) => (e.clone(), *r),
                      Type::Ptr(e) => (e.clone(), 1), 
+                     // Allow Struct types (like Vec<T>) to use index assignment
+                     // The element type is the first generic parameter
+                     Type::Struct(_, generics) if !generics.is_empty() => {
+                         (Box::new(generics[0].clone()), 1)
+                     }
+                     Type::Struct(name, _) => {
+                         return self.err(SemanticError::Generic(format!(
+                             "Struct {} does not support index assignment (no generic element type)", name
+                         )), None)
+                     }
                      _ => return self.err(SemanticError::Generic("Indexing non-tensor/ptr in assignment".into()), None)
                  };
                  

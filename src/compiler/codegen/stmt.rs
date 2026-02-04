@@ -1446,9 +1446,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                           let (inner_val, inner_ty) = self.compile_expr_from_lvalue(val_inner)?;
                           if let Type::Tensor(_, _) = inner_ty {
                                return self.emit_tensor_set(inner_val, indices, val_ir, val_ty);
-                          } else if let Type::Struct(_, generics) = inner_ty {
+                          } else if let Type::Struct(name, generics) = &inner_ty {
                                // Assuming 'set' method
-                               return self.emit_struct_set(inner_val, &generics, indices, val_ir);
+                               return self.emit_struct_set(inner_val, name, &generics, indices, val_ir);
                           }
                      }
                      return Err("Invalid assignment target".into());
@@ -3042,14 +3042,40 @@ impl<'ctx> CodeGenerator<'ctx> {
          Ok(())
     }
 
-    fn emit_struct_set(&mut self, struct_val: inkwell::values::BasicValueEnum<'ctx>, generics: &[Type], indices: &[Expr], val: inkwell::values::BasicValueEnum<'ctx>) -> Result<(), String> {
+    fn emit_struct_set(&mut self, struct_val: inkwell::values::BasicValueEnum<'ctx>, struct_name: &str, generics: &[Type], indices: &[Expr], val: inkwell::values::BasicValueEnum<'ctx>) -> Result<(), String> {
          // Struct 'set' method support
          if indices.len() != 1 { return Err("Struct set supports 1 index".into()); }
          let (idx_val, _) = self.compile_expr(&indices[0])?;
          
-         // Assuming method 'set'
-         // Just error for now.
-         Err("Struct set not fully implemented pending name resolution".into())
+         // Find the 'set' method for this struct type
+         // Method name format: {struct_name}_set or just "set" instance method
+         let mangled_name = if generics.is_empty() {
+             struct_name.to_string()
+         } else {
+             self.mangle_type_name(struct_name, generics)
+         };
+         
+         // Look for instance method 'set' on this type
+         // The runtime function name follows pattern: tl_{TypeName}_set
+         let fn_name = format!("tl_{}_set", mangled_name);
+         
+         if let Some(set_fn) = self.module.get_function(&fn_name) {
+             // Call set(self, index, item)
+             self.builder.build_call(set_fn, &[struct_val.into(), idx_val.into(), val.into()], "")
+                 .map_err(|e| e.to_string())?;
+             return Ok(());
+         }
+         
+         // Fallback: try to find method via TypeManager
+         if let Some(type_info) = self.type_manager.get_type(&mangled_name) {
+             if let Some(_method) = type_info.get_instance_method("set") {
+                 // Instance method found - need to compile method call
+                 // For now, return error with better message
+                 return Err(format!("Struct set method found but instance method call not yet implemented for {}", mangled_name));
+             }
+         }
+         
+         Err(format!("Struct set method not found for type '{}' (looked for fn '{}')", mangled_name, fn_name))
     }
 
     fn build_float_cast_val(&self, val: inkwell::values::BasicValueEnum<'ctx>, from: &Type, to: inkwell::types::FloatType<'ctx>) -> Result<inkwell::values::FloatValue<'ctx>, String> {
