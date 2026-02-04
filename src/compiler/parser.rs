@@ -1097,9 +1097,17 @@ pub fn parse_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
         parse_loop_stmt,
         parse_break_stmt,
         parse_continue_stmt,
+        parse_match_stmt, // Match statement must come before parse_assign_stmt
         parse_assign_stmt, // Tries to match assignment. If fails (not assignment), falls back.
         parse_expr_stmt,
     ))(input)
+}
+
+fn parse_match_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
+    // Check for `match` keyword to avoid consuming tokens in parse_assign_stmt
+    let (input, expr) = parse_match_expr(input)?;
+    let (input, _) = opt(expect_token(Token::SemiColon))(input)?;
+    Ok((input, Spanned::new(StmtKind::Expr(expr), crate::compiler::error::Span::default())))
 }
 
 // --- Top Level Items ---
@@ -1120,12 +1128,24 @@ fn parse_match_expr(input: Input) -> IResult<Input, Expr, ParserError> {
     let (input, target) = parse_expr_no_struct_lit(input)?;
     let (input, _) = expect_token(Token::LBrace)(input)?;
     
-    let (input, arms) = separated_list0(
-        expect_token(Token::Comma),
-        parse_match_arm
-    )(input)?;
+    // Parse match arms with optional comma separation
+    // Block expressions don't require trailing comma
+    let mut arms = Vec::new();
+    let mut input = input;
+    loop {
+        // Try to parse a match arm
+        if let Ok((rest, arm)) = parse_match_arm(input) {
+            arms.push(arm);
+            input = rest;
+            // Consume optional comma
+            if let Ok((rest2, _)) = expect_token(Token::Comma)(input) {
+                input = rest2;
+            }
+        } else {
+            break;
+        }
+    }
     
-    let (input, _) = opt(expect_token(Token::Comma))(input)?;
     let (input, _) = expect_token(Token::RBrace)(input)?;
     
     let span = crate::compiler::error::Span::default();
@@ -1182,8 +1202,14 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
                       let bindings = crate::compiler::ast::EnumPatternBindings::Struct(bindings_vec);
                       return Ok((rest5, Pattern::EnumPattern { enum_name: name, variant_name: method, bindings }));
                   } else if let Ok((rest4, _)) = expect_token(Token::LParen)(rest3) {
-                      // Tuple Pattern ( ... )
-                      let (rest5, vars) = separated_list0(expect_token(Token::Comma), identifier)(rest4)?;
+                      // Tuple Pattern ( ... ) - allow identifiers or wildcards
+                      let (rest5, vars) = separated_list0(
+                          expect_token(Token::Comma),
+                          alt((
+                              map(expect_token(Token::Underscore), |_| "_".to_string()),
+                              identifier,
+                          ))
+                      )(rest4)?;
                       let (rest5, _) = expect_token(Token::RParen)(rest5)?;
                       
                       let bindings = crate::compiler::ast::EnumPatternBindings::Tuple(vars);
@@ -1231,7 +1257,14 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
                        let bindings = crate::compiler::ast::EnumPatternBindings::Struct(bindings_vec);
                        return Ok((rest3, Pattern::EnumPattern { enum_name, variant_name, bindings }));
                   } else if let Ok((rest2, _)) = expect_token(Token::LParen)(rest) {
-                      let (rest3, vars) = separated_list0(expect_token(Token::Comma), identifier)(rest2)?;
+                      // Tuple Pattern ( ... ) - allow identifiers or wildcards
+                      let (rest3, vars) = separated_list0(
+                          expect_token(Token::Comma),
+                          alt((
+                              map(expect_token(Token::Underscore), |_| "_".to_string()),
+                              identifier,
+                          ))
+                      )(rest2)?;
                       let (rest3, _) = expect_token(Token::RParen)(rest3)?;
                       
                       let bindings = crate::compiler::ast::EnumPatternBindings::Tuple(vars);
