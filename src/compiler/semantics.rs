@@ -1459,218 +1459,27 @@ impl SemanticAnalyzer {
 
     pub fn check_stmt(&mut self, stmt: &mut Stmt) -> Result<(), TlError> {
         match &mut stmt.inner {
-            StmtKind::FieldAssign {
-                obj,
-                field,
-                op,
-                value,
-            } => {
-                // Check object type and verify it's a struct
-                let obj_type = self.check_expr(obj)?;
-                let struct_name = match obj_type {
-                    Type::Struct(name, _) => name,
-                    _ => {
-                        return self.err(
-                            SemanticError::TypeMismatch {
-                                expected: Type::Struct("Struct".into(), vec![]),
-                                found: obj_type,
-                            },
-                            Some(stmt.span.clone()),
-                        );
-                    }
-                };
-
-                // Verify struct and field exist
-                // Need to resolve struct_name? Usually FieldAccess object type is already resolved by check_expr logic?
-                // Type::Struct("Name") -> Name should be fully qualified if check_expr(obj) did its job.
-                // But check_expr returns Type. If Type comes from AST, it might simple name.
-                // The Type returned by check_expr comes from:
-                // - ExprKind::StructInit -> looked up strict name (resolved).
-                // - ExprKind::Variable -> lookup_variable -> returns Type from scope.
-                // - ExprKind::FnCall -> returns return_type of function.
-                // So if "Struct" type is stored in scope/function def with FQN, then obj_type has FQN.
-                let struct_def = self
-                    .structs
-                    .get(&struct_name)
-                    .ok_or_else(|| SemanticError::StructNotFound(struct_name.clone()))
-                    .map_err(|e| e.to_tl_error(Some(stmt.span.clone())))?;
-
-                let field_type = struct_def
-                    .fields
-                    .iter()
-                    .find(|(name, _)| name == field)
-                    .map(|(_, ty)| ty.clone())
-                    .ok_or_else(|| SemanticError::VariableNotFound(format!("Field {}", field)))
-                    .map_err(|e| e.to_tl_error(Some(stmt.span.clone())))?;
-
-                // Check value type matches field type
-                let value_type = self.check_expr(value)?;
-
-                match op {
-                    AssignOp::Assign => {
-                        if !self.are_types_compatible(&field_type, &value_type) {
-                            return self.err(
-                                SemanticError::TypeMismatch {
-                                    expected: field_type,
-                                    found: value_type,
-                                },
-                                Some(stmt.span.clone()),
-                            );
-                        }
-                    }
-                    _ => {
-                        // For compound assignments, allow Tensor OR Numeric types
-                        let is_numeric =
-                            matches!(field_type, Type::I64 | Type::I32 | Type::F32 | Type::F64);
-                        let is_tensor = matches!(field_type, Type::Tensor(_, _));
-
-                        if is_tensor {
-                            // Tensor compound assignment logic
-                            let is_compat = match (&field_type, &value_type) {
-                                (Type::Tensor(inner, _), val) if **inner == *val => true, // Tensor += scalar
-                                (Type::Tensor(_, _), Type::Tensor(_, _)) => true,         // Tensor += Tensor
-                                _ => false,
-                            };
-                            if !is_compat {
-                                return self.err(
-                                    SemanticError::TypeMismatch {
-                                        expected: field_type,
-                                        found: value_type,
-                                    },
-                                    Some(stmt.span.clone()),
-                                );
-                            }
-                        } else if is_numeric {
-                            // Numeric compound assignment
-                            if !self.are_types_compatible(&field_type, &value_type) {
-                                return self.err(
-                                    SemanticError::TypeMismatch {
-                                        expected: field_type,
-                                        found: value_type,
-                                    },
-                                    Some(stmt.span.clone()),
-                                );
-                            }
-                        } else {
-                            return self.err(
-                                SemanticError::MethodNotFound {
-                                    type_name: format!("{:?}", field_type),
-                                    method_name: format!("{:?}", op),
-                                },
-                                Some(stmt.span.clone()),
-                            );
-                        }
-                    }
-                }
-
-                Ok(())
+            StmtKind::TensorDecl { name, type_annotation, init } => {
+                 if let Some(expr) = init {
+                     let init_ty = self.check_expr(expr)?;
+                     if !self.are_types_compatible(type_annotation, &init_ty) {
+                         return self.err(SemanticError::TypeMismatch { expected: type_annotation.clone(), found: init_ty }, Some(stmt.span.clone()));
+                     }
+                 }
+                 self.declare_variable(name.clone(), type_annotation.clone(), true)?;
+                 Ok(())
             }
-            StmtKind::TensorDecl {
-                name,
-                type_annotation,
-                init,
-            } => {
-                let mut final_ty = type_annotation.clone();
-                if let Some(expr) = init {
-                    let init_ty = self.check_expr(expr)?;
-                    // If annotation is primitive but init is tensor, upgrade annotation to tensor
-                    if matches!(
-                        type_annotation,
-                        Type::F32 | Type::F64 | Type::I32 | Type::I64
-                    ) {
-                        if let Type::Tensor(ref inner, rank) = init_ty {
-                            if self.are_types_compatible(type_annotation, inner) {
-                                final_ty = Type::Tensor(Box::new(type_annotation.clone()), rank);
-                            }
-                        }
+            StmtKind::Let { name, type_annotation: ann_opt, value, mutable } => {
+                let inferred_type = self.check_expr(value)?;
 
-                    } else if !self.are_types_compatible(type_annotation, &init_ty) {
-                        return self.err(
-                            SemanticError::TypeMismatch {
-                                expected: type_annotation.clone(),
-                                found: init_ty,
-                            },
-                            Some(stmt.span.clone()),
-                        );
-                    }
-                }
-                self.declare_variable(name.clone(), final_ty, true)?;
-                Ok(())
-            }
-
-            StmtKind::Let {
-                name,
-                type_annotation,
-                value,
-                mutable,
-            } => {
-                // 1. Infer free indices (Tensor Equation Mode)
-                // self.infer_free_indices takes &Expr.
-                // But value is &mut Expr. Can treat as &Expr.
-                let free_indices = self.infer_free_indices(value);
-
-                let inferred_type = if !free_indices.is_empty() {
-                    // Tensor Equation Logic
-                    self.enter_scope();
-
-                    // Declare implicitly inferred indices (always mutable for loop vars)
-                    for idx in &free_indices {
-                        self.declare_variable(idx.clone(), Type::I64, true)?;
-                    }
-
-                    // Now check RHS with these indices valid
-                    let rhs_type = self.check_expr(value)?;
-
-                    self.exit_scope();
-
-                    // Construct Tensor Type
-                    if let ExprKind::TensorComprehension { .. } = &value.inner {
-                        rhs_type
-                    } else {
-                        Type::Tensor(Box::new(rhs_type), free_indices.len())
-                    }
-                } else {
-                    let mut rhs_type = self.check_expr(value)?;
-
-                    // [INFERENCE START]
-                    // If RHS is Vec::new() (or similar) and returned Undefined/Pending Generic,
-                    // we might need to handle it here if it wasn't handled in check_expr.
-                    // Currently check_expr for StaticMethodCall usually resolves to a specific type or fails.
-                    // But we want to support Vec::new() without args -> Vec<Undefined>.
-                    // This logic should be in check_expr. 
-                    // However, if we receive a struct with Undefined generics, we just let it bind.
+                let final_type = if let Some(ann) = ann_opt {
+                    // RESOLVE TYPE ANNOTATION (Path -> Struct)
+                    let resolved_ann = self.resolve_user_type(ann);
+                    *ann = resolved_ann;
                     
-                    // If explicit annotation is NOT present, and RHS is generic with Undefined,
-                    // we allow it.
-                    rhs_type
-                };
-
-                let final_type = if let Some(ann_raw) = type_annotation {
-                    // Normalize the type annotation
-                    let ann = self.resolve_user_type(ann_raw);
-
-                    // This handles cases like `let r: Result<I64, String> = Result::Err("e");`
-                    // where inferred is `Result<T, String>` (T is placeholder) but we know T=I64 from annotation.
-                    let mut refined_inferred_type = inferred_type.clone();
-                    
-                    // Unified Inference for Generic Type vs Annotation
-                    // If inferred type has Undefined/Generic placeholders, UNIFY with Annotation.
-                    
-                    if self.unify(&ann, &refined_inferred_type) {
-                        // Unify successful. The inference_map is updated.
-                        // We should now resolve the refined inferred type using the map.
-                        refined_inferred_type = self.resolve_inferred_type(&refined_inferred_type);
-                        
-                        // We must also propagate this back to the AST if possible.
-                        // Specifically for EnumInit / StaticMethodCall.
-                        match &mut value.inner {
-                             ExprKind::EnumInit { generics, .. } => {
-                                 // For EnumInit, generics vector holds the types.
-                                 // We need to update them.
-                                 if let Type::Enum(_, concrete_args) = &refined_inferred_type {
-                                     *generics = concrete_args.clone();
-                                 }
-                             }
+                    let refined_inferred_type = inferred_type.clone();
+                    if self.are_types_compatible(ann, &refined_inferred_type) {
+                         match &mut value.inner {
                              ExprKind::StaticMethodCall(ty_node, _, _) => {
                                  // For StaticMethodCall, type_node holds the struct type (Vec<Placeholder>)
                                  // Update it to resolved type (Vec<i64>)
@@ -1711,131 +1520,63 @@ impl SemanticAnalyzer {
 
                 Ok(())
             }
-            StmtKind::Assign {
-                name,
-                indices,
-                op,
-                value,
-            } => {
-                // Check if variable is mutable
-                let is_mutable = self.is_variable_mutable(name)?;
-                if !is_mutable {
-                    return self.err(
-                        SemanticError::AssignToImmutable(name.clone()),
-                        Some(stmt.span.clone()),
-                    );
-                }
+            StmtKind::Assign { lhs, op, value } => {
+                let lhs_type = self.check_lvalue(lhs)?;
+                let val_type = self.check_expr(value)?;
 
-                let var_type = self.lookup_variable(name)?;
-
-                if let Some(idxs) = indices {
-                    // Indexed assignment: C[i, k] = ...
-                    // Verify var_type is Tensor
-                    let (_inner_type, rank) = match &var_type {
-                        Type::Tensor(inner, r) => (inner, *r),
-                        Type::Ptr(inner) => (inner, 1),
-                        _ => {
+                match op {
+                    AssignOp::Assign => {
+                        if !self.are_types_compatible(&lhs_type, &val_type) {
                             return self.err(
                                 SemanticError::TypeMismatch {
-                                    expected: Type::Tensor(Box::new(Type::Void), 0),
-                                    found: var_type,
-                                },
-                                Some(stmt.span.clone()),
-                            )
-                        }
-                    };
-
-                    if rank != 0 && idxs.len() != rank {
-                        return self.err(
-                            SemanticError::ArgumentCountMismatch {
-                                name: name.clone(),
-                                expected: rank,
-                                found: idxs.len(),
-                            },
-                            Some(stmt.span.clone()),
-                        );
-                    }
-
-                    // Check each index expression is integer
-                    for idx_expr in idxs {
-                        let idx_type = self.check_expr(idx_expr)?;
-                        if !matches!(idx_type, Type::I64 | Type::I32) {
-                            return self.err(
-                                SemanticError::TypeMismatch {
-                                    expected: Type::I64,
-                                    found: idx_type,
+                                    expected: lhs_type,
+                                    found: val_type,
                                 },
                                 Some(stmt.span.clone()),
                             );
                         }
                     }
-                } else {
-                    // Standard assignment
-                    let val_type = self.check_expr(value)?;
+                    _ => {
+                        // Compound assignment: Check if numeric or tensor
+                        let is_numeric =
+                            matches!(lhs_type, Type::I64 | Type::I32 | Type::F32 | Type::F64);
+                        let is_tensor = matches!(lhs_type, Type::Tensor(_, _));
 
-                    match op {
-                        AssignOp::Assign => {
-                            if !self.are_types_compatible(&var_type, &val_type) {
+                        if is_tensor {
+                            let is_compat = match (&lhs_type, &val_type) {
+                                (Type::Tensor(inner, _), val) if **inner == *val => true,
+                                (Type::Tensor(_, _), Type::Tensor(_, _)) => true,
+                                _ => false,
+                            };
+                            if !is_compat {
                                 return self.err(
                                     SemanticError::TypeMismatch {
-                                        expected: var_type,
+                                        expected: lhs_type,
                                         found: val_type,
                                     },
                                     Some(stmt.span.clone()),
                                 );
                             }
-                        }
-                        _ => {
-                            // Compound assignment: Check if numeric or tensor
-                            let is_numeric =
-                                matches!(var_type, Type::I64 | Type::I32 | Type::F32 | Type::F64);
-                            let is_tensor = matches!(var_type, Type::Tensor(_, _));
-
-                            if is_tensor {
-                                let is_compat = match (&var_type, &val_type) {
-                                    (Type::Tensor(inner, _), val) if **inner == *val => true,
-                                    (Type::Tensor(_, _), Type::Tensor(_, _)) => true,
-                                    _ => false,
-                                };
-                                if !is_compat {
-                                    return self.err(
-                                        SemanticError::TypeMismatch {
-                                            expected: var_type.clone(),
-                                            found: val_type.clone(),
-                                        },
-                                        Some(stmt.span.clone()),
-                                    );
-                                }
-                            } else if is_numeric {
-                                if !self.are_types_compatible(&var_type, &val_type) {
-                                    return self.err(
-                                        SemanticError::TypeMismatch {
-                                            expected: var_type.clone(),
-                                            found: val_type.clone(),
-                                        },
-                                        Some(stmt.span.clone()),
-                                    );
-                                }
-                            } else {
-                                let method_name = match op {
-                                    AssignOp::AddAssign => "add_assign",
-                                    AssignOp::SubAssign => "sub_assign",
-                                    AssignOp::MulAssign => "mul_assign",
-                                    AssignOp::DivAssign => "div_assign",
-                                    AssignOp::ModAssign => "mod_assign",
-                                    _ => "unknown_assign",
-                                };
-                                return self.err(
-                                    SemanticError::MethodNotFound {
-                                        type_name: format!("{:?}", var_type),
-                                        method_name: method_name.to_string(),
-                                    },
-                                    Some(stmt.span.clone()),
-                                );
-                            }
+                        } else if !is_numeric {
+                             return self.err(
+                                SemanticError::TypeMismatch {
+                                    expected: Type::I64, // Just a placeholder for "numeric"
+                                    found: lhs_type,
+                                },
+                                Some(stmt.span.clone()),
+                            );
+                        } else if !self.are_types_compatible(&lhs_type, &val_type) {
+                             return self.err(
+                                SemanticError::TypeMismatch {
+                                    expected: lhs_type,
+                                    found: val_type,
+                                },
+                                Some(stmt.span.clone()),
+                            );
                         }
                     }
                 }
+
                 Ok(())
             }
             StmtKind::Return(expr_opt) => {
@@ -2193,6 +1934,101 @@ impl SemanticAnalyzer {
     }
 
 
+    fn check_lvalue(&mut self, lvalue: &mut LValue) -> Result<Type, TlError> {
+        match lvalue {
+            LValue::Variable(name) => {
+                let is_mutable = self.is_variable_mutable(name)?;
+                if !is_mutable {
+                    return self.err(SemanticError::AssignToImmutable(name.clone()), None);
+                }
+                self.lookup_variable(name).map_err(|e| e.to_tl_error(None))
+            }
+            LValue::FieldAccess(inner, field) => {
+                let inner_type = self.check_lvalue(inner)?;
+                
+                let struct_name = match inner_type {
+                    Type::Struct(name, _) => name,
+                    _ => return self.err(SemanticError::TypeMismatch {
+                        expected: Type::Struct("Struct".into(), vec![]),
+                        found: inner_type,
+                    }, None)
+                };
+                
+                let struct_def = self
+                    .structs
+                    .get(&struct_name)
+                    .ok_or_else(|| SemanticError::StructNotFound(struct_name.clone()))
+                    .map_err(|e| e.to_tl_error(None))?;
+
+                let field_type = struct_def
+                    .fields
+                    .iter()
+                    .find(|(f, _)| f == field)
+                    .map(|(_, t)| t.clone())
+                    .ok_or_else(|| SemanticError::Generic(format!("Field {} not found in struct {}", field, struct_name)))
+                    .map_err(|e| e.to_tl_error(None))?;
+                    
+                Ok(field_type)
+            }
+            LValue::IndexAccess(inner, indices) => {
+                 let inner_type = self.check_lvalue(inner)?;
+                 
+                 let (elem_type, rank) = match &inner_type {
+                     Type::Tensor(e, r) => (e.clone(), *r),
+                     Type::Ptr(e) => (e.clone(), 1), 
+                     _ => return self.err(SemanticError::Generic("Indexing non-tensor/ptr in assignment".into()), None)
+                 };
+                 
+                 if rank != 0 && indices.len() != rank {
+                     return self.err(SemanticError::ArgumentCountMismatch {
+                         name: "indexing".into(),
+                         expected: rank,
+                         found: indices.len(),
+                     }, None);
+                 }
+                 
+                 // Check indices
+                 for idx in indices {
+                     let idx_type = self.check_expr(idx)?;
+                     if !matches!(idx_type, Type::I64 | Type::I32) {
+                            return self.err(
+                                SemanticError::TypeMismatch {
+                                    expected: Type::I64,
+                                    found: idx_type,
+                                },
+                                None,
+                            );
+                     }
+                 }
+                 Ok(*elem_type)
+            }
+        }
+    }
+
+    fn unify_types_for_inference(&self, param_ty: &Type, arg_ty: &Type, map: &mut HashMap<String, Type>) {
+        match (param_ty, arg_ty) {
+            (Type::Struct(name, args), _) if args.is_empty() => {
+                 if !map.contains_key(name) {
+                     map.insert(name.clone(), arg_ty.clone());
+                 }
+            },
+            (Type::Struct(name, args), _) if args.is_empty() => {
+                 if !map.contains_key(name) {
+                     map.insert(name.clone(), arg_ty.clone());
+                 }
+            },
+            (Type::Struct(n1, args1), Type::Struct(n2, args2)) 
+            | (Type::Enum(n1, args1), Type::Enum(n2, args2)) => {
+                if n1 == n2 && args1.len() == args2.len() {
+                    for (p, a) in args1.iter().zip(args2.iter()) {
+                        self.unify_types_for_inference(p, a, map);
+                    }
+                }
+            },
+             _ => {}
+        }
+    }
+
     pub fn check_expr(&mut self, expr: &mut Expr) -> Result<Type, TlError> {
         if let ExprKind::StaticMethodCall(_, _, _) = &expr.inner {
              let inner = std::mem::replace(&mut expr.inner, ExprKind::Wildcard);
@@ -2201,121 +2037,66 @@ impl SemanticAnalyzer {
                   let type_ty = self.resolve_user_type(&type_node);
                   
                   // 1. Check Enum Constructor
-                  let variant_def_opt = if let Type::Enum(ref enum_name, _) = type_ty {
-                      self.enums.get(enum_name).and_then(|def| 
-                          def.variants.iter().find(|v| v.name == method_name).cloned()
-                      )
-                  } else { None };
-
-                   if let Some(variant_def) = variant_def_opt {
-                       if let Type::Enum(enum_name, generic_args) = type_ty {
-                           // Note: generic_args here come from the TYPE (Option::Some), which are usually empty.
-                           // We need to infer them from arguments if they are empty.
-                           
-                           // 1. Validate args and get types
-                           let mut checked_arg_types = Vec::new();
-                           for arg in args.iter_mut() {
-                               checked_arg_types.push(self.check_expr(arg)?);
-                           }
-
-                           // 2. Validate Payload Compatibility & Construct Payload
-                           let payload = match variant_def.kind {
-                               crate::compiler::ast::VariantKind::Unit => {
-                                   if !args.is_empty() {
-                                       return self.err(
-                                           SemanticError::ArgumentCountMismatch { 
-                                               name: format!("{}::{}", enum_name, method_name),
-                                               expected: 0,
-                                               found: args.len()
-                                           },
-                                           Some(expr.span.clone())
-                                       );
-                                   }
-                                   crate::compiler::ast::EnumVariantInit::Unit
-                               },
-                               crate::compiler::ast::VariantKind::Tuple(ref types) => {
-                                   if args.len() != types.len() {
-                                       return self.err(
-                                           SemanticError::ArgumentCountMismatch { 
-                                               name: format!("{}::{}", enum_name, method_name),
-                                               expected: types.len(),
-                                               found: args.len()
-                                           },
-                                           Some(expr.span.clone())
-                                       );
-                                   }
-                                   crate::compiler::ast::EnumVariantInit::Tuple(args)
-                               },
-                               crate::compiler::ast::VariantKind::Struct(_) => {
-                                    return self.err(SemanticError::Generic("Struct variant construction via call not supported".into()), Some(expr.span.clone()));
-                               }
-                           };
-
-                           // 3. Infer Generics
-                           // If explicit generics provided (e.g. Option<I64>::Some), use them.
-                           let final_generics = if !generic_args.is_empty() {
-                               generic_args.clone()
-                           } else {
-                               // Else try to infer from args
-                               // Get Enum Def to know generic param names
-                               let enum_def = self.enums.get(&enum_name).expect("Enum definition should exist if variant was found");
-                               if enum_def.generics.is_empty() {
-                                   vec![]
-                               } else {
-                                   // Simple Inference: Map Generic Name -> Concrete Type
-                                   let mut inference_map: std::collections::HashMap<String, Type> = std::collections::HashMap::new();
-                                   
-                                   if let crate::compiler::ast::VariantKind::Tuple(ref param_types) = variant_def.kind {
-                                        for (param_ty, arg_ty) in param_types.iter().zip(checked_arg_types.iter()) {
-                                            // Recursive match function
-                                            fn unify(param: &Type, arg: &Type, map: &mut std::collections::HashMap<String, Type>) {
-                                                match (param, arg) {
-                                                    (Type::Struct(pn, pa), Type::Struct(an, aa)) if pn == an => {
-                                                        for (p, a) in pa.iter().zip(aa.iter()) {
-                                                            unify(p, a, map);
-                                                        }
-                                                    }
-                                                    (Type::Struct(name, _), _) => {
-                                                         map.insert(name.clone(), arg.clone());
-                                                    }
-                                                    (Type::Tensor(p_inner, _), Type::Tensor(a_inner, _)) => unify(p_inner, a_inner, map),
-                                                    (Type::TensorShaped(p_inner, _), Type::TensorShaped(a_inner, _)) => unify(p_inner, a_inner, map),
-                                                    (Type::Ref(p_inner), Type::Ref(a_inner)) => unify(p_inner, a_inner, map),
-                                                    _ => {}
-                                                }
+                  if let Type::Enum(ref enum_name, _) = type_ty {
+                      if let Some(enum_def) = self.enums.get(enum_name).cloned() {
+                          if let Some(variant_def) = enum_def.variants.iter().find(|v| v.name == method_name).cloned() {
+                               // It is an Enum Variant Constructor (e.g. Option::Some(x))
+                               
+                               // Infer Generics from Arguments
+                               let mut inference_map: HashMap<String, Type> = HashMap::new();
+                               
+                               // Check args against Variant fields
+                               match &variant_def.kind {
+                                   VariantKind::Tuple(types) => {
+                                       for (i, arg_expr) in args.iter_mut().enumerate() {
+                                            if i < types.len() {
+                                                let param_ty = &types[i];
+                                                // Check arg and infer type
+                                                let arg_ty = self.check_expr(arg_expr)?;
+                                                self.unify_types_for_inference(param_ty, &arg_ty, &mut inference_map);
                                             }
-                                            unify(param_ty, arg_ty, &mut inference_map);
-                                        }
-                                   }
-                                   
-                                   // Construct concrete args in order
-                                   let mut inferred_args = Vec::new();
-                                   for g_name in &enum_def.generics {
-                                       if let Some(ty) = inference_map.get(g_name) {
-                                           inferred_args.push(ty.clone());
-                                       } else {
-                                           inferred_args.push(Type::Struct(g_name.clone(), vec![]));
                                        }
-                                   }
-                                   inferred_args
+                                   },
+                                   VariantKind::Struct(fields) => {
+                                       // Structural variant?
+                                   },
+                                   _ => {}
                                }
-                           };
-                           println!("DEBUG: semantics EnumInit enum_name='{}' generics={:?}", enum_name, final_generics);
-                           expr.inner = ExprKind::EnumInit {
-                               enum_name: enum_name.clone(),
-                               variant_name: method_name,
-                               generics: final_generics.clone(),
-                               payload
-                           };
-                           
-                           return Ok(Type::Enum(enum_name.clone(), final_generics));
-                       }
+                               
+                               // Construct concrete args in order
+                               let mut final_generics = Vec::new();
+                               for g_name in &enum_def.generics {
+                                   if let Some(ty) = inference_map.get(g_name) {
+                                       final_generics.push(ty.clone());
+                                   } else {
+                                       // Default to Void/Unit if not inferred? Or Error?
+                                       // Fallback to Entity/Generic?
+                                       final_generics.push(Type::Struct(g_name.clone(), vec![]));
+                                   }
+                               }
+
+                               // Construct Payload
+                               let payload = match &variant_def.kind {
+                                   VariantKind::Unit => EnumVariantInit::Unit,
+                                   VariantKind::Tuple(_) => EnumVariantInit::Tuple(args),
+                                   VariantKind::Struct(_) => EnumVariantInit::Unit, // TODO: Struct variant support
+                               };
+
+                               expr.inner = ExprKind::EnumInit {
+                                   enum_name: enum_name.clone(),
+                                   variant_name: method_name,
+                                   generics: final_generics.clone(),
+                                   payload
+                               };
+                               
+                               return Ok(Type::Enum(enum_name.clone(), final_generics));
+                          }
+                      }
                   }
 
                   // Restore if nothing matched
                   expr.inner = ExprKind::StaticMethodCall(type_ty.clone(), method_name, args);
              } else {
-                 // Should be unreachable if we entered the if
                  expr.inner = inner;
              }
         }
@@ -2436,7 +2217,7 @@ impl SemanticAnalyzer {
                         initialized_fields.insert(field_name.clone());
 
                         // Check if field exists and get type
-                        let expected_type = struct_def
+                        let expected_raw_type = struct_def
                             .fields
                             .iter()
                             .find(|(f, _)| f == field_name)
@@ -2449,52 +2230,37 @@ impl SemanticAnalyzer {
                             })
                             .map_err(|e| e.to_tl_error(Some(expr.span.clone())))?;
 
+                        // Create substitution map for field types
+                        let mut generics_subst = HashMap::new();
+                        for (i, param) in struct_def.generics.iter().enumerate() {
+                            if i < final_generics.len() {
+                                generics_subst.insert(param.clone(), final_generics[i].clone());
+                            }
+                        }
+                        
+                        let expected_type = self.substitute_generics(expected_raw_type, &generics_subst);
+
                         let found_type = self.check_expr(field_expr)?;
                         
-                        // Infer generics
-                        // Helper closure to unify
-                        let mut unify = |t1: &Type, t2: &Type| -> bool {
-                            if let Type::Struct(n1, _) = t1 {
-                                if struct_def.generics.contains(n1) {
-                                    if let Some(existing) = inferred_generics.get(n1) {
-                                        return self.are_types_compatible(existing, t2);
-                                    } else {
-                                        inferred_generics.insert(n1.clone(), t2.clone());
-                                        return true;
-                                    }
-                                }
-                            }
-                            // Recursive unification for Box<T> handling?
-                            // For simplicity, just check direct compatibility if not generic param
-                            self.are_types_compatible(t1, t2)
-                        };
-
-                        if !unify(expected_type, &found_type) {
-                             // Try reverse? No, expected is the pattern.
-                             // But wait, what if expected is Box<T> and found is Box<I64>?
-                             // Recurse needed.
-                             // Let's rely on are_types_compatible mostly, but if we see mismatch Generic vs Concrete, try bind.
-                             // Ideally strict unification. 
-                             // But my simple closure above handles top-level T.
-                             // Just check result.
-                             if self.are_types_compatible(expected_type, &found_type) {
-                                 // compatible (maybe T was already bound or concrete match)
-                             } else {
-                                 // Mismatch? Or maybe T needs binding deeper?
-                                 // For now, if unification failed (returned false), it is error.
-                                 // But unify returns true if bound.
-                                 // Wait, if expected=T, found=I64. unify binds T=I64 returns true.
-                                 // if expected=I64, found=I64. unify calls are_types_compatible returns true.
-                                 // So logic is fine.
-                                 return self.err(
-                                    SemanticError::TypeMismatch {
-                                        expected: expected_type.clone(),
-                                        found: found_type,
-                                    },
-                                    Some(field_expr.span.clone()),
-                                );
-                             }
+                        if !self.are_types_compatible(&expected_type, &found_type) {
+                             return self.err(
+                                SemanticError::TypeMismatch {
+                                    expected: expected_type,
+                                    found: found_type,
+                                },
+                                Some(expr.span.clone()),
+                            );
                         }
+                        
+                        // Back-propagate final type to RHS AST if it's a generic constructor (like Vec::new)
+                        // This ensures that Vec::new() gets typed as Vec<ConcreteType> instead of Vec<Undefined>
+                        if let ExprKind::StaticMethodCall(ty_node, _, _) = &mut field_expr.inner {
+                            // We should use the expected type (which might contain Underefined/Inference vars that are now unified)
+                            // Ideally, we want the RESOLVED type if possible, but expected_type is linked to inference.
+                            *ty_node = expected_type.clone();
+                        }
+
+
                     }
 
                     // Check for missing fields
@@ -5668,6 +5434,19 @@ impl SemanticAnalyzer {
     }
 
     // Reification: resolving Undefined types in AST
+    fn resolve_lvalue_types(&mut self, lvalue: &mut LValue) {
+        match lvalue {
+             LValue::Variable(_) => {},
+             LValue::FieldAccess(inner, _) => self.resolve_lvalue_types(inner),
+             LValue::IndexAccess(inner, indices) => {
+                  self.resolve_lvalue_types(inner);
+                  for idx in indices {
+                      self.resolve_expr_types(idx);
+                  }
+             }
+        }
+    }
+
     fn resolve_stmt_types(&mut self, stmt: &mut Stmt) {
         match &mut stmt.inner {
             StmtKind::Let { type_annotation, value, .. } => {
@@ -5676,13 +5455,9 @@ impl SemanticAnalyzer {
                 }
                 self.resolve_expr_types(value);
             }
-            StmtKind::Assign { value, indices, .. } => {
+            StmtKind::Assign { value, lhs, .. } => {
                 self.resolve_expr_types(value);
-                if let Some(idxs) = indices {
-                    for idx in idxs {
-                        self.resolve_expr_types(idx);
-                    }
-                }
+                self.resolve_lvalue_types(lhs);
             }
             StmtKind::Expr(expr) => self.resolve_expr_types(expr),
             StmtKind::Return(Some(expr)) => self.resolve_expr_types(expr),

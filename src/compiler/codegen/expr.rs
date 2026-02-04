@@ -2488,6 +2488,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::String(_) => "String",
                     // Add other types as needed or implement a helper
                     Type::Tensor(_, _) => "Tensor",
+                    Type::Path(segments, _) => segments.last().map(|s| s.as_str()).unwrap_or("Unknown"),
                     _ => return Err(format!("Cannot call static method on type {:?}", type_ty)),
                 };
                 self.compile_static_method_call(struct_name, method_name, args, &type_ty)
@@ -3317,6 +3318,46 @@ impl<'ctx> CodeGenerator<'ctx> {
         generics: &[Type],
         fields: &[(String, Expr)],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        if !generics.is_empty() {
+             if self.monomorphize_struct(name, generics).is_err() {
+                 // Attempt recovery for double-mangled names (e.g. HashMap_i64_i64 -> HashMap)
+                 let mut recovered_name = None;
+                 // Use keys to avoid borrowing self.struct_defs immutably while calling monomorphize (mut)
+                 let def_names: Vec<String> = self.struct_defs.keys().cloned().collect();
+                 
+                 for def_name in def_names {
+                     if name.starts_with(&def_name) && name != def_name {
+                         // Check if this base name works
+                         if self.monomorphize_struct(&def_name, generics).is_ok() {
+                             recovered_name = Some(def_name);
+                             break;
+                         }
+                     }
+                 }
+                 
+                 if let Some(base) = recovered_name {
+                     // Update name to base for lookup
+                     // Note: We can't change 'name' arg easily, but we update lookup_name
+                     let lookup_name = self.mangle_type_name(&base, generics);
+                     
+                     let simple_lookup_name = if lookup_name.contains("::") {
+                        lookup_name.split("::").last().unwrap().to_string()
+                     } else {
+                        lookup_name.clone()
+                     };
+                     
+                     let struct_type = *self.struct_types.get(&simple_lookup_name).ok_or("Recovered struct type not found")?;
+                     let struct_def = self.struct_defs.get(&simple_lookup_name).ok_or("Recovered struct def not found")?.clone();
+                     
+                     // We need to return here or jump to allocation logic with correct def/type
+                     // Refactoring nicely:
+                     return self.compile_struct_alloc(name, generics, &struct_type, &struct_def, fields);
+                 }
+                 
+                 return Err(format!("Monomorphization failed for {} with generics {:?}", name, generics));
+             }
+        }
+
         let lookup_name = if generics.is_empty() {
              name.to_string()
         } else {
@@ -3330,9 +3371,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             lookup_name.clone()
         };
         
-        // Debug:
-        // if generics.len() > 0 { ... }
-
         let struct_type = *self
             .struct_types
             .get(&simple_lookup_name)
@@ -3347,6 +3385,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                  format!("Struct definition {} not found", lookup_name)
             })?
             .clone();
+            
+        self.compile_struct_alloc(name, generics, &struct_type, &struct_def, fields)
+    }
+
+    // Refactored helper to allow calling from recovery path
+    fn compile_struct_alloc(
+        &mut self,
+        _original_name: &str,
+        generics: &[Type],
+        struct_type: &inkwell::types::StructType<'ctx>,
+        struct_def: &crate::compiler::ast::StructDef,
+        fields: &[(String, Expr)],
+    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        let name = &struct_def.name; // Use resolved name
+
 
         // Determine allocation strategy: Arena or Heap
         let size = struct_type
@@ -3466,7 +3519,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             let field_ptr = self
                 .builder
                 .build_struct_gep(
-                    struct_type,
+                    *struct_type,
                     struct_ptr,
                     field_idx as u32,
                     &format!("{}.{}", name, field_name),
@@ -4008,6 +4061,7 @@ impl<'ctx> CodeGenerator<'ctx> {
              };
 
              let struct_type = self.struct_types.get(&simple_lookup_name)
+                 .or_else(|| self.enum_types.get(&simple_lookup_name))
                  .ok_or_else(|| format!("Struct type {} not found for SRET allocation", simple_lookup_name))?;
              
              let size = struct_type.size_of().ok_or("Cannot determine size for SRET struct")?;
@@ -5616,6 +5670,7 @@ impl<'ctx> CodeGenerator<'ctx> {
              };
 
              let struct_type = self.struct_types.get(&simple_lookup_name)
+                 .or_else(|| self.enum_types.get(&simple_lookup_name))
                  .ok_or_else(|| format!("Struct type {} not found for SRET allocation", simple_lookup_name))?;
              
              let size = struct_type.size_of().ok_or("Cannot determine size for SRET struct")?;

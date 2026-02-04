@@ -108,6 +108,37 @@ impl TypeInferencer {
         Ok(last_type)
     }
 
+    /// Infer type from an LValue
+    fn infer_lvalue(&mut self, lvalue: &crate::compiler::ast::LValue) -> Result<Type, TypeError> {
+        match lvalue {
+            crate::compiler::ast::LValue::Variable(name) => self.var_types.get(name).cloned().ok_or_else(|| TypeError::UnboundVariable(name.clone())),
+            crate::compiler::ast::LValue::FieldAccess(inner, field) => {
+                 let base_ty = self.infer_lvalue(inner)?;
+                 // Simplified: Allow struct field access if we can resolve it?
+                 // type_infer constraint system might not know structs well.
+                 // Assuming base_ty is known, we can maybe lookup field?
+                 // For now, return fresh specific to field if possible, or just fresh var.
+                 // Or propagate?
+                 // If base_ty is Struct, find field.
+                 // But type_infer doesn't have struct defs in context?
+                 // It only has var_types.
+                 // It relies on AST? Module is passed to infer_module.
+                 // But infer_function doesn't pass Module to infer_stmt/lvalue?
+                 Ok(self.fresh_type_var()) // Placeholder
+            }
+            crate::compiler::ast::LValue::IndexAccess(inner, indices) => {
+                 let inner_ty = self.infer_lvalue(inner)?;
+                 for idx in indices { self.infer_expr(idx)?; }
+                 match inner_ty {
+                      Type::Tensor(t, _) => Ok(*t),
+                      Type::TensorShaped(t, _) => Ok(*t),
+                      Type::Ptr(t) => Ok(*t),
+                      _ => Ok(self.fresh_type_var())
+                 }
+            }
+        }
+    }
+
     /// Infer type from a statement
     fn infer_stmt(&mut self, stmt: &Stmt) -> Result<Type, TypeError> {
         match &stmt.inner {
@@ -124,13 +155,8 @@ impl TypeInferencer {
                 self.var_types.insert(name.clone(), inferred.clone());
                 Ok(inferred)
             }
-            StmtKind::Assign { name, value, .. } => {
-                // Lookup target variable type
-                let target_ty = self
-                    .var_types
-                    .get(name)
-                    .cloned()
-                    .ok_or_else(|| TypeError::UnboundVariable(name.clone()))?;
+            StmtKind::Assign { lhs, value, .. } => {
+                let target_ty = self.infer_lvalue(lhs)?;
                 let value_ty = self.infer_expr(value)?;
                 self.add_type_eq(target_ty, value_ty.clone());
                 Ok(value_ty)

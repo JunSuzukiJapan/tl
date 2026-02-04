@@ -946,11 +946,16 @@ fn parse_assign_stmt(input: Span) -> IResult<Span, Stmt> {
         let (input, value) = parse_expr(input)?;
         let (input, _) = ws(char(';'))(input)?;
 
+        let lhs = if let Some(idxs) = indices {
+            LValue::IndexAccess(Box::new(LValue::Variable(name)), idxs)
+        } else {
+            LValue::Variable(name)
+        };
+
         Ok((
             input,
             StmtKind::Assign {
-                name,
-                indices,
+                lhs,
                 op,
                 value,
             },
@@ -1061,10 +1066,22 @@ fn parse_block_stmt(input: Span) -> IResult<Span, Stmt> {
     })(input)
 }
 
+fn expr_to_lvalue(expr: Expr) -> Option<LValue> {
+    match expr.inner {
+        ExprKind::Variable(name) => Some(LValue::Variable(name)),
+        ExprKind::FieldAccess(inner, field) => {
+            expr_to_lvalue(*inner).map(|l| LValue::FieldAccess(Box::new(l), field))
+        }
+        ExprKind::IndexAccess(inner, indices) => {
+            expr_to_lvalue(*inner).map(|l| LValue::IndexAccess(Box::new(l), indices))
+        }
+        _ => None,
+    }
+}
+
 fn parse_field_assign(input: Span) -> IResult<Span, Stmt> {
     spanned(|input| {
         let (input, lhs) = parse_expr(input)?;
-        match lhs.inner {
             ExprKind::FieldAccess(obj, field) => {
                 let (input, op_str) = ws(alt((
                     tag("="),
@@ -1085,14 +1102,21 @@ fn parse_field_assign(input: Span) -> IResult<Span, Stmt> {
                     _ => unreachable!(),
                 };
 
+                // Reconstruct full LValue from the parsed field access expression
+                // We know 'lhs' is FieldAccess(obj, field). We need to convert obj to LValue.
+                // We restart conversion on the full expression 'lhs'
+                // Wait, lhs is moved/consumed? we matched lhs.inner.
+                // Reconstructing LValue:
+                let base_lvalue = expr_to_lvalue(*obj).ok_or(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Verify)))?;
+                let lhs = LValue::FieldAccess(Box::new(base_lvalue), field);
+
                 let (input, value) = parse_expr(input)?;
                 let (input, _) = ws(char(';'))(input)?;
 
                 Ok((
                     input,
-                    StmtKind::FieldAssign {
-                        obj: *obj,
-                        field,
+                    StmtKind::Assign {
+                        lhs,
                         op,
                         value,
                     },

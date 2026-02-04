@@ -67,6 +67,19 @@ impl LivenessAnalyzer {
         }
     }
 
+    fn visit_lvalue(&mut self, lvalue: &LValue, time: usize) {
+        match lvalue {
+             LValue::Variable(name) => self.use_var(name, time),
+             LValue::FieldAccess(inner, _) => self.visit_lvalue(inner, time),
+             LValue::IndexAccess(inner, idxs) => {
+                 self.visit_lvalue(inner, time);
+                 for idx in idxs {
+                     self.visit_expr(idx);
+                 }
+             }
+        }
+    }
+
     fn visit_stmt(&mut self, stmt: &Stmt) {
         self.current_time += 1;
         let time = self.current_time;
@@ -76,9 +89,9 @@ impl LivenessAnalyzer {
                 self.visit_expr(value); // RHS used first
                 self.define_var(name, time);
             }
-            StmtKind::Assign { name, value, .. } => {
+            StmtKind::Assign { lhs, value, .. } => {
                 self.visit_expr(value);
-                self.use_var(name, time);
+                self.visit_lvalue(lhs, time);
             }
             StmtKind::TensorDecl { name, init, .. } => {
                  if let Some(expr) = init {

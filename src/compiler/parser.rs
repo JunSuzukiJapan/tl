@@ -377,7 +377,7 @@ fn split_delimited(input: Input) -> IResult<Input, Vec<Expr>, ParserError> {
 
 // Forward declarations using recursive parsers
 pub fn parse_expr(input: Input) -> IResult<Input, Expr, ParserError> {
-    parse_binary_logic(input) // Entry point for precedence
+    parse_binary_logic(input, true) // Entry point for precedence
 }
 
 fn parse_block(input: Input) -> IResult<Input, Expr, ParserError> {
@@ -389,7 +389,7 @@ fn parse_block(input: Input) -> IResult<Input, Expr, ParserError> {
 
 
 
-fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
+fn parse_path_based_atom(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
     // 1. Try Primitive Type first: i64::method()
     if let Ok((rest, ty)) = parse_primitive_type(input) {
         // Primitive type found. Expect :: method
@@ -486,24 +486,24 @@ fn parse_path_based_atom(input: Input) -> IResult<Input, Expr, ParserError> {
         }
     }
     
-    if let Ok((rest2, _)) = expect_token(Token::LBrace)(rest) {
-        // Struct Init: Type { ... }
-        // Use path_ty as the type.
-        
-        // let type_name = path_segments.join("::"); // REMOVED
-         
-        let (rest3, fields) = separated_list0(
-            expect_token(Token::Comma),
-            map(
-                tuple((identifier, expect_token(Token::Colon), parse_expr)),
-                |(id, _, e)| (id, e)
-            )
-        )(rest2)?;
-        let (rest3, _) = opt(expect_token(Token::Comma))(rest3)?;
-        let (rest4, _) = expect_token(Token::RBrace)(rest3)?;
-        
-        // ExprKind::StructInit now takes Type
-        return Ok((rest4, Spanned::new(ExprKind::StructInit(path_ty, fields), crate::compiler::error::Span::default())));
+    if allow_struct {
+        if let Ok((rest2, _)) = expect_token(Token::LBrace)(rest) {
+            // Struct Init: Type { ... }
+            // Use path_ty as the type.
+             
+            let (rest3, fields) = separated_list0(
+                expect_token(Token::Comma),
+                map(
+                    tuple((identifier, expect_token(Token::Colon), parse_expr)),
+                    |(id, _, e)| (id, e)
+                )
+            )(rest2)?;
+            let (rest3, _) = opt(expect_token(Token::Comma))(rest3)?;
+            let (rest4, _) = expect_token(Token::RBrace)(rest3)?;
+            
+            // ExprKind::StructInit now takes Type
+            return Ok((rest4, Spanned::new(ExprKind::StructInit(path_ty, fields), crate::compiler::error::Span::default())));
+        }
     }
 
     // Check for Enum Variant without args: Type::Variant
@@ -527,7 +527,7 @@ fn parse_variable(input: Input) -> IResult<Input, Expr, ParserError> {
     Ok((input, Spanned::new(ExprKind::Variable(name), crate::compiler::error::Span::default())))
 }
 
-fn parse_atom(input: Input) -> IResult<Input, Expr, ParserError> {
+fn parse_atom(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
     alt((
         parse_literal,
         parse_tensor_comprehension_or_literal,
@@ -535,7 +535,7 @@ fn parse_atom(input: Input) -> IResult<Input, Expr, ParserError> {
         parse_block,
         parse_if_expr,
         parse_match_expr,
-        parse_path_based_atom,
+        |i| parse_path_based_atom(i, allow_struct), // Explicit closure to pass flag
         map(
             delimited(
                 expect_token(Token::LParen),
@@ -575,8 +575,8 @@ fn parse_self(input: Input) -> IResult<Input, Expr, ParserError> {
     Ok((input, Spanned::new(ExprKind::Variable("self".to_string()), crate::compiler::error::Span::default())))
 }
 
-fn parse_postfix(input: Input) -> IResult<Input, Expr, ParserError> {
-    let (mut input, mut expr) = parse_atom(input)?;
+fn parse_postfix(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
+    let (mut input, mut expr) = parse_atom(input, allow_struct)?;
     
     // Loop to consume chain of postfixes (call, index, field)
     loop {
@@ -648,8 +648,8 @@ fn parse_postfix(input: Input) -> IResult<Input, Expr, ParserError> {
 }
 
 // Cast: expr as Type
-fn parse_cast(input: Input) -> IResult<Input, Expr, ParserError> {
-    let (mut input, mut expr) = parse_postfix(input)?;
+fn parse_cast(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
+    let (mut input, mut expr) = parse_postfix(input, allow_struct)?;
     loop {
         if let Ok((rest, _)) = expect_token(Token::As)(input) {
             let (rest, ty) = parse_type(rest)?;
@@ -663,7 +663,7 @@ fn parse_cast(input: Input) -> IResult<Input, Expr, ParserError> {
     Ok((input, expr))
 }
 
-fn parse_unary(input: Input) -> IResult<Input, Expr, ParserError> {
+fn parse_unary(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
     if let Ok((rest, op_tok)) = satisfy_token(|t| matches!(t, Token::Minus | Token::Not | Token::Question | Token::Ampersand))(input) {
         let op = match op_tok.token {
             Token::Minus => UnOp::Neg,
@@ -672,10 +672,10 @@ fn parse_unary(input: Input) -> IResult<Input, Expr, ParserError> {
             Token::Ampersand => UnOp::Ref,
             _ => unreachable!(),
         };
-        let (rest, expr) = parse_unary(rest)?;
+        let (rest, expr) = parse_unary(rest, allow_struct)?;
         Ok((rest, Spanned::new(ExprKind::UnOp(op, Box::new(expr)), crate::compiler::error::Span::default())))
     } else {
-        parse_cast(input)
+        parse_cast(input, allow_struct)
     }
 }
 
@@ -687,8 +687,8 @@ fn parse_unary(input: Input) -> IResult<Input, Expr, ParserError> {
 // This corresponds to standard precedence.
 
 // Factor: * / %
-fn parse_factor(input: Input) -> IResult<Input, Expr, ParserError> {
-    let (mut input, mut lhs) = parse_unary(input)?;
+fn parse_factor(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
+    let (mut input, mut lhs) = parse_unary(input, allow_struct)?;
     loop {
         if let Ok((rest, op_tok)) = satisfy_token(|t| matches!(t, Token::Star | Token::Slash | Token::Percent))(input) {
             let op = match op_tok.token {
@@ -697,7 +697,7 @@ fn parse_factor(input: Input) -> IResult<Input, Expr, ParserError> {
                 Token::Percent => BinOp::Mod,
                 _ => unreachable!(),
             };
-            let (rest, rhs) = parse_unary(rest)?;
+            let (rest, rhs) = parse_unary(rest, allow_struct)?;
             lhs = Spanned::new(ExprKind::BinOp(Box::new(lhs), op, Box::new(rhs)), crate::compiler::error::Span::default());
             input = rest;
         } else {
@@ -708,8 +708,8 @@ fn parse_factor(input: Input) -> IResult<Input, Expr, ParserError> {
 }
 
 // Term: + -
-fn parse_term(input: Input) -> IResult<Input, Expr, ParserError> {
-    let (mut input, mut lhs) = parse_factor(input)?;
+fn parse_term(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
+    let (mut input, mut lhs) = parse_factor(input, allow_struct)?;
     loop {
         if let Ok((rest, op_tok)) = satisfy_token(|t| matches!(t, Token::Plus | Token::Minus))(input) {
             let op = match op_tok.token {
@@ -717,7 +717,7 @@ fn parse_term(input: Input) -> IResult<Input, Expr, ParserError> {
                 Token::Minus => BinOp::Sub,
                 _ => unreachable!(),
             };
-            let (rest, rhs) = parse_factor(rest)?;
+            let (rest, rhs) = parse_factor(rest, allow_struct)?;
             lhs = Spanned::new(ExprKind::BinOp(Box::new(lhs), op, Box::new(rhs)), crate::compiler::error::Span::default());
             input = rest;
         } else {
@@ -728,8 +728,8 @@ fn parse_term(input: Input) -> IResult<Input, Expr, ParserError> {
 }
 
 // Comparison: < > <= >= == !=
-fn parse_comparison(input: Input) -> IResult<Input, Expr, ParserError> {
-    let (mut input, mut lhs) = parse_term(input)?;
+fn parse_comparison(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
+    let (mut input, mut lhs) = parse_term(input, allow_struct)?;
     loop {
         if let Ok((rest, op_tok)) = satisfy_token(|t| matches!(t, 
             Token::Lt | Token::Gt | Token::Le | Token::Ge | Token::Eq | Token::Ne
@@ -743,7 +743,7 @@ fn parse_comparison(input: Input) -> IResult<Input, Expr, ParserError> {
                 Token::Ne => BinOp::Neq,
                 _ => unreachable!(),
             };
-            let (rest, rhs) = parse_term(rest)?;
+            let (rest, rhs) = parse_term(rest, allow_struct)?;
             lhs = Spanned::new(ExprKind::BinOp(Box::new(lhs), op, Box::new(rhs)), crate::compiler::error::Span::default());
             input = rest;
         } else {
@@ -754,11 +754,11 @@ fn parse_comparison(input: Input) -> IResult<Input, Expr, ParserError> {
 }
 
 // Logical And
-fn parse_logical_and(input: Input) -> IResult<Input, Expr, ParserError> {
-    let (mut input, mut lhs) = parse_comparison(input)?;
+fn parse_logical_and(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
+    let (mut input, mut lhs) = parse_comparison(input, allow_struct)?;
     loop {
         if let Ok((rest, _)) = expect_token(Token::And)(input) {
-            let (rest, rhs) = parse_comparison(rest)?;
+            let (rest, rhs) = parse_comparison(rest, allow_struct)?;
             lhs = Spanned::new(ExprKind::BinOp(Box::new(lhs), BinOp::And, Box::new(rhs)), crate::compiler::error::Span::default());
             input = rest;
         } else {
@@ -769,11 +769,11 @@ fn parse_logical_and(input: Input) -> IResult<Input, Expr, ParserError> {
 }
 
 // Logical Or
-fn parse_logical_or(input: Input) -> IResult<Input, Expr, ParserError> {
-    let (mut input, mut lhs) = parse_logical_and(input)?;
+fn parse_logical_or(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
+    let (mut input, mut lhs) = parse_logical_and(input, allow_struct)?;
     loop {
         if let Ok((rest, _)) = expect_token(Token::Or)(input) {
-            let (rest, rhs) = parse_logical_and(rest)?;
+            let (rest, rhs) = parse_logical_and(rest, allow_struct)?;
             lhs = Spanned::new(ExprKind::BinOp(Box::new(lhs), BinOp::Or, Box::new(rhs)), crate::compiler::error::Span::default());
             input = rest;
         } else {
@@ -784,15 +784,15 @@ fn parse_logical_or(input: Input) -> IResult<Input, Expr, ParserError> {
 }
 
 // Entry for binary ops
-fn parse_binary_logic(input: Input) -> IResult<Input, Expr, ParserError> {
+fn parse_binary_logic(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
     // Range? a..b
     // Range has lower precedence than logic? or higher?
     // Rust: Range has lower precedence than arithmetic/logic usually?
     // Range 0..10.
     // Legacy parser had parse_range wrapping logical_or.
-    let (input, start) = parse_logical_or(input)?;
+    let (input, start) = parse_logical_or(input, allow_struct)?;
     if let Ok((rest, _)) = expect_token(Token::Range)(input) {
-        let (rest, end) = parse_logical_or(rest)?;
+        let (rest, end) = parse_logical_or(rest, allow_struct)?;
         Ok((rest, Spanned::new(ExprKind::Range(Box::new(start), Box::new(end)), crate::compiler::error::Span::default())))
     } else {
         Ok((input, start))
@@ -858,9 +858,24 @@ fn parse_return_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
 
 
 
+// --- Expression Parsing without Top-Level Struct Literal ---
+// Used for match scrutinee to avoid ambiguity: match S {} vs match (S {})
+pub fn parse_expr_no_struct_lit(input: Input) -> IResult<Input, Expr, ParserError> {
+    parse_expr_inner(input, true)
+}
+
+fn parse_expr_inner(input: Input, no_struct_lit: bool) -> IResult<Input, Expr, ParserError> {
+    // This is a simplified version of parse_expr logic that can pass a flag down.
+    // Ideally parse_expr should call this with false.
+    // For now, let's implement a wrapper or modify parse_expr organization.
+    // Since parse_expr is complex, let's define parse_expr in terms of priority.
+    // Current parse_expr handles binary ops.
+    parse_binary_logic(input, no_struct_lit)
+}
+
 fn parse_assign_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
-    // 1. Parse LHS Expr
-    let (input, lhs) = parse_expr(input)?;
+    // 1. Parse LHS as LValue
+    let (input, lhs) = parse_lvalue(input)?;
     
     // 2. Parse Operator
     let (input, op) = alt((
@@ -876,45 +891,61 @@ fn parse_assign_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
     let (input, rhs) = parse_expr(input)?;
     let (input, _) = expect_token(Token::SemiColon)(input)?;
     
-    // 4. Construct Stmt
-    match lhs.inner {
-        ExprKind::Variable(name) => Ok((input, Spanned::new(StmtKind::Assign {
-            name,
-            indices: None,
-            op,
-            value: rhs,
-        }, crate::compiler::error::Span::default()))),
+    Ok((input, Spanned::new(StmtKind::Assign {
+        lhs,
+        op,
+        value: rhs,
+    }, crate::compiler::error::Span::default())))
+}
+
+fn parse_lvalue(input: Input) -> IResult<Input, LValue, ParserError> {
+    // LValue Start: Variable or Postfix chain
+    // But LValue must start with something assignable.
+    // For now: Identifier or Self
+    
+    let (mut input, mut lvalue) = alt((
+        map(identifier, |name| LValue::Variable(name)),
+        map(expect_token(Token::Self_), |_| LValue::Variable("self".to_string())),
+    ))(input)?;
+    
+    // Loop for postfixes (FieldAccess, IndexAccess)
+    loop {
+        // Check for [ (Index)
+        if let Ok((rest, _)) = expect_token(Token::LBracket)(input) {
+            let (rest, indices) = separated_list1(expect_token(Token::Comma), parse_expr)(rest)?;
+            let (rest, _) = expect_token(Token::RBracket)(rest)?;
+            lvalue = LValue::IndexAccess(Box::new(lvalue), indices);
+            input = rest;
+            continue;
+        }
         
-        ExprKind::IndexAccess(target, indices) => {
-            if let ExprKind::Variable(name) = target.inner {
-                Ok((input, Spanned::new(StmtKind::Assign {
-                    name,
-                    indices: Some(indices),
-                    op,
-                    value: rhs,
-                }, crate::compiler::error::Span::default())))
-            } else {
-               Err(nom::Err::Error(ParserError { 
-                   input, 
-                   kind: crate::compiler::error::ParseErrorKind::Generic("Complex assignment target not supported yet".to_string()) 
-               }))
+        // Check for . (Field)
+        if let Ok((rest, _)) = expect_token(Token::Dot)(input) {
+            if let Ok((rest2, field)) = identifier(rest) {
+                lvalue = LValue::FieldAccess(Box::new(lvalue), field);
+                input = rest2;
+                continue;
             }
-        },
+            // Tuple index access logic could go here if tuples are lvalues (usually not mutable fields though, unless struct)
+            // But syntax is .0 .1 etc. which parses as FloatLiteral if not careful or dedicated Int literal.
+             if let Ok((rest2, _)) = satisfy_token(|t| matches!(t, Token::IntLiteral(_)))(rest) {
+                 // Tuple field access using index
+                  let idx = match rest.first().unwrap().token {
+                     Token::IntLiteral(n) => n.to_string(), // Treat tuple index as field name "0", "1" etc? 
+                     // Or add LValue::TupleAccess? For now FieldAccess with strict string is okay if codegen handles it.
+                     // AST LValue::FieldAccess uses String.
+                     _ => "0".to_string(),
+                 };
+                 lvalue = LValue::FieldAccess(Box::new(lvalue), idx);
+                 input = rest2;
+                 continue;
+             }
+        }
         
-        ExprKind::FieldAccess(obj, field) => {
-            Ok((input, Spanned::new(StmtKind::FieldAssign {
-                obj: *obj,
-                field,
-                op,
-                value: rhs,
-            }, crate::compiler::error::Span::default())))
-        },
-        
-        _ => Err(nom::Err::Error(ParserError { 
-            input, 
-            kind: crate::compiler::error::ParseErrorKind::Generic("Invalid left-hand side of assignment".to_string()) 
-        })),
+        break;
     }
+    
+    Ok((input, lvalue))
 }
 
 // --- Compound Statements & Control Flow ---
@@ -1085,7 +1116,8 @@ fn parse_generic_params(input: Input) -> IResult<Input, Vec<String>, ParserError
 
 fn parse_match_expr(input: Input) -> IResult<Input, Expr, ParserError> {
     let (input, _) = expect_token(Token::Match)(input)?;
-    let (input, target) = parse_expr(input)?;
+    // Use parse_expr_no_struct_lit to avoid ambiguity with Struct Literal in scrutinee
+    let (input, target) = parse_expr_no_struct_lit(input)?;
     let (input, _) = expect_token(Token::LBrace)(input)?;
     
     let (input, arms) = separated_list0(
@@ -1163,15 +1195,23 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
                   }
              }
          } else {
-             // Just Type (Identifier). `None`. `Some`.
-             // Treat as EnumPattern with empty enum_name?
-             let name_opt = match ty {
-                 Type::Struct(name, _) => Some(name),
-                 Type::Path(segments, _) => Some(segments.join("::")),
-                 _ => None,
+             // Just Type (Identifier) or Path (Option::Some).
+             
+             let (enum_name, variant_name) = match ty {
+                 Type::Struct(name, _) => (String::new(), name),
+                 Type::Path(segments, _) => {
+                     if segments.len() > 1 {
+                         let var = segments.last().unwrap().clone();
+                         let en = segments[0..segments.len()-1].join("::");
+                         (en, var)
+                     } else {
+                         (String::new(), segments[0].clone())
+                     }
+                 },
+                 _ => (String::new(), String::new()),
              };
              
-             if let Some(name) = name_opt {
+             if !variant_name.is_empty() {
                   // Check for { or (
                   if let Ok((rest2, _)) = expect_token(Token::LBrace)(rest) {
                       let (rest3, bindings_vec) = separated_list0(
@@ -1189,19 +1229,17 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
                        let (rest3, _) = opt(expect_token(Token::Comma))(rest3)?;
                        let (rest3, _) = expect_token(Token::RBrace)(rest3)?;
                        let bindings = crate::compiler::ast::EnumPatternBindings::Struct(bindings_vec);
-                       // We don't know the enum name. Use empty? Or assume variant name IS the type name (for None)?
-                       // If checking for `None`, usually `Option::None`. `None` implies it's imported.
-                       // For now, assume variant_name = name, enum_name = "".
-                       return Ok((rest3, Pattern::EnumPattern { enum_name: String::new(), variant_name: name, bindings }));
+                       return Ok((rest3, Pattern::EnumPattern { enum_name, variant_name, bindings }));
                   } else if let Ok((rest2, _)) = expect_token(Token::LParen)(rest) {
                       let (rest3, vars) = separated_list0(expect_token(Token::Comma), identifier)(rest2)?;
                       let (rest3, _) = expect_token(Token::RParen)(rest3)?;
+                      
                       let bindings = crate::compiler::ast::EnumPatternBindings::Tuple(vars);
-                      return Ok((rest3, Pattern::EnumPattern { enum_name: String::new(), variant_name: name, bindings }));
+                      return Ok((rest3, Pattern::EnumPattern { enum_name, variant_name, bindings }));
                   } else {
                        // Unit variant
                        let bindings = crate::compiler::ast::EnumPatternBindings::Unit;
-                       return Ok((rest, Pattern::EnumPattern { enum_name: String::new(), variant_name: name, bindings }));
+                       return Ok((rest, Pattern::EnumPattern { enum_name, variant_name, bindings }));
                   }
              }
          }

@@ -254,11 +254,13 @@ impl ShapeAnalyzer {
                 self.shapes.insert(name.clone(), shape);
             }
             StmtKind::Assign {
-                name, value, op, ..
+                lhs, value, op, ..
             } => {
                 if *op == AssignOp::Assign {
-                    let shape = self.analyze_expr(value);
-                    self.shapes.insert(name.clone(), shape);
+                     if let LValue::Variable(name) = lhs {
+                        let shape = self.analyze_expr(value);
+                        self.shapes.insert(name.clone(), shape);
+                     }
                 }
             }
             _ => {}
@@ -278,8 +280,8 @@ impl ShapeAnalyzer {
             match &stmt.inner {
                 StmtKind::Let { value, .. }
                 | StmtKind::Assign { value, .. }
-                | StmtKind::Expr(value)
-                | StmtKind::FieldAssign { value, .. } => {
+                | StmtKind::Expr(value) => {
+
                     allocation_count += self.count_allocations(value);
 
                     let shape = self.analyze_expr(value);

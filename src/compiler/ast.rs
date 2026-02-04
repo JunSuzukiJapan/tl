@@ -193,6 +193,13 @@ pub struct EnumDef {
 pub type Stmt = Spanned<StmtKind>;
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum LValue {
+    Variable(String),
+    FieldAccess(Box<LValue>, String),
+    IndexAccess(Box<LValue>, Vec<Expr>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum StmtKind {
     TensorDecl {
         name: String,
@@ -206,15 +213,8 @@ pub enum StmtKind {
         mutable: bool,
     },
     Assign {
-        name: String,
-        indices: Option<Vec<Expr>>,
+        lhs: LValue,
         op: AssignOp, // =, +=, max=, avg=
-        value: Expr,
-    },
-    FieldAssign {
-        obj: Expr,
-        field: String,
-        op: AssignOp,
         value: Expr,
     },
     Expr(Expr),

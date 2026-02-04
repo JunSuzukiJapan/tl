@@ -150,6 +150,18 @@ impl TypeSubstitutor {
         }
     }
 
+    pub fn substitute_lvalue(&self, lvalue: &LValue) -> LValue {
+         match lvalue {
+              LValue::Variable(name) => LValue::Variable(name.clone()),
+              LValue::FieldAccess(inner, field) => LValue::FieldAccess(Box::new(self.substitute_lvalue(inner)), field.clone()),
+              LValue::IndexAccess(inner, indices) => {
+                   let new_inner = self.substitute_lvalue(inner);
+                   let new_indices = indices.iter().map(|e| self.substitute_expr(e)).collect();
+                   LValue::IndexAccess(Box::new(new_inner), new_indices)
+              }
+         }
+    }
+
     pub fn substitute_stmt(&self, stmt: &Stmt) -> Stmt {
         let new_kind = match &stmt.inner {
             StmtKind::Let { name, type_annotation, value, mutable } => {
@@ -167,12 +179,11 @@ impl TypeSubstitutor {
                 let new_expr = opt_expr.as_ref().map(|e| self.substitute_expr(e));
                 StmtKind::Return(new_expr)
             }
-            StmtKind::Assign { name, indices, op, value } => {
-                let new_indices = indices.as_ref().map(|idxs| idxs.iter().map(|e| self.substitute_expr(e)).collect());
+            StmtKind::Assign { lhs, op, value } => {
+                let new_lhs = self.substitute_lvalue(lhs);
                 let new_value = self.substitute_expr(value);
                 StmtKind::Assign {
-                    name: name.clone(),
-                    indices: new_indices,
+                    lhs: new_lhs,
                     op: op.clone(),
                     value: new_value,
                 }

@@ -1,6 +1,4 @@
-extern fn malloc(size: i64) -> ptr<u8>;
-extern fn realloc(ptr: ptr<u8>, size: i64) -> ptr<u8>;
-extern fn free(ptr: ptr<u8>);
+// Malloc externs provided by vec.tl
 
 // Intrinsic function for hashing
 extern fn tl_core_hash<T>(val: T) -> i64;
@@ -18,13 +16,15 @@ enum Entry<K, V> {
 struct HashMap<K, V> {
     entries: Vec<Entry<K, V>>,
     len: i64,
+    capacity: i64,
 }
 
 impl<K, V> HashMap<K, V> {
     fn new() -> HashMap<K, V> {
-        HashMap {
-            entries: Vec::new(),
+        HashMap<K, V> {
+            entries: Vec<Entry<K, V>>::with_capacity(16),
             len: 0,
+            capacity: 16,
         }
     }
 
@@ -43,7 +43,7 @@ impl<K, V> HashMap<K, V> {
         // We need 'len' to be 'new_cap' filled with Empty.
         // Since Vec doesn't support 'fill' yet, we manually push.
         
-        let mut new_vec = Vec::with_capacity(new_cap);
+        let mut new_vec = Vec<Entry<K, V>>::with_capacity(new_cap);
         let mut i = 0;
         while i < new_cap {
             new_vec.push(Entry::Empty);
@@ -103,12 +103,12 @@ impl<K, V> HashMap<K, V> {
             
             match (entry) {
                 Entry::Empty => {
-                    self.entries.set(idx, Entry::Occupied(key, value));
+                    self.entries[idx] = Entry::Occupied(key, value);
                     self.len = self.len + 1;
                     return;
                 },
                 Entry::Deleted => {
-                    self.entries.set(idx, Entry::Occupied(key, value));
+                    self.entries[idx] = Entry::Occupied(key, value);
                     self.len = self.len + 1;
                     return;
                 },

@@ -241,17 +241,24 @@ impl Monomorphizer {
                 let ctx = self.current_return_type.clone();
                 self.rewrite_expr(&mut e.inner, subst, ctx.as_ref());
             }
-            StmtKind::Assign { value, indices, .. } => {
+            StmtKind::Assign { lhs, value, .. } => {
                 self.rewrite_expr(&mut value.inner, subst, None);
-                if let Some(idxs) = indices {
-                    for idx in idxs {
-                        self.rewrite_expr(&mut idx.inner, subst, None);
+                // Rewrite index expressions in LValue (recursive structure)
+                fn rewrite_lvalue_indices(mono: &mut Monomorphizer, lv: &mut crate::compiler::ast::LValue, subst: &HashMap<String, Type>) {
+                    match lv {
+                        crate::compiler::ast::LValue::Variable(_) => {},
+                        crate::compiler::ast::LValue::FieldAccess(inner, _) => {
+                            rewrite_lvalue_indices(mono, inner, subst);
+                        },
+                        crate::compiler::ast::LValue::IndexAccess(base, indices) => {
+                            rewrite_lvalue_indices(mono, base, subst);
+                            for idx in indices {
+                                mono.rewrite_expr(&mut idx.inner, subst, None);
+                            }
+                        },
                     }
                 }
-            }
-            StmtKind::FieldAssign { obj, value, .. } => {
-                self.rewrite_expr(&mut obj.inner, subst, None);
-                self.rewrite_expr(&mut value.inner, subst, None);
+                rewrite_lvalue_indices(self, lhs, subst);
             }
             StmtKind::For { iterator, body, .. } => {
                 self.rewrite_expr(&mut iterator.inner, subst, None);
