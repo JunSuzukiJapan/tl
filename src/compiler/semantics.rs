@@ -460,31 +460,42 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn resolve_symbol_name(&self, name: &str) -> String {
-        // 1. Check aliases
-        let parts: Vec<&str> = name.split("::").collect();
-        let first_segment = parts[0];
+    // TODO: Type::Path and symbol resolution currently use simple path segments.
+    // This should eventually be replaced with a proper scoping/namespace system
+    // that handles module hierarchies, visibility, and qualified names properly.
+    // For now, path segments (Vec<String>) are used instead of string "::" manipulation.
+
+    /// Resolve a symbol path to its canonical name.
+    /// Takes path segments (e.g., ["math", "Vec"]) and returns the resolved simple name.
+    fn resolve_symbol_path(&self, segments: &[String]) -> String {
+        if segments.is_empty() {
+            return String::new();
+        }
+
+        // 1. Check aliases for first segment
+        let first_segment = &segments[0];
 
         for scope in self.scopes.iter().rev() {
-            if let Some(full_name) = scope.get_alias(first_segment) {
-                if parts.len() > 1 {
-                    let suffix = parts[1..].join("::");
-                    return format!("{}::{}", full_name, suffix);
+            if let Some(aliased_name) = scope.get_alias(first_segment) {
+                if segments.len() > 1 {
+                    // Append remaining segments to aliased name
+                    // e.g., alias "Vec" -> "std::Vec", path ["Vec", "new"] -> "std::Vec::new"
+                    let suffix: Vec<&str> = segments[1..].iter().map(|s| s.as_str()).collect();
+                    return format!("{}::{}", aliased_name, suffix.join("::"));
                 } else {
-                    return full_name.clone();
+                    return aliased_name.clone();
                 }
             }
         }
 
-        // 2. Try current module prefix
-        if !self.current_module.is_empty() {
-            let local_full_name = format!("{}::{}", self.current_module, name);
+        // 2. Try current module prefix (for single segment names)
+        if segments.len() == 1 && !self.current_module.is_empty() {
+            let local_full_name = format!("{}::{}", self.current_module, first_segment);
             if self.functions.contains_key(&local_full_name)
                 || self.structs.contains_key(&local_full_name)
             {
                 return local_full_name;
             }
-            // Also check global variables (tensors) in the first scope?
             if let Some(global_scope) = self.scopes.first() {
                 if global_scope.get(&local_full_name).is_some() {
                     return local_full_name;
@@ -492,29 +503,55 @@ impl SemanticAnalyzer {
             }
         }
 
-        // 3. Try as is (global or absolute path)
-        name.to_string()
+        // 3. Return as joined path (for lookup in maps that use string keys)
+        segments.join("::")
     }
 
-    fn resolve_enum_variant(&self, name: &str) -> Option<(EnumDef, VariantDef)> {
-        // Try splitting name to find Enum and Variant
-        // e.g. "MyEnum::Variant"
-        if let Some((enum_name_part, variant_name)) = name.rsplit_once("::") {
-            let resolved_enum_name = self.resolve_symbol_name(enum_name_part);
-            if let Some(enum_def) = self.enums.get(&resolved_enum_name) {
-                if let Some(variant) = enum_def.variants.iter().find(|v| v.name == variant_name) {
-                    return Some((enum_def.clone(), variant.clone()));
-                }
-            }
-            // Also try exact match if enum_name_part is alias?
-            // resolve_symbol_name handles aliases.
+    /// Convenience wrapper for single-segment symbol resolution (backward compatibility)
+    fn resolve_symbol_name(&self, name: &str) -> String {
+        // Convert string to segments for resolution
+        let segments: Vec<String> = name.split("::").map(|s| s.to_string()).collect();
+        self.resolve_symbol_path(&segments)
+    }
+
+    /// Resolve an enum variant from path segments.
+    /// Takes segments like ["Shape", "Circle"] and returns (EnumDef, VariantDef) if found.
+    fn resolve_enum_variant_path(&self, segments: &[String]) -> Option<(EnumDef, VariantDef)> {
+        if segments.len() < 2 {
+            // Need at least EnumName::VariantName
+            return None;
         }
-        // What if user used `use MyEnum::Variant`? Then `Variant` is aliased to `MyEnum::Variant`.
-        // `resolve_symbol_name` should resolve "Variant" to "MyEnum::Variant".
-        let resolved = self.resolve_symbol_name(name);
-        if resolved != name {
-            // Recursive call with resolved name
-            return self.resolve_enum_variant(&resolved);
+
+        // Last segment is variant name, rest is enum path
+        let variant_name = segments.last().unwrap();
+        let enum_segments = &segments[..segments.len() - 1];
+        
+        let resolved_enum_name = self.resolve_symbol_path(enum_segments);
+        if let Some(enum_def) = self.enums.get(&resolved_enum_name) {
+            if let Some(variant) = enum_def.variants.iter().find(|v| &v.name == variant_name) {
+                return Some((enum_def.clone(), variant.clone()));
+            }
+        }
+
+        None
+    }
+
+    /// Convenience wrapper for string-based enum variant resolution (backward compatibility)
+    fn resolve_enum_variant(&self, name: &str) -> Option<(EnumDef, VariantDef)> {
+        // Convert string to segments
+        let segments: Vec<String> = name.split("::").map(|s| s.to_string()).collect();
+        
+        if let Some(result) = self.resolve_enum_variant_path(&segments) {
+            return Some(result);
+        }
+
+        // Try resolving single name through alias system
+        // e.g., `use MyEnum::Variant;` then `Variant` is aliased
+        if segments.len() == 1 {
+            let resolved = self.resolve_symbol_name(name);
+            if resolved != name {
+                return self.resolve_enum_variant(&resolved);
+            }
         }
 
         None
@@ -1703,6 +1740,9 @@ impl SemanticAnalyzer {
                 Ok(())
             }
             StmtKind::Use { path, alias, items } => {
+                // TODO: Currently relations map uses string keys (e.g., "facts::parent").
+                // When proper scoping is implemented, this should use path segments directly
+                // instead of joining to a string for lookup.
                 let full_prefix = path.join("::");
 
                 if !items.is_empty() {
