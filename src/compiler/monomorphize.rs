@@ -193,7 +193,14 @@ impl Monomorphizer {
                  }
                  // Recurse for args even if not generic struct (e.g. unknown type?)
                  let new_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
+                 
+                 // Fix: Check if base name (before _) is a known enum (e.g., Entry_i64_i64 -> Entry)
+                 let base_name = name.split('_').next().unwrap_or(name);
+                 if self.generic_enums.contains_key(base_name) {
+                     Type::Enum(name.clone(), new_args)
+                 } else {
                      Type::Struct(name.clone(), new_args)
+                 }
                  }
 
             // Recursive resolution
