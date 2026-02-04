@@ -219,7 +219,7 @@ impl Monomorphizer {
             
             // Fix for builtins using Path
             Type::Path(segments, args) => {
-                let name = segments.join("::");
+                let name = segments.last().unwrap().clone();
                 // Resolve args first (they may be Paths like K, V)
                 let resolved_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
                 // Check if this is a generic enum first (e.g., Entry<K, V>)
@@ -323,7 +323,7 @@ impl Monomorphizer {
              ExprKind::StructInit(ty, fields) => {
                  // Fix for builtins: resolve Path -> Struct if semantics didn't run
                  if let Type::Path(segments, args) = ty {
-                     let name = segments.join("::");
+                     let name = segments.last().unwrap().clone();
                      *ty = Type::Struct(name, args.clone());
                  }
 

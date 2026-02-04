@@ -1246,11 +1246,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => return Err(format!("Expected struct type for field {} (got {:?})", field_name, obj_ty)),
         };
 
-        let simple_struct_name = if struct_name.contains("::") {
-            struct_name.split("::").last().unwrap()
-        } else {
-            struct_name.as_str()
-        };
+        let simple_struct_name = struct_name.as_str();
 
         if simple_struct_name == "String" {
             if field_name == "ptr" {
@@ -1404,11 +1400,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         prefix: String,
     ) -> Result<(), String> {
         // Extract simple name from module path (e.g., "mnist_common::Linear" -> "Linear")
-        let simple_name = if struct_name.contains("::") {
-            struct_name.split("::").last().unwrap()
-        } else {
-            struct_name
-        };
+        let simple_name = struct_name;
 
         let def = self
             .struct_defs
@@ -1480,11 +1472,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         prefix: String,
     ) -> Result<(), String> {
         // Extract simple name from module path
-        let simple_name = if struct_name.contains("::") {
-            struct_name.split("::").last().unwrap()
-        } else {
-            struct_name
-        };
+        let simple_name = struct_name;
 
         let def = self
             .struct_defs
@@ -1558,11 +1546,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         struct_name: &str,
         prefix: String,
     ) -> Result<(), String> {
-        let simple_name = if struct_name.contains("::") {
-            struct_name.split("::").last().unwrap()
-        } else {
-            struct_name
-        };
+        let simple_name = struct_name;
 
         let def = self
             .struct_defs
@@ -2310,11 +2294,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.mangle_type_name(&base_name, &generic_args)
                 };
 
-                let simple_struct_name = if mangled_name.contains("::") {
-                    mangled_name.split("::").last().unwrap().to_string()
-                } else {
-                    mangled_name.clone()
-                };
+                let simple_struct_name = mangled_name.clone();
 
                 /*
                 Logic:
@@ -3362,11 +3342,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      // Note: We can't change 'name' arg easily, but we update lookup_name
                      let lookup_name = self.mangle_type_name(&base, generics);
                      
-                     let simple_lookup_name = if lookup_name.contains("::") {
-                        lookup_name.split("::").last().unwrap().to_string()
-                     } else {
-                        lookup_name.clone()
-                     };
+                     let simple_lookup_name = lookup_name.clone();
                      
                      let struct_type = *self.struct_types.get(&simple_lookup_name).ok_or("Recovered struct type not found")?;
                      let struct_def = self.struct_defs.get(&simple_lookup_name).ok_or("Recovered struct def not found")?.clone();
@@ -3393,11 +3369,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
         
         // Extract simple name from module path
-        let simple_lookup_name = if lookup_name.contains("::") {
-            lookup_name.split("::").last().unwrap().to_string()
-        } else {
-            lookup_name.clone()
-        };
+        let simple_lookup_name = lookup_name.clone();
         
         let struct_type = *self
             .struct_types
@@ -3784,11 +3756,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         // Extract simple name from module path
-        let simple_name = if name.contains("::") {
-            name.split("::").last().unwrap()
-        } else {
-            name
-        };
+        let simple_name = name;
 
         let struct_type = *self
             .struct_types
@@ -3983,11 +3951,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             None
         };
         
-        let simple_type_name = if struct_name.contains("::") {
-            struct_name.split("::").last().unwrap()
-        } else {
-            &struct_name
-        };
+        let simple_type_name = &struct_name;
         let mangled_name = format!("tl_{}_{}", simple_type_name, method);
         let stdlib_name = format!("tl_{}_{}", simple_type_name.to_lowercase(), method);
 
@@ -4038,11 +4002,7 @@ impl<'ctx> CodeGenerator<'ctx> {
              };
              
              // Simple name lookup (as done in compile_struct_init)
-             let simple_lookup_name = if mangled_name.contains("::") {
-                 mangled_name.split("::").last().unwrap().to_string()
-             } else {
-                 mangled_name.clone()
-             };
+             let simple_lookup_name = mangled_name.clone();
 
              let struct_type = self.struct_types.get(&simple_lookup_name)
                  .or_else(|| self.enum_types.get(&simple_lookup_name))
@@ -4063,7 +4023,7 @@ impl<'ctx> CodeGenerator<'ctx> {
              // 3. Register (Initialize RefCount=1, Header)
              // Use generic name or strict name?
              let struct_name_str = match &ret_ty {
-                 Type::Struct(n, _) => if n.contains("::") { n.split("::").last().unwrap() } else { n },
+                 Type::Struct(n, _) => n.as_str(),
                  _ => "AnonymousStruct",
              };
              let name_global = self.builder.build_global_string_ptr(struct_name_str, "struct_name").unwrap();
@@ -4736,11 +4696,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Fetch def 
                 let enum_def = self.enum_defs.get(enum_name).ok_or_else(|| format!("Enum def '{}' not found in pattern. Available: {:?}", enum_name, self.enum_defs.keys().collect::<Vec<_>>()))?;
                 
-                let simple_variant_name = if variant_name.contains("::") {
-                    variant_name.split("::").last().unwrap()
-                } else {
-                    variant_name.as_str()
-                };
+                let simple_variant_name = variant_name.as_str();
 
                 let idx = enum_def
                     .variants
@@ -4797,11 +4753,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 ..
             } = pat
             {
-                let simple_variant_name = if variant_name.contains("::") {
-                    variant_name.split("::").last().unwrap()
-                } else {
-                    variant_name.as_str()
-                };
+                let simple_variant_name = variant_name.as_str();
 
                 let variant_idx = enum_def
                     .variants
@@ -5565,11 +5517,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
         // Extract simple name from module path for mangling
-        let simple_struct_name = if struct_name.contains("::") {
-            struct_name.split("::").last().unwrap().to_string()
-        } else {
-            struct_name.clone()
-        };
+        let simple_struct_name = struct_name.clone();
 
         // Try exact mangling first: tl_{Struct}_{Method}
 
@@ -5645,11 +5593,7 @@ impl<'ctx> CodeGenerator<'ctx> {
              };
              
              // Simple name lookup (as done in compile_struct_init)
-             let simple_lookup_name = if mangled_name.contains("::") {
-                 mangled_name.split("::").last().unwrap().to_string()
-             } else {
-                 mangled_name.clone()
-             };
+             let simple_lookup_name = mangled_name.clone();
 
              let struct_type = self.struct_types.get(&simple_lookup_name)
                  .or_else(|| self.enum_types.get(&simple_lookup_name))
@@ -5670,7 +5614,7 @@ impl<'ctx> CodeGenerator<'ctx> {
              // 3. Register (Initialize RefCount=1, Header)
              // Use generic name or strict name?
              let struct_name_str = match &ret_ty {
-                 Type::Struct(n, _) => if n.contains("::") { n.split("::").last().unwrap() } else { n },
+                 Type::Struct(n, _) => n.as_str(),
                  _ => "AnonymousStruct",
              };
              let name_global = self.builder.build_global_string_ptr(struct_name_str, "struct_name").unwrap();
@@ -6096,7 +6040,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                   // Generic method dispatch for UserDefined types and Tensor
                   let mut type_name = match &obj_ty {
                       Type::Struct(name, _) | Type::Struct(name, _) | Type::Enum(name, _) => {
-                          if name.contains("::") { name.split("::").last().unwrap().to_string() } else { name.clone() }
+                          name.clone()
                       },
                       Type::Tensor(_, _) => "Tensor".to_string(),
                       Type::I64 => "i64".to_string(),
@@ -6112,7 +6056,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                   if let Type::Struct(name, args) | Type::Struct(name, args) = &obj_ty {
                        if !args.is_empty() {
                            // Check if it's a generic method in registry (via mono)
-                           let simple_name = if name.contains("::") { name.split("::").last().unwrap() } else { name };
+                           let simple_name = name;
                            
                            match self.monomorphize_method(simple_name, method, args) {
                                Ok(mangled) => {
@@ -6701,11 +6645,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             f
         } else {
             // Fallback to Struct Initialization
-            let simple_name = if name.contains("::") {
-                name.split("::").last().unwrap()
-            } else {
-                name
-            };
+            let simple_name = name;
 
             if self.struct_defs.contains_key(simple_name) {
                 return self.compile_tuple_struct_init(simple_name, args);

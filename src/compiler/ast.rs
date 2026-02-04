@@ -134,7 +134,7 @@ impl Type {
             Type::TensorShaped(_, _) => "Tensor".to_string(),
             Type::Struct(n, _) => n.clone(),
             Type::Enum(n, _) => n.clone(),
-            Type::Path(p, _) => p.join("::"),
+            Type::Path(p, _) => p.last().cloned().unwrap_or_default(),
 
             Type::Tuple(_) => "Tuple".to_string(), // Or handle specially? TypeRegistry didn't support Tuple generic methods usually.
             // Type::UserDefined(n, _) => n.clone(), // REMOVED

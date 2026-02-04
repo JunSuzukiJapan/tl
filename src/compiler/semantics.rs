@@ -583,7 +583,7 @@ impl SemanticAnalyzer {
             let canonical_name = if path.len() == 1 {
                 self.resolve_symbol_name(&path[0])
             } else {
-                path.join("::") // Fallback? Or should we resolve segments?
+                path.last().unwrap().clone() // Use simple name, not full path
             };
             
             // Recursively resolve generic args
@@ -2150,7 +2150,7 @@ impl SemanticAnalyzer {
                      (n.clone(), g.clone())
                 } else if let Type::Path(p, _) = &resolved_ty {
                      // Still path? Means resolve failed or unknown
-                     return self.err(SemanticError::StructNotFound(p.join("::")), Some(expr.span.clone()));
+                     return self.err(SemanticError::StructNotFound(p.last().cloned().unwrap_or_default()), Some(expr.span.clone()));
                 } else {
                      return self.err(SemanticError::StructNotFound(format!("{:?}", resolved_ty)), Some(expr.span.clone()));
                 };

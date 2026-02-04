@@ -1178,7 +1178,7 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
              // Enum Pattern: Type::Variant ...
              if let Some(name) = match ty {
                  Type::Struct(name, _) => Some(name),
-                 Type::Path(segments, _) => Some(segments.join("::")),
+                 Type::Path(segments, _) => segments.last().cloned(),
                  _ => None,
              } {
                   if let Ok((rest4, _)) = expect_token(Token::LBrace)(rest3) {
@@ -1228,7 +1228,7 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
                  Type::Path(segments, _) => {
                      if segments.len() > 1 {
                          let var = segments.last().unwrap().clone();
-                         let en = segments[0..segments.len()-1].join("::");
+                         let en = segments[0].clone(); // Use first segment as enum name
                          (en, var)
                      } else {
                          (String::new(), segments[0].clone())

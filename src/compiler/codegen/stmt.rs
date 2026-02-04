@@ -480,11 +480,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // 1. Resolve Name
                 let mangled_name = if generic_args.is_empty() {
-                    let simple_name = if name.contains("::") {
-                         name.split("::").last().unwrap()
-                    } else {
-                         name.as_str()
-                    };
+                    let simple_name = name.as_str();
                     simple_name.to_string()
                 } else {
                     self.mangle_type_name(name, generic_args)
@@ -500,11 +496,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
 
                 // 3. Check for dedicated free method (custom destructor)
-                 let simple_name = if name.contains("::") {
-                    name.split("::").last().unwrap()
-                } else {
-                    name.as_str()
-                };
+                 let simple_name = name.as_str();
 
                 // Monomorphize 'free' method name if generic
                 let runtime_name_res = if !generic_args.is_empty() {
@@ -630,7 +622,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
                          // ZST Check logic
                          if let Type::Struct(s_name, _) = f_ty {
-                              let simple_s_name = if s_name.contains("::") { s_name.split("::").last().unwrap() } else { s_name.as_str() };
+                              let simple_s_name = s_name.as_str();
                               if let Some(def) = self.struct_defs.get(simple_s_name) {
                                    if def.fields.is_empty() { continue; }
                                }
@@ -789,11 +781,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     return self.emit_recursive_unregister(val, &Type::Tensor(Box::new(Type::F32), 1));
                 }
                 
-                let simple_name = if name.contains("::") {
-                    name.split("::").last().unwrap()
-                } else {
-                    name.as_str()
-                };
+                let simple_name = name.as_str();
 
                 // Some structs might be opaque or non-existent (e.g. String wrapper)
                 if simple_name == "String" {
@@ -2623,11 +2611,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  * This caused massive leaks & trace traps because copies were unregistered.
                  */
                 #[allow(unreachable_code)]
-                let simple_name = if name.contains("::") {
-                    name.split("::").last().unwrap()
-                } else {
-                    name
-                };
+                let simple_name = name.as_str();
 
                 let struct_def = self
                     .struct_defs

@@ -797,11 +797,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::Ptr(_) | Type::Ref(_) | Type::Tuple(_) | Type::Path(_, _) | Type::U8 | Type::Usize => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                     Type::Struct(name, _) => {
                         // Extract simple name from module path
-                        let simple_name = if name.contains("::") {
-                            name.split("::").last().unwrap()
-                        } else {
-                            name.as_str()
-                        };
+                        let simple_name = name.as_str();
 
                         // Check if it is a ZST (Zero Sized Type) by looking up definition
                         let _is_zst = if let Some(def) = self.struct_defs.get(simple_name) {
@@ -892,11 +888,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .into(),
                         Type::Struct(name, _) => {
                              // Extract simple name
-                            let simple_name = if name.contains("::") {
-                                name.split("::").last().unwrap()
-                            } else {
-                                name.as_str()
-                            };
+                            let simple_name = name.as_str();
 
                             // Check is_zst
                             let is_zst = if let Some(def) = self.struct_defs.get(simple_name) {
@@ -1003,11 +995,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             for method in &imp.methods {
                 let target_name = imp.target_type.get_base_name();
-                let simple_target = if target_name.contains("::") {
-                    target_name.split("::").last().unwrap()
-                } else {
-                    &target_name
-                };
+                let simple_target = &target_name;
                 let mangled_name = if method.is_extern {
                     format!("tl_{}_{}", simple_target.to_lowercase(), method.name)
                 } else {
@@ -1124,11 +1112,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             for method in &imp.methods {
                 let target_name = imp.target_type.get_base_name();
-                let simple_target = if target_name.contains("::") {
-                    target_name.split("::").last().unwrap()
-                } else {
-                    &target_name
-                };
+                let simple_target = &target_name;
                 let mangled_name = if method.is_extern {
                      format!("tl_{}_{}", simple_target.to_lowercase(), method.name)
                 } else {

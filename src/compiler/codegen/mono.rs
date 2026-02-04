@@ -416,11 +416,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
 
                 // Check for ZSTs
-                let simple_name = if name.contains("::") {
-                    name.split("::").last().unwrap()
-                } else {
-                    name.as_str()
-                };
+                let simple_name = name.as_str();
 
                 if let Some(def) = self.struct_defs.get(simple_name) {
                     if def.fields.is_empty() {
