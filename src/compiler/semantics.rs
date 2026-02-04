@@ -1543,8 +1543,16 @@ impl SemanticAnalyzer {
 
                 // Back-propagate final type to RHS AST if it's a generic constructor (like Vec::new)
                 // This is crucial for Monomorphizer which reads the AST.
+                // IMPORTANT: Only update type_node if final_type is a Struct with the same base name
+                // (constructor pattern). Do NOT overwrite for methods returning different types
+                // like Arena::get_offset() which returns I64 but should keep Arena in type_node.
                 if let ExprKind::StaticMethodCall(ty_node, _, _) = &mut value.inner {
-                    *ty_node = final_type.clone();
+                    if let Type::Struct(final_name, _) = &final_type {
+                        let original_name = ty_node.get_base_name();
+                        if *final_name == original_name {
+                            *ty_node = final_type.clone();
+                        }
+                    }
                 }
 
                 self.declare_variable(name.clone(), final_type.clone(), *mutable)?;
@@ -1969,6 +1977,120 @@ impl SemanticAnalyzer {
                     }, None));
                 }
                 Some(Ok(Type::Void))
+            }
+            ("Path", "new") => {
+                if args.len() != 1 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Path::new".into(),
+                        expected: 1,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::Struct("Path".to_string(), vec![])))
+            }
+            ("Path", "exists") => {
+                if args.len() != 1 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Path::exists".into(),
+                        expected: 1,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::Bool))
+            }
+            ("File", "open") => {
+                if args.is_empty() || args.len() > 2 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "File::open".into(),
+                        expected: 2,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::Struct("File".to_string(), vec![])))
+            }
+            ("File", "exists") | ("File", "read") | ("File", "write") | ("File", "read_binary") => {
+                if args.len() != 1 && args.len() != 2 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: format!("File::{}", method),
+                        expected: 1,
+                        found: args.len(),
+                    }, None));
+                }
+                match method {
+                    "exists" => Some(Ok(Type::Bool)),
+                    "read" | "read_binary" => Some(Ok(Type::String("String".to_string()))),
+                    "write" => Some(Ok(Type::Bool)),
+                    _ => None,
+                }
+            }
+            ("I64", "get_offset") => Some(Ok(Type::I64)),
+            // System static methods
+            ("System", "memory_mb") => Some(Ok(Type::I64)),
+            ("System", "scope_depth") => Some(Ok(Type::I64)),
+            ("System", "time") => Some(Ok(Type::I64)),
+            ("System", "refcount_count") => Some(Ok(Type::I64)),
+            ("System", "sleep") => {
+                if args.len() != 1 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "System::sleep".into(),
+                        expected: 1,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::Void))
+            }
+            ("System", "exit") => {
+                if args.len() != 1 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "System::exit".into(),
+                        expected: 1,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::Void))
+            }
+            // VarBuilder static methods
+            ("VarBuilder", "get") => {
+                if args.is_empty() || args.len() > 2 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "VarBuilder::get".into(),
+                        expected: 2,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::Tensor(Box::new(Type::F32), 0)))
+            }
+            ("VarBuilder", "grad") => {
+                if args.len() != 1 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "VarBuilder::grad".into(),
+                        expected: 1,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::Tensor(Box::new(Type::F32), 0)))
+            }
+            ("VarBuilder", "update") | ("VarBuilder", "save") => Some(Ok(Type::Void)),
+            // Env static methods
+            ("Env", "set") => {
+                if args.len() != 2 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Env::set".into(),
+                        expected: 2,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::Void))
+            }
+            ("Env", "get") => {
+                if args.len() != 1 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Env::get".into(),
+                        expected: 1,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::String("String".to_string())))
             }
             _ => None,
         }
@@ -5288,7 +5410,112 @@ impl SemanticAnalyzer {
                     _ => None
                 }
             }
-            "Tensor" => None, // Handled by TypeManager
+            "Tensor" => {
+                let any_tensor = Type::Tensor(Box::new(Type::F32), 0);
+                match method {
+                    // Autograd
+                    "backward" => {
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::backward".into(), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        Some(Ok(Type::Void))
+                    }
+                    // Activation / ops
+                    "softmax" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::softmax".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    "matmul" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::matmul".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    "embedding" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::embedding".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    "abs" => {
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::abs".into(), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    "sumall" => {
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::sumall".into(), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    "cross_entropy" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::cross_entropy".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    "log_softmax" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::log_softmax".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    "relu" | "gelu" | "silu" | "exp" | "log" | "sqrt" | "sin" | "cos" | "tanh" | "sigmoid" | "mean" | "max" | "min" | "detach" => {
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("Tensor::{}", method), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    "reshape" | "squeeze" | "unsqueeze" | "flatten" | "gather" | "permute" | "cat" => {
+                        // These take one argument (shape/dim/tensor)
+                        if args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("Tensor::{}", method), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    "pow" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::pow".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    _ => None // Others handled by TypeManager
+                }
+            }
 
 
             "Path" => {
@@ -5308,7 +5535,7 @@ impl SemanticAnalyzer {
             }
             "F32" => {
                 match method {
-                    "abs" => Some(Ok(Type::F32)),
+                    "abs" | "exp" | "sqrt" | "ln" | "log" | "sin" | "cos" => Some(Ok(Type::F32)),
                     _ => None
                 }
             }
@@ -5341,6 +5568,107 @@ impl SemanticAnalyzer {
                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
                         Some(Ok(Type::Tensor(Box::new(Type::Struct("i8".to_string(), vec![])), 2)))
                     }
+                    _ => None
+                }
+            }
+            "File" => {
+                match method {
+                    "open" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "File::open".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::Struct("File".to_string(), vec![])))
+                    }
+                    "read_to_string" | "read_string" => Some(Ok(Type::String("String".to_string()))),
+                    "write_string" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "File::write_string".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::Void))
+                    }
+                    "close" | "free" => Some(Ok(Type::Void)),
+                    _ => None
+                }
+            }
+            "System" => {
+                match method {
+                    "exit" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "System::exit".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::Void))
+                    }
+                    "memory_mb" => Some(Ok(Type::I64)),
+                    "scope_depth" => Some(Ok(Type::I64)),
+                    _ => None
+                }
+            }
+            "VarBuilder" => {
+                match method {
+                    "get" => {
+                        if args.len() < 1 || args.len() > 2 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "VarBuilder::get".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(Type::Tensor(Box::new(Type::F32), 0)))
+                    }
+                    "grad" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "VarBuilder::grad".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::Tensor(Box::new(Type::F32), 0)))
+                    }
+                    "update" => Some(Ok(Type::Void)),
+                    "save" => Some(Ok(Type::Void)),
+                    _ => None
+                }
+            }
+            "Env" => {
+                match method {
+                    "set" => {
+                        if args.len() != 2 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Env::set".into(), expected: 2, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(Type::Void))
+                    }
+                    "get" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Env::get".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::String("String".to_string())))
+                    }
+                    _ => None
+                }
+            }
+            "I64" => {
+                match method {
+                    "get_offset" => Some(Ok(Type::I64)),
+                    "sumall" => Some(Ok(Type::I64)),
+                    "abs" => Some(Ok(Type::I64)),
                     _ => None
                 }
             }

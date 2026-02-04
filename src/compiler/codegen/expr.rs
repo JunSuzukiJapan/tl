@@ -2481,6 +2481,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      return Ok((size_val.into(), Type::I64));
                  }
 
+
                 let struct_name = match type_ty {
                     Type::Struct(name, _) => name,
                     Type::Enum(name, _) => name,
