@@ -505,7 +505,7 @@ impl Monomorphizer {
                  }
                  return;
              }
-              ExprKind::EnumInit { enum_name, variant_name, generics, payload } => {
+              ExprKind::EnumInit { enum_name, variant_name: _, generics, payload } => {
                    // Process EnumInit for monomorphization
 
                    

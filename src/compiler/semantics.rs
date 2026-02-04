@@ -2067,7 +2067,7 @@ impl SemanticAnalyzer {
                                             }
                                        }
                                    },
-                                   VariantKind::Struct(fields) => {
+                                   VariantKind::Struct(_fields) => {
                                        // Structural variant?
                                    },
                                    _ => {}
@@ -5362,6 +5362,7 @@ impl SemanticAnalyzer {
         }
     }
 
+    #[allow(dead_code)]
     fn collect_indices(&self, expr: &Expr, indices: &mut HashSet<String>) {
         match &expr.inner {
             ExprKind::IndexAccess(target, idxs) => {
@@ -5454,6 +5455,7 @@ impl SemanticAnalyzer {
         }
     }
     // Helper to infer free indices (used in StmtKind::Let for Tensor Equation)
+    #[allow(dead_code)]
     fn infer_free_indices(&self, expr: &Expr) -> Vec<String> {
         let mut indices = HashSet::new();
         self.collect_indices(expr, &mut indices);

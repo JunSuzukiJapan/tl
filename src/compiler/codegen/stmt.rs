@@ -127,7 +127,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Fallback: Check if this is actually an Enum being passed as Struct
                 if let Some(enum_def) = self.enum_defs.get(&effective_mangled_name) {
                     // Entry_i64_i64-like enum: use memcpy for simplest approach
-                    let enum_def = enum_def.clone();
+                    let _enum_def = enum_def.clone();
                     if let Some(enum_llvm_ty) = self.enum_types.get(&effective_mangled_name) {
                         let size = enum_llvm_ty.size_of().unwrap();
                         let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
@@ -193,7 +193,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .context
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
-                Type::Struct(name, _) | Type::Enum(name, _) => {
+                Type::Struct(_name, _) | Type::Enum(_name, _) => {
                     self.context.ptr_type(inkwell::AddressSpace::default()).into()
                 }
                 _ => self.context.i64_type().into(),
@@ -3044,7 +3044,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     fn compile_expr_from_lvalue(&mut self, lvalue: &LValue) -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String> {
         match lvalue {
-             LValue::Variable(name) => {
+             LValue::Variable(_name) => {
                  let res = self.compile_lvalue_addr(lvalue)?;
                  let ptr = res.0.unwrap();
                  let load_ty: inkwell::types::BasicTypeEnum = match &res.1 {

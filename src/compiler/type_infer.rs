@@ -112,8 +112,8 @@ impl TypeInferencer {
     fn infer_lvalue(&mut self, lvalue: &crate::compiler::ast::LValue) -> Result<Type, TypeError> {
         match lvalue {
             crate::compiler::ast::LValue::Variable(name) => self.var_types.get(name).cloned().ok_or_else(|| TypeError::UnboundVariable(name.clone())),
-            crate::compiler::ast::LValue::FieldAccess(inner, field) => {
-                 let base_ty = self.infer_lvalue(inner)?;
+            crate::compiler::ast::LValue::FieldAccess(inner, _field) => {
+                 let _base_ty = self.infer_lvalue(inner)?;
                  // Simplified: Allow struct field access if we can resolve it?
                  // type_infer constraint system might not know structs well.
                  // Assuming base_ty is known, we can maybe lookup field?

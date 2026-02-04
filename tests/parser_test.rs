@@ -174,8 +174,8 @@ fn test_postfix() {
 
     // Static Method
     if let ExprKind::StaticMethodCall(type_name, method, _) = p_expr("MyType::new()") {
-        // assert_eq!(type_name, "MyType"); // Legacy
-        assert_eq!(type_name, Type::Struct("MyType".to_string(), vec![]));
+        // Parser returns Path type for unresolved type names
+        assert_eq!(type_name, Type::Path(vec!["MyType".to_string()], vec![]));
         assert_eq!(method, "new");
     } else {
         panic!("Expected StaticMethodCall");
@@ -214,8 +214,8 @@ fn test_statements() {
     }
 
     match p_stmt("x += 5;") {
-        StmtKind::Assign { name, op, .. } => {
-            assert_eq!(name, "x");
+        StmtKind::Assign { lhs, op, .. } => {
+            assert!(matches!(lhs, tl_lang::compiler::ast::LValue::Variable(name) if name == "x"));
             assert_eq!(op, AssignOp::AddAssign);
         }
         _ => panic!("Expected Assign"),
@@ -271,8 +271,9 @@ fn test_top_level() {
     let tokens_res = tokenize(input);
     let tokens: Vec<_> = tokens_res.into_iter().map(|r| r.unwrap()).collect();
     let module = parse(&tokens).expect("Failed to parse module");
-    assert_eq!(module.imports.len(), 1);
+    assert_eq!(module.imports.len(), 2); // "std::math" from use + "foo" from mod
     assert!(module.imports.contains(&"std::math".to_string()));
+    assert!(module.imports.contains(&"foo".to_string())); // mod foo triggers import push
     assert_eq!(module.submodules.len(), 1);
     assert!(module.submodules.contains_key("foo"));
 
@@ -280,10 +281,11 @@ fn test_top_level() {
     assert_eq!(module.structs[0].name, "Point");
 
     assert_eq!(module.impls.len(), 1);
-    // assert_eq!(module.impls[0].target_type, "Point");
+    // Parser may return Type::Path or Type::Struct for impl target
     match &module.impls[0].target_type {
         Type::Struct(name, _) => assert_eq!(name, "Point"),
-        _ => panic!("Expected UserDefined or Struct type"),
+        Type::Path(segments, _) => assert_eq!(segments, &vec!["Point".to_string()]),
+        other => panic!("Expected Struct or Path type, got {:?}", other),
     }
 
     assert_eq!(module.functions.len(), 1);
