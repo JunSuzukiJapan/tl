@@ -1788,6 +1788,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .get(&mangled_name)
                     .ok_or(format!("Enum def {} not found", mangled_name))?
                     .clone();
+
                 let enum_ty = *self
                     .enum_types
                     .get(&mangled_name)
@@ -1942,7 +1943,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                          // No fields to store
                      },
                      (crate::compiler::ast::VariantKind::Tuple(types), crate::compiler::ast::EnumVariantInit::Tuple(exprs)) => {
-                         // Simplify: inline the logic
                         let payload_ptr_raw = self
                             .builder
                             .build_struct_gep(enum_ty, alloca, 1, "payload_ptr_raw")
@@ -4034,8 +4034,65 @@ impl<'ctx> CodeGenerator<'ctx> {
                      
                      // Store Payload if any
                      if !args.is_empty() {
-                         // Payload logic requires generics, which we removed.
-                         // This block is dead code for Option/Result anyway.
+                         match &variant_def.kind {
+                             crate::compiler::ast::VariantKind::Tuple(types) => {
+                                 // Get payload pointer
+                                 let payload_ptr_raw = self.builder
+                                     .build_struct_gep(enum_ty, alloca, 1, "payload_ptr_raw")
+                                     .map_err(|e| e.to_string())?;
+                                 
+                                 // Build variant struct type from field types
+                                 let mut field_types_llvm: Vec<inkwell::types::BasicTypeEnum> = vec![];
+                                 for ty in types {
+                                     let llvm_ty = self.get_llvm_type(ty)?;
+                                     field_types_llvm.push(llvm_ty);
+                                 }
+                                 let variant_struct_ty = self.context.struct_type(&field_types_llvm, false);
+                                 
+                                 let payload_ptr = self.builder.build_pointer_cast(
+                                     payload_ptr_raw,
+                                     self.context.ptr_type(inkwell::AddressSpace::default()),
+                                     "payload_cast"
+                                 ).unwrap();
+                                 
+                                 // Store each field
+                                 for (idx, (arg, f_ty)) in args.iter().zip(types.iter()).enumerate() {
+                                     let (val, _) = self.compile_expr(arg)?;
+                                     let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "field_ptr")
+                                         .map_err(|e| e.to_string())?;
+                                     self.builder.build_store(f_ptr, val).unwrap();
+                                 }
+                             }
+                             crate::compiler::ast::VariantKind::Struct(fields) => {
+                                 // Get payload pointer
+                                 let payload_ptr_raw = self.builder
+                                     .build_struct_gep(enum_ty, alloca, 1, "payload_ptr_raw")
+                                     .map_err(|e| e.to_string())?;
+                                 
+                                 // Build variant struct type from field types (by order)
+                                 let mut field_types_llvm: Vec<inkwell::types::BasicTypeEnum> = vec![];
+                                 for (_, ty) in fields {
+                                     let llvm_ty = self.get_llvm_type(ty)?;
+                                     field_types_llvm.push(llvm_ty);
+                                 }
+                                 let variant_struct_ty = self.context.struct_type(&field_types_llvm, false);
+                                 
+                                 let payload_ptr = self.builder.build_pointer_cast(
+                                     payload_ptr_raw,
+                                     self.context.ptr_type(inkwell::AddressSpace::default()),
+                                     "payload_cast"
+                                 ).unwrap();
+                                 
+                                 // Store each field (args are in order)
+                                 for (idx, arg) in args.iter().enumerate() {
+                                     let (val, _) = self.compile_expr(arg)?;
+                                     let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "field_ptr")
+                                         .map_err(|e| e.to_string())?;
+                                     self.builder.build_store(f_ptr, val).unwrap();
+                                 }
+                             }
+                             _ => {}
+                         }
                      }
                      
                      return Ok((alloca.into(), Type::Enum(struct_name.to_string(), vec![])));
