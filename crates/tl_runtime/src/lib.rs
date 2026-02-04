@@ -4057,11 +4057,9 @@ pub extern "C" fn tl_read_file(path: *const std::os::raw::c_char) -> *mut String
         match std::ffi::CString::new(content.trim()) {
             Ok(c_str) => {
                 let s = crate::tl_string_new(c_str.as_ptr());
-                unsafe {
-                }
                 s
             },
-            Err(e) => {
+            Err(_e) => {
                 std::ptr::null_mut()
             },
         }
@@ -4351,20 +4349,20 @@ pub extern "C" fn tl_vec_ptr_new() -> *mut Vec<*mut std::ffi::c_void> {
 pub extern "C" fn tl_tensor_add_4d(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if !a.is_null() {
         unsafe {
-            if let Ok(ta) = (*a).as_tensor() {
+            if let Ok(_ta) = (*a).as_tensor() {
             }
         }
     }
     if !b.is_null() {
         unsafe {
-            if let Ok(tb) = (*b).as_tensor() {
+            if let Ok(_tb) = (*b).as_tensor() {
             }
         }
     }
     let result = tl_tensor_add(a, b);
     if !result.is_null() {
         unsafe {
-            if let Ok(tr) = (*result).as_tensor() {
+            if let Ok(_tr) = (*result).as_tensor() {
             }
         }
     }
@@ -4378,14 +4376,14 @@ pub extern "C" fn tl_tensor_matmul_4d(a: *mut OpaqueTensor, b: *mut OpaqueTensor
     if !a.is_null() {
         unsafe {
             let t_a = (*a).as_tensor();
-            if let Ok(ta) = t_a {
+            if let Ok(_ta) = t_a {
             }
         }
     }
     if !b.is_null() {
         unsafe {
             let t_b = (*b).as_tensor();
-            if let Ok(tb) = t_b {
+            if let Ok(_tb) = t_b {
             }
         }
     }
