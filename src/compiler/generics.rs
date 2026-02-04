@@ -45,8 +45,34 @@ impl GenericResolver {
                 Ok(())
             }
             
-            // Case 2: Matching structs/user types
-            // Case 2: Matching structs/user types
+            // Case 2: Matching structs/enums
+            (Type::Struct(n1, args1), Type::Struct(n2, args2)) => {
+                if n1 != n2 {
+                    return Err(format!("Type mismatch: {} vs {}", n1, n2));
+                }
+                if args1.len() != args2.len() {
+                    return Err(format!("Generic args count mismatch for {}: {} vs {}", n1, args1.len(), args2.len()));
+                }
+                for (a1, a2) in args1.iter().zip(args2.iter()) {
+                    Self::resolve_recursive(a1, a2, bindings)?;
+                }
+                Ok(())
+            }
+            
+            (Type::Enum(n1, args1), Type::Enum(n2, args2)) => {
+                if n1 != n2 {
+                    return Err(format!("Type mismatch: {} vs {}", n1, n2));
+                }
+                if args1.len() != args2.len() {
+                    return Err(format!("Generic args count mismatch for {}: {} vs {}", n1, args1.len(), args2.len()));
+                }
+                for (a1, a2) in args1.iter().zip(args2.iter()) {
+                    Self::resolve_recursive(a1, a2, bindings)?;
+                }
+                Ok(())
+            }
+            
+            // Cross-variant matching (Struct with Enum or vice versa)
             (Type::Struct(n1, args1), Type::Enum(n2, args2))
             | (Type::Enum(n1, args1), Type::Struct(n2, args2)) => {
                 if n1 != n2 {
