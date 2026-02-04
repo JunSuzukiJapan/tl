@@ -3925,6 +3925,17 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Compatibility aliases for existing logic
         let type_name = struct_name;
 
+        // 0. Check if this is an Enum Variant initialization (priority check)
+        //    This handles cases like Entry_i64_i64::Empty where the type_name is
+        //    the mangled enum name and method is a variant name.
+        if let Some(enum_def) = self.enum_defs.get(struct_name).cloned() {
+            if let Some(variant_idx) = enum_def.variants.iter().position(|v| v.name == method) {
+                // This is an enum variant constructor, compile it as EnumInit
+                return self.compile_enum_variant_as_static_method_call(
+                    struct_name, method, args, variant_idx, &enum_def
+                );
+            }
+        }
 
         // 1. Try TypeManager (AST-defined methods)
         let method_enum = self.type_manager.get_type(type_name)
@@ -3989,118 +4000,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         } else if let Some(f) = self.module.get_function(method) {
             (f, method.to_string())
         } else {
-             // Fallback: Check if it is an Enum Variant initialization
-             if let Some(enum_def) = self.enum_defs.get(struct_name).cloned() {
-                 if let Some(variant_idx) = enum_def.variants.iter().position(|v| v.name == method) {
-                     let variant_def = &enum_def.variants[variant_idx];
-                      let field_count = match &variant_def.kind {
-                          crate::compiler::ast::VariantKind::Unit => 0,
-                          crate::compiler::ast::VariantKind::Tuple(t) => t.len(),
-                          crate::compiler::ast::VariantKind::Struct(f) => f.len(),
-                      };
-                      if args.len() != field_count {
-                          return Err(format!("Enum variant {}::{} expects {} args, got {}", struct_name, method, field_count, args.len()));
-                      }
-                     
-                     let enum_ty = *self.enum_types.get(struct_name).ok_or(format!("Enum type {} not found", struct_name))?;
-                     
-                     // Allocate
-                     // Manual malloc(i64)
-                     let size_ptr = unsafe {
-                        self.builder.build_gep(
-                            enum_ty,
-                            self.context.ptr_type(inkwell::AddressSpace::default()).const_null(),
-                            &[self.context.i64_type().const_int(1, false)],
-                            "size_ptr",
-                        ).map_err(|e| e.to_string())?
-                    };
-                    let size = self.builder
-                        .build_ptr_to_int(size_ptr, self.context.i64_type(), "size")
-                        .map_err(|e| e.to_string())?;
-
-                    let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
-                    let alloca = match self.builder
-                        .build_call(malloc_fn, &[size.into()], &format!("enum_{}", struct_name))
-                        .map_err(|e| e.to_string())?
-                        .try_as_basic_value() {
-                            inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-                            _ => return Err("malloc returned void".into()),
-                        };
-                     
-                     // Store Tag
-                     let tag_ptr = self.builder.build_struct_gep(enum_ty, alloca, 0, "tag_ptr").map_err(|e| e.to_string())?;
-                     let tag_val = variant_idx as u64; // Tag is index
-                     self.builder.build_store(tag_ptr, self.context.i32_type().const_int(tag_val, false)).unwrap();
-                     
-                     // Store Payload if any
-                     if !args.is_empty() {
-                         match &variant_def.kind {
-                             crate::compiler::ast::VariantKind::Tuple(types) => {
-                                 // Get payload pointer
-                                 let payload_ptr_raw = self.builder
-                                     .build_struct_gep(enum_ty, alloca, 1, "payload_ptr_raw")
-                                     .map_err(|e| e.to_string())?;
-                                 
-                                 // Build variant struct type from field types
-                                 let mut field_types_llvm: Vec<inkwell::types::BasicTypeEnum> = vec![];
-                                 for ty in types {
-                                     let llvm_ty = self.get_llvm_type(ty)?;
-                                     field_types_llvm.push(llvm_ty);
-                                 }
-                                 let variant_struct_ty = self.context.struct_type(&field_types_llvm, false);
-                                 
-                                 let payload_ptr = self.builder.build_pointer_cast(
-                                     payload_ptr_raw,
-                                     self.context.ptr_type(inkwell::AddressSpace::default()),
-                                     "payload_cast"
-                                 ).unwrap();
-                                 
-                                 // Store each field
-                                 for (idx, (arg, f_ty)) in args.iter().zip(types.iter()).enumerate() {
-                                     let (val, _) = self.compile_expr(arg)?;
-                                     let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "field_ptr")
-                                         .map_err(|e| e.to_string())?;
-                                     self.builder.build_store(f_ptr, val).unwrap();
-                                 }
-                             }
-                             crate::compiler::ast::VariantKind::Struct(fields) => {
-                                 // Get payload pointer
-                                 let payload_ptr_raw = self.builder
-                                     .build_struct_gep(enum_ty, alloca, 1, "payload_ptr_raw")
-                                     .map_err(|e| e.to_string())?;
-                                 
-                                 // Build variant struct type from field types (by order)
-                                 let mut field_types_llvm: Vec<inkwell::types::BasicTypeEnum> = vec![];
-                                 for (_, ty) in fields {
-                                     let llvm_ty = self.get_llvm_type(ty)?;
-                                     field_types_llvm.push(llvm_ty);
-                                 }
-                                 let variant_struct_ty = self.context.struct_type(&field_types_llvm, false);
-                                 
-                                 let payload_ptr = self.builder.build_pointer_cast(
-                                     payload_ptr_raw,
-                                     self.context.ptr_type(inkwell::AddressSpace::default()),
-                                     "payload_cast"
-                                 ).unwrap();
-                                 
-                                 // Store each field (args are in order)
-                                 for (idx, arg) in args.iter().enumerate() {
-                                     let (val, _) = self.compile_expr(arg)?;
-                                     let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "field_ptr")
-                                         .map_err(|e| e.to_string())?;
-                                     self.builder.build_store(f_ptr, val).unwrap();
-                                 }
-                             }
-                             _ => {}
-                         }
-                     }
-                     
-                     return Ok((alloca.into(), Type::Enum(struct_name.to_string(), vec![])));
-                 }
-             }
-
-
-
+            // Method not found - enum variant initialization is handled at function start
             return Err(format!(
                 "Static method {}::{} not found (checked {}, {}, and {})",
                 struct_name, method, mangled_name, stdlib_name, method
@@ -9029,3 +8929,116 @@ fn compile_tensor_reshape_uneval<'ctx>(
     Ok((res, new_ty))
 }
 
+impl<'ctx> CodeGenerator<'ctx> {
+    /// Compile an enum variant constructor that was parsed as StaticMethodCall.
+    /// This handles cases like Entry_i64_i64::Empty where the mangled enum name
+    /// and variant name come through as a static method call.
+    fn compile_enum_variant_as_static_method_call(
+        &mut self,
+        enum_name: &str,
+        variant_name: &str,
+        args: &[crate::compiler::ast::Expr],
+        variant_idx: usize,
+        enum_def: &crate::compiler::ast::EnumDef,
+    ) -> Result<(inkwell::values::BasicValueEnum<'ctx>, crate::compiler::ast::Type), String> {
+        use crate::compiler::ast::{Type, VariantKind};
+        
+        let variant_def = &enum_def.variants[variant_idx];
+        let field_count = match &variant_def.kind {
+            VariantKind::Unit => 0,
+            VariantKind::Tuple(t) => t.len(),
+            VariantKind::Struct(f) => f.len(),
+        };
+        if args.len() != field_count {
+            return Err(format!("Enum variant {}::{} expects {} args, got {}", enum_name, variant_name, field_count, args.len()));
+        }
+        
+        let enum_ty = *self.enum_types.get(enum_name).ok_or(format!("Enum type {} not found", enum_name))?;
+        
+        // Allocate memory for enum
+        let size_ptr = unsafe {
+            self.builder.build_gep(
+                enum_ty,
+                self.context.ptr_type(inkwell::AddressSpace::default()).const_null(),
+                &[self.context.i64_type().const_int(1, false)],
+                "size_ptr",
+            ).map_err(|e| e.to_string())?
+        };
+        let size = self.builder
+            .build_ptr_to_int(size_ptr, self.context.i64_type(), "size")
+            .map_err(|e| e.to_string())?;
+
+        let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
+        let alloca = match self.builder
+            .build_call(malloc_fn, &[size.into()], &format!("enum_{}", enum_name))
+            .map_err(|e| e.to_string())?
+            .try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                _ => return Err("malloc returned void".into()),
+            };
+        
+        // Store Tag
+        let tag_ptr = self.builder.build_struct_gep(enum_ty, alloca, 0, "tag_ptr").map_err(|e| e.to_string())?;
+        let tag_val = variant_idx as u64;
+        self.builder.build_store(tag_ptr, self.context.i32_type().const_int(tag_val, false)).unwrap();
+        
+        // Store Payload if any
+        if !args.is_empty() {
+            match &variant_def.kind {
+                VariantKind::Tuple(types) => {
+                    let payload_ptr_raw = self.builder
+                        .build_struct_gep(enum_ty, alloca, 1, "payload_ptr_raw")
+                        .map_err(|e| e.to_string())?;
+                    
+                    let mut field_types_llvm: Vec<inkwell::types::BasicTypeEnum> = vec![];
+                    for ty in types {
+                        let llvm_ty = self.get_llvm_type(ty)?;
+                        field_types_llvm.push(llvm_ty);
+                    }
+                    let variant_struct_ty = self.context.struct_type(&field_types_llvm, false);
+                    
+                    let payload_ptr = self.builder.build_pointer_cast(
+                        payload_ptr_raw,
+                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                        "payload_cast"
+                    ).unwrap();
+                    
+                    for (idx, (arg, _f_ty)) in args.iter().zip(types.iter()).enumerate() {
+                        let (val, _) = self.compile_expr(arg)?;
+                        let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "field_ptr")
+                            .map_err(|e| e.to_string())?;
+                        self.builder.build_store(f_ptr, val).unwrap();
+                    }
+                }
+                VariantKind::Struct(fields) => {
+                    let payload_ptr_raw = self.builder
+                        .build_struct_gep(enum_ty, alloca, 1, "payload_ptr_raw")
+                        .map_err(|e| e.to_string())?;
+                    
+                    let mut field_types_llvm: Vec<inkwell::types::BasicTypeEnum> = vec![];
+                    for (_, ty) in fields {
+                        let llvm_ty = self.get_llvm_type(ty)?;
+                        field_types_llvm.push(llvm_ty);
+                    }
+                    let variant_struct_ty = self.context.struct_type(&field_types_llvm, false);
+                    
+                    let payload_ptr = self.builder.build_pointer_cast(
+                        payload_ptr_raw,
+                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                        "payload_cast"
+                    ).unwrap();
+                    
+                    for (idx, arg) in args.iter().enumerate() {
+                        let (val, _) = self.compile_expr(arg)?;
+                        let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "field_ptr")
+                            .map_err(|e| e.to_string())?;
+                        self.builder.build_store(f_ptr, val).unwrap();
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        Ok((alloca.into(), Type::Enum(enum_name.to_string(), vec![])))
+    }
+}

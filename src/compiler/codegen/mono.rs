@@ -14,6 +14,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         method_name: &str,
         generic_args: &[Type],
     ) -> Result<String, String> {
+
         let impls = self.generic_impls.get(struct_name)
              .ok_or_else(|| format!("No generic impls found for struct {}", struct_name))?;
 
@@ -51,6 +52,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mangled_name = crate::compiler::codegen::builtin_types::resolver::resolve_static_method_name(struct_name, method_name, generic_args);
         
         if self.module.get_function(&mangled_name).is_some() {
+
             return Ok(mangled_name);
         }
 
@@ -75,6 +77,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
         new_method.return_type = full_substitutor.substitute_type(&new_method.return_type);
         new_method.body = new_method.body.iter().map(|s| full_substitutor.substitute_stmt(s)).collect();
+        
+        // Transform StaticMethodCall to EnumInit for enum variant constructors
+
+        self.transform_method_body_enum_inits(&mut new_method.body);
         
         // Compile
         // Save current builder position
@@ -580,6 +586,154 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
-
+    // ========== AST Transformation for Enum Variant Constructors ==========
+    
+    fn transform_method_body_enum_inits(&self, stmts: &mut Vec<crate::compiler::ast::Stmt>) {
+        for stmt in stmts.iter_mut() {
+            self.transform_stmt_enum_inits(stmt);
+        }
+    }
+    
+    fn transform_stmt_enum_inits(&self, stmt: &mut crate::compiler::ast::Stmt) {
+        use crate::compiler::ast::StmtKind;
+        match &mut stmt.inner {
+            StmtKind::Let { value, .. } => self.transform_expr_enum_inits(value),
+            StmtKind::Expr(e) => self.transform_expr_enum_inits(e),
+            StmtKind::Return(Some(e)) => self.transform_expr_enum_inits(e),
+            StmtKind::While { cond, body } => {
+                self.transform_expr_enum_inits(cond);
+                self.transform_method_body_enum_inits(body);
+            }
+            StmtKind::For { iterator, body, .. } => {
+                self.transform_expr_enum_inits(iterator);
+                self.transform_method_body_enum_inits(body);
+            }
+            StmtKind::Loop { body } => {
+                self.transform_method_body_enum_inits(body);
+            }
+            StmtKind::Assign { value, .. } => {
+                self.transform_expr_enum_inits(value);
+            }
+            _ => {}
+        }
+    }
+    
+    fn transform_expr_enum_inits(&self, expr: &mut crate::compiler::ast::Expr) {
+        use crate::compiler::ast::{ExprKind, EnumVariantInit};
+        
+        // First, recurse into children
+        match &mut expr.inner {
+            ExprKind::BinOp(l, _, r) => {
+                self.transform_expr_enum_inits(l);
+                self.transform_expr_enum_inits(r);
+            }
+            ExprKind::UnOp(_, e) => {
+                self.transform_expr_enum_inits(e);
+            }
+            ExprKind::MethodCall(obj, _, args) => {
+                self.transform_expr_enum_inits(obj);
+                for arg in args.iter_mut() {
+                    self.transform_expr_enum_inits(arg);
+                }
+            }
+            ExprKind::FnCall(_, args) => {
+                for arg in args.iter_mut() {
+                    self.transform_expr_enum_inits(arg);
+                }
+            }
+            ExprKind::IndexAccess(e, indices) => {
+                self.transform_expr_enum_inits(e);
+                for idx in indices.iter_mut() {
+                    self.transform_expr_enum_inits(idx);
+                }
+            }
+            ExprKind::FieldAccess(obj, _) => {
+                self.transform_expr_enum_inits(obj);
+            }
+            ExprKind::Match { expr: subject, arms } => {
+                self.transform_expr_enum_inits(subject);
+                for (_, arm_expr) in arms.iter_mut() {
+                    self.transform_expr_enum_inits(arm_expr);
+                }
+            }
+            ExprKind::Block(stmts) => {
+                self.transform_method_body_enum_inits(stmts);
+            }
+            ExprKind::IfExpr(cond, then_block, else_block) => {
+                self.transform_expr_enum_inits(cond);
+                self.transform_method_body_enum_inits(then_block);
+                if let Some(else_stmts) = else_block {
+                    self.transform_method_body_enum_inits(else_stmts);
+                }
+            }
+            ExprKind::Tuple(exprs) => {
+                for e in exprs.iter_mut() {
+                    self.transform_expr_enum_inits(e);
+                }
+            }
+            ExprKind::StructInit(_, fields) => {
+                for (_, e) in fields.iter_mut() {
+                    self.transform_expr_enum_inits(e);
+                }
+            }
+            ExprKind::EnumInit { payload, .. } => {
+                match payload {
+                    EnumVariantInit::Tuple(exprs) => {
+                        for e in exprs.iter_mut() {
+                            self.transform_expr_enum_inits(e);
+                        }
+                    }
+                    EnumVariantInit::Struct(fields) => {
+                        for (_, e) in fields.iter_mut() {
+                            self.transform_expr_enum_inits(e);
+                        }
+                    }
+                    EnumVariantInit::Unit => {}
+                }
+            }
+            ExprKind::StaticMethodCall(ty, method, args) => {
+                // Transform args first
+                for arg in args.iter_mut() {
+                    self.transform_expr_enum_inits(arg);
+                }
+                
+                // Check if this is an enum variant constructor
+                let enum_name = match ty {
+                    Type::Struct(name, _) | Type::Enum(name, _) => name.clone(),
+                    Type::Path(segments, _) => segments.last().cloned().unwrap_or_default(),
+                    _ => String::new(),
+                };
+                
+                if let Some(enum_def) = self.enum_defs.get(&enum_name) {
+                    if let Some(variant) = enum_def.variants.iter().find(|v| &v.name == method) {
+                        use crate::compiler::ast::VariantKind;
+                        
+                        // Build payload
+                        let payload = match &variant.kind {
+                            VariantKind::Unit => EnumVariantInit::Unit,
+                            VariantKind::Tuple(_) => EnumVariantInit::Tuple(std::mem::take(args)),
+                            VariantKind::Struct(_) => EnumVariantInit::Unit, // TODO: struct variant
+                        };
+                        
+                        // Extract generics from type
+                        let generics = match ty {
+                            Type::Struct(_, g) | Type::Enum(_, g) | Type::Path(_, g) => g.clone(),
+                            _ => vec![],
+                        };
+                        
+                        // Replace with EnumInit
+                        expr.inner = ExprKind::EnumInit {
+                            enum_name,
+                            variant_name: method.clone(),
+                            generics,
+                            payload,
+                        };
+                        return;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 
 }
