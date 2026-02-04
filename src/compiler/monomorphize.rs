@@ -176,13 +176,16 @@ impl Monomorphizer {
     fn resolve_type(&mut self, ty: &Type) -> Type {
         match ty {
             Type::Struct(name, args) | Type::Enum(name, args) => {
+                 // Track if original type is Enum
+                 let is_enum = matches!(ty, Type::Enum(_, _));
+                 
                  if !args.is_empty() {
                      // Check if this is a generic struct instantiation
                      if self.generic_structs.contains_key(name) {
                          let concrete_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
                          let mangled = self.request_struct_instantiation(name, concrete_args);
-                         // Return as UserDefined with NO args (concrete name)
-                         return Type::Struct(mangled, vec![]); 
+                         // Preserve original type kind
+                         return Type::Struct(mangled, vec![]);
                      }
                      // Check enum
                      if self.generic_enums.contains_key(name) {
@@ -194,12 +197,17 @@ impl Monomorphizer {
                  // Recurse for args even if not generic struct (e.g. unknown type?)
                  let new_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
                  
-                 // Fix: Check if base name (before _) is a known enum (e.g., Entry_i64_i64 -> Entry)
-                 let base_name = name.split('_').next().unwrap_or(name);
-                 if self.generic_enums.contains_key(base_name) {
+                 // Preserve original type kind OR check base name for mangled names
+                 if is_enum {
                      Type::Enum(name.clone(), new_args)
                  } else {
-                     Type::Struct(name.clone(), new_args)
+                     // Check if base name (before _) is a known enum (e.g., Entry_i64_i64 -> Entry)
+                     let base_name = name.split('_').next().unwrap_or(name);
+                     if self.generic_enums.contains_key(base_name) {
+                         Type::Enum(name.clone(), new_args)
+                     } else {
+                         Type::Struct(name.clone(), new_args)
+                     }
                  }
                  }
 
@@ -212,6 +220,7 @@ impl Monomorphizer {
             // Fix for builtins using Path
             Type::Path(segments, args) => {
                 let name = segments.join("::");
+                eprintln!("DEBUG: resolve_type Path '{}' generic_enums.contains_key={}", name, self.generic_enums.contains_key(&name));
                 // Resolve args first (they may be Paths like K, V)
                 let resolved_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
                 // Check if this is a generic enum first (e.g., Entry<K, V>)
