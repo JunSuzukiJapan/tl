@@ -3681,7 +3681,7 @@ pub struct OpaqueQTensor(pub Arc<candle_core::quantized::QTensor>);
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_get_quantized(
     map: i64,
-    name: *const std::os::raw::c_char,
+    name: *mut StringStruct,
 ) -> usize {
     unsafe {
         use std::ffi::CStr;
@@ -3690,9 +3690,20 @@ pub extern "C" fn tl_tensor_map_get_quantized(
             crate::error::set_last_error("Map pointer is null", crate::error::RuntimeErrorCode::NullPointerError);
             return 0;
         }
+        if name.is_null() || (*name).ptr.is_null() {
+            crate::error::set_last_error("Tensor name is null", crate::error::RuntimeErrorCode::NullPointerError);
+            return 0;
+        }
         let map_ref = &(*map_ptr).0;
-        let c_str = CStr::from_ptr(name);
-        let key_str = c_str.to_str().unwrap();
+        
+        let c_str = CStr::from_ptr((*name).ptr);
+        let key_str = match c_str.to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                crate::error::set_last_error("UTF-8 error in tensor name", crate::error::RuntimeErrorCode::ArgumentError);
+                return 0;
+            }
+        };
 
         if let Some(loaded) = map_ref.get(key_str) {
             match loaded {

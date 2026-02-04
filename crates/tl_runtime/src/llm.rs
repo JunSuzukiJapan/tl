@@ -14,7 +14,13 @@ pub struct OpaqueTokenizer(pub Tokenizer);
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tokenizer_new(path: *const c_char) -> i64 {
     unsafe {
-        let path_str = CStr::from_ptr(path).to_str().unwrap();
+        if path.is_null() {
+            return 0;
+        }
+        let path_str = match CStr::from_ptr(path).to_str() {
+            Ok(s) => s,
+            Err(_) => return 0,
+        };
         let expanded_path = crate::expand_tilde(path_str);
         match Tokenizer::from_file(&expanded_path) {
             Ok(tokenizer) => {
@@ -116,17 +122,24 @@ use crate::OpaqueTensorMap;
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_gguf_load(path: *const c_char) -> *mut OpaqueTensorMap {
     unsafe {
-        let path_str = CStr::from_ptr(path).to_str().unwrap();
+        if path.is_null() {
+            return std::ptr::null_mut();
+        }
+        let path_str = match CStr::from_ptr(path).to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        };
         let expanded_path = crate::expand_tilde(path_str);
 
         let mut file = std::fs::File::open(&expanded_path).expect("failed to open file");
+        
         let content = candle_core::quantized::gguf_file::Content::read(&mut file)
             .expect("failed to read gguf");
 
         let map_ptr = Box::into_raw(Box::new(OpaqueTensorMap(std::collections::HashMap::new())));
         {
             let map = &mut *map_ptr;
-            let device = get_device(); // Device used for QTensor loading
+            let device = get_device();
             for (tensor_name, qtensor_info) in content.tensor_infos.iter() {
                 let qtensor = match qtensor_info
                     .read(&mut file, content.tensor_data_offset, &device)
@@ -135,7 +148,7 @@ pub extern "C" fn tl_gguf_load(path: *const c_char) -> *mut OpaqueTensorMap {
                     Ok(q) => q,
                     Err(e) => {
                         eprintln!("Failed to read qtensor: {}", e);
-                        return std::ptr::null_mut(); // Return null on error
+                        return std::ptr::null_mut();
                     }
                 };
 
@@ -146,7 +159,7 @@ pub extern "C" fn tl_gguf_load(path: *const c_char) -> *mut OpaqueTensorMap {
                 );
             }
         }
-        map_ptr // Return pointer directly
+        map_ptr
     }
 }
 
@@ -324,6 +337,7 @@ pub extern "C" fn tl_tensor_rope_new_cos(dim: i64, len: i64, theta: f32) -> *mut
         .step_by(2)
         .map(|i| 1.0 / (theta.powf(i as f64 / dim as f64) as f32))
         .collect();
+    
     let device = get_device();
     let inv_freq_t = Tensor::from_vec(inv_freq, (1, dim / 2), &device).unwrap();
 

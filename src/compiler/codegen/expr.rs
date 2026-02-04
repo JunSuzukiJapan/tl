@@ -1250,27 +1250,32 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         if simple_struct_name == "String" {
             if field_name == "ptr" {
-                 // String is { i64 ptr } basically, or { i8* }
-                 // We need to load field 0.
-                 // We don't have struct def, so we construct field access manually or assume index 0.
-                 // Actually this helper uses struct_def to find index.
-                 // Let's mock index 0.
-                //  let field_idx = 0;
-                 // Proceed to GEP below using struct_name or opaque?
-                 // Wait, build_struct_gep needs StructType.
-                 // If String is Opaque in struct_types, GEP fails.
-                 // We need to cast obj_val to { i64 }* or { i8* }* ?
-                 // String in runtime is usually crate::StringStruct which is opaque to LLVM?
-                 // If we cast to i64* (pointer to i64), and load.
-                 // The "ptr" field usually holds the address (i64 or i8*).
-                 // io.rs expects i64.
-                 
+                 // StringStruct is { ptr: *mut c_char, len: i64 }
+                 // We need to load the ptr field (index 0) as a pointer
                  let ptr = obj_val.into_pointer_value();
-                 let i64_ptr_ty = self.context.i64_type().ptr_type(inkwell::AddressSpace::default());
-                 let cast_ptr = self.builder.build_pointer_cast(ptr, i64_ptr_ty, "cast_str_ptr").map_err(|e| e.to_string())?;
                  
-                 let val = self.builder.build_load(self.context.i64_type(), cast_ptr, "str_ptr_val").map_err(|e| e.to_string())?;
-                 return Ok(val);
+                 // Define StringStruct layout
+                 let str_struct_ty = self.context.struct_type(&[
+                     self.context.ptr_type(inkwell::AddressSpace::default()).into(), // ptr
+                     self.context.i64_type().into(), // len
+                 ], false);
+                 
+                 // GEP to get pointer to ptr field (index 0)
+                 let ptr_field_ptr = self.builder
+                     .build_struct_gep(str_struct_ty, ptr, 0, "str_ptr_field")
+                     .map_err(|_| "Failed to GEP String.ptr")?;
+                 
+                 // Load the ptr value as pointer type
+                 let ptr_val = self.builder
+                     .build_load(self.context.ptr_type(inkwell::AddressSpace::default()), ptr_field_ptr, "str_ptr_val")
+                     .map_err(|e| e.to_string())?;
+                 
+                 // Convert pointer to i64 for callers that expect i64
+                 let ptr_as_i64 = self.builder
+                     .build_ptr_to_int(ptr_val.into_pointer_value(), self.context.i64_type(), "str_ptr_i64")
+                     .map_err(|e| e.to_string())?;
+                 
+                 return Ok(ptr_as_i64.into());
             } else if field_name == "len" || field_name == "cap" {
                  // Basic String struct might have len/cap? 
                  // Current implementation seems to rely on runtime functions for len.
@@ -3952,22 +3957,23 @@ impl<'ctx> CodeGenerator<'ctx> {
             let (path_val, path_ty) = self.compile_expr(&args[0])?;
             
             // TL String is StringStruct { ptr: *c_char, len: i64 }
-            // We need to extract the ptr field for FFI
+            // We need to extract the ptr field (index 0) for FFI
             let cstr_ptr = if matches!(path_ty, Type::String(_)) {
                 let struct_ptr = path_val.into_pointer_value();
-                let i64_ptr_ty = self.context.i64_type().ptr_type(inkwell::AddressSpace::default());
-                let ptr_to_first_field = self.builder
-                    .build_pointer_cast(struct_ptr, i64_ptr_ty, "str_ptr_cast")
+                // Define StringStruct layout
+                let str_struct_ty = self.context.struct_type(&[
+                    self.context.ptr_type(inkwell::AddressSpace::default()).into(), // ptr
+                    self.context.i64_type().into(), // len
+                ], false);
+                // GEP to get pointer to ptr field (index 0)
+                let ptr_field_ptr = self.builder
+                    .build_struct_gep(str_struct_ty, struct_ptr, 0, "str_ptr_field")
+                    .map_err(|_| "Failed to GEP String.ptr")?;
+                // Load the ptr value
+                let ptr_val = self.builder
+                    .build_load(self.context.ptr_type(inkwell::AddressSpace::default()), ptr_field_ptr, "cstr_ptr")
                     .map_err(|e| e.to_string())?;
-                let str_addr_i64 = self.builder
-                    .build_load(self.context.i64_type(), ptr_to_first_field, "str_addr")
-                    .map_err(|e| e.to_string())?
-                    .into_int_value();
-                let i8_ptr_ty = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
-                self.builder
-                    .build_int_to_ptr(str_addr_i64, i8_ptr_ty, "cstr_ptr")
-                    .map_err(|e| e.to_string())?
-                    .into()
+                ptr_val
             } else {
                 path_val
             };
@@ -5485,7 +5491,6 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
 
-
         if type_name == "Map" {
             match method {
                 "get" | "get_1d" | "get_quantized" => {
@@ -5494,25 +5499,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                     let (key_val, key_ty) = self.compile_expr(&args[0])?;
                     
-                    // TL String is StringStruct { ptr: *c_char, len: i64 }
-                    // We need to extract the ptr field for FFI
-                    let cstr_ptr = if matches!(key_ty, Type::String(_)) {
-                        let struct_ptr = key_val.into_pointer_value();
-                        let i64_ptr_ty = self.context.i64_type().ptr_type(inkwell::AddressSpace::default());
-                        let ptr_to_first_field = self.builder
-                            .build_pointer_cast(struct_ptr, i64_ptr_ty, "str_ptr_cast")
-                            .map_err(|e| e.to_string())?;
-                        let str_addr_i64 = self.builder
-                            .build_load(self.context.i64_type(), ptr_to_first_field, "str_addr")
-                            .map_err(|e| e.to_string())?
-                            .into_int_value();
-                        let i8_ptr_ty = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
-                        self.builder
-                            .build_int_to_ptr(str_addr_i64, i8_ptr_ty, "cstr_ptr")
-                            .map_err(|e| e.to_string())?
-                            .into()
-                    } else {
+                    // Runtime expects *mut StringStruct, so pass the String struct pointer directly
+                    // Do NOT extract the ptr field - runtime will access it
+                    let name_arg = if matches!(key_ty, Type::String(_)) {
+                        // key_val is already a pointer to StringStruct
                         key_val
+                    } else {
+                        return Err(format!("Map::get expects String argument, got {:?}", key_ty));
                     };
                     
                     let fn_name = match method {
@@ -5527,7 +5520,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .ok_or(format!("{} not found", fn_name))?;
                     let call = self
                         .builder
-                        .build_call(fn_val, &[obj_val.into(), cstr_ptr.into()], "map_get")
+                        .build_call(fn_val, &[obj_val.into(), name_arg.into()], "map_get")
                         .map_err(|e| e.to_string())?;
                     let res = match call.try_as_basic_value() {
                         inkwell::values::ValueKind::Basic(v) => v,
