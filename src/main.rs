@@ -142,7 +142,7 @@ fn main() -> Result<()> {
             ast.functions.extend(builtins.functions.clone());
             // No need to inject imports/modules unless structured?
 
-            println!("DEBUG: AST stats - structs: {}, impls: {}, functions: {}", ast.structs.len(), ast.impls.len(), ast.functions.len());
+            // DEBUG removed;
 
             // Semantics
             let mut analyzer = SemanticAnalyzer::new(String::new());
@@ -373,8 +373,9 @@ fn main() -> Result<()> {
         combined_module.impls.extend(builtins.impls.clone());
         combined_module.functions.extend(builtins.functions.clone());
 
-        println!("DEBUG: JIT AST stats - structs: {}, impls: {}", combined_module.structs.len(), combined_module.impls.len());
+        // DEBUG removed;
 
+        // TRACE removed;
         // Semantics (Check only)
         let mut analyzer = SemanticAnalyzer::new(String::new());
         if let Err(e) = analyzer.check_module(&mut combined_module) {
@@ -393,18 +394,22 @@ fn main() -> Result<()> {
             print_tl_error_with_source(&tl_err, &combined_source, file_hint);
             std::process::exit(1);
         }
+        // TRACE removed;
 
+        // TRACE removed;
         // Monomorphization (JIT)
         let mut monomorphizer = tl_lang::compiler::monomorphize::Monomorphizer::new();
         if let Err(e) = monomorphizer.run(&mut combined_module) {
              print_tl_error_with_source(&e, &combined_source, None);
              std::process::exit(1);
         }
+        // TRACE removed;
 
         // JIT Execution
         use tl_runtime::registry;
         registry::reset_global_context();
 
+        // TRACE removed;
         let context = InkwellContext::create();
         let mut codegen = CodeGenerator::new(&context, "main");
 
@@ -417,11 +422,13 @@ fn main() -> Result<()> {
             print_tl_error_with_source(&tl_err, &combined_source, None);
             std::process::exit(1);
         }
+        // TRACE removed;
 
         if std::env::var("TL_DUMP_IR").is_ok() {
             codegen.dump_ir();
         }
 
+        // TRACE removed;
         match codegen.jit_execute("main") {
             Ok(ret) => {
                 let _ = ret; // suppress unused

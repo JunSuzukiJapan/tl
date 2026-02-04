@@ -976,7 +976,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         for imp in impls {
             // Check if generic impl
             let _target_name = imp.target_type.get_base_name();
-            eprintln!("DEBUG: compile_impl_blocks {} generics: {:?} target_type: {:?}", _target_name, imp.generics, imp.target_type);
             
             // Skip if formal generics are present
             if !imp.generics.is_empty() {
@@ -995,7 +994,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 name.ends_with("_T") || name.ends_with("_U")
             };
             if has_unresolved_generics {
-                eprintln!("DEBUG: skipping impl with unresolved generics in target: {}", _target_name);
                 // Store as generic impl for later resolution
                 self.generic_impls.entry(_target_name.clone()).or_default().push(imp.clone());
                 continue;
@@ -1016,7 +1014,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     format!("tl_{}_{}", simple_target, method.name)
                 };
                 if mangled_name.contains("Vec_i32") {
-                    eprintln!("DEBUG: compiling method {} in implied Vec_i32", method.name);
                 }
 
                 // Register return type for lookups by name (Critical for SRET detection)

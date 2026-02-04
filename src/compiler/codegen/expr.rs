@@ -1765,7 +1765,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 generics,
                 payload,
             } => {
-                println!("DEBUG: code_gen EnumInit enum_name='{}' generics={:?}", enum_name, generics);
                 // 0. specialized name handling
                 let mangled_name = if generics.is_empty() {
                     enum_name.clone()
@@ -3361,7 +3360,13 @@ impl<'ctx> CodeGenerator<'ctx> {
         let lookup_name = if generics.is_empty() {
              name.to_string()
         } else {
-             self.mangle_type_name(name, generics)
+             // Check if name is already mangled (e.g. HashMap_i64_i64)
+             // by seeing if it exists in struct_types directly. If so, don't re-mangle.
+             if self.struct_types.contains_key(name) {
+                 name.to_string()
+             } else {
+                 self.mangle_type_name(name, generics)
+             }
         };
         
         // Extract simple name from module path
@@ -3894,7 +3899,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         args: &[Expr],
         target_type: &Type,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        eprintln!("DEBUG: compile_static_method_call struct_name={} type_ty={:?}", struct_name, target_type);
         // Compatibility aliases for existing logic
         let type_name = struct_name;
 
@@ -4700,11 +4704,9 @@ impl<'ctx> CodeGenerator<'ctx> {
              if def.generics.is_empty() {
                  &[]
              } else {
-                 println!("DEBUG: Enum {} found but has generics: {:?}. Args: {:?}", enum_name, def.generics, generic_args);
                  generic_args.as_slice()
              }
         } else {
-             println!("DEBUG: compile_match_like - Enum {} not found in enum_defs (keys count: {})", enum_name, self.enum_defs.len());
              // Def not found yet? Try blindly.
              generic_args.as_slice()
         };
@@ -6464,7 +6466,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         args: &[Expr],
         dest: Option<BasicValueEnum<'ctx>>,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        eprintln!("DEBUG: compile_fn_call_dps name={}", name);
         // 0. Check if it's a relation query (handle module path resolution)
         let simple_name = name.split("::").last().unwrap_or(name);
 

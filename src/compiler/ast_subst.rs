@@ -11,7 +11,6 @@ impl TypeSubstitutor {
     }
 
     pub fn substitute_type(&self, ty: &Type) -> Type {
-        eprintln!("AST_SUBST: {:?}", ty);
         match ty {
             // UserDefined removed
 

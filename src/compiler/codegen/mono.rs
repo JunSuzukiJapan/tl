@@ -57,7 +57,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Instantiate
         let substitutor = TypeSubstitutor::new(subst_map);
         let mut new_method = method.clone();
-        eprintln!("DEBUG: monomorphize_method {} map keys: {:?}", method_name, substitutor.subst.keys());
         new_method.name = mangled_name.clone(); 
         new_method.generics = vec![]; // Concrete
         
@@ -176,7 +175,6 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // 2. Check generics
         if enum_def.generics.len() != generic_args.len() {
-             println!("DEBUG: monomorphize_enum mismatch. name='{}', args={:?}, def_generics={:?}", enum_name, generic_args, enum_def.generics);
              return Err(format!("Generic count mismatch for enum {}: expected {}, got {}", 
                  enum_name, enum_def.generics.len(), generic_args.len()));
         }
@@ -305,7 +303,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         } else {
             let args_str: Vec<String> = type_args.iter().map(|t| self.type_to_suffix(t)).collect();
             let res = format!("{}<{}>", base_name, args_str.join(", "));
-            println!("DEBUG: mangle_type_name {} {:?} -> {}", base_name, type_args, res);
             res
         }
     }
@@ -371,7 +368,6 @@ impl<'ctx> CodeGenerator<'ctx> {
     /// Note: This version uses &self and does NOT perform on-demand monomorphization.
     /// For monomorphization, use `get_or_monomorphize_type` which takes &mut self.
     pub fn get_llvm_type(&self, ty: &Type) -> Result<BasicTypeEnum<'ctx>, String> {
-        // println!("DEBUG: get_llvm_type {:?}", ty);
         match ty {
             Type::Ptr(_) => Ok(self.context.ptr_type(AddressSpace::default()).into()),
             Type::I64 | Type::Entity => Ok(self.context.i64_type().into()),
@@ -493,7 +489,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut subst: HashMap<String, Type> = HashMap::new();
         for (i, param_name) in struct_def.generics.iter().enumerate() {
             if let Some(arg) = type_args.get(i) {
-                eprintln!("DEBUG: monomorphize_struct {} subst {} = {:?}", base_name, param_name, arg);
                 subst.insert(param_name.clone(), arg.clone());
             }
         }
@@ -529,7 +524,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.enum_defs.contains_key(base_name)
                 };
                 if is_enum {
-                    eprintln!("DEBUG: monomorphize_struct converting Struct {} to Enum", s_name);
                     Type::Enum(s_name.clone(), s_args.clone())
                 } else {
                     substituted
@@ -546,7 +540,6 @@ impl<'ctx> CodeGenerator<'ctx> {
     
     /// Substitute type parameters in a type using the given substitution map.
     fn substitute_type(&self, ty: &Type, subst: &HashMap<String, Type>) -> Type {
-        eprintln!("DEBUG: subst {:?} with map keys {:?}", ty, subst.keys());
         match ty {
             Type::Struct(name, args) => {
                 // Check if this is a type parameter
@@ -564,7 +557,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.enum_defs.contains_key(base_name)
                 };
                 if is_enum {
-                    eprintln!("DEBUG: substitute_type converting Struct {} to Enum", name);
                     Type::Enum(name.clone(), new_args)
                 } else {
                     Type::Struct(name.clone(), new_args)
@@ -591,4 +583,3 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
 }
-

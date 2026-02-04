@@ -80,7 +80,11 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<(), String> {
         match ty {
             Type::Struct(name, generics) => {
+                // FIX: Check if name is already mangled (exists in struct_defs) before re-mangling
                 let mangled_name = if generics.is_empty() {
+                    name.clone()
+                } else if self.struct_defs.contains_key(name) {
+                    // Name is already mangled (e.g. HashMap_i64_i64), don't re-mangle
                     name.clone()
                 } else {
                     self.mangle_type_name(name, generics)
@@ -228,7 +232,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         ty: &Type,
         mode: u8,
     ) -> Result<(), String> {
-        eprintln!("DEBUG: emit_recursive_free: {:?}", ty);
         if mode == super::CLEANUP_NONE {
              return Ok(());
         }
@@ -608,7 +611,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Recurse using Type::Enum to trigger switch-based field cleanup.
                     
                     // DEBUG: Inspect fields to see if they are generic
-                    eprintln!("DEBUG: Enum Fallback for {}", name);
                     for variant in &enum_def.variants {
                         eprintln!("  Variant {}: {:?}", variant.name, variant.kind);
                     }
@@ -2987,7 +2989,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                     match self.struct_types.get(&name.split("::").last().unwrap().to_string()) {
                         Some(t) => {
                              let st_llvm_ty = *t;
-                             let field_ptr = self.builder.build_struct_gep(st_llvm_ty, base_ptr, idx as u32, "").map_err(|e|e.to_string())?;
+                             // FIX: In TL, structs are Handles (pointers). base_ptr is an alloca containing the struct pointer.
+                             // We must LOAD the struct pointer before using struct_gep.
+                             let struct_ptr = self.builder.build_load(
+                                 self.context.ptr_type(inkwell::AddressSpace::default()),
+                                 base_ptr,
+                                 "struct_ptr"
+                             ).map_err(|e| e.to_string())?.into_pointer_value();
+                             let field_ptr = self.builder.build_struct_gep(st_llvm_ty, struct_ptr, idx as u32, "").map_err(|e|e.to_string())?;
                              Ok((Some(field_ptr), field_ty.clone(), super::CLEANUP_NONE, base_name))
                         }
                         None => Err(format!("LLVM type not found for {}", name))

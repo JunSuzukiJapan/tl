@@ -220,7 +220,6 @@ impl Monomorphizer {
             // Fix for builtins using Path
             Type::Path(segments, args) => {
                 let name = segments.join("::");
-                eprintln!("DEBUG: resolve_type Path '{}' generic_enums.contains_key={}", name, self.generic_enums.contains_key(&name));
                 // Resolve args first (they may be Paths like K, V)
                 let resolved_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
                 // Check if this is a generic enum first (e.g., Entry<K, V>)
