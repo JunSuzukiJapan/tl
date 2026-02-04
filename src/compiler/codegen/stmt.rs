@@ -109,93 +109,117 @@ impl<'ctx> CodeGenerator<'ctx> {
                     mangled_name
                 };
 
-                let struct_def = self
-                    .struct_defs
-                    .get(&effective_mangled_name)
-                    .ok_or(format!("Struct {} not found ({})", name, effective_mangled_name))?
-                    .clone();
-                let st_llvm_ty = *self
-                    .struct_types
-                    .get(&effective_mangled_name)
-                    .ok_or(format!("LLVM struct type {} not found", effective_mangled_name))?;
-
-                for (i, (field_name, field_ty)) in struct_def.fields.iter().enumerate() {
-                    let src_field_ptr = self
-                        .builder
-                        .build_struct_gep(st_llvm_ty, src, i as u32, &format!("src_{}", field_name))
-                        .map_err(|e| e.to_string())?;
-                    let dst_field_ptr = self
-                        .builder
-                        .build_struct_gep(st_llvm_ty, dst, i as u32, &format!("dst_{}", field_name))
-                        .map_err(|e| e.to_string())?;
-
-                    // Load field value from src
-                    let llvm_field_ty: inkwell::types::BasicTypeEnum = match field_ty {
-                        Type::F32 => self.context.f32_type().into(),
-                        Type::I64 => self.context.i64_type().into(),
-                        Type::I32 => self.context.i32_type().into(),
-                        Type::Bool => self.context.bool_type().into(),
-                        Type::Tensor(_, _) => self
-                            .context
-                            .ptr_type(inkwell::AddressSpace::default())
-                            .into(),
-                        Type::Struct(name, _) => {
-                             // Check for ZST
-                            let simple_name = if name.contains("::") {
-                                name.split("::").last().unwrap()
-                            } else {
-                                name.as_str()
-                            };
-
-                            let _is_zst = if let Some(def) = self.struct_defs.get(simple_name) {
-                                def.fields.is_empty()
-                            } else {
-                                false
-                            };
-
-                            // ZST Strategy V3.2: Even ZSTs are treated as Pointers (NULL).
-                            self.context.ptr_type(inkwell::AddressSpace::default()).into()
-                        }
-                        _ => self.context.i64_type().into(),
-                    };
-
-                    let field_val = self
-                        .builder
-                        .build_load(llvm_field_ty, src_field_ptr, "field_val")
-                        .map_err(|e| e.to_string())?;
-
-                    // Deep Copy Logic:
-                    // If field is Tensor/Struct/UserDefined, use emit_deep_clone (Recursively acquire/copy)
-                    // Currently emit_deep_clone mallocs new structs, but here we want to store into dst_field_ptr.
-                    // But emit_deep_clone returns a Value (Pointer to new struct or Tensor Ptr).
-                    // So we store that Value into dst_field_ptr.
-                    // This means dst (SRET buffer) will hold Pointers to the Deep Copied fields.
-                    // This matches tl semantics (Structs contain pointers).
-                    let store_val = if matches!(
-                        field_ty,
-                        Type::Tensor(_, _)
-                            | Type::TensorShaped(_, _)
-                            | Type::Struct(_, _)
-                            | Type::Enum(_, _)
-                            | Type::Tuple(_)
-                    ) {
-                        self.emit_deep_clone(field_val, field_ty)?
-                    } else {
-                        field_val
-                    };
-
-                    // Store to dst
-                    self.builder
-                        .build_store(dst_field_ptr, store_val)
-                        .map_err(|e| e.to_string())?;
+                // First check if it exists in struct_defs
+                if let Some(struct_def) = self.struct_defs.get(&effective_mangled_name) {
+                    let struct_def = struct_def.clone();
+                    let st_llvm_ty = *self
+                        .struct_types
+                        .get(&effective_mangled_name)
+                        .ok_or(format!("LLVM struct type {} not found", effective_mangled_name))?;
+                    
+                    return self.copy_struct_fields(dst, src, &struct_def, st_llvm_ty);
                 }
-                Ok(())
+                
+                // Fallback: Check if this is actually an Enum being passed as Struct
+                if let Some(enum_def) = self.enum_defs.get(&effective_mangled_name) {
+                    // Entry_i64_i64-like enum: use memcpy for simplest approach
+                    let enum_def = enum_def.clone();
+                    if let Some(enum_llvm_ty) = self.enum_types.get(&effective_mangled_name) {
+                        let size = enum_llvm_ty.size_of().unwrap();
+                        let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                        let dst_cast = self.builder.build_pointer_cast(dst, void_ptr_ty, "dst_cast").unwrap();
+                        let src_cast = self.builder.build_pointer_cast(src, void_ptr_ty, "src_cast").unwrap();
+                        
+                        let memcpy = self.module.get_function("llvm.memcpy.p0.p0.i64")
+                            .or_else(|| {
+                                let void_ty = self.context.void_type();
+                                let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                                let i64_ty = self.context.i64_type();
+                                let i1_ty = self.context.bool_type();
+                                let ft = void_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into(), i1_ty.into()], false);
+                                Some(self.module.add_function("llvm.memcpy.p0.p0.i64", ft, None))
+                            }).unwrap();
+                        
+                        self.builder.build_call(memcpy, &[
+                            dst_cast.into(),
+                            src_cast.into(),
+                            size.into(),
+                            self.context.bool_type().const_zero().into() // isVolatile = false
+                        ], "").unwrap();
+                        
+                        return Ok(());
+                    }
+                    return Err(format!("LLVM enum type {} not found", effective_mangled_name));
+                }
+                
+                Err(format!("Type {} not found in struct_defs or enum_defs ({})", name, effective_mangled_name))
             }
             _ => Err(format!(
                 "emit_struct_copy called on non-struct type: {:?}",
                 ty
             )),
         }
+    }
+    
+    /// Helper function to copy struct fields from src to dst
+    fn copy_struct_fields(
+        &self,
+        dst: inkwell::values::PointerValue<'ctx>,
+        src: inkwell::values::PointerValue<'ctx>,
+        struct_def: &crate::compiler::ast::StructDef,
+        st_llvm_ty: inkwell::types::StructType<'ctx>,
+    ) -> Result<(), String> {
+        for (i, (field_name, field_ty)) in struct_def.fields.iter().enumerate() {
+            let src_field_ptr = self
+                .builder
+                .build_struct_gep(st_llvm_ty, src, i as u32, &format!("src_{}", field_name))
+                .map_err(|e| e.to_string())?;
+            let dst_field_ptr = self
+                .builder
+                .build_struct_gep(st_llvm_ty, dst, i as u32, &format!("dst_{}", field_name))
+                .map_err(|e| e.to_string())?;
+
+            // Load field value from src
+            let llvm_field_ty: inkwell::types::BasicTypeEnum = match field_ty {
+                Type::F32 => self.context.f32_type().into(),
+                Type::I64 => self.context.i64_type().into(),
+                Type::I32 => self.context.i32_type().into(),
+                Type::Bool => self.context.bool_type().into(),
+                Type::Tensor(_, _) => self
+                    .context
+                    .ptr_type(inkwell::AddressSpace::default())
+                    .into(),
+                Type::Struct(name, _) | Type::Enum(name, _) => {
+                    self.context.ptr_type(inkwell::AddressSpace::default()).into()
+                }
+                _ => self.context.i64_type().into(),
+            };
+
+            let field_val = self
+                .builder
+                .build_load(llvm_field_ty, src_field_ptr, "field_val")
+                .map_err(|e| e.to_string())?;
+
+            // Deep Copy Logic:
+            let store_val = if matches!(
+                field_ty,
+                Type::Tensor(_, _)
+                    | Type::TensorShaped(_, _)
+                    | Type::Struct(_, _)
+                    | Type::Enum(_, _)
+                    | Type::Tuple(_)
+            ) {
+                self.emit_deep_clone(field_val, field_ty)?
+            } else {
+                field_val
+            };
+
+            // Store to dst
+            self.builder
+                .build_store(dst_field_ptr, store_val)
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
     }
 
     pub(crate) fn emit_recursive_free(
@@ -1910,8 +1934,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string())?;
                 }
 
-                // Continue at end
-                self.builder.position_at_end(end_block);
+                // Continue at end - but only if end_block has predecessors
+                // If loop body only returns (no break), end_block is orphan and must be removed
+                if end_block.get_first_use().is_some() {
+                    self.builder.position_at_end(end_block);
+                } else {
+                    // Remove orphan block to prevent LLVM verification failure
+                    unsafe { end_block.delete().map_err(|e| format!("Failed to delete orphan loop_end block: {:?}", e))?; }
+                }
                 Ok(())
             }
             StmtKind::Expr(expr) => {
