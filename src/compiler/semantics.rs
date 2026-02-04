@@ -2037,6 +2037,16 @@ impl SemanticAnalyzer {
                     _ => None,
                 }
             }
+            ("File", "download") => {
+                if args.len() != 2 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "File::download".into(),
+                        expected: 2,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::Bool))
+            }
             ("I64", "get_offset") => Some(Ok(Type::I64)),
             // Tensor static methods for llama3
             ("Tensor", "new_causal_mask") => {
@@ -5859,6 +5869,47 @@ impl SemanticAnalyzer {
                         Some(Ok(Type::Void))
                     }
                     "close" | "free" => Some(Ok(Type::Void)),
+                    // Static methods
+                    "exists" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "File::exists".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::Bool))
+                    }
+                    "read" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "File::read".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::String("String".to_string())))
+                    }
+                    "write" => {
+                        if args.len() != 2 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "File::write".into(), expected: 2, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(Type::Bool))
+                    }
+                    "download" => {
+                        if args.len() != 2 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "File::download".into(), expected: 2, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(Type::Bool))
+                    }
                     _ => None
                 }
             }
