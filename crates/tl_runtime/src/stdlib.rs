@@ -79,29 +79,22 @@ pub extern "C" fn tl_string_concat(s1: *mut crate::StringStruct, s2: *mut crate:
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_eq(s1: *mut crate::StringStruct, s2: *mut crate::StringStruct) -> bool {
-    eprintln!("tl_string_eq: {:?} == {:?}", s1, s2);
     if s1.is_null() && s2.is_null() { return true; }
     if s1.is_null() || s2.is_null() { return false; }
     unsafe {
         let p1 = (*s1).ptr as *const u8;
         let p2 = (*s2).ptr as *const u8;
-        // eprintln!("  ptrs: {:?} == {:?}", p1, p2);
         if p1.is_null() && p2.is_null() { return true; }
         if p1.is_null() || p2.is_null() { return false; }
         
         let mut i = 0;
-        eprintln!("DEBUG: comparing loop start");
         loop {
-            // eprintln!("DEBUG:   cmp i={}", i);
             let b1 = *p1.add(i);
             let b2 = *p2.add(i);
-            // eprintln!("DEBUG:   b1={:x} b2={:x}", b1, b2);
             if b1 != b2 { 
-                eprintln!("DEBUG: mismatch at {}", i);
                 return false; 
             }
             if b1 == 0 { 
-                eprintln!("DEBUG: match up to null at {}", i);
                 return true; 
             }
             i += 1;
