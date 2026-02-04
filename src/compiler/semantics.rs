@@ -5626,6 +5626,18 @@ impl SemanticAnalyzer {
                         }
                         Some(Ok(any_tensor.clone()))
                     }
+                    // transpose / transpose_2d: tensor.transpose(dim0, dim1) / tensor.transpose_2d(dim0, dim1)
+                    "transpose" | "transpose_2d" => {
+                        if args.len() != 2 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("Tensor::{}", method), expected: 2, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
                     // item_i64: tensor.item_i64() -> i64
                     "item_i64" => {
                         if !args.is_empty() {
@@ -5661,6 +5673,105 @@ impl SemanticAnalyzer {
                         if args.len() != 4 {
                             return Some(self.err(SemanticError::ArgumentCountMismatch {
                                 name: "Tensor::slice".into(), expected: 4, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    // sub, div: binary ops taking one arg
+                    "sub" | "div" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("Tensor::{}", method), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    // neg, grad, item, tan, get_shape, print, display: 0 arg
+                    "neg" | "grad" | "tan" | "get_shape" | "print" | "display" => {
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("Tensor::{}", method), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        if method == "print" || method == "display" {
+                            Some(Ok(Type::Void))
+                        } else {
+                            Some(Ok(any_tensor.clone()))
+                        }
+                    }
+                    // item: returns f32
+                    "item" => {
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::item".into(), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        Some(Ok(Type::F32))
+                    }
+                    // cuda, cpu: device transfer
+                    "cuda" | "cpu" => {
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("Tensor::{}", method), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    // sum: 0-1 args (sum all or sum along dim)
+                    "sum" => {
+                        if args.len() > 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::sum".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    // sum_dim, mean_dim: 2 args (dim, keepdim)
+                    "sum_dim" | "mean_dim" => {
+                        if args.len() != 2 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("Tensor::{}", method), expected: 2, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    // argmax, argmin, max_dim, min_dim, tril: 1 arg
+                    "argmax" | "argmin" | "max_dim" | "min_dim" | "tril" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("Tensor::{}", method), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    // clamp: 2 args (min, max)
+                    "clamp" => {
+                        if args.len() != 2 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::clamp".into(), expected: 2, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    // conv2d: 3 args (weight, padding, stride)
+                    "conv2d" => {
+                        if args.len() != 3 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::conv2d".into(), expected: 3, found: args.len()
                             }, None));
                         }
                         for arg in args.iter_mut() {
@@ -5835,6 +5946,95 @@ impl SemanticAnalyzer {
                     "get_offset" => Some(Ok(Type::I64)),
                     "sumall" => Some(Ok(Type::I64)),
                     "abs" => Some(Ok(Type::I64)),
+                    _ => None
+                }
+            }
+            "Tokenizer" => {
+                match method {
+                    // encode: tokenizer.encode(text) -> Tensor<I64, 1>
+                    "encode" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tokenizer::encode".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::Tensor(Box::new(Type::I64), 1)))
+                    }
+                    // decode: tokenizer.decode(tokens) -> String
+                    "decode" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tokenizer::decode".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::String("String".to_string())))
+                    }
+                    // token_id: tokenizer.token_id(token_str) -> i64
+                    "token_id" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tokenizer::token_id".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::I64))
+                    }
+                    // vocab_size: tokenizer.vocab_size() -> i64
+                    "vocab_size" => {
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tokenizer::vocab_size".into(), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        Some(Ok(Type::I64))
+                    }
+                    // free: tokenizer.free() -> void
+                    "free" => {
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tokenizer::free".into(), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        Some(Ok(Type::Void))
+                    }
+                    _ => None
+                }
+            }
+            "KVCache" => {
+                match method {
+                    // get_k: kvcache.get_k(layer) -> Tensor
+                    "get_k" | "get_v" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("KVCache::{}", method), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::Tensor(Box::new(Type::F32), 0)))
+                    }
+                    // update: kvcache.update(layer, k, v) -> void
+                    "update" => {
+                        if args.len() != 3 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "KVCache::update".into(), expected: 3, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(Type::Void))
+                    }
+                    // free: kvcache.free() -> void
+                    "free" => {
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "KVCache::free".into(), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        Some(Ok(Type::Void))
+                    }
                     _ => None
                 }
             }
