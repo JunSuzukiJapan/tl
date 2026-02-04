@@ -1303,7 +1303,6 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) -> FreeOutcome {
         if arena::tl_arena_contains(t as *mut std::ffi::c_void) {
             // Arena-allocated tensors MUST be dropped to release Candle resources (GPU memory, etc)
             // The memory for OpaqueTensor itself is reclaimed by arena reset, but the inner content needs Drop.
-            println!("DEBUG: Drop arena tensor {:p}", t);
             std::ptr::drop_in_place(t);
             return FreeOutcome::ArenaDrop;
         }
@@ -1322,7 +1321,6 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) -> FreeOutcome {
         if let Ok(mut pool) = memory_manager::TENSOR_POOL.lock() {
             match pool.release(t, num_elements, dtype_id, device_id) {
                 memory_manager::PoolOutcome::Pooled => {
-                    // println!("DEBUG: Pool tensor {:p}", t);
                     std::ptr::drop_in_place(t);
                     return FreeOutcome::Pooled;
                 }
@@ -1437,14 +1435,12 @@ pub extern "C" fn tl_tensor_prepare_return(ptr: *mut OpaqueTensor) -> *mut Opaqu
     
     // Check if in arena
     if arena::tl_arena_contains(ptr as *mut c_void) {
-        println!("DEBUG: prepare_return CLONE arena ptr={:p}", ptr);
         // Clone to Heap
         let new_ptr = tl_tensor_clone(ptr);
         // Clone registers it in current scope. Unregister to pass ownership to caller.
         memory_manager::tl_mem_unregister(new_ptr as *mut c_void);
         new_ptr
     } else {
-        println!("DEBUG: prepare_return UNREG heap ptr={:p}", ptr);
         // Heap/Pool. Unregister to pass ownership to caller.
         memory_manager::tl_mem_unregister(ptr as *mut c_void);
         ptr
@@ -2729,7 +2725,6 @@ pub extern "C" fn tl_tensor_reshape_dims(
     dims_ptr: *const i64,
     num_dims: i64,
 ) -> *mut OpaqueTensor {
-    println!("DEBUG: Inside tl_tensor_reshape_dims");
     if t.is_null() || dims_ptr.is_null() {
         crate::error::set_last_error(format!("Null pointer passed to reshape_dims: t={:?}, dims={:?}", t, dims_ptr), crate::error::RuntimeErrorCode::NullPointerError);
         return std::ptr::null_mut();
@@ -3147,7 +3142,6 @@ pub extern "C" fn tl_tensor_map_insert(
         
         // let c_str = std::ffi::CStr::from_ptr((*name).ptr);
         // let key = c_str.to_string_lossy().into_owned();
-        // eprintln!("DEBUG: insert map={:p} tensor={:p} key={}", map, tensor, key);
         // Clean implementation:
         let map_ref = &mut (*map).0;
         let c_str = std::ffi::CStr::from_ptr((*name).ptr);
@@ -3170,7 +3164,6 @@ pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *mut Strin
             return;
         }
         let p_str = std::ffi::CStr::from_ptr((*path).ptr).to_string_lossy();
-        // eprintln!("DEBUG: tl_tensor_map_save path='{}'", p_str);
 
         if map.is_null() {
             eprintln!("tl_tensor_map_save: map is NULL");
@@ -3179,17 +3172,14 @@ pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *mut Strin
 
         let map_ref = &(*map).0;
         let mut save_map = std::collections::HashMap::new();
-        // eprintln!("DEBUG: Saving map with {} entries", map_ref.len());
         for (k, v) in map_ref.iter() {
             if let LoadedTensor::Standard(t) = v {
-                // eprintln!("DEBUG: Saving tensor '{}'", k);
                 save_map.insert(k.clone(), t.clone());
             }
         }
         
         match candle_core::safetensors::save(&save_map, p_str.as_ref()) {
             Ok(_) => {
-                // eprintln!("DEBUG: Successfully saved to '{}'", p_str);
             },
             Err(e) => {
                 eprintln!("tl_tensor_map_save ERROR: Failed to save to '{}': {}", p_str, e);
@@ -3203,11 +3193,9 @@ pub extern "C" fn tl_tensor_map_load(path: *mut StringStruct) -> *mut OpaqueTens
     unsafe {
         if path.is_null() || (*path).ptr.is_null() { return std::ptr::null_mut(); }
         let p_str = std::ffi::CStr::from_ptr((*path).ptr).to_str().unwrap();
-        // eprintln!("DEBUG: tl_tensor_map_load path: '{}'", p_str);
         let mut loaded_map = std::collections::HashMap::new();
 
         if p_str.ends_with(".gguf") {
-            eprintln!("DEBUG: Detecting GGUF file");
             let mut file = std::fs::File::open(p_str).expect("Failed to open GGUF file");
             let content = candle_core::quantized::gguf_file::Content::read(&mut file)
                 .expect("Failed to read GGUF file");
@@ -3222,7 +3210,6 @@ pub extern "C" fn tl_tensor_map_load(path: *mut StringStruct) -> *mut OpaqueTens
                 );
             }
         } else {
-            eprintln!("DEBUG: Fallback to safetensors for path: '{}'", p_str);
             let device = get_device();
             let map = candle_core::safetensors::load(p_str, &device)
                 .expect("Failed to load safetensors file");
@@ -4066,25 +4053,19 @@ pub extern "C" fn tl_download_file(
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_read_file(path: *const std::os::raw::c_char) -> *mut StringStruct {
     let path_str = unsafe { std::ffi::CStr::from_ptr(path).to_string_lossy() };
-    eprintln!("DEBUG: tl_read_file reading: {}", path_str);
     if let Ok(content) = std::fs::read_to_string(path_str.as_ref()) {
-        eprintln!("DEBUG: read content len: {}", content.len());
-        // eprintln!("DEBUG: content bytes: {:?}", content.as_bytes());
         match std::ffi::CString::new(content.trim()) {
             Ok(c_str) => {
                 let s = crate::tl_string_new(c_str.as_ptr());
                 unsafe {
-                    eprintln!("DEBUG: tl_read_file allocated string at {:?} with buffer {:?}", s, (*s).ptr);
                 }
                 s
             },
             Err(e) => {
-                eprintln!("DEBUG: CString::new failed: {}", e);
                 std::ptr::null_mut()
             },
         }
     } else {
-        eprintln!("DEBUG: allowed read_to_string failed");
         std::ptr::null_mut()
     }
 }
@@ -4102,7 +4083,6 @@ pub extern "C" fn tl_write_file(path: *const std::os::raw::c_char, content: *con
     let path_str = unsafe { std::ffi::CStr::from_ptr(path).to_string_lossy() };
     let content_str = unsafe { std::ffi::CStr::from_ptr(content).to_string_lossy() };
     
-    // eprintln!("DEBUG: writing to {} content len {}", path_str, content_str.len());
 
     if let Ok(_) = std::fs::write(path_str.as_ref(), content_str.as_ref()) {
         1
@@ -4369,27 +4349,22 @@ pub extern "C" fn tl_vec_ptr_new() -> *mut Vec<*mut std::ffi::c_void> {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_add_4d(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    eprintln!("DEBUG: tl_tensor_add_4d called, a_null={}, b_null={}", a.is_null(), b.is_null());
     if !a.is_null() {
         unsafe {
             if let Ok(ta) = (*a).as_tensor() {
-                eprintln!("DEBUG: add_4d a_shape: {:?}", ta.shape());
             }
         }
     }
     if !b.is_null() {
         unsafe {
             if let Ok(tb) = (*b).as_tensor() {
-                eprintln!("DEBUG: add_4d b_shape: {:?}", tb.shape());
             }
         }
     }
     let result = tl_tensor_add(a, b);
-    eprintln!("DEBUG: add_4d result_null={}", result.is_null());
     if !result.is_null() {
         unsafe {
             if let Ok(tr) = (*result).as_tensor() {
-                eprintln!("DEBUG: add_4d result_shape: {:?}", tr.shape());
             }
         }
     }
@@ -4400,12 +4375,10 @@ pub extern "C" fn tl_tensor_add_4d(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_matmul_4d(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    eprintln!("DEBUG: tl_tensor_matmul_4d called, a={:?}, b={:?}", a.is_null(), b.is_null());
     if !a.is_null() {
         unsafe {
             let t_a = (*a).as_tensor();
             if let Ok(ta) = t_a {
-                eprintln!("DEBUG: matmul_4d a_shape: {:?}", ta.shape());
             }
         }
     }
@@ -4413,12 +4386,10 @@ pub extern "C" fn tl_tensor_matmul_4d(a: *mut OpaqueTensor, b: *mut OpaqueTensor
         unsafe {
             let t_b = (*b).as_tensor();
             if let Ok(tb) = t_b {
-                eprintln!("DEBUG: matmul_4d b_shape: {:?}", tb.shape());
             }
         }
     }
     let result = tl_tensor_matmul(a, b);
-    eprintln!("DEBUG: tl_tensor_matmul_4d result={:?}", result.is_null());
     result
 }
 
