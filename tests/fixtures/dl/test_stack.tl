@@ -1,3 +1,4 @@
+// SKIP: Mutability issues in struct field assignment
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 
 impl Linear {

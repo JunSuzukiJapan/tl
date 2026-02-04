@@ -1,29 +1,33 @@
-tensor A: f32 = [1.0, 2.0, 3.0, 4.0];
-tensor B: f32 = [2.0, 2.0, 2.0, 2.0];
+// Test tensor operations
+// STDOUT: Library test complete
 
-// Test Div
-let C = A / B; // Should be [0.5, 1.0, 1.5, 2.0]
-print(C);
+tensor A: Tensor<f32, 1> = [1.0, 2.0, 3.0, 4.0];
+tensor B: Tensor<f32, 1> = [2.0, 2.0, 2.0, 2.0];
+tensor M1: Tensor<f32, 1> = [1.0, 2.0, 3.0, 4.0];
+tensor M2: Tensor<f32, 1> = [1.0, 0.0, 0.0, 1.0];
 
-// Test Exp
-let E = B.exp(); // [7.389, ...]
-print(E);
+fn main() {
+    // Test Div
+    let C = A / B; // Should be [0.5, 1.0, 1.5, 2.0]
+    print(C);
 
-// Test Log
-let L = E.log(); // [2.0, ...]
-print(L);
+    // Test Exp
+    let E = B.exp(); // [7.389, ...]
+    print(E);
 
-// Test Sqrt
-let S = B.sqrt(); // [1.414, ...]
-print(S);
+    // Test Log
+    let L = E.log(); // [2.0, ...]
+    print(L);
 
-// Test MatMul
-// A: [2, 2]
-// B: [2, 2]
-tensor M1: f32 = [1.0, 2.0, 3.0, 4.0];
-let M1_res = M1.reshape([2, 2]);
-tensor M2: f32 = [1.0, 0.0, 0.0, 1.0]; // Identity
-let M2_res = M2.reshape([2, 2]);
+    // Test Sqrt
+    let S = B.sqrt(); // [1.414, ...]
+    print(S);
 
-let M3 = M1_res.matmul(M2_res); // Should be same as M1
-print(M3);
+    // Test MatMul
+    let M1_res = M1.reshape([2, 2]);
+    let M2_res = M2.reshape([2, 2]);
+
+    let M3 = M1_res.matmul(M2_res); // Should be same as M1
+    print(M3);
+    print("Library test complete\n");
+}

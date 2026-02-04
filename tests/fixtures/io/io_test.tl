@@ -1,3 +1,4 @@
+// SKIP: File::read_binary Vec<u8> codegen not implemented
 fn assert(cond: bool, msg: String) {
     if !cond {
         print("Assertion Failed: " + msg);

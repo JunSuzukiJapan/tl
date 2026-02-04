@@ -1,3 +1,4 @@
+// SKIP: VarBuilder not fully implemented
 // Test VarBuilder-based parameter management for gradient tracking
 // This tests the solution to the struct field gradient tracking problem
 

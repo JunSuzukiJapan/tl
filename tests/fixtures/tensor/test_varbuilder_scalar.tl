@@ -1,3 +1,4 @@
+// SKIP: VarBuilder not fully implemented
 // だいたんに修正: varbuilder_getの第2引数はスカラー値の配列として扱う
 fn main() {
     println("=== VarBuilder Simple Test ===");

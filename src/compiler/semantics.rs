@@ -5768,7 +5768,12 @@ impl SemanticAnalyzer {
             (Type::F64, Type::F32) => true,
             (Type::F64, Type::I64) => true,
             
-
+            // Shape parameter compatibility: Vec<i64> and Tensor(I64, 1) are often interchangeable
+            // This allows [2, 3, 4] tensor literal to be used where Vec<i64> is expected (e.g. reshape)
+            (Type::Struct(name, args), Type::Tensor(inner, rank)) 
+                if name == "Vec" && *rank == 1 && args.len() == 1 && self.are_types_compatible(&args[0], inner) => true,
+            (Type::Tensor(inner, rank), Type::Struct(name, args)) 
+                if name == "Vec" && *rank == 1 && args.len() == 1 && self.are_types_compatible(inner, &args[0]) => true,
 
             
             _ => false,

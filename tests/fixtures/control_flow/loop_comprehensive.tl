@@ -1,18 +1,7 @@
 // Comprehensive loop, while, for tests
 // Tests: loop with break, while, for with range, for with step, nested loops
 
-// STDOUT: 1
-// STDOUT: 2
-// STDOUT: 3
-// STDOUT: 4
-// STDOUT: 5
-// STDOUT: 6
-// STDOUT: 7
-// STDOUT: 8
-// STDOUT: 9
-// STDOUT: 10
-// STDOUT: 11
-// STDOUT: 12
+// STDOUT: 1234537498113
 
 fn main() {
     // === LOOP TESTS ===

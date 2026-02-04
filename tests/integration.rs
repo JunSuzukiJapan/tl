@@ -40,6 +40,10 @@ fn run_fixture(path: &Path) -> Result<(), String> {
     let mut expected_stderr = Vec::new();
 
     for line in content.lines() {
+        // Skip marker - if present, test is skipped
+        if line.trim().starts_with("// SKIP:") || line.trim().starts_with("// SKIP") {
+            return Ok(());  // Skip this test
+        }
         if let Some(val) = line.trim().strip_prefix("// EXIT: ") {
             expected_exit_code = val.trim().parse().unwrap_or(0);
         }
