@@ -2472,15 +2472,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             },
             ExprKind::StaticMethodCall(type_ty, method_name, args) => {
                 if method_name == "sizeof" {
-                     eprintln!("[DEBUG sizeof] type_ty = {:?}", type_ty);
-                     eprintln!("[DEBUG sizeof] enum_types keys = {:?}", self.enum_types.keys().collect::<Vec<_>>());
-                     
                      // For Enum types, we need to get the actual data struct size, not pointer size
                      if let Type::Enum(enum_name, _) = type_ty {
                          // Look up the actual LLVM struct type from enum_types
                          if let Some(enum_struct_type) = self.enum_types.get(enum_name) {
                              let size_val = enum_struct_type.size_of().ok_or(format!("Enum type {} has no size", enum_name))?;
-                             eprintln!("[DEBUG sizeof] Found Enum {} -> size", enum_name);
                              return Ok((size_val.into(), Type::I64));
                          } else {
                              return Err(format!("Enum type {} not found in enum_types for sizeof", enum_name));
@@ -2492,12 +2488,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                          if let Some(enum_struct_type) = self.enum_types.get(name) {
                              // It's actually an enum with a Struct type wrapper
                              let size_val = enum_struct_type.size_of().ok_or(format!("Enum type {} has no size", name))?;
-                             eprintln!("[DEBUG sizeof] Found Struct-as-Enum {} -> size", name);
                              return Ok((size_val.into(), Type::I64));
                          }
                      }
                      
-                     eprintln!("[DEBUG sizeof] Fallback to get_llvm_type for {:?}", type_ty);
                      // Generic T already substituted by Monomorphizer
                      let llvm_ty = self.get_llvm_type(type_ty).map_err(|e| e.to_string())?;
                      let size_val = llvm_ty.size_of().ok_or(format!("Type {:?} has no size (ZST not supported)", type_ty))?;

@@ -3014,8 +3014,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                      if indices.len() != 1 { return Err("Ptr index must be 1D".into()); }
                      let (idx_val, _) = self.compile_expr(&indices[0])?;
                      
+                     // Get LLVM type of element for correct GEP offset calculation
+                     let elem_llvm_ty = self.get_llvm_type(&elem_ty)?;
+                     
+                     // Load the actual pointer value from the alloca
+                     let ptr_val = self.builder.build_load(
+                         self.context.ptr_type(inkwell::AddressSpace::default()),
+                         base_ptr,
+                         "ptr_load"
+                     ).map_err(|e| e.to_string())?.into_pointer_value();
+                     
                      unsafe {
-                         let elem_ptr = self.builder.build_gep(self.context.ptr_type(inkwell::AddressSpace::default()), base_ptr, &[idx_val.into_int_value()], "ptr_idx").map_err(|e| e.to_string())?;
+                         let elem_ptr = self.builder.build_gep(
+                             elem_llvm_ty, 
+                             ptr_val, 
+                             &[idx_val.into_int_value()], 
+                             "ptr_idx"
+                         ).map_err(|e| e.to_string())?;
                          Ok((Some(elem_ptr), *elem_ty.clone(), super::CLEANUP_NONE, base_name))
                      }
                  } else {
