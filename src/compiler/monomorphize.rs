@@ -140,10 +140,16 @@ impl Monomorphizer {
                 self.generic_impls.push(impl_block);
             } else {
                 // Rewrite methods in non-generic impl
-                let empty_subst = HashMap::new();
+                // Check if this is a specialized impl (e.g., HashMap_i64_i64) that needs substitution
+                let subst = if let Type::Struct(name, _) | Type::Enum(name, _) = &impl_block.target_type {
+                    self.build_subst_from_mangled_name(name)
+                } else {
+                    HashMap::new()
+                };
+                
                 for method in &mut impl_block.methods {
                     for stmt in &mut method.body {
-                        self.rewrite_stmt(&mut stmt.inner, &empty_subst, None);
+                        self.rewrite_stmt(&mut stmt.inner, &subst, None);
                     }
                 }
                 self.concrete_impls.push(impl_block);
@@ -199,7 +205,15 @@ impl Monomorphizer {
             // Fix for builtins using Path
             Type::Path(segments, args) => {
                 let name = segments.join("::");
-                let new_ty = Type::Struct(name, args.clone());
+                // Resolve args first (they may be Paths like K, V)
+                let resolved_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
+                // Check if this is a generic enum first (e.g., Entry<K, V>)
+                if self.generic_enums.contains_key(&name) {
+                    let new_ty = Type::Enum(name, resolved_args);
+                    return self.resolve_type(&new_ty);
+                }
+                // Otherwise treat as struct
+                let new_ty = Type::Struct(name, resolved_args);
                 self.resolve_type(&new_ty)
             }
             
@@ -857,6 +871,41 @@ impl Monomorphizer {
                        }
                    }
               }
+              ExprKind::Match { expr, arms } => {
+                  // Rewrite the matched expression
+                  self.rewrite_expr(&mut expr.inner, subst, None);
+                  
+                  // Rewrite each arm: substitute pattern types and rewrite body
+                  for (pattern, body) in arms.iter_mut() {
+                      // Substitute types in pattern (e.g., Entry<K, V> -> Entry_i64_i64)
+                      if let Pattern::EnumPattern { enum_name, variant_name: _, bindings: _ } = pattern {
+                          // Parse the enum_name to extract base name and type args
+                          // e.g., "Entry<K, V>" -> base="Entry", args=["K", "V"]
+                          if let Some(angle_idx) = enum_name.find('<') {
+                              let base = &enum_name[..angle_idx];
+                              let args_str = &enum_name[angle_idx+1..enum_name.len()-1];
+                              // Parse type args and substitute
+                              let arg_names: Vec<&str> = args_str.split(", ").collect();
+                              let mut substituted_args = Vec::new();
+                              for arg_name in &arg_names {
+                                  let arg_name = arg_name.trim();
+                                  if let Some(replacement) = subst.get(arg_name) {
+                                      substituted_args.push(self.mangle_type(replacement));
+                                  } else {
+                                      substituted_args.push(arg_name.to_string());
+                                  }
+                              }
+                              // Build new mangled enum name
+                              if !substituted_args.is_empty() {
+                                  let new_name = format!("{}_{}", base, substituted_args.join("_"));
+                                  *enum_name = new_name;
+                              }
+                          }
+                      }
+                      // Rewrite arm body
+                      self.rewrite_expr(&mut body.inner, subst, expected_type);
+                  }
+              }
               _ => {}
          }
      }
@@ -888,11 +937,9 @@ impl Monomorphizer {
                      // Usually impl<U> Struct<U>.
                      if target_args.len() == args.len() {
                          matches = true;
-                         eprintln!("DEBUG: instantiate_impls unifying target_args={:?} with args={:?}", target_args, args);
                          for (impl_arg, concrete_arg) in target_args.iter().zip(args) {
                              self.unify_types(impl_arg, concrete_arg, &mut subst);
                          }
-                         eprintln!("DEBUG: subst map: {:?}", subst);
                      }
                  }
              }
@@ -1148,21 +1195,25 @@ impl Monomorphizer {
                      _ => Type::Struct(name.clone(), new_args)
                  }
              },
+             // Handle Enum type arguments recursively
+             Type::Enum(name, args) => {
+                 if let Some(replacement) = subst.get(name) {
+                     return replacement.clone();
+                 }
+                 let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
+                 Type::Enum(name.clone(), new_args)
+             },
              // ... other recursive cases
              Type::Path(segments, args) => {
                  if segments.len() == 1 {
                      if let Some(replacement) = subst.get(&segments[0]) {
-                         eprintln!("DEBUG: substituted Path {} -> {:?}", segments[0], replacement);
                          return replacement.clone();
-                     } else {
-                         eprintln!("DEBUG: Path {} not found in subst {:?}", segments[0], subst.keys());
                      }
                  }
                  let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
                  Type::Path(segments.clone(), new_args)
              },
              Type::Ptr(inner) => {
-                 eprintln!("DEBUG: substituting Ptr inner={:?}", inner);
                  Type::Ptr(Box::new(self.substitute_type(inner, subst)))
              },
              Type::Ref(inner) => Type::Ref(Box::new(self.substitute_type(inner, subst))),
@@ -1277,5 +1328,73 @@ impl Monomorphizer {
     }
 
 
+    /// Build a substitution map from a mangled type name like "HashMap_i64_i64"
+    /// by extracting the type arguments from the suffix and mapping them to the
+    /// original generic parameters (K, V) from the generic struct/enum definition.
+    fn build_subst_from_mangled_name(&self, mangled_name: &str) -> HashMap<String, Type> {
+        let mut subst = HashMap::new();
+        
+        // Try to find the base generic struct/enum name
+        for (base_name, def) in &self.generic_structs {
+            if mangled_name.starts_with(&format!("{}_", base_name)) {
+                let suffix = &mangled_name[base_name.len() + 1..]; // +1 for underscore
+                let type_args = self.parse_mangled_type_args(suffix);
+                
+                if type_args.len() == def.generics.len() {
+                    for (param, arg) in def.generics.iter().zip(type_args.iter()) {
+                        subst.insert(param.clone(), arg.clone());
+                    }
+                    return subst;
+                }
+            }
+        }
+        
+        // Also check generic enums
+        for (base_name, def) in &self.generic_enums {
+            if mangled_name.starts_with(&format!("{}_", base_name)) {
+                let suffix = &mangled_name[base_name.len() + 1..];
+                let type_args = self.parse_mangled_type_args(suffix);
+                
+                if type_args.len() == def.generics.len() {
+                    for (param, arg) in def.generics.iter().zip(type_args.iter()) {
+                        subst.insert(param.clone(), arg.clone());
+                    }
+                    return subst;
+                }
+            }
+        }
+        
+        subst
+    }
+    
+    /// Parse mangled type arguments from a suffix like "i64_i64" -> [I64, I64]
+    fn parse_mangled_type_args(&self, suffix: &str) -> Vec<Type> {
+        let mut args = Vec::new();
+        for part in suffix.split('_') {
+            let ty = match part {
+                "i64" => Type::I64,
+                "f32" => Type::F32,
+                "f64" => Type::F64,
+                "bool" => Type::Bool,
+                "string" => Type::String("String".to_string()),
+                "char" => Type::Char("Char".to_string()),
+                other => {
+                    // Check if it's a known struct/enum
+                    if self.generic_structs.contains_key(other) {
+                        Type::Struct(other.to_string(), vec![])
+                    } else if self.generic_enums.contains_key(other) {
+                        Type::Enum(other.to_string(), vec![])
+                    } else {
+                        // Default to Struct for unknown types
+                        Type::Struct(other.to_string(), vec![])
+                    }
+                }
+            };
+            args.push(ty);
+        }
+        args
+    }
+
 
 }
+

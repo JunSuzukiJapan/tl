@@ -58,7 +58,21 @@ impl TypeSubstitutor {
                          }
                      }
                  }
-                 let new_generics = generics.iter().map(|g| self.substitute_type(g)).collect();
+                 let new_generics: Vec<Type> = generics.iter().map(|g| self.substitute_type(g)).collect();
+                 
+                 // If we have generics, mangle the type name and create an Enum type
+                 // This handles cases like Entry<K, V> -> Entry_i64_i64
+                 if !new_generics.is_empty() && segments.len() == 1 {
+                     // Check if all generics are concrete (not Path types with unresolved params)
+                     let all_concrete = new_generics.iter().all(|g| !matches!(g, Type::Path(_, _)));
+                     if all_concrete {
+                         let suffix = new_generics.iter().map(|t| self.type_to_suffix(t)).collect::<Vec<_>>().join("_");
+                         let mangled_name = format!("{}_{}", segments[0], suffix);
+                         // Return as Enum (most generic paths with substituted generics are enums like Entry, Option)
+                         return Type::Enum(mangled_name, vec![]);
+                     }
+                 }
+                 
                  Type::Path(segments.clone(), new_generics)
             }
             Type::Ptr(inner) => Type::Ptr(Box::new(self.substitute_type(inner))),
@@ -66,6 +80,45 @@ impl TypeSubstitutor {
 
 
             _ => ty.clone(),
+        }
+    }
+
+    /// Convert a Type to a string representation for mangling.
+    fn type_to_suffix(&self, ty: &Type) -> String {
+        match ty {
+            Type::I64 => "i64".to_string(),
+            Type::I32 => "i32".to_string(),
+            Type::U8 => "u8".to_string(),
+            Type::F32 => "f32".to_string(),
+            Type::F64 => "f64".to_string(),
+            Type::Bool => "bool".to_string(),
+            Type::Usize => "usize".to_string(),
+            Type::Void => "void".to_string(),
+            Type::String(_) => "String".to_string(),
+            Type::Char(_) => "Char".to_string(),
+            Type::Struct(name, args) => {
+                if args.is_empty() {
+                    name.clone()
+                } else {
+                    let args_str: Vec<String> = args.iter().map(|t| self.type_to_suffix(t)).collect();
+                    format!("{}_{}", name, args_str.join("_"))
+                }
+            }
+            Type::Enum(name, args) => {
+                if args.is_empty() {
+                    name.clone()
+                } else {
+                    let args_str: Vec<String> = args.iter().map(|t| self.type_to_suffix(t)).collect();
+                    format!("{}_{}", name, args_str.join("_"))
+                }
+            }
+            Type::Tensor(inner, rank) => format!("Tensor_{}_{}", self.type_to_suffix(inner), rank),
+            Type::Tuple(types) => {
+                let parts: Vec<String> = types.iter().map(|t| self.type_to_suffix(t)).collect();
+                format!("Tuple_{}", parts.join("_"))
+            }
+            Type::Path(segments, _) => segments.join("_"),
+            _ => "unknown".to_string(),
         }
     }
 
@@ -138,6 +191,47 @@ impl TypeSubstitutor {
                 let new_expr = self.substitute_expr(expr);
                 let new_indices = indices.iter().map(|e| self.substitute_expr(e)).collect();
                 ExprKind::IndexAccess(Box::new(new_expr), new_indices)
+            }
+            
+            ExprKind::EnumInit { enum_name, variant_name, generics, payload } => {
+                let new_generics: Vec<Type> = generics.iter().map(|g| self.substitute_type(g)).collect();
+                
+                // Mangle enum name with concrete generics
+                let new_enum_name = if !new_generics.is_empty() {
+                    let suffix = new_generics.iter().map(|t| self.type_to_suffix(t)).collect::<Vec<_>>().join("_");
+                    format!("{}_{}", enum_name, suffix)
+                } else {
+                    enum_name.clone()
+                };
+                
+                let new_payload = match payload {
+                    crate::compiler::ast::EnumVariantInit::Unit => crate::compiler::ast::EnumVariantInit::Unit,
+                    crate::compiler::ast::EnumVariantInit::Tuple(exprs) => {
+                        crate::compiler::ast::EnumVariantInit::Tuple(exprs.iter().map(|e| self.substitute_expr(e)).collect())
+                    }
+                    crate::compiler::ast::EnumVariantInit::Struct(fields) => {
+                        crate::compiler::ast::EnumVariantInit::Struct(
+                            fields.iter().map(|(n, e)| (n.clone(), self.substitute_expr(e))).collect()
+                        )
+                    }
+                };
+                ExprKind::EnumInit {
+                    enum_name: new_enum_name,
+                    variant_name: variant_name.clone(),
+                    generics: vec![], // Generics now encoded in enum_name
+                    payload: new_payload,
+                }
+            }
+            
+            ExprKind::Match { expr: subject, arms } => {
+                let new_subject = self.substitute_expr(subject);
+                let new_arms: Vec<(crate::compiler::ast::Pattern, Expr)> = arms.iter().map(|(pattern, arm_expr)| {
+                    (pattern.clone(), self.substitute_expr(arm_expr))
+                }).collect();
+                ExprKind::Match {
+                    expr: Box::new(new_subject),
+                    arms: new_arms,
+                }
             }
             
             // For now, handle commonly used kinds. Extend as needed.

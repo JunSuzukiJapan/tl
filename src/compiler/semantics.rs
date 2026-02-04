@@ -2069,9 +2069,9 @@ impl SemanticAnalyzer {
                                    if let Some(ty) = inference_map.get(g_name) {
                                        final_generics.push(ty.clone());
                                    } else {
-                                       // Default to Void/Unit if not inferred? Or Error?
-                                       // Fallback to Entity/Generic?
-                                       final_generics.push(Type::Struct(g_name.clone(), vec![]));
+                                       // Use Undefined placeholder for context-based inference
+                                       let id = self.get_next_undefined_id();
+                                       final_generics.push(Type::Undefined(id));
                                    }
                                }
 

@@ -1,4 +1,5 @@
 use crate::compiler::ast::*;
+use crate::compiler::ast_subst::TypeSubstitutor;
 
 use crate::compiler::shape_analysis::ShapeAnalyzer;
 use inkwell::builder::Builder;
@@ -975,10 +976,28 @@ impl<'ctx> CodeGenerator<'ctx> {
         for imp in impls {
             // Check if generic impl
             let _target_name = imp.target_type.get_base_name();
-            eprintln!("DEBUG: compile_impl_blocks {} generics: {:?}", _target_name, imp.generics);
+            eprintln!("DEBUG: compile_impl_blocks {} generics: {:?} target_type: {:?}", _target_name, imp.generics, imp.target_type);
+            
+            // Skip if formal generics are present
             if !imp.generics.is_empty() {
                 let target_name = imp.target_type.get_base_name();
                 self.generic_impls.entry(target_name).or_default().push(imp.clone());
+                continue;
+            }
+            
+            // Also skip if target type name contains unresolved generic parameter references
+            // (e.g., "Vec_Entry_K_V" where K, V are not yet bound to concrete types)
+            let has_unresolved_generics = {
+                let name = &_target_name;
+                // Common generic parameter names that indicate unresolved types
+                name.contains("_K_") || name.contains("_V_") || name.contains("_T_") ||
+                name.contains("_U_") || name.ends_with("_K") || name.ends_with("_V") ||
+                name.ends_with("_T") || name.ends_with("_U")
+            };
+            if has_unresolved_generics {
+                eprintln!("DEBUG: skipping impl with unresolved generics in target: {}", _target_name);
+                // Store as generic impl for later resolution
+                self.generic_impls.entry(_target_name.clone()).or_default().push(imp.clone());
                 continue;
             }
             

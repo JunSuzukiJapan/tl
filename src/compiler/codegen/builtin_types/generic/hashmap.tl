@@ -46,7 +46,7 @@ impl<K, V> HashMap<K, V> {
         let mut new_vec = Vec<Entry<K, V>>::with_capacity(new_cap);
         let mut i = 0;
         while i < new_cap {
-            new_vec.push(Entry::Empty);
+            new_vec.push(Entry<K, V>::Empty);
             i = i + 1;
         }
         
@@ -61,11 +61,11 @@ impl<K, V> HashMap<K, V> {
             // let's use `get` or direct index. `old_entries.get(j)` returns Option.
             if let Option::Some(e) = old_entries.get(j) {
                 match e {
-                    Entry::Occupied(k, v) => {
+                    Entry<K, V>::Occupied(k, v) => {
                         self.insert(k, v);
                     },
-                    Entry::Empty => {},
-                    Entry::Deleted => {}
+                    Entry<K, V>::Empty => {},
+                    Entry<K, V>::Deleted => {}
                 }
             }
             j = j + 1;
@@ -102,17 +102,17 @@ impl<K, V> HashMap<K, V> {
             let entry = self.entries.get(idx).unwrap(); // Should be safe
             
             match (entry) {
-                Entry::Empty => {
-                    self.entries[idx] = Entry::Occupied(key, value);
+                Entry<K, V>::Empty => {
+                    self.entries[idx] = Entry<K, V>::Occupied(key, value);
                     self.len = self.len + 1;
                     return;
                 },
-                Entry::Deleted => {
-                    self.entries[idx] = Entry::Occupied(key, value);
+                Entry<K, V>::Deleted => {
+                    self.entries[idx] = Entry<K, V>::Occupied(key, value);
                     self.len = self.len + 1;
                     return;
                 },
-                Entry::Occupied(k, unused) => {}
+                Entry<K, V>::Occupied(k, unused) => {}
             }
             
             idx = (idx + 1) % cap;
@@ -139,15 +139,15 @@ impl<K, V> HashMap<K, V> {
         loop {
             let entry = self.entries.get(idx).unwrap();
             match (entry) {
-                Entry::Empty => {
+                Entry<K, V>::Empty => {
                      return Option::None;
                 },
-                Entry::Occupied(k, v) => {
+                Entry<K, V>::Occupied(k, v) => {
                     if k == key {
                         return Option::Some(v);
                     }
                 },
-                Entry::Deleted => {
+                Entry<K, V>::Deleted => {
                     // Continue probing
                 }
             }
