@@ -1004,7 +1004,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if let ExprKind::FnCall(fn_name, _args) = &value.inner {
                     // Check if function returns Tensor
                     // We need to resolve name properly if it's imported (simplified check for now)
-                    let simple_name = fn_name.split("::").last().unwrap_or(fn_name);
+                    let simple_name = fn_name;
                     let lookup_name = if self.module.get_function(fn_name).is_some() {
                          fn_name
                     } else if self.module.get_function(simple_name).is_some() {
@@ -2966,11 +2966,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let base_ptr = base_ptr_opt.ok_or("Cannot field access on non-addressable lvalue")?;
                 
                 if let Type::Struct(name, _) = &base_ty {
-                    let struct_def = self.struct_defs.get(&name.split("::").last().unwrap().to_string()).ok_or("Struct def not found")?;
+                    let struct_def = self.struct_defs.get(name).ok_or("Struct def not found")?;
                     let idx = struct_def.fields.iter().position(|(n, _)| n == field).ok_or("Field not found")?;
                     let (_, field_ty) = &struct_def.fields[idx];
                     
-                    match self.struct_types.get(&name.split("::").last().unwrap().to_string()) {
+                    match self.struct_types.get(name) {
                         Some(t) => {
                              let st_llvm_ty = *t;
                              // FIX: In TL, structs are Handles (pointers). base_ptr is an alloca containing the struct pointer.
