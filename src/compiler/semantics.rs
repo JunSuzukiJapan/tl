@@ -567,16 +567,7 @@ impl SemanticAnalyzer {
                  }
             }
 
-            // 2. Resolve Name (Namespace)
-            // Current resolve_symbol_name takes String. It probably checks imports.
-            // If we have a path, we should use it?
-            // But resolve_symbol_name might be primitive?
-            // For now, assume path.join("::") matches what's in symbol table?
-            // The user wants "Type::Struct NOT holding namespace".
-            // So if we have "std::vec::Vec", we want to resolve to "Vec" (unique ID) or "std::vec::Vec" (canonical ID)?
-            // If "std::vec::Vec" IS the canonical ID in struct_defs, then we resolve to it.
-            // The existing code uses "Vec" for Vec.
-            // Let's assume resolve_symbol_name handles aliases.
+            // 2. Resolve Name via resolve_symbol_name which handles aliases
             
             // If path > 1, assume full path?
             // If path == 1, use resolve_symbol_name.
@@ -2881,11 +2872,6 @@ impl SemanticAnalyzer {
                     // panic! returns Never type - it never returns normally
                     return Ok(Type::Never);
                 }
-
-                // --- StdLib Phase 1 ---
-                // --- StdLib Static Methods ---
-                // Transferred to ExprKind::StaticMethodCall handling.
-                // The parser ensures that identifiers with "::" are parsed as StaticMethodCall.
 
                 // --- StdLib FFI (Legacy/Direct) ---
                 if name == "args_get" {
