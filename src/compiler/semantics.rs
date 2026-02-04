@@ -2025,10 +2025,12 @@ impl SemanticAnalyzer {
             }
             ("I64", "get_offset") => Some(Ok(Type::I64)),
             // System static methods
-            ("System", "memory_mb") => Some(Ok(Type::I64)),
+            ("System", "memory_mb") | ("System", "metal_pool_mb") | ("System", "metal_pool_count") 
+            | ("System", "metal_pool_bytes") => Some(Ok(Type::I64)),
             ("System", "scope_depth") => Some(Ok(Type::I64)),
             ("System", "time") => Some(Ok(Type::I64)),
             ("System", "refcount_count") => Some(Ok(Type::I64)),
+            ("System", "metal_sync") => Some(Ok(Type::Void)),
             ("System", "sleep") => {
                 if args.len() != 1 {
                     return Some(self.err(SemanticError::ArgumentCountMismatch {
@@ -5484,7 +5486,7 @@ impl SemanticAnalyzer {
                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
                         Some(Ok(any_tensor.clone()))
                     }
-                    "relu" | "gelu" | "silu" | "exp" | "log" | "sqrt" | "sin" | "cos" | "tanh" | "sigmoid" | "mean" | "max" | "min" | "detach" => {
+                    "relu" | "gelu" | "silu" | "exp" | "log" | "sqrt" | "sin" | "cos" | "tanh" | "sigmoid" | "mean" | "max" | "min" | "detach" | "enable_grad" => {
                         if !args.is_empty() {
                             return Some(self.err(SemanticError::ArgumentCountMismatch {
                                 name: format!("Tensor::{}", method), expected: 0, found: args.len()
@@ -5607,8 +5609,19 @@ impl SemanticAnalyzer {
                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
                         Some(Ok(Type::Void))
                     }
-                    "memory_mb" => Some(Ok(Type::I64)),
-                    "scope_depth" => Some(Ok(Type::I64)),
+                    "memory_mb" | "metal_pool_mb" | "metal_pool_count" | "metal_pool_bytes" 
+                    | "scope_depth" | "refcount_count" => Some(Ok(Type::I64)),
+                    "time" => Some(Ok(Type::F32)),
+                    "metal_sync" => Some(Ok(Type::Void)),
+                    "sleep" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "System::sleep".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        Some(Ok(Type::Void))
+                    }
                     _ => None
                 }
             }
