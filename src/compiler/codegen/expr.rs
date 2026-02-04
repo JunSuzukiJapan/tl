@@ -3926,15 +3926,23 @@ impl<'ctx> CodeGenerator<'ctx> {
              }
         }
         
-        // 2. Generic Resolver Fallback (Removed)
-        // Resolves to runtime function: tl_{type}_{generics}_{method}
-
-        
-        // Remove Type::Map handling as it doesn't exist.
-        
-
-        
-
+        // 2. Check self.static_methods (registered via register_all_methods)
+        // Copy the method to avoid borrow conflict with self.compile_expr
+        let method_opt = self.static_methods.get(type_name).and_then(|m| m.get(method).copied());
+        if let Some(method_fn) = method_opt {
+            match method_fn {
+                StaticMethod::Evaluated(func) => {
+                    let mut compiled_args = Vec::new();
+                    for arg in args {
+                        compiled_args.push(self.compile_expr(arg)?);
+                    }
+                    return func(self, compiled_args, Some(target_type));
+                }
+                StaticMethod::Unevaluated(func) => {
+                    return func(self, args, Some(target_type));
+                }
+            }
+        }
 
         // 3. User Generic Fallback (Monomorphize)
         let generics = match target_type {

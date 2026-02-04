@@ -563,10 +563,17 @@ impl SemanticAnalyzer {
             // Check for primitives FIRST generic args should be empty ideally, but even if not, we force primitive?
             // Usually primitives don't have generic args.
             match name.as_str() {
-                "i64" => return Type::I64,
+                "i8" => return Type::I8,
+                "i16" => return Type::I16,
                 "i32" => return Type::I32,
-                "f64" => return Type::F64,
+                "i64" => return Type::I64,
+                "u8" => return Type::U8,
+                "u16" => return Type::U16,
+                "u32" => return Type::U32,
+                "u64" => return Type::U64,
+                "usize" => return Type::Usize,
                 "f32" => return Type::F32,
+                "f64" => return Type::F64,
                 "bool" => return Type::Bool,
                 "string" | "String" => return Type::String("String".to_string()),
                 "char" | "Char" => return Type::Char("Char".to_string()),
@@ -592,10 +599,17 @@ impl SemanticAnalyzer {
             // 1. Primitive Check (if length 1)
             if path.len() == 1 {
                  match path[0].as_str() {
-                    "i64" => return Type::I64,
+                    "i8" => return Type::I8,
+                    "i16" => return Type::I16,
                     "i32" => return Type::I32,
-                    "f64" => return Type::F64,
+                    "i64" => return Type::I64,
+                    "u8" => return Type::U8,
+                    "u16" => return Type::U16,
+                    "u32" => return Type::U32,
+                    "u64" => return Type::U64,
+                    "usize" => return Type::Usize,
                     "f32" => return Type::F32,
+                    "f64" => return Type::F64,
                     "bool" => return Type::Bool,
                     "string" | "String" => return Type::String("String".to_string()),
                     "char" | "Char" => return Type::Char("Char".to_string()),
@@ -2024,9 +2038,31 @@ impl SemanticAnalyzer {
                 }
             }
             ("I64", "get_offset") => Some(Ok(Type::I64)),
+            // Tensor static methods for llama3
+            ("Tensor", "new_causal_mask") => {
+                if args.len() != 1 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Tensor::new_causal_mask".into(),
+                        expected: 1,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::Tensor(Box::new(Type::F32), 2)))
+            }
+            ("Tensor", "rope_new_cos") | ("Tensor", "rope_new_sin") => {
+                // rope_new_cos(dim, max_seq_len, base) -> Tensor<f32, 2>
+                if args.len() != 3 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: format!("Tensor::{}", method),
+                        expected: 3,
+                        found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::Tensor(Box::new(Type::F32), 2)))
+            }
             // System static methods
             ("System", "memory_mb") | ("System", "metal_pool_mb") | ("System", "metal_pool_count") 
-            | ("System", "metal_pool_bytes") => Some(Ok(Type::I64)),
+            | ("System", "metal_pool_bytes") | ("System", "pool_count") => Some(Ok(Type::I64)),
             ("System", "scope_depth") => Some(Ok(Type::I64)),
             ("System", "time") => Some(Ok(Type::I64)),
             ("System", "refcount_count") => Some(Ok(Type::I64)),
@@ -5038,10 +5074,7 @@ impl SemanticAnalyzer {
                          return Ok(ret_ty.clone());
                      }
 
-                // Temporary: Fallback to old check if not found (e.g. Vec)
-                if type_name == "Tensor" && method_name.as_str() != "zeros" && method_name.as_str() != "ones" && method_name.as_str() != "randn" {
-                     return self.err(SemanticError::MethodNotFound { type_name, method_name: method_name.clone() }, Some(expr.span.clone()));
-                }
+                // NOTE: Removed hardcoded Tensor filter - check_builtin_static_method handles all static methods
                 // Check if it is a user-defined static method in impl block
                 // Check if it is a user-defined static method in impl block
                 // 1. Lookup method (immutable borrow)
@@ -5352,7 +5385,7 @@ impl SemanticAnalyzer {
         type_name: &str,
         method: &str,
         args: &mut [crate::compiler::ast::Expr],
-        _obj_type: &Type,
+        obj_type: &Type,
     ) -> Option<Result<Type, TlError>> {
         match type_name {
             "String" => {
@@ -5413,7 +5446,7 @@ impl SemanticAnalyzer {
                 }
             }
             "Tensor" => {
-                let any_tensor = Type::Tensor(Box::new(Type::F32), 0);
+                let any_tensor = obj_type.clone(); // Use actual tensor type (e.g., Tensor<i8, 2>)
                 match method {
                     // Autograd
                     "backward" => {
@@ -5515,6 +5548,138 @@ impl SemanticAnalyzer {
                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
                         Some(Ok(any_tensor.clone()))
                     }
+                    // llama3/chatbot methods - single arg returning tensor
+                    "scale" | "clone" | "add" | "mul" | "add_4d" | "matmul_4d" | "cat_4d" => {
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    // matmul_quantized: Tensor<f32> * Tensor<i8> -> Tensor<f32>
+                    "matmul_quantized" => {
+                        if args.len() != 1 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::matmul_quantized".into(), expected: 1, found: args.len()
+                            }, None));
+                        }
+                        if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
+                        // Returns F32 tensor with same rank as input (rank 0 = dynamic)
+                        Some(Ok(Type::Tensor(Box::new(Type::F32), 2)))
+                    }
+                    // rms_norm: tensor.rms_norm(weights, epsilon)
+                    "rms_norm" => {
+                        if args.len() != 2 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::rms_norm".into(), expected: 2, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    // sample: tensor.sample(temperature, top_p) -> next token tensor
+                    "sample" => {
+                        if args.len() != 2 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::sample".into(), expected: 2, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(Type::Tensor(Box::new(Type::F32), 1)))
+                    }
+                    // repeat_interleave: tensor.repeat_interleave(n, dim)
+                    "repeat_interleave" => {
+                        if args.len() != 2 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::repeat_interleave".into(), expected: 2, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    // apply_rope: tensor.apply_rope(cos, sin)
+                    "apply_rope" => {
+                        if args.len() != 2 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::apply_rope".into(), expected: 2, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    // narrow: tensor.narrow(dim, start, length)
+                    "narrow" => {
+                        if args.len() != 3 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::narrow".into(), expected: 3, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    // item_i64: tensor.item_i64() -> i64
+                    "item_i64" => {
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::item_i64".into(), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        Some(Ok(Type::I64))
+                    }
+                    // cat_i64: tensor.cat_i64(other, dim)
+                    "cat_i64" => {
+                        if args.len() != 2 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::cat_i64".into(), expected: 2, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    // Shape/length queries
+                    "len" | "dim" | "ndim" => {
+                        if !args.is_empty() {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: format!("Tensor::{}", method), expected: 0, found: args.len()
+                            }, None));
+                        }
+                        Some(Ok(Type::I64))
+                    }
+                    // narrow: tensor.narrow(dim, start, len)
+                    "narrow" => {
+                        if args.len() != 3 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::narrow".into(), expected: 3, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
+                    // slice: tensor.slice(dim, start, end, step)
+                    "slice" => {
+                        if args.len() != 4 {
+                            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                                name: "Tensor::slice".into(), expected: 4, found: args.len()
+                            }, None));
+                        }
+                        for arg in args.iter_mut() {
+                            if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+                        }
+                        Some(Ok(any_tensor.clone()))
+                    }
                     _ => None // Others handled by TypeManager
                 }
             }
@@ -5568,7 +5733,7 @@ impl SemanticAnalyzer {
                             }, None));
                         }
                         if let Err(e) = self.check_expr(&mut args[0]) { return Some(Err(e)); }
-                        Some(Ok(Type::Tensor(Box::new(Type::Struct("i8".to_string(), vec![])), 2)))
+                        Some(Ok(Type::Tensor(Box::new(Type::I8), 2)))
                     }
                     _ => None
                 }
@@ -5731,9 +5896,12 @@ impl SemanticAnalyzer {
         match (t1, t2) {
             (Type::Ref(inner1), Type::Ref(inner2)) => self.are_types_compatible(inner1, inner2), 
             (Type::Tensor(i1, r1), Type::Tensor(i2, r2)) => {
-                // If either rank is 0, we treat it as dynamic/compatible rank
-                let ranks_match = *r1 == 0 || *r2 == 0 || r1 == r2;
-                ranks_match && self.are_types_compatible(i1, i2)
+                // If either rank is 0, we treat it as dynamic/compatible rank AND inner type
+                // This allows Tensor<F32, 0> (from TypeManager) to match Tensor<I8, 2> (quantized)
+                if *r1 == 0 || *r2 == 0 {
+                    return true; // Dynamic tensor matches any tensor
+                }
+                r1 == r2 && self.are_types_compatible(i1, i2)
             }
             (Type::Tensor(inner, _rank), primitive)
                 if self.are_types_compatible(inner, primitive) =>
