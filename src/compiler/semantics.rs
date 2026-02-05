@@ -5474,6 +5474,35 @@ impl SemanticAnalyzer {
         args: &mut [crate::compiler::ast::Expr],
         obj_type: &Type,
     ) -> Option<Result<Type, TlError>> {
+        // === Phase 3: TypeManager lookup first ===
+        // Clone signatures upfront to avoid borrow conflict with self.check_expr
+        let sigs_cloned: Option<Vec<(Vec<Type>, Type)>> = self.type_manager.get_type(type_name)
+            .and_then(|ti| {
+                let sigs = ti.get_instance_signatures(method);
+                if sigs.is_empty() { None }
+                else { Some(sigs.into_iter().map(|(a, r)| (a.clone(), r.clone())).collect()) }
+            });
+        
+        if let Some(sigs) = sigs_cloned {
+            // Check args first
+            for arg in args.iter_mut() {
+                if let Err(e) = self.check_expr(arg) { return Some(Err(e)); }
+            }
+            // Find matching signature by arg count
+            for (sig_args, ret_type) in &sigs {
+                if sig_args.len() == args.len() {
+                    return Some(Ok(ret_type.clone()));
+                }
+            }
+            // No matching overload found
+            return Some(self.err(SemanticError::ArgumentCountMismatch {
+                name: format!("{}::{}", type_name, method),
+                expected: sigs[0].0.len(),
+                found: args.len(),
+            }, None));
+        }
+        
+        // === Fallback: Hardcoded checks (legacy, to be removed progressively) ===
         match type_name {
             "String" => {
                 match method {
