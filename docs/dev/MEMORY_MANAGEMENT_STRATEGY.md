@@ -228,3 +228,66 @@ ZSTを安全かつ低コストに扱うため、以下の戦略を採用しま�
 -   **パフォーマンス**: 割り当てコストも追跡コストもゼロです。
 -   **安全性**: 有効なヒープポインタがNULLになることはありません。
 -   **単純性**: 「グローバルZSTシングルトン」や「1バイト割り当て」のような複雑な仕組みをランタイムに導入する必要がありません。
+
+---
+
+## [English] Autograd Memory Leak Fix (V3.3)
+
+### 1. The Problem
+In autograd-heavy workloads (e.g., N-Queens gradient descent), memory usage grew linearly with each training iteration:
+- **Symptom**: 1237 MB → 2168 MB over a single run (+930 MB leak)
+- **Root Cause**: `emit_retain()` for Tensor types was calling `tl_tensor_acquire()` excessively (31 times vs 3 times in v0.2.1)
+
+### 2. Analysis (v0.2.1 vs rebuild-from-scratch)
+Comparison of LLVM IR revealed the key difference:
+
+| Function Call | v0.2.1 | Current (before fix) |
+|---------------|--------|----------------------|
+| `tl_tensor_acquire` | **3** | **31** (10x increase) |
+
+The `emit_retain()` function was added after v0.2.1 to fix UAF (Use-After-Free) bugs in struct returns. However, applying it to Tensors caused **over-retention**: tensors held extra references that prevented the computational graph from being freed.
+
+### 3. The Solution
+1. **Disable Tensor Acquire in `emit_retain()`**: Tensor types no longer call `tl_tensor_acquire()`. Their lifecycle is already managed by the runtime's memory manager.
+2. **Automatic `tl_clear_grads()` in Loops**: The compiler inserts `tl_clear_grads()` at the end of each `for` loop iteration (in the `for_latch` block) to clear gradient storage automatically.
+
+### 4. Results
+| Metric | Before | After |
+|--------|--------|-------|
+| N-Queens Memory | 1237→2168 MB (+930 MB) | **39 MB stable (Zero Leak)** |
+| Test Pass Rate | 83.4% | **Maintained** |
+
+### 5. Key Insight
+**Tensors have different ownership semantics than Structs.** While structs benefit from `emit_retain()` to prevent UAF, tensors are already managed by the runtime's centralized memory manager (`TensorPool`, `MemoryManager`). Applying struct-like retain logic to tensors creates duplicate reference tracking that interferes with Candle's internal computational graph cleanup.
+
+---
+
+## [Japanese] Autograd メモリリーク修正 (V3.3)
+
+### 1. 問題点
+Autograd を多用するワークロード（例: N-Queens の勾配降下法）において、訓練イテレーションごとにメモリ使用量が線形に増加していました：
+- **症状**: 1回の実行で 1237 MB → 2168 MB（+930 MB リーク）
+- **根本原因**: テンソル型に対する `emit_retain()` が `tl_tensor_acquire()` を過剰に呼び出していた（v0.2.1 の 3回 に対し 31回）
+
+### 2. 分析 (v0.2.1 vs rebuild-from-scratch)
+LLVM IR の比較により、決定的な差異が判明しました：
+
+| 関数呼び出し | v0.2.1 | 修正前 (現在) |
+|--------------|--------|--------------|
+| `tl_tensor_acquire` | **3** | **31** (10倍増) |
+
+`emit_retain()` 関数は、構造体の返却時における UAF (Use-After-Free) バグを修正するために v0.2.1 以降に追加されました。しかし、これをテンソルにも適用したことで **過剰な参照保持** が発生し、計算グラフの解放が妨げられていました。
+
+### 3. 解決策
+1. **`emit_retain()` でのテンソル Acquire を無効化**: テンソル型は `tl_tensor_acquire()` を呼び出さなくなりました。ライフサイクルはランタイムのメモリマネージャーで既に管理されています。
+2. **ループ内での自動 `tl_clear_grads()`**: コンパイラは各 `for` ループイテレーションの終了時（`for_latch` ブロック）に `tl_clear_grads()` を自動挿入し、勾配ストレージを自動的にクリアします。
+
+### 4. 結果
+| 指標 | 修正前 | 修正後 |
+|------|--------|--------|
+| N-Queens メモリ | 1237→2168 MB (+930 MB) | **39 MB 安定（リークゼロ）** |
+| テスト成功率 | 83.4% | **維持** |
+
+### 5. 重要な知見
+**テンソルと構造体では所有権セマンティクスが異なります。** 構造体は UAF を防ぐために `emit_retain()` の恩恵を受けますが、テンソルはランタイムの集約されたメモリマネージャー（`TensorPool`、`MemoryManager`）によって既に管理されています。構造体と同様の retain ロジックをテンソルに適用すると、重複した参照追跡が発生し、Candle 内部の計算グラフのクリーンアップを妨害します。
+
