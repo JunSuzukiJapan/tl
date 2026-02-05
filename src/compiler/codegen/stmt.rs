@@ -3037,6 +3037,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let idx = struct_def.fields.iter().position(|(n, _)| n == field).ok_or("Field not found")?;
                     let (_, field_ty) = &struct_def.fields[idx];
                     
+                    // Apply type substitution if struct has generics
+                    let field_ty = if !generics.is_empty() && !struct_def.generics.is_empty() {
+                        let mut subst = std::collections::HashMap::new();
+                        for (i, param) in struct_def.generics.iter().enumerate() {
+                            if i < generics.len() {
+                                subst.insert(param.clone(), generics[i].clone());
+                            }
+                        }
+                        self.substitute_type(field_ty, &subst)
+                    } else {
+                        field_ty.clone()
+                    };
+                    
                     // For LLVM types: try base name first, then mangled name if not found
                     // (monomorphized types are registered with mangled names)
                     let llvm_ty_opt = self.struct_types.get(name).or_else(|| {

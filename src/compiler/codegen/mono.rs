@@ -593,7 +593,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
     
     /// Substitute type parameters in a type using the given substitution map.
-    fn substitute_type(&self, ty: &Type, subst: &HashMap<String, Type>) -> Type {
+    pub fn substitute_type(&self, ty: &Type, subst: &HashMap<String, Type>) -> Type {
         match ty {
             Type::Struct(name, args) => {
                 // Check if this is a type parameter

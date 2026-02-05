@@ -4300,9 +4300,19 @@ impl<'ctx> CodeGenerator<'ctx> {
              // Simple name lookup (as done in compile_struct_init)
              let simple_lookup_name = mangled_name.clone();
 
-             let struct_type = self.struct_types.get(&simple_lookup_name)
-                 .or_else(|| self.enum_types.get(&simple_lookup_name))
-                 .ok_or_else(|| format!("Struct type {} not found for SRET allocation", simple_lookup_name))?;
+             // Try to get existing type, or monomorphize on-demand
+             let struct_type = if let Some(st) = self.struct_types.get(&simple_lookup_name)
+                 .or_else(|| self.enum_types.get(&simple_lookup_name)) {
+                 *st
+             } else {
+                 // Try on-demand monomorphization
+                 if !generics.is_empty() {
+                     self.monomorphize_struct(struct_name, generics)?;
+                 }
+                 *self.struct_types.get(&simple_lookup_name)
+                     .or_else(|| self.enum_types.get(&simple_lookup_name))
+                     .ok_or_else(|| format!("Struct type {} not found for SRET allocation", simple_lookup_name))?
+             };
              
              let size = struct_type.size_of().ok_or("Cannot determine size for SRET struct")?;
              
