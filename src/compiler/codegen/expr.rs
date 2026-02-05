@@ -1072,10 +1072,81 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // If the struct is Generic, we must substitute
                  Type::Struct(name.clone(), inner_args.iter().map(|t| self.substitute_type_generic(t, generics, args)).collect())
             }
-             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.substitute_type_generic(inner, generics, args)), *rank),
+            Type::Enum(name, inner_args) => {
+                 if let Some(idx) = generics.iter().position(|g| g == name) {
+                     return args[idx].clone();
+                 }
+                 Type::Enum(name.clone(), inner_args.iter().map(|t| self.substitute_type_generic(t, generics, args)).collect())
+            }
+            Type::Path(segments, inner_args) => {
+                 // Check if single-segment path is a type parameter
+                 if segments.len() == 1 {
+                     if let Some(idx) = generics.iter().position(|g| g == &segments[0]) {
+                         return args[idx].clone();
+                     }
+                 }
+                 Type::Path(segments.clone(), inner_args.iter().map(|t| self.substitute_type_generic(t, generics, args)).collect())
+            }
+            Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.substitute_type_generic(inner, generics, args)), *rank),
+            Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.substitute_type_generic(t, generics, args)).collect()),
+            Type::Ptr(inner) => Type::Ptr(Box::new(self.substitute_type_generic(inner, generics, args))),
 
              _ => ty.clone(),
         }
+    }
+
+    /// Parse type arguments from underscore-separated parts (e.g., ["Entry", "i64", "i64"])
+    /// Handles nested generics by checking if a part is a known generic type
+    fn parse_mangled_type_args(&self, parts: &[&str]) -> Vec<Type> {
+        let mut result = Vec::new();
+        let mut i = 0;
+        while i < parts.len() {
+            let s = parts[i];
+            // Try primitive types first
+            let ty = match s.to_lowercase().as_str() {
+                "i64" => Type::I64,
+                "i32" => Type::I32,
+                "f32" => Type::F32,
+                "f64" => Type::F64,
+                "bool" => Type::Bool,
+                "u8" => Type::U8,
+                "u16" => Type::U16,
+                "u32" => Type::U32,
+                "usize" => Type::Usize,
+                "string" => Type::String("String".to_string()),
+                "" => { i += 1; continue; }
+                _ => {
+                    // Check if this is a known generic enum (like Entry)
+                    if let Some(enum_def) = self.enum_defs.get(s) {
+                        let arity = enum_def.generics.len();
+                        if arity > 0 && i + arity < parts.len() {
+                            // Consume next 'arity' parts as type arguments
+                            let nested_args = self.parse_mangled_type_args(&parts[i + 1..i + 1 + arity]);
+                            i += arity;
+                            Type::Enum(s.to_string(), nested_args)
+                        } else {
+                            Type::Enum(s.to_string(), vec![])
+                        }
+                    // Check if this is a known generic struct
+                    } else if let Some(struct_def) = self.struct_defs.get(s) {
+                        let arity = struct_def.generics.len();
+                        if arity > 0 && i + arity < parts.len() {
+                            let nested_args = self.parse_mangled_type_args(&parts[i + 1..i + 1 + arity]);
+                            i += arity;
+                            Type::Struct(s.to_string(), nested_args)
+                        } else {
+                            Type::Struct(s.to_string(), vec![])
+                        }
+                    } else {
+                        // Unknown type - return as struct with no args
+                        Type::Struct(s.to_string(), vec![])
+                    }
+                }
+            };
+            result.push(ty);
+            i += 1;
+        }
+        result
     }
 
     pub(crate) fn register_all_methods(&mut self) {
@@ -2586,13 +2657,22 @@ impl<'ctx> CodeGenerator<'ctx> {
             ExprKind::StaticMethodCall(type_ty, method_name, args) => {
                 if method_name == "sizeof" {
                      // For Enum types, we need to get the actual data struct size, not pointer size
-                     if let Type::Enum(enum_name, _) = type_ty {
+                     if let Type::Enum(enum_name, generics) = type_ty {
+                         // Try direct lookup first, then mangled name if generics present
+                         let lookup_name = if generics.is_empty() {
+                             enum_name.clone()
+                         } else if self.enum_types.contains_key(enum_name) {
+                             enum_name.clone()
+                         } else {
+                             self.mangle_type_name(enum_name, generics)
+                         };
+                         
                          // Look up the actual LLVM struct type from enum_types
-                         if let Some(enum_struct_type) = self.enum_types.get(enum_name) {
-                             let size_val = enum_struct_type.size_of().ok_or(format!("Enum type {} has no size", enum_name))?;
+                         if let Some(enum_struct_type) = self.enum_types.get(&lookup_name) {
+                             let size_val = enum_struct_type.size_of().ok_or(format!("Enum type {} has no size", lookup_name))?;
                              return Ok((size_val.into(), Type::I64));
                          } else {
-                             return Err(format!("Enum type {} not found in enum_types for sizeof", enum_name));
+                             return Err(format!("Enum type {} not found in enum_types for sizeof", lookup_name));
                          }
                      }
                      
@@ -5807,24 +5887,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             (base, parsed_generics)
         } else if type_name.contains('_') {
             // Try underscore format: "Result_i32_i32" -> ("Result", [I32, I32])
+            // Also handle nested generics like "Vec_Entry_i64_i64" -> ("Vec", [Entry<i64, i64>])
             let parts: Vec<&str> = type_name.split('_').collect();
             if !parts.is_empty() {
                 let base = parts[0].to_string();
-                let parsed_generics: Vec<Type> = parts[1..].iter()
-                    .filter_map(|s| {
-                        match s.to_lowercase().as_str() {
-                            "i64" => Some(Type::I64),
-                            "i32" => Some(Type::I32),
-                            "f32" => Some(Type::F32),
-                            "f64" => Some(Type::F64),
-                            "bool" => Some(Type::Bool),
-                            "u8" => Some(Type::U8),
-                            "string" => Some(Type::String("String".to_string())),
-                            "" => None,
-                            _ => Some(Type::Struct(s.to_string(), vec![])),
-                        }
-                    })
-                    .collect();
+                let parsed_generics = self.parse_mangled_type_args(&parts[1..]);
                 (base, parsed_generics)
             } else {
                 (type_name.clone(), vec![])
@@ -5834,14 +5901,11 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         let generic_func = if self.generic_impls.contains_key(&base_type_name) {
-             // Use inferred generics from mangled name, or from obj_ty
-             let generics = if !inferred_generics.is_empty() {
-                 inferred_generics.clone()
-             } else {
-                 match &obj_ty {
-                     Type::Struct(_, args) | Type::Enum(_, args) | Type::Path(_, args) => args.clone(),
-                     _ => vec![],
-                 }
+             // Prioritize obj_ty for type args - it has complete type information
+             // String parser (inferred_generics) may lose nested generic info (e.g. Entry<K,V> -> Entry)
+             let generics = match &obj_ty {
+                 Type::Struct(_, args) | Type::Enum(_, args) | Type::Path(_, args) if !args.is_empty() => args.clone(),
+                 _ => if !inferred_generics.is_empty() { inferred_generics.clone() } else { vec![] },
              };
 
              // Try monomorphize

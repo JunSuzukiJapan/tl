@@ -184,13 +184,15 @@ impl Monomorphizer {
                      if self.generic_structs.contains_key(name) {
                          let concrete_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
                          let mangled = self.request_struct_instantiation(name, concrete_args);
-                         // Preserve original type kind
+                         // Return mangled name with empty args (original behavior)
+                         // Codegen uses reverse_struct_instances to recover type args when needed
                          return Type::Struct(mangled, vec![]);
                      }
                      // Check enum
                      if self.generic_enums.contains_key(name) {
                           let concrete_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
                           let mangled = self.request_enum_instantiation(name, concrete_args);
+                          // Return mangled name with empty args
                           return Type::Enum(mangled, vec![]);
                      }
                  }

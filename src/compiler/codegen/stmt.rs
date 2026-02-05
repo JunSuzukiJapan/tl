@@ -2604,7 +2604,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
 
                 // Check if it is an Enum
-                if let Some(enum_def) = self.enum_defs.get(&mangled_name).cloned() {
+                if let Some(mut enum_def) = self.enum_defs.get(&mangled_name).cloned() {
+                    // If still generic, monomorphize with default type (same as Type::Enum branch)
+                    if !enum_def.generics.is_empty() {
+                        let default_generics = vec![Type::I64; enum_def.generics.len()];
+                        let default_mangled = self.mangle_type_name(name, &default_generics);
+                        if let Some(specialized) = self.enum_defs.get(&default_mangled) {
+                            enum_def = specialized.clone();
+                        } else {
+                            self.monomorphize_enum(name, &default_generics).map_err(|e| e.to_string())?;
+                            enum_def = self.enum_defs.get(&default_mangled)
+                                .ok_or(format!("Failed to monomorphize {} -> {}", name, default_mangled))?
+                                .clone();
+                        }
+                    }
                     return self.emit_enum_deep_clone(val, &enum_def);
                 }
                 

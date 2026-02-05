@@ -11,6 +11,7 @@ impl TypeSubstitutor {
     }
 
     pub fn substitute_type(&self, ty: &Type) -> Type {
+        // eprintln!("[DEBUG] substitute_type: {:?}", ty); // Verbose - uncomment if needed
         match ty {
             // UserDefined removed
 

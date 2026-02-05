@@ -260,7 +260,7 @@ impl<'ctx> CodeGenerator<'ctx> {
              match &mut variant.kind {
                  crate::compiler::ast::VariantKind::Unit => {},
                  crate::compiler::ast::VariantKind::Tuple(types) => {
-                     for t in types {
+                     for t in types.iter_mut() {
                          *t = substitutor.substitute_type(t);
                      }
                  }
@@ -357,9 +357,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         if type_args.is_empty() {
             base_name.to_string()
         } else {
+            // Use underscore notation for consistency with frontend monomorphizer
             let args_str: Vec<String> = type_args.iter().map(|t| self.type_to_suffix(t)).collect();
-            let res = format!("{}<{}>", base_name, args_str.join(", "));
-            res
+            format!("{}_{}", base_name, args_str.join("_"))
         }
     }
 
@@ -391,10 +391,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
 
-            Type::Tensor(inner, rank) => format!("Tensor<{}, {}>", self.type_to_suffix(inner), rank),
+            Type::Tensor(inner, rank) => format!("Tensor_{}_{}", self.type_to_suffix(inner), rank),
             Type::Tuple(types) => {
                 let parts: Vec<String> = types.iter().map(|t| self.type_to_suffix(t)).collect();
-                format!("({})", parts.join(", "))
+                format!("Tuple_{}", parts.join("_"))
             }
             _ => "unknown".to_string(),
         }
@@ -596,7 +596,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                         return replacement.clone();
                     }
                 }
-                // Recursively substitute in args
                 let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
                 
                 // Fix: Check if this is actually an Enum (exact match only)
@@ -641,11 +640,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if segments.len() == 1 {
                     let name = &segments[0];
                     let normalized_args: Vec<Type> = args.iter().map(|a| self.normalize_type(a)).collect();
-                    if self.enum_defs.contains_key(name) {
-                        Type::Enum(name.clone(), normalized_args)
-                    } else {
-                        Type::Struct(name.clone(), normalized_args)
+                    // Check if it's an enum and generic counts match
+                    if let Some(enum_def) = self.enum_defs.get(name) {
+                        if enum_def.generics.len() == normalized_args.len() || enum_def.generics.is_empty() {
+                            return Type::Enum(name.clone(), normalized_args);
+                        }
+                        // Generic count mismatch - return as-is (don't convert)
+                        return ty.clone();
                     }
+                    // Not an enum, treat as Struct
+                    Type::Struct(name.clone(), normalized_args)
                 } else {
                     let normalized_args: Vec<Type> = args.iter().map(|a| self.normalize_type(a)).collect();
                     Type::Path(segments.clone(), normalized_args)
@@ -653,12 +657,14 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             Type::Struct(name, args) => {
                 let normalized_args: Vec<Type> = args.iter().map(|a| self.normalize_type(a)).collect();
-                // Also check if this struct is actually an enum
-                if self.enum_defs.contains_key(name) {
-                    Type::Enum(name.clone(), normalized_args)
-                } else {
-                    Type::Struct(name.clone(), normalized_args)
+                // Only convert Struct to Enum if it's actually an enum AND generic counts match
+                if let Some(enum_def) = self.enum_defs.get(name) {
+                    if enum_def.generics.len() == normalized_args.len() || enum_def.generics.is_empty() {
+                        return Type::Enum(name.clone(), normalized_args);
+                    }
+                    // Generic count mismatch - keep as Struct
                 }
+                Type::Struct(name.clone(), normalized_args)
             }
             Type::Enum(name, args) => {
                 let normalized_args: Vec<Type> = args.iter().map(|a| self.normalize_type(a)).collect();
