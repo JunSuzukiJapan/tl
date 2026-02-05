@@ -26,7 +26,7 @@ use std::cell::RefCell;
 use std::ffi::{c_float, c_void};
 use std::io::Write;
 use std::slice;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 // Opaque struct to represent a Tensor in C-ABI (LLVM IR)
 // In reality, this will be a raw pointer to a Heap-allocated Tensor.
@@ -113,10 +113,8 @@ fn record_tensor_alloc(ctx: &str, ptr: *mut OpaqueTensor, tensor: &Tensor, poole
 }
 
 // Global VarMap for tracking all trainable parameters
-lazy_static::lazy_static! {
-    static ref GLOBAL_VAR_MAP: Mutex<candle_nn::VarMap> = Mutex::new(candle_nn::VarMap::new());
-    static ref GLOBAL_PARAM_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-}
+static GLOBAL_VAR_MAP: LazyLock<Mutex<candle_nn::VarMap>> = LazyLock::new(|| Mutex::new(candle_nn::VarMap::new()));
+static GLOBAL_PARAM_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// OpaqueTensor wraps a Candle Tensor and optionally a Var for gradient tracking
 /// The Var is stored as Arc to allow sharing across clones while keeping the same variable alive

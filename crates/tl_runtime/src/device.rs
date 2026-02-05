@@ -1,8 +1,7 @@
 use crate::error::RuntimeError;
 use candle_core::Device;
-use lazy_static::lazy_static;
 use log::info;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -178,10 +177,8 @@ fn check_metal_health(device: &Device) -> bool {
 }
 
 // Global Singleton for Device Manager
-lazy_static! {
-    pub static ref DEVICE_MANAGER: Arc<Mutex<DeviceManager>> =
-        Arc::new(Mutex::new(DeviceManager::new()));
-}
+pub static DEVICE_MANAGER: LazyLock<Arc<Mutex<DeviceManager>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(DeviceManager::new())));
 
 // Atomic generation counter exposed for fast checks
 pub static GLOBAL_DEVICE_GENERATION: std::sync::atomic::AtomicUsize =

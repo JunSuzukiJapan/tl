@@ -130,9 +130,7 @@ impl TensorPool {
 }
 
 // Global tensor pool instance
-lazy_static::lazy_static! {
-    pub static ref TENSOR_POOL: std::sync::Mutex<TensorPool> = std::sync::Mutex::new(TensorPool::new());
-}
+pub static TENSOR_POOL: std::sync::LazyLock<std::sync::Mutex<TensorPool>> = std::sync::LazyLock::new(|| std::sync::Mutex::new(TensorPool::new()));
 
 /// Type of allocation being tracked
 #[derive(Debug, Clone, Copy)]
@@ -604,9 +602,7 @@ impl MemoryManager {
 }
 
 // Global memory manager instance
-lazy_static::lazy_static! {
-    static ref MEMORY_MANAGER: std::sync::Mutex<MemoryManager> = std::sync::Mutex::new(MemoryManager::new());
-}
+static MEMORY_MANAGER: std::sync::LazyLock<std::sync::Mutex<MemoryManager>> = std::sync::LazyLock::new(|| std::sync::Mutex::new(MemoryManager::new()));
 
 // C-ABI functions for LLVM codegen
 

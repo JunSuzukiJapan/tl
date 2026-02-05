@@ -564,9 +564,7 @@ pub extern "C" fn tl_env_set(key: *mut crate::StringStruct, value: *mut crate::S
 
 // --- System ---
 
-lazy_static::lazy_static! {
-    static ref START_TIME: std::time::Instant = std::time::Instant::now();
-}
+static START_TIME: std::sync::LazyLock<std::time::Instant> = std::sync::LazyLock::new(|| std::time::Instant::now());
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_system_time() -> f32 {

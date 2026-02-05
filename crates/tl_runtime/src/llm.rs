@@ -374,13 +374,11 @@ pub extern "C" fn tl_tensor_rope_new_sin(dim: i64, len: i64, theta: f32) -> *mut
 // --- KV Cache Support ---
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
-lazy_static::lazy_static! {
-    /// Global KVCache Manager - holds all active KVCache instances
-    /// When the manager is cleared (e.g., at program exit), all caches are freed
-    static ref KV_CACHE_MANAGER: Mutex<KVCacheManager> = Mutex::new(KVCacheManager::new());
-}
+/// Global KVCache Manager - holds all active KVCache instances
+/// When the manager is cleared (e.g., at program exit), all caches are freed
+static KV_CACHE_MANAGER: LazyLock<Mutex<KVCacheManager>> = LazyLock::new(|| Mutex::new(KVCacheManager::new()));
 
 pub struct KVCache {
     // Layer -> (K, V)

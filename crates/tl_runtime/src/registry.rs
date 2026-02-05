@@ -1,14 +1,11 @@
 use crate::context::{TensorContext, TensorValue};
 use crate::OpaqueTensor;
-use lazy_static::lazy_static;
 use std::ffi::CStr;
 use std::os::raw::c_char;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
-lazy_static! {
-    // Global tensor context to store tensors created by JIT execution
-    pub static ref GLOBAL_CONTEXT: Mutex<TensorContext> = Mutex::new(TensorContext::new());
-}
+// Global tensor context to store tensors created by JIT execution
+pub static GLOBAL_CONTEXT: LazyLock<Mutex<TensorContext>> = LazyLock::new(|| Mutex::new(TensorContext::new()));
 
 /// Reset the global context (call before running a new program)
 pub fn reset_global_context() {

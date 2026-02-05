@@ -3,12 +3,10 @@
 
 use std::ffi::CString;
 use std::os::raw::c_char;
-use std::sync::RwLock;
+use std::sync::{LazyLock, RwLock};
 
-lazy_static::lazy_static! {
-    /// グローバル引数ストレージ
-    static ref ARGS: RwLock<Vec<String>> = RwLock::new(Vec::new());
-}
+/// グローバル引数ストレージ
+static ARGS: LazyLock<RwLock<Vec<String>>> = LazyLock::new(|| RwLock::new(Vec::new()));
 
 /// TLプログラム実行前にコマンドライン引数を初期化
 /// main.rsから呼び出される
