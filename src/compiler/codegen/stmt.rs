@@ -3013,12 +3013,25 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (base_ptr_opt, base_ty, _, base_name) = self.compile_lvalue_addr(inner)?;
                 let base_ptr = base_ptr_opt.ok_or("Cannot field access on non-addressable lvalue")?;
                 
-                if let Type::Struct(name, _) = &base_ty {
-                    let struct_def = self.struct_defs.get(name).ok_or("Struct def not found")?;
+                if let Type::Struct(name, generics) = &base_ty {
+                    // Use base name for struct_defs lookup
+                    let struct_def = self.struct_defs.get(name)
+                        .ok_or_else(|| format!("Struct def not found: {}", name))?;
                     let idx = struct_def.fields.iter().position(|(n, _)| n == field).ok_or("Field not found")?;
                     let (_, field_ty) = &struct_def.fields[idx];
                     
-                    match self.struct_types.get(name) {
+                    // For LLVM types: try base name first, then mangled name if not found
+                    // (monomorphized types are registered with mangled names)
+                    let llvm_ty_opt = self.struct_types.get(name).or_else(|| {
+                        if generics.is_empty() {
+                            None
+                        } else {
+                            let mangled = self.mangle_type_name(name, generics);
+                            self.struct_types.get(&mangled)
+                        }
+                    });
+                    
+                    match llvm_ty_opt {
                         Some(t) => {
                              let st_llvm_ty = *t;
                              // FIX: In TL, structs are Handles (pointers). base_ptr is an alloca containing the struct pointer.

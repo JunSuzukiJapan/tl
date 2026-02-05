@@ -59,19 +59,8 @@ impl TypeSubstitutor {
                  }
                  let new_generics: Vec<Type> = generics.iter().map(|g| self.substitute_type(g)).collect();
                  
-                 // If we have generics, mangle the type name and create an Enum type
-                 // This handles cases like Entry<K, V> -> Entry_i64_i64
-                 if !new_generics.is_empty() && segments.len() == 1 {
-                     // Check if all generics are concrete (not Path types with unresolved params)
-                     let all_concrete = new_generics.iter().all(|g| !matches!(g, Type::Path(_, _)));
-                     if all_concrete {
-                         let suffix = new_generics.iter().map(|t| self.type_to_suffix(t)).collect::<Vec<_>>().join("_");
-                         let mangled_name = format!("{}_{}", segments[0], suffix);
-                         // Return as Enum (most generic paths with substituted generics are enums like Entry, Option)
-                         return Type::Enum(mangled_name, vec![]);
-                     }
-                 }
-                 
+                 // Return Type::Path as-is - let codegen determine Struct vs Enum
+                 // at compile time where it has access to struct_defs and enum_defs
                  Type::Path(segments.clone(), new_generics)
             }
             Type::Ptr(inner) => Type::Ptr(Box::new(self.substitute_type(inner))),

@@ -81,8 +81,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Substitute
         for (_, ty) in &mut new_method.args {
             *ty = full_substitutor.substitute_type(ty);
+            *ty = self.normalize_type(ty);
         }
         new_method.return_type = full_substitutor.substitute_type(&new_method.return_type);
+        new_method.return_type = self.normalize_type(&new_method.return_type);
         new_method.body = new_method.body.iter().map(|s| full_substitutor.substitute_stmt(s)).collect();
         
         // Transform StaticMethodCall to EnumInit for enum variant constructors
@@ -610,14 +612,61 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.substitute_type(t, subst)).collect()),
              Type::Path(segments, args) => {
                  if segments.len() == 1 {
-                     if let Some(replacement) = subst.get(&segments[0]) {
+                     let name = &segments[0];
+                     // Check if this is a type parameter being substituted
+                     if let Some(replacement) = subst.get(name) {
                          return replacement.clone();
+                     }
+                     // Otherwise, convert to Struct or Enum based on definitions
+                     let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
+                     if self.enum_defs.contains_key(name) {
+                         return Type::Enum(name.clone(), new_args);
+                     } else {
+                         return Type::Struct(name.clone(), new_args);
                      }
                  }
                  let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
                  Type::Path(segments.clone(), new_args)
             },
             Type::Ptr(inner) => Type::Ptr(Box::new(self.substitute_type(inner, subst))),
+            _ => ty.clone(),
+        }
+    }
+
+    /// Normalize Type::Path to Type::Struct or Type::Enum based on definitions.
+    /// This is called after TypeSubstitutor.substitute_type which doesn't have access to enum_defs.
+    pub fn normalize_type(&self, ty: &Type) -> Type {
+        match ty {
+            Type::Path(segments, args) => {
+                if segments.len() == 1 {
+                    let name = &segments[0];
+                    let normalized_args: Vec<Type> = args.iter().map(|a| self.normalize_type(a)).collect();
+                    if self.enum_defs.contains_key(name) {
+                        Type::Enum(name.clone(), normalized_args)
+                    } else {
+                        Type::Struct(name.clone(), normalized_args)
+                    }
+                } else {
+                    let normalized_args: Vec<Type> = args.iter().map(|a| self.normalize_type(a)).collect();
+                    Type::Path(segments.clone(), normalized_args)
+                }
+            }
+            Type::Struct(name, args) => {
+                let normalized_args: Vec<Type> = args.iter().map(|a| self.normalize_type(a)).collect();
+                // Also check if this struct is actually an enum
+                if self.enum_defs.contains_key(name) {
+                    Type::Enum(name.clone(), normalized_args)
+                } else {
+                    Type::Struct(name.clone(), normalized_args)
+                }
+            }
+            Type::Enum(name, args) => {
+                let normalized_args: Vec<Type> = args.iter().map(|a| self.normalize_type(a)).collect();
+                Type::Enum(name.clone(), normalized_args)
+            }
+            Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.normalize_type(inner)), *rank),
+            Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.normalize_type(t)).collect()),
+            Type::Ptr(inner) => Type::Ptr(Box::new(self.normalize_type(inner))),
             _ => ty.clone(),
         }
     }
