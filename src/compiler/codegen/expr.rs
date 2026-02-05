@@ -2427,7 +2427,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Determine struct name and generic args
                 // Note: Vec_u8 etc. may come as Enum due to monomorphize.rs conversion
                 // Treat such types as Struct for field access purposes
-                let (base_name, generic_args) = match &obj_ty {
+                // Normalize obj_ty to resolve Path types in generic args
+                let normalized_obj_ty = self.normalize_type(&obj_ty);
+
+                let (base_name, generic_args) = match &normalized_obj_ty {
                     Type::Struct(name, args) => (name.clone(), args.clone()),
                     Type::Enum(name, args) => {
                         // Workaround: Some types like Vec_u8 are incorrectly classified as Enum
@@ -2436,6 +2439,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                     _ => return Err(format!("Field access on non-struct type {:?}", obj_ty)),
                 };
+
 
                 // Determine mangled name for lookup
                 let mangled_name = if generic_args.is_empty() {
@@ -2518,8 +2522,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                         *t
                     } else if !generic_args.is_empty() {
                         // Try to monomorphize on-demand
+
                         match self.monomorphize_struct(&underscore_base, &generic_args) {
-                            Ok(t) => t,
+                            Ok(t) => {
+
+                                t
+                            }
                             Err(_) => {
                                 // Last resort: try to infer generics from underscore suffix
                                 let parts: Vec<&str> = base_name.split('_').collect();
@@ -2540,23 +2548,36 @@ impl<'ctx> CodeGenerator<'ctx> {
                             }
                         }
                     } else {
-                        // Try to infer generics from underscore suffix (e.g., "Vec_u8" -> Vec<u8>)
-                        let parts: Vec<&str> = base_name.split('_').collect();
-                        if parts.len() >= 2 {
-                            let inferred_ty = match parts[1].to_lowercase().as_str() {
-                                "u8" => Type::U8,
-                                "i64" => Type::I64,
-                                "f32" => Type::F32,
-                                "f64" => Type::F64,
-                                "string" => Type::String("String".to_string()),
-                                _ => return Err(format!("LLVM struct type for {} not found (tried {}, {}, {})", 
-                                    base_name, simple_struct_name, base_name, underscore_base)),
-                            };
-                            self.monomorphize_struct(&underscore_base, &[inferred_ty])
-                                .map_err(|e| format!("Failed to monomorphize {}: {}", base_name, e))?
+                        // generic_args is empty but name is mangled (e.g., Vec_Entry_i64_i64)
+                        // For Vec, HashMap, etc., the LLVM layout is fixed regardless of generic args
+                        // So we can use the base type's LLVM layout
+                        if underscore_base == "Vec" || underscore_base == "HashMap" || underscore_base == "Option" || underscore_base == "Result" {
+                            // Try to get base type, then monomorphize with i64 as fallback
+                            if let Some(t) = self.struct_types.get(&underscore_base) {
+                                *t
+                            } else {
+                                self.monomorphize_struct(&underscore_base, &[Type::I64])
+                                    .map_err(|e| format!("Failed to monomorphize {} for FieldAccess: {}", underscore_base, e))?
+                            }
                         } else {
-                            return Err(format!("LLVM struct type for {} not found (tried {}, {}, {})", 
-                                base_name, simple_struct_name, base_name, underscore_base));
+                            // Try to infer generics from underscore suffix (e.g., "Vec_u8" -> Vec<u8>)
+                            let parts: Vec<&str> = base_name.split('_').collect();
+                            if parts.len() >= 2 {
+                                let inferred_ty = match parts[1].to_lowercase().as_str() {
+                                    "u8" => Type::U8,
+                                    "i64" => Type::I64,
+                                    "f32" => Type::F32,
+                                    "f64" => Type::F64,
+                                    "string" => Type::String("String".to_string()),
+                                    _ => return Err(format!("LLVM struct type for {} not found (tried {}, {}, {})", 
+                                        base_name, simple_struct_name, base_name, underscore_base)),
+                                };
+                                self.monomorphize_struct(&underscore_base, &[inferred_ty])
+                                    .map_err(|e| format!("Failed to monomorphize {}: {}", base_name, e))?
+                            } else {
+                                return Err(format!("LLVM struct type for {} not found (tried {}, {}, {})", 
+                                    base_name, simple_struct_name, base_name, underscore_base));
+                            }
                         }
                     }
                 };
@@ -2647,10 +2668,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Err(format!("Variable {} not found in scopes", name))
             }
             ExprKind::StructInit(ty, fields) => {
-                 let (name, generics) = match ty {
+                 // Normalize Path types to Struct/Enum
+                 let normalized_ty = self.normalize_type(ty);
+                 let (name, generics) = match &normalized_ty {
                       Type::Struct(name, generics) => (name.clone(), generics.clone()),
                       Type::Enum(name, generics) => (name.clone(), generics.clone()), // Enums might use struct-init syntax?
-                      _ => panic!("StructInit type must be Struct or Enum, found {:?}", ty),
+                      _ => panic!("StructInit type must be Struct or Enum (after normalization), found {:?} (original: {:?})", normalized_ty, ty),
                  };
                  self.compile_struct_init(&name, &generics, fields)
             },
@@ -3536,66 +3559,77 @@ impl<'ctx> CodeGenerator<'ctx> {
         fields: &[(String, Expr)],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         if !generics.is_empty() {
-             if self.monomorphize_struct(name, generics).is_err() {
-                 // Attempt recovery for double-mangled names (e.g. HashMap_i64_i64 -> HashMap)
-                 let mut recovered_name = None;
-                 // Use keys to avoid borrowing self.struct_defs immutably while calling monomorphize (mut)
-                 let def_names: Vec<String> = self.struct_defs.keys().cloned().collect();
-                 
-                 for def_name in def_names {
-                     if name.starts_with(&def_name) && name != def_name {
-                         // Check if this base name works
-                         if self.monomorphize_struct(&def_name, generics).is_ok() {
-                             recovered_name = Some(def_name);
-                             break;
+             // Generate mangled name first
+             let mangled_name = self.mangle_type_name(name, generics);
+             
+             // Try to get existing or monomorphize on-demand
+             let struct_type = if let Some(t) = self.struct_types.get(&mangled_name) {
+                 *t
+             } else {
+                 // Attempt monomorphization
+                 if self.monomorphize_struct(name, generics).is_ok() {
+                     // Try again after monomorphization
+                     if let Some(t) = self.struct_types.get(&mangled_name) {
+                         *t
+                     } else {
+                         return Err(format!("Struct type {} not found after monomorphization", mangled_name));
+                     }
+                 } else {
+                     // Recovery for double-mangled names (e.g. HashMap_i64_i64 -> HashMap)
+                     let def_names: Vec<String> = self.struct_defs.keys().cloned().collect();
+                      
+                     let mut recovered = false;
+                     for def_name in def_names {
+                         if name.starts_with(&def_name) && name != def_name {
+                             if self.monomorphize_struct(&def_name, generics).is_ok() {
+                                 recovered = true;
+                                 break;
+                             }
                          }
                      }
+                     
+                     if recovered {
+                         if let Some(t) = self.struct_types.get(&mangled_name) {
+                             *t
+                         } else {
+                             // Try with base name mangled
+                             let base = name.split('_').next().unwrap_or(name);
+                             let base_mangled = self.mangle_type_name(base, generics);
+                             *self.struct_types.get(&base_mangled)
+                                 .ok_or(format!("Struct type {} not found (tried {} and {})", name, mangled_name, base_mangled))?
+                         }
+                     } else {
+                         return Err(format!("Monomorphization failed for {} with generics {:?}", name, generics));
+                     }
                  }
-                 
-                 if let Some(base) = recovered_name {
-                     // Update name to base for lookup
-                     // Note: We can't change 'name' arg easily, but we update lookup_name
-                     let lookup_name = self.mangle_type_name(&base, generics);
-                     
-                     let simple_lookup_name = lookup_name.clone();
-                     
-                     let struct_type = *self.struct_types.get(&simple_lookup_name).ok_or("Recovered struct type not found")?;
-                     let struct_def = self.struct_defs.get(&simple_lookup_name).ok_or("Recovered struct def not found")?.clone();
-                     
-                     // We need to return here or jump to allocation logic with correct def/type
-                     // Refactoring nicely:
-                     return self.compile_struct_alloc(name, generics, &struct_type, &struct_def, fields);
-                 }
-                 
-                 return Err(format!("Monomorphization failed for {} with generics {:?}", name, generics));
-             }
+             };
+             
+             let struct_def = self.struct_defs.get(&mangled_name)
+                 .or_else(|| {
+                     // Try base name mangled
+                     let base = name.split('_').next().unwrap_or(name);
+                     let base_mangled = self.mangle_type_name(base, generics);
+                     self.struct_defs.get(&base_mangled)
+                 })
+                 .ok_or(format!("Struct definition {} not found", mangled_name))?
+                 .clone();
+             
+             return self.compile_struct_alloc(name, generics, &struct_type, &struct_def, fields);
         }
 
-        let lookup_name = if generics.is_empty() {
-             name.to_string()
-        } else {
-             // Check if name is already mangled (e.g. HashMap_i64_i64)
-             // by seeing if it exists in struct_types directly. If so, don't re-mangle.
-             if self.struct_types.contains_key(name) {
-                 name.to_string()
-             } else {
-                 self.mangle_type_name(name, generics)
-             }
-        };
-        
-        // Extract simple name from module path
-        let simple_lookup_name = lookup_name.clone();
+        // Non-generic case
+        let lookup_name = name.to_string();
         
         let struct_type = *self
             .struct_types
-            .get(&simple_lookup_name)
+            .get(&lookup_name)
             .ok_or_else(|| {
                  format!("Struct type {} not found in codegen", lookup_name)
             })?;
 
         let struct_def = self
             .struct_defs
-            .get(&simple_lookup_name)
+            .get(&lookup_name)
             .ok_or_else(|| {
                  format!("Struct definition {} not found", lookup_name)
             })?

@@ -116,10 +116,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // First check if it exists in struct_defs
                 if let Some(struct_def) = self.struct_defs.get(&effective_mangled_name) {
                     let struct_def = struct_def.clone();
-                    let st_llvm_ty = *self
-                        .struct_types
-                        .get(&effective_mangled_name)
-                        .ok_or(format!("LLVM struct type {} not found", effective_mangled_name))?;
+                    // Try to get LLVM type, with fallback + on-demand monomorphization
+                    let st_llvm_ty = if let Some(t) = self.struct_types.get(&effective_mangled_name) {
+                        *t
+                    } else {
+                        // Fallback: try base type name (e.g., "Vec" for "Vec_Entry_i64_i64")
+                        let base_name = effective_mangled_name.split('_').next().unwrap_or(&effective_mangled_name);
+                        if let Some(t) = self.struct_types.get(base_name) {
+                            *t
+                        } else if !generics.is_empty() {
+                            // On-demand monomorphization using original generics
+                            self.monomorphize_struct(name, generics)
+                                .map_err(|e| format!("On-demand monomorphization failed for {}<{:?}>: {}", name, generics, e))?
+                        } else {
+                            return Err(format!("LLVM struct type {} not found (also tried base {})", effective_mangled_name, base_name));
+                        }
+                    };
                     
                     return self.copy_struct_fields(dst, src, &struct_def, st_llvm_ty);
                 }
