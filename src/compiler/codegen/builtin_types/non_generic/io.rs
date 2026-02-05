@@ -546,7 +546,22 @@ pub fn compile_file_read_binary<'ctx>(
     };
     
     // Cast void* to Vec*
-    let vec_struct_ty = codegen.struct_types.get("Vec").ok_or("Vec type not found")?;
+    // Vec is a generic type, so we need to ensure it's monomorphized first
+    // Note: mangle_type_name returns "Vec<u8>" format, not "Vec_u8"
+    let vec_ty_name = "Vec<u8>";
+    let vec_struct_ty = if let Some(ty) = codegen.struct_types.get(vec_ty_name) {
+        *ty
+    } else if let Some(ty) = codegen.struct_types.get("Vec") {
+        // Fallback to base name (unlikely to exist)
+        *ty
+    } else {
+        // Monomorphize Vec<u8> on-demand
+        let vec_u8_generics = vec![Type::U8];
+        codegen.monomorphize_struct("Vec", &vec_u8_generics)
+            .map_err(|e| format!("Failed to monomorphize Vec<u8>: {}", e))?;
+        *codegen.struct_types.get(vec_ty_name)
+            .ok_or(format!("Vec<u8> type not found after monomorphization (tried {})", vec_ty_name))?
+    };
     let vec_ptr_ty = vec_struct_ty.ptr_type(inkwell::AddressSpace::default());
     let vec_ptr = codegen.builder.build_pointer_cast(
         res.into_pointer_value(),

@@ -75,7 +75,7 @@ impl TypeSubstitutor {
                  Type::Path(segments.clone(), new_generics)
             }
             Type::Ptr(inner) => Type::Ptr(Box::new(self.substitute_type(inner))),
-            Type::Ref(inner) => Type::Ref(Box::new(self.substitute_type(inner))),
+            // Type::Ref(inner) => Type::Ref(Box::new(self.substitute_type(inner))), // REMOVED
 
 
             _ => ty.clone(),

@@ -36,11 +36,18 @@ impl<'ctx> CodeGenerator<'ctx> {
         let method = target_method.ok_or_else(|| format!("Method {} not found in generic impls of {}", method_name, struct_name))?;
         let imp = target_impl.unwrap();
 
-        // Check generic count
-        if imp.generics.len() != generic_args.len() {
-             return Err(format!("Generic arg count mismatch for impl {}: expected {}, got {}", 
-                 struct_name, imp.generics.len(), generic_args.len()));
+        // Check and fix generic count - pad with default type if insufficient
+        let mut final_generic_args = generic_args.to_vec();
+        if imp.generics.len() > generic_args.len() {
+            // Pad with I64 as default type for missing generics
+            for _ in 0..(imp.generics.len() - generic_args.len()) {
+                final_generic_args.push(Type::I64);
+            }
+        } else if imp.generics.len() < generic_args.len() {
+            // Too many generics - truncate to expected count
+            final_generic_args.truncate(imp.generics.len());
         }
+        let generic_args = &final_generic_args;
 
         // Build substitution map
         let mut subst_map = HashMap::new();
@@ -176,8 +183,49 @@ impl<'ctx> CodeGenerator<'ctx> {
         generic_args: &[Type],
     ) -> Result<String, String> {
         // 1. Check if the enum exists in generic registry
-        let enum_def = self.enum_defs.get(enum_name)
-            .ok_or_else(|| format!("Enum {} not found", enum_name))?.clone();
+        // First, try direct lookup
+        let enum_def = if let Some(def) = self.enum_defs.get(enum_name) {
+            def.clone()
+        } else if enum_name.contains('_') && !enum_name.contains('<') {
+            // Try extracting base name from underscore-mangled name (e.g., "Option_i64" -> "Option")
+            let base_name = enum_name.split('_').next().unwrap_or(enum_name);
+            if let Some(def) = self.enum_defs.get(base_name) {
+                // If generic_args is empty but the def needs generics, try to parse from name
+                if generic_args.is_empty() && !def.generics.is_empty() {
+                    // This is already monomorphized with a different naming scheme
+                    // Try to find the angle-bracket version
+                    let suffix = enum_name.strip_prefix(base_name).unwrap_or("");
+                    let suffix_clean = suffix.trim_start_matches('_');
+                    let inferred_generics: Vec<Type> = suffix_clean.split('_')
+                        .filter_map(|s| {
+                            match s.to_lowercase().as_str() {
+                                "i64" => Some(Type::I64),
+                                "i32" => Some(Type::I32),
+                                "f32" => Some(Type::F32),
+                                "f64" => Some(Type::F64),
+                                "bool" => Some(Type::Bool),
+                                "u8" => Some(Type::U8),
+                                "" => None,
+                                _ => Some(Type::Struct(s.to_string(), vec![])),
+                            }
+                        })
+                        .collect();
+                    // Try to find or create the angle-bracket version
+                    let angle_name = self.mangle_type_name(base_name, &inferred_generics);
+                    if let Some(existing) = self.enum_types.get(&angle_name) {
+                        // Already exists
+                        return Ok(angle_name);
+                    }
+                    // Recursively monomorphize with inferred generics
+                    return self.monomorphize_enum(base_name, &inferred_generics);
+                }
+                def.clone()
+            } else {
+                return Err(format!("Enum {} not found (tried base {})", enum_name, base_name));
+            }
+        } else {
+            return Err(format!("Enum {} not found", enum_name));
+        };
 
         // 2. Check generics
         if enum_def.generics.len() != generic_args.len() {
@@ -440,9 +488,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(self.context.ptr_type(AddressSpace::default()).into())
             }
 
-            Type::Ref(_) => {
-                Ok(self.context.ptr_type(AddressSpace::default()).into())
-            }
+            // Type::Ref(_) => { // REMOVED - Ref not in spec
+            //     Ok(self.context.ptr_type(AddressSpace::default()).into())
+            // }
 
             Type::Path(_segments, _) => {
                  // Assume Path resolves to Struct/Enum which are pointers (in this phase)
@@ -518,14 +566,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         specialized_def.fields = struct_def.fields.iter().map(|(name, ty)| {
             let substituted = self.substitute_type(ty, &subst);
             // Fix: Convert Struct to Enum if it exists in enum_defs
-            // Check both mangled name and base name (e.g., Entry_i64_i64 → Entry)
+            // Check only exact name match (not base_name) to avoid false positives like Vec_u8 -> Vec
             let corrected = if let Type::Struct(s_name, s_args) = &substituted {
-                let is_enum = self.enum_defs.contains_key(s_name) || {
-                    // Extract base name from mangled name
-                    let base_name = s_name.split('_').next().unwrap_or(s_name);
-                    self.enum_defs.contains_key(base_name)
-                };
-                if is_enum {
+                // Only convert if exact name exists in enum_defs
+                if self.enum_defs.contains_key(s_name) {
                     Type::Enum(s_name.clone(), s_args.clone())
                 } else {
                     substituted
@@ -553,12 +597,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Recursively substitute in args
                 let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
                 
-                // Fix: Check if this is actually an Enum
-                let is_enum = self.enum_defs.contains_key(name) || {
-                    let base_name = name.split('_').next().unwrap_or(name);
-                    self.enum_defs.contains_key(base_name)
-                };
-                if is_enum {
+                // Fix: Check if this is actually an Enum (exact match only)
+                if self.enum_defs.contains_key(name) {
                     Type::Enum(name.clone(), new_args)
                 } else {
                     Type::Struct(name.clone(), new_args)

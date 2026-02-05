@@ -185,11 +185,12 @@ pub fn parse_type(input: Input) -> IResult<Input, Type, ParserError> {
         parse_primitive_type,
         parse_tensor_type,
         parse_ptr_type,
-        // Reference type: &Type
-        map(
-            preceded(expect_token(Token::Ampersand), parse_type),
-            |t| Type::Ref(Box::new(t))
-        ),
+        // Reference type: &Type - REMOVED (not in spec)
+        // map(
+        //     preceded(expect_token(Token::Ampersand), parse_type),
+        //     |t| Type::Ref(Box::new(t))
+        // ),
+
         // Tuple type: (Type, Type, ...)
         map(
             delimited(

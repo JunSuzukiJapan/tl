@@ -462,7 +462,7 @@ impl SemanticAnalyzer {
             Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.substitute_generics(t, subst)).collect()),
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.substitute_generics(inner, subst)), *rank),
             Type::TensorShaped(inner, dims) => Type::TensorShaped(Box::new(self.substitute_generics(inner, subst)), dims.clone()),
-            Type::Ref(inner) => Type::Ref(Box::new(self.substitute_generics(inner, subst))),
+            // Type::Ref(inner) => Type::Ref(Box::new(self.substitute_generics(inner, subst))), // REMOVED
             _ => ty.clone(),
         }
     }
@@ -2618,9 +2618,10 @@ impl SemanticAnalyzer {
                         }
                     }
                     
-                    // Resolve generics
-                    let generic_args: Vec<Type> = struct_def.generics.iter().map(|g| {
-                        inferred_generics.get(g).cloned().unwrap_or_else(|| Type::Struct(g.clone(), vec![]))
+                    // Resolve generics - use inference_map to resolve any Undefined types 
+                    // that were unified during field checking
+                    let generic_args: Vec<Type> = final_generics.iter().map(|g| {
+                        self.resolve_inferred_type(g)
                     }).collect();
 
                     Ok(Type::Struct(name.clone(), generic_args))
@@ -4841,7 +4842,8 @@ impl SemanticAnalyzer {
                         Ok(Type::Tensor(Box::new(Type::F32), 0))
                     }
                     UnOp::Ref => {
-                        Ok(Type::Ref(Box::new(t)))
+                        // Reference types removed from spec - return inner type for now
+                        Ok(t)
                     }
                 }
             }
@@ -5206,6 +5208,9 @@ impl SemanticAnalyzer {
                                  subst.insert(param.clone(), struct_generics_vals[i].clone());
                              }
                          }
+                         
+                         // Map 'Self' to the concrete type (e.g., Wrapper<I64>)
+                         subst.insert("Self".to_string(), type_ty.clone());
 
                          // Check arguments and infer types
                          for (i, (_arg_name, arg_ty_def)) in func.args.iter().enumerate() {
@@ -5282,11 +5287,11 @@ impl SemanticAnalyzer {
             ExprKind::FieldAccess(obj, field_name) => {
                 let obj_type = self.check_expr(obj)?;
                 
-                // Auto-dereference Ref types
-                let mut current_type = &obj_type;
-                while let Type::Ref(inner) = current_type {
-                    current_type = inner;
-                }
+                // Auto-dereference Ref types - REMOVED (Ref not in spec)
+                let current_type = &obj_type;
+                // while let Type::Ref(inner) = current_type {
+                //     current_type = inner;
+                // }
 
                 let (name, args) = match current_type {
                     Type::Struct(n, a) => (n.clone(), a.clone()),
@@ -5531,7 +5536,8 @@ impl SemanticAnalyzer {
             return true;
         }
         match (t1, t2) {
-            (Type::Ref(inner1), Type::Ref(inner2)) => self.are_types_compatible(inner1, inner2), 
+            // (Type::Ref(inner1), Type::Ref(inner2)) => self.are_types_compatible(inner1, inner2), // REMOVED
+
             (Type::Tensor(i1, r1), Type::Tensor(i2, r2)) => {
                 // If either rank is 0, we treat it as dynamic/compatible rank AND inner type
                 // This allows Tensor<F32, 0> (from TypeManager) to match Tensor<I8, 2> (quantized)

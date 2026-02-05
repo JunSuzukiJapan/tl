@@ -1261,7 +1261,7 @@ impl Monomorphizer {
              Type::Ptr(inner) => {
                  Type::Ptr(Box::new(self.substitute_type(inner, subst)))
              },
-             Type::Ref(inner) => Type::Ref(Box::new(self.substitute_type(inner, subst))),
+             // Type::Ref(inner) => Type::Ref(Box::new(self.substitute_type(inner, subst))), // REMOVED
 
              _ => ty.clone()
         }

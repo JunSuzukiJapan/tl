@@ -73,7 +73,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     /// Copy struct contents from src to dst pointer (used for sret)
     pub(crate) fn emit_struct_copy(
-        &self,
+        &mut self,
         dst: inkwell::values::PointerValue<'ctx>,
         src: inkwell::values::PointerValue<'ctx>,
         ty: &Type,
@@ -167,7 +167,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     
     /// Helper function to copy struct fields from src to dst
     fn copy_struct_fields(
-        &self,
+        &mut self,
         dst: inkwell::values::PointerValue<'ctx>,
         src: inkwell::values::PointerValue<'ctx>,
         struct_def: &crate::compiler::ast::StructDef,
@@ -244,15 +244,38 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.mangle_type_name(name, generics)
                 };
 
-                let enum_def = self
+                // Try to find enum_def, with fallback for generic enums
+                let mut enum_def = self
                     .enum_defs
                     .get(&mangled_name)
                     .ok_or(format!("Enum def {} not found ({})", name, mangled_name))?
                     .clone();
-                let enum_ty = *self
-                    .enum_types
-                    .get(&mangled_name)
-                    .ok_or(format!("Enum type {} not found ({})", name, mangled_name))?;
+                
+                // If still generic, monomorphize with default type
+                if !enum_def.generics.is_empty() {
+                    let default_generics = vec![Type::I64; enum_def.generics.len()];
+                    let default_mangled = self.mangle_type_name(name, &default_generics);
+                    if let Some(specialized) = self.enum_defs.get(&default_mangled) {
+                        enum_def = specialized.clone();
+                    } else {
+                        self.monomorphize_enum(name, &default_generics).map_err(|e| e.to_string())?;
+                        enum_def = self.enum_defs.get(&default_mangled)
+                            .ok_or(format!("Failed to monomorphize {} -> {}", name, default_mangled))?
+                            .clone();
+                    }
+                }
+                
+                // Get enum type with fallback
+                let enum_ty = if let Some(ty) = self.enum_types.get(&enum_def.name) {
+                    *ty
+                } else if let Some(ty) = self.enum_types.get(&mangled_name) {
+                    *ty
+                } else {
+                    // Try to compile on-demand
+                    self.compile_enum_defs(&[enum_def.clone()])?;
+                    *self.enum_types.get(&enum_def.name)
+                        .ok_or(format!("Enum type {} not found (tried {} and {})", name, enum_def.name, mangled_name))?
+                };
 
                 let ptr = val.into_pointer_value();
 
@@ -2480,7 +2503,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
     /// Deep clone a value (Tensor or Struct containing Tensors)
     pub(crate) fn emit_deep_clone(
-        &self,
+        &mut self,
         val: inkwell::values::BasicValueEnum<'ctx>,
         ty: &Type,
     ) -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
@@ -2551,11 +2574,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.mangle_type_name(name, generics)
                 };
 
-                let enum_def = self
+                let mut enum_def = self
                     .enum_defs
                     .get(&mangled_name)
-                    .ok_or(format!("Enum {} definition not found ({})", name, mangled_name))?;
-                self.emit_enum_deep_clone(val, enum_def)
+                    .ok_or(format!("Enum {} definition not found ({})", name, mangled_name))?
+                    .clone();
+                
+                // If still generic, monomorphize with default type
+                if !enum_def.generics.is_empty() {
+                    let default_generics = vec![Type::I64; enum_def.generics.len()];
+                    let default_mangled = self.mangle_type_name(name, &default_generics);
+                    if let Some(specialized) = self.enum_defs.get(&default_mangled) {
+                        enum_def = specialized.clone();
+                    } else {
+                        self.monomorphize_enum(name, &default_generics).map_err(|e| e.to_string())?;
+                        enum_def = self.enum_defs.get(&default_mangled)
+                            .ok_or(format!("Failed to monomorphize {} -> {}", name, default_mangled))?
+                            .clone();
+                    }
+                }
+                
+                self.emit_enum_deep_clone(val, &enum_def)
             }
             Type::Struct(name, generics) => {
                 let mangled_name = if generics.is_empty() {
@@ -2565,8 +2604,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
 
                 // Check if it is an Enum
-                if let Some(enum_def) = self.enum_defs.get(&mangled_name) {
-                    return self.emit_enum_deep_clone(val, enum_def);
+                if let Some(enum_def) = self.enum_defs.get(&mangled_name).cloned() {
+                    return self.emit_enum_deep_clone(val, &enum_def);
                 }
                 
                 // Handle String struct
@@ -2803,7 +2842,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     fn emit_enum_deep_clone(
-        &self,
+        &mut self,
         val: BasicValueEnum<'ctx>,
         enum_def: &EnumDef,
     ) -> Result<BasicValueEnum<'ctx>, String> {

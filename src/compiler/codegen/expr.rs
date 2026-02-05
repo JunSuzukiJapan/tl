@@ -1765,30 +1765,88 @@ impl<'ctx> CodeGenerator<'ctx> {
                 payload,
             } => {
                 // 0. specialized name handling
-                let mangled_name = if generics.is_empty() {
+                // Extract base name from mangled name (e.g., "Option_i64" -> "Option")
+                // and parse generics from mangled suffix if generics is empty
+                let (base_name, inferred_generics) = if generics.is_empty() && enum_name.contains('_') {
+                    let parts: Vec<&str> = enum_name.splitn(2, '_').collect();
+                    if parts.len() == 2 {
+                        let base = parts[0].to_string();
+                        // Parse type suffix (e.g., "i64", "String", etc.)
+                        let type_part = parts[1];
+                        let inferred_ty = match type_part.to_lowercase().as_str() {
+                            "i64" => Type::I64,
+                            "f32" => Type::F32,
+                            "f64" => Type::F64,
+                            "bool" => Type::Bool,
+                            "string" => Type::String("String".to_string()),
+                            other => Type::Struct(other.to_string(), vec![]),
+                        };
+                        (base, vec![inferred_ty])
+                    } else {
+                        (enum_name.clone(), generics.clone())
+                    }
+                } else {
+                    (enum_name.clone(), generics.clone())
+                };
+                
+                let mangled_name = if inferred_generics.is_empty() {
                     enum_name.clone()
                 } else {
-                    self.mangle_type_name(enum_name, generics)
+                    self.mangle_type_name(&base_name, &inferred_generics)
                 };
 
                 // 1. On-demand Monomorphization
-                if !generics.is_empty() {
-                     if !self.enum_defs.contains_key(&mangled_name) {
-                         // Monomorphize!
-                         self.monomorphize_enum(enum_name, generics).map_err(|e| e.to_string())?;
-                     }
-                }
+                // First, try to find already-monomorphized enum by mangled_name
+                let mut enum_def = if let Some(def) = self.enum_defs.get(&mangled_name) {
+                    def.clone()
+                } else if let Some(def) = self.enum_defs.get(enum_name) {
+                    // Found exact enum_name (might be mangled already)
+                    def.clone()
+                } else if let Some(def) = self.enum_defs.get(&base_name) {
+                    def.clone()
+                } else {
+                    return Err(format!("Enum def {} not found (tried: {}, {}, {})", 
+                        enum_name, mangled_name, base_name, enum_name));
+                };
+                
+                // If the found enum_def is still generic, monomorphize with inferred or default types
+                if !enum_def.generics.is_empty() {
+                    let actual_generics = if !inferred_generics.is_empty() {
+                        inferred_generics.clone()
+                    } else {
+                        // Default to I64 for single-param generics like Option<T>, Result<T>
+                        vec![Type::I64; enum_def.generics.len()]
+                    };
+                    let actual_mangled = self.mangle_type_name(&base_name, &actual_generics);
+                    
+                    // Try to find already-monomorphized version first
+                    if let Some(specialized_def) = self.enum_defs.get(&actual_mangled) {
+                        enum_def = specialized_def.clone();
+                    } else {
+                        // Monomorphize on-demand
+                        self.monomorphize_enum(&base_name, &actual_generics).map_err(|e| e.to_string())?;
+                        enum_def = self.enum_defs.get(&actual_mangled)
+                            .ok_or(format!("Monomorphization failed for {} -> {}", base_name, actual_mangled))?
+                            .clone();
+                    }
+                };
 
-                let enum_def = self
-                    .enum_defs
-                    .get(&mangled_name)
-                    .ok_or(format!("Enum def {} not found", mangled_name))?
-                    .clone();
-
-                let enum_ty = *self
-                    .enum_types
-                    .get(&mangled_name)
-                    .ok_or(format!("Enum type {} not found", mangled_name))?;
+                // 2. Ensure enum_type exists
+                // Note: After default type monomorphization, enum_def.name may be "Option<i64>" style
+                let enum_ty = if let Some(ty) = self.enum_types.get(&enum_def.name) {
+                    // Use the name from enum_def (might be monomorphized name)
+                    *ty
+                } else if let Some(ty) = self.enum_types.get(&mangled_name) {
+                    *ty
+                } else if let Some(ty) = self.enum_types.get(enum_name) {
+                    *ty
+                } else {
+                    // Need to compile this enum type on-demand
+                    // This should work because enum_def has generics=[] after monomorphization
+                    self.compile_enum_defs(&[enum_def.clone()])?;
+                    *self.enum_types.get(&enum_def.name)
+                        .ok_or(format!("Failed to compile enum type {} (from {}), generics={:?}", enum_def.name, enum_name, enum_def.generics))?
+                };
 
                 // 2. Allocate Enum
                 // Manual malloc(size)
@@ -2083,9 +2141,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                      _ => return Err(format!("Mismatch between variant definition {:?} and init payload {:?}", variant_def.kind, payload)),
                 }
 
-                // Return the rich generic type so downstream processing (like MethodCall) 
-                // sees "Option" and [T] instead of "Option<T>" and [].
-                Ok((alloca.into(), Type::Enum(enum_name.clone(), generics.clone())))
+                // Return the monomorphized type so downstream processing (like MethodCall) 
+                // gets the correct generics. After monomorphization, enum_def.generics is empty
+                // and enum_def.name contains the full name like "Option<i64>".
+                // For proper type matching, we return (enum_def.name, []) as generics are baked into the name.
+                Ok((alloca.into(), Type::Enum(enum_def.name.clone(), vec![])))
             }
             ExprKind::Match {
                 expr: subject_expr,
@@ -2281,21 +2341,28 @@ impl<'ctx> CodeGenerator<'ctx> {
             ExprKind::FieldAccess(obj, field) => {
                 let (mut obj_val, mut obj_ty) = self.compile_expr(obj)?;
 
-                // Auto-dereference Ref types (load pointer)
-                while let Type::Ref(inner) = obj_ty.clone() {
-                    let ptr = obj_val.into_pointer_value();
-                    let loaded = self.builder.build_load(
-                        self.get_llvm_type(&inner)?,
-                        ptr,
-                        "deref"
-                    ).map_err(|e| e.to_string())?;
-                    obj_val = loaded.into();
-                    obj_ty = *inner;
-                }
+                // Auto-dereference Ref types - REMOVED (Ref not in spec)
+                // while let Type::Ref(inner) = obj_ty.clone() {
+                //     let ptr = obj_val.into_pointer_value();
+                //     let loaded = self.builder.build_load(
+                //         self.get_llvm_type(&inner)?,
+                //         ptr,
+                //         "deref"
+                //     ).map_err(|e| e.to_string())?;
+                //     obj_val = loaded.into();
+                //     obj_ty = *inner;
+                // }
                 
                 // Determine struct name and generic args
+                // Note: Vec_u8 etc. may come as Enum due to monomorphize.rs conversion
+                // Treat such types as Struct for field access purposes
                 let (base_name, generic_args) = match &obj_ty {
                     Type::Struct(name, args) => (name.clone(), args.clone()),
+                    Type::Enum(name, args) => {
+                        // Workaround: Some types like Vec_u8 are incorrectly classified as Enum
+                        // If it has struct_defs entry, treat it as struct
+                        (name.clone(), args.clone())
+                    }
                     _ => return Err(format!("Field access on non-struct type {:?}", obj_ty)),
                 };
 
@@ -2320,7 +2387,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 } else if let Some(def) = self.struct_defs.get(&base_name) {
                     (def, true)
                 } else {
-                     return Err(format!("Struct definition for {} not found (checked {} and {})", base_name, simple_struct_name, base_name));
+                    // Try extracting base name from underscore-mangled name (e.g., "Vec_u8" -> "Vec")
+                    let underscore_base = base_name.split('_').next().unwrap_or(&base_name).to_string();
+                    if let Some(def) = self.struct_defs.get(&underscore_base) {
+                        (def, true)
+                    } else {
+                        return Err(format!("Struct definition for {} not found (checked {}, {}, {})", 
+                            base_name, simple_struct_name, base_name, underscore_base));
+                    }
                 };
 
                 let field_idx = struct_def
@@ -2362,11 +2436,58 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // CodeGenerator registers structs in init.
                 
                 let st_llvm_ty = if let Some(t) = self.struct_types.get(&simple_struct_name) {
-                     t
+                     *t
                 } else if let Some(t) = self.struct_types.get(&base_name) {
-                     t 
+                     *t 
                 } else {
-                     return Err(format!("LLVM struct type for {} not found", base_name));
+                    // Try underscore-based base name (e.g., "Vec_u8" -> "Vec")
+                    // and monomorphize on-demand if generics can be inferred
+                    let underscore_base = base_name.split('_').next().unwrap_or(&base_name).to_string();
+                    if let Some(t) = self.struct_types.get(&underscore_base) {
+                        *t
+                    } else if !generic_args.is_empty() {
+                        // Try to monomorphize on-demand
+                        match self.monomorphize_struct(&underscore_base, &generic_args) {
+                            Ok(t) => t,
+                            Err(_) => {
+                                // Last resort: try to infer generics from underscore suffix
+                                let parts: Vec<&str> = base_name.split('_').collect();
+                                if parts.len() >= 2 {
+                                    let inferred_ty = match parts[1].to_lowercase().as_str() {
+                                        "u8" => Type::U8,
+                                        "i64" => Type::I64,
+                                        "f32" => Type::F32,
+                                        "f64" => Type::F64,
+                                        "string" => Type::String("String".to_string()),
+                                        _ => return Err(format!("LLVM struct type for {} not found", base_name)),
+                                    };
+                                    self.monomorphize_struct(&underscore_base, &[inferred_ty])
+                                        .map_err(|e| format!("Failed to monomorphize {}: {}", base_name, e))?
+                                } else {
+                                    return Err(format!("LLVM struct type for {} not found", base_name));
+                                }
+                            }
+                        }
+                    } else {
+                        // Try to infer generics from underscore suffix (e.g., "Vec_u8" -> Vec<u8>)
+                        let parts: Vec<&str> = base_name.split('_').collect();
+                        if parts.len() >= 2 {
+                            let inferred_ty = match parts[1].to_lowercase().as_str() {
+                                "u8" => Type::U8,
+                                "i64" => Type::I64,
+                                "f32" => Type::F32,
+                                "f64" => Type::F64,
+                                "string" => Type::String("String".to_string()),
+                                _ => return Err(format!("LLVM struct type for {} not found (tried {}, {}, {})", 
+                                    base_name, simple_struct_name, base_name, underscore_base)),
+                            };
+                            self.monomorphize_struct(&underscore_base, &[inferred_ty])
+                                .map_err(|e| format!("Failed to monomorphize {}: {}", base_name, e))?
+                        } else {
+                            return Err(format!("LLVM struct type for {} not found (tried {}, {}, {})", 
+                                base_name, simple_struct_name, base_name, underscore_base));
+                        }
+                    }
                 };
 
 
@@ -2377,7 +2498,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let field_ptr = self
                         .builder
                         .build_struct_gep(
-                            *st_llvm_ty,
+                            st_llvm_ty,
                             ptr,
                             field_idx as u32,
                             &format!("ptr_{}", field),
@@ -2878,27 +2999,28 @@ impl<'ctx> CodeGenerator<'ctx> {
                     UnOp::Ref => {
                         // Ref operator: &expr
                         // Always get address. Do not return value directly.
-
+                        // Reference types removed from spec - return Ptr instead
                          // For scalars (L-Value vs R-Value logic)
                         if let ExprKind::Variable(name) = &expr.inner {
                             // Variable: Get address from variables map
                              for scope in self.variables.iter().rev() {
                                 if let Some((var_val, _, _)) = scope.get(name) {
-                                     // var_val is the Alloca (Pointer)
-                                     return Ok((var_val.as_basic_value_enum(), Type::Ref(Box::new(ty))));
+                                     // var_val is the Alloca (Pointer) - return as Ptr type
+                                     return Ok((var_val.as_basic_value_enum(), Type::Ptr(Box::new(ty))));
                                 }
                              }
                              return Err(format!("Variable {} not found for Ref", name));
                         } else {
-                            // R-Value: Store to temp, return address
+                            // R-Value: Store to temp, return address as Ptr
                             let current_block = self.builder.get_insert_block().unwrap();
                             let func = current_block.get_parent().unwrap();
                             let alloca = self.create_entry_block_alloca(func, "ref_tmp", &ty)?;
                             
                             self.builder.build_store(alloca, val).map_err(|e| e.to_string())?;
-                            return Ok((alloca.into(), Type::Ref(Box::new(ty))));
+                            return Ok((alloca.into(), Type::Ptr(Box::new(ty))));
                         }
                     }
+
                     UnOp::Query => {
                         // Logic Query: check if result tensor is non-empty
                         if let Type::Tensor(_, _) = ty {
@@ -3909,11 +4031,24 @@ impl<'ctx> CodeGenerator<'ctx> {
         // 0. Check if this is an Enum Variant initialization (priority check)
         //    This handles cases like Entry_i64_i64::Empty where the type_name is
         //    the mangled enum name and method is a variant name.
-        if let Some(enum_def) = self.enum_defs.get(struct_name).cloned() {
+        if let Some(mut enum_def) = self.enum_defs.get(struct_name).cloned() {
             if let Some(variant_idx) = enum_def.variants.iter().position(|v| v.name == method) {
+                // If enum_def is still generic, monomorphize with default type
+                if !enum_def.generics.is_empty() {
+                    let default_generics = vec![Type::I64; enum_def.generics.len()];
+                    let mangled = self.mangle_type_name(struct_name, &default_generics);
+                    if let Some(specialized) = self.enum_defs.get(&mangled) {
+                        enum_def = specialized.clone();
+                    } else {
+                        self.monomorphize_enum(struct_name, &default_generics).map_err(|e| e.to_string())?;
+                        enum_def = self.enum_defs.get(&mangled)
+                            .ok_or(format!("Monomorphization failed for {} -> {}", struct_name, mangled))?
+                            .clone();
+                    }
+                }
                 // This is an enum variant constructor, compile it as EnumInit
                 return self.compile_enum_variant_as_static_method_call(
-                    struct_name, method, args, variant_idx, &enum_def
+                    &enum_def.name, method, args, variant_idx, &enum_def
                 );
             }
         }
@@ -4718,6 +4853,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => return Err(format!("Match on non-enum: {:?}", subject_ty)),
         };
 
+
         // Ensure enum layout is generated
         // Check if enum is already specialized (or concrete) to avoid double-monomorphization
         // Check if enum is already specialized (or concrete) to avoid double-monomorphization
@@ -4738,7 +4874,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         let enum_ty = self.enum_types.get(&mangled_name).cloned()
             .ok_or(format!("Enum LLVM type {} not found", mangled_name))?;
 
-        let enum_def = self.enum_defs.get(enum_name).cloned().ok_or("Enum def not found")?;
+        let enum_def = self.enum_defs.get(&mangled_name)
+            .or_else(|| self.enum_defs.get(enum_name))
+            .cloned()
+            .ok_or(format!("Enum def not found (tried {} and {})", mangled_name, enum_name))?;
 
 
         let ptr = subject_val.into_pointer_value();
@@ -4774,8 +4913,24 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut used_variants = HashSet::new();
         for (arm_idx, (pat, _)) in arms.iter().enumerate() {
             if let Pattern::EnumPattern { variant_name, .. } = pat {
-                // Fetch def 
-                let enum_def = self.enum_defs.get(enum_name).ok_or_else(|| format!("Enum def '{}' not found in pattern. Available: {:?}", enum_name, self.enum_defs.keys().collect::<Vec<_>>()))?;
+                // Fetch def - try mangled_name first, then enum_name, then base name extraction
+                let enum_def = if let Some(def) = self.enum_defs.get(&mangled_name) {
+                    def
+                } else if let Some(def) = self.enum_defs.get(enum_name) {
+                    def
+                } else {
+                    // Try to convert underscore format to angle-bracket format
+                    let base_name = if enum_name.contains('_') && !enum_name.contains('<') {
+                        enum_name.split('_').next().unwrap_or(enum_name)
+                    } else {
+                        enum_name
+                    };
+                    // Try angle-bracket version from monomorphize result
+                    self.enum_defs.get(&mangled_name)
+                        .or_else(|| self.enum_defs.get(base_name))
+                        .ok_or_else(|| format!("Enum def '{}' not found in pattern. Tried: {}, {}. Available: {:?}", 
+                            enum_name, mangled_name, base_name, self.enum_defs.keys().collect::<Vec<_>>()))?
+                };
                 
                 let simple_variant_name = variant_name.as_str();
 
@@ -5619,6 +5774,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let type_name = struct_name.clone();
 
 
+
         // Extract simple name from module path for mangling
         let simple_struct_name = struct_name.clone();
 
@@ -5627,16 +5783,69 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
         // Check for generic impls first
+        // Extract base name from mangled type name (e.g., "Option<i64>" -> "Option", "Result_i32" -> "Result")
+        let (base_type_name, inferred_generics) = if type_name.contains('<') {
+            let base = type_name.split('<').next().unwrap_or(&type_name).to_string();
+            // Extract generics from e.g., "Option<i64>" -> [I64]
+            let generics_str = type_name.trim_start_matches(&base).trim_start_matches('<').trim_end_matches('>');
+            let parsed_generics: Vec<Type> = generics_str.split(',')
+                .filter_map(|s| {
+                    let s = s.trim();
+                    match s.to_lowercase().as_str() {
+                        "i64" => Some(Type::I64),
+                        "i32" => Some(Type::I32),
+                        "f32" => Some(Type::F32),
+                        "f64" => Some(Type::F64),
+                        "bool" => Some(Type::Bool),
+                        "u8" => Some(Type::U8),
+                        "string" => Some(Type::String("String".to_string())),
+                        "" => None,
+                        _ => Some(Type::Struct(s.to_string(), vec![])),
+                    }
+                })
+                .collect();
+            (base, parsed_generics)
+        } else if type_name.contains('_') {
+            // Try underscore format: "Result_i32_i32" -> ("Result", [I32, I32])
+            let parts: Vec<&str> = type_name.split('_').collect();
+            if !parts.is_empty() {
+                let base = parts[0].to_string();
+                let parsed_generics: Vec<Type> = parts[1..].iter()
+                    .filter_map(|s| {
+                        match s.to_lowercase().as_str() {
+                            "i64" => Some(Type::I64),
+                            "i32" => Some(Type::I32),
+                            "f32" => Some(Type::F32),
+                            "f64" => Some(Type::F64),
+                            "bool" => Some(Type::Bool),
+                            "u8" => Some(Type::U8),
+                            "string" => Some(Type::String("String".to_string())),
+                            "" => None,
+                            _ => Some(Type::Struct(s.to_string(), vec![])),
+                        }
+                    })
+                    .collect();
+                (base, parsed_generics)
+            } else {
+                (type_name.clone(), vec![])
+            }
+        } else {
+            (type_name.clone(), vec![])
+        };
 
-        let generic_func = if self.generic_impls.contains_key(&type_name) {
-             let generics = match &obj_ty {
-                 Type::Struct(_, args) | Type::Enum(_, args) | Type::Path(_, args) => args.clone(),
-                 _ => vec![],
+        let generic_func = if self.generic_impls.contains_key(&base_type_name) {
+             // Use inferred generics from mangled name, or from obj_ty
+             let generics = if !inferred_generics.is_empty() {
+                 inferred_generics.clone()
+             } else {
+                 match &obj_ty {
+                     Type::Struct(_, args) | Type::Enum(_, args) | Type::Path(_, args) => args.clone(),
+                     _ => vec![],
+                 }
              };
 
-
              // Try monomorphize
-             match self.monomorphize_method(&type_name, method, &generics) {
+             match self.monomorphize_method(&base_type_name, method, &generics) {
                  Ok(name) => {
                      let f = self.module.get_function(&name).ok_or(format!("{} not found", name))?;
                      Some((f, name))
@@ -6548,7 +6757,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => return Err("tl_hash_string did not return a value".to_string()),
                      }
                 },
-                Type::Struct(_, _) | Type::Enum(_, _) | Type::Ref(_) | Type::Tensor(_, _) | Type::Tuple(_) => {
+                Type::Struct(_, _) | Type::Enum(_, _) | Type::Tensor(_, _) | Type::Tuple(_) => {
                     if val.is_pointer_value() {
                          self.builder.build_ptr_to_int(val.into_pointer_value(), i64_type, "ptr_int").unwrap()
                     } else {
@@ -6703,7 +6912,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             let is_ref = match target_type {
                 Type::Struct(name, _) if name == "String" => false, // String literals crash if treated as RefCounted
                 Type::String(_) => false,
-                Type::Struct(_, _) | Type::Tensor(_, _) | Type::Ref(_) | Type::Enum(_, _) | Type::Tuple(_) => true,
+                Type::Struct(_, _) | Type::Tensor(_, _) | Type::Enum(_, _) | Type::Tuple(_) => true,
                 _ => false,
             };
             
@@ -8996,7 +9205,18 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Err(format!("Enum variant {}::{} expects {} args, got {}", enum_name, variant_name, field_count, args.len()));
         }
         
-        let enum_ty = *self.enum_types.get(enum_name).ok_or(format!("Enum type {} not found", enum_name))?;
+        // Use enum_def.name (monomorphized name like "Option<i64>") instead of enum_name (might be base name "Option")
+        let actual_enum_name = &enum_def.name;
+        let enum_ty = if let Some(ty) = self.enum_types.get(actual_enum_name) {
+            *ty
+        } else if let Some(ty) = self.enum_types.get(enum_name) {
+            *ty
+        } else {
+            // Try to compile on-demand
+            self.compile_enum_defs(&[enum_def.clone()])?;
+            *self.enum_types.get(actual_enum_name)
+                .ok_or(format!("Enum type {} not found (tried {} and {})", enum_name, actual_enum_name, enum_name))?
+        };
         
         // Allocate memory for enum
         let size_ptr = unsafe {

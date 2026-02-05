@@ -794,7 +794,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .ptr_type(inkwell::AddressSpace::default())
                         .into(),
                     Type::Char(_) | Type::I32 => self.context.i32_type().into(),
-                    Type::Ptr(_) | Type::Ref(_) | Type::Tuple(_) | Type::Path(_, _) | Type::U8 | Type::Usize => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
+                    Type::Ptr(_) | Type::Tuple(_) | Type::Path(_, _) | Type::U8 | Type::Usize => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                     Type::Struct(name, _) => {
                         // Extract simple name from module path
                         let simple_name = name.as_str();

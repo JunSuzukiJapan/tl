@@ -85,8 +85,8 @@ pub enum Type {
     // Tensor with shape information for inference
     TensorShaped(Box<Type>, Vec<Dim>),
 
-    // Reference type: &Type
-    Ref(Box<Type>),
+    // Reference type: &Type - REMOVED (not in spec)
+    // Ref(Box<Type>),
     
     // Raw Pointer type: ptr<Type> (or *Type)
     Ptr(Box<Type>),
@@ -146,7 +146,7 @@ impl Type {
             Type::Never => "Never".to_string(),
             Type::Undefined(_) => "Undefined".to_string(),
             Type::TypeVar(_) => "TypeVar".to_string(),
-            Type::Ref(inner) => inner.get_base_name(),
+            // Type::Ref(inner) => inner.get_base_name(), // REMOVED
             Type::Ptr(_inner) => "Ptr".to_string(),
         }
     }
