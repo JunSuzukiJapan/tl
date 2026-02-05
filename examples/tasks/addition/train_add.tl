@@ -199,7 +199,7 @@ impl GPT {
         self.h.forward(x)
     } 
     fn update(self, lr: f32) -> GPT { 
-        let s = self; 
+        let mut s = self; 
         // s.w = s.w.update(lr); 
         // s.wp = s.wp.update(lr); 
         s.b1 = s.b1.update(lr); 

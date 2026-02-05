@@ -1,3 +1,4 @@
+// SKIP: Requires external resources or model files
 // MNIST Inference
 mod mnist_common;
 

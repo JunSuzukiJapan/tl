@@ -1,3 +1,4 @@
+// SKIP: Requires external resources or model files
 fn argmax(t: Tensor<f32, 1>) -> i64 {
     let mut max_val = -1000000.0;
     let mut idx = 0;

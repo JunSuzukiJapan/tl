@@ -1,3 +1,4 @@
+// SKIP: Requires external resources or model files
 // 2桁足し算タスク推論 - 組み込み関数を最小限に抑えた実装
 // 自己回帰生成による推論
 

@@ -8,7 +8,7 @@ impl Linear {
         x.matmul(self.W) + self.b 
     } 
     fn step(self, lr: f32) -> Linear { 
-        let s = self; 
+        let mut s = self; 
         let gW = s.W.grad(); 
         let gb = s.b.grad(); 
         s.W = (s.W - gW * lr).detach(); 
@@ -27,7 +27,7 @@ impl Embedding {
         i.embedding(self.w) 
     } 
     fn step(self, lr: f32) -> Embedding { 
-        let s = self; 
+        let mut s = self; 
         let g = s.w.grad(); 
         s.w = (s.w - g * lr).detach(); 
         s 
@@ -44,7 +44,7 @@ impl LayerNorm {
         x + self.b 
     } 
     fn step(self, lr: f32) -> LayerNorm { 
-        let s = self; 
+        let mut s = self; 
         let gb = s.b.grad(); 
         s.b = (s.b - gb * lr).detach(); 
         s 
@@ -66,7 +66,7 @@ impl CausalSelfAttention {
         self.p_proj.forward(y) 
     } 
     fn step(self, lr: f32) -> CausalSelfAttention { 
-        let s = self; 
+        let mut s = self; 
         s.q_proj = s.q_proj.step(lr); 
         s.k_proj = s.k_proj.step(lr); 
         s.v_proj = s.v_proj.step(lr); 
@@ -87,7 +87,7 @@ impl MLP {
         self.p.forward(self.f.forward(x).relu()) 
     } 
     fn step(self, lr: f32) -> MLP { 
-        let s = self; 
+        let mut s = self; 
         s.f = s.f.step(lr); 
         s.p = s.p.step(lr); 
         s 
@@ -105,7 +105,7 @@ impl Block {
         x + self.m.forward(self.l2.forward(x)) 
     } 
     fn step(self, lr: f32) -> Block { 
-        let s = self; 
+        let mut s = self; 
         s.l1 = s.l1.step(lr); 
         s.a = s.a.step(lr); 
         s.l2 = s.l2.step(lr); 
@@ -151,7 +151,7 @@ impl GPT {
         self.h.forward(self.l.forward(x))  
     } 
     fn step(self, lr: f32) -> GPT { 
-        let s = self; 
+        let mut s = self; 
         s.w = s.w.step(lr); 
         s.wp = s.wp.step(lr); 
         s.b1 = s.b1.step(lr); 

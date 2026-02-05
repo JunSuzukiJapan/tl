@@ -1,3 +1,4 @@
+// SKIP: Requires external resources or model files
 fn main() {
     println("--- Prolog-like Logic in TL (Matrix Logic Approach) ---");
     

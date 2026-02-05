@@ -32,13 +32,14 @@ impl Linear {
     }
     
     fn step(self, lr: f32) -> Linear {
-        let s = self;
+        let mut s = self;
         let gW = s.W.grad();
         let gb = s.b.grad();
         s.W = (s.W - gW * lr).detach();
         s.b = (s.b - gb * lr).detach();
         s
     }
+
 }
 
 fn load_mnist_images(path: String) -> Tensor<f32, 2> {

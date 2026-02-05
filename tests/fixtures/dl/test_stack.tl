@@ -12,26 +12,26 @@ impl Linear {
         Linear(w, b)
     }
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { x.matmul(self.W) + self.b }
-    fn step(self, lr: f32) -> Linear { let s = self; let gW = s.W.grad(); let gb = s.b.grad(); s.W = (s.W - gW * lr).detach(); s.b = (s.b - gb * lr).detach(); s }
+    fn step(self, lr: f32) -> Linear { let mut s = self; let gW = s.W.grad(); let gb = s.b.grad(); s.W = (s.W - gW * lr).detach(); s.b = (s.b - gb * lr).detach(); s }
 }
 
 struct Embedding { w: Tensor<f32, 2> }
-impl Embedding { fn new(v: i64, d: i64) -> Embedding { print("Embedding::new"); let w = (Tensor::randn([v, d], true)*0.1).detach(); Embedding(w) } fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { i.embedding(self.w) } fn step(self, lr: f32) -> Embedding { let s = self; let g = s.w.grad(); s.w = (s.w - g * lr).detach(); s } }
+impl Embedding { fn new(v: i64, d: i64) -> Embedding { print("Embedding::new"); let w = (Tensor::randn([v, d], true)*0.1).detach(); Embedding(w) } fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { i.embedding(self.w) } fn step(self, lr: f32) -> Embedding { let mut s = self; let g = s.w.grad(); s.w = (s.w - g * lr).detach(); s } }
 
 struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
-impl LayerNorm { fn new(d: i64) -> LayerNorm { print("LayerNorm::new"); let w = (Tensor::randn([d], true)*0.0+1.0).detach(); let b = (Tensor::randn([d], true)*0.0).detach(); LayerNorm(w, b) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { x + self.b } fn step(self, lr: f32) -> LayerNorm { let s = self; let gb = s.b.grad(); s.b = (s.b - gb * lr).detach(); s } }
+impl LayerNorm { fn new(d: i64) -> LayerNorm { print("LayerNorm::new"); let w = (Tensor::randn([d], true)*0.0+1.0).detach(); let b = (Tensor::randn([d], true)*0.0).detach(); LayerNorm(w, b) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { x + self.b } fn step(self, lr: f32) -> LayerNorm { let mut s = self; let gb = s.b.grad(); s.b = (s.b - gb * lr).detach(); s } }
 
 struct CausalSelfAttention { a: Linear, p: Linear }
-impl CausalSelfAttention { fn new(d: i64) -> CausalSelfAttention { print("CSA::new"); let l1 = Linear::new(d, d*3); let l2 = Linear::new(d*3, d); CausalSelfAttention(l1, l2) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { let q = self.a.forward(x); let k=q; let v=q; let y = q.matmul(k.transpose(1, 2)).scale(0.125).tril(0).softmax(2).matmul(v); self.p.forward(y) } fn step(self, lr: f32) -> CausalSelfAttention { let s = self; s.a = s.a.step(lr); s.p = s.p.step(lr); s } }
+impl CausalSelfAttention { fn new(d: i64) -> CausalSelfAttention { print("CSA::new"); let l1 = Linear::new(d, d*3); let l2 = Linear::new(d*3, d); CausalSelfAttention(l1, l2) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { let q = self.a.forward(x); let k=q; let v=q; let y = q.matmul(k.transpose(1, 2)).scale(0.125).tril(0).softmax(2).matmul(v); self.p.forward(y) } fn step(self, lr: f32) -> CausalSelfAttention { let mut s = self; s.a = s.a.step(lr); s.p = s.p.step(lr); s } }
 
 struct MLP { c_fc: Linear, c_proj: Linear }
-impl MLP { fn new(d: i64) -> MLP { print("MLP::new"); let l1 = Linear::new(d, d*4); print("MLP L1"); let l2 = Linear::new(d*4, d); print("MLP L2"); MLP(l1, l2) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { self.c_proj.forward(self.c_fc.forward(x).gelu()) } fn step(self, lr: f32) -> MLP { let s = self; s.c_fc = s.c_fc.step(lr); s.c_proj = s.c_proj.step(lr); s } }
+impl MLP { fn new(d: i64) -> MLP { print("MLP::new"); let l1 = Linear::new(d, d*4); print("MLP L1"); let l2 = Linear::new(d*4, d); print("MLP L2"); MLP(l1, l2) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { self.c_proj.forward(self.c_fc.forward(x).gelu()) } fn step(self, lr: f32) -> MLP { let mut s = self; s.c_fc = s.c_fc.step(lr); s.c_proj = s.c_proj.step(lr); s } }
 
 struct Block { l1: LayerNorm, a: CausalSelfAttention, l2: LayerNorm, m: MLP }
-impl Block { fn new(d: i64) -> Block { print("Block::new"); Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { let x = x + self.a.forward(self.l1.forward(x)); x + self.m.forward(self.l2.forward(x)) } fn step(self, lr: f32) -> Block { let s = self; s.l1 = s.l1.step(lr); s.a = s.a.step(lr); s.l2 = s.l2.step(lr); s.m = s.m.step(lr); s } }
+impl Block { fn new(d: i64) -> Block { print("Block::new"); Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { let x = x + self.a.forward(self.l1.forward(x)); x + self.m.forward(self.l2.forward(x)) } fn step(self, lr: f32) -> Block { let mut s = self; s.l1 = s.l1.step(lr); s.a = s.a.step(lr); s.l2 = s.l2.step(lr); s.m = s.m.step(lr); s } }
 
 struct GPT { w: Embedding, b: Block, l: LayerNorm, h: Linear }
-impl GPT { fn new(v: i64, d: i64) -> GPT { print("GPT::new"); let e = Embedding::new(v, d); print("Embedding created"); let b = Block::new(d); print("Block created"); let res = GPT(e, b, LayerNorm::new(d), Linear::new(d, v)); print("GPT::new Done"); res } fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { self.h.forward(self.l.forward(self.b.forward(self.w.forward(i)))) } fn step(self, lr: f32) -> GPT { let s = self; s.w = s.w.step(lr); s.b = s.b.step(lr); s.l = s.l.step(lr); s.h = s.h.step(lr); s } }
+impl GPT { fn new(v: i64, d: i64) -> GPT { print("GPT::new"); let e = Embedding::new(v, d); print("Embedding created"); let b = Block::new(d); print("Block created"); let res = GPT(e, b, LayerNorm::new(d), Linear::new(d, v)); print("GPT::new Done"); res } fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { self.h.forward(self.l.forward(self.b.forward(self.w.forward(i)))) } fn step(self, lr: f32) -> GPT { let mut s = self; s.w = s.w.step(lr); s.b = s.b.step(lr); s.l = s.l.step(lr); s.h = s.h.step(lr); s } }
 
 fn main() {
     let vocab_size = 13;

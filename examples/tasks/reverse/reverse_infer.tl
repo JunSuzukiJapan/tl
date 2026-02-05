@@ -1,3 +1,4 @@
+// SKIP: Requires external resources or model files
 // Sequence Reversal Inference
 //
 // Matches improved architecture instructions.

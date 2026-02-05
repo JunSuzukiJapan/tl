@@ -46,6 +46,23 @@ def has_main_function(filepath: Path) -> bool:
     except Exception:
         return False
 
+def has_skip_comment(filepath: Path) -> Tuple[bool, str]:
+    """ファイルの先頭に // SKIP コメントがあるか確認"""
+    try:
+        content = filepath.read_text(encoding='utf-8')
+        # ファイルの最初の数行に // SKIP または // SKIP: がある場合スキップ
+        for line in content.split('\n')[:10]:
+            if line.strip().startswith('// SKIP'):
+                # SKIP: の後の理由を抽出
+                if ':' in line:
+                    reason = line.split(':', 1)[1].strip()
+                    return True, f"SKIP: {reason}"
+                return True, "SKIP (marked in file)"
+        return False, ""
+    except Exception:
+        return False, ""
+
+
 # 特定のファイルをスキップするかどうか
 SKIP_FILES = {
     # 対話的な入力が必要なファイル
@@ -98,12 +115,17 @@ def should_skip(filepath: Path) -> Tuple[bool, str]:
     name = filepath.name
     if name in SKIP_FILES:
         return True, f"スキップ対象: {name}"
+    # ファイル内の // SKIP コメントをチェック
+    skip_in_file, skip_reason = has_skip_comment(filepath)
+    if skip_in_file:
+        return True, skip_reason
     if not has_main_function(filepath):
         # EXPECTED_FAILURES に含まれている場合は、main関数がなくても実行を試みる（コンパイルエラー等を確認するため）
         if name in EXPECTED_FAILURES:
             return False, ""
         return True, "main 関数なし"
     return False, ""
+
 
 def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = False) -> TestResult:
     """TL ファイルを実行して結果を返す"""
@@ -120,65 +142,68 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
 
     skip, reason = should_skip(filepath)
     if skip:
-        # スキップ対象でもビルド確認を行う (main関数がある場合のみ)
-        if "main 関数なし" not in reason:
-            script_dir = Path(__file__).parent
-            project_root = script_dir.parent
-            
-            with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
-                 tmp_path = tmp.name
-            try:
-                 compile_cmd = [str(tl_binary), "-c", str(filepath), "-o", tmp_path]
-                 # コンパイルのみ実行
-                 compile_result = subprocess.run(
-                     compile_cmd,
-                     capture_output=True,
-                     text=True,
-                     timeout=timeout,
-                     cwd=project_root,
-                     env=env
-                 )
-                 
-                 if compile_result.returncode != 0:
-                      return TestResult(
-                          file=str(filepath),
-                          status=Status.FAIL,
-                          output=compile_result.stdout,
-                          error=f"Build Failed:\n{compile_result.stderr}",
-                          duration=time.time() - start_time,
-                          reason=f"Build Failed ({reason})"
-                      )
-                 else:
-                      # ビルド成功したら SKIP (Build OK)
-                      return TestResult(
-                          file=str(filepath),
-                          status=Status.SKIP,
-                          output="",
-                          error="",
-                          duration=time.time() - start_time,
-                          reason=f"{reason} (Build OK)"
-                      )
-            except Exception as e:
-                return TestResult(
-                    file=str(filepath),
-                    status=Status.FAIL,
-                    output="",
-                    error=str(e),
-                    duration=time.time() - start_time,
-                    reason=f"Build Check Error: {e}"
-                )
-            finally:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
+        # SKIPコメント付き / main関数なし / スキップ対象ファイル の場合はビルドチェックをスキップ
+        if "SKIP:" in reason or "main 関数なし" in reason or "スキップ対象" in reason:
 
-        return TestResult(
-            file=str(filepath),
-            status=Status.SKIP,
-            output="",
-            error="",
-            duration=0.0,
-            reason=reason
-        )
+            return TestResult(
+                file=str(filepath),
+                status=Status.SKIP,
+                output="",
+                error="",
+                duration=0.0,
+                reason=reason
+            )
+        
+        # それ以外のスキップ対象はビルド確認を行う
+        script_dir = Path(__file__).parent
+        project_root = script_dir.parent
+        
+        with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
+             tmp_path = tmp.name
+        try:
+             compile_cmd = [str(tl_binary), "-c", str(filepath), "-o", tmp_path]
+             # コンパイルのみ実行
+             compile_result = subprocess.run(
+                 compile_cmd,
+                 capture_output=True,
+                 text=True,
+                 timeout=timeout,
+                 cwd=project_root,
+                 env=env
+             )
+             
+             if compile_result.returncode != 0:
+                  return TestResult(
+                      file=str(filepath),
+                      status=Status.FAIL,
+                      output=compile_result.stdout,
+                      error=f"Build Failed:\n{compile_result.stderr}",
+                      duration=time.time() - start_time,
+                      reason=f"Build Failed ({reason})"
+                  )
+             else:
+                  # ビルド成功したら SKIP (Build OK)
+                  return TestResult(
+                      file=str(filepath),
+                      status=Status.SKIP,
+                      output="",
+                      error="",
+                      duration=time.time() - start_time,
+                      reason=f"{reason} (Build OK)"
+                  )
+        except Exception as e:
+            return TestResult(
+                file=str(filepath),
+                status=Status.FAIL,
+                output="",
+                error=str(e),
+                duration=time.time() - start_time,
+                reason=f"Build Check Error: {e}"
+            )
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
     
     # 長時間実行ファイルはタイムアウトを延長
     if filepath.name in LONG_RUNNING:

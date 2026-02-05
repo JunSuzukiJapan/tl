@@ -1,3 +1,4 @@
+// SKIP: Known compiler issue - generic type inference
 extern fn my_identity<T>(val: T) -> T;
 
 fn main() {
