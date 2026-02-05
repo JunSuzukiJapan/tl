@@ -2339,7 +2339,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
             ExprKind::FieldAccess(obj, field) => {
-                let (mut obj_val, mut obj_ty) = self.compile_expr(obj)?;
+                let (obj_val, obj_ty) = self.compile_expr(obj)?;
 
                 // Auto-dereference Ref types - REMOVED (Ref not in spec)
                 // while let Type::Ref(inner) = obj_ty.clone() {

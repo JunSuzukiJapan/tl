@@ -208,7 +208,5 @@ fn main() {
             gen_idx = gen_idx + 1;
         }
         println("");
-        // cache.free(); // Automatic cleanup handles this
-        println("debug: loop end");
     }
 }

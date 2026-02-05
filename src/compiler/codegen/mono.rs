@@ -212,7 +212,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .collect();
                     // Try to find or create the angle-bracket version
                     let angle_name = self.mangle_type_name(base_name, &inferred_generics);
-                    if let Some(existing) = self.enum_types.get(&angle_name) {
+                    if let Some(_existing) = self.enum_types.get(&angle_name) {
                         // Already exists
                         return Ok(angle_name);
                     }
