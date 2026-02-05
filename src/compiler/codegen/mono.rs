@@ -242,6 +242,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         if self.enum_types.contains_key(&mangled_name) {
              return Ok(mangled_name);
         }
+        
+        // Register this specialization
+        self.specialization_registry.register(enum_name, generic_args);
 
         // 5. Instantiate
         // Build substitution map
@@ -537,6 +540,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         let struct_def = self.struct_defs.get(base_name).cloned()
             .ok_or_else(|| format!("Generic struct definition not found: {}", base_name))?;
         
+        // Register this specialization
+        self.specialization_registry.register(base_name, type_args);
+        
         // Build type parameter substitution map
         let mut subst: HashMap<String, Type> = HashMap::new();
         for (i, param_name) in struct_def.generics.iter().enumerate() {
@@ -825,6 +831,45 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             _ => {}
         }
+    }
+
+    /// Generate all methods for a specialized type.
+    /// This is called at the end of compilation to ensure all methods are generated.
+    pub fn generate_methods_for_specialized_type(
+        &mut self,
+        base_name: &str,
+        type_args: &[Type],
+    ) -> Result<(), String> {
+        // Get impl blocks for this base type
+        let impls = match self.generic_impls.get(base_name) {
+            Some(impls) => impls.clone(),
+            None => return Ok(()), // No impl blocks for this type
+        };
+        
+        // Generate each method
+        for imp in &impls {
+            for method in &imp.methods {
+                // Skip if already generated
+                let mangled_name = crate::compiler::codegen::builtin_types::resolver::resolve_static_method_name(
+                    base_name, &method.name, type_args
+                );
+                if self.module.get_function(&mangled_name).is_some() {
+                    continue;
+                }
+                
+                // Generate this method
+                match self.monomorphize_method(base_name, &method.name, type_args) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        // Log but continue - some methods may not be needed
+                        log::debug!("Could not generate method {}.{}: {}", 
+                            base_name, method.name, e);
+                    }
+                }
+            }
+        }
+        
+        Ok(())
     }
 
 }

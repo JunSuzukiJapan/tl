@@ -1,11 +1,8 @@
 // Malloc externs provided by vec.tl
 
-// Intrinsic function for hashing
+// Intrinsic function for hashing (directly implemented in compiler)
 extern fn tl_core_hash<T>(val: T) -> i64;
 
-fn hash<T>(val: T) -> i64 {
-    tl_core_hash(val)
-}
 
 enum Entry<K, V> {
     Empty,
@@ -90,7 +87,7 @@ impl<K, V> HashMap<K, V> {
         }
 
         let cap = self.entries.len();
-        let h = hash(key);
+        let h = tl_core_hash(key);
         // Ensure non-negative index through abs or mask? 
         // hash returns i64. using abs for safety.
         let mut idx = h % cap;
@@ -136,7 +133,7 @@ impl<K, V> HashMap<K, V> {
         }
 
         let cap = self.entries.len();
-        let h = hash(key);
+        let h = tl_core_hash(key);
         let mut idx = h % cap;
         if idx < 0 { idx = -idx; }
         
