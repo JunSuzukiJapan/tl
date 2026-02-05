@@ -89,6 +89,7 @@ fn main() {
              board.enable_grad();
         }
 
+
         // Validate result
         let probs = board.softmax(1);
         

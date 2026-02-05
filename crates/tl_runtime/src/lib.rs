@@ -1167,8 +1167,20 @@ pub extern "C" fn tl_tensor_detach(t: *mut OpaqueTensor, req_grad: bool) -> *mut
         };
         Ok(ptr)
     }));
+    
+    // FIX: Clear the original tensor's Var reference to break the computational graph link
+    // This prevents the old computational graph from keeping tensors alive
+    unsafe {
+        if let TensorVariant::Standard(_, var_opt, _) = &mut (*t).0 {
+            *var_opt = None;
+        }
+    }
+    
     return_ptr_or_null(res)
 }
+
+
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_enable_grad(t: *mut OpaqueTensor) {
@@ -1185,6 +1197,7 @@ pub extern "C" fn tl_tensor_enable_grad(t: *mut OpaqueTensor) {
         tensor_wrapper.0 = new_variant;
     }
 }
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_print(t: *const OpaqueTensor) {
@@ -2452,22 +2465,24 @@ pub extern "C" fn tl_tensor_backward(t: *mut OpaqueTensor) {
 
     let tensor = unwrap_tensor_void!(t);
 
+    // FIX: Clear old gradients BEFORE computing new ones to release old computational graph
+    LATEST_GRADS.with(|g| {
+        *g.borrow_mut() = None;
+    });
+
     // Perform backpropagation
-
     if let Ok(grads) = tensor.backward() {
-        // Store gradients in thread-local storage, replacing any previous ones
-
+        // Store gradients in thread-local storage
         LATEST_GRADS.with(|g| {
             *g.borrow_mut() = Some(grads);
         });
     } else {
-        // Error handling or fallback?
-
         eprintln!(
             "Runtime Error: backward() failed. Ensure the tensor behaves like a scalar loss."
         );
     }
 }
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_clear_grads() {

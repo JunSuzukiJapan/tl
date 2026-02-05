@@ -119,7 +119,7 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_instance_signature("scale", vec![Type::F32], any_tensor.clone());
     tensor.register_instance_signature("add_4d", vec![any_tensor.clone()], any_tensor.clone());
     tensor.register_instance_signature("matmul_4d", vec![any_tensor.clone()], any_tensor.clone());
-    tensor.register_instance_signature("cat_4d", vec![any_tensor.clone()], any_tensor.clone());
+    tensor.register_instance_signature("cat_4d", vec![any_tensor.clone(), Type::I64], any_tensor.clone());
     tensor.register_instance_signature("rms_norm", vec![any_tensor.clone(), Type::F32], any_tensor.clone());
     tensor.register_instance_signature("sample", vec![Type::F32, Type::F32], Type::Tensor(Box::new(Type::F32), 1));
     tensor.register_instance_signature("repeat_interleave", vec![Type::I64, Type::I64], any_tensor.clone());

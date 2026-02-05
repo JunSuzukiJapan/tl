@@ -1789,6 +1789,14 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Latch block: increment index and branch back to header
                 self.builder.position_at_end(loop_latch);
+                
+                // AUTO: Clear gradients at end of each iteration to prevent memory leak in autograd loops
+                if let Some(clear_grads_fn) = self.module.get_function("tl_clear_grads") {
+                    self.builder
+                        .build_call(clear_grads_fn, &[], "")
+                        .map_err(|e| e.to_string())?;
+                }
+                
                 let next_idx = self
                     .builder
                     .build_int_add(
@@ -1801,6 +1809,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder
                     .build_unconditional_branch(loop_header)
                     .map_err(|e| e.to_string())?;
+
 
                 // Add PHI incoming edges
                 phi.add_incoming(&[(&next_idx, loop_latch)]);
