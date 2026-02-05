@@ -4232,8 +4232,11 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // 3. User Generic Fallback (Monomorphize)
-        let generics = match target_type {
+        // Normalize target_type to convert Path to Struct/Enum
+        let normalized_target_type = self.normalize_type(target_type);
+        let generics = match &normalized_target_type {
             Type::Struct(n, args) if n == type_name => args.clone(),
+            Type::Enum(n, args) if n == type_name => args.clone(),
             _ => vec![],
         };
         
