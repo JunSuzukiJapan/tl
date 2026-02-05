@@ -102,6 +102,11 @@ pub fn register_io_types(manager: &mut TypeManager) {
         vec![string_type.clone()],
         Type::Struct("Path".to_string(), vec![])
     );
+    // Instance methods for Path (signature only for semantics check)
+    path.register_instance_signature("is_dir", vec![], Type::Bool);
+    path.register_instance_signature("is_file", vec![], Type::Bool);
+    path.register_instance_signature("exists", vec![], Type::Bool);
+    path.register_instance_signature("to_string", vec![], string_type.clone());
     manager.register_type(path);
 
     // Env

@@ -60,8 +60,9 @@ pub fn load_all_builtins(codegen: &mut CodeGenerator) {
     }
     codegen.generic_impls.entry("Entry".to_string()).or_default().extend(entry_data.impl_blocks);
 
-    // 2. Register Non-Generic Types (IO, System, LLM, Tensor, Param)
+    // 2. Register Non-Generic Types (IO, System, LLM, Tensor, Param, Primitives)
     // These register directly into TypeManager
+    non_generic::primitives::register_primitive_types(&mut codegen.type_manager);
     io::register_io_types(&mut codegen.type_manager);
     system::register_system_types(&mut codegen.type_manager);
     llm::register_llm_types(&mut codegen.type_manager);
