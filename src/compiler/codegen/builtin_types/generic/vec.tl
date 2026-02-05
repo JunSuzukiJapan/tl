@@ -10,7 +10,7 @@ struct Vec<T> {
 
 impl<T> Vec<T> {
     fn new() -> Vec<T> {
-        Vec {
+        Vec<T> {
             ptr: 0 as ptr<T>,
             cap: 0,
             len: 0,
@@ -23,7 +23,7 @@ impl<T> Vec<T> {
         }
         let size = cap * T::sizeof();
         let p = malloc(size);
-        Vec {
+        Vec<T> {
             ptr: p as ptr<T>,
             cap: cap,
             len: 0,

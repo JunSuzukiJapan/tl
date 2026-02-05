@@ -3558,6 +3558,17 @@ impl<'ctx> CodeGenerator<'ctx> {
         generics: &[Type],
         fields: &[(String, Expr)],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        // Early detection: If `name` is already a mangled name that exists in struct_types,
+        // use it directly and ignore generics (avoids double-mangling)
+        if !generics.is_empty() && name.contains('_') {
+            if let Some(&existing_type) = self.struct_types.get(name) {
+                let struct_def = self.struct_defs.get(name)
+                    .ok_or_else(|| format!("Struct definition {} not found", name))?
+                    .clone();
+                return self.compile_struct_alloc(name, &[], &existing_type, &struct_def, fields);
+            }
+        }
+        
         if !generics.is_empty() {
              // Generate mangled name first
              let mangled_name = self.mangle_type_name(name, generics);

@@ -49,9 +49,10 @@ impl SpecializationRegistry {
         self.mangled_names.len()
     }
 
-    /// 空かどうか
+    /// 未処理の特殊化があるかどうか（ループ条件用）
+    /// NOTE: mangled_names は履歴として保持されるので、specializations をチェックする
     pub fn is_empty(&self) -> bool {
-        self.mangled_names.is_empty()
+        self.specializations.is_empty()
     }
 }
 
