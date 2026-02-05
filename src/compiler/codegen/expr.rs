@@ -161,6 +161,8 @@ pub type InstanceMethodUneval = for<'a, 'ctx> fn(
 pub enum InstanceMethod {
     Evaluated(InstanceMethodEval),
     Unevaluated(InstanceMethodUneval),
+    /// Signature only, no implementation. Used for semantics analysis.
+    SignatureOnly,
 }
 
 pub struct InstanceMethodManager {
@@ -205,6 +207,8 @@ pub type StaticMethodUneval = for<'a, 'ctx> fn(
 pub enum StaticMethod {
     Evaluated(StaticMethodEval),
     Unevaluated(StaticMethodUneval),
+    /// Signature only, no implementation. Used for semantics analysis.
+    SignatureOnly,
 }
 
 pub struct StaticMethodManager {
@@ -3911,24 +3915,37 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
-        // 1. Try TypeManager (AST-defined methods)
-        let method_enum = self.type_manager.get_type(type_name)
-             .and_then(|t| t.get_static_method(method))
-             .copied();
-
-        if let Some(method_enum) = method_enum {
-             match method_enum {
-                 StaticMethod::Evaluated(func) => {
-                     let mut compiled_args = Vec::new();
-                     for arg in args {
-                         compiled_args.push(self.compile_expr(arg)?);
-                     }
-                     return func(self, compiled_args, Some(target_type));
-                 }
-                 StaticMethod::Unevaluated(func) => {
-                     return func(self, args, Some(target_type));
-                 }
-             }
+        // 1. Try TypeManager (AST-defined methods) - find matching overload
+        if let Some(type_info) = self.type_manager.get_type(type_name) {
+            if type_info.has_static_method(method) {
+                // Get overloads and try to find a match
+                if let Some(overloads) = type_info.get_static_overloads(method) {
+                    // For Unevaluated methods, we need to try each overload
+                    // For now, try the first unevaluated if any, or match by arg count
+                    for overload in overloads {
+                        if overload.arg_types.len() == args.len() {
+                            match &overload.impl_fn {
+                                StaticMethod::Evaluated(func) => {
+                                    let func = *func;
+                                    let mut compiled_args = Vec::new();
+                                    for arg in args {
+                                        compiled_args.push(self.compile_expr(arg)?);
+                                    }
+                                    return func(self, compiled_args, Some(target_type));
+                                }
+                                StaticMethod::Unevaluated(func) => {
+                                    let func = *func;
+                                    return func(self, args, Some(target_type));
+                                }
+                                StaticMethod::SignatureOnly => {
+                                    // This method has no implementation, skip this overload
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         
         // 2. Check self.static_methods (registered via register_all_methods)
@@ -3945,6 +3962,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 StaticMethod::Unevaluated(func) => {
                     return func(self, args, Some(target_type));
+                }
+                StaticMethod::SignatureOnly => {
+                    // Should not happen for registered methods, fall through
                 }
             }
         }
@@ -5412,25 +5432,35 @@ impl<'ctx> CodeGenerator<'ctx> {
         if let Some(name) = type_name_opt {
              // Handle special logical types if we want to support UserDefined alias canonicalization? 
              // Logic above handles it if UserDefined("Custom") returns "Custom".
-                          let method_enum = self.type_manager.get_type(&name)
-                  .and_then(|t| t.get_instance_method(method))
-                  .copied();
-
-              if let Some(method_enum) = method_enum {
-                   match method_enum {
-                           InstanceMethod::Evaluated(func) => {
-                               let mut compiled_args = Vec::new();
-                               for arg in args {
-                                   compiled_args.push(self.compile_expr(arg)?);
-                               }
-                               return func(self, obj_val, obj_ty, compiled_args);
-                           }
-                           InstanceMethod::Unevaluated(func) => {
-                               return func(self, obj_expr_context, method, args);
-                           }
-                      }
+             if let Some(type_info) = self.type_manager.get_type(&name) {
+                 if type_info.has_instance_method(method) {
+                     if let Some(overloads) = type_info.get_instance_overloads(method) {
+                         // Try to find matching overload by arg count
+                         for overload in overloads {
+                             if overload.arg_types.len() == args.len() {
+                                 match &overload.impl_fn {
+                                     InstanceMethod::Evaluated(func) => {
+                                         let func = *func;
+                                         let mut compiled_args = Vec::new();
+                                         for arg in args {
+                                             compiled_args.push(self.compile_expr(arg)?);
+                                         }
+                                         return func(self, obj_val, obj_ty, compiled_args);
+                                     }
+                                     InstanceMethod::Unevaluated(func) => {
+                                         let func = *func;
+                                         return func(self, obj_expr_context, method, args);
+                                     }
+                                     InstanceMethod::SignatureOnly => {
+                                         // No implementation, skip this overload
+                                         continue;
+                                     }
+                                 }
+                             }
+                         }
+                     }
                  }
-
+             }
         }
 
 
@@ -5484,6 +5514,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 InstanceMethod::Unevaluated(func) => {
                     // Unevaluated methods handle their own arg compilation and cleanup
                     return func(self, obj_expr_context, method, args);
+                }
+                InstanceMethod::SignatureOnly => {
+                    // Should not happen, fall through to lookup elsewhere
                 }
             }
         }

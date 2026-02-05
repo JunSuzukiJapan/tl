@@ -5121,14 +5121,21 @@ impl SemanticAnalyzer {
                 // 2. Resolve mangled name (using args as "generics")
                 let mut mangled_name = resolve_static_method_name(&type_name, method_name, &arg_types);
                 
-                // Check if already mangled (idempotency)
-                if self.type_manager.get_type(&type_name).and_then(|t| t.get_static_signature(method_name)).is_some() {
+                // Check if method exists in TypeManager (new TL name-based API)
+                let has_method_in_manager = self.type_manager.get_type(&type_name)
+                    .map(|t| t.has_static_method(method_name))
+                    .unwrap_or(false);
+                if has_method_in_manager {
                     mangled_name = method_name.clone();
                 }
 
                 // 3. Fallback to Type Manager (built-in Static Methods via TypeDef)
+                // Find overload matching arg count
                 let signature_opt = if let Some(ty_def) = self.type_manager.get_type(&type_name) {
-                     ty_def.get_static_signature(&mangled_name).map(|(a, b)| (a.clone(), b.clone()))
+                    let sigs = ty_def.get_static_signatures(&mangled_name);
+                    sigs.into_iter()
+                        .find(|(sig_args, _)| sig_args.len() == arg_types.len())
+                        .map(|(a, b)| (a.clone(), b.clone()))
                 } else {
                      None
                 };
@@ -5355,19 +5362,25 @@ impl SemanticAnalyzer {
                      }
                      
                      let mut mangled_name = resolve_static_method_name(&type_name, method_name, &arg_types_temp);
-                     // Check idempotency
-                     if self.type_manager.get_type(&type_name).and_then(|t| t.get_instance_signature(method_name)).is_some() {
+                     // Check if method exists in TypeManager (new TL name-based API)
+                     if self.type_manager.get_type(&type_name)
+                         .map(|t| t.has_instance_method(method_name))
+                         .unwrap_or(false) {
                           mangled_name = method_name.clone();
                      }
 
                      if let Some(ty_def) = self.type_manager.get_type(&type_name) {
-                          ty_def.get_instance_signature(&mangled_name).map(|(sig_args, ret)| {
-                              let args_with_names: Vec<(String, Type)> = sig_args.iter()
-                                .map(|t| ("_".to_string(), t.clone()))
-                                .collect();
-                              
-                              (mangled_name, args_with_names, ret.clone())
-                          })
+                          let sigs = ty_def.get_instance_signatures(&mangled_name);
+                          // Find matching overload by arg count
+                          sigs.into_iter()
+                              .find(|(sig_args, _)| sig_args.len() == arg_types_temp.len())
+                              .map(|(sig_args, ret)| {
+                                  let args_with_names: Vec<(String, Type)> = sig_args.iter()
+                                    .map(|t| ("_".to_string(), t.clone()))
+                                    .collect();
+                                  
+                                  (mangled_name.clone(), args_with_names, ret.clone())
+                              })
                      } else {
                          None
                      }

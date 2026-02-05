@@ -2,13 +2,30 @@ use std::collections::HashMap;
 pub use crate::compiler::codegen::expr::{
     StaticMethod, InstanceMethod, StaticMethodEval, StaticMethodUneval, InstanceMethodEval, InstanceMethodUneval
 };
+use crate::compiler::ast::Type;
+
+/// An overload of a method with its implementation and signature
+#[derive(Clone)]
+pub struct StaticOverload {
+    pub impl_fn: StaticMethod,
+    pub arg_types: Vec<Type>,
+    pub return_type: Type,
+}
+
+#[derive(Clone)]
+pub struct InstanceOverload {
+    pub impl_fn: InstanceMethod,
+    pub arg_types: Vec<Type>,
+    pub return_type: Type,
+}
 
 /// Represents a type definition within the CodeGenerator, managing its methods.
+/// Methods are keyed by TL name (e.g., "sum", "load") with overloads stored in a Vec.
 pub struct CodeGenType {
     pub name: String,
-    // Store (Method, ArgTypes, ReturnType)
-    pub static_methods: HashMap<String, (StaticMethod, Vec<crate::compiler::ast::Type>, crate::compiler::ast::Type)>,
-    pub instance_methods: HashMap<String, (InstanceMethod, Vec<crate::compiler::ast::Type>, crate::compiler::ast::Type)>,
+    // TL name -> list of overloads
+    pub static_methods: HashMap<String, Vec<StaticOverload>>,
+    pub instance_methods: HashMap<String, Vec<InstanceOverload>>,
 }
 
 impl CodeGenType {
@@ -20,36 +37,182 @@ impl CodeGenType {
         }
     }
 
-    pub fn register_evaluated_static_method(&mut self, name: &str, method: crate::compiler::codegen::type_manager::StaticMethodEval, args: Vec<crate::compiler::ast::Type>, ret: crate::compiler::ast::Type) {
-        self.static_methods.insert(name.to_string(), (StaticMethod::Evaluated(method), args, ret));
+    /// Register a static method by TL name
+    pub fn register_static_method(
+        &mut self,
+        tl_name: &str,
+        method: StaticMethod,
+        args: Vec<Type>,
+        ret: Type,
+    ) {
+        self.static_methods
+            .entry(tl_name.to_string())
+            .or_default()
+            .push(StaticOverload {
+                impl_fn: method,
+                arg_types: args,
+                return_type: ret,
+            });
     }
 
-    pub fn register_unevaluated_static_method(&mut self, name: &str, method: crate::compiler::codegen::type_manager::StaticMethodUneval, args: Vec<crate::compiler::ast::Type>, ret: crate::compiler::ast::Type) {
-        self.static_methods.insert(name.to_string(), (StaticMethod::Unevaluated(method), args, ret));
+    /// Register an instance method by TL name
+    pub fn register_instance_method(
+        &mut self,
+        tl_name: &str,
+        method: InstanceMethod,
+        args: Vec<Type>,
+        ret: Type,
+    ) {
+        self.instance_methods
+            .entry(tl_name.to_string())
+            .or_default()
+            .push(InstanceOverload {
+                impl_fn: method,
+                arg_types: args,
+                return_type: ret,
+            });
     }
 
-    pub fn register_evaluated_instance_method(&mut self, name: &str, method: crate::compiler::codegen::type_manager::InstanceMethodEval, args: Vec<crate::compiler::ast::Type>, ret: crate::compiler::ast::Type) {
-        self.instance_methods.insert(name.to_string(), (InstanceMethod::Evaluated(method), args, ret));
+    // Convenience methods for registering evaluated/unevaluated methods
+    pub fn register_evaluated_static_method(
+        &mut self,
+        tl_name: &str,
+        method: StaticMethodEval,
+        args: Vec<Type>,
+        ret: Type,
+    ) {
+        self.register_static_method(tl_name, StaticMethod::Evaluated(method), args, ret);
     }
 
-    pub fn register_unevaluated_instance_method(&mut self, name: &str, method: crate::compiler::codegen::type_manager::InstanceMethodUneval, args: Vec<crate::compiler::ast::Type>, ret: crate::compiler::ast::Type) {
-        self.instance_methods.insert(name.to_string(), (InstanceMethod::Unevaluated(method), args, ret));
+    pub fn register_unevaluated_static_method(
+        &mut self,
+        tl_name: &str,
+        method: StaticMethodUneval,
+        args: Vec<Type>,
+        ret: Type,
+    ) {
+        self.register_static_method(tl_name, StaticMethod::Unevaluated(method), args, ret);
     }
 
-    pub fn get_static_method(&self, name: &str) -> Option<&StaticMethod> {
-        self.static_methods.get(name).map(|(m, _, _)| m)
+    pub fn register_evaluated_instance_method(
+        &mut self,
+        tl_name: &str,
+        method: InstanceMethodEval,
+        args: Vec<Type>,
+        ret: Type,
+    ) {
+        self.register_instance_method(tl_name, InstanceMethod::Evaluated(method), args, ret);
     }
 
-    pub fn get_instance_method(&self, name: &str) -> Option<&InstanceMethod> {
-        self.instance_methods.get(name).map(|(m, _, _)| m)
+    pub fn register_unevaluated_instance_method(
+        &mut self,
+        tl_name: &str,
+        method: InstanceMethodUneval,
+        args: Vec<Type>,
+        ret: Type,
+    ) {
+        self.register_instance_method(tl_name, InstanceMethod::Unevaluated(method), args, ret);
     }
 
-    pub fn get_static_signature(&self, name: &str) -> Option<(&Vec<crate::compiler::ast::Type>, &crate::compiler::ast::Type)> {
-        self.static_methods.get(name).map(|(_, args, ret)| (args, ret))
+    /// Register a static method signature only (no implementation).
+    /// Used for semantics analysis when the codegen is handled elsewhere.
+    pub fn register_static_signature(&mut self, tl_name: &str, args: Vec<Type>, ret: Type) {
+        self.static_methods
+            .entry(tl_name.to_string())
+            .or_default()
+            .push(StaticOverload {
+                impl_fn: StaticMethod::SignatureOnly,
+                arg_types: args,
+                return_type: ret,
+            });
     }
 
-    pub fn get_instance_signature(&self, name: &str) -> Option<(&Vec<crate::compiler::ast::Type>, &crate::compiler::ast::Type)> {
-        self.instance_methods.get(name).map(|(_, args, ret)| (args, ret))
+    /// Register an instance method signature only (no implementation).
+    /// Used for semantics analysis when the codegen is handled elsewhere.
+    pub fn register_instance_signature(&mut self, tl_name: &str, args: Vec<Type>, ret: Type) {
+        self.instance_methods
+            .entry(tl_name.to_string())
+            .or_default()
+            .push(InstanceOverload {
+                impl_fn: InstanceMethod::SignatureOnly,
+                arg_types: args,
+                return_type: ret,
+            });
+    }
+
+    /// Get all overloads for a static method by TL name
+    pub fn get_static_overloads(&self, tl_name: &str) -> Option<&Vec<StaticOverload>> {
+        self.static_methods.get(tl_name)
+    }
+
+    /// Get all overloads for an instance method by TL name
+    pub fn get_instance_overloads(&self, tl_name: &str) -> Option<&Vec<InstanceOverload>> {
+        self.instance_methods.get(tl_name)
+    }
+
+    /// Get all static method signatures by TL name (for semantic analysis)
+    pub fn get_static_signatures(&self, tl_name: &str) -> Vec<(&Vec<Type>, &Type)> {
+        self.static_methods
+            .get(tl_name)
+            .map(|overloads| {
+                overloads.iter()
+                    .map(|o| (&o.arg_types, &o.return_type))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Get all instance method signatures by TL name (for semantic analysis)
+    pub fn get_instance_signatures(&self, tl_name: &str) -> Vec<(&Vec<Type>, &Type)> {
+        self.instance_methods
+            .get(tl_name)
+            .map(|overloads| {
+                overloads.iter()
+                    .map(|o| (&o.arg_types, &o.return_type))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Check if a static method exists
+    pub fn has_static_method(&self, tl_name: &str) -> bool {
+        self.static_methods.contains_key(tl_name)
+    }
+
+    /// Check if an instance method exists
+    pub fn has_instance_method(&self, tl_name: &str) -> bool {
+        self.instance_methods.contains_key(tl_name)
+    }
+
+    /// Find matching static overload by argument types
+    pub fn find_static_overload(&self, tl_name: &str, arg_types: &[Type]) -> Option<&StaticOverload> {
+        self.static_methods.get(tl_name)?.iter().find(|o| {
+            o.arg_types.len() == arg_types.len() &&
+            o.arg_types.iter().zip(arg_types).all(|(expected, actual)| types_compatible(expected, actual))
+        })
+    }
+
+    /// Find matching instance overload by argument types
+    pub fn find_instance_overload(&self, tl_name: &str, arg_types: &[Type]) -> Option<&InstanceOverload> {
+        self.instance_methods.get(tl_name)?.iter().find(|o| {
+            o.arg_types.len() == arg_types.len() &&
+            o.arg_types.iter().zip(arg_types).all(|(expected, actual)| types_compatible(expected, actual))
+        })
+    }
+}
+
+/// Check if two types are compatible for overload resolution
+fn types_compatible(expected: &Type, actual: &Type) -> bool {
+    match (expected, actual) {
+        // Exact match
+        (a, b) if a == b => true,
+        // Tensor matches any tensor
+        (Type::Tensor(_, _), Type::Tensor(_, _)) => true,
+        // Struct with same base name matches
+        (Type::Struct(n1, _), Type::Struct(n2, _)) if n1 == n2 => true,
+        // String variants
+        (Type::String(_), Type::String(_)) => true,
+        _ => false,
     }
 }
 
@@ -74,7 +237,6 @@ impl TypeManager {
     }
 
     /// Register a builtin type defined in .tl (AST + Impls).
-    /// This stores the data to be used by CodeGenerator for AST injection.
     pub fn register_builtin(&mut self, data: BuiltinTypeData) {
         self.builtin_data.insert(data.name.clone(), data);
     }
@@ -90,15 +252,51 @@ impl TypeManager {
     pub fn ensure_type(&mut self, name: &str) -> &mut CodeGenType {
         self.types.entry(name.to_string()).or_insert_with(|| CodeGenType::new(name))
     }
+
+    /// Get instance method signatures for a type by TL name
+    pub fn get_instance_signatures_for_type(&self, type_name: &str, tl_name: &str) -> Vec<(&Vec<Type>, &Type)> {
+        self.types.get(type_name)
+            .map(|t| t.get_instance_signatures(tl_name))
+            .unwrap_or_default()
+    }
+
+    /// Get static method signatures for a type by TL name
+    pub fn get_static_signatures_for_type(&self, type_name: &str, tl_name: &str) -> Vec<(&Vec<Type>, &Type)> {
+        self.types.get(type_name)
+            .map(|t| t.get_static_signatures(tl_name))
+            .unwrap_or_default()
+    }
+
+    /// Check if an instance method exists for a type
+    pub fn has_instance_method(&self, type_name: &str, tl_name: &str) -> bool {
+        self.types.get(type_name)
+            .map(|t| t.has_instance_method(tl_name))
+            .unwrap_or(false)
+    }
+
+    /// Check if a static method exists for a type
+    pub fn has_static_method(&self, type_name: &str, tl_name: &str) -> bool {
+        self.types.get(type_name)
+            .map(|t| t.has_static_method(tl_name))
+            .unwrap_or(false)
+    }
+
+    /// Find matching instance overload
+    pub fn find_instance_overload<'a>(&'a self, type_name: &str, tl_name: &str, arg_types: &[Type]) -> Option<&'a InstanceOverload> {
+        self.types.get(type_name)?.find_instance_overload(tl_name, arg_types)
+    }
+
+    /// Find matching static overload
+    pub fn find_static_overload<'a>(&'a self, type_name: &str, tl_name: &str, arg_types: &[Type]) -> Option<&'a StaticOverload> {
+        self.types.get(type_name)?.find_static_overload(tl_name, arg_types)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::compiler::codegen::CodeGenerator;
-    use crate::compiler::ast::Type;
     use inkwell::values::BasicValueEnum;
-    use crate::compiler::codegen::expr::InstanceMethod;
 
     // Mock function matching InstanceMethodEval signature
     fn mock_method<'a, 'ctx>(
@@ -107,53 +305,62 @@ mod tests {
         _ty: Type,
         _args: Vec<(BasicValueEnum<'ctx>, Type)>,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        Err("Mock called".to_string())
+        Err("Mock method".into())
     }
 
     #[test]
-    fn test_codegen_type_methods() {
+    fn test_register_and_get_method() {
         let mut ty = CodeGenType::new("TestType");
-        assert_eq!(ty.name, "TestType");
+        ty.register_evaluated_instance_method("test", mock_method, vec![], Type::I64);
         
-        // Test registering instance method
-        ty.register_evaluated_instance_method("test_method", mock_method, vec![], Type::Void);
-        
-        let method = ty.get_instance_method("test_method");
-        assert!(method.is_some());
-        
-        if let Some(InstanceMethod::Evaluated(_)) = method {
-             // Correctly retrieved
-        } else {
-             panic!("Expected Evaluated instance method");
-        }
-
-        // Test missing method
-        assert!(ty.get_instance_method("non_existent").is_none());
+        assert!(ty.has_instance_method("test"));
+        let sigs = ty.get_instance_signatures("test");
+        assert_eq!(sigs.len(), 1);
+        assert_eq!(*sigs[0].1, Type::I64);
     }
 
     #[test]
-    fn test_type_manager_lifecycle() {
-        let mut tm = TypeManager::new();
+    fn test_overloads() {
+        let mut ty = CodeGenType::new("TestType");
+        // Register two overloads for "sum"
+        ty.register_evaluated_instance_method("sum", mock_method, vec![], Type::I64);
+        ty.register_evaluated_instance_method("sum", mock_method, vec![Type::I64], Type::I64);
+        ty.register_evaluated_instance_method("sum", mock_method, vec![Type::I64, Type::Bool], Type::I64);
         
-        // Test ensure_type (creation)
-        let ty_ref = tm.ensure_type("NewType");
-        assert_eq!(ty_ref.name, "NewType");
+        let sigs = ty.get_instance_signatures("sum");
+        assert_eq!(sigs.len(), 3);
+    }
+
+    #[test]
+    fn test_find_overload() {
+        let mut ty = CodeGenType::new("Tensor");
+        ty.register_evaluated_instance_method("sum", mock_method, vec![], Type::F32);
+        ty.register_evaluated_instance_method("sum", mock_method, vec![Type::I64], Type::F32);
         
-        // Test retrieval
-        let ty_opt = tm.get_type("NewType");
-        assert!(ty_opt.is_some());
-        assert_eq!(ty_opt.unwrap().name, "NewType");
+        // Find 0-arg overload
+        let overload = ty.find_instance_overload("sum", &[]);
+        assert!(overload.is_some());
+        assert_eq!(overload.unwrap().arg_types.len(), 0);
         
-        // Test ensure_type (existing)
-        let ty_ref2 = tm.ensure_type("NewType");
-        assert_eq!(ty_ref2.name, "NewType");
+        // Find 1-arg overload
+        let overload = ty.find_instance_overload("sum", &[Type::I64]);
+        assert!(overload.is_some());
+        assert_eq!(overload.unwrap().arg_types.len(), 1);
         
-        // Register explicit type
-        let mut explicit_ty = CodeGenType::new("Explicit");
-        explicit_ty.register_evaluated_instance_method("foo", mock_method, vec![], Type::Void);
-        tm.register_type(explicit_ty);
+        // Non-matching args
+        let overload = ty.find_instance_overload("sum", &[Type::Bool]);
+        assert!(overload.is_none());
+    }
+
+    #[test]
+    fn test_type_manager() {
+        let mut mgr = TypeManager::new();
+        let mut ty = CodeGenType::new("Tensor");
+        ty.register_evaluated_instance_method("sum", mock_method, vec![], Type::F32);
+        mgr.register_type(ty);
         
-        let retrieved = tm.get_type("Explicit").unwrap();
-        assert!(retrieved.get_instance_method("foo").is_some());
+        assert!(mgr.has_instance_method("Tensor", "sum"));
+        let sigs = mgr.get_instance_signatures_for_type("Tensor", "sum");
+        assert_eq!(sigs.len(), 1);
     }
 }

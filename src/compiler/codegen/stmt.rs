@@ -3116,7 +3116,7 @@ impl<'ctx> CodeGenerator<'ctx> {
          
          // Fallback: try to find method via TypeManager
          if let Some(type_info) = self.type_manager.get_type(&mangled_name) {
-             if let Some(_method) = type_info.get_instance_method("set") {
+             if type_info.has_instance_method("set") {
                  // Instance method found - need to compile method call
                  // For now, return error with better message
                  return Err(format!("Struct set method found but instance method call not yet implemented for {}", mangled_name));
