@@ -930,6 +930,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .into(),
                         Type::Char(_) => self.context.i32_type().into(),
                         Type::I32 => self.context.i32_type().into(),
+                        Type::U8 => self.context.i8_type().into(),
+                        Type::Usize => self.context.i64_type().into(),
+                        Type::Path(_, _) => {
+                            // Path types are treated as pointers (generic type parameters)
+                            self.context
+                                .ptr_type(inkwell::AddressSpace::default())
+                                .into()
+                        }
                         _ => {
                             return Err(format!(
                                 "Unsupported type in enum variant {}: {:?}",

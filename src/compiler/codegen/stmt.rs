@@ -1491,14 +1491,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                      // Tensor/Struct Indexing (Not Addressable)
                      if let LValue::IndexAccess(val_inner, indices) = lhs {
                           let (inner_val, inner_ty) = self.compile_expr_from_lvalue(val_inner)?;
+                          // Normalize Path to Struct/Enum
+                          let inner_ty = self.normalize_type(&inner_ty);
                           if let Type::Tensor(_, _) = inner_ty {
                                return self.emit_tensor_set(inner_val, indices, val_ir, val_ty);
                           } else if let Type::Struct(name, generics) = &inner_ty {
                                // Assuming 'set' method
                                return self.emit_struct_set(inner_val, name, &generics, indices, val_ir);
+                          } else {
+                               return Err(format!("Invalid assignment target inner type: {:?}", inner_ty));
                           }
                      }
-                     return Err("Invalid assignment target".into());
+                     return Err(format!("Invalid assignment target (not IndexAccess): {:?}", lhs));
                 } else {
                      return Err("Invalid assignment LValue".into());
                 }
