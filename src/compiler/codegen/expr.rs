@@ -1633,13 +1633,16 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn emit_retain(&self, val: BasicValueEnum<'ctx>, ty: &Type) -> Result<(), String> {
         match ty {
             Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
-                let acquire_fn = self.module.get_function("tl_tensor_acquire")
-                    .ok_or("tl_tensor_acquire not found")?;
-                let ptr = val.into_pointer_value();
-                let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_aq").map_err(|e| e.to_string())?;
-                self.builder.build_call(acquire_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
+                // FIX: Temporarily disable tensor acquire to test memory leak reduction
+                // v0.2.1 did not have this call and had no memory leak
+                // let acquire_fn = self.module.get_function("tl_tensor_acquire")
+                //     .ok_or("tl_tensor_acquire not found")?;
+                // let ptr = val.into_pointer_value();
+                // let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                // let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_aq").map_err(|e| e.to_string())?;
+                // self.builder.build_call(acquire_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
             }
+
             Type::Struct(_, _) | Type::String(_) | Type::Enum(_, _) | Type::Path(_, _) => {
                 let inc_fn = self.module.get_function("tl_ptr_inc_ref")
                     .or_else(|| {
