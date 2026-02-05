@@ -83,6 +83,24 @@ pub fn register_llm_types(manager: &mut TypeManager) {
     );
 
     manager.register_type(kv_cache);
+
+    // VarBuilder (for loading model weights from safetensors)
+    let mut var_builder = CodeGenType::new("VarBuilder");
+    // VarBuilder::new(path: String) -> VarBuilder
+    var_builder.register_static_signature("new", vec![string_type.clone()], Type::Struct("VarBuilder".into(), vec![]));
+    // vb.get(name: String) -> Tensor
+    var_builder.register_instance_signature("get", vec![string_type.clone()], tensor_type.clone());
+    // vb.get_or_zeros(name: String, shape: Vec<i64>) -> Tensor
+    var_builder.register_instance_signature("get_or_zeros", vec![string_type.clone(), Type::Struct("Vec".into(), vec![Type::I64])], tensor_type.clone());
+    // vb.child(prefix: String) -> VarBuilder
+    var_builder.register_instance_signature("child", vec![string_type.clone()], Type::Struct("VarBuilder".into(), vec![]));
+    // vb.grad(tensor: Tensor) -> Tensor
+    var_builder.register_instance_signature("grad", vec![tensor_type.clone()], tensor_type.clone());
+    // vb.update() -> Void
+    var_builder.register_instance_signature("update", vec![], Type::Void);
+    // vb.save(path: String) -> Void
+    var_builder.register_instance_signature("save", vec![string_type.clone()], Type::Void);
+    manager.register_type(var_builder);
 }
 
 // ... existing static methods ...
