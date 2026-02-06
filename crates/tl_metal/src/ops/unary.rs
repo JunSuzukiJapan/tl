@@ -1,43 +1,54 @@
-//! 単項演算
+//! 単項演算（GPU Shader 使用）
 
+use crate::device::get_device;
+use crate::shaders::{self, SHADER_EXP_F32, SHADER_SQRT_F32};
 use crate::tensor::MetalTensor;
 use crate::DType;
 
 impl MetalTensor {
-    /// 要素ごとの exp
+    /// 要素ごとの exp（GPU）
     pub fn exp(&self) -> MetalTensor {
-        let result = MetalTensor::uninit(self.shape(), self.dtype());
-
         match self.dtype() {
-            DType::F32 => {
-                let a: Vec<f32> = self.to_vec();
-                let c: Vec<f32> = a.iter().map(|x| x.exp()).collect();
-                let ptr = result.buffer().contents() as *mut f32;
-                unsafe {
-                    std::ptr::copy_nonoverlapping(c.as_ptr(), ptr, c.len());
-                }
-            }
+            DType::F32 => self.unary_op_gpu(SHADER_EXP_F32),
             _ => unimplemented!("exp for {:?}", self.dtype()),
         }
-
-        result
     }
 
-    /// 要素ごとの sqrt
+    /// 要素ごとの sqrt（GPU）
     pub fn sqrt(&self) -> MetalTensor {
-        let result = MetalTensor::uninit(self.shape(), self.dtype());
-
         match self.dtype() {
-            DType::F32 => {
-                let a: Vec<f32> = self.to_vec();
-                let c: Vec<f32> = a.iter().map(|x| x.sqrt()).collect();
-                let ptr = result.buffer().contents() as *mut f32;
-                unsafe {
-                    std::ptr::copy_nonoverlapping(c.as_ptr(), ptr, c.len());
-                }
-            }
+            DType::F32 => self.unary_op_gpu(SHADER_SQRT_F32),
             _ => unimplemented!("sqrt for {:?}", self.dtype()),
         }
+    }
+
+    /// 単項演算の GPU 実行
+    fn unary_op_gpu(&self, shader_name: &str) -> MetalTensor {
+        let result = MetalTensor::uninit(self.shape(), self.dtype());
+        let device = get_device();
+        let command_queue = device.command_queue();
+
+        // Shader パイプラインを取得
+        let mut shaders = shaders::get_shaders().lock().unwrap();
+        let pipeline = shaders
+            .get_pipeline(device.device(), shader_name)
+            .expect("Failed to get shader pipeline");
+
+        // コマンドバッファとエンコーダ
+        let command_buffer = command_queue.new_command_buffer();
+        let encoder = command_buffer.new_compute_command_encoder();
+
+        encoder.set_compute_pipeline_state(pipeline);
+        encoder.set_buffer(0, Some(self.buffer()), 0);
+        encoder.set_buffer(1, Some(result.buffer()), 0);
+
+        // スレッドグループサイズを計算
+        let (grid_size, threads_per_group) = shaders::compute_thread_groups(self.elem_count(), pipeline);
+        encoder.dispatch_thread_groups(grid_size, threads_per_group);
+        encoder.end_encoding();
+
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
 
         result
     }

@@ -7,6 +7,7 @@ pub mod buffer_pool;
 pub mod device;
 pub mod tensor;
 pub mod ops;
+pub mod shaders;
 
 pub use buffer_pool::MetalBufferPool;
 pub use device::MetalDevice;
