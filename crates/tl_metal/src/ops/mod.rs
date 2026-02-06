@@ -12,4 +12,5 @@ pub mod index;
 pub mod broadcast;
 pub mod special;
 pub mod nn;
+pub mod mps;
 
