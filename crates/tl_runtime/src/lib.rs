@@ -1055,6 +1055,15 @@ pub extern "C" fn tl_tensor_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
     let t_a = unwrap_tensor_ptr!(a);
     let t_b = unwrap_tensor_ptr!(b);
     let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // Metal バックエンド優先
+        #[cfg(feature = "tl_metal_backend")]
+        {
+            let device = t_a.device().clone();
+            if let Ok(result) = crate::gpu_dispatch::metal_add(t_a, t_b, &device) {
+                return Ok(make_tensor(result));
+            }
+        }
+        // Fallback: Candle
         let result = t_a
             .broadcast_add(t_b)
             .or_else(|_| t_a.add(t_b))
@@ -1070,6 +1079,13 @@ pub extern "C" fn tl_tensor_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
     let t_a = unwrap_tensor_ptr!(a);
     let t_b = unwrap_tensor_ptr!(b);
     let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        #[cfg(feature = "tl_metal_backend")]
+        {
+            let device = t_a.device().clone();
+            if let Ok(result) = crate::gpu_dispatch::metal_sub(t_a, t_b, &device) {
+                return Ok(make_tensor(result));
+            }
+        }
         let result = t_a
             .broadcast_sub(t_b)
             .or_else(|_| t_a.sub(t_b))
@@ -1085,6 +1101,13 @@ pub extern "C" fn tl_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
     let t_a = unwrap_tensor_ptr!(a);
     let t_b = unwrap_tensor_ptr!(b);
     let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        #[cfg(feature = "tl_metal_backend")]
+        {
+            let device = t_a.device().clone();
+            if let Ok(result) = crate::gpu_dispatch::metal_mul(t_a, t_b, &device) {
+                return Ok(make_tensor(result));
+            }
+        }
         let result = t_a
             .broadcast_mul(t_b)
             .or_else(|_| t_a.mul(t_b))
@@ -2924,6 +2947,13 @@ pub extern "C" fn tl_tensor_cos(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_relu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unwrap_tensor_ptr!(t);
+    #[cfg(feature = "tl_metal_backend")]
+    {
+        let device = t.device().clone();
+        if let Ok(result) = crate::gpu_dispatch::metal_relu(t, &device) {
+            return make_tensor(result);
+        }
+    }
     let res = t.relu().unwrap();
     make_tensor(res)
 }
