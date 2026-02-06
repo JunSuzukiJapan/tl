@@ -937,7 +937,7 @@ pub extern "C" fn tl_tensor_argmax(t: *mut OpaqueTensor, _dim: usize, _keep_dim:
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_argmin(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
+pub extern "C" fn tl_tensor_argmin(t: *mut OpaqueTensor, _dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
     if t.is_null() {
         return std::ptr::null_mut();
     }

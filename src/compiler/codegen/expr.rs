@@ -2632,11 +2632,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .into(),
                         Type::Char(_) | Type::I32 => self.context.i32_type().into(),
                         Type::Struct(_, _) 
- 
                         | Type::Enum(_, _)
                         | Type::Ptr(_) // FIX: Handle Ptr fields
-                        | Type::Tuple(_)
-                        | Type::Tensor(_, _) => self
+                        | Type::Tuple(_) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
