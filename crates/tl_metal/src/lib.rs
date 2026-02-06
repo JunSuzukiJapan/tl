@@ -8,10 +8,12 @@ pub mod device;
 pub mod tensor;
 pub mod ops;
 pub mod shaders;
+pub mod autograd;
 
 pub use buffer_pool::MetalBufferPool;
-pub use device::MetalDevice;
+pub use device::{get_device, MetalDevice};
 pub use tensor::MetalTensor;
+pub use autograd::{MetalVar, GradFn};
 
 /// データ型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

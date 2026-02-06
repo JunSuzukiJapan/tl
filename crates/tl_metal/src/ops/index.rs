@@ -1,7 +1,6 @@
 //! インデックス操作
 
 use crate::tensor::MetalTensor;
-use crate::DType;
 
 impl MetalTensor {
     /// スライス（1軸のみ、開始位置と長さ指定）
