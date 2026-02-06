@@ -2,4 +2,6 @@
 
 pub mod binary;
 pub mod unary;
+pub mod scalar;
+pub mod reduce;
 pub mod matmul;

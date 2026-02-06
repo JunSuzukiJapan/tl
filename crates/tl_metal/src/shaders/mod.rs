@@ -3,18 +3,38 @@
 use metal::{ComputePipelineState, Device, Library, MTLSize};
 use std::collections::HashMap;
 
-/// Shader 関数名
+/// Shader 関数名 - 二項演算
 pub const SHADER_ADD_F32: &str = "add_f32";
+pub const SHADER_SUB_F32: &str = "sub_f32";
 pub const SHADER_MUL_F32: &str = "mul_f32";
+pub const SHADER_DIV_F32: &str = "div_f32";
+pub const SHADER_POW_F32: &str = "pow_f32";
+
+/// Shader 関数名 - 単項演算
+pub const SHADER_NEG_F32: &str = "neg_f32";
+pub const SHADER_ABS_F32: &str = "abs_f32";
 pub const SHADER_EXP_F32: &str = "exp_f32";
+pub const SHADER_LOG_F32: &str = "log_f32";
 pub const SHADER_SQRT_F32: &str = "sqrt_f32";
+pub const SHADER_TANH_F32: &str = "tanh_f32";
+pub const SHADER_SIGMOID_F32: &str = "sigmoid_f32";
+pub const SHADER_RELU_F32: &str = "relu_f32";
+
+/// Shader 関数名 - スカラー演算
+pub const SHADER_ADD_SCALAR_F32: &str = "add_scalar_f32";
+pub const SHADER_MUL_SCALAR_F32: &str = "mul_scalar_f32";
+pub const SHADER_CLAMP_F32: &str = "clamp_f32";
+
+/// Shader 関数名 - Reduce
+pub const SHADER_SUMALL_F32: &str = "sumall_f32";
 
 /// Metal Shader ソースコード
 const SHADER_SOURCE: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
 
-// 二項演算: 加算
+// ========== 二項演算 ==========
+
 kernel void add_f32(
     device const float* a [[buffer(0)]],
     device const float* b [[buffer(1)]],
@@ -24,7 +44,15 @@ kernel void add_f32(
     out[id] = a[id] + b[id];
 }
 
-// 二項演算: 乗算
+kernel void sub_f32(
+    device const float* a [[buffer(0)]],
+    device const float* b [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = a[id] - b[id];
+}
+
 kernel void mul_f32(
     device const float* a [[buffer(0)]],
     device const float* b [[buffer(1)]],
@@ -34,7 +62,42 @@ kernel void mul_f32(
     out[id] = a[id] * b[id];
 }
 
-// 単項演算: exp
+kernel void div_f32(
+    device const float* a [[buffer(0)]],
+    device const float* b [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = a[id] / b[id];
+}
+
+kernel void pow_f32(
+    device const float* a [[buffer(0)]],
+    device const float* b [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = pow(a[id], b[id]);
+}
+
+// ========== 単項演算 ==========
+
+kernel void neg_f32(
+    device const float* a [[buffer(0)]],
+    device float* out [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = -a[id];
+}
+
+kernel void abs_f32(
+    device const float* a [[buffer(0)]],
+    device float* out [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = abs(a[id]);
+}
+
 kernel void exp_f32(
     device const float* a [[buffer(0)]],
     device float* out [[buffer(1)]],
@@ -43,13 +106,107 @@ kernel void exp_f32(
     out[id] = exp(a[id]);
 }
 
-// 単項演算: sqrt
+kernel void log_f32(
+    device const float* a [[buffer(0)]],
+    device float* out [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = log(a[id]);
+}
+
 kernel void sqrt_f32(
     device const float* a [[buffer(0)]],
     device float* out [[buffer(1)]],
     uint id [[thread_position_in_grid]]
 ) {
     out[id] = sqrt(a[id]);
+}
+
+kernel void tanh_f32(
+    device const float* a [[buffer(0)]],
+    device float* out [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = tanh(a[id]);
+}
+
+kernel void sigmoid_f32(
+    device const float* a [[buffer(0)]],
+    device float* out [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = 1.0f / (1.0f + exp(-a[id]));
+}
+
+kernel void relu_f32(
+    device const float* a [[buffer(0)]],
+    device float* out [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = max(0.0f, a[id]);
+}
+
+// ========== スカラー演算 ==========
+
+kernel void add_scalar_f32(
+    device const float* a [[buffer(0)]],
+    constant float& scalar [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = a[id] + scalar;
+}
+
+kernel void mul_scalar_f32(
+    device const float* a [[buffer(0)]],
+    constant float& scalar [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = a[id] * scalar;
+}
+
+kernel void clamp_f32(
+    device const float* a [[buffer(0)]],
+    constant float& min_val [[buffer(1)]],
+    constant float& max_val [[buffer(2)]],
+    device float* out [[buffer(3)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = clamp(a[id], min_val, max_val);
+}
+
+// ========== Reduce (部分和) ==========
+
+// Threadgroup-local reduction for sumall
+kernel void sumall_f32(
+    device const float* input [[buffer(0)]],
+    device float* partial_sums [[buffer(1)]],
+    constant uint& count [[buffer(2)]],
+    uint id [[thread_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint tg_size [[threads_per_threadgroup]],
+    uint tg_id [[threadgroup_position_in_grid]]
+) {
+    threadgroup float shared_data[256];
+    
+    // Load data
+    float val = (id < count) ? input[id] : 0.0f;
+    shared_data[tid] = val;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    
+    // Reduction in shared memory
+    for (uint s = tg_size / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            shared_data[tid] += shared_data[tid + s];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    
+    // Write result
+    if (tid == 0) {
+        partial_sums[tg_id] = shared_data[0];
+    }
 }
 "#;
 
