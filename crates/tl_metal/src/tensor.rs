@@ -18,6 +18,13 @@ pub struct MetalTensor {
     device: Arc<MetalDevice>,
 }
 
+impl Clone for MetalTensor {
+    fn clone(&self) -> Self {
+        // データを複製して新しいテンソルを作成
+        self.clone_data()
+    }
+}
+
 impl MetalTensor {
     /// 新しいテンソルを作成（未初期化）
     pub fn uninit(shape: &[usize], dtype: DType) -> Self {

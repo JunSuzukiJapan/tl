@@ -9,11 +9,15 @@ pub mod tensor;
 pub mod ops;
 pub mod shaders;
 pub mod autograd;
+pub mod backend_impl;
 
 pub use buffer_pool::MetalBufferPool;
 pub use device::{get_device, MetalDevice};
 pub use tensor::MetalTensor;
 pub use autograd::{MetalVar, GradFn};
+
+// Re-export tl_backend traits
+pub use tl_backend::{GpuTensor, GpuOps};
 
 /// データ型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
