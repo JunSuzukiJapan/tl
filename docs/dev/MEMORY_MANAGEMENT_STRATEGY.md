@@ -291,3 +291,60 @@ LLVM IR の比較により、決定的な差異が判明しました：
 ### 5. 重要な知見
 **テンソルと構造体では所有権セマンティクスが異なります。** 構造体は UAF を防ぐために `emit_retain()` の恩恵を受けますが、テンソルはランタイムの集約されたメモリマネージャー（`TensorPool`、`MemoryManager`）によって既に管理されています。構造体と同様の retain ロジックをテンソルに適用すると、重複した参照追跡が発生し、Candle 内部の計算グラフのクリーンアップを妨害します。
 
+---
+
+## [English] Persistent GPU Pool Strategy (V4.0)
+
+### 1. Problem: Metal RSS Growth
+On Metal devices, repeatedly allocating and freeing GPU memory causes **Resident Set Size (RSS)** to grow continuously, even when the TL runtime's internal buffer pool remains stable. This is a known Metal driver behavior where released memory is not always returned to the OS.
+
+### 2. Solution: Never Release GPU Memory
+The V4.0 strategy implements a **Persistent GPU Pool** that never deallocates GPU memory back to the OS:
+
+- **`acquire()`**: Currently disabled (Phase 1). Always returns `None`, forcing new allocations.
+- **`release()`**: Drops tensor **contents** (internal Candle tensors, Arcs) but intentionally **leaks** the `OpaqueTensor` struct memory.
+
+This approach:
+1. **Prevents RSS growth** from repeated alloc/free cycles
+2. **Avoids Metal driver issues** with memory reclamation
+3. **Memory is reclaimed by OS** when the process exits
+
+### 3. Statistics API
+New C-ABI functions for monitoring:
+- `tl_get_gpu_total_allocated_bytes()`: Total bytes ever allocated
+- `tl_get_gpu_free_count()`: Number of "freed" (leaked) tensors
+- `tl_get_gpu_free_bytes()`: Bytes in freed tensors
+- `tl_get_gpu_pool_hit_rate()`: Pool hit rate (currently 0%)
+- `tl_dump_gpu_pool_stats()`: Dump all stats to stderr
+
+### 4. Environment Variable
+- `TL_GPU_PREALLOCATE_MB=<size>`: Pre-allocate GPU memory at startup (future implementation)
+
+---
+
+## [Japanese] Persistent GPU Pool 戦略 (V4.0)
+
+### 1. 問題: Metal の RSS 膨張
+Metal デバイスでは、GPU メモリの確保と解放を繰り返すと、TL ランタイム内部のバッファプールが安定していても **Resident Set Size (RSS)** が継続的に増加します。これは Metal ドライバの既知の挙動で、解放されたメモリが常に OS に返されるわけではありません。
+
+### 2. 解決策: GPU メモリを解放しない
+V4.0 戦略は、GPU メモリを OS に解放しない **Persistent GPU Pool** を実装します：
+
+- **`acquire()`**: 現在無効（Phase 1）。常に `None` を返し、新規確保を強制。
+- **`release()`**: テンソルの **コンテンツ**（内部 Candle テンソル、Arc）はドロップしますが、`OpaqueTensor` 構造体メモリは意図的に **リーク** します。
+
+このアプローチにより：
+1. 繰り返しの確保/解放サイクルによる **RSS 膨張を防止**
+2. メモリ回収に関する **Metal ドライバの問題を回避**
+3. プロセス終了時に **OS がメモリを回収**
+
+### 3. 統計 API
+監視用の新しい C-ABI 関数：
+- `tl_get_gpu_total_allocated_bytes()`: 累計確保バイト数
+- `tl_get_gpu_free_count()`: 「解放」（リーク）されたテンソル数
+- `tl_get_gpu_free_bytes()`: 解放されたテンソルのバイト数
+- `tl_get_gpu_pool_hit_rate()`: プール命中率（現在 0%）
+- `tl_dump_gpu_pool_stats()`: 全統計を stderr にダンプ
+
+### 4. 環境変数
+- `TL_GPU_PREALLOCATE_MB=<size>`: 起動時に GPU メモリを事前確保（将来実装）

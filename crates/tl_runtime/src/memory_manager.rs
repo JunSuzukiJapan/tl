@@ -816,13 +816,10 @@ pub extern "C" fn tl_tensor_release(ptr: *mut OpaqueTensor) {
 }
 
 /// Get number of tensors currently stored in the pool
+/// V4.0: Uses PersistentGpuPool
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_get_pool_count() -> i64 {
-    if let Ok(pool) = TENSOR_POOL.lock() {
-        pool.total_count() as i64
-    } else {
-        -1
-    }
+    crate::tensor_pool::tl_get_gpu_free_count()
 }
 
 /// Get number of live tensor refcount entries

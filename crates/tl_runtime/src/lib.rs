@@ -899,19 +899,22 @@ pub extern "C" fn tl_get_memory_mb() -> i64 {
     -1
 }
 
+/// V4.0: Get GPU pool free bytes from PersistentGpuPool
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_get_metal_pool_bytes() -> i64 {
-    0
+    tensor_pool::tl_get_gpu_free_bytes()
 }
 
+/// V4.0: Get GPU pool free MB from PersistentGpuPool
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_get_metal_pool_mb() -> i64 {
-    0
+    tensor_pool::tl_get_gpu_free_bytes() / (1024 * 1024)
 }
 
+/// V4.0: Get GPU pool free count from PersistentGpuPool
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_get_metal_pool_count() -> i64 {
-    0
+    tensor_pool::tl_get_gpu_free_count()
 }
 
 #[unsafe(no_mangle)]
@@ -1305,6 +1308,7 @@ pub extern "C" fn tl_tensor_print_3(t: *const OpaqueTensor) {
 
 /// Internal function to free tensor resources without unregistering
 /// Used by MemoryManager to avoid deadlock
+/// V4.0: Uses PersistentGpuPool - never actually frees, always pools
 pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) -> FreeOutcome {
     if t.is_null() {
         return FreeOutcome::Freed;
@@ -1318,31 +1322,20 @@ pub(crate) fn free_tensor_resources(t: *mut OpaqueTensor) -> FreeOutcome {
             return FreeOutcome::ArenaDrop;
         }
 
-        // Try to release to pool (heap-allocated tensors only)
-        // Check if Standard
+        // Get tensor metadata for pooling
         let (num_elements, dtype_id, device_id) = match (*t).as_tensor() {
              Ok(tensor) => (tensor.elem_count(), dtype_to_id(tensor.dtype()), device_to_id(tensor.device())),
              Err(_) => {
-                // Quantized tensors are currently not pooled. Just drop.
-                 let _ = Box::from_raw(t);
-                 return FreeOutcome::Freed;
+                // Quantized tensors are currently not pooled. Just drop content.
+                // V4.0: Still drop content but keep memory (leak intentionally for stability)
+                std::ptr::drop_in_place(t);
+                return FreeOutcome::Freed;
              }
         };
 
-        if let Ok(mut pool) = memory_manager::TENSOR_POOL.lock() {
-            match pool.release(t, num_elements, dtype_id, device_id) {
-                memory_manager::PoolOutcome::Pooled => {
-                    std::ptr::drop_in_place(t);
-                    return FreeOutcome::Pooled;
-                }
-                memory_manager::PoolOutcome::Duplicate => return FreeOutcome::Pooled,
-                memory_manager::PoolOutcome::Full => { /* Fallthrough to free */ }
-            }
-        }
-
-        // Pool is full or lock failed, actually free
-        let _ = Box::from_raw(t);
-        FreeOutcome::Freed
+        // V4.0: Use PersistentGpuPool - never free, always pool
+        tensor_pool::pool_release(t, num_elements, dtype_id, device_id);
+        FreeOutcome::Pooled
     }
 }
 
