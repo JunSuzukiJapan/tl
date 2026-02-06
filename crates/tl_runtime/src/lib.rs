@@ -2792,6 +2792,13 @@ pub extern "C" fn tl_tensor_div(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
     let t_a = unwrap_tensor_ptr!(a);
     let t_b = unwrap_tensor_ptr!(b);
     let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        #[cfg(feature = "tl_metal_backend")]
+        {
+            let device = t_a.device().clone();
+            if let Ok(result) = crate::gpu_dispatch::metal_div(t_a, t_b, &device) {
+                return Ok(make_tensor(result));
+            }
+        }
         let result = t_a
             .broadcast_div(t_b)
             .or_else(|_| t_a.div(t_b))
@@ -2806,6 +2813,13 @@ pub extern "C" fn tl_tensor_exp(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     let tensor = unwrap_tensor_ptr!(t);
     let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        #[cfg(feature = "tl_metal_backend")]
+        {
+            let device = tensor.device().clone();
+            if let Ok(result) = crate::gpu_dispatch::metal_exp(tensor, &device) {
+                return Ok(make_tensor(result));
+            }
+        }
         let result = tensor
             .exp()
             .map_err(|e| RuntimeError::InternalError(e.to_string()))?;
