@@ -238,6 +238,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         // 3. Mangle
         let mangled_name = self.mangle_type_name(enum_name, generic_args);
         
+        // Register reverse lookup for mangled name -> (base_name, generic_args)
+        self.register_mangled_type(&mangled_name, enum_name, generic_args);
+        
         // 4. Check if already instantiated
         if self.enum_types.contains_key(&mangled_name) {
              return Ok(mangled_name);
@@ -356,6 +359,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     /// Generate a mangled name for a monomorphized type.
     /// Example: `Vec` + `[i64]` -> `Vec<i64>`
+    /// Note: Call register_mangled_type separately when the mangled name is used for type registration.
     pub fn mangle_type_name(&self, base_name: &str, type_args: &[Type]) -> String {
         if type_args.is_empty() {
             base_name.to_string()
@@ -364,6 +368,24 @@ impl<'ctx> CodeGenerator<'ctx> {
             let args_str: Vec<String> = type_args.iter().map(|t| self.type_to_suffix(t)).collect();
             format!("{}_{}", base_name, args_str.join("_"))
         }
+    }
+    
+    /// Register a mangled type name with its original base name and generic args.
+    /// This enables reverse lookup from mangled name to original type information.
+    pub fn register_mangled_type(&mut self, mangled_name: &str, base_name: &str, type_args: &[Type]) {
+        self.reified_types.register_from_parts(mangled_name, base_name, type_args);
+    }
+    
+    /// Lookup original type information from a mangled name.
+    /// Returns (base_name, generic_args) if found.
+    pub fn lookup_mangled_type(&self, mangled_name: &str) -> Option<(String, Vec<Type>)> {
+        self.reified_types.lookup(mangled_name)
+            .map(|r| (r.base_name.clone(), r.type_args.clone()))
+    }
+    
+    /// Lookup a reified type by mangled name (full info)
+    pub fn lookup_reified_type(&self, mangled_name: &str) -> Option<&super::reified_type::ReifiedType> {
+        self.reified_types.lookup(mangled_name)
     }
 
     /// Convert a Type to a string representation for mangling/display.

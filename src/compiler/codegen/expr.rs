@@ -2485,8 +2485,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                 
                 // Retrieve field type and substitute if necessary
                 let (_, field_ty_raw) = &struct_def.fields[field_idx];
-                let field_ty = if is_generic_base && !generic_args.is_empty() {
-                     self.substitute_type_generic(field_ty_raw, &struct_def.generics, &generic_args)
+                
+                // If generic_args is empty but we have a mangled name, extract generics from it
+                let effective_generic_args = if generic_args.is_empty() && base_name.contains('_') {
+                    let parts: Vec<&str> = base_name.split('_').collect();
+                    if parts.len() > 1 {
+                        self.parse_mangled_type_args(&parts[1..])
+                    } else {
+                        generic_args.clone()
+                    }
+                } else {
+                    generic_args.clone()
+                };
+                
+                let field_ty = if is_generic_base && !effective_generic_args.is_empty() {
+                     self.substitute_type_generic(field_ty_raw, &struct_def.generics, &effective_generic_args)
                 } else {
                      field_ty_raw.clone()
                 };
@@ -4979,16 +4992,34 @@ impl<'ctx> CodeGenerator<'ctx> {
         arms: &[(Pattern, Expr)],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         let (subject_val, subject_ty) = self.compile_expr(subject_expr)?;
-        let (enum_name, generic_args) = match &subject_ty {
-            Type::Enum(n, args) | Type::Struct(n, args) => (n, args),
+        let (enum_name, raw_generic_args) = match &subject_ty {
+            Type::Enum(n, args) | Type::Struct(n, args) => (n, args.clone()),
             Type::Path(segments, args) => {
                 if let Some(n) = segments.last() {
-                    (n, args)
+                    (n, args.clone())
                 } else {
                     return Err("Match on empty path".into());
                 }
             }
             _ => return Err(format!("Match on non-enum: {:?}", subject_ty)),
+        };
+        
+        // If generic_args is empty but enum_name is mangled, lookup the original generics
+        let generic_args: Vec<Type> = if raw_generic_args.is_empty() && enum_name.contains('_') {
+            // Try to lookup from registered mangled types (accurate method)
+            if let Some((_, args)) = self.lookup_mangled_type(enum_name) {
+                args
+            } else {
+                // Fallback to parsing mangled name (less accurate)
+                let parts: Vec<&str> = enum_name.split('_').collect();
+                if parts.len() > 1 {
+                    self.parse_mangled_type_args(&parts[1..])
+                } else {
+                    raw_generic_args
+                }
+            }
+        } else {
+            raw_generic_args
         };
 
 
@@ -5141,7 +5172,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     &enum_def,
                     variant_idx,
                     bindings,
-                    generic_args,
+                    &generic_args,
                 )?;
             }
 
@@ -5282,10 +5313,25 @@ impl<'ctx> CodeGenerator<'ctx> {
         let variant_def = &enum_def.variants[variant_idx];
 
         // Build substitution map for concrete types
+        // If enum_def.generics is empty (monomorphized enum like Entry_i64_i64),
+        // try to find the original generic enum definition (e.g., Entry) to get generic param names
         let mut subst: HashMap<String, Type> = HashMap::new();
-        for (i, param_name) in enum_def.generics.iter().enumerate() {
-            if let Some(arg) = generic_args.get(i) {
-                subst.insert(param_name.clone(), arg.clone());
+        
+        if enum_def.generics.is_empty() && !generic_args.is_empty() {
+            // Try to find the original generic enum definition
+            let base_name = enum_def.name.split('_').next().unwrap_or(&enum_def.name);
+            if let Some(generic_def) = self.enum_defs.get(base_name) {
+                for (i, param_name) in generic_def.generics.iter().enumerate() {
+                    if let Some(arg) = generic_args.get(i) {
+                        subst.insert(param_name.clone(), arg.clone());
+                    }
+                }
+            }
+        } else {
+            for (i, param_name) in enum_def.generics.iter().enumerate() {
+                if let Some(arg) = generic_args.get(i) {
+                    subst.insert(param_name.clone(), arg.clone());
+                }
             }
         }
 
@@ -5996,11 +6042,54 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         // Get return type (for SRET check)
-        let ret_ty = if let Some(ret) = self.method_return_types.get(&final_name) {
+        let mut ret_ty = if let Some(ret) = self.method_return_types.get(&final_name) {
              ret.clone()
         } else {
              self.get_return_type_from_signature(func_val)
         };
+        
+        // FIX: For generic runtime functions (like tl_vec_ptr_get), the return type may have 
+        // generic placeholders (e.g., Option<T>) that need to be substituted with actual generics.
+        // This is necessary because runtime functions like tl_vec_ptr_get are shared across all
+        // Vec<T> types, but the actual T in Option<T> depends on the call site.
+        if !inferred_generics.is_empty() {
+            match &ret_ty {
+                Type::Enum(name, args) if (name == "Option" || name == "Result") && args.len() == 1 => {
+                    // For Vec.get -> Option<T>, replace T with the actual element type
+                    if method == "get" && base_type_name == "Vec" {
+                        ret_ty = Type::Enum(name.clone(), inferred_generics.clone());
+                    }
+                }
+                Type::Enum(name, args) if name == "Result" && args.len() == 2 => {
+                    // Handle Result<T, E> if needed
+                    if method == "get" && base_type_name == "Vec" {
+                        let new_ok = inferred_generics.get(0).cloned().unwrap_or(args[0].clone());
+                        let new_err = args[1].clone();
+                        ret_ty = Type::Enum(name.clone(), vec![new_ok, new_err]);
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        // For Option.unwrap/unwrap_or, the return type T should be replaced with generics[0]
+        // Note: Get generics from obj_ty which has the correct type from the call site
+        if base_type_name == "Option" && (method == "unwrap" || method == "unwrap_or") {
+            if let Type::Enum(_, args) = &obj_ty {
+                if let Some(inner_ty) = args.get(0) {
+                    ret_ty = inner_ty.clone();
+                }
+            }
+        }
+        
+        // For Result.unwrap, the return type T should be replaced with generics[0]
+        if base_type_name == "Result" && method == "unwrap" {
+            if let Type::Enum(_, args) = &obj_ty {
+                if let Some(ok_ty) = args.get(0) {
+                    ret_ty = ok_ty.clone();
+                }
+            }
+        }
 
         // SRET Check
         // String is a pointer (RefCounted), handled as value return, not SRET.

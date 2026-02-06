@@ -11,7 +11,6 @@ impl TypeSubstitutor {
     }
 
     pub fn substitute_type(&self, ty: &Type) -> Type {
-        // eprintln!("[DEBUG] substitute_type: {:?}", ty); // Verbose - uncomment if needed
         match ty {
             // UserDefined removed
 
@@ -215,11 +214,25 @@ impl TypeSubstitutor {
             ExprKind::Match { expr: subject, arms } => {
                 let new_subject = self.substitute_expr(subject);
                 let new_arms: Vec<(crate::compiler::ast::Pattern, Expr)> = arms.iter().map(|(pattern, arm_expr)| {
-                    (pattern.clone(), self.substitute_expr(arm_expr))
+                    (self.substitute_pattern(pattern), self.substitute_expr(arm_expr))
                 }).collect();
                 ExprKind::Match {
                     expr: Box::new(new_subject),
                     arms: new_arms,
+                }
+            }
+            
+            ExprKind::IfLet { pattern, expr, then_block, else_block } => {
+                let new_expr = self.substitute_expr(expr);
+                let new_then = then_block.iter().map(|s| self.substitute_stmt(s)).collect();
+                let new_else = else_block.as_ref().map(|block| block.iter().map(|s| self.substitute_stmt(s)).collect());
+                // Also substitute pattern if it has generics
+                let new_pattern = self.substitute_pattern(pattern);
+                ExprKind::IfLet {
+                    pattern: new_pattern,
+                    expr: Box::new(new_expr),
+                    then_block: new_then,
+                    else_block: new_else,
                 }
             }
             
@@ -233,7 +246,7 @@ impl TypeSubstitutor {
         }
     }
 
-    pub fn substitute_lvalue(&self, lvalue: &LValue) -> LValue {
+     pub fn substitute_lvalue(&self, lvalue: &LValue) -> LValue {
          match lvalue {
               LValue::Variable(name) => LValue::Variable(name.clone()),
               LValue::FieldAccess(inner, field) => LValue::FieldAccess(Box::new(self.substitute_lvalue(inner)), field.clone()),
@@ -243,6 +256,24 @@ impl TypeSubstitutor {
                    LValue::IndexAccess(Box::new(new_inner), new_indices)
               }
          }
+    }
+
+    pub fn substitute_pattern(&self, pattern: &Pattern) -> Pattern {
+        match pattern {
+            Pattern::EnumPattern { enum_name, variant_name, bindings } => {
+                // Mangle enum name with substituted generics if it's a generic enum
+                // Check if enum_name contains generic params that need substitution
+                // For now, just return the pattern as-is since the actual type substitution
+                // happens through the subject expression's type in compile_match_like
+                Pattern::EnumPattern {
+                    enum_name: enum_name.clone(),
+                    variant_name: variant_name.clone(),
+                    bindings: bindings.clone(),
+                }
+            }
+            Pattern::Wildcard => Pattern::Wildcard,
+            Pattern::Literal(expr) => Pattern::Literal(Box::new(self.substitute_expr(expr))),
+        }
     }
 
     pub fn substitute_stmt(&self, stmt: &Stmt) -> Stmt {
