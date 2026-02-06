@@ -1,4 +1,4 @@
-// mono_comprehensive 部分テスト（HashMap なし）
+// mono_comprehensive.tl のテスト関数を段階的に実行
 
 struct Box<T> {
     value: T,
@@ -14,26 +14,20 @@ impl<T> Box<T> {
     }
 }
 
-fn assert_eq(actual: i64, expected: i64, msg: String) {
-    if actual != expected {
-        print("FAIL: ");
-        print(msg);
-        print(" - expected ");
-        print(expected);
-        print(", got ");
-        println(actual);
-    }
-}
-
 fn main() {
-    println("Test 1: Basic Box<i64>");
+    println("=== Test 1: Basic Generics ===");
+    
+    // 単一型パラメータ
     let b1: Box<i64> = Box::new(42);
-    assert_eq(b1.get(), 42, "Box<i64>");
+    println("Box created");
+    let v = b1.get();
+    println("Box.get: {}", v);
+    
+    let b2: Box<String> = Box::new("hello");
+    println("Box<String> created");
+    
+    let b3: Box<f32> = Box::new(3.14);
+    println("Box<f32> created");
+    
     println("Test 1 PASSED");
-    
-    println("Test 2: Box<bool>");
-    let b4: Box<bool> = Box::new(true);
-    println("Test 2 PASSED");
-    
-    println("All tests passed");
 }

@@ -2108,40 +2108,37 @@ impl<'ctx> CodeGenerator<'ctx> {
                         for (idx, (f_ty, expr)) in types.iter().zip(exprs.iter()).enumerate() {
                              let (val, _) = self.compile_expr(expr)?;
                              
-                            let is_rvalue = matches!(
-                                &expr.inner,
-                                ExprKind::FnCall(_, _)
-                                    | ExprKind::MethodCall(_, _, _)
-                                    | ExprKind::StaticMethodCall(_, _, _)
-                                    | ExprKind::BinOp(_, _, _)
-                                    | ExprKind::UnOp(_, _)
-                                    | ExprKind::TensorLiteral(_)
-                                    | ExprKind::Block(_)
-                                    | ExprKind::Int(_)
-                                    | ExprKind::Float(_)
-                                    | ExprKind::Bool(_)
-                                    | ExprKind::StringLiteral(_)
-                            );
-                            let mut stored_val = val;
-                            let should_deep_clone = match f_ty {
-                                Type::Tensor(_, _) => !is_rvalue,
+                            // Move semantics for pointer types:
+                            // When a variable is used as enum payload, we MOVE ownership.
+                            let is_moveable_type = match f_ty {
+                                Type::Tensor(_, _) => true,
                                 Type::Struct(n, args) => {
-                                    if args.is_empty() && (n == "I64" || n == "F64" || n == "I32" || n == "F32" || n == "Bool" || n == "Usize" || n == "Entity" ||
-                                       n == "i64" || n == "f64" || n == "i32" || n == "f32" || n == "bool" || n == "usize") {
-                                           false
-                                    } else {
-                                           !is_rvalue
-                                    }
+                                    // Primitive types don't need move semantics
+                                    !(args.is_empty() && 
+                                      (n == "I64" || n == "F64" || n == "I32" || n == "F32" || n == "Bool" || 
+                                       n == "i64" || n == "f64" || n == "i32" || n == "f32" || n == "bool"))
                                 }
+                                Type::Enum(_, _) | Type::Tuple(_) => true,
                                 _ => false,
                             };
-                            if should_deep_clone {
-                                 stored_val = self.emit_deep_clone(val, f_ty)?;
+
+                            
+                            // If field_expr is a Variable, mark it as moved (disable cleanup)
+                            if is_moveable_type {
+                                if let ExprKind::Variable(var_name) = &expr.inner {
+                                    for scope in self.variables.iter_mut().rev() {
+                                        if let Some((_, _, cleanup_mode)) = scope.get_mut(var_name) {
+                                            *cleanup_mode = crate::compiler::codegen::CLEANUP_NONE;
+                                            break;
+                                        }
+                                    }
+                                }
                             }
                             
                             let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "").map_err(|e| e.to_string())?;
-                            self.builder.build_store(f_ptr, stored_val).unwrap();
+                            self.builder.build_store(f_ptr, val).unwrap();
                         }
+
                      },
                      (crate::compiler::ast::VariantKind::Struct(fields_def), crate::compiler::ast::EnumVariantInit::Struct(exprs)) => {
                         let payload_ptr_raw = self

@@ -115,29 +115,60 @@ pub extern "C" fn tl_tensor_release(t: *mut crate::OpaqueTensor) {
     }
 }
 
-/// 参照カウント増加（スタブ）
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+/// グローバル参照カウントマップ
+static REF_COUNTS: std::sync::LazyLock<Mutex<HashMap<usize, usize>>> = 
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// 参照カウント増加
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_ptr_inc_ref(_ptr: *mut c_void) {
-    // スタブ
+pub extern "C" fn tl_ptr_inc_ref(ptr: *mut c_void) {
+    if ptr.is_null() { return; }
+    let key = ptr as usize;
+    if let Ok(mut counts) = REF_COUNTS.lock() {
+        *counts.entry(key).or_insert(1) += 1;
+    }
 }
 
-/// 参照カウント減少（スタブ）
+/// 参照カウント減少
+/// 戻り値: カウントが0になった場合は true (解放すべき)
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_ptr_dec_ref(_ptr: *mut c_void) {
-    // スタブ
+pub extern "C" fn tl_ptr_dec_ref(ptr: *mut c_void) -> bool {
+    if ptr.is_null() { return false; }
+    let key = ptr as usize;
+    if let Ok(mut counts) = REF_COUNTS.lock() {
+        if let Some(count) = counts.get_mut(&key) {
+            if *count > 0 {
+                *count -= 1;
+                if *count == 0 {
+                    counts.remove(&key);
+                    return true; // should free
+                }
+            }
+        }
+    }
+    false
 }
 
-/// ポインタ取得（スタブ）
+/// ポインタ取得（参照カウント増加）
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_ptr_acquire(ptr: *mut c_void) -> *mut c_void {
+    if ptr.is_null() { return ptr; }
+    tl_ptr_inc_ref(ptr);
     ptr
 }
 
-/// ポインタ解放（スタブ）
+/// ポインタ解放（参照カウント減少、0になったら解放）
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_ptr_release(_ptr: *mut c_void) {
-    // スタブ
+pub extern "C" fn tl_ptr_release(ptr: *mut c_void) {
+    if ptr.is_null() { return; }
+    if tl_ptr_dec_ref(ptr) {
+        unsafe { libc::free(ptr); }
+    }
 }
+
 
 /// 一時バッファ割り当て
 #[unsafe(no_mangle)]
