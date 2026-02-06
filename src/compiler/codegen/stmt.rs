@@ -2547,41 +2547,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(val)
             }
             Type::String(_) => {
-                // String Deep Clone
-                // Uses tl_string_new("") + tl_string_concat(val, empty)
-                // 1. Create empty string object
-                let empty_cstr = self.builder.build_global_string_ptr("", "empty_cstr").unwrap();
-                let string_new_fn = self.module.get_function("tl_string_new")
+                // String Deep Clone using tl_string_clone
+                let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                let string_clone_fn = self.module.get_function("tl_string_clone")
                     .or_else(|| {
-                         // Declare if missing
-                         let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                         let fn_type = ptr_ty.fn_type(&[ptr_ty.into()], false);
-                         Some(self.module.add_function("tl_string_new", fn_type, None))
+                        // Declare if missing: ptr @tl_string_clone(ptr)
+                        let fn_type = ptr_ty.fn_type(&[ptr_ty.into()], false);
+                        Some(self.module.add_function("tl_string_clone", fn_type, None))
                     })
-                    .ok_or("tl_string_new not found")?;
-                    
-                let empty_call = self.builder.build_call(string_new_fn, &[empty_cstr.as_pointer_value().into()], "empty_str").map_err(|e| e.to_string())?;
-                let empty_str_obj = match empty_call.try_as_basic_value() {
-                    inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-                    _ => return Err("tl_string_new returned void".into()),
-                };
-
-                // 2. Deep Clone via Concat
-                let string_concat_fn = self.module.get_function("tl_string_concat")
-                     .ok_or("tl_string_concat not found")?;
+                    .ok_or("tl_string_clone not found")?;
+                
                 let val_ptr = val.into_pointer_value();
-                let clone_call = self.builder.build_call(string_concat_fn, &[val_ptr.into(), empty_str_obj.into()], "str_clone").map_err(|e| e.to_string())?;
-                let clone_res = match clone_call.try_as_basic_value() {
-                    inkwell::values::ValueKind::Basic(v) => v,
-                    _ => return Err("tl_string_concat returned void".into()),
-                };
-
-                // 3. Free empty string object
-                let string_free_fn = self.module.get_function("tl_string_free")
-                    .ok_or("tl_string_free not found")?;
-                self.builder.build_call(string_free_fn, &[empty_str_obj.into()], "").map_err(|e| e.to_string())?;
-
-                Ok(clone_res)
+                let clone_call = self.builder.build_call(string_clone_fn, &[val_ptr.into()], "str_clone")
+                    .map_err(|e| e.to_string())?;
+                match clone_call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => Ok(v),
+                    _ => Err("tl_string_clone returned void".into()),
+                }
             }
             Type::Enum(name, generics) => {
                 let mangled_name = if generics.is_empty() {

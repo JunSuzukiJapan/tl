@@ -160,11 +160,15 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     pub fn jit_execute(&self, function_name: &str) -> Result<u64, String> {
         unsafe {
+            eprintln!("[DEBUG jit_execute] getting function: {}", function_name);
             let function = self
                 .execution_engine
                 .get_function::<unsafe extern "C" fn() -> u64>(function_name)
                 .map_err(|e| format!("JIT compile error: {}", e))?;
-            Ok(function.call())
+            eprintln!("[DEBUG jit_execute] function obtained, calling...");
+            let result = function.call();
+            eprintln!("[DEBUG jit_execute] function returned: {}", result);
+            Ok(result)
         }
     }
 

@@ -413,6 +413,7 @@ fn main() -> Result<()> {
         let context = InkwellContext::create();
         let mut codegen = CodeGenerator::new(&context, "main");
 
+        eprintln!("[DEBUG] Starting compile_module");
         if let Err(e) = codegen.compile_module(&combined_module, "main") {
             // StringエラーをTlErrorに変換
             let tl_err = TlError::Codegen {
@@ -422,7 +423,9 @@ fn main() -> Result<()> {
             print_tl_error_with_source(&tl_err, &combined_source, None);
             std::process::exit(1);
         }
+        eprintln!("[DEBUG] compile_module completed");
         // TRACE removed;
+
 
         if std::env::var("TL_DUMP_IR").is_ok() {
             codegen.dump_ir();

@@ -62,6 +62,32 @@ pub extern "C" fn tl_string_concat(a: *mut StringStruct, b: *mut StringStruct) -
     }
 }
 
+/// StringStruct を deep clone
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_clone(s: *mut StringStruct) -> *mut StringStruct {
+    unsafe {
+        if s.is_null() {
+            return std::ptr::null_mut();
+        }
+        
+        let s_str = if (*s).ptr.is_null() { 
+            String::new() 
+        } else { 
+            CStr::from_ptr((*s).ptr).to_string_lossy().into_owned() 
+        };
+        
+        let c_str = CString::new(s_str).unwrap();
+        let ptr = c_str.into_raw();
+        let len = libc::strlen(ptr) as i64;
+        
+        let layout = std::alloc::Layout::new::<StringStruct>();
+        let struct_ptr = std::alloc::alloc(layout) as *mut StringStruct;
+        (*struct_ptr).ptr = ptr;
+        (*struct_ptr).len = len;
+        struct_ptr
+    }
+}
+
 /// 文字列比較
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_eq(a: *mut StringStruct, b: *mut StringStruct) -> bool {

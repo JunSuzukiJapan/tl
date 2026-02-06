@@ -1992,7 +1992,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                             Type::Bool => self.context.bool_type().into(),
                             Type::Tensor(_, _)
                             | Type::Struct(_, _)
-                            | Type::Enum(_, _) => self
+                            | Type::Enum(_, _)
+                            | Type::String(_)
+                            | Type::Tuple(_) => self
                                 .context
                                 .ptr_type(inkwell::AddressSpace::default())
                                 .into(),
@@ -2086,7 +2088,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 Type::I64 => self.context.i64_type().into(),
                                 Type::Bool => self.context.bool_type().into(),
                                 Type::Struct(_, _)
-                                | Type::Enum(_, _) => self
+                                | Type::Enum(_, _)
+                                | Type::String(_)
+                                | Type::Tensor(_, _)
+                                | Type::Tuple(_) => self
                                     .context
                                     .ptr_type(inkwell::AddressSpace::default())
                                     .into(),
@@ -2094,6 +2099,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             };
                             field_types_llvm.push(llvm_ty);
                         }
+
                         let variant_struct_ty = self.context.struct_type(&field_types_llvm, false);
 
                         let payload_ptr = self
@@ -2629,7 +2635,9 @@ impl<'ctx> CodeGenerator<'ctx> {
  
                         | Type::Enum(_, _)
                         | Type::Ptr(_) // FIX: Handle Ptr fields
-                        | Type::Tuple(_) => self
+                        | Type::Tuple(_)
+                        | Type::String(_)
+                        | Type::Tensor(_, _) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),

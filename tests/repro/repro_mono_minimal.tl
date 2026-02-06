@@ -1,33 +1,20 @@
-// mono_comprehensive.tl のテスト関数を段階的に実行
+// Either<String, i64> 完全テスト
 
-struct Box<T> {
-    value: T,
-}
-
-impl<T> Box<T> {
-    fn new(v: T) -> Box<T> {
-        Box { value: v }
-    }
-    
-    fn get(self) -> T {
-        self.value
-    }
+enum Either<L, R> {
+    Left(L),
+    Right(R),
 }
 
 fn main() {
-    println("=== Test 1: Basic Generics ===");
+    println("Test Either<String, i64>");
     
-    // 単一型パラメータ
-    let b1: Box<i64> = Box::new(42);
-    println("Box created");
-    let v = b1.get();
-    println("Box.get: {}", v);
+    // Left バリアント（String）
+    let e1: Either<String, i64> = Either::Left("Hello");
+    println("e1 (Left): created");
     
-    let b2: Box<String> = Box::new("hello");
-    println("Box<String> created");
+    // Right バリアント（i64）
+    let e2: Either<String, i64> = Either::Right(42);
+    println("e2 (Right): created");
     
-    let b3: Box<f32> = Box::new(3.14);
-    println("Box<f32> created");
-    
-    println("Test 1 PASSED");
+    println("All tests passed!");
 }

@@ -269,14 +269,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                      for t in types.iter_mut() {
                          *t = substitutor.substitute_type(t);
                      }
+                     eprintln!("[DEBUG] monomorphize_enum: {} variant {} = {:?}", mangled_name, variant.name, types);
                  }
                  crate::compiler::ast::VariantKind::Struct(fields) => {
-                     for (_, t) in fields {
+                     for (_, t) in fields.iter_mut() {
                          *t = substitutor.substitute_type(t);
                      }
+                     eprintln!("[DEBUG] monomorphize_enum: {} variant {} = {:?}", mangled_name, variant.name, fields);
                  }
+
              }
         }
+
 
         // 6. Compile/Register
         // We can reuse compile_enum_defs. It handles LLVM struct creation and map insertion.
