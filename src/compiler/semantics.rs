@@ -1544,6 +1544,23 @@ impl SemanticAnalyzer {
                                  // Update it to resolved type (Vec<i64>)
                                  *ty_node = refined_inferred_type.clone();
                              }
+                             ExprKind::EnumInit { generics, .. } => {
+                                 // For EnumInit, back-propagate type annotation generics
+                                 // This ensures that `Either<i64, i64>` annotation properly fills
+                                 // both generic args even if RHS only used one (e.g. Either::Left(42))
+                                 if let Type::Enum(_, ann_generics) = ann {
+                                     if ann_generics.len() == generics.len() || generics.iter().any(|g| matches!(g, Type::Undefined(_))) {
+                                         // Replace Undefined types with annotation types
+                                         for (i, g) in generics.iter_mut().enumerate() {
+                                             if matches!(g, Type::Undefined(_)) {
+                                                 if let Some(ann_g) = ann_generics.get(i) {
+                                                     *g = ann_g.clone();
+                                                 }
+                                             }
+                                         }
+                                     }
+                                 }
+                             }
                              _ => {}
                         }
                     } else {

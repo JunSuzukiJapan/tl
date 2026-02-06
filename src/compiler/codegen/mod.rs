@@ -836,6 +836,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                         */
                     }
 
+                    Type::Enum(_, _) => {
+                        // Enum types are always pointers
+                        self.context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into()
+                    }
+
                     _ => {
                         return Err(format!(
                             "Unsupported field type in struct {}: {:?}",
@@ -938,6 +945,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Type::Usize => self.context.i64_type().into(),
                         Type::Path(_, _) => {
                             // Path types are treated as pointers (generic type parameters)
+                            self.context
+                                .ptr_type(inkwell::AddressSpace::default())
+                                .into()
+                        }
+                        Type::Undefined(_) => {
+                            // Undefined types (unresolved generics) are treated as pointers
                             self.context
                                 .ptr_type(inkwell::AddressSpace::default())
                                 .into()

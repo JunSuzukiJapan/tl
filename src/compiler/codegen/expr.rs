@@ -1842,17 +1842,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let parts: Vec<&str> = enum_name.splitn(2, '_').collect();
                     if parts.len() == 2 {
                         let base = parts[0].to_string();
-                        // Parse type suffix (e.g., "i64", "String", etc.)
-                        let type_part = parts[1];
-                        let inferred_ty = match type_part.to_lowercase().as_str() {
-                            "i64" => Type::I64,
-                            "f32" => Type::F32,
-                            "f64" => Type::F64,
-                            "bool" => Type::Bool,
-                            "string" => Type::String("String".to_string()),
-                            other => Type::Struct(other.to_string(), vec![]),
-                        };
-                        (base, vec![inferred_ty])
+                        // Parse ALL type suffixes (e.g., "i64_i64" -> [I64, I64])
+                        let type_parts: Vec<&str> = parts[1].split('_').collect();
+                        let inferred_types: Vec<Type> = type_parts.iter()
+                            .filter_map(|type_part| {
+                                match type_part.to_lowercase().as_str() {
+                                    "i64" => Some(Type::I64),
+                                    "f32" => Some(Type::F32),
+                                    "f64" => Some(Type::F64),
+                                    "bool" => Some(Type::Bool),
+                                    "string" => Some(Type::String("String".to_string())),
+                                    "" => None,  // Skip empty parts
+                                    other => Some(Type::Struct(other.to_string(), vec![])),
+                                }
+                            })
+                            .collect();
+                        (base, inferred_types)
                     } else {
                         (enum_name.clone(), generics.clone())
                     }
@@ -5036,7 +5041,6 @@ impl<'ctx> CodeGenerator<'ctx> {
              // Def not found yet? Try blindly.
              generic_args.as_slice()
         };
-
         let mangled_name = self.monomorphize_enum(enum_name, actual_generic_args)
             .map_err(|e| format!("Failed to monomorphize enum {}: {}", enum_name, e))?;
         

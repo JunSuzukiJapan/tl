@@ -421,6 +421,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let parts: Vec<String> = types.iter().map(|t| self.type_to_suffix(t)).collect();
                 format!("Tuple_{}", parts.join("_"))
             }
+            Type::Path(path, args) => {
+                // Path types represent generic parameters or type references
+                // Use the last segment of the path
+                if let Some(name) = path.last() {
+                    if args.is_empty() {
+                        name.clone()
+                    } else {
+                        self.mangle_type_name(name, args)
+                    }
+                } else {
+                    "unknown_path".to_string()
+                }
+            }
+            Type::Undefined(id) => format!("undefined_{}", id),
+            Type::Ptr(inner) => format!("ptr_{}", self.type_to_suffix(inner)),
+            Type::Entity => "entity".to_string(),
             _ => "unknown".to_string(),
         }
     }
