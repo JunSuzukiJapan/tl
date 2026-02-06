@@ -3757,40 +3757,31 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             let (val, _ty) = self.compile_expr(field_expr)?;
             
-            // Move Semantics & Copy Semantics (ARC): 
-            // 1. If usage is Temporary (in cleanup list): Remove from list = Move logic (ownership transfer).
-            // 2. If usage is Variable/L-Value (NOT in cleanup list): It's a Copy. We MUST Increment RefCount.
+            // Move Semantics for pointer types:
+            // When a variable is used as a struct field initializer, we MOVE ownership.
+            // This means:
+            // 1. If it's a temporary: remove from cleanup list (already done by try_consume_temp)
+            // 2. If it's a variable: set its cleanup_mode to CLEANUP_NONE (ownership transferred)
             
             let moved = self.try_consume_temp(val);
-
-            if !moved {
-                // Not a temporary -> Copy -> Share Ownership -> IncRef
-                match _ty {
-                    Type::Tensor(_, _) 
-                    | Type::Struct(_, _) 
-
-                    | Type::Enum(_, _) => {
-                        let inc_fn = self.module.get_function("tl_ptr_inc_ref")
-                            .or_else(|| {
-                                let void_ty = self.context.void_type();
-                                let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                                let ft = void_ty.fn_type(&[ptr_ty.into()], false);
-                                Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
-                            })
-                            .expect("tl_ptr_inc_ref not declared");
-                        
-                        // Guard against ZST
-                        if val.is_pointer_value() {
-                            let ptr = val.into_pointer_value();
-                            let void_ptr = self.builder.build_pointer_cast(
-                                ptr,
-                                self.context.ptr_type(inkwell::AddressSpace::default()),
-                                "void_cast_inc"
-                            ).unwrap();
-                            self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
+            
+            // Check if field_expr is a direct variable access - if so, mark it as moved
+            let is_moveable_type = matches!(
+                _ty,
+                Type::Tensor(_, _) | Type::Struct(_, _) | Type::Tuple(_) | Type::Enum(_, _)
+            );
+            
+            if !moved && is_moveable_type {
+                // If field_expr is a Variable, we should transfer ownership (move semantics)
+                // by disabling cleanup for the source variable
+                if let ExprKind::Variable(var_name) = &field_expr.inner {
+                    // Find the variable in scope and set cleanup_mode to CLEANUP_NONE
+                    for scope in self.variables.iter_mut().rev() {
+                        if let Some((_, _, cleanup_mode)) = scope.get_mut(var_name) {
+                            *cleanup_mode = crate::compiler::codegen::CLEANUP_NONE;
+                            break;
                         }
                     }
-                    _ => {} // Scalars don't need RefCount
                 }
             }
 
@@ -3804,27 +3795,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 )
                 .map_err(|e| e.to_string())?;
 
-            // Deep Clone / Acquire Logic:
-            // For Tensors: acquire reference (share).
-            // For Structs: deep copy struct memory (prevent dangling pointer when local var dies), share tensors.
-            let store_val = if matches!(
-                _ty,
-                Type::Tensor(_, _) | Type::Struct(_, _) | Type::Tuple(_) | Type::String(_)
-            ) {
-                self.emit_deep_clone(val, &_ty)?
-            } else {
-                val
-            };
-
+            // Store the value directly (move semantics - no deep clone needed since we're transferring ownership)
+            // For scalar types, just store the value.
+            // For pointer types (Tensor, Struct, etc.), store the pointer - ownership is transferred.
             self.builder
-                .build_store(field_ptr, store_val)
+                .build_store(field_ptr, val)
                 .map_err(|e| e.to_string())?;
-
-            // Move Semantics Removed:
-            // We now use RefCounting/DeepCopy. Source variable should remain valid (Shared ownership).
-            // Cleanup at end of scope will decrement refcount (balancing the Acquire in emit_deep_clone).
-            // No manual unregister. No removal from scope.
         }
+
 
         // Return the pointer directly (no load)
         Ok((struct_ptr.into(), Type::Struct(name.to_string(), generics.to_vec())))
