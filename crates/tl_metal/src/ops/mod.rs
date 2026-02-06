@@ -9,3 +9,5 @@ pub mod matmul;
 pub mod shape;
 pub mod activation;
 pub mod index;
+pub mod broadcast;
+pub mod special;

@@ -19,6 +19,10 @@ pub const SHADER_SQRT_F32: &str = "sqrt_f32";
 pub const SHADER_TANH_F32: &str = "tanh_f32";
 pub const SHADER_SIGMOID_F32: &str = "sigmoid_f32";
 pub const SHADER_RELU_F32: &str = "relu_f32";
+pub const SHADER_SIN_F32: &str = "sin_f32";
+pub const SHADER_COS_F32: &str = "cos_f32";
+pub const SHADER_TAN_F32: &str = "tan_f32";
+pub const SHADER_GELU_F32: &str = "gelu_f32";
 
 /// Shader 関数名 - スカラー演算
 pub const SHADER_ADD_SCALAR_F32: &str = "add_scalar_f32";
@@ -144,6 +148,41 @@ kernel void relu_f32(
     uint id [[thread_position_in_grid]]
 ) {
     out[id] = max(0.0f, a[id]);
+}
+
+kernel void sin_f32(
+    device const float* a [[buffer(0)]],
+    device float* out [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = sin(a[id]);
+}
+
+kernel void cos_f32(
+    device const float* a [[buffer(0)]],
+    device float* out [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = cos(a[id]);
+}
+
+kernel void tan_f32(
+    device const float* a [[buffer(0)]],
+    device float* out [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = tan(a[id]);
+}
+
+// GELU: 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+kernel void gelu_f32(
+    device const float* a [[buffer(0)]],
+    device float* out [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    float x = a[id];
+    float cdf = 0.5f * (1.0f + tanh(0.7978845608f * (x + 0.044715f * x * x * x)));
+    out[id] = x * cdf;
 }
 
 // ========== スカラー演算 ==========

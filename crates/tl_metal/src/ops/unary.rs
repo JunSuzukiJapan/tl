@@ -2,7 +2,8 @@
 
 use crate::device::get_device;
 use crate::shaders::{self, SHADER_NEG_F32, SHADER_ABS_F32, SHADER_EXP_F32, SHADER_LOG_F32, 
-                     SHADER_SQRT_F32, SHADER_TANH_F32, SHADER_SIGMOID_F32, SHADER_RELU_F32};
+                     SHADER_SQRT_F32, SHADER_TANH_F32, SHADER_SIGMOID_F32, SHADER_RELU_F32,
+                     SHADER_SIN_F32, SHADER_COS_F32, SHADER_TAN_F32, SHADER_GELU_F32};
 use crate::tensor::MetalTensor;
 use crate::DType;
 
@@ -45,6 +46,26 @@ impl MetalTensor {
     /// ReLU
     pub fn relu(&self) -> MetalTensor {
         self.unary_op(SHADER_RELU_F32)
+    }
+
+    /// サイン
+    pub fn sin(&self) -> MetalTensor {
+        self.unary_op(SHADER_SIN_F32)
+    }
+
+    /// コサイン
+    pub fn cos(&self) -> MetalTensor {
+        self.unary_op(SHADER_COS_F32)
+    }
+
+    /// タンジェント
+    pub fn tan(&self) -> MetalTensor {
+        self.unary_op(SHADER_TAN_F32)
+    }
+
+    /// GELU
+    pub fn gelu(&self) -> MetalTensor {
+        self.unary_op(SHADER_GELU_F32)
     }
 
     /// 単項演算の GPU 実行
