@@ -41,15 +41,7 @@ impl MetalTensor {
         MetalTensor::from_slice(&result, &new_shape, MetalTensor::dtype(self))
     }
 
-    /// argmax（全体）
-    pub fn argmax_all_impl(&self) -> usize {
-        let data: Vec<f32> = self.to_vec();
-        data.iter()
-            .enumerate()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-            .map(|(i, _)| i)
-            .unwrap_or(0)
-    }
+    // Note: argmax_all_impl は reduce.rs で GPU 実装済み
 
     /// argmax（軸指定）
     pub fn argmax_impl(&self, axis: i32) -> MetalTensor {

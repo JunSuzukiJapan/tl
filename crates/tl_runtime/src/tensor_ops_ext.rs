@@ -112,11 +112,15 @@ pub extern "C" fn tl_tensor_max_dim(t: *mut OpaqueTensor, dim: usize, keep_dim: 
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    // CPU fallback: max along dim
-    let data: Vec<f32> = tensor.to_vec();
-    let shape = tensor.shape().to_vec();
-    let (result_data, new_shape) = reduce_dim_max(&data, &shape, dim, keep_dim);
-    let result = MetalTensor::from_slice(&result_data, &new_shape, DType::F32);
+    // GPU accelerated max along dim
+    let mut result = MetalTensor::max_impl(tensor, dim as i32);
+    if keep_dim {
+        // keep_dim フラグがある場合、次元を保持
+        let shape = tensor.shape().to_vec();
+        let mut new_shape = shape.clone();
+        new_shape[dim] = 1;
+        result = MetalTensor::reshape_impl(&result, &new_shape);
+    }
     Box::into_raw(Box::new(result))
 }
 
@@ -126,11 +130,14 @@ pub extern "C" fn tl_tensor_min_dim(t: *mut OpaqueTensor, dim: usize, keep_dim: 
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    // CPU fallback: min along dim
-    let data: Vec<f32> = tensor.to_vec();
-    let shape = tensor.shape().to_vec();
-    let (result_data, new_shape) = reduce_dim_min(&data, &shape, dim, keep_dim);
-    let result = MetalTensor::from_slice(&result_data, &new_shape, DType::F32);
+    // GPU accelerated min along dim
+    let mut result = MetalTensor::min_impl(tensor, dim as i32);
+    if keep_dim {
+        let shape = tensor.shape().to_vec();
+        let mut new_shape = shape.clone();
+        new_shape[dim] = 1;
+        result = MetalTensor::reshape_impl(&result, &new_shape);
+    }
     Box::into_raw(Box::new(result))
 }
 
@@ -140,11 +147,14 @@ pub extern "C" fn tl_tensor_mean_dim(t: *mut OpaqueTensor, dim: usize, keep_dim:
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    // CPU fallback: mean along dim
-    let data: Vec<f32> = tensor.to_vec();
-    let shape = tensor.shape().to_vec();
-    let (result_data, new_shape) = reduce_dim_mean(&data, &shape, dim, keep_dim);
-    let result = MetalTensor::from_slice(&result_data, &new_shape, DType::F32);
+    // GPU accelerated mean along dim
+    let mut result = MetalTensor::mean_impl(tensor, dim as i32);
+    if keep_dim {
+        let shape = tensor.shape().to_vec();
+        let mut new_shape = shape.clone();
+        new_shape[dim] = 1;
+        result = MetalTensor::reshape_impl(&result, &new_shape);
+    }
     Box::into_raw(Box::new(result))
 }
 
@@ -154,95 +164,15 @@ pub extern "C" fn tl_tensor_sum_dim(t: *mut OpaqueTensor, dim: usize, keep_dim: 
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    // CPU fallback: sum along dim
-    let data: Vec<f32> = tensor.to_vec();
-    let shape = tensor.shape().to_vec();
-    let (result_data, new_shape) = reduce_dim_sum(&data, &shape, dim, keep_dim);
-    let result = MetalTensor::from_slice(&result_data, &new_shape, DType::F32);
-    Box::into_raw(Box::new(result))
-}
-
-// Helper functions for reduction
-fn reduce_dim_sum(data: &[f32], shape: &[usize], dim: usize, keep_dim: bool) -> (Vec<f32>, Vec<usize>) {
-    let dim_size = shape[dim];
-    let mut stride = 1;
-    for d in (dim + 1)..shape.len() {
-        stride *= shape[d];
-    }
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size = stride;
-    let mut result = Vec::new();
-    for o in 0..outer_size {
-        for i in 0..inner_size {
-            let mut sum = 0.0f32;
-            for d in 0..dim_size {
-                sum += data[o * dim_size * inner_size + d * inner_size + i];
-            }
-            result.push(sum);
-        }
-    }
-    let mut new_shape: Vec<usize> = shape.to_vec();
+    // GPU accelerated sum along dim
+    let mut result = MetalTensor::sum_impl(tensor, dim as i32);
     if keep_dim {
+        let shape = tensor.shape().to_vec();
+        let mut new_shape = shape.clone();
         new_shape[dim] = 1;
-    } else {
-        new_shape.remove(dim);
+        result = MetalTensor::reshape_impl(&result, &new_shape);
     }
-    (result, new_shape)
-}
-
-fn reduce_dim_max(data: &[f32], shape: &[usize], dim: usize, keep_dim: bool) -> (Vec<f32>, Vec<usize>) {
-    let dim_size = shape[dim];
-    let mut stride = 1;
-    for d in (dim + 1)..shape.len() {
-        stride *= shape[d];
-    }
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size = stride;
-    let mut result = Vec::new();
-    for o in 0..outer_size {
-        for i in 0..inner_size {
-            let mut max_val = f32::NEG_INFINITY;
-            for d in 0..dim_size {
-                let v = data[o * dim_size * inner_size + d * inner_size + i];
-                if v > max_val { max_val = v; }
-            }
-            result.push(max_val);
-        }
-    }
-    let mut new_shape: Vec<usize> = shape.to_vec();
-    if keep_dim { new_shape[dim] = 1; } else { new_shape.remove(dim); }
-    (result, new_shape)
-}
-
-fn reduce_dim_min(data: &[f32], shape: &[usize], dim: usize, keep_dim: bool) -> (Vec<f32>, Vec<usize>) {
-    let dim_size = shape[dim];
-    let mut stride = 1;
-    for d in (dim + 1)..shape.len() {
-        stride *= shape[d];
-    }
-    let outer_size: usize = shape[..dim].iter().product();
-    let inner_size = stride;
-    let mut result = Vec::new();
-    for o in 0..outer_size {
-        for i in 0..inner_size {
-            let mut min_val = f32::INFINITY;
-            for d in 0..dim_size {
-                let v = data[o * dim_size * inner_size + d * inner_size + i];
-                if v < min_val { min_val = v; }
-            }
-            result.push(min_val);
-        }
-    }
-    let mut new_shape: Vec<usize> = shape.to_vec();
-    if keep_dim { new_shape[dim] = 1; } else { new_shape.remove(dim); }
-    (result, new_shape)
-}
-
-fn reduce_dim_mean(data: &[f32], shape: &[usize], dim: usize, keep_dim: bool) -> (Vec<f32>, Vec<usize>) {
-    let (sum_result, new_shape) = reduce_dim_sum(data, shape, dim, keep_dim);
-    let dim_size = shape[dim] as f32;
-    let result: Vec<f32> = sum_result.iter().map(|&s| s / dim_size).collect();
-    (result, new_shape)
+    Box::into_raw(Box::new(result))
 }
 
 // ========== NN 演算 ==========

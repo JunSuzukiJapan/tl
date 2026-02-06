@@ -31,6 +31,8 @@ pub const SHADER_CLAMP_F32: &str = "clamp_f32";
 
 /// Shader 関数名 - Reduce
 pub const SHADER_SUMALL_F32: &str = "sumall_f32";
+pub const SHADER_ARGMAX_F32: &str = "argmax_f32";
+pub const SHADER_ARGMIN_F32: &str = "argmin_f32";
 
 /// Metal Shader ソースコード
 const SHADER_SOURCE: &str = r#"
@@ -245,6 +247,84 @@ kernel void sumall_f32(
     // Write result
     if (tid == 0) {
         partial_sums[tg_id] = shared_data[0];
+    }
+}
+
+// ========== Argmax/Argmin (部分結果) ==========
+
+// Argmax: 各スレッドグループで最大値とそのインデックスを求める
+kernel void argmax_f32(
+    device const float* input [[buffer(0)]],
+    device float* partial_max [[buffer(1)]],     // 各グループの最大値
+    device uint* partial_idx [[buffer(2)]],      // 各グループの最大値インデックス
+    constant uint& count [[buffer(3)]],
+    uint id [[thread_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint tg_size [[threads_per_threadgroup]],
+    uint tg_id [[threadgroup_position_in_grid]]
+) {
+    threadgroup float shared_val[256];
+    threadgroup uint shared_idx[256];
+    
+    // Load data
+    float val = (id < count) ? input[id] : -INFINITY;
+    shared_val[tid] = val;
+    shared_idx[tid] = id;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    
+    // Reduction in shared memory
+    for (uint s = tg_size / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            if (shared_val[tid + s] > shared_val[tid]) {
+                shared_val[tid] = shared_val[tid + s];
+                shared_idx[tid] = shared_idx[tid + s];
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    
+    // Write result
+    if (tid == 0) {
+        partial_max[tg_id] = shared_val[0];
+        partial_idx[tg_id] = shared_idx[0];
+    }
+}
+
+// Argmin: 各スレッドグループで最小値とそのインデックスを求める
+kernel void argmin_f32(
+    device const float* input [[buffer(0)]],
+    device float* partial_min [[buffer(1)]],     // 各グループの最小値
+    device uint* partial_idx [[buffer(2)]],      // 各グループの最小値インデックス
+    constant uint& count [[buffer(3)]],
+    uint id [[thread_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint tg_size [[threads_per_threadgroup]],
+    uint tg_id [[threadgroup_position_in_grid]]
+) {
+    threadgroup float shared_val[256];
+    threadgroup uint shared_idx[256];
+    
+    // Load data
+    float val = (id < count) ? input[id] : INFINITY;
+    shared_val[tid] = val;
+    shared_idx[tid] = id;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    
+    // Reduction in shared memory
+    for (uint s = tg_size / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            if (shared_val[tid + s] < shared_val[tid]) {
+                shared_val[tid] = shared_val[tid + s];
+                shared_idx[tid] = shared_idx[tid + s];
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    
+    // Write result
+    if (tid == 0) {
+        partial_min[tg_id] = shared_val[0];
+        partial_idx[tg_id] = shared_idx[0];
     }
 }
 "#;

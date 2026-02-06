@@ -925,11 +925,8 @@ pub extern "C" fn tl_tensor_argmax(t: *mut OpaqueTensor, _dim: usize, _keep_dim:
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    // CPU fallback
-    let data: Vec<f32> = tensor.to_vec();
-    let (max_idx, _) = data.iter().enumerate().fold((0, f32::NEG_INFINITY), |(mi, mv), (i, &v)| {
-        if v > mv { (i, v) } else { (mi, mv) }
-    });
+    // GPU accelerated argmax
+    let max_idx = MetalTensor::argmax_all_impl(tensor);
     let result = MetalTensor::from_slice(&[max_idx as f32], &[1], DType::F32);
     make_tensor(result)
 }
@@ -940,11 +937,8 @@ pub extern "C" fn tl_tensor_argmin(t: *mut OpaqueTensor, _dim: usize, _keep_dim:
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    // CPU fallback
-    let data: Vec<f32> = tensor.to_vec();
-    let (min_idx, _) = data.iter().enumerate().fold((0, f32::INFINITY), |(mi, mv), (i, &v)| {
-        if v < mv { (i, v) } else { (mi, mv) }
-    });
+    // GPU accelerated argmin
+    let min_idx = MetalTensor::argmin_all_impl(tensor);
     let result = MetalTensor::from_slice(&[min_idx as f32], &[1], DType::F32);
     make_tensor(result)
 }
