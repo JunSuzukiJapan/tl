@@ -2,7 +2,6 @@
 //!
 //! 実行コンテキストのスタブ
 
-use std::ffi::c_void;
 use std::collections::HashMap;
 use crate::OpaqueTensor;
 

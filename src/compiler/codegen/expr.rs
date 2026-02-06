@@ -2636,7 +2636,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                         | Type::Enum(_, _)
                         | Type::Ptr(_) // FIX: Handle Ptr fields
                         | Type::Tuple(_)
-                        | Type::String(_)
                         | Type::Tensor(_, _) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())

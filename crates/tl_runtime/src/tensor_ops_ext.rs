@@ -1,7 +1,7 @@
 //! 追加のテンソル演算 FFI 関数
 
 use crate::OpaqueTensor;
-use tl_metal::{MetalTensor, DType, GpuOps};
+use tl_metal::{MetalTensor, DType};
 
 // ========== 型変換 ==========
 

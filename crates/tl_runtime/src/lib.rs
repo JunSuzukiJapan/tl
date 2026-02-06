@@ -179,7 +179,7 @@ use std::ffi::c_void;
 use std::sync::OnceLock;
 
 // Metal バックエンド
-use tl_metal::{MetalTensor, DType, GpuOps};
+use tl_metal::{MetalTensor, DType};
 
 /// OpaqueTensor は MetalTensor のエイリアス
 pub type OpaqueTensor = MetalTensor;
@@ -922,7 +922,7 @@ pub extern "C" fn tl_tensor_min(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_argmax(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
+pub extern "C" fn tl_tensor_argmax(t: *mut OpaqueTensor, _dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
     if t.is_null() {
         return std::ptr::null_mut();
     }

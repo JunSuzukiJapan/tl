@@ -1,7 +1,7 @@
 //! tl_metal GPU パフォーマンステスト
 
 use std::time::Instant;
-use tl_metal::{buffer_pool, DType, MetalTensor};
+use tl_metal::{buffer_pool, DType, MetalTensor, GpuOps};
 
 fn main() {
     println!("=== tl_metal GPU パフォーマンステスト ===\n");
@@ -35,7 +35,7 @@ fn main() {
 
     // exp
     let start = Instant::now();
-    let e = a.exp();
+    let _e = a.exp();
     println!("exp: {:?}", start.elapsed());
 
     // sqrt

@@ -1,6 +1,6 @@
 //! Autograd テスト
 
-use tl_metal::{DType, MetalTensor, MetalVar};
+use tl_metal::{DType, MetalTensor, MetalVar, GpuOps};
 
 fn main() {
     println!("=== Autograd テスト ===\n");

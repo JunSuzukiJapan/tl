@@ -1,6 +1,6 @@
 //! Phase 2/3 演算テスト
 
-use tl_metal::{DType, MetalTensor};
+use tl_metal::{DType, MetalTensor, GpuOps};
 
 fn main() {
     println!("=== Phase 2/3 演算テスト ===\n");
