@@ -22,6 +22,9 @@ pub mod tensor_pool;
 #[cfg(feature = "tl_metal_backend")]
 pub mod metal_bridge;
 
+#[cfg(feature = "tl_metal_backend")]
+pub mod gpu_dispatch;
+
 use crate::device::get_device;
 use candle_core::Tensor;
 // Import candle_nn
