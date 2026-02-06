@@ -3914,6 +3914,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tl_metal"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "metal 0.29.0",
+ "objc",
+]
+
+[[package]]
 name = "tl_runtime"
 version = "0.3.1"
 dependencies = [
