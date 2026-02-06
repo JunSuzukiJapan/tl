@@ -17,6 +17,23 @@ pub enum RuntimeErrorCode {
     Unknown = 999,
 }
 
+impl From<u32> for RuntimeErrorCode {
+    fn from(code: u32) -> Self {
+        match code {
+            0 => RuntimeErrorCode::Success,
+            1 => RuntimeErrorCode::ShapeMismatch,
+            2 => RuntimeErrorCode::DeviceError,
+            3 => RuntimeErrorCode::AllocationError,
+            4 => RuntimeErrorCode::NullPointerError,
+            5 => RuntimeErrorCode::InternalError,
+            6 => RuntimeErrorCode::IndexOutOfBounds,
+            7 => RuntimeErrorCode::TypeMismatch,
+            8 => RuntimeErrorCode::ArgumentError,
+            _ => RuntimeErrorCode::Unknown,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum RuntimeError {
     ShapeMismatch(String),

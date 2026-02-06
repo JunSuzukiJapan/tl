@@ -394,8 +394,8 @@ pub fn declare_runtime_functions<'ctx>(
     let from_char_type = i8_ptr.fn_type(&[i32_type.into()], false);
     add_fn("tl_string_from_char", from_char_type);
 
-    // tl_string_char_at(s: *const c_char, index: i64) -> i32 (char)
-    let char_at_type = i32_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    // tl_string_char_at(s: *mut StringStruct, index: i64) -> i64 (char as i64)
+    let char_at_type = i64_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
     add_fn("tl_string_char_at", char_at_type);
 
     // tl_string_eq(s1: *mut StringStruct, s2: *mut StringStruct) -> bool
@@ -957,10 +957,8 @@ pub fn declare_runtime_functions<'ctx>(
     let str_to_int_type = i64_type.fn_type(&[i8_ptr.into()], false);
     add_fn("tl_string_to_i64", str_to_int_type);
 
-    // String utilities
-    // tl_string_char_at(s: *const i8, index: i64) -> *const i8 (String)
-    let string_char_at_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
-    add_fn("tl_string_char_at", string_char_at_type);
+    // (tl_string_char_at は上で宣言済み - 重複削除)
+
 
     let string_len_type = i64_type.fn_type(&[i8_ptr.into()], false);
     add_fn("tl_string_len", string_len_type);
@@ -1367,6 +1365,12 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_display_i32") {
         execution_engine.add_global_mapping(&f, runtime::tl_display_i32 as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_print_char") {
+        execution_engine.add_global_mapping(&f, runtime::tl_print_char as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_display_char") {
+        execution_engine.add_global_mapping(&f, runtime::tl_display_char as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_print_ptr") {
         execution_engine.add_global_mapping(&f, runtime::tl_print_ptr as *const () as usize);

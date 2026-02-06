@@ -3934,15 +3934,10 @@ name = "tl_runtime"
 version = "0.3.1"
 dependencies = [
  "byteorder",
- "candle-core",
- "candle-coreml",
- "candle-nn",
- "candle-transformers",
  "cc",
  "image",
  "libc",
  "log",
- "metal 0.27.0",
  "once_cell",
  "rand 0.8.5",
  "reqwest 0.13.1",
