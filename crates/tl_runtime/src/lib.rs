@@ -19,6 +19,9 @@ pub mod registry;
 pub mod stdlib;
 pub mod tensor_pool;
 
+#[cfg(feature = "tl_metal_backend")]
+pub mod metal_bridge;
+
 use crate::device::get_device;
 use candle_core::Tensor;
 // Import candle_nn
