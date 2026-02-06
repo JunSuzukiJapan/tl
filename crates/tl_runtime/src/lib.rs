@@ -877,9 +877,8 @@ pub extern "C" fn tl_tensor_sum(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    // CPU fallback - sumall may return f32 in some implementations
-    let data: Vec<f32> = tensor.to_vec();
-    let sum_val: f32 = data.iter().sum();
+    // GPU accelerated sumall
+    let sum_val = MetalTensor::sumall_impl(tensor);
     let result = MetalTensor::from_slice(&[sum_val], &[1], DType::F32);
     make_tensor(result)
 }
@@ -890,9 +889,8 @@ pub extern "C" fn tl_tensor_mean(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    // CPU fallback
-    let data: Vec<f32> = tensor.to_vec();
-    let mean_val: f32 = data.iter().sum::<f32>() / data.len() as f32;
+    // GPU accelerated mean_all
+    let mean_val = MetalTensor::mean_all_impl(tensor);
     let result = MetalTensor::from_slice(&[mean_val], &[1], DType::F32);
     make_tensor(result)
 }
@@ -1076,25 +1074,9 @@ pub extern "C" fn tl_tensor_cat(a: *mut OpaqueTensor, b: *mut OpaqueTensor, dim:
         return std::ptr::null_mut();
     }
     let (ta, tb) = unsafe { (&*a, &*b) };
-    // CPU fallback: concatenate along dim 0 (simple case)
-    let a_data: Vec<f32> = ta.to_vec();
-    let b_data: Vec<f32> = tb.to_vec();
-    let a_shape = ta.shape().to_vec();
-    let b_shape = tb.shape().to_vec();
-    
-    // Simple concat for 1D or along dim 0
-    if dim == 0 || a_shape.len() == 1 {
-        let mut result_data = a_data;
-        result_data.extend(b_data);
-        let mut new_shape = a_shape.clone();
-        new_shape[0] = a_shape[0] + b_shape[0];
-        let result = MetalTensor::from_slice(&result_data, &new_shape, DType::F32);
-        make_tensor(result)
-    } else {
-        // For other dims, just return cloned a for now
-        eprintln!("Warning: Cat along dim {} not fully implemented", dim);
-        make_tensor(ta.clone())
-    }
+    // GPU accelerated cat
+    let result = MetalTensor::cat(&[ta, tb], dim as usize);
+    make_tensor(result)
 }
 
 #[unsafe(no_mangle)]
