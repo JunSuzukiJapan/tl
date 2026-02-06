@@ -262,8 +262,8 @@ pub(crate) fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
     let dtype_id = dtype_to_id(t.dtype());
     let device_id = device_to_id(t.device());
 
-    // Try to acquire from pool first
-    let pooled_ptr = if let Ok(mut pool) = memory_manager::TENSOR_POOL.lock() {
+    // Try to acquire from PersistentGpuPool first (V4.0 Phase 3)
+    let pooled_ptr = if let Ok(mut pool) = tensor_pool::PERSISTENT_GPU_POOL.lock() {
         pool.acquire(num_elements, dtype_id, device_id)
     } else {
         None
@@ -271,7 +271,7 @@ pub(crate) fn make_tensor(t: Tensor) -> *mut OpaqueTensor {
 
     if let Some(ptr) = pooled_ptr {
         unsafe {
-            // Reuse the OpaqueTensor
+            // Reuse the OpaqueTensor memory - write new tensor data
             std::ptr::write(ptr, OpaqueTensor(TensorVariant::Standard(t, None, None)));
         }
         memory_manager::register_tensor_global(ptr);

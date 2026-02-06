@@ -104,6 +104,8 @@ impl PersistentGpuPool {
     ) -> Option<*mut OpaqueTensor> {
         let key = (num_elements, dtype_id, device_id);
         
+        let debug = std::env::var("TL_POOL_DEBUG").is_ok();
+        
         if let Some(list) = self.free_lists.get_mut(&key) {
             if let Some(ptr) = list.pop() {
                 let bytes = Self::calculate_bytes(num_elements, dtype_id) as u64;
@@ -112,6 +114,10 @@ impl PersistentGpuPool {
                 self.stats.acquire_hits.fetch_add(1, Ordering::Relaxed);
                 self.active.insert(ptr as usize);
                 
+                if debug {
+                    eprintln!("[Pool] HIT acquire key={:?} ptr={:?}", key, ptr);
+                }
+                
                 // ドロップして再利用可能にする（メモリは保持）
                 unsafe {
                     std::ptr::drop_in_place(ptr);
@@ -119,6 +125,10 @@ impl PersistentGpuPool {
                 
                 return Some(ptr);
             }
+        }
+        
+        if debug {
+            eprintln!("[Pool] MISS acquire key={:?} free_lists_keys={:?}", key, self.free_lists.keys().collect::<Vec<_>>());
         }
         
         self.stats.acquire_misses.fetch_add(1, Ordering::Relaxed);
