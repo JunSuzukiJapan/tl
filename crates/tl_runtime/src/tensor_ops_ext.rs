@@ -181,17 +181,22 @@ pub extern "C" fn tl_tensor_sum_dim(t: *mut OpaqueTensor, dim: usize, keep_dim: 
 pub extern "C" fn tl_tensor_conv2d(
     input: *mut OpaqueTensor,
     weight: *mut OpaqueTensor,
-    _padding: i64,
-    _stride: i64,
+    padding: i64,
+    stride: i64,
 ) -> *mut OpaqueTensor {
     if input.is_null() || weight.is_null() {
         return std::ptr::null_mut();
     }
-    // スタブ: Conv2D は現在 CPU fallback として最小実装
-    eprintln!("Warning: Conv2D not yet fully supported in Metal backend");
     let input_tensor = unsafe { &*input };
-    let cloned = input_tensor.clone();
-    Box::into_raw(Box::new(cloned))
+    let weight_tensor = unsafe { &*weight };
+    // Conv2D 実装（現在は CPU fallback）
+    let result = MetalTensor::conv2d_impl(
+        input_tensor,
+        weight_tensor,
+        (stride as usize, stride as usize),
+        (padding as usize, padding as usize),
+    );
+    Box::into_raw(Box::new(result))
 }
 
 #[unsafe(no_mangle)]
