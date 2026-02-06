@@ -94,48 +94,68 @@ impl PersistentGpuPool {
     }
 
     /// プールからテンソルを取得
-    /// NOTE: V4.0 Phase 1 - プールからの再利用は現在無効。
-    /// ランタイムがプールテンソルの再初期化をサポートしていないため。
-    /// 統計は記録するが、常に None を返す。
+    /// V4.0 Phase 2: フリーリストからメモリを再利用
+    /// 注意: 取得したポインタはメモリ領域のみ再利用。内容は初期化が必要。
     pub fn acquire(
         &mut self,
-        _num_elements: usize,
-        _dtype_id: u8,
-        _device_id: u8,
+        num_elements: usize,
+        dtype_id: u8,
+        device_id: u8,
     ) -> Option<*mut OpaqueTensor> {
-        // V4.0 Phase 1: 再利用は無効化。新規割り当てのみ。
-        // 後で再利用ロジックを実装する際に有効化。
+        let key = (num_elements, dtype_id, device_id);
+        
+        if let Some(list) = self.free_lists.get_mut(&key) {
+            if let Some(ptr) = list.pop() {
+                let bytes = Self::calculate_bytes(num_elements, dtype_id) as u64;
+                self.stats.current_free_count.fetch_sub(1, Ordering::Relaxed);
+                self.stats.current_free_bytes.fetch_sub(bytes, Ordering::Relaxed);
+                self.stats.acquire_hits.fetch_add(1, Ordering::Relaxed);
+                self.active.insert(ptr as usize);
+                
+                // ドロップして再利用可能にする（メモリは保持）
+                unsafe {
+                    std::ptr::drop_in_place(ptr);
+                }
+                
+                return Some(ptr);
+            }
+        }
+        
         self.stats.acquire_misses.fetch_add(1, Ordering::Relaxed);
         None
     }
 
     /// テンソルをプールに戻す（解放しない）
-    /// V4.0: メモリ解放を完全に廃止。コンテンツのみドロップ。
+    /// V4.0 Phase 2: フリーリストにプッシュして再利用可能に
     pub fn release(
         &mut self,
         ptr: *mut OpaqueTensor,
         num_elements: usize,
         dtype_id: u8,
-        _device_id: u8,
+        device_id: u8,
     ) {
         if ptr.is_null() {
             return;
         }
 
-        // OpaqueTensor の内部コンテンツを drop（Tensor, Arc<Var> 等）
-        // これにより GPU メモリは Candle/Metal レベルで解放される可能性があるが、
-        // OpaqueTensor struct メモリ自体はリークさせる（意図的）
-        unsafe {
-            std::ptr::drop_in_place(ptr);
+        let ptr_val = ptr as usize;
+        
+        // アクティブから削除
+        self.active.remove(&ptr_val);
+        
+        // 重複チェック
+        let key = (num_elements, dtype_id, device_id);
+        if let Some(list) = self.free_lists.get(&key) {
+            if list.contains(&ptr) {
+                return; // 既にプール内
+            }
         }
 
-        // 統計のみ更新（フリーリストには追加しない）
+        // フリーリストに追加（ドロップは acquire 時に行う）
         let bytes = Self::calculate_bytes(num_elements, dtype_id) as u64;
+        self.free_lists.entry(key).or_default().push(ptr);
         self.stats.current_free_count.fetch_add(1, Ordering::Relaxed);
         self.stats.current_free_bytes.fetch_add(bytes, Ordering::Relaxed);
-        
-        // NOTE: メモリはリークするが、プロセス終了時にOSが回収。
-        // これにより Metal ドライバの RSS 問題を回避。
     }
 
     /// 新規テンソル確保を記録
