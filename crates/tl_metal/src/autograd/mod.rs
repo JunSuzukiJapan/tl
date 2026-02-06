@@ -9,6 +9,7 @@ use crate::tensor::MetalTensor;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tl_backend::GpuOps;
 
 /// ノード ID 生成用カウンタ
 static NODE_ID: AtomicUsize = AtomicUsize::new(0);

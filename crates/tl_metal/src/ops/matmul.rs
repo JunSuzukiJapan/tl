@@ -58,12 +58,12 @@ fn get_matmul_pipeline() -> &'static ComputePipelineState {
 impl MetalTensor {
     /// 行列積: self * other
     /// self: [M, K], other: [K, N] -> result: [M, N]
-    pub fn matmul(&self, other: &MetalTensor) -> MetalTensor {
-        assert_eq!(self.dtype(), DType::F32, "matmul only supports F32");
-        assert_eq!(other.dtype(), DType::F32, "matmul only supports F32");
+    pub fn matmul_impl(&self, other: &MetalTensor) -> MetalTensor {
+        assert_eq!(MetalTensor::dtype(self), DType::F32, "matmul only supports F32");
+        assert_eq!(MetalTensor::dtype(other), DType::F32, "matmul only supports F32");
         
-        let self_shape = self.shape();
-        let other_shape = other.shape();
+        let self_shape = MetalTensor::shape(self);
+        let other_shape = MetalTensor::shape(other);
         
         // 形状チェック
         assert!(self_shape.len() == 2, "self must be 2D");

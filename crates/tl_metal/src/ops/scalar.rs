@@ -6,9 +6,8 @@ use crate::tensor::MetalTensor;
 use metal::MTLResourceOptions;
 
 impl MetalTensor {
-    /// スカラー加算
-    pub fn add_scalar(&self, scalar: f32) -> MetalTensor {
-        let result = MetalTensor::uninit(self.shape(), self.dtype());
+    pub fn add_scalar_impl(&self, scalar: f32) -> MetalTensor {
+        let result = MetalTensor::uninit(MetalTensor::shape(self), MetalTensor::dtype(self));
         let device = get_device();
         let command_queue = device.command_queue();
 
@@ -41,9 +40,8 @@ impl MetalTensor {
         result
     }
 
-    /// スカラー乗算
-    pub fn mul_scalar(&self, scalar: f32) -> MetalTensor {
-        let result = MetalTensor::uninit(self.shape(), self.dtype());
+    pub fn mul_scalar_impl(&self, scalar: f32) -> MetalTensor {
+        let result = MetalTensor::uninit(MetalTensor::shape(self), MetalTensor::dtype(self));
         let device = get_device();
         let command_queue = device.command_queue();
 
@@ -76,19 +74,16 @@ impl MetalTensor {
         result
     }
 
-    /// スカラー減算
-    pub fn sub_scalar(&self, scalar: f32) -> MetalTensor {
-        self.add_scalar(-scalar)
+    pub fn sub_scalar_impl(&self, scalar: f32) -> MetalTensor {
+        self.add_scalar_impl(-scalar)
     }
 
-    /// スカラー除算
-    pub fn div_scalar(&self, scalar: f32) -> MetalTensor {
-        self.mul_scalar(1.0 / scalar)
+    pub fn div_scalar_impl(&self, scalar: f32) -> MetalTensor {
+        self.mul_scalar_impl(1.0 / scalar)
     }
 
-    /// clamp（範囲制限）
-    pub fn clamp(&self, min_val: f32, max_val: f32) -> MetalTensor {
-        let result = MetalTensor::uninit(self.shape(), self.dtype());
+    pub fn clamp_impl(&self, min_val: f32, max_val: f32) -> MetalTensor {
+        let result = MetalTensor::uninit(MetalTensor::shape(self), MetalTensor::dtype(self));
         let device = get_device();
         let command_queue = device.command_queue();
 

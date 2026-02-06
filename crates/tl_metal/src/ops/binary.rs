@@ -6,45 +6,45 @@ use crate::tensor::MetalTensor;
 use crate::DType;
 
 impl MetalTensor {
-    /// 要素ごとの加算
-    pub fn add(&self, other: &MetalTensor) -> MetalTensor {
+    /// 要素ごとの加算（内部実装）
+    pub fn add_impl(&self, other: &MetalTensor) -> MetalTensor {
         self.binary_op(other, SHADER_ADD_F32)
     }
 
-    /// 要素ごとの減算
-    pub fn sub(&self, other: &MetalTensor) -> MetalTensor {
+    /// 要素ごとの減算（内部実装）
+    pub fn sub_impl(&self, other: &MetalTensor) -> MetalTensor {
         self.binary_op(other, SHADER_SUB_F32)
     }
 
-    /// 要素ごとの乗算
-    pub fn mul(&self, other: &MetalTensor) -> MetalTensor {
+    /// 要素ごとの乗算（内部実装）
+    pub fn mul_impl(&self, other: &MetalTensor) -> MetalTensor {
         self.binary_op(other, SHADER_MUL_F32)
     }
 
-    /// 要素ごとの除算
-    pub fn div(&self, other: &MetalTensor) -> MetalTensor {
+    /// 要素ごとの除算（内部実装）
+    pub fn div_impl(&self, other: &MetalTensor) -> MetalTensor {
         self.binary_op(other, SHADER_DIV_F32)
     }
 
-    /// 要素ごとのべき乗
-    pub fn pow(&self, other: &MetalTensor) -> MetalTensor {
+    /// 要素ごとのべき乗（内部実装）
+    pub fn pow_impl(&self, other: &MetalTensor) -> MetalTensor {
         self.binary_op(other, SHADER_POW_F32)
     }
 
     /// 二項演算の GPU 実行
     fn binary_op(&self, other: &MetalTensor, shader_name: &str) -> MetalTensor {
-        assert_eq!(self.shape(), other.shape(), "Shape mismatch");
-        assert_eq!(self.dtype(), other.dtype(), "DType mismatch");
+        assert_eq!(MetalTensor::shape(self), MetalTensor::shape(other), "Shape mismatch");
+        assert_eq!(MetalTensor::dtype(self), MetalTensor::dtype(other), "DType mismatch");
 
-        match self.dtype() {
+        match MetalTensor::dtype(self) {
             DType::F32 => self.binary_op_gpu(other, shader_name),
-            _ => unimplemented!("{} for {:?}", shader_name, self.dtype()),
+            _ => unimplemented!("{} for {:?}", shader_name, MetalTensor::dtype(self)),
         }
     }
 
     /// 二項演算の GPU 実行（内部）
     fn binary_op_gpu(&self, other: &MetalTensor, shader_name: &str) -> MetalTensor {
-        let result = MetalTensor::uninit(self.shape(), self.dtype());
+        let result = MetalTensor::uninit(MetalTensor::shape(self), MetalTensor::dtype(self));
         let device = get_device();
         let command_queue = device.command_queue();
 

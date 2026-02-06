@@ -7,7 +7,7 @@ impl MetalTensor {
     /// input: [N, C_in, H, W]
     /// weight: [C_out, C_in, kH, kW]
     /// output: [N, C_out, H_out, W_out]
-    pub fn conv2d(
+    pub fn conv2d_impl(
         &self,
         weight: &MetalTensor,
         stride: (usize, usize),
@@ -16,7 +16,7 @@ impl MetalTensor {
         // CPU fallback implementation
         let input = self.to_vec::<f32>();
         let kernel = weight.to_vec::<f32>();
-        let in_shape = self.shape();
+        let in_shape = MetalTensor::shape(self);
         let w_shape = weight.shape();
         
         let (n, c_in, h_in, w_in) = (in_shape[0], in_shape[1], in_shape[2], in_shape[3]);
@@ -72,7 +72,7 @@ impl MetalTensor {
     /// input: [N, C, H, W]
     /// gamma/beta: [C]
     /// running_mean/var: [C]
-    pub fn batch_norm(
+    pub fn batch_norm_impl(
         &self,
         gamma: &MetalTensor,
         beta: &MetalTensor,
@@ -86,7 +86,7 @@ impl MetalTensor {
         let mean_v = running_mean.to_vec::<f32>();
         let var_v = running_var.to_vec::<f32>();
         
-        let shape = self.shape();
+        let shape = MetalTensor::shape(self);
         let (n, c, h, w) = (shape[0], shape[1], shape[2], shape[3]);
         let spatial = h * w;
         
@@ -107,7 +107,7 @@ impl MetalTensor {
     
     /// LayerNorm: レイヤー正規化
     /// input: [*, normalized_shape]
-    pub fn layer_norm(
+    pub fn layer_norm_impl(
         &self,
         gamma: &MetalTensor,
         beta: &MetalTensor,
@@ -117,7 +117,7 @@ impl MetalTensor {
         let gamma_v = gamma.to_vec::<f32>();
         let beta_v = beta.to_vec::<f32>();
         
-        let shape = self.shape();
+        let shape = MetalTensor::shape(self);
         let norm_size = *shape.last().unwrap();
         let batch_size = shape.iter().take(shape.len() - 1).product::<usize>();
         
@@ -146,13 +146,13 @@ impl MetalTensor {
     }
     
     /// MaxPool2D: 最大プーリング
-    pub fn max_pool2d(
+    pub fn max_pool2d_impl(
         &self,
         kernel_size: (usize, usize),
         stride: (usize, usize),
     ) -> MetalTensor {
         let input = self.to_vec::<f32>();
-        let shape = self.shape();
+        let shape = MetalTensor::shape(self);
         
         let (n, c, h_in, w_in) = (shape[0], shape[1], shape[2], shape[3]);
         let (kh, kw) = kernel_size;
@@ -191,13 +191,13 @@ impl MetalTensor {
     }
     
     /// AvgPool2D: 平均プーリング
-    pub fn avg_pool2d(
+    pub fn avg_pool2d_impl(
         &self,
         kernel_size: (usize, usize),
         stride: (usize, usize),
     ) -> MetalTensor {
         let input = self.to_vec::<f32>();
-        let shape = self.shape();
+        let shape = MetalTensor::shape(self);
         
         let (n, c, h_in, w_in) = (shape[0], shape[1], shape[2], shape[3]);
         let (kh, kw) = kernel_size;
@@ -237,7 +237,7 @@ impl MetalTensor {
     }
     
     /// Dropout: ドロップアウト（推論時は何もしない）
-    pub fn dropout(&self, p: f32, training: bool) -> MetalTensor {
+    pub fn dropout_impl(&self, p: f32, training: bool) -> MetalTensor {
         if !training || p == 0.0 {
             return self.clone();
         }
@@ -251,6 +251,6 @@ impl MetalTensor {
             output.push(if keep { val * scale } else { 0.0 });
         }
         
-        MetalTensor::from_slice(&output, self.shape(), DType::F32)
+        MetalTensor::from_slice(&output, MetalTensor::shape(self), DType::F32)
     }
 }

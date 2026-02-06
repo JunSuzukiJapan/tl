@@ -8,8 +8,8 @@ use metal::{MTLResourceOptions, MTLSize};
 
 impl MetalTensor {
     /// 全要素の合計
-    pub fn sumall(&self) -> f32 {
-        assert_eq!(self.dtype(), DType::F32, "sumall only supports F32");
+    pub fn sumall_impl(&self) -> f32 {
+        assert_eq!(MetalTensor::dtype(self), DType::F32, "sumall only supports F32");
         
         let device = get_device();
         let command_queue = device.command_queue();
@@ -67,7 +67,7 @@ impl MetalTensor {
     }
 
     /// 全要素の平均
-    pub fn mean_all(&self) -> f32 {
-        self.sumall() / self.elem_count() as f32
+    pub fn mean_all_impl(&self) -> f32 {
+        self.sumall_impl() / self.elem_count() as f32
     }
 }

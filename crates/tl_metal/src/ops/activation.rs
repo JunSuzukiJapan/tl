@@ -2,14 +2,15 @@
 
 use crate::tensor::MetalTensor;
 use crate::DType;
+use tl_backend::GpuOps;
 
 impl MetalTensor {
     /// Softmax（軸指定）
     /// softmax(x)_i = exp(x_i) / sum(exp(x))
-    pub fn softmax(&self, axis: i32) -> MetalTensor {
-        assert_eq!(self.dtype(), DType::F32, "softmax only supports F32");
+    pub fn softmax_impl(&self, axis: i32) -> MetalTensor {
+        assert_eq!(MetalTensor::dtype(self), DType::F32, "softmax only supports F32");
         
-        let shape = self.shape();
+        let shape = MetalTensor::shape(self);
         let ndim = shape.len();
         let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
         assert!(axis < ndim, "axis out of range");
@@ -32,12 +33,12 @@ impl MetalTensor {
         let exp_vals: Vec<f32> = data.iter().map(|x| (x - max_val).exp()).collect();
         let sum: f32 = exp_vals.iter().sum();
         let result: Vec<f32> = exp_vals.iter().map(|x| x / sum).collect();
-        MetalTensor::from_slice(&result, self.shape(), self.dtype())
+        MetalTensor::from_slice(&result, MetalTensor::shape(self), MetalTensor::dtype(self))
     }
 
     /// 2D テンソルの axis=1 softmax
     fn softmax_2d_axis1(&self) -> MetalTensor {
-        let shape = self.shape();
+        let shape = MetalTensor::shape(self);
         let rows = shape[0];
         let cols = shape[1];
         let data: Vec<f32> = self.to_vec();
@@ -57,14 +58,14 @@ impl MetalTensor {
             }
         }
 
-        MetalTensor::from_slice(&result, self.shape(), self.dtype())
+        MetalTensor::from_slice(&result, MetalTensor::shape(self), MetalTensor::dtype(self))
     }
 
     /// 汎用 softmax（CPU）
     fn softmax_generic(&self, axis: usize) -> MetalTensor {
         // 単純化: flatten して softmax して reshape
         let data: Vec<f32> = self.to_vec();
-        let shape = self.shape();
+        let shape = MetalTensor::shape(self);
         
         // 軸のサイズ
         let axis_size = shape[axis];
@@ -101,6 +102,6 @@ impl MetalTensor {
             }
         }
 
-        MetalTensor::from_slice(&result, self.shape(), self.dtype())
+        MetalTensor::from_slice(&result, MetalTensor::shape(self), MetalTensor::dtype(self))
     }
 }

@@ -8,77 +8,28 @@ use crate::tensor::MetalTensor;
 use crate::DType;
 
 impl MetalTensor {
-    /// 符号反転
-    pub fn neg(&self) -> MetalTensor {
-        self.unary_op(SHADER_NEG_F32)
-    }
+    pub fn neg_impl(&self) -> MetalTensor { self.unary_op(SHADER_NEG_F32) }
+    pub fn abs_impl(&self) -> MetalTensor { self.unary_op(SHADER_ABS_F32) }
+    pub fn exp_impl(&self) -> MetalTensor { self.unary_op(SHADER_EXP_F32) }
+    pub fn log_impl(&self) -> MetalTensor { self.unary_op(SHADER_LOG_F32) }
+    pub fn sqrt_impl(&self) -> MetalTensor { self.unary_op(SHADER_SQRT_F32) }
+    pub fn tanh_impl(&self) -> MetalTensor { self.unary_op(SHADER_TANH_F32) }
+    pub fn sigmoid_impl(&self) -> MetalTensor { self.unary_op(SHADER_SIGMOID_F32) }
+    pub fn relu_impl(&self) -> MetalTensor { self.unary_op(SHADER_RELU_F32) }
+    pub fn sin_impl(&self) -> MetalTensor { self.unary_op(SHADER_SIN_F32) }
+    pub fn cos_impl(&self) -> MetalTensor { self.unary_op(SHADER_COS_F32) }
+    pub fn tan_impl(&self) -> MetalTensor { self.unary_op(SHADER_TAN_F32) }
+    pub fn gelu_impl(&self) -> MetalTensor { self.unary_op(SHADER_GELU_F32) }
 
-    /// 絶対値
-    pub fn abs(&self) -> MetalTensor {
-        self.unary_op(SHADER_ABS_F32)
-    }
-
-    /// 指数関数
-    pub fn exp(&self) -> MetalTensor {
-        self.unary_op(SHADER_EXP_F32)
-    }
-
-    /// 自然対数
-    pub fn log(&self) -> MetalTensor {
-        self.unary_op(SHADER_LOG_F32)
-    }
-
-    /// 平方根
-    pub fn sqrt(&self) -> MetalTensor {
-        self.unary_op(SHADER_SQRT_F32)
-    }
-
-    /// 双曲線正接
-    pub fn tanh(&self) -> MetalTensor {
-        self.unary_op(SHADER_TANH_F32)
-    }
-
-    /// シグモイド関数
-    pub fn sigmoid(&self) -> MetalTensor {
-        self.unary_op(SHADER_SIGMOID_F32)
-    }
-
-    /// ReLU
-    pub fn relu(&self) -> MetalTensor {
-        self.unary_op(SHADER_RELU_F32)
-    }
-
-    /// サイン
-    pub fn sin(&self) -> MetalTensor {
-        self.unary_op(SHADER_SIN_F32)
-    }
-
-    /// コサイン
-    pub fn cos(&self) -> MetalTensor {
-        self.unary_op(SHADER_COS_F32)
-    }
-
-    /// タンジェント
-    pub fn tan(&self) -> MetalTensor {
-        self.unary_op(SHADER_TAN_F32)
-    }
-
-    /// GELU
-    pub fn gelu(&self) -> MetalTensor {
-        self.unary_op(SHADER_GELU_F32)
-    }
-
-    /// 単項演算の GPU 実行
     fn unary_op(&self, shader_name: &str) -> MetalTensor {
-        match self.dtype() {
+        match MetalTensor::dtype(self) {
             DType::F32 => self.unary_op_gpu(shader_name),
-            _ => unimplemented!("{} for {:?}", shader_name, self.dtype()),
+            _ => unimplemented!("{} for {:?}", shader_name, MetalTensor::dtype(self)),
         }
     }
 
-    /// 単項演算の GPU 実行（内部）
     fn unary_op_gpu(&self, shader_name: &str) -> MetalTensor {
-        let result = MetalTensor::uninit(self.shape(), self.dtype());
+        let result = MetalTensor::uninit(MetalTensor::shape(self), MetalTensor::dtype(self));
         let device = get_device();
         let command_queue = device.command_queue();
 

@@ -5,7 +5,7 @@ use crate::tensor::MetalTensor;
 impl MetalTensor {
     /// スライス（1軸のみ、開始位置と長さ指定）
     pub fn slice(&self, axis: usize, start: usize, len: usize) -> MetalTensor {
-        let shape = self.shape();
+        let shape = MetalTensor::shape(self);
         assert!(axis < shape.len(), "axis out of range");
         assert!(start + len <= shape[axis], "slice out of range");
 
@@ -39,12 +39,12 @@ impl MetalTensor {
     /// embedding lookup
     /// self: [V, D] (埋め込み行列), indices: [T] (インデックス)
     /// → [T, D]
-    pub fn embedding(&self, indices: &MetalTensor) -> MetalTensor {
-        assert_eq!(self.shape().len(), 2, "embedding matrix must be 2D");
+    pub fn embedding_impl(&self, indices: &MetalTensor) -> MetalTensor {
+        assert_eq!(MetalTensor::shape(self).len(), 2, "embedding matrix must be 2D");
         assert_eq!(indices.shape().len(), 1, "indices must be 1D");
         
-        let vocab_size = self.shape()[0];
-        let dim = self.shape()[1];
+        let vocab_size = MetalTensor::shape(self)[0];
+        let dim = MetalTensor::shape(self)[1];
         let seq_len = indices.shape()[0];
         
         let emb_data: Vec<f32> = self.to_vec();

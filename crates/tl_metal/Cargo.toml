@@ -13,3 +13,4 @@ rand = "0.8"
 tl_backend = { path = "../tl_backend" }
 
 [dev-dependencies]
+serial_test = "3"

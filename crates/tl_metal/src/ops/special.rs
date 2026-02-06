@@ -5,7 +5,7 @@ use crate::DType;
 
 impl MetalTensor {
     /// where_cond: condition ? x : y
-    pub fn where_cond(condition: &MetalTensor, x: &MetalTensor, y: &MetalTensor) -> MetalTensor {
+    pub fn where_cond_impl(condition: &MetalTensor, x: &MetalTensor, y: &MetalTensor) -> MetalTensor {
         let cond: Vec<f32> = condition.to_vec();
         let x_data: Vec<f32> = x.to_vec();
         let y_data: Vec<f32> = y.to_vec();
@@ -16,12 +16,12 @@ impl MetalTensor {
             .map(|((c, x), y)| if *c > 0.0 { *x } else { *y })
             .collect();
         
-        MetalTensor::from_slice(&result, x.shape(), x.dtype())
+        MetalTensor::from_slice(&result, MetalTensor::shape(x), MetalTensor::dtype(x))
     }
 
     /// tril: 下三角行列
-    pub fn tril(&self, diagonal: i32) -> MetalTensor {
-        let shape = self.shape();
+    pub fn tril_impl(&self, diagonal: i32) -> MetalTensor {
+        let shape = MetalTensor::shape(self);
         assert!(shape.len() >= 2, "tril requires at least 2D tensor");
         
         let rows = shape[shape.len() - 2];
@@ -42,11 +42,11 @@ impl MetalTensor {
             }
         }
         
-        MetalTensor::from_slice(&result, shape, self.dtype())
+        MetalTensor::from_slice(&result, shape, MetalTensor::dtype(self))
     }
 
     /// cross_entropy: -sum(target * log(pred))
-    pub fn cross_entropy(&self, target: &MetalTensor) -> MetalTensor {
+    pub fn cross_entropy_impl(&self, target: &MetalTensor) -> MetalTensor {
         // self = predictions (after softmax), target = one-hot or probabilities
         let pred: Vec<f32> = self.to_vec();
         let tgt: Vec<f32> = target.to_vec();
@@ -56,12 +56,12 @@ impl MetalTensor {
             .map(|(p, t)| -t * (p + 1e-7).ln())
             .sum();
         
-        MetalTensor::from_slice(&[loss], &[1], self.dtype())
+        MetalTensor::from_slice(&[loss], &[1], MetalTensor::dtype(self))
     }
 
     /// repeat_interleave: 要素を繰り返す
-    pub fn repeat_interleave(&self, repeats: usize, axis: usize) -> MetalTensor {
-        let shape = self.shape();
+    pub fn repeat_interleave_impl(&self, repeats: usize, axis: usize) -> MetalTensor {
+        let shape = MetalTensor::shape(self);
         assert!(axis < shape.len(), "axis out of range");
         
         let data: Vec<f32> = self.to_vec();
@@ -85,12 +85,12 @@ impl MetalTensor {
             }
         }
         
-        MetalTensor::from_slice(&result, &new_shape, self.dtype())
+        MetalTensor::from_slice(&result, &new_shape, MetalTensor::dtype(self))
     }
 
     /// to_dtype: データ型変換（現在は F32 のみ対応）
     pub fn to_dtype(&self, dtype: DType) -> MetalTensor {
-        if self.dtype() == dtype {
+        if MetalTensor::dtype(self) == dtype {
             return self.clone_data();
         }
         // 現在は F32 → F32 のみ
@@ -98,8 +98,8 @@ impl MetalTensor {
     }
 
     /// index_select: インデックスで選択
-    pub fn index_select(&self, axis: usize, indices: &MetalTensor) -> MetalTensor {
-        let shape = self.shape();
+    pub fn index_select_impl(&self, axis: usize, indices: &MetalTensor) -> MetalTensor {
+        let shape = MetalTensor::shape(self);
         assert!(axis < shape.len(), "axis out of range");
         
         let idx_data: Vec<f32> = indices.to_vec();
@@ -127,6 +127,6 @@ impl MetalTensor {
             }
         }
         
-        MetalTensor::from_slice(&result, &new_shape, self.dtype())
+        MetalTensor::from_slice(&result, &new_shape, MetalTensor::dtype(self))
     }
 }

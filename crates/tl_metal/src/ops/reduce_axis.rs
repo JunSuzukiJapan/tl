@@ -2,13 +2,14 @@
 
 use crate::tensor::MetalTensor;
 use crate::DType;
+use tl_backend::GpuOps;
 
 impl MetalTensor {
     /// 軸指定で合計
-    pub fn sum(&self, axis: i32) -> MetalTensor {
-        assert_eq!(self.dtype(), DType::F32, "sum only supports F32");
+    pub fn sum_impl(&self, axis: i32) -> MetalTensor {
+        assert_eq!(MetalTensor::dtype(self), DType::F32, "sum only supports F32");
         
-        let shape = self.shape();
+        let shape = MetalTensor::shape(self);
         let ndim = shape.len();
         let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
         assert!(axis < ndim, "axis out of range");
@@ -37,11 +38,11 @@ impl MetalTensor {
             }
         }
 
-        MetalTensor::from_slice(&result, &new_shape, self.dtype())
+        MetalTensor::from_slice(&result, &new_shape, MetalTensor::dtype(self))
     }
 
     /// argmax（全体）
-    pub fn argmax_all(&self) -> usize {
+    pub fn argmax_all_impl(&self) -> usize {
         let data: Vec<f32> = self.to_vec();
         data.iter()
             .enumerate()
@@ -51,10 +52,10 @@ impl MetalTensor {
     }
 
     /// argmax（軸指定）
-    pub fn argmax(&self, axis: i32) -> MetalTensor {
-        assert_eq!(self.dtype(), DType::F32, "argmax only supports F32");
+    pub fn argmax_impl(&self, axis: i32) -> MetalTensor {
+        assert_eq!(MetalTensor::dtype(self), DType::F32, "argmax only supports F32");
         
-        let shape = self.shape();
+        let shape = MetalTensor::shape(self);
         let ndim = shape.len();
         let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
         assert!(axis < ndim, "axis out of range");
@@ -91,10 +92,10 @@ impl MetalTensor {
     }
 
     /// max（軸指定）
-    pub fn max(&self, axis: i32) -> MetalTensor {
-        assert_eq!(self.dtype(), DType::F32, "max only supports F32");
+    pub fn max_impl(&self, axis: i32) -> MetalTensor {
+        assert_eq!(MetalTensor::dtype(self), DType::F32, "max only supports F32");
         
-        let shape = self.shape();
+        let shape = MetalTensor::shape(self);
         let ndim = shape.len();
         let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
         assert!(axis < ndim, "axis out of range");
@@ -124,14 +125,14 @@ impl MetalTensor {
             }
         }
 
-        MetalTensor::from_slice(&result, &new_shape, self.dtype())
+        MetalTensor::from_slice(&result, &new_shape, MetalTensor::dtype(self))
     }
 
     /// min（軸指定）
-    pub fn min(&self, axis: i32) -> MetalTensor {
-        assert_eq!(self.dtype(), DType::F32, "min only supports F32");
+    pub fn min_impl(&self, axis: i32) -> MetalTensor {
+        assert_eq!(MetalTensor::dtype(self), DType::F32, "min only supports F32");
         
-        let shape = self.shape();
+        let shape = MetalTensor::shape(self);
         let ndim = shape.len();
         let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
         assert!(axis < ndim, "axis out of range");
@@ -161,14 +162,14 @@ impl MetalTensor {
             }
         }
 
-        MetalTensor::from_slice(&result, &new_shape, self.dtype())
+        MetalTensor::from_slice(&result, &new_shape, MetalTensor::dtype(self))
     }
 
     /// argmin（軸指定）
-    pub fn argmin(&self, axis: i32) -> MetalTensor {
-        assert_eq!(self.dtype(), DType::F32, "argmin only supports F32");
+    pub fn argmin_impl(&self, axis: i32) -> MetalTensor {
+        assert_eq!(MetalTensor::dtype(self), DType::F32, "argmin only supports F32");
         
-        let shape = self.shape();
+        let shape = MetalTensor::shape(self);
         let ndim = shape.len();
         let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
         assert!(axis < ndim, "axis out of range");
@@ -205,9 +206,9 @@ impl MetalTensor {
     }
 
     /// mean（軸指定）
-    pub fn mean(&self, axis: i32) -> MetalTensor {
+    pub fn mean_impl(&self, axis: i32) -> MetalTensor {
         let sum = self.sum(axis);
-        let shape = self.shape();
+        let shape = MetalTensor::shape(self);
         let ndim = shape.len();
         let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
         let axis_size = shape[axis] as f32;

@@ -160,7 +160,10 @@ impl MetalTensor {
 
 impl Drop for MetalTensor {
     fn drop(&mut self) {
-        // バッファをプールに返却（解放しない）
-        pool_release(self.buffer.clone());
+        // バッファをプールに返却（参照カウントが 1 の場合のみ）
+        // Arc::strong_count で他に参照がないことを確認
+        if Arc::strong_count(&self.buffer) == 1 {
+            pool_release(self.buffer.clone());
+        }
     }
 }

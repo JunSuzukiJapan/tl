@@ -4,6 +4,7 @@ use super::{GradFn, MetalVarInner};
 use crate::tensor::MetalTensor;
 use std::cell::RefCell;
 use std::rc::Rc;
+use tl_backend::GpuOps;
 
 /// 加算の勾配
 pub struct AddBackward {

@@ -3925,6 +3925,7 @@ dependencies = [
  "metal 0.29.0",
  "objc",
  "rand 0.8.5",
+ "serial_test",
  "tl_backend",
 ]
 
