@@ -1126,6 +1126,13 @@ pub extern "C" fn tl_tensor_softmax(tensor: *mut OpaqueTensor, dim: i64) -> *mut
     }
     let t = unwrap_tensor_ptr!(tensor);
     let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        #[cfg(feature = "tl_metal_backend")]
+        {
+            let device = t.device().clone();
+            if let Ok(result) = crate::gpu_dispatch::metal_softmax(t, dim as i32, &device) {
+                return Ok(make_tensor(result));
+            }
+        }
         let d = dim as usize;
         let result = candle_nn::ops::softmax(t, d)
             .map_err(|e| RuntimeError::InternalError(e.to_string()))?;
@@ -3094,7 +3101,15 @@ pub extern "C" fn tl_tensor_matmul(
     let t_b = unwrap_tensor_ptr!(b);
 
     let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // Make tensors contiguous before matmul to avoid striding issues
+        // Metal バックエンド優先
+        #[cfg(feature = "tl_metal_backend")]
+        {
+            let device = t_a.device().clone();
+            if let Ok(result) = crate::gpu_dispatch::metal_matmul(t_a, t_b, &device) {
+                return Ok(make_tensor(result));
+            }
+        }
+        // Fallback: Candle
         let t_a_contig = t_a
             .contiguous()
             .map_err(|e| RuntimeError::InternalError(e.to_string()))?;
@@ -3102,7 +3117,6 @@ pub extern "C" fn tl_tensor_matmul(
             .contiguous()
             .map_err(|e| RuntimeError::InternalError(e.to_string()))?;
 
-        // Use broadcast_matmul to support [B, S, D] x [D, O] -> [B, S, O]
         let result = t_a_contig
             .broadcast_matmul(&t_b_contig)
             .map_err(|e| RuntimeError::InternalError(e.to_string()))?;
