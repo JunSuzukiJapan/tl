@@ -4,6 +4,8 @@
 
 #[cfg(feature = "tl_metal_backend")]
 use tl_metal::{DType as MetalDType, MetalTensor};
+#[cfg(feature = "tl_metal_backend")]
+use tl_metal::GpuOps;
 
 use candle_core::{DType, Tensor};
 
