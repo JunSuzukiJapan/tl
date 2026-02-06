@@ -62,6 +62,10 @@ pub fn from_metal(metal: &MetalTensor, device: &Device) -> Result<Tensor, String
 /// Metal バックエンドで加算
 #[cfg(feature = "tl_metal_backend")]
 pub fn metal_add(a: &Tensor, b: &Tensor, device: &Device) -> Result<Tensor, String> {
+    // Shape が異なる場合は Candle にフォールバック
+    if a.dims() != b.dims() {
+        return Err("Shape mismatch, fallback to Candle".into());
+    }
     let ma = to_metal(a)?;
     let mb = to_metal(b)?;
     let result = GpuOps::add(&ma, &mb);
@@ -71,6 +75,9 @@ pub fn metal_add(a: &Tensor, b: &Tensor, device: &Device) -> Result<Tensor, Stri
 /// Metal バックエンドで減算
 #[cfg(feature = "tl_metal_backend")]
 pub fn metal_sub(a: &Tensor, b: &Tensor, device: &Device) -> Result<Tensor, String> {
+    if a.dims() != b.dims() {
+        return Err("Shape mismatch, fallback to Candle".into());
+    }
     let ma = to_metal(a)?;
     let mb = to_metal(b)?;
     let result = GpuOps::sub(&ma, &mb);
@@ -80,6 +87,9 @@ pub fn metal_sub(a: &Tensor, b: &Tensor, device: &Device) -> Result<Tensor, Stri
 /// Metal バックエンドで乗算
 #[cfg(feature = "tl_metal_backend")]
 pub fn metal_mul(a: &Tensor, b: &Tensor, device: &Device) -> Result<Tensor, String> {
+    if a.dims() != b.dims() {
+        return Err("Shape mismatch, fallback to Candle".into());
+    }
     let ma = to_metal(a)?;
     let mb = to_metal(b)?;
     let result = GpuOps::mul(&ma, &mb);
@@ -89,6 +99,9 @@ pub fn metal_mul(a: &Tensor, b: &Tensor, device: &Device) -> Result<Tensor, Stri
 /// Metal バックエンドで除算
 #[cfg(feature = "tl_metal_backend")]
 pub fn metal_div(a: &Tensor, b: &Tensor, device: &Device) -> Result<Tensor, String> {
+    if a.dims() != b.dims() {
+        return Err("Shape mismatch, fallback to Candle".into());
+    }
     let ma = to_metal(a)?;
     let mb = to_metal(b)?;
     let result = GpuOps::div(&ma, &mb);

@@ -5,6 +5,29 @@ use crate::shaders::{self, SHADER_ADD_F32, SHADER_SUB_F32, SHADER_MUL_F32, SHADE
 use crate::tensor::MetalTensor;
 use crate::DType;
 
+/// NumPy スタイルの broadcast shape 計算
+fn broadcast_shape(a: &[usize], b: &[usize]) -> Vec<usize> {
+    let max_rank = a.len().max(b.len());
+    let mut result = vec![1; max_rank];
+    
+    for i in 0..max_rank {
+        let a_dim = if i < a.len() { a[a.len() - 1 - i] } else { 1 };
+        let b_dim = if i < b.len() { b[b.len() - 1 - i] } else { 1 };
+        
+        let out_dim = if a_dim == b_dim {
+            a_dim
+        } else if a_dim == 1 {
+            b_dim
+        } else if b_dim == 1 {
+            a_dim
+        } else {
+            panic!("Cannot broadcast shapes {:?} and {:?}", a, b);
+        };
+        result[max_rank - 1 - i] = out_dim;
+    }
+    result
+}
+
 impl MetalTensor {
     /// 要素ごとの加算（内部実装）
     pub fn add_impl(&self, other: &MetalTensor) -> MetalTensor {
@@ -33,12 +56,35 @@ impl MetalTensor {
 
     /// 二項演算の GPU 実行
     fn binary_op(&self, other: &MetalTensor, shader_name: &str) -> MetalTensor {
-        assert_eq!(MetalTensor::shape(self), MetalTensor::shape(other), "Shape mismatch");
         assert_eq!(MetalTensor::dtype(self), MetalTensor::dtype(other), "DType mismatch");
-
-        match MetalTensor::dtype(self) {
-            DType::F32 => self.binary_op_gpu(other, shader_name),
-            _ => unimplemented!("{} for {:?}", shader_name, MetalTensor::dtype(self)),
+        
+        let self_shape = MetalTensor::shape(self);
+        let other_shape = MetalTensor::shape(other);
+        
+        // Shape が同じ場合は直接演算
+        if self_shape == other_shape {
+            return match MetalTensor::dtype(self) {
+                DType::F32 => self.binary_op_gpu(other, shader_name),
+                _ => unimplemented!("{} for {:?}", shader_name, MetalTensor::dtype(self)),
+            };
+        }
+        
+        // Broadcast が必要な場合
+        let output_shape = broadcast_shape(self_shape, other_shape);
+        let a = if self_shape != output_shape {
+            self.broadcast_to_impl(&output_shape)
+        } else {
+            self.clone()
+        };
+        let b = if other_shape != output_shape {
+            other.broadcast_to_impl(&output_shape)
+        } else {
+            other.clone()
+        };
+        
+        match MetalTensor::dtype(&a) {
+            DType::F32 => a.binary_op_gpu(&b, shader_name),
+            _ => unimplemented!("{} for {:?}", shader_name, MetalTensor::dtype(&a)),
         }
     }
 
