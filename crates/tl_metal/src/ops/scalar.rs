@@ -3,7 +3,6 @@
 use crate::device::get_device;
 use crate::shaders::{self, SHADER_ADD_SCALAR_F32, SHADER_MUL_SCALAR_F32, SHADER_CLAMP_F32};
 use crate::tensor::MetalTensor;
-use crate::DType;
 use metal::MTLResourceOptions;
 
 impl MetalTensor {

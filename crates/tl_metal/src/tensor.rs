@@ -81,6 +81,64 @@ impl MetalTensor {
         &self.buffer
     }
 
+    /// バッファの Arc を取得
+    pub fn buffer_arc(&self) -> &Arc<Buffer> {
+        &self.buffer
+    }
+
+    /// 既存バッファから新しい形状でテンソルを作成（バッファ共有）
+    pub fn from_buffer_shared(buffer: Arc<Buffer>, shape: Vec<usize>, dtype: DType) -> Self {
+        let device = get_device();
+        MetalTensor {
+            buffer,
+            shape,
+            dtype,
+            device,
+        }
+    }
+
+    /// 全て1で初期化
+    pub fn ones(shape: &[usize], dtype: DType) -> Self {
+        let tensor = Self::uninit(shape, dtype);
+        match dtype {
+            DType::F32 => {
+                let ptr = tensor.buffer.contents() as *mut f32;
+                let count = tensor.elem_count();
+                unsafe {
+                    for i in 0..count {
+                        *ptr.add(i) = 1.0;
+                    }
+                }
+            }
+            _ => unimplemented!("ones for {:?}", dtype),
+        }
+        tensor
+    }
+
+    /// 正規乱数で初期化
+    pub fn randn(shape: &[usize], dtype: DType) -> Self {
+        use rand::Rng;
+        let tensor = Self::uninit(shape, dtype);
+        let mut rng = rand::thread_rng();
+        match dtype {
+            DType::F32 => {
+                let ptr = tensor.buffer.contents() as *mut f32;
+                let count = tensor.elem_count();
+                unsafe {
+                    for i in 0..count {
+                        // Box-Muller transform for normal distribution
+                        let u1: f32 = rng.gen();
+                        let u2: f32 = rng.gen();
+                        let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos();
+                        *ptr.add(i) = z;
+                    }
+                }
+            }
+            _ => unimplemented!("randn for {:?}", dtype),
+        }
+        tensor
+    }
+
     /// データを CPU にコピー
     pub fn to_vec<T: Copy + Default>(&self) -> Vec<T> {
         let count = self.elem_count();
