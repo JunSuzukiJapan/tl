@@ -90,4 +90,25 @@ pub trait GpuOps: GpuTensor {
     
     /// 条件分岐
     fn where_cond(condition: &Self, x: &Self, y: &Self) -> Self;
+    
+    // ========== 深層学習演算 ==========
+    
+    /// Conv2D: 2D 畳み込み
+    fn conv2d(&self, weight: &Self, stride: (usize, usize), padding: (usize, usize)) -> Self;
+    
+    /// BatchNorm: バッチ正規化
+    fn batch_norm(&self, gamma: &Self, beta: &Self, running_mean: &Self, running_var: &Self, eps: f32) -> Self;
+    
+    /// LayerNorm: レイヤー正規化
+    fn layer_norm(&self, gamma: &Self, beta: &Self, eps: f32) -> Self;
+    
+    /// MaxPool2D: 最大プーリング
+    fn max_pool2d(&self, kernel_size: (usize, usize), stride: (usize, usize)) -> Self;
+    
+    /// AvgPool2D: 平均プーリング
+    fn avg_pool2d(&self, kernel_size: (usize, usize), stride: (usize, usize)) -> Self;
+    
+    /// Dropout: ドロップアウト
+    fn dropout(&self, p: f32, training: bool) -> Self;
 }
+

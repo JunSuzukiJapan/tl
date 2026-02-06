@@ -10,11 +10,13 @@ pub mod ops;
 pub mod shaders;
 pub mod autograd;
 pub mod backend_impl;
+pub mod optim;
 
 pub use buffer_pool::MetalBufferPool;
 pub use device::{get_device, MetalDevice};
 pub use tensor::MetalTensor;
 pub use autograd::{MetalVar, GradFn};
+pub use optim::{SGD, Adam, AdamW, clip_grad_norm};
 
 // Re-export tl_backend traits
 pub use tl_backend::{GpuTensor, GpuOps};

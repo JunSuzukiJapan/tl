@@ -135,4 +135,25 @@ impl GpuOps for MetalTensor {
     fn repeat_interleave(&self, repeats: usize, axis: usize) -> Self { self.repeat_interleave(repeats, axis) }
     fn index_select(&self, axis: usize, indices: &Self) -> Self { self.index_select(axis, indices) }
     fn where_cond(condition: &Self, x: &Self, y: &Self) -> Self { MetalTensor::where_cond(condition, x, y) }
+    
+    // ========== 深層学習演算 ==========
+    fn conv2d(&self, weight: &Self, stride: (usize, usize), padding: (usize, usize)) -> Self {
+        self.conv2d(weight, stride, padding)
+    }
+    fn batch_norm(&self, gamma: &Self, beta: &Self, running_mean: &Self, running_var: &Self, eps: f32) -> Self {
+        self.batch_norm(gamma, beta, running_mean, running_var, eps)
+    }
+    fn layer_norm(&self, gamma: &Self, beta: &Self, eps: f32) -> Self {
+        self.layer_norm(gamma, beta, eps)
+    }
+    fn max_pool2d(&self, kernel_size: (usize, usize), stride: (usize, usize)) -> Self {
+        self.max_pool2d(kernel_size, stride)
+    }
+    fn avg_pool2d(&self, kernel_size: (usize, usize), stride: (usize, usize)) -> Self {
+        self.avg_pool2d(kernel_size, stride)
+    }
+    fn dropout(&self, p: f32, training: bool) -> Self {
+        self.dropout(p, training)
+    }
 }
+
