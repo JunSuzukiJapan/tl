@@ -414,6 +414,32 @@ def print_summary(results: List[TestResult], verbose: bool):
     
     return len(failed) + len(segfault)
 
+def clean_binaries(project_root: Path):
+    """古いバイナリを削除して再ビルドを強制する"""
+    print("🧹 古いバイナリを削除中...")
+    
+    binaries_to_clean = [
+        project_root / "target" / "debug" / "tl",
+        project_root / "target" / "release" / "tl",
+    ]
+    
+    cleaned = 0
+    for binary in binaries_to_clean:
+        if binary.exists():
+            try:
+                binary.unlink()
+                print(f"   削除: {binary.relative_to(project_root)}")
+                cleaned += 1
+            except Exception as e:
+                print(f"   ⚠️ 削除失敗: {binary.name} - {e}")
+    
+    if cleaned == 0:
+        print("   バイナリが見つかりませんでした")
+    else:
+        print(f"\n✅ {cleaned} 個のバイナリを削除しました")
+        print("💡 次回の実行時に自動的に再ビルドされます (cargo build)")
+
+
 def main():
     parser = argparse.ArgumentParser(description="TL ファイル検証エージェント")
     parser.add_argument("--verbose", "-v", action="store_true", help="詳細出力")
@@ -421,11 +447,17 @@ def main():
     parser.add_argument("--filter", "-f", type=str, help="ファイルパターンでフィルタ")
     parser.add_argument("--parallel", "-p", type=int, default=1, help="並列実行数 (デフォルト: 1)")
     parser.add_argument("--static", action="store_true", help="静的コンパイルモードで実行 (JIT回避)")
+    parser.add_argument("--clean", action="store_true", help="古いバイナリを削除して終了")
     args = parser.parse_args()
     
     # プロジェクトルートを検出
     script_dir = Path(__file__).parent
     project_root = script_dir.parent
+    
+    # --clean オプションの処理
+    if args.clean:
+        clean_binaries(project_root)
+        sys.exit(0)
     
     # TL バイナリのパス
     tl_binary = project_root / "target" / "release" / "tl"
