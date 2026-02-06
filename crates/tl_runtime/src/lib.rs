@@ -1435,6 +1435,13 @@ pub extern "C" fn tl_tensor_clone(t: *const OpaqueTensor) -> *mut OpaqueTensor {
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_neg(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let tensor = unwrap_tensor_ptr!(t);
+    #[cfg(feature = "tl_metal_backend")]
+    {
+        let device = tensor.device().clone();
+        if let Ok(result) = crate::gpu_dispatch::metal_neg(tensor, &device) {
+            return make_tensor(result);
+        }
+    }
     let result = tensor.neg().unwrap();
     make_tensor(result)
 }
@@ -2555,6 +2562,16 @@ pub extern "C" fn tl_tensor_sum(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     use crate::error::RuntimeError;
     let tensor = unwrap_tensor_ptr!(t);
     let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        #[cfg(feature = "tl_metal_backend")]
+        {
+            let device = tensor.device().clone();
+            if let Ok(mt) = crate::gpu_dispatch::to_metal(tensor) {
+                let sum_val = tl_backend::GpuOps::sumall(&mt);
+                if let Ok(result) = candle_core::Tensor::new(&[sum_val], &device) {
+                    return Ok(make_tensor(result));
+                }
+            }
+        }
         let result = tensor
             .sum_all()
             .map_err(|e| RuntimeError::InternalError(e.to_string()))?;
@@ -2982,6 +2999,13 @@ pub extern "C" fn tl_tensor_relu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_gelu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let t = unwrap_tensor_ptr!(t);
+    #[cfg(feature = "tl_metal_backend")]
+    {
+        let device = t.device().clone();
+        if let Ok(result) = crate::gpu_dispatch::metal_gelu(t, &device) {
+            return make_tensor(result);
+        }
+    }
     let res = t.gelu().unwrap();
     make_tensor(res)
 }
