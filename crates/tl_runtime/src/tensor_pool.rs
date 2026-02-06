@@ -148,6 +148,7 @@ impl PersistentGpuPool {
             return;
         }
 
+        let debug = std::env::var("TL_POOL_DEBUG").is_ok();
         let ptr_val = ptr as usize;
         
         // アクティブから削除
@@ -157,6 +158,9 @@ impl PersistentGpuPool {
         let key = (num_elements, dtype_id, device_id);
         if let Some(list) = self.free_lists.get(&key) {
             if list.contains(&ptr) {
+                if debug {
+                    eprintln!("[Pool] SKIP release (duplicate) key={:?} ptr={:?}", key, ptr);
+                }
                 return; // 既にプール内
             }
         }
@@ -166,6 +170,11 @@ impl PersistentGpuPool {
         self.free_lists.entry(key).or_default().push(ptr);
         self.stats.current_free_count.fetch_add(1, Ordering::Relaxed);
         self.stats.current_free_bytes.fetch_add(bytes, Ordering::Relaxed);
+        
+        if debug {
+            let list_len = self.free_lists.get(&key).map(|l| l.len()).unwrap_or(0);
+            eprintln!("[Pool] RELEASE key={:?} ptr={:?} list_len={}", key, ptr, list_len);
+        }
     }
 
     /// 新規テンソル確保を記録
