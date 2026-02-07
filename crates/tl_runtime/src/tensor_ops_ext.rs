@@ -189,13 +189,100 @@ pub extern "C" fn tl_tensor_conv2d(
     }
     let input_tensor = unsafe { &*input };
     let weight_tensor = unsafe { &*weight };
-    // Conv2D 実装（現在は CPU fallback）
     let result = MetalTensor::conv2d_impl(
         input_tensor,
         weight_tensor,
         (stride as usize, stride as usize),
         (padding as usize, padding as usize),
     );
+    Box::into_raw(Box::new(result))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_batch_norm(
+    input: *mut OpaqueTensor,
+    gamma: *mut OpaqueTensor,
+    beta: *mut OpaqueTensor,
+    running_mean: *mut OpaqueTensor,
+    running_var: *mut OpaqueTensor,
+    eps: f64,
+) -> *mut OpaqueTensor {
+    if input.is_null() || gamma.is_null() || beta.is_null()
+        || running_mean.is_null() || running_var.is_null()
+    {
+        return std::ptr::null_mut();
+    }
+    let (inp, g, b, rm, rv) = unsafe {
+        (&*input, &*gamma, &*beta, &*running_mean, &*running_var)
+    };
+    let result = inp.batch_norm_impl(g, b, rm, rv, eps as f32);
+    Box::into_raw(Box::new(result))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_layer_norm(
+    input: *mut OpaqueTensor,
+    gamma: *mut OpaqueTensor,
+    beta: *mut OpaqueTensor,
+    eps: f64,
+) -> *mut OpaqueTensor {
+    if input.is_null() || gamma.is_null() || beta.is_null() {
+        return std::ptr::null_mut();
+    }
+    let (inp, g, b) = unsafe { (&*input, &*gamma, &*beta) };
+    let result = inp.layer_norm_impl(g, b, eps as f32);
+    Box::into_raw(Box::new(result))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_max_pool2d(
+    input: *mut OpaqueTensor,
+    kernel_h: i64,
+    kernel_w: i64,
+    stride_h: i64,
+    stride_w: i64,
+) -> *mut OpaqueTensor {
+    if input.is_null() {
+        return std::ptr::null_mut();
+    }
+    let inp = unsafe { &*input };
+    let result = inp.max_pool2d_impl(
+        (kernel_h as usize, kernel_w as usize),
+        (stride_h as usize, stride_w as usize),
+    );
+    Box::into_raw(Box::new(result))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_avg_pool2d(
+    input: *mut OpaqueTensor,
+    kernel_h: i64,
+    kernel_w: i64,
+    stride_h: i64,
+    stride_w: i64,
+) -> *mut OpaqueTensor {
+    if input.is_null() {
+        return std::ptr::null_mut();
+    }
+    let inp = unsafe { &*input };
+    let result = inp.avg_pool2d_impl(
+        (kernel_h as usize, kernel_w as usize),
+        (stride_h as usize, stride_w as usize),
+    );
+    Box::into_raw(Box::new(result))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_dropout(
+    input: *mut OpaqueTensor,
+    p: f64,
+    training: bool,
+) -> *mut OpaqueTensor {
+    if input.is_null() {
+        return std::ptr::null_mut();
+    }
+    let inp = unsafe { &*input };
+    let result = inp.dropout_impl(p as f32, training);
     Box::into_raw(Box::new(result))
 }
 
@@ -605,7 +692,7 @@ pub extern "C" fn tl_tensor_set_f32_md(t: *mut OpaqueTensor, idx0: i64, idx1: i6
     if t.is_null() {
         return;
     }
-    let tensor = unsafe { &mut *t };
+    let _tensor = unsafe { &mut *t };
     // MetalTensor の直接変更は困難なため警告
     eprintln!("Warning: tl_tensor_set_f32_md modifying tensor at [{}, {}] = {}", idx0, idx1, value);
     // スタブ - 実際の変更は未サポート

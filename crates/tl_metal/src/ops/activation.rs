@@ -2,7 +2,6 @@
 
 use crate::tensor::MetalTensor;
 use crate::DType;
-use tl_backend::GpuOps;
 
 impl MetalTensor {
     /// Softmax（軸指定）

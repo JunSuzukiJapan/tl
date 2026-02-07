@@ -77,6 +77,9 @@ pub use tensor_ops_ext::{
     tl_tensor_max_dim, tl_tensor_min_dim, tl_tensor_mean_dim, tl_tensor_sum_dim,
     // Convolution
     tl_tensor_conv2d,
+    // NN Layers (GPU accelerated)
+    tl_tensor_batch_norm, tl_tensor_layer_norm,
+    tl_tensor_max_pool2d, tl_tensor_avg_pool2d, tl_tensor_dropout,
     // Embedding
     tl_tensor_embedding, tl_tensor_cross_entropy,
     // Normalization
@@ -186,10 +189,12 @@ pub type OpaqueTensor = MetalTensor;
 
 // ========== ユーティリティ ==========
 
+#[allow(dead_code)]
 pub(crate) fn mem_log_enabled() -> bool {
     std::env::var("TL_MEM_DEBUG").is_ok()
 }
 
+#[allow(dead_code)]
 fn mem_trace_enabled() -> bool {
     static MEM_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
     *MEM_TRACE_ENABLED.get_or_init(|| std::env::var("TL_MEM_TRACE").is_ok())
@@ -200,6 +205,7 @@ fn make_tensor(t: MetalTensor) -> *mut OpaqueTensor {
     Box::into_raw(Box::new(t))
 }
 
+#[allow(dead_code)]
 fn return_ptr_or_null(
     res: std::thread::Result<Result<*mut OpaqueTensor, crate::error::RuntimeError>>,
 ) -> *mut OpaqueTensor {
@@ -235,6 +241,7 @@ pub extern "C" fn tl_runtime_shutdown() {
 
 /// エラーハンドリング
 #[unsafe(no_mangle)]
+#[allow(improper_ctypes_definitions)]
 pub extern "C" fn tl_amend_error_loc(
     code: u32,
     msg: String,

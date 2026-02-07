@@ -189,6 +189,47 @@ fn test_embedding() {
 
 #[test]
 #[serial]
+fn test_batch_norm() {
+    // [1, 2, 2, 2] 入力 (N=1, C=2, H=2, W=2)
+    let input = MetalTensor::from_slice(&[
+        1.0f32, 2.0, 3.0, 4.0,   // ch 0
+        5.0, 6.0, 7.0, 8.0,      // ch 1
+    ], &[1, 2, 2, 2], DType::F32);
+    
+    let gamma = MetalTensor::from_slice(&[1.0f32, 1.0], &[2], DType::F32);
+    let beta = MetalTensor::from_slice(&[0.0f32, 0.0], &[2], DType::F32);
+    let mean = MetalTensor::from_slice(&[2.5f32, 6.5], &[2], DType::F32);
+    let var = MetalTensor::from_slice(&[1.25f32, 1.25], &[2], DType::F32);
+    
+    let output = GpuOps::batch_norm(&input, &gamma, &beta, &mean, &var, 1e-5);
+    assert_eq!(output.shape(), &[1, 2, 2, 2]);
+    
+    let result = output.to_vec::<f32>();
+    // (1.0 - 2.5) / sqrt(1.25 + 1e-5) ≈ -1.3416
+    assert_approx_eq(result[0], -1.3416, 1e-3);
+    // (4.0 - 2.5) / sqrt(1.25 + 1e-5) ≈ 1.3416
+    assert_approx_eq(result[3], 1.3416, 1e-3);
+}
+
+#[test]
+#[serial]
+fn test_max_pool2d() {
+    // [1, 1, 4, 4] 入力
+    let input = MetalTensor::from_slice(&[
+        1.0f32, 2.0, 3.0, 4.0,
+        5.0, 6.0, 7.0, 8.0,
+        9.0, 10.0, 11.0, 12.0,
+        13.0, 14.0, 15.0, 16.0,
+    ], &[1, 1, 4, 4], DType::F32);
+    
+    let output = GpuOps::max_pool2d(&input, (2, 2), (2, 2));
+    assert_eq!(output.shape(), &[1, 1, 2, 2]);
+    // max: max(1,2,5,6)=6, max(3,4,7,8)=8, max(9,10,13,14)=14, max(11,12,15,16)=16
+    assert_tensor_approx_eq(&output, &[6.0, 8.0, 14.0, 16.0], 1e-5);
+}
+
+#[test]
+#[serial]
 fn test_avg_pool2d() {
     // [1, 1, 4, 4] 入力
     let input = MetalTensor::from_slice(&[
@@ -206,6 +247,30 @@ fn test_avg_pool2d() {
 
 #[test]
 #[serial]
+fn test_layer_norm() {
+    // [2, 4] 入力
+    let input = MetalTensor::from_slice(&[
+        1.0f32, 2.0, 3.0, 4.0,
+        5.0, 6.0, 7.0, 8.0,
+    ], &[2, 4], DType::F32);
+    
+    let gamma = MetalTensor::from_slice(&[1.0f32, 1.0, 1.0, 1.0], &[4], DType::F32);
+    let beta = MetalTensor::from_slice(&[0.0f32, 0.0, 0.0, 0.0], &[4], DType::F32);
+    
+    let output = GpuOps::layer_norm(&input, &gamma, &beta, 1e-5);
+    assert_eq!(output.shape(), &[2, 4]);
+    
+    let result = output.to_vec::<f32>();
+    // 行0: mean=2.5, var=1.25, (1-2.5)/sqrt(1.25) ≈ -1.3416
+    assert_approx_eq(result[0], -1.3416, 1e-3);
+    assert_approx_eq(result[3], 1.3416, 1e-3);
+    // 行1: mean=6.5, var=1.25, (5-6.5)/sqrt(1.25) ≈ -1.3416
+    assert_approx_eq(result[4], -1.3416, 1e-3);
+    assert_approx_eq(result[7], 1.3416, 1e-3);
+}
+
+#[test]
+#[serial]
 fn test_dropout() {
     let input = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0], &[4], DType::F32);
     
@@ -213,6 +278,31 @@ fn test_dropout() {
     let output = GpuOps::dropout(&input, 0.5, false);
     assert_eq!(output.shape(), &[4]);
     assert_tensor_approx_eq(&output, &[1.0, 2.0, 3.0, 4.0], 1e-5);
+}
+
+#[test]
+#[serial]
+fn test_dropout_training() {
+    // 大きなテンソルで training=true のテスト
+    let data: Vec<f32> = (0..1000).map(|i| i as f32).collect();
+    let input = MetalTensor::from_slice(&data, &[1000], DType::F32);
+    
+    let output = GpuOps::dropout(&input, 0.5, true);
+    assert_eq!(output.shape(), &[1000]);
+    
+    let result = output.to_vec::<f32>();
+    // 一部の要素が 0 になっているはず
+    let zero_count = result.iter().filter(|&&x| x == 0.0).count();
+    assert!(zero_count > 100, "Dropout should zero out some elements, got {} zeros", zero_count);
+    assert!(zero_count < 900, "Dropout should not zero out all elements, got {} zeros", zero_count);
+    
+    // 非ゼロ要素は scale (= 2.0) 倍されているはず
+    for (i, &val) in result.iter().enumerate() {
+        if val != 0.0 {
+            let expected = data[i] * 2.0; // scale = 1/(1-0.5) = 2.0
+            assert_approx_eq(val, expected, 1e-3);
+        }
+    }
 }
 
 // ========== 統合テスト ==========

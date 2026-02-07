@@ -1,26 +1,20 @@
 //! Metal Performance Shaders (MPS) 統合
 //! 
-//! Apple の MPS フレームワークを使用した高性能 GPU カーネル
-//!
-//! 現在は CPU フォールバックを使用し、今後 MPS ネイティブ実装を追加予定
+//! NN 演算は nn.rs にてカスタム Metal Compute Shader で GPU 実装済み。
+//! 本モジュールは MPS API 経由のラッパーとして残している。
+//! 将来 MPSMatrixMultiplication 等を統合する際に拡張予定。
 
 use crate::MetalTensor;
 
-/// MPS を使用した Conv2D 実装
+/// Conv2D 実装（カスタム Metal Compute Shader 経由）
 /// 
-/// 現在は CPU フォールバックを使用
-/// TODO: MPSCNNConvolution を使用した GPU 実装
+/// nn.rs の conv2d_f32 シェーダーで GPU アクセラレーション済み
 pub fn mps_conv2d(
     input: &MetalTensor,
     weight: &MetalTensor,
     stride: (usize, usize),
     padding: (usize, usize),
 ) -> MetalTensor {
-    // MPS 実装のプレースホルダー
-    // MPSCNNConvolution は MPSImage (Texture) ベースなので
-    // Buffer -> Texture 変換が必要
-    
-    // 現在は CPU フォールバック
     MetalTensor::conv2d_impl(input, weight, stride, padding)
 }
 

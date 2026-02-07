@@ -15,6 +15,7 @@ pub struct MetalTensor {
     /// データ型
     dtype: DType,
     /// デバイス
+    #[allow(dead_code)]
     device: Arc<MetalDevice>,
 }
 
