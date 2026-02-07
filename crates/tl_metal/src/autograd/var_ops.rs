@@ -184,4 +184,66 @@ impl MetalVar {
         let result = data.mul_scalar(scalar);
         MetalVar::new(result, self.inner.borrow().requires_grad)
     }
+
+    /// sigmoid
+    pub fn sigmoid(&self) -> MetalVar {
+        let data = self.inner.borrow().data.clone_data();
+        let result = data.sigmoid_impl();
+
+        if self.inner.borrow().requires_grad {
+            MetalVar::from_op(result.clone_data(), Box::new(SigmoidBackward {
+                a: self.inner.clone(),
+                output: result,
+            }), true)
+        } else {
+            MetalVar::new(result, false)
+        }
+    }
+
+    /// exp
+    pub fn exp(&self) -> MetalVar {
+        let data = self.inner.borrow().data.clone_data();
+        let result = data.exp_impl();
+
+        if self.inner.borrow().requires_grad {
+            MetalVar::from_op(result.clone_data(), Box::new(ExpBackward {
+                a: self.inner.clone(),
+                output: result,
+            }), true)
+        } else {
+            MetalVar::new(result, false)
+        }
+    }
+
+    /// log
+    pub fn log(&self) -> MetalVar {
+        let data = self.inner.borrow().data.clone_data();
+        let result = data.log_impl();
+
+        if self.inner.borrow().requires_grad {
+            MetalVar::from_op(result, Box::new(LogBackward {
+                a: self.inner.clone(),
+                a_data: data,
+            }), true)
+        } else {
+            MetalVar::new(result, false)
+        }
+    }
+
+    /// sum(axis)
+    pub fn sum(&self, axis: i32) -> MetalVar {
+        let data = self.inner.borrow().data.clone_data();
+        let input_shape = data.shape().to_vec();
+        let result = data.sum_impl(axis);
+
+        if self.inner.borrow().requires_grad {
+            MetalVar::from_op(result, Box::new(SumDimBackward {
+                a: self.inner.clone(),
+                input_shape,
+                axis,
+            }), true)
+        } else {
+            MetalVar::new(result, false)
+        }
+    }
 }

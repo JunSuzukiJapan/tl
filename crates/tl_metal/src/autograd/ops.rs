@@ -212,12 +212,108 @@ impl GradFn for MatmulBackward {
         // C = A @ B
         // dL/dA = dL/dC @ B^T
         // dL/dB = A^T @ dL/dC
-        let grad_a = grad_output.matmul(&self.b_data.transpose(0, 1));
-        let grad_b = self.a_data.transpose(0, 1).matmul(grad_output);
+        let grad_a = grad_output.matmul_impl(&self.b_data.transpose_impl(0, 1));
+        let grad_b = self.a_data.transpose_impl(0, 1).matmul_impl(grad_output);
         vec![grad_a, grad_b]
     }
     
     fn inputs(&self) -> Vec<Rc<RefCell<MetalVarInner>>> {
         vec![self.a.clone(), self.b.clone()]
+    }
+}
+
+/// sigmoid の勾配
+pub struct SigmoidBackward {
+    pub a: Rc<RefCell<MetalVarInner>>,
+    pub output: MetalTensor,
+}
+
+impl GradFn for SigmoidBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        // d(sigmoid(x))/dx = sigmoid(x) * (1 - sigmoid(x))
+        let ones = MetalTensor::ones(self.output.shape(), self.output.dtype());
+        let one_minus_s = ones.sub(&self.output);
+        let grad = grad_output.mul(&self.output).mul(&one_minus_s);
+        vec![grad]
+    }
+    
+    fn inputs(&self) -> Vec<Rc<RefCell<MetalVarInner>>> {
+        vec![self.a.clone()]
+    }
+}
+
+/// exp の勾配
+pub struct ExpBackward {
+    pub a: Rc<RefCell<MetalVarInner>>,
+    pub output: MetalTensor,
+}
+
+impl GradFn for ExpBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        // d(exp(x))/dx = exp(x)
+        vec![grad_output.mul(&self.output)]
+    }
+    
+    fn inputs(&self) -> Vec<Rc<RefCell<MetalVarInner>>> {
+        vec![self.a.clone()]
+    }
+}
+
+/// log の勾配
+pub struct LogBackward {
+    pub a: Rc<RefCell<MetalVarInner>>,
+    pub a_data: MetalTensor,
+}
+
+impl GradFn for LogBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        // d(log(x))/dx = 1/x
+        vec![grad_output.div(&self.a_data)]
+    }
+    
+    fn inputs(&self) -> Vec<Rc<RefCell<MetalVarInner>>> {
+        vec![self.a.clone()]
+    }
+}
+
+/// sum(dim) の勾配
+pub struct SumDimBackward {
+    pub a: Rc<RefCell<MetalVarInner>>,
+    pub input_shape: Vec<usize>,
+    pub axis: i32,
+}
+
+impl GradFn for SumDimBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        // sum(dim) の勾配: grad_output を input_shape にブロードキャスト
+        let axis = if self.axis < 0 {
+            (self.input_shape.len() as i32 + self.axis) as usize
+        } else {
+            self.axis as usize
+        };
+        
+        let grad_data: Vec<f32> = grad_output.to_vec();
+        let numel: usize = self.input_shape.iter().product();
+        let mut result = vec![0.0f32; numel];
+        
+        // axis 方向にブロードキャスト
+        let outer_size: usize = self.input_shape[..axis].iter().product();
+        let inner_size: usize = self.input_shape[axis + 1..].iter().product();
+        let axis_size = self.input_shape[axis];
+        
+        for i in 0..outer_size {
+            for k in 0..inner_size {
+                let grad_val = grad_data[i * inner_size + k];
+                for j in 0..axis_size {
+                    result[i * axis_size * inner_size + j * inner_size + k] = grad_val;
+                }
+            }
+        }
+        
+        vec![MetalTensor::from_slice(&result, &self.input_shape, grad_output.dtype())]
+    }
+    
+    fn inputs(&self) -> Vec<Rc<RefCell<MetalVarInner>>> {
+        vec![self.a.clone()]
     }
 }

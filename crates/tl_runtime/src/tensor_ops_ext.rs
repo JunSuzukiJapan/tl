@@ -69,7 +69,8 @@ pub extern "C" fn tl_tensor_sigmoid(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let one = MetalTensor::ones(tensor.shape(), DType::F32);
     let denom = MetalTensor::add_impl(&exp_neg, &one);
     let result = MetalTensor::div_impl(&one, &denom);
-    Box::into_raw(Box::new(result))
+    let ptr = Box::into_raw(Box::new(result));
+    crate::autograd_registry::unary_op(t, |v| v.sigmoid(), ptr)
 }
 
 #[unsafe(no_mangle)]
@@ -160,7 +161,9 @@ pub extern "C" fn tl_tensor_sum_dim(t: *mut OpaqueTensor, dim: usize, keep_dim: 
         new_shape[dim] = 1;
         result = MetalTensor::reshape_impl(&result, &new_shape);
     }
-    Box::into_raw(Box::new(result))
+    let dim_i32 = dim as i32;
+    let ptr = Box::into_raw(Box::new(result));
+    crate::autograd_registry::unary_op(t, |v| v.sum(dim_i32), ptr)
 }
 
 // ========== NN 演算 ==========
@@ -386,42 +389,28 @@ pub extern "C" fn tl_tensor_device_id(_t: *mut OpaqueTensor) -> i64 {
     0
 }
 
-// ========== Autograd（スタブ） ==========
+// ========== Autograd ==========
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_backward(_t: *mut OpaqueTensor) {
-    // Autograd は未実装
-    eprintln!("Warning: Backward not yet supported in Metal backend");
+pub extern "C" fn tl_tensor_backward(t: *mut OpaqueTensor) {
+    crate::autograd_registry::backward(t);
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    // Autograd は未実装 — 入力と同じ shape のゼロテンソルを返す
-    // (学習は進まないがクラッシュしない)
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    let shape = MetalTensor::shape(tensor);
-    let zeros = MetalTensor::zeros(shape, MetalTensor::dtype(tensor));
-    Box::into_raw(Box::new(zeros))
+    crate::autograd_registry::grad(t)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_detach(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    let cloned = tensor.clone();
-    Box::into_raw(Box::new(cloned))
+    crate::autograd_registry::detach(t)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_enable_grad(t: *mut OpaqueTensor, _enable: bool) -> *mut OpaqueTensor {
-    // Autograd は未実装、そのまま返す
-    t
+    crate::autograd_registry::enable_grad(t)
 }
+
 
 // ========== RoPE 関連 ==========
 
@@ -547,7 +536,15 @@ pub extern "C" fn tl_tensor_pow(t: *mut OpaqueTensor, exp: f64) -> *mut OpaqueTe
     }
     let tensor = unsafe { &*t };
     let result = tensor.pow_scalar_impl(exp as f32);
-    Box::into_raw(Box::new(result))
+    let exp_f32 = exp as f32;
+    let ptr = Box::into_raw(Box::new(result));
+    // pow(x, n) を MetalVar 経由で追跡: x^n -> pow(x, const(n))
+    crate::autograd_registry::unary_op(t, |v| {
+        use tl_metal::autograd::MetalVar;
+        let n_tensor = MetalTensor::from_slice(&[exp_f32], &[1], tl_metal::DType::F32);
+        let n_var = MetalVar::new(n_tensor, false);
+        v.pow(&n_var)
+    }, ptr)
 }
 
 /// 下三角行列
@@ -566,24 +563,24 @@ pub extern "C" fn tl_tensor_tril(t: *mut OpaqueTensor, diagonal: i64) -> *mut Op
 
 /// テンソル要素取得
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_get(t: *mut OpaqueTensor, idx: i64) -> f64 {
+pub extern "C" fn tl_tensor_get(t: *mut OpaqueTensor, idx: i64) -> f32 {
     if t.is_null() {
         return 0.0;
     }
     let tensor = unsafe { &*t };
     let data: Vec<f32> = tensor.to_vec();
-    data.get(idx as usize).map(|&v| v as f64).unwrap_or(0.0)
+    data.get(idx as usize).copied().unwrap_or(0.0)
 }
 
 /// テンソル item（単一要素取得）
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_item(t: *mut OpaqueTensor) -> f64 {
+pub extern "C" fn tl_tensor_item(t: *mut OpaqueTensor) -> f32 {
     if t.is_null() {
         return 0.0;
     }
     let tensor = unsafe { &*t };
     let data: Vec<f32> = tensor.to_vec();
-    data.first().map(|&v| v as f64).unwrap_or(0.0)
+    data.first().copied().unwrap_or(0.0)
 }
 
 /// 多次元インデックスで f32 取得
