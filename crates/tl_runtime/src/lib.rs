@@ -18,7 +18,7 @@ pub mod tokenizer;
 pub mod system;
 pub mod tensor_ops_ext;
 pub mod math_ffi;
-pub mod autograd_registry;
+// autograd_registry は MetalTensor 統合により廃止
 
 // ========== Stub Modules (Legacy Compatibility) ==========
 pub mod stdlib;
@@ -327,7 +327,8 @@ pub extern "C" fn tl_tensor_randn(rank: usize, shape: *const usize, req_grad: bo
     let tensor = MetalTensor::randn(shape_slice, DType::F32);
     let ptr = make_tensor(tensor);
     if req_grad {
-        autograd_registry::register_requires_grad(ptr);
+        let t = unsafe { &mut *ptr };
+        t.enable_grad();
     }
     ptr
 }
@@ -495,7 +496,12 @@ pub extern "C" fn tl_tensor_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
     let (ta, tb) = unsafe { (&*a, &*b) };
     let result = MetalTensor::add_impl(ta, tb);
     let ptr = make_tensor(result);
-    autograd_registry::binary_op(a, b, |va, vb| va.add(vb), ptr)
+    if ta.requires_grad() || tb.requires_grad() {
+        use tl_metal::autograd::ops::AddBackward;
+        let t = unsafe { &mut *ptr };
+        t.set_grad_fn(Box::new(AddBackward { a, b }));
+    }
+    ptr
 }
 
 #[unsafe(no_mangle)]
@@ -506,7 +512,12 @@ pub extern "C" fn tl_tensor_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
     let (ta, tb) = unsafe { (&*a, &*b) };
     let result = MetalTensor::sub_impl(ta, tb);
     let ptr = make_tensor(result);
-    autograd_registry::binary_op(a, b, |va, vb| va.sub(vb), ptr)
+    if ta.requires_grad() || tb.requires_grad() {
+        use tl_metal::autograd::ops::SubBackward;
+        let t = unsafe { &mut *ptr };
+        t.set_grad_fn(Box::new(SubBackward { a, b }));
+    }
+    ptr
 }
 
 #[unsafe(no_mangle)]
@@ -517,7 +528,16 @@ pub extern "C" fn tl_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
     let (ta, tb) = unsafe { (&*a, &*b) };
     let result = MetalTensor::mul_impl(ta, tb);
     let ptr = make_tensor(result);
-    autograd_registry::binary_op(a, b, |va, vb| va.mul(vb), ptr)
+    if ta.requires_grad() || tb.requires_grad() {
+        use tl_metal::autograd::ops::MulBackward;
+        let t = unsafe { &mut *ptr };
+        t.set_grad_fn(Box::new(MulBackward {
+            a, b,
+            a_data: ta.shallow_clone(),
+            b_data: tb.shallow_clone(),
+        }));
+    }
+    ptr
 }
 
 #[unsafe(no_mangle)]
@@ -528,7 +548,16 @@ pub extern "C" fn tl_tensor_div(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
     let (ta, tb) = unsafe { (&*a, &*b) };
     let result = MetalTensor::div_impl(ta, tb);
     let ptr = make_tensor(result);
-    autograd_registry::binary_op(a, b, |va, vb| va.div(vb), ptr)
+    if ta.requires_grad() || tb.requires_grad() {
+        use tl_metal::autograd::ops::DivBackward;
+        let t = unsafe { &mut *ptr };
+        t.set_grad_fn(Box::new(DivBackward {
+            a, b,
+            a_data: ta.shallow_clone(),
+            b_data: tb.shallow_clone(),
+        }));
+    }
+    ptr
 }
 
 #[unsafe(no_mangle)]
@@ -597,13 +626,21 @@ pub extern "C" fn tl_tensor_pow_scalar(t: *mut OpaqueTensor, exp: f32) -> *mut O
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    let ptr = make_tensor(tensor.pow_scalar_impl(exp));
-    autograd_registry::unary_op(t, |v| {
-        use tl_metal::autograd::MetalVar;
-        let n_tensor = MetalTensor::from_slice(&[exp], &[1], DType::F32);
-        let n_var = MetalVar::new(n_tensor, false);
-        v.pow(&n_var)
-    }, ptr)
+    let result = tensor.pow_scalar_impl(exp);
+    let ptr = make_tensor(result);
+    if tensor.requires_grad() {
+        use tl_metal::autograd::ops::PowBackward;
+        let exp_tensor = MetalTensor::from_slice(&[exp], &[1], DType::F32);
+        let result_clone = unsafe { &*ptr }.shallow_clone();
+        let rt = unsafe { &mut *ptr };
+        rt.set_grad_fn(Box::new(PowBackward {
+            a: t,
+            a_data: tensor.shallow_clone(),
+            b_data: exp_tensor,
+            output: result_clone,
+        }));
+    }
+    ptr
 }
 
 
@@ -775,7 +812,13 @@ pub extern "C" fn tl_tensor_exp(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let tensor = unsafe { &*t };
     let result = MetalTensor::exp_impl(tensor);
     let ptr = make_tensor(result);
-    autograd_registry::unary_op(t, |v| v.exp(), ptr)
+    if tensor.requires_grad() {
+        use tl_metal::autograd::ops::ExpBackward;
+        let output = unsafe { &*ptr }.shallow_clone();
+        let rt = unsafe { &mut *ptr };
+        rt.set_grad_fn(Box::new(ExpBackward { a: t, output }));
+    }
+    ptr
 }
 
 #[unsafe(no_mangle)]
@@ -786,7 +829,12 @@ pub extern "C" fn tl_tensor_log(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let tensor = unsafe { &*t };
     let result = MetalTensor::log_impl(tensor);
     let ptr = make_tensor(result);
-    autograd_registry::unary_op(t, |v| v.log(), ptr)
+    if tensor.requires_grad() {
+        use tl_metal::autograd::ops::LogBackward;
+        let rt = unsafe { &mut *ptr };
+        rt.set_grad_fn(Box::new(LogBackward { a: t, a_data: tensor.shallow_clone() }));
+    }
+    ptr
 }
 
 #[unsafe(no_mangle)]
@@ -826,7 +874,12 @@ pub extern "C" fn tl_tensor_relu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let tensor = unsafe { &*t };
     let result = MetalTensor::relu_impl(tensor);
     let ptr = make_tensor(result);
-    autograd_registry::unary_op(t, |v| v.relu(), ptr)
+    if tensor.requires_grad() {
+        use tl_metal::autograd::ops::ReluBackward;
+        let rt = unsafe { &mut *ptr };
+        rt.set_grad_fn(Box::new(ReluBackward { a: t, a_data: tensor.shallow_clone() }));
+    }
+    ptr
 }
 
 #[unsafe(no_mangle)]
@@ -838,7 +891,13 @@ pub extern "C" fn tl_tensor_softmax(t: *mut OpaqueTensor, dim: i64) -> *mut Opaq
     let result = MetalTensor::softmax_impl(tensor, dim as i32);
     let dim_i32 = dim as i32;
     let ptr = make_tensor(result);
-    autograd_registry::unary_op(t, |v| v.softmax(dim_i32), ptr)
+    if tensor.requires_grad() {
+        use tl_metal::autograd::ops::SoftmaxBackward;
+        let output = unsafe { &*ptr }.shallow_clone();
+        let rt = unsafe { &mut *ptr };
+        rt.set_grad_fn(Box::new(SoftmaxBackward { a: t, output, axis: dim_i32 }));
+    }
+    ptr
 }
 
 // ========== Reduction ==========
@@ -853,7 +912,12 @@ pub extern "C" fn tl_tensor_sum(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let sum_val = MetalTensor::sumall_impl(tensor);
     let result = MetalTensor::from_slice(&[sum_val], &[1], DType::F32);
     let ptr = make_tensor(result);
-    autograd_registry::unary_op(t, |v| v.sumall(), ptr)
+    if tensor.requires_grad() {
+        use tl_metal::autograd::ops::SumallBackward;
+        let rt = unsafe { &mut *ptr };
+        rt.set_grad_fn(Box::new(SumallBackward { a: t, shape: tensor.shape().to_vec() }));
+    }
+    ptr
 }
 
 #[unsafe(no_mangle)]
@@ -1107,7 +1171,17 @@ pub extern "C" fn tl_tensor_matmul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -
     let (ta, tb) = unsafe { (&*a, &*b) };
     let result = MetalTensor::matmul_impl(ta, tb);
     let ptr = make_tensor(result);
-    autograd_registry::binary_op(a, b, |va, vb| va.matmul(vb), ptr)
+    if ta.requires_grad() || tb.requires_grad() {
+        use tl_metal::autograd::ops::MatmulBackward;
+        let (a_ref, b_ref) = (a, b);
+        let t = unsafe { &mut *ptr };
+        t.set_grad_fn(Box::new(MatmulBackward {
+            a: a_ref, b: b_ref,
+            a_data: ta.shallow_clone(),
+            b_data: tb.shallow_clone(),
+        }));
+    }
+    ptr
 }
 
 // ========== I/O ==========

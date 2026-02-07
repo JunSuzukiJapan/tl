@@ -103,13 +103,14 @@ pub extern "C" fn tl_load_all_params(_path: *mut StringStruct) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_update_all_params(_lr: f64) {
-    eprintln!("Warning: Parameter update not yet supported in Metal backend");
+pub extern "C" fn tl_update_all_params(lr: f32) {
+    // REGISTRY 廃止: テンソルのパラメータ更新は TL コード側で直接実行
+    let _ = lr;
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_clear_grads() {
-    eprintln!("Warning: Gradient clearing not yet supported in Metal backend");
+    // REGISTRY 廃止: テンソルの勾配クリアはスコープ離脱時に自動
 }
 
 /// GGUF ロード（スタブ）

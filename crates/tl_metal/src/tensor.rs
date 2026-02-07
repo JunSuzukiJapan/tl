@@ -3,8 +3,20 @@
 use crate::buffer_pool::{pool_acquire, pool_release};
 use crate::device::{get_device, MetalDevice};
 use crate::{shape_to_bytes, DType};
+use crate::autograd::GradFn;
 use metal::{Buffer, MTLResourceOptions};
 use std::sync::Arc;
+use tl_backend::GpuOps;
+
+/// Autograd メタデータ
+pub struct AutogradMeta {
+    /// 勾配（累積）
+    pub grad: Option<MetalTensor>,
+    /// 勾配関数（リーフノードは None）
+    pub grad_fn: Option<Box<dyn GradFn>>,
+    /// 勾配が必要か
+    pub requires_grad: bool,
+}
 
 /// Metal GPU テンソル
 pub struct MetalTensor {
@@ -17,6 +29,8 @@ pub struct MetalTensor {
     /// デバイス
     #[allow(dead_code)]
     device: Arc<MetalDevice>,
+    /// Autograd メタデータ（None = autograd 不要）
+    pub autograd: Option<Box<AutogradMeta>>,
 }
 
 impl Clone for MetalTensor {
@@ -44,13 +58,13 @@ impl MetalTensor {
             shape: shape.to_vec(),
             dtype,
             device,
+            autograd: None,
         }
     }
 
     /// ゼロで初期化されたテンソルを作成
     pub fn zeros(shape: &[usize], dtype: DType) -> Self {
         let tensor = Self::uninit(shape, dtype);
-        // バッファをゼロクリア
         let ptr = tensor.buffer.contents() as *mut u8;
         let size = shape_to_bytes(shape, dtype);
         unsafe {
@@ -102,6 +116,19 @@ impl MetalTensor {
             shape,
             dtype,
             device,
+            autograd: None,
+        }
+    }
+
+    /// GPU バッファを共有する浅いクローン（データコピーなし）
+    /// autograd メタデータはコピーしない
+    pub fn shallow_clone(&self) -> Self {
+        MetalTensor {
+            buffer: Arc::clone(&self.buffer),
+            shape: self.shape.clone(),
+            dtype: self.dtype,
+            device: Arc::clone(&self.device),
+            autograd: None,
         }
     }
 
@@ -134,7 +161,6 @@ impl MetalTensor {
                 let count = tensor.elem_count();
                 unsafe {
                     for i in 0..count {
-                        // Box-Muller transform for normal distribution
                         let u1: f32 = rng.gen();
                         let u2: f32 = rng.gen();
                         let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos();
@@ -164,14 +190,118 @@ impl MetalTensor {
         }
         result
     }
+
+    /// データを GPU→CPU→GPU で完全コピー
+    pub fn clone_data(&self) -> MetalTensor {
+        MetalTensor::from_slice(&self.to_vec::<f32>(), self.shape(), self.dtype())
+    }
+
+    // ========== Autograd メソッド ==========
+
+    /// requires_grad フラグを確認
+    pub fn requires_grad(&self) -> bool {
+        self.autograd.as_ref().map_or(false, |a| a.requires_grad)
+    }
+
+    /// requires_grad を有効化
+    pub fn enable_grad(&mut self) {
+        if self.autograd.is_none() {
+            self.autograd = Some(Box::new(AutogradMeta {
+                grad: None,
+                grad_fn: None,
+                requires_grad: true,
+            }));
+        } else {
+            self.autograd.as_mut().unwrap().requires_grad = true;
+        }
+    }
+
+    /// grad_fn をセット
+    pub fn set_grad_fn(&mut self, grad_fn: Box<dyn GradFn>) {
+        self.autograd = Some(Box::new(AutogradMeta {
+            grad: None,
+            grad_fn: Some(grad_fn),
+            requires_grad: true,
+        }));
+    }
+
+    /// 勾配を取得（shallow clone）
+    pub fn get_grad(&self) -> Option<MetalTensor> {
+        self.autograd.as_ref().and_then(|a| {
+            a.grad.as_ref().map(|g| g.shallow_clone())
+        })
+    }
+
+    /// 勾配をゼロクリア
+    pub fn zero_grad(&mut self) {
+        if let Some(ref mut a) = self.autograd {
+            a.grad = None;
+        }
+    }
+
+    /// backward（逆伝播）
+    pub fn backward(&mut self) {
+        assert!(self.requires_grad(), "backward called on non-requires_grad tensor");
+
+        // 初期勾配: すべて 1
+        let ones = MetalTensor::ones(self.shape(), self.dtype());
+        // self のポインタを取得
+        let self_ptr = self as *mut MetalTensor;
+        Self::backward_recursive(self_ptr, &ones);
+    }
+
+    /// 生ポインタベースの backward（計算グラフを辿る）
+    /// テンソルは JIT 実行中に解放されないため安全
+    fn backward_recursive(tensor_ptr: *mut MetalTensor, grad_output: &MetalTensor) {
+        let tensor = unsafe { &mut *tensor_ptr };
+
+        // 勾配を累積
+        if let Some(ref mut meta) = tensor.autograd {
+            if let Some(ref mut grad) = meta.grad {
+                let new_grad = grad.add(grad_output);
+                *grad = new_grad;
+            } else {
+                meta.grad = Some(grad_output.shallow_clone());
+            }
+        }
+
+        // grad_fn から入力勾配を計算して伝播
+        let propagation = {
+            let meta = tensor.autograd.as_ref();
+            meta.and_then(|m| {
+                m.grad_fn.as_ref().map(|gf| {
+                    let grads = gf.backward(grad_output);
+                    let inputs = gf.inputs();
+                    (grads, inputs)
+                })
+            })
+        };
+
+        if let Some((grads, inputs)) = propagation {
+            for (input_ptr, grad) in inputs.into_iter().zip(grads.into_iter()) {
+                let input = unsafe { &*input_ptr };
+                if input.requires_grad() {
+                    Self::backward_recursive(input_ptr, &grad);
+                }
+            }
+        }
+    }
+
+    /// 計算グラフから切り離す（データのみの shallow clone）
+    pub fn detach(&self) -> MetalTensor {
+        self.shallow_clone()
+    }
 }
 
 impl Drop for MetalTensor {
     fn drop(&mut self) {
-        // バッファをプールに返却（参照カウントが 1 の場合のみ）
-        // Arc::strong_count で他に参照がないことを確認
         if Arc::strong_count(&self.buffer) == 1 {
             pool_release(self.buffer.clone());
         }
     }
 }
+
+// GpuTensor トレイトが Send + Sync を要求
+// AutogradMeta は dyn GradFn を含むが JIT はシングルスレッド実行のため安全
+unsafe impl Send for MetalTensor {}
+unsafe impl Sync for MetalTensor {}

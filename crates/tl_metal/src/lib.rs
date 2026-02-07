@@ -15,7 +15,7 @@ pub mod optim;
 pub use buffer_pool::MetalBufferPool;
 pub use device::{get_device, MetalDevice};
 pub use tensor::MetalTensor;
-pub use autograd::{MetalVar, GradFn};
+pub use autograd::GradFn;
 pub use optim::{SGD, Adam, AdamW, clip_grad_norm};
 
 // Re-export tl_backend traits
