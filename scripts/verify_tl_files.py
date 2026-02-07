@@ -90,25 +90,25 @@ SKIP_FILES = {
     # --- autograd / clear_grads / enable_grad 未実装 (Metal backend) ---
     "mem_leak_autograd_fixed.tl",  # clear_grads() + enable_grad() 使用
     "mem_leak_extended.tl",        # clear_grads() + enable_grad() 使用
-    # --- プロセス終了時 cleanup クラッシュ (二重解放) ---
-    "mem_leak_autograd.tl",        # backward + grad の cleanup 時セグフォ
-    "io_simple.tl",                # save/load テンソルの cleanup 時セグフォ
-    "library_test.tl",             # テンソル演算の cleanup 時セグフォ
-    "method_chains.tl",            # メソッドチェーンの cleanup 時セグフォ
-    "reshape_rank.tl",             # reshape の cleanup 時セグフォ
-    "kv_cache_test.tl",            # KV キャッシュの cleanup 時セグフォ
-    # --- tensor_logic コンパイルエラー (0.1s でクラッシュ) ---
-    "logic.tl",
-    "gnn.tl",
-    "inverse_life.tl",
-    "n_queens_debug.tl",
-    "access_control.tl",
-    "recommendation.tl",
-    "raycast.tl",
-    "tsp.tl",
+    # --- backward / grad 未実装によるセグフォ (Metal backend) ---
+    "mem_leak_autograd.tl",        # backward() 呼出し後のクラッシュ
+    "gnn.tl",                      # backward() 呼出し後のクラッシュ
+    "inverse_life.tl",             # backward() 呼出し後のクラッシュ
+    "n_queens_debug.tl",           # backward() 呼出し後のクラッシュ
+    "raycast.tl",                  # backward() 呼出し後のクラッシュ
+    "tsp.tl",                      # backward() 呼出し後のクラッシュ
+    "logic.tl",                    # tl_tensor_set_f32_md パニック
+    # --- KVCache シグネチャ不整合 (全面改修必要) ---
+    "kv_cache_test.tl",            # get_k/get_v のランタイム引数不足
+    # --- io / load 関連 ---
+    "io_simple.tl",                # tl_tensor_load が無効ファイルで null を返しクラッシュ
+    # --- 一時テスト ---
+    "repro_kv_crash.tl",           # デバッグ用一時ファイル
+    "repro_reshape_segfault.tl",   # デバッグ用一時ファイル
     # システムテスト (タイムアウト)
     "system_test.tl",
 }
+
 
 # 長時間実行が予想されるファイル（長めのタイムアウト）
 LONG_RUNNING = {

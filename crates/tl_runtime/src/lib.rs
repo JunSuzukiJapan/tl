@@ -918,11 +918,19 @@ pub extern "C" fn tl_tensor_reshape(
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_reshape_new(
     t: *mut OpaqueTensor,
-    rank: usize,
-    shape: *const usize,
+    new_shape_tensor: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
-    tl_tensor_reshape(t, rank, shape)
+    if t.is_null() || new_shape_tensor.is_null() {
+        eprintln!("[tl_tensor_reshape_new] null pointer: t={} shape={}", t.is_null(), new_shape_tensor.is_null());
+        return std::ptr::null_mut();
+    }
+    // shape テンソルから shape データを抽出 (f32 -> usize)
+    let shape_tensor = unsafe { &*new_shape_tensor };
+    let shape_f32: Vec<f32> = shape_tensor.to_vec();
+    let new_shape: Vec<usize> = shape_f32.iter().map(|&x| x as usize).collect();
+    tl_tensor_reshape(t, new_shape.len(), new_shape.as_ptr())
 }
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_reshape_dims(

@@ -165,47 +165,92 @@ impl MetalTensor {
         )
     }
 
-    /// transpose（2D）— Metal GPU シェーダー実装
+    /// transpose — 2D: Metal GPU シェーダー、N-D: CPU フォールバック
     pub fn transpose_impl(&self, dim0: usize, dim1: usize) -> MetalTensor {
         let shape = MetalTensor::shape(self);
-        assert!(shape.len() == 2, "transpose currently only supports 2D tensors");
         assert!(dim0 < shape.len() && dim1 < shape.len(), "dim out of range");
 
-        let rows = shape[0];
-        let cols = shape[1];
-        let new_shape = vec![cols, rows];
+        if dim0 == dim1 {
+            return self.clone_data();
+        }
 
-        let result = MetalTensor::uninit(&new_shape, MetalTensor::dtype(self));
-        let device = get_device();
-        let command_queue = device.command_queue();
-        let pipeline = get_transpose_pipeline();
+        // 2D テンソル → 既存 GPU シェーダー
+        if shape.len() == 2 {
+            let rows = shape[0];
+            let cols = shape[1];
+            let new_shape = vec![cols, rows];
 
-        let rows_buf = make_u32_buf(rows as u32);
-        let cols_buf = make_u32_buf(cols as u32);
+            let result = MetalTensor::uninit(&new_shape, MetalTensor::dtype(self));
+            let device = get_device();
+            let command_queue = device.command_queue();
+            let pipeline = get_transpose_pipeline();
 
-        let command_buffer = command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
+            let rows_buf = make_u32_buf(rows as u32);
+            let cols_buf = make_u32_buf(cols as u32);
 
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(self.buffer()), 0);
-        encoder.set_buffer(1, Some(result.buffer()), 0);
-        encoder.set_buffer(2, Some(&rows_buf), 0);
-        encoder.set_buffer(3, Some(&cols_buf), 0);
+            let command_buffer = command_queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
 
-        let tpg = MTLSize::new(cols.min(16) as u64, rows.min(16) as u64, 1);
-        let grid = MTLSize::new(
-            ((cols + tpg.width as usize - 1) / tpg.width as usize) as u64,
-            ((rows + tpg.height as usize - 1) / tpg.height as usize) as u64,
-            1,
-        );
-        encoder.dispatch_thread_groups(grid, tpg);
-        encoder.end_encoding();
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_buffer(0, Some(self.buffer()), 0);
+            encoder.set_buffer(1, Some(result.buffer()), 0);
+            encoder.set_buffer(2, Some(&rows_buf), 0);
+            encoder.set_buffer(3, Some(&cols_buf), 0);
 
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+            let tpg = MTLSize::new(cols.min(16) as u64, rows.min(16) as u64, 1);
+            let grid = MTLSize::new(
+                ((cols + tpg.width as usize - 1) / tpg.width as usize) as u64,
+                ((rows + tpg.height as usize - 1) / tpg.height as usize) as u64,
+                1,
+            );
+            encoder.dispatch_thread_groups(grid, tpg);
+            encoder.end_encoding();
 
-        result
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+
+            return result;
+        }
+
+        // N-D テンソル → CPU フォールバック（ストライドベースのインデックスマッピング）
+        let ndim = shape.len();
+        let mut new_shape = shape.to_vec();
+        new_shape.swap(dim0, dim1);
+
+        // 元テンソルのストライド計算
+        let mut src_strides = vec![1usize; ndim];
+        for i in (0..ndim - 1).rev() {
+            src_strides[i] = src_strides[i + 1] * shape[i + 1];
+        }
+
+        // 新テンソルのストライド計算
+        let mut dst_strides = vec![1usize; ndim];
+        for i in (0..ndim - 1).rev() {
+            dst_strides[i] = dst_strides[i + 1] * new_shape[i + 1];
+        }
+
+        let total_elems: usize = shape.iter().product();
+        let src_data: Vec<f32> = self.to_vec();
+        let mut dst_data = vec![0.0f32; total_elems];
+
+        for src_idx in 0..total_elems {
+            // src_idx → 多次元座標
+            let mut remaining = src_idx;
+            let mut coords = vec![0usize; ndim];
+            for d in 0..ndim {
+                coords[d] = remaining / src_strides[d];
+                remaining %= src_strides[d];
+            }
+            // dim0 と dim1 の座標を入れ替え
+            coords.swap(dim0, dim1);
+            // 新しいインデックスを計算
+            let dst_idx: usize = coords.iter().zip(dst_strides.iter()).map(|(c, s)| c * s).sum();
+            dst_data[dst_idx] = src_data[src_idx];
+        }
+
+        MetalTensor::from_slice(&dst_data, &new_shape, MetalTensor::dtype(self))
     }
+
     
     /// broadcast_to — Metal GPU シェーダー実装
     pub fn broadcast_to_impl(&self, shape: &[usize]) -> MetalTensor {
