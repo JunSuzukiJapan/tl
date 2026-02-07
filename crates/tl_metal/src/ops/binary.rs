@@ -1,7 +1,9 @@
 //! 二項演算（GPU Shader 使用）
 
 use crate::device::get_device;
-use crate::shaders::{self, SHADER_ADD_F32, SHADER_SUB_F32, SHADER_MUL_F32, SHADER_DIV_F32, SHADER_POW_F32};
+use crate::shaders::{self, SHADER_ADD_F32, SHADER_SUB_F32, SHADER_MUL_F32, SHADER_DIV_F32, SHADER_POW_F32,
+    SHADER_EQ_F32, SHADER_NE_F32, SHADER_LT_F32, SHADER_LE_F32, SHADER_GT_F32, SHADER_GE_F32,
+    SHADER_FMOD_F32};
 use crate::tensor::MetalTensor;
 use crate::DType;
 
@@ -115,5 +117,36 @@ impl MetalTensor {
         command_buffer.wait_until_completed();
 
         result
+    }
+
+    // ========== 比較演算（GPU Shader）==========
+
+    /// 要素ごとの等値比較
+    pub fn eq_impl(&self, other: &MetalTensor) -> MetalTensor {
+        self.binary_op(other, SHADER_EQ_F32)
+    }
+    /// 要素ごとの非等値比較
+    pub fn ne_impl(&self, other: &MetalTensor) -> MetalTensor {
+        self.binary_op(other, SHADER_NE_F32)
+    }
+    /// 要素ごとの小なり比較
+    pub fn lt_impl(&self, other: &MetalTensor) -> MetalTensor {
+        self.binary_op(other, SHADER_LT_F32)
+    }
+    /// 要素ごとの小なりイコール比較
+    pub fn le_impl(&self, other: &MetalTensor) -> MetalTensor {
+        self.binary_op(other, SHADER_LE_F32)
+    }
+    /// 要素ごとの大なり比較
+    pub fn gt_impl(&self, other: &MetalTensor) -> MetalTensor {
+        self.binary_op(other, SHADER_GT_F32)
+    }
+    /// 要素ごとの大なりイコール比較
+    pub fn ge_impl(&self, other: &MetalTensor) -> MetalTensor {
+        self.binary_op(other, SHADER_GE_F32)
+    }
+    /// 要素ごとの剰余演算
+    pub fn rem_impl(&self, other: &MetalTensor) -> MetalTensor {
+        self.binary_op(other, SHADER_FMOD_F32)
     }
 }

@@ -9,6 +9,7 @@ pub const SHADER_SUB_F32: &str = "sub_f32";
 pub const SHADER_MUL_F32: &str = "mul_f32";
 pub const SHADER_DIV_F32: &str = "div_f32";
 pub const SHADER_POW_F32: &str = "pow_f32";
+pub const SHADER_FMOD_F32: &str = "fmod_f32";
 
 /// Shader 関数名 - 単項演算
 pub const SHADER_NEG_F32: &str = "neg_f32";
@@ -33,6 +34,14 @@ pub const SHADER_CLAMP_F32: &str = "clamp_f32";
 pub const SHADER_SUMALL_F32: &str = "sumall_f32";
 pub const SHADER_ARGMAX_F32: &str = "argmax_f32";
 pub const SHADER_ARGMIN_F32: &str = "argmin_f32";
+
+/// Shader 関数名 - 比較演算
+pub const SHADER_EQ_F32: &str = "eq_f32";
+pub const SHADER_NE_F32: &str = "ne_f32";
+pub const SHADER_LT_F32: &str = "lt_f32";
+pub const SHADER_LE_F32: &str = "le_f32";
+pub const SHADER_GT_F32: &str = "gt_f32";
+pub const SHADER_GE_F32: &str = "ge_f32";
 
 /// Metal Shader ソースコード
 const SHADER_SOURCE: &str = r#"
@@ -84,6 +93,71 @@ kernel void pow_f32(
     uint id [[thread_position_in_grid]]
 ) {
     out[id] = pow(a[id], b[id]);
+}
+
+kernel void fmod_f32(
+    device const float* a [[buffer(0)]],
+    device const float* b [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = fmod(a[id], b[id]);
+}
+
+// ========== 比較演算 ==========
+
+kernel void eq_f32(
+    device const float* a [[buffer(0)]],
+    device const float* b [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = (a[id] == b[id]) ? 1.0f : 0.0f;
+}
+
+kernel void ne_f32(
+    device const float* a [[buffer(0)]],
+    device const float* b [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = (a[id] != b[id]) ? 1.0f : 0.0f;
+}
+
+kernel void lt_f32(
+    device const float* a [[buffer(0)]],
+    device const float* b [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = (a[id] < b[id]) ? 1.0f : 0.0f;
+}
+
+kernel void le_f32(
+    device const float* a [[buffer(0)]],
+    device const float* b [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = (a[id] <= b[id]) ? 1.0f : 0.0f;
+}
+
+kernel void gt_f32(
+    device const float* a [[buffer(0)]],
+    device const float* b [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = (a[id] > b[id]) ? 1.0f : 0.0f;
+}
+
+kernel void ge_f32(
+    device const float* a [[buffer(0)]],
+    device const float* b [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = (a[id] >= b[id]) ? 1.0f : 0.0f;
 }
 
 // ========== 単項演算 ==========

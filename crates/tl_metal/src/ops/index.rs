@@ -1,65 +1,100 @@
-//! インデックス操作
+//! インデックス操作 — Metal GPU シェーダー実装
+//! slice は shape.rs の GPU 実装に委譲、embedding は専用シェーダー
 
+use crate::device::get_device;
 use crate::tensor::MetalTensor;
+use metal::{ComputePipelineState, MTLSize};
+
+/// Embedding 用 Metal シェーダー
+const EMBEDDING_SHADER: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+// embedding lookup: out[t*D+d] = emb[idx[t]*D+d]
+kernel void embedding_f32(
+    device const float* emb [[buffer(0)]],
+    device const float* indices [[buffer(1)]],
+    device float* output [[buffer(2)]],
+    constant uint& dim [[buffer(3)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint d = gid.x;
+    uint t = gid.y;
+    if (d >= dim) return;
+    
+    uint idx = uint(indices[t]);
+    output[t * dim + d] = emb[idx * dim + d];
+}
+"#;
+
+static EMBEDDING_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
+
+fn get_embedding_pipeline() -> &'static ComputePipelineState {
+    EMBEDDING_PIPELINE.get_or_init(|| {
+        let device = get_device();
+        let options = metal::CompileOptions::new();
+        let library = device
+            .device()
+            .new_library_with_source(EMBEDDING_SHADER, &options)
+            .expect("Failed to compile embedding shader");
+        let function = library
+            .get_function("embedding_f32", None)
+            .expect("embedding_f32 not found");
+        device
+            .device()
+            .new_compute_pipeline_state_with_function(&function)
+            .expect("Failed to create embedding pipeline")
+    })
+}
 
 impl MetalTensor {
-    /// スライス（1軸のみ、開始位置と長さ指定）
+    /// スライス（1軸のみ）— shape.rs の GPU 実装に委譲
     pub fn slice(&self, axis: usize, start: usize, len: usize) -> MetalTensor {
-        let shape = MetalTensor::shape(self);
-        assert!(axis < shape.len(), "axis out of range");
-        assert!(start + len <= shape[axis], "slice out of range");
-
-        // 新しい形状
-        let mut new_shape = shape.to_vec();
-        new_shape[axis] = len;
-
-        // データを抽出
-        let data: Vec<f32> = self.to_vec();
-        let outer_size: usize = shape[..axis].iter().product();
-        let axis_size = shape[axis];
-        let inner_size: usize = if axis + 1 < shape.len() { shape[axis + 1..].iter().product() } else { 1 };
-        
-        let new_elem_count: usize = new_shape.iter().product();
-        let mut result = vec![0.0f32; new_elem_count];
-        
-        let mut out_idx = 0;
-        for outer in 0..outer_size.max(1) {
-            for a in start..(start + len) {
-                for inner in 0..inner_size.max(1) {
-                    let idx = outer * axis_size * inner_size + a * inner_size + inner;
-                    result[out_idx] = data[idx];
-                    out_idx += 1;
-                }
-            }
-        }
-
-        MetalTensor::from_slice(&result, &new_shape, self.dtype())
+        self.slice_impl(axis, start, len)
     }
 
-    /// embedding lookup
+    /// embedding lookup — Metal GPU シェーダー実装
     /// self: [V, D] (埋め込み行列), indices: [T] (インデックス)
     /// → [T, D]
     pub fn embedding_impl(&self, indices: &MetalTensor) -> MetalTensor {
         assert_eq!(MetalTensor::shape(self).len(), 2, "embedding matrix must be 2D");
         assert_eq!(indices.shape().len(), 1, "indices must be 1D");
         
-        let vocab_size = MetalTensor::shape(self)[0];
         let dim = MetalTensor::shape(self)[1];
         let seq_len = indices.shape()[0];
         
-        let emb_data: Vec<f32> = self.to_vec();
-        let idx_data: Vec<f32> = indices.to_vec();
-        
-        let mut result = vec![0.0f32; seq_len * dim];
-        
-        for t in 0..seq_len {
-            let idx = idx_data[t] as usize;
-            assert!(idx < vocab_size, "index {} out of vocabulary size {}", idx, vocab_size);
-            for d in 0..dim {
-                result[t * dim + d] = emb_data[idx * dim + d];
-            }
-        }
+        let result = MetalTensor::uninit(&[seq_len, dim], self.dtype());
+        let device = get_device();
+        let command_queue = device.command_queue();
+        let pipeline = get_embedding_pipeline();
 
-        MetalTensor::from_slice(&result, &[seq_len, dim], self.dtype())
+        let dim_buf = device.device().new_buffer_with_data(
+            &(dim as u32) as *const u32 as *const _,
+            4,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+
+        let command_buffer = command_queue.new_command_buffer();
+        let encoder = command_buffer.new_compute_command_encoder();
+
+        encoder.set_compute_pipeline_state(pipeline);
+        encoder.set_buffer(0, Some(self.buffer()), 0);
+        encoder.set_buffer(1, Some(indices.buffer()), 0);
+        encoder.set_buffer(2, Some(result.buffer()), 0);
+        encoder.set_buffer(3, Some(&dim_buf), 0);
+
+        let tpg = MTLSize::new(dim.min(256) as u64, seq_len.min(4) as u64, 1);
+        let grid = MTLSize::new(
+            ((dim + tpg.width as usize - 1) / tpg.width as usize) as u64,
+            ((seq_len + tpg.height as usize - 1) / tpg.height as usize) as u64,
+            1,
+        );
+        encoder.dispatch_thread_groups(grid, tpg);
+        encoder.end_encoding();
+
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+
+        result
     }
 }

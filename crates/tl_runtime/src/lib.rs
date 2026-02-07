@@ -528,13 +528,7 @@ pub extern "C" fn tl_tensor_rem(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
         return std::ptr::null_mut();
     }
     let (ta, tb) = unsafe { (&*a, &*b) };
-    let a_data: Vec<f32> = ta.to_vec();
-    let b_data: Vec<f32> = tb.to_vec();
-    let result_data: Vec<f32> = a_data.iter().zip(b_data.iter())
-        .map(|(&a, &b)| a % b)
-        .collect();
-    let result = MetalTensor::from_slice(&result_data, ta.shape(), DType::F32);
-    make_tensor(result)
+    make_tensor(ta.rem_impl(tb))
 }
 
 #[unsafe(no_mangle)]
@@ -553,10 +547,7 @@ pub extern "C" fn tl_tensor_abs(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    let data: Vec<f32> = tensor.to_vec();
-    let result_data: Vec<f32> = data.iter().map(|&x| x.abs()).collect();
-    let result = MetalTensor::from_slice(&result_data, tensor.shape(), DType::F32);
-    make_tensor(result)
+    make_tensor(tensor.abs_impl())
 }
 
 // ========== スカラー演算 ==========
@@ -655,12 +646,8 @@ pub extern "C" fn tl_tensor_mod_assign(a: *mut OpaqueTensor, b: *mut OpaqueTenso
         return;
     }
     unsafe {
-        let a_data: Vec<f32> = (*a).to_vec();
-        let b_data: Vec<f32> = (*b).to_vec();
-        let result_data: Vec<f32> = a_data.iter().zip(b_data.iter())
-            .map(|(&a, &b)| a % b)
-            .collect();
-        *a = MetalTensor::from_slice(&result_data, (*a).shape(), DType::F32);
+        let result = (*a).rem_impl(&*b);
+        *a = result;
     }
 }
 
@@ -718,13 +705,7 @@ pub extern "C" fn tl_tensor_eq(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *m
         return std::ptr::null_mut();
     }
     let (ta, tb) = unsafe { (&*a, &*b) };
-    let a_data: Vec<f32> = ta.to_vec();
-    let b_data: Vec<f32> = tb.to_vec();
-    let result_data: Vec<f32> = a_data.iter().zip(b_data.iter())
-        .map(|(&a, &b)| if (a - b).abs() < 1e-6 { 1.0 } else { 0.0 })
-        .collect();
-    let result = MetalTensor::from_slice(&result_data, ta.shape(), DType::F32);
-    make_tensor(result)
+    make_tensor(ta.eq_impl(tb))
 }
 
 #[unsafe(no_mangle)]
@@ -733,13 +714,7 @@ pub extern "C" fn tl_tensor_neq(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *
         return std::ptr::null_mut();
     }
     let (ta, tb) = unsafe { (&*a, &*b) };
-    let a_data: Vec<f32> = ta.to_vec();
-    let b_data: Vec<f32> = tb.to_vec();
-    let result_data: Vec<f32> = a_data.iter().zip(b_data.iter())
-        .map(|(&a, &b)| if (a - b).abs() >= 1e-6 { 1.0 } else { 0.0 })
-        .collect();
-    let result = MetalTensor::from_slice(&result_data, ta.shape(), DType::F32);
-    make_tensor(result)
+    make_tensor(ta.ne_impl(tb))
 }
 
 #[unsafe(no_mangle)]
@@ -748,13 +723,7 @@ pub extern "C" fn tl_tensor_lt(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *m
         return std::ptr::null_mut();
     }
     let (ta, tb) = unsafe { (&*a, &*b) };
-    let a_data: Vec<f32> = ta.to_vec();
-    let b_data: Vec<f32> = tb.to_vec();
-    let result_data: Vec<f32> = a_data.iter().zip(b_data.iter())
-        .map(|(&a, &b)| if a < b { 1.0 } else { 0.0 })
-        .collect();
-    let result = MetalTensor::from_slice(&result_data, ta.shape(), DType::F32);
-    make_tensor(result)
+    make_tensor(ta.lt_impl(tb))
 }
 
 #[unsafe(no_mangle)]
@@ -763,13 +732,7 @@ pub extern "C" fn tl_tensor_le(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *m
         return std::ptr::null_mut();
     }
     let (ta, tb) = unsafe { (&*a, &*b) };
-    let a_data: Vec<f32> = ta.to_vec();
-    let b_data: Vec<f32> = tb.to_vec();
-    let result_data: Vec<f32> = a_data.iter().zip(b_data.iter())
-        .map(|(&a, &b)| if a <= b { 1.0 } else { 0.0 })
-        .collect();
-    let result = MetalTensor::from_slice(&result_data, ta.shape(), DType::F32);
-    make_tensor(result)
+    make_tensor(ta.le_impl(tb))
 }
 
 #[unsafe(no_mangle)]
@@ -778,13 +741,7 @@ pub extern "C" fn tl_tensor_gt(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *m
         return std::ptr::null_mut();
     }
     let (ta, tb) = unsafe { (&*a, &*b) };
-    let a_data: Vec<f32> = ta.to_vec();
-    let b_data: Vec<f32> = tb.to_vec();
-    let result_data: Vec<f32> = a_data.iter().zip(b_data.iter())
-        .map(|(&a, &b)| if a > b { 1.0 } else { 0.0 })
-        .collect();
-    let result = MetalTensor::from_slice(&result_data, ta.shape(), DType::F32);
-    make_tensor(result)
+    make_tensor(ta.gt_impl(tb))
 }
 
 #[unsafe(no_mangle)]
@@ -793,13 +750,7 @@ pub extern "C" fn tl_tensor_ge(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *m
         return std::ptr::null_mut();
     }
     let (ta, tb) = unsafe { (&*a, &*b) };
-    let a_data: Vec<f32> = ta.to_vec();
-    let b_data: Vec<f32> = tb.to_vec();
-    let result_data: Vec<f32> = a_data.iter().zip(b_data.iter())
-        .map(|(&a, &b)| if a >= b { 1.0 } else { 0.0 })
-        .collect();
-    let result = MetalTensor::from_slice(&result_data, ta.shape(), DType::F32);
-    make_tensor(result)
+    make_tensor(ta.ge_impl(tb))
 }
 
 // ========== 数学関数 ==========

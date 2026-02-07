@@ -1,11 +1,94 @@
 //! 活性化関数
+//! Softmax は Metal GPU シェーダーで実装
 
+use crate::device::get_device;
 use crate::tensor::MetalTensor;
 use crate::DType;
+use metal::{ComputePipelineState, MTLSize};
+
+/// Softmax 用 Metal シェーダー（汎用 N-D 対応）
+/// outer × axis × inner の 3 軸分解パターン
+const SOFTMAX_SHADER: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+// Softmax: 各 (outer, inner) スライスに対して axis 方向に softmax を計算
+// Step 1: max を計算
+// Step 2: exp(x - max) を計算し sum を取得
+// Step 3: exp(x - max) / sum で正規化
+kernel void softmax_f32(
+    device const float* input [[buffer(0)]],
+    device float* output [[buffer(1)]],
+    constant uint& outer_size [[buffer(2)]],
+    constant uint& axis_size [[buffer(3)]],
+    constant uint& inner_size [[buffer(4)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    // gid.x = inner index, gid.y = outer index
+    uint inner = gid.x;
+    uint outer = gid.y;
+    
+    if (inner >= inner_size || outer >= outer_size) return;
+    
+    uint base = outer * axis_size * inner_size + inner;
+    uint stride = inner_size;
+    
+    // Step 1: max
+    float max_val = -INFINITY;
+    for (uint a = 0; a < axis_size; a++) {
+        float v = input[base + a * stride];
+        max_val = max(max_val, v);
+    }
+    
+    // Step 2: exp and sum
+    float sum = 0.0f;
+    for (uint a = 0; a < axis_size; a++) {
+        float e = exp(input[base + a * stride] - max_val);
+        output[base + a * stride] = e;
+        sum += e;
+    }
+    
+    // Step 3: normalize
+    float inv_sum = 1.0f / sum;
+    for (uint a = 0; a < axis_size; a++) {
+        output[base + a * stride] *= inv_sum;
+    }
+}
+"#;
+
+static SOFTMAX_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
+
+fn get_softmax_pipeline() -> &'static ComputePipelineState {
+    SOFTMAX_PIPELINE.get_or_init(|| {
+        let device = get_device();
+        let options = metal::CompileOptions::new();
+        let library = device
+            .device()
+            .new_library_with_source(SOFTMAX_SHADER, &options)
+            .expect("Failed to compile softmax shader");
+        let function = library
+            .get_function("softmax_f32", None)
+            .expect("softmax_f32 not found");
+        device
+            .device()
+            .new_compute_pipeline_state_with_function(&function)
+            .expect("Failed to create softmax pipeline")
+    })
+}
+
+/// u32 パラメータバッファを作成
+fn make_u32_buf(v: u32) -> metal::Buffer {
+    let device = get_device();
+    device.device().new_buffer_with_data(
+        &v as *const u32 as *const _,
+        4,
+        metal::MTLResourceOptions::StorageModeShared,
+    )
+}
 
 impl MetalTensor {
-    /// Softmax（軸指定）
-    /// softmax(x)_i = exp(x_i) / sum(exp(x))
+    /// Softmax（軸指定）— Metal GPU 実装
+    /// 汎用 N-D 対応: outer × axis × inner の 3 軸分解
     pub fn softmax_impl(&self, axis: i32) -> MetalTensor {
         assert_eq!(MetalTensor::dtype(self), DType::F32, "softmax only supports F32");
         
@@ -14,93 +97,46 @@ impl MetalTensor {
         let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
         assert!(axis < ndim, "axis out of range");
 
-        // 現在は 2D テンソルの最後の軸のみ対応
-        if ndim == 2 && axis == 1 {
-            self.softmax_2d_axis1()
-        } else if ndim == 1 {
-            self.softmax_1d()
-        } else {
-            // 汎用的な softmax（CPU fallback）
-            self.softmax_generic(axis)
-        }
-    }
-
-    /// 1D テンソルの softmax
-    fn softmax_1d(&self) -> MetalTensor {
-        let data: Vec<f32> = self.to_vec();
-        let max_val = data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let exp_vals: Vec<f32> = data.iter().map(|x| (x - max_val).exp()).collect();
-        let sum: f32 = exp_vals.iter().sum();
-        let result: Vec<f32> = exp_vals.iter().map(|x| x / sum).collect();
-        MetalTensor::from_slice(&result, MetalTensor::shape(self), MetalTensor::dtype(self))
-    }
-
-    /// 2D テンソルの axis=1 softmax
-    fn softmax_2d_axis1(&self) -> MetalTensor {
-        let shape = MetalTensor::shape(self);
-        let rows = shape[0];
-        let cols = shape[1];
-        let data: Vec<f32> = self.to_vec();
-        let mut result = vec![0.0f32; data.len()];
-
-        for i in 0..rows {
-            let start = i * cols;
-            let end = start + cols;
-            let row = &data[start..end];
-            
-            let max_val = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-            let exp_vals: Vec<f32> = row.iter().map(|x| (x - max_val).exp()).collect();
-            let sum: f32 = exp_vals.iter().sum();
-            
-            for j in 0..cols {
-                result[start + j] = exp_vals[j] / sum;
-            }
-        }
-
-        MetalTensor::from_slice(&result, MetalTensor::shape(self), MetalTensor::dtype(self))
-    }
-
-    /// 汎用 softmax（CPU）
-    fn softmax_generic(&self, axis: usize) -> MetalTensor {
-        // 単純化: flatten して softmax して reshape
-        let data: Vec<f32> = self.to_vec();
-        let shape = MetalTensor::shape(self);
-        
-        // 軸のサイズ
+        let outer_size: usize = shape[..axis].iter().product::<usize>().max(1);
         let axis_size = shape[axis];
-        let outer_size: usize = shape[..axis].iter().product();
-        let inner_size: usize = shape[axis + 1..].iter().product();
-        
-        let mut result = vec![0.0f32; data.len()];
-        
-        for outer in 0..outer_size.max(1) {
-            for inner in 0..inner_size.max(1) {
-                // この slice の max を計算
-                let mut max_val = f32::NEG_INFINITY;
-                for a in 0..axis_size {
-                    let idx = outer * axis_size * inner_size.max(1) + a * inner_size.max(1) + inner;
-                    if data[idx] > max_val {
-                        max_val = data[idx];
-                    }
-                }
-                
-                // exp と sum
-                let mut sum = 0.0f32;
-                for a in 0..axis_size {
-                    let idx = outer * axis_size * inner_size.max(1) + a * inner_size.max(1) + inner;
-                    let exp_val = (data[idx] - max_val).exp();
-                    result[idx] = exp_val;
-                    sum += exp_val;
-                }
-                
-                // normalize
-                for a in 0..axis_size {
-                    let idx = outer * axis_size * inner_size.max(1) + a * inner_size.max(1) + inner;
-                    result[idx] /= sum;
-                }
-            }
-        }
+        let inner_size: usize = shape[axis + 1..].iter().product::<usize>().max(1);
 
-        MetalTensor::from_slice(&result, MetalTensor::shape(self), MetalTensor::dtype(self))
+        let result = MetalTensor::uninit(shape, DType::F32);
+        let device = get_device();
+        let command_queue = device.command_queue();
+        let pipeline = get_softmax_pipeline();
+
+        let outer_buf = make_u32_buf(outer_size as u32);
+        let axis_buf = make_u32_buf(axis_size as u32);
+        let inner_buf = make_u32_buf(inner_size as u32);
+
+        let command_buffer = command_queue.new_command_buffer();
+        let encoder = command_buffer.new_compute_command_encoder();
+
+        encoder.set_compute_pipeline_state(pipeline);
+        encoder.set_buffer(0, Some(self.buffer()), 0);
+        encoder.set_buffer(1, Some(result.buffer()), 0);
+        encoder.set_buffer(2, Some(&outer_buf), 0);
+        encoder.set_buffer(3, Some(&axis_buf), 0);
+        encoder.set_buffer(4, Some(&inner_buf), 0);
+
+        // 2D グリッド: [inner_size, outer_size]
+        let tpg = MTLSize::new(
+            inner_size.min(256) as u64,
+            outer_size.min(4) as u64,
+            1,
+        );
+        let grid = MTLSize::new(
+            ((inner_size + tpg.width as usize - 1) / tpg.width as usize) as u64,
+            ((outer_size + tpg.height as usize - 1) / tpg.height as usize) as u64,
+            1,
+        );
+        encoder.dispatch_thread_groups(grid, tpg);
+        encoder.end_encoding();
+
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+
+        result
     }
 }
