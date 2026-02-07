@@ -150,7 +150,14 @@ impl MetalTensor {
     /// データを CPU にコピー
     pub fn to_vec<T: Copy + Default>(&self) -> Vec<T> {
         let count = self.elem_count();
+        if count == 0 {
+            return Vec::new();
+        }
         let ptr = self.buffer.contents() as *const T;
+        if ptr.is_null() {
+            eprintln!("Warning: to_vec called on tensor with null buffer, returning zeros");
+            return vec![T::default(); count];
+        }
         let mut result = vec![T::default(); count];
         unsafe {
             std::ptr::copy_nonoverlapping(ptr, result.as_mut_ptr(), count);

@@ -54,16 +54,36 @@ impl MetalTensor {
     }
 
     /// embedding lookup — Metal GPU シェーダー実装
-    /// self: [V, D] (埋め込み行列), indices: [T] (インデックス)
+    /// weights: [V, D] (埋め込み行列), indices: [T] (インデックス)
     /// → [T, D]
-    pub fn embedding_impl(&self, indices: &MetalTensor) -> MetalTensor {
-        assert_eq!(MetalTensor::shape(self).len(), 2, "embedding matrix must be 2D");
-        assert_eq!(indices.shape().len(), 1, "indices must be 1D");
+    ///
+    /// 引数順序を自動判別:
+    ///   - self=2D, other=1D → self=weights, other=indices (標準)
+    ///   - self=1D, other=2D → self=indices, other=weights (TL言語からの呼び出し)
+    pub fn embedding_impl(&self, other: &MetalTensor) -> MetalTensor {
+        let self_ndim = MetalTensor::shape(self).len();
+        let other_ndim = MetalTensor::shape(other).len();
+
+        // 引数順序を自動判別
+        let (weights, indices) = if self_ndim == 2 && other_ndim == 1 {
+            // 標準: self=weights(2D), other=indices(1D)
+            (self, other)
+        } else if self_ndim == 1 && other_ndim == 2 {
+            // TL 言語: self=indices(1D), other=weights(2D)
+            (other, self)
+        } else {
+            eprintln!(
+                "Warning: embedding_impl expects (2D weights, 1D indices), got shapes {:?} and {:?}",
+                MetalTensor::shape(self), MetalTensor::shape(other)
+            );
+            // フォールバック: 最善の推測
+            if self_ndim >= other_ndim { (self, other) } else { (other, self) }
+        };
         
-        let dim = MetalTensor::shape(self)[1];
+        let dim = MetalTensor::shape(weights)[1];
         let seq_len = indices.shape()[0];
         
-        let result = MetalTensor::uninit(&[seq_len, dim], self.dtype());
+        let result = MetalTensor::uninit(&[seq_len, dim], weights.dtype());
         let device = get_device();
         let command_queue = device.command_queue();
         let pipeline = get_embedding_pipeline();
@@ -78,7 +98,7 @@ impl MetalTensor {
         let encoder = command_buffer.new_compute_command_encoder();
 
         encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(self.buffer()), 0);
+        encoder.set_buffer(0, Some(weights.buffer()), 0);
         encoder.set_buffer(1, Some(indices.buffer()), 0);
         encoder.set_buffer(2, Some(result.buffer()), 0);
         encoder.set_buffer(3, Some(&dim_buf), 0);
