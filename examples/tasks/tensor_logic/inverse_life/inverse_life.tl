@@ -1,8 +1,8 @@
 fn main() {
     print("Inverse Game of Life...\n");
 
-    let N = 10;
-    let STEPS = 5;
+    let N = 8;
+    let STEPS = 3;
 
     // 1. Generate Ground Truth (Initial State)
     // Random binary state 0 or 1
@@ -65,7 +65,7 @@ fn main() {
     let opt_lr = 0.5;
     
     let mut iter = 0;
-    while iter < 500 {
+    while iter < 200 {
         // Forward Pass
         let state = learnable_logits.sigmoid(); // [0,1] continuous
         
@@ -92,7 +92,7 @@ fn main() {
         let diff = current_est - target_final;
         let loss = diff.pow(2).sumall();
         
-        if (iter / 50) * 50 == iter {
+        if (iter / 40) * 40 == iter {
              println("Iter {} Loss: {}", iter, loss.item());
         }
         
