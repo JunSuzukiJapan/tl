@@ -1214,10 +1214,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 
                 if !moved {
-                     // L-Value copy -> IncRef
+                     // L-Value copy -> IncRef (テンソルは参照カウント操作しない)
                      match val_ty {
-                        Type::Tensor(_, _) 
-                        | Type::Enum(_, _) => {
+                        Type::Enum(_, _) => {
                             let inc_fn = self.module.get_function("tl_ptr_inc_ref")
                                 .or_else(|| {
                                     let void_ty = self.context.void_type();
@@ -1460,9 +1459,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 }
                             }
                             
-                            // IncRef
+                            // IncRef (テンソルは参照カウント操作しない)
                              match val_ty {
-                                Type::Tensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) => {
+                                Type::Struct(_, _) | Type::Enum(_, _) => {
                                      let inc_fn = self.module.get_function("tl_ptr_inc_ref").expect("inc_ref missing");
                                      if val_ir.is_pointer_value() {
                                          let ptr = val_ir.into_pointer_value();
@@ -1830,8 +1829,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string())?;
                 }
 
-                // Latch block: increment index and branch back to header
+                // Latch block: clear grads + increment index and branch back to header
                 self.builder.position_at_end(loop_latch);
+
+                // V3.3: 各 for イテレーション終了時に勾配をクリア (autograd メモリリーク防止)
+                if let Some(clear_fn) = self.module.get_function("tl_clear_grads") {
+                    self.builder.build_call(clear_fn, &[], "").unwrap();
+                }
 
                 let next_idx = self
                     .builder
