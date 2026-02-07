@@ -30,7 +30,7 @@ fn main() {
 
     // mul
     let start = Instant::now();
-    let d = a.mul(&b);
+    let _d = a.mul(&b);
     println!("mul: {:?}", start.elapsed());
 
     // exp
@@ -40,7 +40,7 @@ fn main() {
 
     // sqrt
     let start = Instant::now();
-    let f = a.sqrt();
+    let _f = a.sqrt();
     println!("sqrt: {:?}", start.elapsed());
 
     // 結果確認（先頭5要素）

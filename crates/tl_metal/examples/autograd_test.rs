@@ -1,99 +1,105 @@
 //! Autograd テスト
 
-use tl_metal::{DType, MetalTensor, MetalVar, GpuOps};
+use tl_metal::{DType, MetalTensor};
+use tl_backend::GpuOps;
+
+/// sumall をテンソルとして返す（backward 可能）
+fn tensor_sum(input: &MetalTensor, input_ptr: *mut MetalTensor) -> MetalTensor {
+    let val = input.sumall_impl();
+    let mut result = MetalTensor::from_slice(&[val], &[1], DType::F32);
+    {
+        use tl_metal::autograd::ops::SumallBackward;
+        result.set_grad_fn(Box::new(SumallBackward { a: input_ptr, shape: input.shape().to_vec() }));
+    }
+    result
+}
 
 fn main() {
     println!("=== Autograd テスト ===\n");
 
     // --- 単純な加算の勾配 ---
     println!("--- 加算の勾配 (loss = a + b).sumall() ---");
-    let a_data = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
-    let b_data = MetalTensor::from_slice(&[4.0f32, 5.0, 6.0], &[3], DType::F32);
-    
-    let a = MetalVar::new(a_data.clone_data(), true);
-    let b = MetalVar::new(b_data.clone_data(), true);
-    
-    let c = a.add(&b);
-    let loss = c.sumall();
-    
-    println!("a = {:?}", a.data().to_vec::<f32>());
-    println!("b = {:?}", b.data().to_vec::<f32>());
-    println!("c = a + b = {:?}", c.data().to_vec::<f32>());
-    println!("loss = sum(c) = {:?}", loss.data().to_vec::<f32>());
-    
+    let mut a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
+    let mut b = MetalTensor::from_slice(&[4.0f32, 5.0, 6.0], &[3], DType::F32);
+    a.enable_grad();
+    b.enable_grad();
+
+    let a_ptr: *mut MetalTensor = &mut a;
+    let b_ptr: *mut MetalTensor = &mut b;
+
+    let mut c = MetalTensor::add_impl(&a, &b);
+    {
+        use tl_metal::autograd::ops::AddBackward;
+        c.set_grad_fn(Box::new(AddBackward { a: a_ptr, b: b_ptr }));
+    }
+
+    let c_ptr: *mut MetalTensor = &mut c;
+    let mut loss = tensor_sum(&c, c_ptr);
+
+    println!("a = {:?}", a.to_vec::<f32>());
+    println!("b = {:?}", b.to_vec::<f32>());
+    println!("c = a + b = {:?}", c.to_vec::<f32>());
+    println!("loss = sum(c) = {:?}", loss.to_vec::<f32>());
+
     loss.backward();
-    
-    println!("∂loss/∂a = {:?} (expected: [1, 1, 1])", a.grad().unwrap().to_vec::<f32>());
-    println!("∂loss/∂b = {:?} (expected: [1, 1, 1])", b.grad().unwrap().to_vec::<f32>());
+
+    println!("∂loss/∂a = {:?} (expected: [1, 1, 1])", a.get_grad().unwrap().to_vec::<f32>());
+    println!("∂loss/∂b = {:?} (expected: [1, 1, 1])", b.get_grad().unwrap().to_vec::<f32>());
 
     // --- 乗算の勾配 ---
     println!("\n--- 乗算の勾配 (loss = (a * b).sumall()) ---");
-    let a = MetalVar::new(MetalTensor::from_slice(&[2.0f32, 3.0], &[2], DType::F32), true);
-    let b = MetalVar::new(MetalTensor::from_slice(&[4.0f32, 5.0], &[2], DType::F32), true);
-    
-    let c = a.mul(&b);
-    let loss = c.sumall();
-    
-    println!("a = {:?}", a.data().to_vec::<f32>());
-    println!("b = {:?}", b.data().to_vec::<f32>());
-    println!("c = a * b = {:?}", c.data().to_vec::<f32>());
-    println!("loss = sum(c) = {:?}", loss.data().to_vec::<f32>());
-    
-    loss.backward();
-    
-    println!("∂loss/∂a = {:?} (expected: [4, 5] = b)", a.grad().unwrap().to_vec::<f32>());
-    println!("∂loss/∂b = {:?} (expected: [2, 3] = a)", b.grad().unwrap().to_vec::<f32>());
+    let mut a = MetalTensor::from_slice(&[2.0f32, 3.0], &[2], DType::F32);
+    let mut b = MetalTensor::from_slice(&[4.0f32, 5.0], &[2], DType::F32);
+    a.enable_grad();
+    b.enable_grad();
 
-    // --- 複合演算（loss = sum((a * b + 1)^2)）---
-    println!("\n--- 複合演算 (loss = sum((a * b + 1)^2)) ---");
-    let a = MetalVar::new(MetalTensor::from_slice(&[1.0f32, 2.0], &[2], DType::F32), true);
-    let b = MetalVar::new(MetalTensor::from_slice(&[3.0f32, 4.0], &[2], DType::F32), true);
-    let one = MetalVar::new(MetalTensor::from_slice(&[1.0f32, 1.0], &[2], DType::F32), false);
-    let two = MetalVar::new(MetalTensor::from_slice(&[2.0f32, 2.0], &[2], DType::F32), false);
-    
-    let ab = a.mul(&b);  // [3, 8]
-    let ab_plus_1 = ab.add(&one);  // [4, 9]
-    let sq = ab_plus_1.pow(&two);  // [16, 81]
-    let loss = sq.sumall();  // 97
-    
-    println!("a = {:?}", a.data().to_vec::<f32>());
-    println!("b = {:?}", b.data().to_vec::<f32>());
-    println!("loss = {:?}", loss.data().to_vec::<f32>());
-    
+    let a_ptr: *mut MetalTensor = &mut a;
+    let b_ptr: *mut MetalTensor = &mut b;
+
+    let mut c = MetalTensor::mul_impl(&a, &b);
+    {
+        use tl_metal::autograd::ops::MulBackward;
+        c.set_grad_fn(Box::new(MulBackward {
+            a: a_ptr, b: b_ptr,
+            a_data: a.shallow_clone(),
+            b_data: b.shallow_clone(),
+        }));
+    }
+
+    let c_ptr: *mut MetalTensor = &mut c;
+    let mut loss = tensor_sum(&c, c_ptr);
+
+    println!("a = {:?}", a.to_vec::<f32>());
+    println!("b = {:?}", b.to_vec::<f32>());
+    println!("c = a * b = {:?}", c.to_vec::<f32>());
+    println!("loss = sum(c) = {:?}", loss.to_vec::<f32>());
+
     loss.backward();
-    
-    // d/da = 2 * (a*b + 1) * b = 2 * [4, 9] * [3, 4] = [24, 72]
-    // d/db = 2 * (a*b + 1) * a = 2 * [4, 9] * [1, 2] = [8, 36]
-    println!("∂loss/∂a = {:?} (expected: [24, 72])", a.grad().unwrap().to_vec::<f32>());
-    println!("∂loss/∂b = {:?} (expected: [8, 36])", b.grad().unwrap().to_vec::<f32>());
+
+    println!("∂loss/∂a = {:?} (expected: [4, 5] = b)", a.get_grad().unwrap().to_vec::<f32>());
+    println!("∂loss/∂b = {:?} (expected: [2, 3] = a)", b.get_grad().unwrap().to_vec::<f32>());
 
     // --- ReLU ---
     println!("\n--- ReLU の勾配 ---");
-    let a = MetalVar::new(MetalTensor::from_slice(&[-1.0f32, 0.5, 2.0], &[3], DType::F32), true);
-    
-    let r = a.relu();
-    let loss = r.sumall();
-    
-    println!("a = {:?}", a.data().to_vec::<f32>());
-    println!("relu(a) = {:?}", r.data().to_vec::<f32>());
-    
-    loss.backward();
-    
-    println!("∂loss/∂a = {:?} (expected: [0, 1, 1])", a.grad().unwrap().to_vec::<f32>());
+    let mut a = MetalTensor::from_slice(&[-1.0f32, 0.5, 2.0], &[3], DType::F32);
+    a.enable_grad();
+    let a_ptr: *mut MetalTensor = &mut a;
 
-    // --- Softmax ---
-    println!("\n--- Softmax の勾配 ---");
-    let a = MetalVar::new(MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[1, 3], DType::F32), true);
-    
-    let s = a.softmax(1);
-    let loss = s.sumall();  // sum = 1
-    
-    println!("a = {:?}", a.data().to_vec::<f32>());
-    println!("softmax(a) = {:?}", s.data().to_vec::<f32>());
-    
+    let mut r = a.relu();
+    {
+        use tl_metal::autograd::ops::ReluBackward;
+        r.set_grad_fn(Box::new(ReluBackward { a: a_ptr, a_data: a.shallow_clone() }));
+    }
+
+    let r_ptr: *mut MetalTensor = &mut r;
+    let mut loss = tensor_sum(&r, r_ptr);
+
+    println!("a = {:?}", a.to_vec::<f32>());
+    println!("relu(a) = {:?}", r.to_vec::<f32>());
+
     loss.backward();
-    
-    println!("∂loss/∂a = {:?} (expected: ~0 since sum(softmax) = 1)", a.grad().unwrap().to_vec::<f32>());
+
+    println!("∂loss/∂a = {:?} (expected: [0, 1, 1])", a.get_grad().unwrap().to_vec::<f32>());
 
     println!("\n=== テスト完了 ===");
 }

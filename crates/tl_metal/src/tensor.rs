@@ -239,49 +239,50 @@ impl MetalTensor {
         }
     }
 
-    /// backward（逆伝播）
+    /// backward（逆伝播）— ワークリスト方式（スタックオーバーフロー防止）
     pub fn backward(&mut self) {
-        assert!(self.requires_grad(), "backward called on non-requires_grad tensor");
+        if !self.requires_grad() {
+            return; // extern "C" から呼ばれるため assert ではなく早期 return
+        }
 
         // 初期勾配: すべて 1
         let ones = MetalTensor::ones(self.shape(), self.dtype());
-        // self のポインタを取得
         let self_ptr = self as *mut MetalTensor;
-        Self::backward_recursive(self_ptr, &ones);
-    }
 
-    /// 生ポインタベースの backward（計算グラフを辿る）
-    /// テンソルは JIT 実行中に解放されないため安全
-    fn backward_recursive(tensor_ptr: *mut MetalTensor, grad_output: &MetalTensor) {
-        let tensor = unsafe { &mut *tensor_ptr };
+        // ワークリスト: (テンソルポインタ, 出力勾配)
+        let mut worklist: Vec<(*mut MetalTensor, MetalTensor)> = vec![(self_ptr, ones)];
 
-        // 勾配を累積
-        if let Some(ref mut meta) = tensor.autograd {
-            if let Some(ref mut grad) = meta.grad {
-                let new_grad = grad.add(grad_output);
-                *grad = new_grad;
-            } else {
-                meta.grad = Some(grad_output.shallow_clone());
+        while let Some((tensor_ptr, grad_output)) = worklist.pop() {
+            let tensor = unsafe { &mut *tensor_ptr };
+
+            // 勾配を累積
+            if let Some(ref mut meta) = tensor.autograd {
+                if let Some(ref mut grad) = meta.grad {
+                    let new_grad = grad.add(&grad_output);
+                    *grad = new_grad;
+                } else {
+                    meta.grad = Some(grad_output.shallow_clone());
+                }
             }
-        }
 
-        // grad_fn から入力勾配を計算して伝播
-        let propagation = {
-            let meta = tensor.autograd.as_ref();
-            meta.and_then(|m| {
-                m.grad_fn.as_ref().map(|gf| {
-                    let grads = gf.backward(grad_output);
-                    let inputs = gf.inputs();
-                    (grads, inputs)
+            // grad_fn から入力勾配を計算してワークリストに追加
+            let propagation = {
+                let meta = tensor.autograd.as_ref();
+                meta.and_then(|m| {
+                    m.grad_fn.as_ref().map(|gf| {
+                        let grads = gf.backward(&grad_output);
+                        let inputs = gf.inputs();
+                        (grads, inputs)
+                    })
                 })
-            })
-        };
+            };
 
-        if let Some((grads, inputs)) = propagation {
-            for (input_ptr, grad) in inputs.into_iter().zip(grads.into_iter()) {
-                let input = unsafe { &*input_ptr };
-                if input.requires_grad() {
-                    Self::backward_recursive(input_ptr, &grad);
+            if let Some((grads, inputs)) = propagation {
+                for (input_ptr, grad) in inputs.into_iter().zip(grads.into_iter()) {
+                    let input = unsafe { &*input_ptr };
+                    if input.requires_grad() {
+                        worklist.push((input_ptr, grad));
+                    }
                 }
             }
         }

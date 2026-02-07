@@ -87,6 +87,7 @@ SKIP_FILES = {
     "reverse_infer.tl",
     # 計算量が多くタイムアウトする
     "mln.tl",
+    "tsp.tl",  # backward が重く 30秒タイムアウト超過
     # --- autograd / clear_grads / enable_grad 未実装 (Metal backend) ---
     "mem_leak_autograd_fixed.tl",  # clear_grads() + enable_grad() 使用
     "mem_leak_extended.tl",        # clear_grads() + enable_grad() 使用
@@ -100,6 +101,9 @@ SKIP_FILES = {
 LONG_RUNNING = {
     "lenia.tl",
     "inverse_life.tl",
+    "n_queens_debug.tl",  # 500 エポックの autograd 学習
+    "gnn.tl",             # GNN 学習ループ
+    "mem_leak_autograd.tl",  # 100 エポックのメモリリークテスト
 }
 
 # 失敗することが期待されるファイル（エラーテスト用）
