@@ -99,20 +99,23 @@ pub extern "C" fn tl_mem_unregister(_ptr: *mut c_void) {
     // スタブ
 }
 
-/// テンソル取得（スタブ）
+/// テンソル取得（V3.3: テンソルの RC 増分は行わない）
+/// テンソルのライフサイクルはランタイムのメモリマネージャーで管理される。
+/// 参照: MEMORY_MANAGEMENT_STRATEGY.md V3.3
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::OpaqueTensor {
-    t // そのまま返す
+    t // スタブ: そのまま返す
 }
 
-/// テンソル解放（スタブ）
+/// テンソル解放（V4.0 Persistent GPU Pool 戦略: No-Op）
+/// テンソルメモリ（OpaqueTensor + 内部 Buffer）はプロセス終了まで保持。
+/// drop_in_place は MetalTensor の Drop を発動し pool_release を呼ぶため、
+/// 二重呼び出しで Arc が破損するリスクがある。意図的に何もしない。
+/// 参照: MEMORY_MANAGEMENT_STRATEGY.md V4.0
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_release(t: *mut crate::OpaqueTensor) {
-    if !t.is_null() {
-        unsafe {
-            let _ = Box::from_raw(t);
-        }
-    }
+pub extern "C" fn tl_tensor_release(_t: *mut crate::OpaqueTensor) {
+    // V4.0: 意図的に何もしない。
+    // メモリはプロセス終了時に OS が回収する。
 }
 
 use std::collections::HashMap;
