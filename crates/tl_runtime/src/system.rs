@@ -131,59 +131,79 @@ pub extern "C" fn tl_qtensor_matmul(_input: *mut crate::OpaqueTensor, _weight: u
     std::ptr::null_mut()
 }
 
-/// KV Cache 関連（スタブ）
+/// KV Cache 関連 — layer ベース実装
+/// LLVM 宣言: new(layers: i64) → i64, get_k/get_v(ptr: i64, layer: i64) → Tensor,
+///            update(ptr: i64, layer: i64, k: ptr, v: ptr), free(ptr: i64)
 pub struct OpaqueKVCache {
-    pub k: Option<*mut crate::OpaqueTensor>,
-    pub v: Option<*mut crate::OpaqueTensor>,
+    pub layers: Vec<(Option<*mut crate::OpaqueTensor>, Option<*mut crate::OpaqueTensor>)>,
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_kv_cache_new() -> *mut OpaqueKVCache {
-    Box::into_raw(Box::new(OpaqueKVCache { k: None, v: None }))
+pub extern "C" fn tl_kv_cache_new(num_layers: i64) -> i64 {
+    let n = num_layers.max(1) as usize;
+    let cache = Box::new(OpaqueKVCache {
+        layers: vec![(None, None); n],
+    });
+    Box::into_raw(cache) as i64
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_kv_cache_free(cache: *mut OpaqueKVCache) {
-    if !cache.is_null() {
-        unsafe {
-            let _ = Box::from_raw(cache);
-        }
+pub extern "C" fn tl_kv_cache_free(cache_ptr: i64) {
+    if cache_ptr == 0 {
+        return;
+    }
+    unsafe {
+        let _ = Box::from_raw(cache_ptr as *mut OpaqueKVCache);
     }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_kv_cache_get_k(cache: *mut OpaqueKVCache) -> *mut crate::OpaqueTensor {
-    unsafe {
-        if cache.is_null() {
-            return std::ptr::null_mut();
-        }
-        (*cache).k.unwrap_or(std::ptr::null_mut())
+pub extern "C" fn tl_kv_cache_get_k(cache_ptr: i64, layer: i64) -> *mut crate::OpaqueTensor {
+    if cache_ptr == 0 {
+        return std::ptr::null_mut();
+    }
+    let cache = unsafe { &*(cache_ptr as *mut OpaqueKVCache) };
+    let idx = layer as usize;
+    if idx < cache.layers.len() {
+        cache.layers[idx].0.unwrap_or(std::ptr::null_mut())
+    } else {
+        std::ptr::null_mut()
     }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_kv_cache_get_v(cache: *mut OpaqueKVCache) -> *mut crate::OpaqueTensor {
-    unsafe {
-        if cache.is_null() {
-            return std::ptr::null_mut();
-        }
-        (*cache).v.unwrap_or(std::ptr::null_mut())
+pub extern "C" fn tl_kv_cache_get_v(cache_ptr: i64, layer: i64) -> *mut crate::OpaqueTensor {
+    if cache_ptr == 0 {
+        return std::ptr::null_mut();
+    }
+    let cache = unsafe { &*(cache_ptr as *mut OpaqueKVCache) };
+    let idx = layer as usize;
+    if idx < cache.layers.len() {
+        cache.layers[idx].1.unwrap_or(std::ptr::null_mut())
+    } else {
+        std::ptr::null_mut()
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_kv_cache_update(
-    cache: *mut OpaqueKVCache,
+    cache_ptr: i64,
+    layer: i64,
     k: *mut crate::OpaqueTensor,
     v: *mut crate::OpaqueTensor,
 ) {
-    unsafe {
-        if !cache.is_null() {
-            (*cache).k = Some(k);
-            (*cache).v = Some(v);
-        }
+    if cache_ptr == 0 {
+        return;
     }
+    let cache = unsafe { &mut *(cache_ptr as *mut OpaqueKVCache) };
+    let idx = layer as usize;
+    // layer がキャパシティを超えた場合は拡張
+    while cache.layers.len() <= idx {
+        cache.layers.push((None, None));
+    }
+    cache.layers[idx] = (Some(k), Some(v));
 }
+
 
 // ========== 追加 System 関数 ==========
 

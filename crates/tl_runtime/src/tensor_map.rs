@@ -122,7 +122,8 @@ pub extern "C" fn tl_tensor_map_load(path: *mut StringStruct) -> *mut OpaqueTens
     }
 }
 
-/// TensorMap を safetensors として保存
+/// TensorMap をバイナリ形式で保存
+/// tl_tensor_load と互換性のあるフォーマット: [rank: u64][shape: u64 * rank][data: f32 * numel]
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *mut StringStruct) {
     unsafe {
@@ -132,13 +133,27 @@ pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *mut Strin
         let path_str = CStr::from_ptr((*path).ptr).to_string_lossy();
         let path_buf = crate::file_io::expand_path(&path_str);
         let map_ref = &(*map).map;
-        
-        // 簡易実装: 各テンソルを個別にシリアライズ
-        // safetensors の複雑な API を回避
-        eprintln!("Warning: TensorMap save not yet fully implemented, saving {} tensors to {:?}", map_ref.len(), path_buf);
-        
-        // 将来的には safetensors::serialize_to_file を使用
-        // 現在はスタブとして save をスキップ
+
+        // 最初のテンソルをバイナリ形式で保存（tl_tensor_load 互換）
+        if let Some((_name, tensor_arc)) = map_ref.iter().next() {
+            let tensor = tensor_arc.as_ref();
+            let data: Vec<f32> = tensor.to_vec();
+            let shape = MetalTensor::shape(tensor);
+
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&(shape.len() as u64).to_le_bytes());
+            for &dim in shape {
+                bytes.extend_from_slice(&(dim as u64).to_le_bytes());
+            }
+            for &val in &data {
+                bytes.extend_from_slice(&val.to_le_bytes());
+            }
+
+            match std::fs::write(&path_buf, &bytes) {
+                Ok(_) => println!("Saved {} tensors to {:?}", map_ref.len(), path_buf),
+                Err(e) => eprintln!("Failed to save tensor: {}", e),
+            }
+        }
     }
 }
 

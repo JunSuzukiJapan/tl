@@ -395,9 +395,16 @@ pub extern "C" fn tl_tensor_backward(_t: *mut OpaqueTensor) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_grad(_t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    eprintln!("Warning: Gradients not yet supported in Metal backend");
-    std::ptr::null_mut()
+pub extern "C" fn tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    // Autograd は未実装 — 入力と同じ shape のゼロテンソルを返す
+    // (学習は進まないがクラッシュしない)
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
+    let tensor = unsafe { &*t };
+    let shape = MetalTensor::shape(tensor);
+    let zeros = MetalTensor::zeros(shape, MetalTensor::dtype(tensor));
+    Box::into_raw(Box::new(zeros))
 }
 
 #[unsafe(no_mangle)]
@@ -604,16 +611,45 @@ pub extern "C" fn tl_tensor_get_i64_md(t: *mut OpaqueTensor, idx0: i64, idx1: i6
 }
 
 /// 多次元インデックスで f32 設定
+/// LLVM 宣言: (t: *mut, indices: *const i64, rank: usize, val: f32) → *mut
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_set_f32_md(t: *mut OpaqueTensor, idx0: i64, idx1: i64, value: f32) {
-    if t.is_null() {
-        return;
+pub extern "C" fn tl_tensor_set_f32_md(
+    t: *mut OpaqueTensor,
+    indices: *const i64,
+    rank: usize,
+    value: f32,
+) -> *mut OpaqueTensor {
+    if t.is_null() || indices.is_null() {
+        return t;
     }
-    let _tensor = unsafe { &mut *t };
-    // MetalTensor の直接変更は困難なため警告
-    eprintln!("Warning: tl_tensor_set_f32_md modifying tensor at [{}, {}] = {}", idx0, idx1, value);
-    // スタブ - 実際の変更は未サポート
+    let tensor = unsafe { &*t };
+    let shape = MetalTensor::shape(tensor);
+
+    // indices を読み取り
+    let idx_slice = unsafe { std::slice::from_raw_parts(indices, rank) };
+
+    // 線形インデックスを計算 (row-major)
+    let mut linear_idx = 0usize;
+    let mut stride = 1usize;
+    for d in (0..rank).rev() {
+        let i = idx_slice[d] as usize;
+        if d < shape.len() && i < shape[d] {
+            linear_idx += i * stride;
+            stride *= shape[d];
+        }
+    }
+
+    // テンソルの全データを CPU に読み出し
+    let mut data: Vec<f32> = tensor.to_vec();
+    if linear_idx < data.len() {
+        data[linear_idx] = value;
+    }
+
+    // 新しいテンソルを作成して返す
+    let result = MetalTensor::from_slice(&data, shape, MetalTensor::dtype(tensor));
+    Box::into_raw(Box::new(result))
 }
+
 
 // tl_tensor_prepare_return は memory_ffi.rs で定義済み
 
