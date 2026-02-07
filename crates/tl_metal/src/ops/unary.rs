@@ -3,7 +3,8 @@
 use crate::device::get_device;
 use crate::shaders::{self, SHADER_NEG_F32, SHADER_ABS_F32, SHADER_EXP_F32, SHADER_LOG_F32, 
                      SHADER_SQRT_F32, SHADER_TANH_F32, SHADER_SIGMOID_F32, SHADER_RELU_F32,
-                     SHADER_SIN_F32, SHADER_COS_F32, SHADER_TAN_F32, SHADER_GELU_F32};
+                     SHADER_SIN_F32, SHADER_COS_F32, SHADER_TAN_F32, SHADER_GELU_F32,
+                     SHADER_SILU_F32};
 use crate::tensor::MetalTensor;
 use crate::DType;
 
@@ -20,6 +21,7 @@ impl MetalTensor {
     pub fn cos_impl(&self) -> MetalTensor { self.unary_op(SHADER_COS_F32) }
     pub fn tan_impl(&self) -> MetalTensor { self.unary_op(SHADER_TAN_F32) }
     pub fn gelu_impl(&self) -> MetalTensor { self.unary_op(SHADER_GELU_F32) }
+    pub fn silu_impl(&self) -> MetalTensor { self.unary_op(SHADER_SILU_F32) }
 
     fn unary_op(&self, shader_name: &str) -> MetalTensor {
         match MetalTensor::dtype(self) {

@@ -78,14 +78,7 @@ pub extern "C" fn tl_tensor_gelu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    // GELU 近似: 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
-    let data: Vec<f32> = tensor.to_vec();
-    let result_data: Vec<f32> = data.iter().map(|&x| {
-        let sqrt_2_pi = (2.0_f32 / std::f32::consts::PI).sqrt();
-        let inner = sqrt_2_pi * (x + 0.044715 * x.powi(3));
-        0.5 * x * (1.0 + inner.tanh())
-    }).collect();
-    let result = MetalTensor::from_slice(&result_data, tensor.shape(), DType::F32);
+    let result = tensor.gelu_impl();
     Box::into_raw(Box::new(result))
 }
 
@@ -95,12 +88,7 @@ pub extern "C" fn tl_tensor_silu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    // SiLU(x) = x * sigmoid(x)
-    let data: Vec<f32> = tensor.to_vec();
-    let result_data: Vec<f32> = data.iter().map(|&x| {
-        x / (1.0 + (-x).exp())
-    }).collect();
-    let result = MetalTensor::from_slice(&result_data, tensor.shape(), DType::F32);
+    let result = tensor.silu_impl();
     Box::into_raw(Box::new(result))
 }
 
@@ -323,12 +311,7 @@ pub extern "C" fn tl_tensor_rms_norm(
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    // RMS Norm: x / sqrt(mean(x^2) + eps)
-    let data: Vec<f32> = tensor.to_vec();
-    let mean_sq: f32 = data.iter().map(|&x| x * x).sum::<f32>() / data.len() as f32;
-    let rms = (mean_sq + eps as f32).sqrt();
-    let result_data: Vec<f32> = data.iter().map(|&x| x / rms).collect();
-    let result = MetalTensor::from_slice(&result_data, tensor.shape(), DType::F32);
+    let result = tensor.rms_norm_impl(eps as f32);
     Box::into_raw(Box::new(result))
 }
 
@@ -392,9 +375,7 @@ pub extern "C" fn tl_tensor_clamp(
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    let data: Vec<f32> = tensor.to_vec();
-    let result_data: Vec<f32> = data.iter().map(|&x| x.clamp(min_val, max_val)).collect();
-    let result = MetalTensor::from_slice(&result_data, tensor.shape(), DType::F32);
+    let result = tensor.clamp_impl(min_val, max_val);
     Box::into_raw(Box::new(result))
 }
 
@@ -442,16 +423,10 @@ pub extern "C" fn tl_tensor_rope_new_cos(
     head_dim: i64,
     base: f64,
 ) -> *mut OpaqueTensor {
-    let mut cos_data = Vec::with_capacity((seq_len * head_dim / 2) as usize);
-    for pos in 0..seq_len {
-        for i in 0..(head_dim / 2) {
-            let freq = 1.0 / (base as f32).powf((2.0 * i as f32) / head_dim as f32);
-            cos_data.push((pos as f32 * freq).cos());
-        }
-    }
-    let shape = vec![seq_len as usize, (head_dim / 2) as usize];
-    let result = MetalTensor::from_slice(&cos_data, &shape, DType::F32);
-    Box::into_raw(Box::new(result))
+    let (cos_tensor, _sin_tensor) = MetalTensor::rope_cos_sin_impl(
+        seq_len as usize, head_dim as usize, base as f32,
+    );
+    Box::into_raw(Box::new(cos_tensor))
 }
 
 #[unsafe(no_mangle)]
@@ -460,16 +435,10 @@ pub extern "C" fn tl_tensor_rope_new_sin(
     head_dim: i64,
     base: f64,
 ) -> *mut OpaqueTensor {
-    let mut sin_data = Vec::with_capacity((seq_len * head_dim / 2) as usize);
-    for pos in 0..seq_len {
-        for i in 0..(head_dim / 2) {
-            let freq = 1.0 / (base as f32).powf((2.0 * i as f32) / head_dim as f32);
-            sin_data.push((pos as f32 * freq).sin());
-        }
-    }
-    let shape = vec![seq_len as usize, (head_dim / 2) as usize];
-    let result = MetalTensor::from_slice(&sin_data, &shape, DType::F32);
-    Box::into_raw(Box::new(result))
+    let (_cos_tensor, sin_tensor) = MetalTensor::rope_cos_sin_impl(
+        seq_len as usize, head_dim as usize, base as f32,
+    );
+    Box::into_raw(Box::new(sin_tensor))
 }
 
 #[unsafe(no_mangle)]
@@ -485,44 +454,13 @@ pub extern "C" fn tl_tensor_apply_rope(
     let tensor = unsafe { &*t };
     let cos_tensor = unsafe { &*cos };
     let sin_tensor = unsafe { &*sin };
-    
-    // 簡易 RoPE 実装
-    let data: Vec<f32> = tensor.to_vec();
-    let cos_data: Vec<f32> = cos_tensor.to_vec();
-    let sin_data: Vec<f32> = sin_tensor.to_vec();
-    let head_dim = tensor.shape().last().cloned().unwrap_or(1);
-    let half_dim = head_dim / 2;
-    
-    let mut result_data = data.clone();
-    for i in 0..half_dim {
-        let cos_val = cos_data.get(pos as usize * half_dim + i).cloned().unwrap_or(1.0);
-        let sin_val = sin_data.get(pos as usize * half_dim + i).cloned().unwrap_or(0.0);
-        
-        if let (Some(&x1), Some(&x2)) = (data.get(i), data.get(i + half_dim)) {
-            result_data[i] = x1 * cos_val - x2 * sin_val;
-            result_data[i + half_dim] = x1 * sin_val + x2 * cos_val;
-        }
-    }
-    
-    let result = MetalTensor::from_slice(&result_data, tensor.shape(), DType::F32);
+    let result = tensor.apply_rope_impl(cos_tensor, sin_tensor, pos as usize);
     Box::into_raw(Box::new(result))
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_new_causal_mask(seq_len: i64) -> *mut OpaqueTensor {
-    let n = seq_len as usize;
-    let mut data = Vec::with_capacity(n * n);
-    for i in 0..n {
-        for j in 0..n {
-            if j <= i {
-                data.push(0.0f32);
-            } else {
-                data.push(f32::NEG_INFINITY);
-            }
-        }
-    }
-    let shape = vec![n, n];
-    let result = MetalTensor::from_slice(&data, &shape, DType::F32);
+    let result = MetalTensor::causal_mask_impl(seq_len as usize);
     Box::into_raw(Box::new(result))
 }
 
@@ -600,9 +538,7 @@ pub extern "C" fn tl_tensor_pow(t: *mut OpaqueTensor, exp: f64) -> *mut OpaqueTe
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    let data: Vec<f32> = tensor.to_vec();
-    let result_data: Vec<f32> = data.iter().map(|&x| x.powf(exp as f32)).collect();
-    let result = MetalTensor::from_slice(&result_data, tensor.shape(), DType::F32);
+    let result = tensor.pow_scalar_impl(exp as f32);
     Box::into_raw(Box::new(result))
 }
 
@@ -613,30 +549,10 @@ pub extern "C" fn tl_tensor_tril(t: *mut OpaqueTensor, diagonal: i64) -> *mut Op
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    let shape = tensor.shape();
-    if shape.len() < 2 {
+    if tensor.shape().len() < 2 {
         return Box::into_raw(Box::new(tensor.clone()));
     }
-    
-    let data: Vec<f32> = tensor.to_vec();
-    let rows = shape[shape.len() - 2];
-    let cols = shape[shape.len() - 1];
-    let batch_size = data.len() / (rows * cols);
-    
-    let mut result_data = Vec::with_capacity(data.len());
-    for b in 0..batch_size {
-        for i in 0..rows {
-            for j in 0..cols {
-                let idx = b * rows * cols + i * cols + j;
-                if (j as i64) <= (i as i64) + diagonal {
-                    result_data.push(data[idx]);
-                } else {
-                    result_data.push(0.0);
-                }
-            }
-        }
-    }
-    let result = MetalTensor::from_slice(&result_data, &shape, DType::F32);
+    let result = tensor.tril_impl(diagonal as i32);
     Box::into_raw(Box::new(result))
 }
 

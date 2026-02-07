@@ -588,10 +588,7 @@ pub extern "C" fn tl_tensor_pow_scalar(t: *mut OpaqueTensor, exp: f64) -> *mut O
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    let data: Vec<f32> = tensor.to_vec();
-    let result_data: Vec<f32> = data.iter().map(|&x| x.powf(exp as f32)).collect();
-    let result = MetalTensor::from_slice(&result_data, tensor.shape(), DType::F32);
-    make_tensor(result)
+    make_tensor(tensor.pow_scalar_impl(exp as f32))
 }
 
 // ========== インプレース演算 ==========
@@ -691,9 +688,8 @@ pub extern "C" fn tl_tensor_div_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) 
 pub extern "C" fn tl_tensor_mod_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
     if t.is_null() { return; }
     unsafe {
-        let data: Vec<f32> = (*t).to_vec();
-        let result_data: Vec<f32> = data.iter().map(|&x| x % s).collect();
-        *t = MetalTensor::from_slice(&result_data, (*t).shape(), DType::F32);
+        let result = (*t).fmod_scalar_impl(s);
+        *t = result;
     }
 }
 
@@ -801,10 +797,7 @@ pub extern "C" fn tl_tensor_tanh(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    let data: Vec<f32> = tensor.to_vec();
-    let result_data: Vec<f32> = data.iter().map(|&x| x.tanh()).collect();
-    let result = MetalTensor::from_slice(&result_data, tensor.shape(), DType::F32);
-    make_tensor(result)
+    make_tensor(tensor.tanh_impl())
 }
 
 #[unsafe(no_mangle)]
@@ -859,8 +852,10 @@ pub extern "C" fn tl_tensor_max(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
+    // GPU argmax で最大値インデックスを取得し、そのインデックスの値を取得
+    let idx = MetalTensor::argmax_all_impl(tensor);
     let data: Vec<f32> = tensor.to_vec();
-    let max_val = data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let max_val = data[idx];
     let result = MetalTensor::from_slice(&[max_val], &[1], DType::F32);
     make_tensor(result)
 }
@@ -871,8 +866,10 @@ pub extern "C" fn tl_tensor_min(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
+    // GPU argmin で最小値インデックスを取得し、そのインデックスの値を取得
+    let idx = MetalTensor::argmin_all_impl(tensor);
     let data: Vec<f32> = tensor.to_vec();
-    let min_val = data.iter().cloned().fold(f32::INFINITY, f32::min);
+    let min_val = data[idx];
     let result = MetalTensor::from_slice(&[min_val], &[1], DType::F32);
     make_tensor(result)
 }

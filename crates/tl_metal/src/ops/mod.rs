@@ -13,4 +13,5 @@ pub mod broadcast;
 pub mod special;
 pub mod nn;
 pub mod mps;
+pub mod llm;
 

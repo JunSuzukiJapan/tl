@@ -24,11 +24,14 @@ pub const SHADER_SIN_F32: &str = "sin_f32";
 pub const SHADER_COS_F32: &str = "cos_f32";
 pub const SHADER_TAN_F32: &str = "tan_f32";
 pub const SHADER_GELU_F32: &str = "gelu_f32";
+pub const SHADER_SILU_F32: &str = "silu_f32";
 
 /// Shader 関数名 - スカラー演算
 pub const SHADER_ADD_SCALAR_F32: &str = "add_scalar_f32";
 pub const SHADER_MUL_SCALAR_F32: &str = "mul_scalar_f32";
 pub const SHADER_CLAMP_F32: &str = "clamp_f32";
+pub const SHADER_POW_SCALAR_F32: &str = "pow_scalar_f32";
+pub const SHADER_FMOD_SCALAR_F32: &str = "fmod_scalar_f32";
 
 /// Shader 関数名 - Reduce
 pub const SHADER_SUMALL_F32: &str = "sumall_f32";
@@ -261,6 +264,16 @@ kernel void gelu_f32(
     out[id] = x * cdf;
 }
 
+// SiLU: x * sigmoid(x) = x / (1 + exp(-x))
+kernel void silu_f32(
+    device const float* a [[buffer(0)]],
+    device float* out [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    float x = a[id];
+    out[id] = x / (1.0f + exp(-x));
+}
+
 // ========== スカラー演算 ==========
 
 kernel void add_scalar_f32(
@@ -289,6 +302,24 @@ kernel void clamp_f32(
     uint id [[thread_position_in_grid]]
 ) {
     out[id] = clamp(a[id], min_val, max_val);
+}
+
+kernel void pow_scalar_f32(
+    device const float* a [[buffer(0)]],
+    constant float& exp [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = pow(a[id], exp);
+}
+
+kernel void fmod_scalar_f32(
+    device const float* a [[buffer(0)]],
+    constant float& s [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = fmod(a[id], s);
 }
 
 // ========== Reduce (部分和) ==========
