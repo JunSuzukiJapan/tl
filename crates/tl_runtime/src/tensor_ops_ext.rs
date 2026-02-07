@@ -276,8 +276,8 @@ pub extern "C" fn tl_tensor_dropout(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_embedding(
-    weights: *mut OpaqueTensor,
     indices: *mut OpaqueTensor,
+    weights: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
     if weights.is_null() || indices.is_null() {
         return std::ptr::null_mut();
@@ -287,6 +287,7 @@ pub extern "C" fn tl_tensor_embedding(
     let result = MetalTensor::embedding_impl(weights_tensor, indices_tensor);
     Box::into_raw(Box::new(result))
 }
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_cross_entropy(

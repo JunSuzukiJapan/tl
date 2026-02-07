@@ -57,51 +57,167 @@ fn get_matmul_pipeline() -> &'static ComputePipelineState {
 
 impl MetalTensor {
     /// 行列積: self * other
-    /// self: [M, K], other: [K, N] -> result: [M, N]
+    /// 2D×2D: [M, K] × [K, N] → [M, N]
+    /// 3D×2D: [B, M, K] × [K, N] → [B, M, N] (batch matmul)
+    /// 3D×3D: [B, M, K] × [B, K, N] → [B, M, N] (batch matmul)
     pub fn matmul_impl(&self, other: &MetalTensor) -> MetalTensor {
         assert_eq!(MetalTensor::dtype(self), DType::F32, "matmul only supports F32");
         assert_eq!(MetalTensor::dtype(other), DType::F32, "matmul only supports F32");
-        
+
         let self_shape = MetalTensor::shape(self);
         let other_shape = MetalTensor::shape(other);
-        
-        // 形状チェック
-        assert!(self_shape.len() == 2, "self must be 2D");
-        assert!(other_shape.len() == 2, "other must be 2D");
-        
+
+        // 3D × 2D: batch matmul
+        if self_shape.len() == 3 && other_shape.len() == 2 {
+            let batch = self_shape[0];
+            let m = self_shape[1];
+            let k = self_shape[2];
+            let k2 = other_shape[0];
+            let n = other_shape[1];
+            assert_eq!(k, k2, "Inner dimensions must match: {} vs {}", k, k2);
+
+            let result = MetalTensor::uninit(&[batch, m, n], DType::F32);
+            let device = get_device();
+            let command_queue = device.command_queue();
+            let pipeline = get_matmul_pipeline();
+
+            let m_buf = device.device().new_buffer_with_data(
+                &(m as u32) as *const u32 as *const _, 4,
+                metal::MTLResourceOptions::StorageModeShared,
+            );
+            let n_buf = device.device().new_buffer_with_data(
+                &(n as u32) as *const u32 as *const _, 4,
+                metal::MTLResourceOptions::StorageModeShared,
+            );
+            let k_buf = device.device().new_buffer_with_data(
+                &(k as u32) as *const u32 as *const _, 4,
+                metal::MTLResourceOptions::StorageModeShared,
+            );
+
+            // 各 batch を個別に GPU 実行
+            for b in 0..batch {
+                let self_offset = (b * m * k * 4) as u64;  // f32 = 4 bytes
+                let result_offset = (b * m * n * 4) as u64;
+
+                let command_buffer = command_queue.new_command_buffer();
+                let encoder = command_buffer.new_compute_command_encoder();
+
+                encoder.set_compute_pipeline_state(pipeline);
+                encoder.set_buffer(0, Some(self.buffer()), self_offset);
+                encoder.set_buffer(1, Some(other.buffer()), 0);
+                encoder.set_buffer(2, Some(result.buffer()), result_offset);
+                encoder.set_buffer(3, Some(&m_buf), 0);
+                encoder.set_buffer(4, Some(&n_buf), 0);
+                encoder.set_buffer(5, Some(&k_buf), 0);
+
+                let threads_per_group = MTLSize::new(16, 16, 1);
+                let grid_size = MTLSize::new(
+                    ((n + 15) / 16) as u64,
+                    ((m + 15) / 16) as u64,
+                    1,
+                );
+                encoder.dispatch_thread_groups(grid_size, threads_per_group);
+                encoder.end_encoding();
+
+                command_buffer.commit();
+                command_buffer.wait_until_completed();
+            }
+
+            return result;
+        }
+
+        // 3D × 3D: batch matmul
+        if self_shape.len() == 3 && other_shape.len() == 3 {
+            let batch = self_shape[0];
+            assert_eq!(batch, other_shape[0], "Batch dimensions must match: {} vs {}", batch, other_shape[0]);
+            let m = self_shape[1];
+            let k = self_shape[2];
+            let k2 = other_shape[1];
+            let n = other_shape[2];
+            assert_eq!(k, k2, "Inner dimensions must match: {} vs {}", k, k2);
+
+            let result = MetalTensor::uninit(&[batch, m, n], DType::F32);
+            let device = get_device();
+            let command_queue = device.command_queue();
+            let pipeline = get_matmul_pipeline();
+
+            let m_buf = device.device().new_buffer_with_data(
+                &(m as u32) as *const u32 as *const _, 4,
+                metal::MTLResourceOptions::StorageModeShared,
+            );
+            let n_buf = device.device().new_buffer_with_data(
+                &(n as u32) as *const u32 as *const _, 4,
+                metal::MTLResourceOptions::StorageModeShared,
+            );
+            let k_buf = device.device().new_buffer_with_data(
+                &(k as u32) as *const u32 as *const _, 4,
+                metal::MTLResourceOptions::StorageModeShared,
+            );
+
+            for b in 0..batch {
+                let self_offset = (b * m * k * 4) as u64;
+                let other_offset = (b * k * n * 4) as u64;
+                let result_offset = (b * m * n * 4) as u64;
+
+                let command_buffer = command_queue.new_command_buffer();
+                let encoder = command_buffer.new_compute_command_encoder();
+
+                encoder.set_compute_pipeline_state(pipeline);
+                encoder.set_buffer(0, Some(self.buffer()), self_offset);
+                encoder.set_buffer(1, Some(other.buffer()), other_offset);
+                encoder.set_buffer(2, Some(result.buffer()), result_offset);
+                encoder.set_buffer(3, Some(&m_buf), 0);
+                encoder.set_buffer(4, Some(&n_buf), 0);
+                encoder.set_buffer(5, Some(&k_buf), 0);
+
+                let threads_per_group = MTLSize::new(16, 16, 1);
+                let grid_size = MTLSize::new(
+                    ((n + 15) / 16) as u64,
+                    ((m + 15) / 16) as u64,
+                    1,
+                );
+                encoder.dispatch_thread_groups(grid_size, threads_per_group);
+                encoder.end_encoding();
+
+                command_buffer.commit();
+                command_buffer.wait_until_completed();
+            }
+
+            return result;
+        }
+
+        // 2D × 2D: 標準 matmul
+        assert!(self_shape.len() == 2, "self must be 2D or 3D, got {}D", self_shape.len());
+        assert!(other_shape.len() == 2, "other must be 2D or 3D, got {}D", other_shape.len());
+
         let m = self_shape[0];
         let k1 = self_shape[1];
         let k2 = other_shape[0];
         let n = other_shape[1];
-        
+
         assert_eq!(k1, k2, "Inner dimensions must match: {} vs {}", k1, k2);
-        
+
         let result = MetalTensor::uninit(&[m, n], DType::F32);
         let device = get_device();
         let command_queue = device.command_queue();
         let pipeline = get_matmul_pipeline();
-        
-        // 次元パラメータ用バッファ
+
         let m_buf = device.device().new_buffer_with_data(
-            &(m as u32) as *const u32 as *const _,
-            4,
+            &(m as u32) as *const u32 as *const _, 4,
             metal::MTLResourceOptions::StorageModeShared,
         );
         let n_buf = device.device().new_buffer_with_data(
-            &(n as u32) as *const u32 as *const _,
-            4,
+            &(n as u32) as *const u32 as *const _, 4,
             metal::MTLResourceOptions::StorageModeShared,
         );
         let k_buf = device.device().new_buffer_with_data(
-            &(k1 as u32) as *const u32 as *const _,
-            4,
+            &(k1 as u32) as *const u32 as *const _, 4,
             metal::MTLResourceOptions::StorageModeShared,
         );
-        
-        // GPU 実行
+
         let command_buffer = command_queue.new_command_buffer();
         let encoder = command_buffer.new_compute_command_encoder();
-        
+
         encoder.set_compute_pipeline_state(pipeline);
         encoder.set_buffer(0, Some(self.buffer()), 0);
         encoder.set_buffer(1, Some(other.buffer()), 0);
@@ -109,8 +225,7 @@ impl MetalTensor {
         encoder.set_buffer(3, Some(&m_buf), 0);
         encoder.set_buffer(4, Some(&n_buf), 0);
         encoder.set_buffer(5, Some(&k_buf), 0);
-        
-        // 2D グリッド
+
         let threads_per_group = MTLSize::new(16, 16, 1);
         let grid_size = MTLSize::new(
             ((n + 15) / 16) as u64,
@@ -119,10 +234,11 @@ impl MetalTensor {
         );
         encoder.dispatch_thread_groups(grid_size, threads_per_group);
         encoder.end_encoding();
-        
+
         command_buffer.commit();
         command_buffer.wait_until_completed();
-        
+
         result
     }
+
 }

@@ -54,36 +54,56 @@ impl MetalTensor {
     }
 
     /// embedding lookup — Metal GPU シェーダー実装
-    /// weights: [V, D] (埋め込み行列), indices: [T] (インデックス)
-    /// → [T, D]
+    /// weights: [V, D] (埋め込み行列), indices: [T] or [B, S] (インデックス)
+    /// → [T, D] or [B, S, D]
     ///
-    /// 引数順序を自動判別:
-    ///   - self=2D, other=1D → self=weights, other=indices (標準)
-    ///   - self=1D, other=2D → self=indices, other=weights (TL言語からの呼び出し)
+    /// 引数: self = weights (2D), other = indices (1D or 2D)
+    /// tl_tensor_embedding から呼び出される際は (weights, indices) の順序で渡される
     pub fn embedding_impl(&self, other: &MetalTensor) -> MetalTensor {
-        let self_ndim = MetalTensor::shape(self).len();
-        let other_ndim = MetalTensor::shape(other).len();
+        let self_shape = MetalTensor::shape(self);
+        let other_shape = MetalTensor::shape(other);
 
-        // 引数順序を自動判別
-        let (weights, indices) = if self_ndim == 2 && other_ndim == 1 {
-            // 標準: self=weights(2D), other=indices(1D)
-            (self, other)
-        } else if self_ndim == 1 && other_ndim == 2 {
-            // TL 言語: self=indices(1D), other=weights(2D)
-            (other, self)
+        // 引数順序の判別: weights は 2D [V, D]、indices は 1D or 2D
+        let (weights, indices, indices_shape) = if self_shape.len() == 2 && (other_shape.len() == 1 || other_shape.len() == 2) {
+            // self=weights(2D), other=indices(1D/2D)
+            (self, other, other_shape.to_vec())
+        } else if other_shape.len() == 2 && (self_shape.len() == 1 || self_shape.len() == 2 && self_shape[1] > other_shape[1]) {
+            // self=indices, other=weights
+            (other, self, self_shape.to_vec())
         } else {
             eprintln!(
-                "Warning: embedding_impl expects (2D weights, 1D indices), got shapes {:?} and {:?}",
-                MetalTensor::shape(self), MetalTensor::shape(other)
+                "Warning: embedding_impl expects (2D weights, 1D/2D indices), got shapes {:?} and {:?}",
+                self_shape, other_shape
             );
-            // フォールバック: 最善の推測
-            if self_ndim >= other_ndim { (self, other) } else { (other, self) }
+            // フォールバック: self=weights と仮定
+            (self, other, other_shape.to_vec())
         };
-        
+
         let dim = MetalTensor::shape(weights)[1];
-        let seq_len = indices.shape()[0];
-        
-        let result = MetalTensor::uninit(&[seq_len, dim], weights.dtype());
+
+        // 2D indices の場合: flatten → embed → reshape
+        let (flat_indices, total_tokens) = if indices_shape.len() == 2 {
+            let batch = indices_shape[0];
+            let seq = indices_shape[1];
+            let total = batch * seq;
+            // flatten to [total]
+            let flat = MetalTensor::from_buffer_shared(
+                indices.buffer_arc().clone(),
+                vec![total],
+                MetalTensor::dtype(indices),
+            );
+            (flat, total)
+        } else {
+            let total = indices_shape[0];
+            (MetalTensor::from_buffer_shared(
+                indices.buffer_arc().clone(),
+                vec![total],
+                MetalTensor::dtype(indices),
+            ), total)
+        };
+
+        // GPU embedding lookup: flat_indices [T] → result [T, D]
+        let result = MetalTensor::uninit(&[total_tokens, dim], weights.dtype());
         let device = get_device();
         let command_queue = device.command_queue();
         let pipeline = get_embedding_pipeline();
@@ -99,14 +119,14 @@ impl MetalTensor {
 
         encoder.set_compute_pipeline_state(pipeline);
         encoder.set_buffer(0, Some(weights.buffer()), 0);
-        encoder.set_buffer(1, Some(indices.buffer()), 0);
+        encoder.set_buffer(1, Some(flat_indices.buffer()), 0);
         encoder.set_buffer(2, Some(result.buffer()), 0);
         encoder.set_buffer(3, Some(&dim_buf), 0);
 
-        let tpg = MTLSize::new(dim.min(256) as u64, seq_len.min(4) as u64, 1);
+        let tpg = MTLSize::new(dim.min(256) as u64, total_tokens.min(4) as u64, 1);
         let grid = MTLSize::new(
             ((dim + tpg.width as usize - 1) / tpg.width as usize) as u64,
-            ((seq_len + tpg.height as usize - 1) / tpg.height as usize) as u64,
+            ((total_tokens + tpg.height as usize - 1) / tpg.height as usize) as u64,
             1,
         );
         encoder.dispatch_thread_groups(grid, tpg);
@@ -115,6 +135,18 @@ impl MetalTensor {
         command_buffer.commit();
         command_buffer.wait_until_completed();
 
-        result
+        // 2D indices の場合: [T, D] → [B, S, D] に reshape
+        if indices_shape.len() == 2 {
+            let batch = indices_shape[0];
+            let seq = indices_shape[1];
+            MetalTensor::from_buffer_shared(
+                result.buffer_arc().clone(),
+                vec![batch, seq, dim],
+                weights.dtype(),
+            )
+        } else {
+            result
+        }
     }
+
 }
