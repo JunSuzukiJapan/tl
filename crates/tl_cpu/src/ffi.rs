@@ -571,6 +571,58 @@ pub extern "C" fn tl_cpu_tensor_matmul(a: *mut OpaqueTensor, b: *mut OpaqueTenso
     ptr
 }
 
+// ========== 高度テンソル関数 ==========
+
+pub extern "C" fn tl_cpu_tensor_sqrt(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    make_tensor(unsafe { (&*t).sqrt_impl() })
+}
+
+pub extern "C" fn tl_cpu_tensor_gelu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    make_tensor(unsafe { (&*t).gelu_impl() })
+}
+
+pub extern "C" fn tl_cpu_tensor_tril(t: *mut OpaqueTensor, diagonal: i64) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    if tensor.shape().len() < 2 {
+        return make_tensor(tensor.clone());
+    }
+    make_tensor(tensor.tril_impl(diagonal as i32))
+}
+
+pub extern "C" fn tl_cpu_tensor_sum_dim(t: *mut OpaqueTensor, dim: usize, keep_dim: bool) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    let mut result = tensor.sum_impl(dim as i32);
+    if keep_dim {
+        let mut new_shape = tensor.shape().to_vec();
+        new_shape[dim] = 1;
+        result = result.reshape_impl(&new_shape);
+    }
+    let ptr = make_tensor(result);
+    if tensor.requires_grad() {
+        use crate::autograd::ops::SumDimBackward;
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(SumDimBackward {
+            a: t,
+            input_shape: tensor.shape().to_vec(),
+            axis: dim as i32,
+        })); }
+    }
+    ptr
+}
+
+pub extern "C" fn tl_cpu_tensor_embedding(
+    indices: *mut OpaqueTensor,
+    weights: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if weights.is_null() || indices.is_null() { return std::ptr::null_mut(); }
+    let weights_tensor = unsafe { &*weights };
+    let indices_tensor = unsafe { &*indices };
+    make_tensor(weights_tensor.embedding_impl(indices_tensor))
+}
+
 // ========== Init/Shutdown ==========
 
 pub extern "C" fn tl_cpu_runtime_init() {
@@ -578,3 +630,4 @@ pub extern "C" fn tl_cpu_runtime_init() {
 }
 
 pub extern "C" fn tl_cpu_runtime_shutdown() {}
+

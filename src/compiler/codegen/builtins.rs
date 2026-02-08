@@ -1630,26 +1630,16 @@ pub fn declare_runtime_functions<'ctx>(
     map_tensor_fn!("tl_tensor_mod_assign_scalar_f32", runtime::tl_tensor_mod_assign_scalar_f32, cpu_ffi::tl_cpu_tensor_mod_assign_scalar_f32);
     map_tensor_fn!("tl_tensor_exp", runtime::tl_tensor_exp, cpu_ffi::tl_cpu_tensor_exp);
     map_tensor_fn!("tl_tensor_log", runtime::tl_tensor_log, cpu_ffi::tl_cpu_tensor_log);
-    // tl_tensor_sqrt はCPU版未実装のためGPU版のままフォールスルー
-    if let Some(f) = module.get_function("tl_tensor_sqrt") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_sqrt as usize);
-    }
+    // tl_tensor_sqrt はCPU版実装済み
+    map_tensor_fn!("tl_tensor_sqrt", runtime::tl_tensor_sqrt, cpu_ffi::tl_cpu_tensor_sqrt);
     map_tensor_fn!("tl_tensor_sin", runtime::tl_tensor_sin, cpu_ffi::tl_cpu_tensor_sin);
     map_tensor_fn!("tl_tensor_cos", runtime::tl_tensor_cos, cpu_ffi::tl_cpu_tensor_cos);
     map_tensor_fn!("tl_tensor_relu", runtime::tl_tensor_relu, cpu_ffi::tl_cpu_tensor_relu);
-    // tl_tensor_gelu, tl_tensor_tril, tl_tensor_sum_dim, tl_tensor_embedding: GPU版のまま
-    if let Some(f) = module.get_function("tl_tensor_gelu") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_gelu as usize);
-    }
-    if let Some(f) = module.get_function("tl_tensor_tril") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_tril as usize);
-    }
-    if let Some(f) = module.get_function("tl_tensor_sum_dim") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_sum_dim as usize);
-    }
-    if let Some(f) = module.get_function("tl_tensor_embedding") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_embedding as usize);
-    }
+    // tl_tensor_gelu, tl_tensor_tril, tl_tensor_sum_dim, tl_tensor_embedding: CPU版実装済み
+    map_tensor_fn!("tl_tensor_gelu", runtime::tl_tensor_gelu, cpu_ffi::tl_cpu_tensor_gelu);
+    map_tensor_fn!("tl_tensor_tril", runtime::tl_tensor_tril, cpu_ffi::tl_cpu_tensor_tril);
+    map_tensor_fn!("tl_tensor_sum_dim", runtime::tl_tensor_sum_dim, cpu_ffi::tl_cpu_tensor_sum_dim);
+    map_tensor_fn!("tl_tensor_embedding", runtime::tl_tensor_embedding, cpu_ffi::tl_cpu_tensor_embedding);
     if let Some(f) = module.get_function("tl_tensor_save") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_save as usize);
     }
