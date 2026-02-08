@@ -165,6 +165,34 @@ pub extern "C" fn tl_cpu_tensor_set_f32(t: *mut OpaqueTensor, indices: *const us
     }
 }
 
+/// LLVM 宣言: (t: *mut, indices: *const i64, rank: usize, val: f32) → *mut
+/// runtime 版と同じ署名を持つ CPU 版。in-place で書き込み、同じポインタを返す。
+pub extern "C" fn tl_cpu_tensor_set_f32_md(
+    t: *mut OpaqueTensor,
+    indices: *const i64,
+    rank: usize,
+    value: f32,
+) -> *mut OpaqueTensor {
+    if t.is_null() || indices.is_null() { return t; }
+    let tensor = unsafe { &mut *t };
+    let shape = tensor.shape().to_vec();
+    let idx_slice = unsafe { std::slice::from_raw_parts(indices, rank) };
+    let mut flat_idx = 0usize;
+    let mut stride = 1usize;
+    for d in (0..rank).rev() {
+        let i = idx_slice[d] as usize;
+        if d < shape.len() && i < shape[d] {
+            flat_idx += i * stride;
+            stride *= shape[d];
+        }
+    }
+    let data = tensor.data_f32_mut();
+    if flat_idx < data.len() {
+        data[flat_idx] = value;
+    }
+    t
+}
+
 pub extern "C" fn tl_cpu_tensor_item(t: *mut OpaqueTensor) -> f32 {
     if t.is_null() { return 0.0; }
     let tensor = unsafe { &*t };
@@ -212,6 +240,7 @@ pub extern "C" fn tl_cpu_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) 
         use crate::autograd::ops::MulBackward;
         unsafe { (&mut *ptr).set_grad_fn(Box::new(MulBackward {
             a, b, a_data: ta.shallow_clone(), b_data: tb.shallow_clone(),
+            a_shape: ta.shape().to_vec(), b_shape: tb.shape().to_vec(),
         })); }
     }
     ptr
@@ -496,7 +525,16 @@ pub extern "C" fn tl_cpu_tensor_reshape(t: *mut OpaqueTensor, rank: usize, shape
     if t.is_null() || shape.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
     let new_shape = unsafe { std::slice::from_raw_parts(shape, rank) };
-    make_tensor(tensor.reshape_impl(new_shape))
+    let input_shape = tensor.shape().to_vec();
+    let ptr = make_tensor(tensor.reshape_impl(new_shape));
+    if tensor.requires_grad() {
+        use crate::autograd::ops::ReshapeBackward;
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(ReshapeBackward {
+            input: t,
+            input_shape,
+        })); }
+    }
+    ptr
 }
 
 pub extern "C" fn tl_cpu_tensor_reshape_new(t: *mut OpaqueTensor, new_shape_tensor: *mut OpaqueTensor) -> *mut OpaqueTensor {

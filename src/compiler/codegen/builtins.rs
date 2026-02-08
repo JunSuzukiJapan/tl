@@ -1393,15 +1393,12 @@ pub fn declare_runtime_functions<'ctx>(
     // ========== テンソル作成/メモリ/情報: CPU/GPU 切替 ==========
     map_tensor_fn!("tl_tensor_new", runtime::tl_tensor_new, cpu_ffi::tl_cpu_tensor_new);
     map_tensor_fn!("tl_tensor_new_i64", runtime::tl_tensor_new_i64, cpu_ffi::tl_cpu_tensor_new_i64);
-    if let Some(f) = module.get_function("tl_tensor_from_i64_array") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_from_i64_array as usize);
-    }
+    map_tensor_fn!("tl_tensor_from_i64_array", runtime::tl_tensor_from_i64_array, cpu_ffi::tl_cpu_tensor_from_i64);
     map_tensor_fn!("tl_tensor_matmul", runtime::tl_tensor_matmul, cpu_ffi::tl_cpu_tensor_matmul);
     map_tensor_fn!("tl_tensor_contiguous", runtime::tl_tensor_contiguous, cpu_ffi::tl_cpu_tensor_contiguous);
     map_tensor_fn!("tl_tensor_print", runtime::tl_tensor_print, cpu_ffi::tl_cpu_tensor_print);
-    if let Some(f) = module.get_function("tl_tensor_display") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_display as usize);
-    }
+    // display も print と同じ関数にマッピング
+    map_tensor_fn!("tl_tensor_display", runtime::tl_tensor_display, cpu_ffi::tl_cpu_tensor_print);
     if let Some(f) = module.get_function("tl_tensor_print_1") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_print_1 as usize);
     }
@@ -1475,9 +1472,7 @@ pub fn declare_runtime_functions<'ctx>(
     map_tensor_fn!("tl_tensor_pow", runtime::tl_tensor_pow, cpu_ffi::tl_cpu_tensor_pow_scalar);
     map_tensor_fn!("tl_tensor_pow_scalar", runtime::tl_tensor_pow_scalar, cpu_ffi::tl_cpu_tensor_pow_scalar);
     map_tensor_fn!("tl_tensor_add_assign", runtime::tl_tensor_add_assign, cpu_ffi::tl_cpu_tensor_add_assign);
-    if let Some(f) = module.get_function("tl_tensor_set_f32_md") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_set_f32_md as usize);
-    }
+    map_tensor_fn!("tl_tensor_set_f32_md", runtime::tl_tensor_set_f32_md, cpu_ffi::tl_cpu_tensor_set_f32_md);
     map_tensor_fn!("tl_tensor_mul_assign", runtime::tl_tensor_mul_assign, cpu_ffi::tl_cpu_tensor_mul_assign);
     map_tensor_fn!("tl_tensor_div_assign", runtime::tl_tensor_div_assign, cpu_ffi::tl_cpu_tensor_div_assign);
     // Scalar assign variants
@@ -1649,9 +1644,7 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_map_free") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_free as usize);
     }
-    if let Some(f) = module.get_function("tl_tensor_set_f32_md") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_set_f32_md as usize);
-    }
+    // tl_tensor_set_f32_md はL1478で既にマッピング済み
     if let Some(f) = module.get_function("tl_mem_unregister") {
         execution_engine
             .add_global_mapping(&f, runtime::memory_manager::tl_mem_unregister as usize);

@@ -4,6 +4,46 @@ use super::GradFn;
 use crate::tensor::CpuTensor;
 use tl_backend::GpuOps;
 
+/// ブロードキャスト勾配集約:
+/// grad の shape を target_shape に合わせるため、ブロードキャストで追加された次元に沿って sum する。
+fn reduce_grad_for_broadcast(grad: &CpuTensor, target_shape: &[usize]) -> CpuTensor {
+    let grad_shape = grad.shape();
+    if grad_shape == target_shape {
+        return grad.shallow_clone();
+    }
+    
+    let mut result = grad.shallow_clone();
+    let grad_ndim = grad_shape.len();
+    let target_ndim = target_shape.len();
+    
+    // target_shape が短い場合、先頭の余分な次元を sum で潰す
+    if grad_ndim > target_ndim {
+        for _ in 0..(grad_ndim - target_ndim) {
+            result = result.sum_impl(0); // dim 0 に沿って sum (keep_dim=false で次元が減る)
+        }
+    }
+    
+    // 同じ次元数で、target が 1 の次元を sum + keep_dim
+    let result_shape = result.shape().to_vec();
+    let min_ndim = result_shape.len().min(target_shape.len());
+    for d in 0..min_ndim {
+        if target_shape[d] == 1 && result_shape[d] > 1 {
+            result = result.sum_impl(d as i32);
+            // sum_impl は keep_dim=false なので、shape を復元
+            let mut new_shape = result.shape().to_vec();
+            new_shape.insert(d, 1);
+            result = result.reshape_impl(&new_shape);
+        }
+    }
+    
+    // 最終的な shape を target_shape に合わせて reshape
+    if result.shape() != target_shape {
+        result = result.reshape_impl(target_shape);
+    }
+    
+    result
+}
+
 /// 加算の勾配
 pub struct AddBackward {
     pub a: *mut CpuTensor,
@@ -40,14 +80,15 @@ pub struct MulBackward {
     pub b: *mut CpuTensor,
     pub a_data: CpuTensor,
     pub b_data: CpuTensor,
+    pub a_shape: Vec<usize>,
+    pub b_shape: Vec<usize>,
 }
 
 impl GradFn for MulBackward {
     fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
-        vec![
-            grad_output.mul(&self.b_data),
-            grad_output.mul(&self.a_data),
-        ]
+        let grad_a = reduce_grad_for_broadcast(&grad_output.mul(&self.b_data), &self.a_shape);
+        let grad_b = reduce_grad_for_broadcast(&grad_output.mul(&self.a_data), &self.b_shape);
+        vec![grad_a, grad_b]
     }
     fn inputs(&self) -> Vec<*mut CpuTensor> {
         vec![self.a, self.b]
@@ -301,3 +342,22 @@ unsafe impl Send for LogBackward {}
 unsafe impl Sync for LogBackward {}
 unsafe impl Send for SumDimBackward {}
 unsafe impl Sync for SumDimBackward {}
+
+/// reshape の勾配
+pub struct ReshapeBackward {
+    pub input: *mut CpuTensor,
+    pub input_shape: Vec<usize>,
+}
+
+impl GradFn for ReshapeBackward {
+    fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
+        // grad を元のshapeに戻す
+        vec![grad_output.reshape_impl(&self.input_shape)]
+    }
+    fn inputs(&self) -> Vec<*mut CpuTensor> {
+        vec![self.input]
+    }
+}
+
+unsafe impl Send for ReshapeBackward {}
+unsafe impl Sync for ReshapeBackward {}

@@ -286,30 +286,74 @@ impl CpuTensor {
 
     // ========== 演算実装 (_impl メソッド) ==========
 
+    /// ブロードキャスト用ストライド計算
+    /// src_shape を out_shape にブロードキャストする際のストライドを返す。
+    /// 次元サイズが1の場合はストライド0（同じ要素を繰り返す）。
+    fn broadcast_strides(src_shape: &[usize], out_shape: &[usize]) -> Vec<usize> {
+        let out_ndim = out_shape.len();
+        let src_ndim = src_shape.len();
+        let mut strides = vec![0usize; out_ndim];
+        // src_shape を右詰めで out_shape に合わせる
+        let offset = out_ndim - src_ndim;
+        // まず src_shape のストライドを計算
+        let mut src_strides = vec![1usize; src_ndim];
+        for i in (0..src_ndim.saturating_sub(1)).rev() {
+            src_strides[i] = src_strides[i + 1] * src_shape[i + 1];
+        }
+        for i in 0..out_ndim {
+            if i < offset {
+                strides[i] = 0; // src にはこの次元がない → ブロードキャスト
+            } else {
+                let si = i - offset;
+                if src_shape[si] == 1 {
+                    strides[i] = 0; // サイズ1 → ブロードキャスト
+                } else {
+                    strides[i] = src_strides[si];
+                }
+            }
+        }
+        strides
+    }
+
     fn elementwise_binop(&self, other: &Self, op: impl Fn(f32, f32) -> f32) -> Self {
-        // ブロードキャスト対応（簡易版）
+        // NumPy互換ブロードキャスト
+        let a_shape = &self.shape;
+        let b_shape = &other.shape;
         let a = &self.data_f32;
         let b = &other.data_f32;
-        let data: Vec<f32> = if a.len() == b.len() {
-            a.iter().zip(b.iter()).map(|(x, y)| op(*x, *y)).collect()
-        } else if b.len() == 1 {
-            a.iter().map(|x| op(*x, b[0])).collect()
-        } else if a.len() == 1 {
-            b.iter().map(|y| op(a[0], *y)).collect()
-        } else {
-            // 末尾次元ブロードキャスト
-            let out_len = a.len().max(b.len());
-            (0..out_len).map(|i| op(a[i % a.len()], b[i % b.len()])).collect()
-        };
-        let shape = if self.shape.len() >= other.shape.len() {
-            self.shape.clone()
-        } else {
-            other.shape.clone()
-        };
+
+        // ブロードキャスト結果の shape を計算
+        let out_ndim = a_shape.len().max(b_shape.len());
+        let mut out_shape = vec![0usize; out_ndim];
+        for i in 0..out_ndim {
+            let da = if i < out_ndim - a_shape.len() { 1 } else { a_shape[i - (out_ndim - a_shape.len())] };
+            let db = if i < out_ndim - b_shape.len() { 1 } else { b_shape[i - (out_ndim - b_shape.len())] };
+            out_shape[i] = da.max(db);
+        }
+        let out_len: usize = out_shape.iter().product();
+
+        // a と b のストライドを計算（ブロードキャスト用）
+        let a_strides = Self::broadcast_strides(a_shape, &out_shape);
+        let b_strides = Self::broadcast_strides(b_shape, &out_shape);
+
+        let data: Vec<f32> = (0..out_len).map(|flat_idx| {
+            let mut a_idx = 0usize;
+            let mut b_idx = 0usize;
+            let mut remaining = flat_idx;
+            for d in 0..out_ndim {
+                let stride = out_shape[d+1..].iter().product::<usize>().max(1);
+                let coord = remaining / stride;
+                remaining %= stride;
+                a_idx += coord * a_strides[d];
+                b_idx += coord * b_strides[d];
+            }
+            op(a[a_idx], b[b_idx])
+        }).collect();
+
         CpuTensor {
             data_f32: data,
             data_i64: None,
-            shape,
+            shape: out_shape,
             dtype: self.dtype,
             autograd: None,
         }
