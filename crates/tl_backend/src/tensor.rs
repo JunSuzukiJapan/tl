@@ -41,4 +41,13 @@ pub trait GpuTensor: Clone + Send + Sync + Sized {
     
     /// データを複製
     fn clone_data(&self) -> Self;
+
+    /// テンソルの Box ポインタを解放し、Drop を発動する。
+    /// GPU: Drop → pool_release（プール返却）
+    /// CPU: Drop → free（メモリ解放）
+    fn release(ptr: *mut Self) {
+        if !ptr.is_null() {
+            unsafe { let _ = Box::from_raw(ptr); }
+        }
+    }
 }

@@ -107,15 +107,14 @@ pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::
     t // スタブ: そのまま返す
 }
 
-/// テンソル解放（V4.0 Persistent GPU Pool 戦略: No-Op）
-/// テンソルメモリ（OpaqueTensor + 内部 Buffer）はプロセス終了まで保持。
-/// drop_in_place は MetalTensor の Drop を発動し pool_release を呼ぶため、
-/// 二重呼び出しで Arc が破損するリスクがある。意図的に何もしない。
-/// 参照: MEMORY_MANAGEMENT_STRATEGY.md V4.0
+/// テンソル解放（V5.0: Box::from_raw で Drop を発動）
+/// MetalTensor の Drop → pool_release で GPU バッファをプールに返却。
+/// CpuTensor の Drop → メモリ解放。
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_release(_t: *mut crate::OpaqueTensor) {
-    // V4.0: 意図的に何もしない。
-    // メモリはプロセス終了時に OS が回収する。
+pub extern "C" fn tl_tensor_release(t: *mut crate::OpaqueTensor) {
+    if !t.is_null() {
+        unsafe { let _ = Box::from_raw(t); }
+    }
 }
 
 use std::collections::HashMap;

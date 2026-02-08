@@ -1,0 +1,9 @@
+[package]
+name = "tl_cpu"
+version = "0.1.0"
+edition = "2021"
+description = "CPU tensor backend for TL"
+
+[dependencies]
+tl_backend = { path = "../tl_backend" }
+rand = "0.8"

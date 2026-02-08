@@ -282,6 +282,9 @@ pub enum SemanticErrorKind {
 
     #[error("continue outside of loop")]
     ContinueOutsideLoop,
+
+    #[error("invalid tensor element type: {0}. Only numeric primitives (f32, f64, i64, etc.) and bool are allowed")]
+    InvalidTensorElementType(String),
 }
 
 /// コード生成エラーの種類

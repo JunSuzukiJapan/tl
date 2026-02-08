@@ -53,6 +53,8 @@ pub enum SemanticError {
     ContinueOutsideLoop,
     #[error("negation is not stratified: {0}")]
     NegationNotStratified(String),
+    #[error("Invalid tensor element type: {0:?}. Only numeric primitives (f32, f64, i64, etc.) and bool are allowed")]
+    InvalidTensorElementType(Type),
     #[error("Generic error: {0}")]
     Generic(String),
 }
@@ -108,6 +110,9 @@ impl SemanticError {
             SemanticError::NegationNotStratified(name) => {
                 SemanticErrorKind::NegationNotStratified(name)
             }
+            SemanticError::InvalidTensorElementType(ty) => {
+                SemanticErrorKind::InvalidTensorElementType(format!("{:?}", ty))
+            }
             SemanticError::Generic(msg) => SemanticErrorKind::UnknownFunction(msg), // Fallback mostly
         };
         TlError::Semantic { kind, span }
@@ -118,6 +123,17 @@ impl From<SemanticError> for TlError {
     fn from(err: SemanticError) -> Self {
         err.to_tl_error(None)
     }
+}
+
+/// テンソル要素型として有効かどうかを判定するヘルパー関数
+/// 数値プリミティブ型と bool のみ許可
+fn is_valid_tensor_element(ty: &Type) -> bool {
+    matches!(ty,
+        Type::F32 | Type::F64 |
+        Type::I8  | Type::I16 | Type::I32 | Type::I64 |
+        Type::U8  | Type::U16 | Type::U32 | Type::U64 |
+        Type::Bool | Type::Usize
+    )
 }
 
 #[derive(Clone, Debug)]
@@ -661,8 +677,22 @@ impl SemanticAnalyzer {
         } else {
             // Check other types that might contain subtypes (Tuple, Tensor, etc)
             match ty {
-                Type::Tensor(inner, r) => Type::Tensor(Box::new(self.resolve_user_type(inner)), *r),
-                Type::TensorShaped(inner, dims) => Type::TensorShaped(Box::new(self.resolve_user_type(inner)), dims.clone()),
+                Type::Tensor(inner, r) => {
+                    let resolved_inner = self.resolve_user_type(inner);
+                    // テンソル要素型バリデーション: 数値プリミティブと bool のみ許可
+                    if !is_valid_tensor_element(&resolved_inner) {
+                        // ワーニングとして出力（コンパイルは継続可能）
+                        eprintln!("Warning: Invalid tensor element type: {:?}. Only numeric primitives and bool are allowed as tensor elements.", resolved_inner);
+                    }
+                    Type::Tensor(Box::new(resolved_inner), *r)
+                }
+                Type::TensorShaped(inner, dims) => {
+                    let resolved_inner = self.resolve_user_type(inner);
+                    if !is_valid_tensor_element(&resolved_inner) {
+                        eprintln!("Warning: Invalid tensor element type: {:?}. Only numeric primitives and bool are allowed as tensor elements.", resolved_inner);
+                    }
+                    Type::TensorShaped(Box::new(resolved_inner), dims.clone())
+                }
 
 
                 Type::Tuple(inner) => Type::Tuple(inner.iter().map(|t| self.resolve_user_type(t)).collect()),
@@ -1519,6 +1549,15 @@ impl SemanticAnalyzer {
     pub fn check_stmt(&mut self, stmt: &mut Stmt) -> Result<(), TlError> {
         match &mut stmt.inner {
             StmtKind::TensorDecl { name, type_annotation, init } => {
+                 // テンソル要素型バリデーション
+                 if let Type::Tensor(inner, _) | Type::TensorShaped(inner, _) = type_annotation {
+                     if !is_valid_tensor_element(inner) {
+                         return self.err(
+                             SemanticError::InvalidTensorElementType(*inner.clone()),
+                             Some(stmt.span.clone()),
+                         );
+                     }
+                 }
                  if let Some(expr) = init {
                      let init_ty = self.check_expr(expr)?;
                      if !self.are_types_compatible(type_annotation, &init_ty) {

@@ -3972,6 +3972,7 @@ dependencies = [
  "safetensors",
  "serial_test",
  "thiserror 1.0.69",
+ "tl_cpu",
  "tl_runtime",
  "tokenizers 0.19.1",
  "tokio",
@@ -3980,6 +3981,14 @@ dependencies = [
 [[package]]
 name = "tl_backend"
 version = "0.1.0"
+
+[[package]]
+name = "tl_cpu"
+version = "0.1.0"
+dependencies = [
+ "rand 0.8.5",
+ "tl_backend",
+]
 
 [[package]]
 name = "tl_metal"
@@ -4012,6 +4021,7 @@ dependencies = [
  "reqwest 0.13.1",
  "safetensors",
  "tl_backend",
+ "tl_cpu",
  "tl_metal",
  "tokenizers 0.19.1",
  "tokio",
