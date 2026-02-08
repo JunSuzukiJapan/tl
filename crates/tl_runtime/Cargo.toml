@@ -21,6 +21,9 @@ tl_backend = { path = "../tl_backend" }
 tokenizers = "0.19.1"
 safetensors = "0.4.1"
 
+# Candle (for GGUF loading and quantized tensors)
+candle-core = { version = "0.9.1", features = ["metal", "accelerate"] }
+
 # Utils
 once_cell = "1.18.0"
 reqwest = { version = "0.13.1", features = ["blocking", "json", "multipart", "native-tls", "http2"], default-features = false }

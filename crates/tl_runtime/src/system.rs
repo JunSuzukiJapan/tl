@@ -113,23 +113,164 @@ pub extern "C" fn tl_clear_grads() {
     // REGISTRY 廃止: テンソルの勾配クリアはスコープ離脱時に自動
 }
 
-/// GGUF ロード（スタブ）
+/// GGUF ロード（candle-core 実装）
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_gguf_load(_path: *mut StringStruct) -> *mut crate::tensor_map::OpaqueTensorMap {
-    eprintln!("Warning: GGUF loading not yet supported in Metal backend");
-    std::ptr::null_mut()
+pub extern "C" fn tl_gguf_load(path: *mut StringStruct) -> *mut crate::tensor_map::OpaqueTensorMap {
+    use candle_core::quantized::gguf_file;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    unsafe {
+        if path.is_null() || (*path).ptr.is_null() {
+            eprintln!("Error: tl_gguf_load received null path");
+            return std::ptr::null_mut();
+        }
+        let path_str = std::ffi::CStr::from_ptr((*path).ptr)
+            .to_string_lossy()
+            .into_owned();
+        let expanded = crate::file_io::expand_path(&path_str);
+
+        eprintln!("[tl_gguf_load] Loading GGUF from: {:?}", expanded);
+
+        // GGUF ファイルを読み込む
+        let mut file = match std::fs::File::open(&expanded) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("Error: Failed to open GGUF file {:?}: {}", expanded, e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        let content = match gguf_file::Content::read(&mut file) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Error: Failed to parse GGUF file {:?}: {}", expanded, e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        eprintln!(
+            "[tl_gguf_load] GGUF contains {} tensors",
+            content.tensor_infos.len()
+        );
+
+        // Metal デバイスを使用
+        let device = candle_core::Device::new_metal(0).unwrap_or(candle_core::Device::Cpu);
+
+        // テンソルをロードし、OpaqueTensorMap に格納
+        let tensor_map = HashMap::new();
+        let mut qtensor_map = HashMap::new();
+
+        for (name, _) in content.tensor_infos.iter() {
+            match content.tensor(&mut file, name, &device) {
+                Ok(qtensor) => {
+                    // QTensor を量子化テンソルマップに保存
+                    qtensor_map.insert(name.clone(), Arc::new(qtensor));
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to load tensor '{}': {}",
+                        name, e
+                    );
+                }
+            }
+        }
+
+        let _total = tensor_map.len() + qtensor_map.len();
+        eprintln!(
+            "[tl_gguf_load] Loaded {} regular + {} quantized tensors",
+            tensor_map.len(),
+            qtensor_map.len()
+        );
+
+        let map = crate::tensor_map::OpaqueTensorMap {
+            map: tensor_map,
+            qtensors: qtensor_map,
+        };
+
+        Box::into_raw(Box::new(map))
+    }
 }
 
-/// QTensor 関連（スタブ）
+/// QTensor 解放
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_qtensor_free(_ptr: usize) {
-    // スタブ
+pub extern "C" fn tl_qtensor_free(ptr: usize) {
+    if ptr == 0 {
+        return;
+    }
+    unsafe {
+        let _ = Box::from_raw(
+            ptr as *mut candle_core::quantized::QTensor,
+        );
+    }
 }
 
+/// QTensor matmul: input_tensor × quantized_weight
+/// QTensor をデクォンタイズしてから通常の matmul を実行
+/// コンパイラシグネチャ: (void_ptr, void_ptr) -> void_ptr
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_qtensor_matmul(_input: *mut crate::OpaqueTensor, _weight: usize) -> *mut crate::OpaqueTensor {
-    eprintln!("Warning: Quantized matmul not yet supported in Metal backend");
-    std::ptr::null_mut()
+pub extern "C" fn tl_qtensor_matmul(
+    input: *mut crate::OpaqueTensor,
+    weight: *mut candle_core::quantized::QTensor,
+) -> *mut crate::OpaqueTensor {
+    if input.is_null() || weight.is_null() {
+        eprintln!("Error: tl_qtensor_matmul received null argument");
+        return std::ptr::null_mut();
+    }
+
+    unsafe {
+        let input_tensor = &*input;
+        let qtensor = &*weight;
+
+        let device = candle_core::Device::new_metal(0).unwrap_or(candle_core::Device::Cpu);
+
+        // QTensor をデクォンタイズ
+        let weight_tensor = match qtensor.dequantize(&device) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("Error: tl_qtensor_matmul dequantize failed: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        // MetalTensor -> candle Tensor
+        let input_data: Vec<f32> = input_tensor.to_vec();
+        let input_shape: Vec<usize> = tl_metal::MetalTensor::shape(input_tensor).to_vec();
+
+        let candle_input = match candle_core::Tensor::from_vec(
+            input_data,
+            input_shape.as_slice(),
+            &device,
+        ) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("Error: Failed to create candle tensor: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        // matmul: input × weight^T
+        let result = match candle_input.matmul(&weight_tensor.t().unwrap_or(weight_tensor)) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Error: tl_qtensor_matmul matmul failed: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+
+        // candle Tensor -> MetalTensor
+        let result_shape: Vec<usize> = result.dims().to_vec();
+        let result_data: Vec<f32> = match result.flatten_all().and_then(|f| f.to_vec1::<f32>()) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Error: Failed to extract result data: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        let metal_result =
+            tl_metal::MetalTensor::from_slice(&result_data, &result_shape, tl_metal::DType::F32);
+        Box::into_raw(Box::new(metal_result))
+    }
 }
 
 /// KV Cache 関連 — layer ベース実装

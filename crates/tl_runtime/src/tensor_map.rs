@@ -6,10 +6,12 @@ use tl_metal::{MetalTensor, DType};
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::sync::Arc;
+use candle_core::quantized::QTensor;
 
 /// TensorMap 構造体
 pub struct OpaqueTensorMap {
     pub map: HashMap<String, Arc<MetalTensor>>,
+    pub qtensors: HashMap<String, Arc<QTensor>>,
 }
 
 /// 新しい TensorMap を作成
@@ -17,6 +19,7 @@ pub struct OpaqueTensorMap {
 pub extern "C" fn tl_tensor_map_new() -> *mut OpaqueTensorMap {
     Box::into_raw(Box::new(OpaqueTensorMap {
         map: HashMap::new(),
+        qtensors: HashMap::new(),
     }))
 }
 
@@ -112,7 +115,7 @@ pub extern "C" fn tl_tensor_map_load(path: *mut StringStruct) -> *mut OpaqueTens
                     map.insert(name.to_string(), Arc::new(tensor));
                 }
                 println!("Loaded {} tensors from {:?}", map.len(), path_buf);
-                Box::into_raw(Box::new(OpaqueTensorMap { map }))
+                Box::into_raw(Box::new(OpaqueTensorMap { map, qtensors: HashMap::new() }))
             }
             Err(e) => {
                 eprintln!("Failed to load safetensors: {}", e);
@@ -157,13 +160,29 @@ pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *mut Strin
     }
 }
 
-/// Quantized テンソルを取得（スタブ - 未実装）
+/// Quantized テンソルを取得
+/// コンパイラシグネチャ: (void_ptr, i8_ptr) -> void_ptr
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_get_quantized(
-    _map: i64,
-    _name: *mut StringStruct,
-) -> usize {
-    // Quantized テンソルは未実装
-    eprintln!("Warning: Quantized tensors not yet supported in Metal backend");
-    0
+    map: *mut OpaqueTensorMap,
+    name: *mut StringStruct,
+) -> *mut QTensor {
+    unsafe {
+        if map.is_null() || name.is_null() || (*name).ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        let map_ref = &(*map);
+        let key = CStr::from_ptr((*name).ptr).to_string_lossy();
+
+        // まず qtensors マップから検索
+        if let Some(qtensor_arc) = map_ref.qtensors.get(key.as_ref()) {
+            // Arc のクローンを Box に入れてから raw pointer に変換
+            // 呼び出し元は Arc<QTensor> として扱う
+            let arc_clone = Arc::clone(qtensor_arc);
+            return Arc::into_raw(arc_clone) as *mut QTensor;
+        }
+
+        eprintln!("Warning: Quantized tensor '{}' not found", key);
+        std::ptr::null_mut()
+    }
 }

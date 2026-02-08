@@ -4002,6 +4002,7 @@ name = "tl_runtime"
 version = "0.3.1"
 dependencies = [
  "byteorder",
+ "candle-core",
  "cc",
  "image",
  "libc",
