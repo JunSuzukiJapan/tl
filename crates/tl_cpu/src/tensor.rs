@@ -2,7 +2,7 @@
 
 use crate::autograd::GradFn;
 use crate::DType;
-use tl_backend::GpuOps;
+
 
 /// Autograd メタデータ
 pub struct AutogradMeta {
@@ -652,7 +652,7 @@ impl CpuTensor {
         if tensors.is_empty() {
             return CpuTensor::zeros(&[0], DType::F32);
         }
-        let ndim = tensors[0].shape.len();
+        let _ndim = tensors[0].shape.len();
         let outer: usize = tensors[0].shape[..axis].iter().product();
         let inner: usize = tensors[0].shape[axis + 1..].iter().product();
         let total_axis: usize = tensors.iter().map(|t| t.shape[axis]).sum();
@@ -704,7 +704,7 @@ impl CpuTensor {
     }
 
     pub fn embedding_impl(&self, indices: &Self) -> Self {
-        let vocab_size = self.shape[0];
+        let _vocab_size = self.shape[0];
         let embed_dim = if self.shape.len() > 1 { self.shape[1] } else { 1 };
         let idx_data: Vec<i64> = indices.to_vec::<f32>().iter().map(|x| *x as i64).collect();
         let mut result = Vec::with_capacity(idx_data.len() * embed_dim);

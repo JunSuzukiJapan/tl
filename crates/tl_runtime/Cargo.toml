@@ -37,6 +37,7 @@ log = "0.4"
 
 [features]
 default = []
+cuda = []
 
 [build-dependencies]
 cc = "1.0"

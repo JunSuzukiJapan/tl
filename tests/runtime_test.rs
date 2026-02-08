@@ -317,7 +317,7 @@ fn test_reshape_transpose() {
 
     // Reshape to 4x1
     let new_shape: Vec<usize> = vec![4, 1];
-    let t_flat = tl_tensor_reshape_new(t, 2, new_shape.as_ptr());
+    let t_flat = tl_tensor_reshape(t, 2, new_shape.as_ptr());
     assert_tensor_valid(t_flat);
     let numel = tl_tensor_len(t_flat);
     assert_eq!(numel, 4); // 4x1 = 4 elements
