@@ -1427,19 +1427,13 @@ pub fn declare_runtime_functions<'ctx>(
     map_tensor_fn!("tl_tensor_len", runtime::tl_tensor_len, cpu_ffi::tl_cpu_tensor_len);
 
     map_tensor_fn!("tl_tensor_dim", runtime::tl_tensor_dim, cpu_ffi::tl_cpu_tensor_dim);
-    if let Some(f) = module.get_function("tl_tensor_get_f32_md") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_get_f32_md as usize);
-    }
-    if let Some(f) = module.get_function("tl_tensor_get_i64_md") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_get_i64_md as usize);
-    }
+    map_tensor_fn!("tl_tensor_get_f32_md", runtime::tl_tensor_get_f32_md, cpu_ffi::tl_cpu_tensor_get_f32);
+    map_tensor_fn!("tl_tensor_get_i64_md", runtime::tl_tensor_get_i64_md, cpu_ffi::tl_cpu_tensor_get_i64);
     map_tensor_fn!("tl_tensor_neg", runtime::tl_tensor_neg, cpu_ffi::tl_cpu_tensor_neg);
     map_tensor_fn!("tl_tensor_transpose", runtime::tl_tensor_transpose, cpu_ffi::tl_cpu_tensor_transpose);
     map_tensor_fn!("tl_tensor_reshape_new", runtime::tl_tensor_reshape_new, cpu_ffi::tl_cpu_tensor_reshape_new);
 
-    if let Some(f) = module.get_function("tl_tensor_get") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_get as usize);
-    }
+    map_tensor_fn!("tl_tensor_get", runtime::tl_tensor_get, cpu_ffi::tl_cpu_tensor_get_f32);
     map_tensor_fn!("tl_tensor_slice", runtime::tl_tensor_slice, cpu_ffi::tl_cpu_tensor_slice);
     if let Some(f) = module.get_function("tl_register_tensor") {
         execution_engine.add_global_mapping(&f, runtime::registry::tl_register_tensor as usize);
@@ -1865,12 +1859,8 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_to_i64") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_to_i64 as usize);
     }
-    if let Some(f) = module.get_function("tl_tensor_item_i64") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_item_i64 as usize);
-    }
-    if let Some(f) = module.get_function("tl_tensor_item") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_item as usize);
-    }
+    // tl_tensor_item / tl_tensor_item_i64 のマッピングは
+    // 宣言セクション (L2225/L2231) の直後で map_tensor_fn! により実施
 
     // CLI Args
 
@@ -2227,10 +2217,13 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_item(t: *mut) -> f32
     let item_type = f32_type.fn_type(&[void_ptr.into()], false);
     module.add_function("tl_tensor_item", item_type, None);
+    // CPU/GPU 切替マッピング（宣言直後に配置する必要がある）
+    map_tensor_fn!("tl_tensor_item", runtime::tl_tensor_item, cpu_ffi::tl_cpu_tensor_item);
 
     // tl_tensor_item_i64(t: *mut) -> i64
     let item_i64_type = i64_type.fn_type(&[void_ptr.into()], false);
     module.add_function("tl_tensor_item_i64", item_i64_type, None);
+    map_tensor_fn!("tl_tensor_item_i64", runtime::tl_tensor_item_i64, cpu_ffi::tl_cpu_tensor_item_i64);
 
     // tl_tensor_to_i64(t: *mut) -> *mut
     let to_i64_type = void_ptr.fn_type(&[void_ptr.into()], false);
@@ -2724,12 +2717,9 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_argmax as usize);
     }
 
-    // tl_tensor_item_i64
+    // tl_tensor_item_i64 — 宣言のみ (マッピングは L2233 の map_tensor_fn! で実施済み)
     let item_i64_type = i64_type.fn_type(&[void_ptr.into()], false);
     add_fn("tl_tensor_item_i64", item_i64_type);
-    if let Some(f) = module.get_function("tl_tensor_item_i64") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_item_i64 as usize);
-    }
 
     // tl_tensor_cat_i64
     if let Some(f) = module.get_function("tl_tensor_cat_i64") {

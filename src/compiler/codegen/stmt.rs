@@ -1447,6 +1447,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                             
                             self.builder.build_store(lhs_ptr, val_ir).unwrap();
                             
+                            // FIX: 代入された値をテンポラリリストから除外。
+                            // ExprKind::BinOp 等で add_temp された一時テンソルが
+                            // 代入先に所有権移転後もテンポラリに残り、exit_scope で
+                            // 二重 release される問題を防止。
+                            self.mark_temp_no_cleanup(val_ir);
+                            
                             // Unregister if leaking to outer scope
                             if let Some(vname) = lhs_scope_name {
                                 if self.is_outer_scope(&vname) {

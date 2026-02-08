@@ -13,11 +13,23 @@ pub struct AutogradMeta {
 
 /// CPU テンソル（Vec<f32> / Vec<i64> ベース）
 pub struct CpuTensor {
-    data_f32: Vec<f32>,
-    data_i64: Option<Vec<i64>>,
-    shape: Vec<usize>,
-    dtype: DType,
+    pub(crate) data_f32: Vec<f32>,
+    pub(crate) data_i64: Option<Vec<i64>>,
+    pub(crate) shape: Vec<usize>,
+    pub(crate) dtype: DType,
     pub autograd: Option<Box<AutogradMeta>>,
+}
+
+impl CpuTensor {
+    /// テンソルの内部データをクリアしてメモリを OS に返却する。
+    /// 構造体ポインタ自体は有効なまま残るため、use-after-free を防止できる。
+    /// release/free 時に呼ばれる。
+    pub(crate) fn clear_data(&mut self) {
+        self.data_f32 = Vec::new();
+        self.data_i64 = None;
+        self.shape = Vec::new();
+        self.autograd = None;
+    }
 }
 
 impl Clone for CpuTensor {

@@ -75,23 +75,29 @@ fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
     Box::into_raw(Box::new(t))
 }
 
-// ========== テンソル解放（noop） ==========
+// ========== テンソル解放（データクリア方式） ==========
 // JIT の forループ末尾クリーンアップや変数再代入で同一テンソルに対して
-// 複数回 release が呼ばれるため、CpuTensor の即時解放は use-after-free を招く。
-// GPU 版は MetalTensor の内部 Arc でデータが保護されるため問題ないが、
-// CpuTensor は Vec<f32> を直接保持するため、release を noop にして
-// テンソルのライフタイムをプログラム全体に延長する。
+// 複数回 release が呼ばれる場合がある。Box::from_raw による即時解放は
+// use-after-free を招くため、内部データのみクリアして構造体は保持する。
+// これにより:
+//   - Vec<f32> 等のデータメモリは OS に返却（メモリリーク解消）
+//   - OpaqueTensor ポインタは有効なまま（use-after-free 防止）
+//   - 構造体（~80バイト）のリークは許容範囲
 
-pub extern "C" fn tl_cpu_tensor_free(_t: *mut OpaqueTensor) {
-    // noop: テンソルはプロセス終了時に OS が回収
+pub extern "C" fn tl_cpu_tensor_free(t: *mut OpaqueTensor) {
+    if t.is_null() { return; }
+    let tensor = unsafe { &mut *t };
+    tensor.clear_data();
 }
 
 pub extern "C" fn tl_cpu_tensor_acquire(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    t // noop
+    t // noop: V3.3 でテンソルの Acquire は無効化済み
 }
 
-pub extern "C" fn tl_cpu_tensor_release(_t: *mut OpaqueTensor) {
-    // noop
+pub extern "C" fn tl_cpu_tensor_release(t: *mut OpaqueTensor) {
+    if t.is_null() { return; }
+    let tensor = unsafe { &mut *t };
+    tensor.clear_data();
 }
 
 // ========== テンソル情報 ==========
@@ -157,6 +163,12 @@ pub extern "C" fn tl_cpu_tensor_set_f32(t: *mut OpaqueTensor, indices: *const us
     if flat_idx < data.len() {
         data[flat_idx] = value;
     }
+}
+
+pub extern "C" fn tl_cpu_tensor_item(t: *mut OpaqueTensor) -> f32 {
+    if t.is_null() { return 0.0; }
+    let tensor = unsafe { &*t };
+    tensor.data_f32().first().copied().unwrap_or(0.0)
 }
 
 pub extern "C" fn tl_cpu_tensor_item_i64(t: *mut OpaqueTensor) -> i64 {
