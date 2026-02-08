@@ -237,46 +237,78 @@ impl CpuTensor {
         if !self.requires_grad() {
             return;
         }
-        let ones = CpuTensor::ones(self.shape(), self.dtype());
         let self_ptr = self as *mut CpuTensor;
-        let mut worklist: Vec<(*mut CpuTensor, CpuTensor)> = vec![(self_ptr, ones)];
+
+        // 1. DFS でトポロジカル順序を構築
+        let mut topo_order: Vec<*mut CpuTensor> = Vec::new();
         let mut visited = std::collections::HashSet::<usize>::new();
-        while let Some((tensor_ptr, grad_output)) = worklist.pop() {
-            let key = tensor_ptr as usize;
-            let tensor = unsafe { &mut *tensor_ptr };
-            // 勾配を蓄積
-            if let Some(ref mut meta) = tensor.autograd {
-                if let Some(ref mut grad) = meta.grad {
-                    let new_grad = grad.add_impl(&grad_output);
-                    *grad = new_grad;
-                } else {
-                    meta.grad = Some(grad_output.shallow_clone());
-                }
-            }
-            // 既に訪問済みなら勾配蓄積のみで backward 伝播はスキップ
-            if visited.contains(&key) {
-                continue;
-            }
-            visited.insert(key);
-            let propagation = {
-                let meta = tensor.autograd.as_ref();
-                meta.and_then(|m| {
+        Self::build_topo(self_ptr, &mut visited, &mut topo_order);
+
+        // 2. 出力テンソルの勾配を ones で初期化
+        let ones = CpuTensor::ones(self.shape(), self.dtype());
+        if let Some(ref mut meta) = self.autograd {
+            meta.grad = Some(ones);
+        }
+
+        // 3. 逆トポロジカル順序で勾配を伝播
+        //    各ノードの蓄積済み勾配を使って backward を呼ぶため、
+        //    全パスの勾配が合算されてから伝播される。
+        for &ptr in topo_order.iter().rev() {
+            let tensor = unsafe { &*ptr };
+            let grad = tensor.autograd.as_ref()
+                .and_then(|m| m.grad.as_ref())
+                .map(|g| g.shallow_clone());
+
+            if let Some(grad_output) = grad {
+                let propagation = tensor.autograd.as_ref().and_then(|m| {
                     m.grad_fn.as_ref().map(|gf| {
                         let grads = gf.backward(&grad_output);
                         let inputs = gf.inputs();
                         (grads, inputs)
                     })
-                })
-            };
-            if let Some((grads, inputs)) = propagation {
-                for (input_ptr, grad) in inputs.into_iter().zip(grads.into_iter()) {
-                    let input = unsafe { &*input_ptr };
-                    if input.requires_grad() {
-                        worklist.push((input_ptr, grad));
+                });
+
+                if let Some((grads, inputs)) = propagation {
+                    for (input_ptr, grad) in inputs.into_iter().zip(grads.into_iter()) {
+                        let input = unsafe { &mut *input_ptr };
+                        if input.requires_grad() {
+                            if let Some(ref mut meta) = input.autograd {
+                                if let Some(ref mut existing) = meta.grad {
+                                    *existing = existing.add_impl(&grad);
+                                } else {
+                                    meta.grad = Some(grad);
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+
+    /// backward 用のトポロジカルソート（DFS）
+    fn build_topo(
+        ptr: *mut CpuTensor,
+        visited: &mut std::collections::HashSet<usize>,
+        topo: &mut Vec<*mut CpuTensor>,
+    ) {
+        let key = ptr as usize;
+        if visited.contains(&key) {
+            return;
+        }
+        visited.insert(key);
+        let tensor = unsafe { &*ptr };
+        if let Some(ref meta) = tensor.autograd {
+            if let Some(ref gf) = meta.grad_fn {
+                for input in gf.inputs() {
+                    let input_tensor = unsafe { &*input };
+                    if input_tensor.requires_grad() {
+                        Self::build_topo(input, visited, topo);
+                    }
+                }
+            }
+        }
+        topo.push(ptr);
     }
 
 

@@ -214,7 +214,11 @@ pub extern "C" fn tl_cpu_tensor_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) 
     let ptr = make_tensor(result);
     if ta.requires_grad() || tb.requires_grad() {
         use crate::autograd::ops::AddBackward;
-        unsafe { (&mut *ptr).set_grad_fn(Box::new(AddBackward { a, b })); }
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(AddBackward {
+            a, b,
+            a_shape: ta.shape().to_vec(),
+            b_shape: tb.shape().to_vec(),
+        })); }
     }
     ptr
 }
@@ -226,7 +230,11 @@ pub extern "C" fn tl_cpu_tensor_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) 
     let ptr = make_tensor(result);
     if ta.requires_grad() || tb.requires_grad() {
         use crate::autograd::ops::SubBackward;
-        unsafe { (&mut *ptr).set_grad_fn(Box::new(SubBackward { a, b })); }
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(SubBackward {
+            a, b,
+            a_shape: ta.shape().to_vec(),
+            b_shape: tb.shape().to_vec(),
+        })); }
     }
     ptr
 }
@@ -255,6 +263,7 @@ pub extern "C" fn tl_cpu_tensor_div(a: *mut OpaqueTensor, b: *mut OpaqueTensor) 
         use crate::autograd::ops::DivBackward;
         unsafe { (&mut *ptr).set_grad_fn(Box::new(DivBackward {
             a, b, a_data: ta.shallow_clone(), b_data: tb.shallow_clone(),
+            a_shape: ta.shape().to_vec(), b_shape: tb.shape().to_vec(),
         })); }
     }
     ptr

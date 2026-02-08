@@ -48,11 +48,15 @@ fn reduce_grad_for_broadcast(grad: &CpuTensor, target_shape: &[usize]) -> CpuTen
 pub struct AddBackward {
     pub a: *mut CpuTensor,
     pub b: *mut CpuTensor,
+    pub a_shape: Vec<usize>,
+    pub b_shape: Vec<usize>,
 }
 
 impl GradFn for AddBackward {
     fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
-        vec![grad_output.shallow_clone(), grad_output.shallow_clone()]
+        let grad_a = reduce_grad_for_broadcast(grad_output, &self.a_shape);
+        let grad_b = reduce_grad_for_broadcast(grad_output, &self.b_shape);
+        vec![grad_a, grad_b]
     }
     fn inputs(&self) -> Vec<*mut CpuTensor> {
         vec![self.a, self.b]
@@ -63,11 +67,15 @@ impl GradFn for AddBackward {
 pub struct SubBackward {
     pub a: *mut CpuTensor,
     pub b: *mut CpuTensor,
+    pub a_shape: Vec<usize>,
+    pub b_shape: Vec<usize>,
 }
 
 impl GradFn for SubBackward {
     fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
-        vec![grad_output.shallow_clone(), grad_output.neg()]
+        let grad_a = reduce_grad_for_broadcast(grad_output, &self.a_shape);
+        let grad_b = reduce_grad_for_broadcast(&grad_output.neg(), &self.b_shape);
+        vec![grad_a, grad_b]
     }
     fn inputs(&self) -> Vec<*mut CpuTensor> {
         vec![self.a, self.b]
@@ -101,13 +109,15 @@ pub struct DivBackward {
     pub b: *mut CpuTensor,
     pub a_data: CpuTensor,
     pub b_data: CpuTensor,
+    pub a_shape: Vec<usize>,
+    pub b_shape: Vec<usize>,
 }
 
 impl GradFn for DivBackward {
     fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
-        let grad_a = grad_output.div(&self.b_data);
+        let grad_a = reduce_grad_for_broadcast(&grad_output.div(&self.b_data), &self.a_shape);
         let b_sq = self.b_data.mul(&self.b_data);
-        let grad_b = grad_output.mul(&self.a_data).neg().div(&b_sq);
+        let grad_b = reduce_grad_for_broadcast(&grad_output.mul(&self.a_data).neg().div(&b_sq), &self.b_shape);
         vec![grad_a, grad_b]
     }
     fn inputs(&self) -> Vec<*mut CpuTensor> {
