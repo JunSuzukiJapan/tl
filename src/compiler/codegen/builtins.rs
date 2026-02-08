@@ -505,9 +505,7 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_get_f32_md", get_md_type);
 
     // Manual mapping for tl_clear_grads to avoid dlsym issues
-    if let Some(f) = module.get_function("tl_clear_grads") {
-        execution_engine.add_global_mapping(&f, runtime::tl_clear_grads as usize);
-    }
+    map_tensor_fn!("tl_clear_grads", runtime::tl_clear_grads, cpu_ffi::tl_cpu_clear_grads);
     if let Some(f) = module.get_function("tl_file_exists") {
         execution_engine.add_global_mapping(&f, runtime::tl_file_exists as usize);
     }
@@ -1418,10 +1416,7 @@ pub fn declare_runtime_functions<'ctx>(
     }
     map_tensor_fn!("tl_tensor_free", runtime::tl_tensor_free, cpu_ffi::tl_cpu_tensor_free);
     map_tensor_fn!("tl_tensor_clone", runtime::tl_tensor_clone, cpu_ffi::tl_cpu_tensor_clone);
-    if let Some(f) = module.get_function("tl_tensor_acquire") {
-        execution_engine
-            .add_global_mapping(&f, runtime::memory_manager::tl_tensor_acquire as usize);
-    }
+    map_tensor_fn!("tl_tensor_acquire", runtime::memory_ffi::tl_tensor_acquire, cpu_ffi::tl_cpu_tensor_acquire);
     map_tensor_fn!("tl_tensor_release", runtime::tl_tensor_release, cpu_ffi::tl_cpu_tensor_release);
     if let Some(f) = module.get_function("tl_tensor_prepare_return") {
         execution_engine.add_global_mapping(
@@ -1452,21 +1447,11 @@ pub fn declare_runtime_functions<'ctx>(
     // Additional mappings from previous list...
     map_tensor_fn!("tl_tensor_randn_debug", runtime::tl_tensor_randn_debug, cpu_ffi::tl_cpu_tensor_randn_debug);
     map_tensor_fn!("tl_tensor_zeros", runtime::tl_tensor_zeros, cpu_ffi::tl_cpu_tensor_zeros);
-    if let Some(f) = module.get_function("tl_tensor_backward") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_backward as usize);
-    }
-    if let Some(f) = module.get_function("tl_tensor_grad") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_grad as usize);
-    }
-    if let Some(f) = module.get_function("tl_tensor_detach") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_detach as usize);
-    }
-    if let Some(f) = module.get_function("tl_tensor_enable_grad") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_enable_grad as usize);
-    }
-    if let Some(f) = module.get_function("tl_tensor_softmax") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_softmax as usize);
-    }
+    map_tensor_fn!("tl_tensor_backward", runtime::tl_tensor_backward, cpu_ffi::tl_cpu_tensor_backward);
+    map_tensor_fn!("tl_tensor_grad", runtime::tl_tensor_grad, cpu_ffi::tl_cpu_tensor_grad);
+    map_tensor_fn!("tl_tensor_detach", runtime::tl_tensor_detach, cpu_ffi::tl_cpu_tensor_detach);
+    map_tensor_fn!("tl_tensor_enable_grad", runtime::tl_tensor_enable_grad, cpu_ffi::tl_cpu_tensor_enable_grad);
+    map_tensor_fn!("tl_tensor_softmax", runtime::tl_tensor_softmax, cpu_ffi::tl_cpu_tensor_softmax);
     if let Some(f) = module.get_function("tl_tensor_cross_entropy") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_cross_entropy as usize);
     }

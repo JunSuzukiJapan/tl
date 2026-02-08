@@ -7,10 +7,6 @@ use crate::DType;
 
 type OpaqueTensor = CpuTensor;
 
-fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
-    Box::into_raw(Box::new(t))
-}
-
 // ========== テンソル作成 ==========
 
 pub extern "C" fn tl_cpu_tensor_new(
@@ -75,14 +71,27 @@ pub extern "C" fn tl_cpu_tensor_from_u8(data: *const u8, len: usize) -> *mut Opa
     make_tensor(CpuTensor::from_slice(&f32_data, &[len], DType::F32))
 }
 
-// ========== テンソル解放 ==========
-
-pub extern "C" fn tl_cpu_tensor_free(t: *mut OpaqueTensor) {
-    if !t.is_null() { unsafe { let _ = Box::from_raw(t); } }
+fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
+    Box::into_raw(Box::new(t))
 }
 
-pub extern "C" fn tl_cpu_tensor_release(t: *mut OpaqueTensor) {
-    if !t.is_null() { unsafe { let _ = Box::from_raw(t); } }
+// ========== テンソル解放（noop） ==========
+// JIT の forループ末尾クリーンアップや変数再代入で同一テンソルに対して
+// 複数回 release が呼ばれるため、CpuTensor の即時解放は use-after-free を招く。
+// GPU 版は MetalTensor の内部 Arc でデータが保護されるため問題ないが、
+// CpuTensor は Vec<f32> を直接保持するため、release を noop にして
+// テンソルのライフタイムをプログラム全体に延長する。
+
+pub extern "C" fn tl_cpu_tensor_free(_t: *mut OpaqueTensor) {
+    // noop: テンソルはプロセス終了時に OS が回収
+}
+
+pub extern "C" fn tl_cpu_tensor_acquire(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    t // noop
+}
+
+pub extern "C" fn tl_cpu_tensor_release(_t: *mut OpaqueTensor) {
+    // noop
 }
 
 // ========== テンソル情報 ==========
@@ -630,4 +639,40 @@ pub extern "C" fn tl_cpu_runtime_init() {
 }
 
 pub extern "C" fn tl_cpu_runtime_shutdown() {}
+
+// ========== Autograd FFI ==========
+
+pub extern "C" fn tl_cpu_tensor_backward(t: *mut OpaqueTensor) {
+    if t.is_null() { return; }
+    let tensor = unsafe { &mut *t };
+    tensor.backward();
+}
+
+pub extern "C" fn tl_cpu_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    if let Some(grad) = tensor.get_grad() {
+        return make_tensor(grad);
+    }
+    // フォールバック: ゼロテンソル
+    make_tensor(CpuTensor::zeros(tensor.shape(), DType::F32))
+}
+
+pub extern "C" fn tl_cpu_tensor_detach(t: *mut OpaqueTensor, _req_grad: bool) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    make_tensor(tensor.detach())
+}
+
+/// LLVM IR宣言は `(t) -> void`
+pub extern "C" fn tl_cpu_tensor_enable_grad(t: *mut OpaqueTensor) {
+    if t.is_null() { return; }
+    let tensor = unsafe { &mut *t };
+    tensor.enable_grad();
+}
+
+/// CPU版では noop（CPU autograd はグローバル grad 管理をしないため）
+pub extern "C" fn tl_cpu_clear_grads() {
+    // noop
+}
 

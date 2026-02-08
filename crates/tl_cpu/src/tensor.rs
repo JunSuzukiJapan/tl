@@ -228,8 +228,11 @@ impl CpuTensor {
         let ones = CpuTensor::ones(self.shape(), self.dtype());
         let self_ptr = self as *mut CpuTensor;
         let mut worklist: Vec<(*mut CpuTensor, CpuTensor)> = vec![(self_ptr, ones)];
+        let mut visited = std::collections::HashSet::<usize>::new();
         while let Some((tensor_ptr, grad_output)) = worklist.pop() {
+            let key = tensor_ptr as usize;
             let tensor = unsafe { &mut *tensor_ptr };
+            // 勾配を蓄積
             if let Some(ref mut meta) = tensor.autograd {
                 if let Some(ref mut grad) = meta.grad {
                     let new_grad = grad.add_impl(&grad_output);
@@ -238,6 +241,11 @@ impl CpuTensor {
                     meta.grad = Some(grad_output.shallow_clone());
                 }
             }
+            // 既に訪問済みなら勾配蓄積のみで backward 伝播はスキップ
+            if visited.contains(&key) {
+                continue;
+            }
+            visited.insert(key);
             let propagation = {
                 let meta = tensor.autograd.as_ref();
                 meta.and_then(|m| {
@@ -258,6 +266,7 @@ impl CpuTensor {
             }
         }
     }
+
 
     pub fn detach(&self) -> CpuTensor {
         self.shallow_clone()
