@@ -866,36 +866,226 @@ impl CpuTensor {
     // ========== 深層学習演算（簡易版） ==========
 
     pub fn conv2d_impl(&self, weight: &Self, stride: (usize, usize), padding: (usize, usize)) -> Self {
-        // TODO: 完全な実装
-        let _ = (weight, stride, padding);
-        CpuTensor::zeros(&[1], self.dtype)
+        // self: [batch, in_ch, h, w], weight: [out_ch, in_ch, kh, kw]
+        let batch = self.shape[0];
+        let in_ch = self.shape[1];
+        let h = self.shape[2];
+        let w = self.shape[3];
+        let out_ch = weight.shape[0];
+        let kh = weight.shape[2];
+        let kw = weight.shape[3];
+        let (sh, sw) = stride;
+        let (ph, pw) = padding;
+        let out_h = (h + 2 * ph - kh) / sh + 1;
+        let out_w = (w + 2 * pw - kw) / sw + 1;
+
+        let mut result = vec![0.0f32; batch * out_ch * out_h * out_w];
+
+        for b in 0..batch {
+            for oc in 0..out_ch {
+                for oh in 0..out_h {
+                    for ow in 0..out_w {
+                        let mut sum = 0.0f32;
+                        for ic in 0..in_ch {
+                            for ki in 0..kh {
+                                for kj in 0..kw {
+                                    let ih = oh * sh + ki;
+                                    let iw = ow * sw + kj;
+                                    let ih = ih as isize - ph as isize;
+                                    let iw = iw as isize - pw as isize;
+                                    if ih >= 0 && ih < h as isize && iw >= 0 && iw < w as isize {
+                                        let in_idx = b * in_ch * h * w + ic * h * w + ih as usize * w + iw as usize;
+                                        let w_idx = oc * in_ch * kh * kw + ic * kh * kw + ki * kw + kj;
+                                        sum += self.data_f32[in_idx] * weight.data_f32[w_idx];
+                                    }
+                                }
+                            }
+                        }
+                        let out_idx = b * out_ch * out_h * out_w + oc * out_h * out_w + oh * out_w + ow;
+                        result[out_idx] = sum;
+                    }
+                }
+            }
+        }
+
+        CpuTensor { data_f32: result, data_i64: None, shape: vec![batch, out_ch, out_h, out_w], dtype: self.dtype, autograd: None }
     }
 
-    pub fn batch_norm_impl(&self, gamma: &Self, beta: &Self, _running_mean: &Self, _running_var: &Self, eps: f32) -> Self {
-        let mean = self.mean_all_impl();
-        let data: Vec<f32> = self.data_f32.iter().map(|x| x - mean).collect();
-        let var: f32 = data.iter().map(|x| x * x).sum::<f32>() / data.len() as f32;
-        let inv_std = 1.0 / (var + eps).sqrt();
-        let result: Vec<f32> = data.iter().enumerate().map(|(i, x)| {
-            let g = if i < gamma.data_f32.len() { gamma.data_f32[i % gamma.data_f32.len()] } else { 1.0 };
-            let b = if i < beta.data_f32.len() { beta.data_f32[i % beta.data_f32.len()] } else { 0.0 };
-            x * inv_std * g + b
-        }).collect();
-        CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+    pub fn batch_norm_impl(&self, gamma: &Self, beta: &Self, running_mean: &Self, running_var: &Self, eps: f32) -> Self {
+        // self: [batch, channels, ...] or [batch, features]
+        // running_mean/running_var 使用時はチャネルごと正規化
+        if self.shape.len() >= 2 {
+            let batch = self.shape[0];
+            let channels = self.shape[1];
+            let spatial: usize = self.shape[2..].iter().product();
+            let spatial = if spatial == 0 { 1 } else { spatial };
+
+            let use_running = running_mean.elem_count() == channels && running_var.elem_count() == channels;
+
+            let mut result = self.data_f32.clone();
+            for c in 0..channels {
+                let (mean, var) = if use_running {
+                    (running_mean.data_f32[c], running_var.data_f32[c])
+                } else {
+                    // バッチ統計量を計算
+                    let n = (batch * spatial) as f32;
+                    let mut m = 0.0f32;
+                    for b in 0..batch {
+                        for s in 0..spatial {
+                            m += self.data_f32[b * channels * spatial + c * spatial + s];
+                        }
+                    }
+                    m /= n;
+                    let mut v = 0.0f32;
+                    for b in 0..batch {
+                        for s in 0..spatial {
+                            let d = self.data_f32[b * channels * spatial + c * spatial + s] - m;
+                            v += d * d;
+                        }
+                    }
+                    v /= n;
+                    (m, v)
+                };
+
+                let inv_std = 1.0 / (var + eps).sqrt();
+                let g = if c < gamma.data_f32.len() { gamma.data_f32[c] } else { 1.0 };
+                let bi = if c < beta.data_f32.len() { beta.data_f32[c] } else { 0.0 };
+
+                for b in 0..batch {
+                    for s in 0..spatial {
+                        let idx = b * channels * spatial + c * spatial + s;
+                        result[idx] = (result[idx] - mean) * inv_std * g + bi;
+                    }
+                }
+            }
+            CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        } else {
+            // 1D フォールバック
+            let mean = self.mean_all_impl();
+            let data: Vec<f32> = self.data_f32.iter().map(|x| x - mean).collect();
+            let var: f32 = data.iter().map(|x| x * x).sum::<f32>() / data.len() as f32;
+            let inv_std = 1.0 / (var + eps).sqrt();
+            let result: Vec<f32> = data.iter().enumerate().map(|(i, x)| {
+                let g = if i < gamma.data_f32.len() { gamma.data_f32[i % gamma.data_f32.len()] } else { 1.0 };
+                let b = if i < beta.data_f32.len() { beta.data_f32[i % beta.data_f32.len()] } else { 0.0 };
+                x * inv_std * g + b
+            }).collect();
+            CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        }
     }
 
     pub fn layer_norm_impl(&self, gamma: &Self, beta: &Self, eps: f32) -> Self {
-        self.batch_norm_impl(gamma, beta, &CpuTensor::zeros(&[1], self.dtype), &CpuTensor::ones(&[1], self.dtype), eps)
+        // 最終次元で正規化 (各行独立)
+        let ndim = self.shape.len();
+        if ndim < 2 {
+            // 1D: 全体を正規化
+            let mean = self.mean_all_impl();
+            let var: f32 = self.data_f32.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / self.data_f32.len() as f32;
+            let inv_std = 1.0 / (var + eps).sqrt();
+            let result: Vec<f32> = self.data_f32.iter().enumerate().map(|(i, x)| {
+                let g = gamma.data_f32.get(i).copied().unwrap_or(1.0);
+                let b = beta.data_f32.get(i).copied().unwrap_or(0.0);
+                (x - mean) * inv_std * g + b
+            }).collect();
+            return CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None };
+        }
+
+        let last_dim = self.shape[ndim - 1];
+        let outer: usize = self.shape[..ndim - 1].iter().product();
+        let mut result = self.data_f32.clone();
+
+        for i in 0..outer {
+            let start = i * last_dim;
+            let end = start + last_dim;
+            let slice = &self.data_f32[start..end];
+
+            let mean: f32 = slice.iter().sum::<f32>() / last_dim as f32;
+            let var: f32 = slice.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / last_dim as f32;
+            let inv_std = 1.0 / (var + eps).sqrt();
+
+            for j in 0..last_dim {
+                let g = gamma.data_f32.get(j).copied().unwrap_or(1.0);
+                let b = beta.data_f32.get(j).copied().unwrap_or(0.0);
+                result[start + j] = (slice[j] - mean) * inv_std * g + b;
+            }
+        }
+
+        CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
     }
 
     pub fn max_pool2d_impl(&self, kernel_size: (usize, usize), stride: (usize, usize)) -> Self {
-        let _ = (kernel_size, stride);
-        CpuTensor::zeros(&[1], self.dtype)
+        // self: [batch, channels, h, w]
+        let batch = self.shape[0];
+        let channels = self.shape[1];
+        let h = self.shape[2];
+        let w = self.shape[3];
+        let (kh, kw) = kernel_size;
+        let (sh, sw) = stride;
+        let out_h = (h - kh) / sh + 1;
+        let out_w = (w - kw) / sw + 1;
+
+        let mut result = vec![f32::NEG_INFINITY; batch * channels * out_h * out_w];
+
+        for b in 0..batch {
+            for c in 0..channels {
+                for oh in 0..out_h {
+                    for ow in 0..out_w {
+                        let mut max_val = f32::NEG_INFINITY;
+                        for ki in 0..kh {
+                            for kj in 0..kw {
+                                let ih = oh * sh + ki;
+                                let iw = ow * sw + kj;
+                                let idx = b * channels * h * w + c * h * w + ih * w + iw;
+                                if self.data_f32[idx] > max_val {
+                                    max_val = self.data_f32[idx];
+                                }
+                            }
+                        }
+                        let out_idx = b * channels * out_h * out_w + c * out_h * out_w + oh * out_w + ow;
+                        result[out_idx] = max_val;
+                    }
+                }
+            }
+        }
+
+        CpuTensor { data_f32: result, data_i64: None, shape: vec![batch, channels, out_h, out_w], dtype: self.dtype, autograd: None }
     }
 
     pub fn avg_pool2d_impl(&self, kernel_size: (usize, usize), stride: (usize, usize)) -> Self {
-        let _ = (kernel_size, stride);
-        CpuTensor::zeros(&[1], self.dtype)
+        // self: [batch, channels, h, w]
+        let batch = self.shape[0];
+        let channels = self.shape[1];
+        let h = self.shape[2];
+        let w = self.shape[3];
+        let (kh, kw) = kernel_size;
+        let (sh, sw) = stride;
+        let out_h = (h - kh) / sh + 1;
+        let out_w = (w - kw) / sw + 1;
+        let pool_size = (kh * kw) as f32;
+
+        let mut result = vec![0.0f32; batch * channels * out_h * out_w];
+
+        for b in 0..batch {
+            for c in 0..channels {
+                for oh in 0..out_h {
+                    for ow in 0..out_w {
+                        let mut sum = 0.0f32;
+                        for ki in 0..kh {
+                            for kj in 0..kw {
+                                let ih = oh * sh + ki;
+                                let iw = ow * sw + kj;
+                                let idx = b * channels * h * w + c * h * w + ih * w + iw;
+                                sum += self.data_f32[idx];
+                            }
+                        }
+                        let out_idx = b * channels * out_h * out_w + c * out_h * out_w + oh * out_w + ow;
+                        result[out_idx] = sum / pool_size;
+                    }
+                }
+            }
+        }
+
+        CpuTensor { data_f32: result, data_i64: None, shape: vec![batch, channels, out_h, out_w], dtype: self.dtype, autograd: None }
     }
 
     pub fn dropout_impl(&self, _p: f32, _training: bool) -> Self {

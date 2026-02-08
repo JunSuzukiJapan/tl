@@ -525,27 +525,104 @@ fn test_where_cond() {
 // ========== NN 演算 ==========
 
 #[test]
-fn test_conv2d_stub() {
-    // conv2d は現在 stub 実装 (TODO)
+fn test_conv2d_basic() {
+    // 1x1x3x3 input, 1x1x2x2 kernel
     let input = t(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], &[1, 1, 3, 3]);
     let weight = t(&[1.0, 0.0, 0.0, 1.0], &[1, 1, 2, 2]);
     let c = input.conv2d_impl(&weight, (1, 1), (0, 0));
-    // stub は zeros([1]) を返す
-    assert_eq!(c.elem_count(), 1);
+    assert_eq!(c.shape(), &[1, 1, 2, 2]);
+    // out[0,0]=1*1+2*0+4*0+5*1=6, out[0,1]=2*1+3*0+5*0+6*1=8
+    // out[1,0]=4*1+5*0+7*0+8*1=12, out[1,1]=5*1+6*0+8*0+9*1=14
+    assert_approx(c.data_f32(), &[6.0, 8.0, 12.0, 14.0], 1e-5);
 }
 
 #[test]
-fn test_layer_norm_delegated() {
-    // layer_norm は batch_norm に委譲 (簡易実装)
+fn test_conv2d_stride() {
+    // 1x1x4x4 input, 1x1x2x2 kernel, stride=2
+    let input = t(&[
+        1.0, 2.0, 3.0, 4.0,
+        5.0, 6.0, 7.0, 8.0,
+        9.0, 10.0, 11.0, 12.0,
+        13.0, 14.0, 15.0, 16.0,
+    ], &[1, 1, 4, 4]);
+    let weight = t(&[1.0, 1.0, 1.0, 1.0], &[1, 1, 2, 2]);
+    let c = input.conv2d_impl(&weight, (2, 2), (0, 0));
+    assert_eq!(c.shape(), &[1, 1, 2, 2]);
+    // out[0,0]=1+2+5+6=14, out[0,1]=3+4+7+8=22
+    // out[1,0]=9+10+13+14=46, out[1,1]=11+12+15+16=54
+    assert_approx(c.data_f32(), &[14.0, 22.0, 46.0, 54.0], 1e-5);
+}
+
+#[test]
+fn test_conv2d_padding() {
+    // 1x1x2x2 input, 1x1x3x3 kernel, padding=1 → output same size
+    let input = t(&[1.0, 2.0, 3.0, 4.0], &[1, 1, 2, 2]);
+    let weight = t(&[0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0], &[1, 1, 3, 3]);
+    let c = input.conv2d_impl(&weight, (1, 1), (1, 1));
+    assert_eq!(c.shape(), &[1, 1, 2, 2]);
+    // identity kernel → same as input
+    assert_approx(c.data_f32(), &[1.0, 2.0, 3.0, 4.0], 1e-5);
+}
+
+#[test]
+fn test_layer_norm() {
     let a = t(&[1.0, 2.0, 3.0, 4.0], &[2, 2]);
     let gamma = t(&[1.0, 1.0], &[2]);
     let beta = t(&[0.0, 0.0], &[2]);
     let c = a.layer_norm_impl(&gamma, &beta, 1e-5);
     assert_eq!(c.shape(), &[2, 2]);
-    // 出力が有限であることを確認 (batch_norm 委譲のため厳密な正規化は保証されない)
-    for v in c.data_f32() {
-        assert!(v.is_finite(), "layer_norm output should be finite");
-    }
+    // 各行は独立に正規化される (平均≈0)
+    let row1_mean = (c.data_f32()[0] + c.data_f32()[1]) / 2.0;
+    let row2_mean = (c.data_f32()[2] + c.data_f32()[3]) / 2.0;
+    assert!(row1_mean.abs() < 1e-4, "row1 mean = {}", row1_mean);
+    assert!(row2_mean.abs() < 1e-4, "row2 mean = {}", row2_mean);
+    // [1,2] → [-1, 1] (正規化)
+    assert!(c.data_f32()[0] < 0.0);
+    assert!(c.data_f32()[1] > 0.0);
+}
+
+#[test]
+fn test_batch_norm() {
+    // [2, 2, 1, 1] → batch=2, channels=2
+    let a = t(&[1.0, 3.0, 5.0, 7.0], &[2, 2, 1, 1]);
+    let gamma = t(&[1.0, 1.0], &[2]);
+    let beta = t(&[0.0, 0.0], &[2]);
+    let mean = t(&[3.0, 5.0], &[2]); // channel means: (1+5)/2=3, (3+7)/2=5
+    let var = t(&[4.0, 4.0], &[2]);  // channel var: ((1-3)^2+(5-3)^2)/2=4
+    let c = a.batch_norm_impl(&gamma, &beta, &mean, &var, 1e-5);
+    assert_eq!(c.shape(), &[2, 2, 1, 1]);
+    // channel 0: (1-3)/sqrt(4)=-1, (5-3)/sqrt(4)=1
+    // channel 1: (3-5)/sqrt(4)=-1, (7-5)/sqrt(4)=1
+    assert_approx(c.data_f32(), &[-1.0, -1.0, 1.0, 1.0], 1e-4);
+}
+
+#[test]
+fn test_max_pool2d() {
+    // 1x1x4x4 → kernel=2x2, stride=2 → 1x1x2x2
+    let input = t(&[
+        1.0, 2.0, 3.0, 4.0,
+        5.0, 6.0, 7.0, 8.0,
+        9.0, 10.0, 11.0, 12.0,
+        13.0, 14.0, 15.0, 16.0,
+    ], &[1, 1, 4, 4]);
+    let c = input.max_pool2d_impl((2, 2), (2, 2));
+    assert_eq!(c.shape(), &[1, 1, 2, 2]);
+    assert_approx(c.data_f32(), &[6.0, 8.0, 14.0, 16.0], 1e-5);
+}
+
+#[test]
+fn test_avg_pool2d() {
+    // 1x1x4x4 → kernel=2x2, stride=2 → 1x1x2x2
+    let input = t(&[
+        1.0, 2.0, 3.0, 4.0,
+        5.0, 6.0, 7.0, 8.0,
+        9.0, 10.0, 11.0, 12.0,
+        13.0, 14.0, 15.0, 16.0,
+    ], &[1, 1, 4, 4]);
+    let c = input.avg_pool2d_impl((2, 2), (2, 2));
+    assert_eq!(c.shape(), &[1, 1, 2, 2]);
+    // avg([1,2,5,6])=3.5, avg([3,4,7,8])=5.5, ...
+    assert_approx(c.data_f32(), &[3.5, 5.5, 11.5, 13.5], 1e-5);
 }
 
 // ========== Autograd ==========
