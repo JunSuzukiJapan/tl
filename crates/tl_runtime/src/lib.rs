@@ -1,3 +1,4 @@
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 //! TL Runtime - Metal Backend
 //!
 //! Candle を使用せず、tl_metal::MetalTensor を直接使用するランタイム。
@@ -14,10 +15,10 @@ pub mod print_ffi;
 pub mod memory_ffi;
 pub mod file_io;
 pub mod tensor_map;
-pub mod tokenizer;
 pub mod system;
 pub mod tensor_ops_ext;
 pub mod math_ffi;
+pub mod tokenizer;
 // autograd_registry は MetalTensor 統合により廃止
 
 // ========== Stub Modules (Legacy Compatibility) ==========
@@ -74,9 +75,15 @@ pub use tensor_ops_ext::{
     // Type conversion
     tl_tensor_to_f32, tl_tensor_to_i64, tl_tensor_to_device,
     // Activation functions
-    tl_tensor_tan, tl_tensor_sigmoid, tl_tensor_gelu, tl_tensor_silu,
+    tl_tensor_tan, tl_tensor_sigmoid, tl_tensor_gelu, tl_tensor_silu, tl_tensor_tanh,
+    tl_tensor_exp, tl_tensor_log, tl_tensor_sin, tl_tensor_cos, tl_tensor_relu,
+    tl_tensor_softmax,
     // Reduction with dimension
     tl_tensor_max_dim, tl_tensor_min_dim, tl_tensor_mean_dim, tl_tensor_sum_dim,
+    // Global reduction and argmin/max
+    tl_tensor_max, tl_tensor_min, tl_tensor_mean, tl_tensor_sum, tl_tensor_argmin,
+    // Matrix Ops
+    tl_tensor_matmul, tl_tensor_transpose,
     // Convolution
     tl_tensor_conv2d,
     // NN Layers (GPU accelerated)
@@ -88,17 +95,25 @@ pub use tensor_ops_ext::{
     tl_tensor_rms_norm,
     // Misc
     tl_tensor_repeat_interleave, tl_tensor_sample, tl_tensor_scale, tl_tensor_clamp,
+    tl_tensor_replace_data, tl_tensor_contiguous, tl_tensor_print, tl_tensor_slice,
+    tl_tensor_reshape, // Added reshape
     // Device/Grad
     tl_tensor_device_id, tl_tensor_backward, tl_tensor_grad, tl_tensor_detach, tl_tensor_enable_grad,
-    // RoPE
+    // Rope
     tl_tensor_rope_new_cos, tl_tensor_rope_new_sin, tl_tensor_apply_rope,
     // Mask
     tl_tensor_new_causal_mask,
     // 追加テンソル関数
-    tl_tensor_sqrt, tl_tensor_pow, tl_tensor_tril,
+    tl_tensor_sqrt, tl_tensor_pow, tl_tensor_sub_scalar, tl_tensor_tril,
+    tl_tensor_cat, // Added export
     tl_tensor_get, tl_tensor_item,
     tl_tensor_get_f32_md, tl_tensor_get_i64_md, tl_tensor_set_f32_md,
     tl_tensor_from_vec_u8, tl_tensor_from_u8_labels, tl_tensor_from_i64_array,
+    // Legacy / Image / Compiler Compat / IO
+    tl_tensor_cat_i64, tl_tensor_narrow, tl_tensor_reshape_dims,
+    tl_tensor_argmax, tl_tensor_reshape_new,
+    tl_image_load_grayscale, tl_image_width, tl_image_height,
+    tl_tensor_save, tl_tensor_load, tl_get_memory_mb,
 };
 
 // ========== Print Ext Exports ==========
@@ -177,7 +192,7 @@ pub fn force_link() {
     // 何もしない - リンクを強制するだけ
 }
 
-use std::ffi::c_void;
+// use std::ffi::c_void;
 use std::sync::OnceLock;
 
 // Metal バックエンド
@@ -808,561 +823,4 @@ pub extern "C" fn tl_tensor_ge(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *m
     }
     let (ta, tb) = unsafe { (&*a, &*b) };
     make_tensor(ta.ge_impl(tb))
-}
-
-// ========== 数学関数 ==========
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_exp(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    let result = MetalTensor::exp_impl(tensor);
-    let ptr = make_tensor(result);
-    if tensor.requires_grad() {
-        use tl_metal::autograd::ops::ExpBackward;
-        let output = unsafe { &*ptr }.shallow_clone();
-        let rt = unsafe { &mut *ptr };
-        rt.set_grad_fn(Box::new(ExpBackward { a: t, output }));
-    }
-    ptr
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_log(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    let result = MetalTensor::log_impl(tensor);
-    let ptr = make_tensor(result);
-    if tensor.requires_grad() {
-        use tl_metal::autograd::ops::LogBackward;
-        let rt = unsafe { &mut *ptr };
-        rt.set_grad_fn(Box::new(LogBackward { a: t, a_data: tensor.shallow_clone() }));
-    }
-    ptr
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_sin(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    let result = MetalTensor::sin_impl(tensor);
-    make_tensor(result)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_cos(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    let result = MetalTensor::cos_impl(tensor);
-    make_tensor(result)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_tanh(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    make_tensor(tensor.tanh_impl())
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_relu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    let result = MetalTensor::relu_impl(tensor);
-    let ptr = make_tensor(result);
-    if tensor.requires_grad() {
-        use tl_metal::autograd::ops::ReluBackward;
-        let rt = unsafe { &mut *ptr };
-        rt.set_grad_fn(Box::new(ReluBackward { a: t, a_data: tensor.shallow_clone() }));
-    }
-    ptr
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_softmax(t: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    let result = MetalTensor::softmax_impl(tensor, dim as i32);
-    let dim_i32 = dim as i32;
-    let ptr = make_tensor(result);
-    if tensor.requires_grad() {
-        use tl_metal::autograd::ops::SoftmaxBackward;
-        let output = unsafe { &*ptr }.shallow_clone();
-        let rt = unsafe { &mut *ptr };
-        rt.set_grad_fn(Box::new(SoftmaxBackward { a: t, output, axis: dim_i32 }));
-    }
-    ptr
-}
-
-// ========== Reduction ==========
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_sum(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    // GPU accelerated sumall
-    let sum_val = MetalTensor::sumall_impl(tensor);
-    let result = MetalTensor::from_slice(&[sum_val], &[1], DType::F32);
-    let ptr = make_tensor(result);
-    if tensor.requires_grad() {
-        use tl_metal::autograd::ops::SumallBackward;
-        let rt = unsafe { &mut *ptr };
-        rt.set_grad_fn(Box::new(SumallBackward { a: t, shape: tensor.shape().to_vec() }));
-    }
-    ptr
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_mean(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    // GPU accelerated mean_all
-    let mean_val = MetalTensor::mean_all_impl(tensor);
-    let result = MetalTensor::from_slice(&[mean_val], &[1], DType::F32);
-    make_tensor(result)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_max(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    // GPU argmax で最大値インデックスを取得し、そのインデックスの値を取得
-    let idx = MetalTensor::argmax_all_impl(tensor);
-    let data: Vec<f32> = tensor.to_vec();
-    let max_val = data[idx];
-    let result = MetalTensor::from_slice(&[max_val], &[1], DType::F32);
-    make_tensor(result)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_min(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    // GPU argmin で最小値インデックスを取得し、そのインデックスの値を取得
-    let idx = MetalTensor::argmin_all_impl(tensor);
-    let data: Vec<f32> = tensor.to_vec();
-    let min_val = data[idx];
-    let result = MetalTensor::from_slice(&[min_val], &[1], DType::F32);
-    make_tensor(result)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_argmax(t: *mut OpaqueTensor, _dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    // GPU accelerated argmax
-    let max_idx = MetalTensor::argmax_all_impl(tensor);
-    let result = MetalTensor::from_slice(&[max_idx as f32], &[1], DType::F32);
-    make_tensor(result)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_argmin(t: *mut OpaqueTensor, _dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    // GPU accelerated argmin
-    let min_idx = MetalTensor::argmin_all_impl(tensor);
-    let result = MetalTensor::from_slice(&[min_idx as f32], &[1], DType::F32);
-    make_tensor(result)
-}
-
-// ========== Shape 操作 ==========
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_reshape(
-    t: *mut OpaqueTensor,
-    rank: usize,
-    shape: *const usize,
-) -> *mut OpaqueTensor {
-    if t.is_null() || shape.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    let new_shape = unsafe { std::slice::from_raw_parts(shape, rank) };
-    let result = MetalTensor::reshape_impl(tensor, new_shape);
-    make_tensor(result)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_reshape_new(
-    t: *mut OpaqueTensor,
-    new_shape_tensor: *mut OpaqueTensor,
-) -> *mut OpaqueTensor {
-    if t.is_null() || new_shape_tensor.is_null() {
-        eprintln!("[tl_tensor_reshape_new] null pointer: t={} shape={}", t.is_null(), new_shape_tensor.is_null());
-        return std::ptr::null_mut();
-    }
-    // shape テンソルから shape データを抽出 (f32 -> usize)
-    let shape_tensor = unsafe { &*new_shape_tensor };
-    let shape_f32: Vec<f32> = shape_tensor.to_vec();
-    let new_shape: Vec<usize> = shape_f32.iter().map(|&x| x as usize).collect();
-    tl_tensor_reshape(t, new_shape.len(), new_shape.as_ptr())
-}
-
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_reshape_dims(
-    t: *mut OpaqueTensor,
-    dim1: i64,
-    dim2: i64,
-    dim3: i64,
-    dim4: i64,
-) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    let mut new_shape = Vec::new();
-    if dim1 > 0 { new_shape.push(dim1 as usize); }
-    if dim2 > 0 { new_shape.push(dim2 as usize); }
-    if dim3 > 0 { new_shape.push(dim3 as usize); }
-    if dim4 > 0 { new_shape.push(dim4 as usize); }
-    
-    let result = MetalTensor::reshape_impl(tensor, &new_shape);
-    make_tensor(result)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_transpose(t: *mut OpaqueTensor, dim0: usize, dim1: usize) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    let result = MetalTensor::transpose_impl(tensor, dim0, dim1);
-    make_tensor(result)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_squeeze(t: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    let result = MetalTensor::squeeze_impl(tensor, dim as usize);
-    make_tensor(result)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_unsqueeze(t: *mut OpaqueTensor, dim: usize) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    let result = MetalTensor::unsqueeze_impl(tensor, dim);
-    make_tensor(result)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_contiguous(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    let result = MetalTensor::contiguous_impl(tensor);
-    make_tensor(result)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_narrow(
-    t: *mut OpaqueTensor,
-    dim: usize,
-    start: usize,
-    len: usize,
-) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    let result = MetalTensor::narrow_impl(tensor, dim, start, len);
-    make_tensor(result)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_slice(
-    t: *mut OpaqueTensor,
-    dim: usize,
-    start: usize,
-    end: usize,
-) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    let len = end.saturating_sub(start);
-    let result = MetalTensor::narrow_impl(tensor, dim, start, len);
-    make_tensor(result)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_cat(a: *mut OpaqueTensor, b: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() {
-        return std::ptr::null_mut();
-    }
-    let (ta, tb) = unsafe { (&*a, &*b) };
-    // GPU accelerated cat
-    let result = MetalTensor::cat(&[ta, tb], dim as usize);
-    make_tensor(result)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_cat_i64(a: *mut OpaqueTensor, b: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
-    tl_tensor_cat(a, b, dim)
-}
-
-// ========== Clone/Print ==========
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_clone(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() {
-        return std::ptr::null_mut();
-    }
-    let tensor = unsafe { &*t };
-    let cloned = tensor.clone();
-    make_tensor(cloned)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_print(t: *mut OpaqueTensor) {
-    if t.is_null() {
-        println!("Tensor[null]");
-        return;
-    }
-    let tensor = unsafe { &*t };
-    let data: Vec<f32> = tensor.to_vec();
-    let shape = tensor.shape();
-    println!("Tensor(shape={:?}, data={:?})", shape, data);
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_replace_data(dst: *mut OpaqueTensor, src: *mut OpaqueTensor) {
-    if dst.is_null() || src.is_null() {
-        return;
-    }
-    unsafe {
-        *dst = (*src).clone();
-    }
-}
-
-// ========== MatMul ==========
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_matmul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() {
-        return std::ptr::null_mut();
-    }
-    let (ta, tb) = unsafe { (&*a, &*b) };
-    let result = MetalTensor::matmul_impl(ta, tb);
-    let ptr = make_tensor(result);
-    if ta.requires_grad() || tb.requires_grad() {
-        use tl_metal::autograd::ops::MatmulBackward;
-        let (a_ref, b_ref) = (a, b);
-        let t = unsafe { &mut *ptr };
-        t.set_grad_fn(Box::new(MatmulBackward {
-            a: a_ref, b: b_ref,
-            a_data: ta.shallow_clone(),
-            b_data: tb.shallow_clone(),
-        }));
-    }
-    ptr
-}
-
-// ========== I/O ==========
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_save(t: *mut OpaqueTensor, path: *mut StringStruct) {
-    unsafe {
-        if t.is_null() || path.is_null() || (*path).ptr.is_null() {
-            return;
-        }
-        let tensor = &*t;
-        let path_str = std::ffi::CStr::from_ptr((*path).ptr).to_string_lossy();
-        let path_buf = file_io::expand_path(&path_str);
-        
-        // 簡易実装: バイナリ形式で保存
-        let data: Vec<f32> = tensor.to_vec();
-        let shape = tensor.shape().to_vec();
-        
-        // バイナリフォーマット: [rank: u64][shape: u64 * rank][data: f32 * numel]
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&(shape.len() as u64).to_le_bytes());
-        for &dim in &shape {
-            bytes.extend_from_slice(&(dim as u64).to_le_bytes());
-        }
-        for &val in &data {
-            bytes.extend_from_slice(&val.to_le_bytes());
-        }
-        
-        match std::fs::write(&path_buf, &bytes) {
-            Ok(_) => println!("Saved tensor to {:?}", path_buf),
-            Err(e) => eprintln!("Failed to save tensor: {}", e),
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_load(path: *mut StringStruct) -> *mut OpaqueTensor {
-    unsafe {
-        if path.is_null() || (*path).ptr.is_null() {
-            return std::ptr::null_mut();
-        }
-        let path_str = std::ffi::CStr::from_ptr((*path).ptr).to_string_lossy();
-        let path_buf = file_io::expand_path(&path_str);
-        
-        match std::fs::read(&path_buf) {
-            Ok(bytes) => {
-                if bytes.len() < 8 {
-                    eprintln!("Invalid tensor file: too short");
-                    return std::ptr::null_mut();
-                }
-                
-                // バイナリフォーマット: [rank: u64][shape: u64 * rank][data: f32 * numel]
-                let rank = u64::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
-                let mut offset = 8;
-                
-                let mut shape = Vec::with_capacity(rank);
-                for _ in 0..rank {
-                    if offset + 8 > bytes.len() {
-                        eprintln!("Invalid tensor file: truncated shape");
-                        return std::ptr::null_mut();
-                    }
-                    let dim = u64::from_le_bytes([bytes[offset], bytes[offset+1], bytes[offset+2], bytes[offset+3], bytes[offset+4], bytes[offset+5], bytes[offset+6], bytes[offset+7]]) as usize;
-                    shape.push(dim);
-                    offset += 8;
-                }
-                
-                let numel: usize = shape.iter().product();
-                let mut data = Vec::with_capacity(numel);
-                for _ in 0..numel {
-                    if offset + 4 > bytes.len() {
-                        eprintln!("Invalid tensor file: truncated data");
-                        return std::ptr::null_mut();
-                    }
-                    let val = f32::from_le_bytes([bytes[offset], bytes[offset+1], bytes[offset+2], bytes[offset+3]]);
-                    data.push(val);
-                    offset += 4;
-                }
-                
-                let tensor = MetalTensor::from_slice(&data, &shape, DType::F32);
-                println!("Loaded tensor from {:?}", path_buf);
-                make_tensor(tensor)
-            }
-            Err(e) => {
-                eprintln!("Failed to read file: {}", e);
-                std::ptr::null_mut()
-            }
-        }
-    }
-}
-
-// ========== Memory Size ==========
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_get_memory_mb() -> i64 {
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
-        if let Ok(output) = Command::new("ps")
-            .args(["-o", "rss=", "-p", &std::process::id().to_string()])
-            .output()
-        {
-            if let Ok(s) = String::from_utf8(output.stdout) {
-                if let Ok(kb) = s.trim().parse::<i64>() {
-                    return kb / 1024;
-                }
-            }
-        }
-    }
-    0
-}
-
-// ========== Compatibility Re-exports ==========
-// tl_print_f64, tl_print_i64, tl_display_f64, tl_display_i64 は print_ffi モジュールで定義
-
-// Vec helper functions for compatibility
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_vec_void_len(ptr: *mut c_void) -> usize {
-    if ptr.is_null() { return 0; }
-    unsafe {
-        let vec = &*(ptr as *mut Vec<*mut c_void>);
-        vec.len()
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_vec_void_get(ptr: *mut c_void, idx: usize) -> *mut c_void {
-    if ptr.is_null() { return std::ptr::null_mut(); }
-    unsafe {
-        let vec = &*(ptr as *mut Vec<*mut c_void>);
-        vec.get(idx).cloned().unwrap_or(std::ptr::null_mut())
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_vec_void_free(ptr: *mut c_void) {
-    if !ptr.is_null() {
-        unsafe {
-            let _ = Box::from_raw(ptr as *mut Vec<*mut c_void>);
-        }
-    }
-}
-
-// Vec<u8> support
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_vec_u8_new() -> *mut Vec<u8> {
-    Box::into_raw(Box::new(Vec::<u8>::new()))
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_vec_u8_len(ptr: *mut Vec<u8>) -> usize {
-    if ptr.is_null() { return 0; }
-    unsafe { (*ptr).len() }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_vec_u8_get(ptr: *mut Vec<u8>, idx: usize) -> u8 {
-    if ptr.is_null() { return 0; }
-    unsafe {
-        let vec = &*ptr;
-        vec.get(idx).cloned().unwrap_or(0)
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_vec_u8_push(ptr: *mut Vec<u8>, val: u8) {
-    if !ptr.is_null() {
-        unsafe { (*ptr).push(val); }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tl_vec_u8_free(ptr: *mut Vec<u8>) {
-    if !ptr.is_null() {
-        unsafe { let _ = Box::from_raw(ptr); }
-    }
 }

@@ -42,12 +42,12 @@ fn unwrap_tensor(ptr: *mut OpaqueTensor) -> *mut OpaqueTensor {
 fn test_error_reporting() {
     // Test invalid matmul (Shape mismatch)
     // 2x2 @ 3x3 -> Error
-    let data_a = vec![1.0, 2.0, 3.0, 4.0];
-    let shape_a = vec![2, 2];
+    let data_a = [1.0, 2.0, 3.0, 4.0];
+    let shape_a = [2, 2];
     let ptr_a = tl_tensor_new(data_a.as_ptr(), 2, shape_a.as_ptr());
 
-    let data_b = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
-    let shape_b = vec![3, 3];
+    let data_b = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+    let shape_b = [3, 3];
     let ptr_b = tl_tensor_new(data_b.as_ptr(), 2, shape_b.as_ptr());
 
     assert_tensor_valid(ptr_a);
@@ -182,8 +182,8 @@ fn assert_approx_eq(a: f32, b: f32) {
 #[serial]
 fn test_matmul() {
     // A: 2x3, B: 3x2 -> C: 2x2
-    let data_a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
-    let data_b = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let data_a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let data_b = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
 
     // A = [[1, 2, 3], [4, 5, 6]]
     // B = [[1, 2], [3, 4], [5, 6]]
@@ -216,8 +216,8 @@ fn test_matmul() {
 #[test]
 #[serial]
 fn test_sum() {
-    let data = vec![1.0, 2.0, 3.0, 4.0];
-    let shape = vec![4];
+    let data = [1.0, 2.0, 3.0, 4.0];
+    let shape = [4];
     let t = unwrap_tensor(tl_tensor_new(data.as_ptr(), 1, shape.as_ptr()));
 
     let t_sum = unwrap_tensor(tl_tensor_sum(t));
@@ -233,8 +233,8 @@ fn test_sum() {
 #[test]
 #[serial]
 fn test_math_ops() {
-    let data = vec![1.0, 4.0, 9.0];
-    let shape = vec![3];
+    let data = [1.0, 4.0, 9.0];
+    let shape = [3];
     let t = unwrap_tensor(tl_tensor_new(data.as_ptr(), 1, shape.as_ptr()));
 
     // Sqrt
@@ -244,8 +244,8 @@ fn test_math_ops() {
     assert_approx_eq(get_item_f32(t_sqrt, 2), 3.0);
 
     // Exp (e^0 = 1) - create new tensor
-    let data_zero = vec![0.0];
-    let shape_zero = vec![1];
+    let data_zero = [0.0];
+    let shape_zero = [1];
     let t_zero = unwrap_tensor(tl_tensor_new(data_zero.as_ptr(), 1, shape_zero.as_ptr()));
     let t_exp = unwrap_tensor(tl_tensor_exp(t_zero));
     assert_approx_eq(get_item_f32(t_exp, 0), 1.0);
@@ -259,9 +259,9 @@ fn test_math_ops() {
 #[test]
 #[serial]
 fn test_basic_ops() {
-    let data_a = vec![10.0, 20.0, 30.0];
-    let data_b = vec![2.0, 5.0, 3.0];
-    let shape = vec![3];
+    let data_a = [10.0, 20.0, 30.0];
+    let data_b = [2.0, 5.0, 3.0];
+    let shape = [3];
 
     let t_a = unwrap_tensor(tl_tensor_new(data_a.as_ptr(), 1, shape.as_ptr()));
     let t_b = unwrap_tensor(tl_tensor_new(data_b.as_ptr(), 1, shape.as_ptr()));
@@ -282,7 +282,7 @@ fn test_basic_ops() {
     assert_approx_eq(get_item_f32(t_div, 1), 4.0);
 
     // Pow: t_b ^ 2 -> [4, 25, 9]
-    let t_pow = unwrap_tensor(tl_tensor_pow(t_b, 2.0));
+    let t_pow = unwrap_tensor(tl_tensor_pow_scalar(t_b, 2.0));
     assert_approx_eq(get_item_f32(t_pow, 0), 4.0);
     assert_approx_eq(get_item_f32(t_pow, 1), 25.0);
 
@@ -291,7 +291,7 @@ fn test_basic_ops() {
     let t_log_input = unwrap_tensor(tl_tensor_new(vec![10.0].as_ptr(), 1, vec![1].as_ptr()));
     let t_log = unwrap_tensor(tl_tensor_log(t_log_input));
     // ln(10) ~ 2.30258
-    assert_approx_eq(get_item_f32(t_log, 0), 2.30258);
+    assert_approx_eq(get_item_f32(t_log, 0), std::f32::consts::LN_10);
 
     safe_free(t_a);
     safe_free(t_b);
@@ -306,8 +306,8 @@ fn test_basic_ops() {
 #[test]
 #[serial]
 fn test_reshape_transpose() {
-    let data = vec![1.0, 2.0, 3.0, 4.0];
-    let shape = vec![2, 2]; // [[1, 2], [3, 4]]
+    let data = [1.0, 2.0, 3.0, 4.0];
+    let shape = [2, 2]; // [[1, 2], [3, 4]]
     let t = unwrap_tensor(tl_tensor_new(data.as_ptr(), 2, shape.as_ptr()));
 
     // Transpose -> [[1, 3], [2, 4]]

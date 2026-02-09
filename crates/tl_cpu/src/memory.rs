@@ -4,12 +4,14 @@ use crate::tensor::CpuTensor;
 
 // Global Tensor Pool to reduce allocation overhead
 // Stores released tensors for reuse.
+#[allow(clippy::vec_box)]
 static TENSOR_POOL: Mutex<Vec<Box<CpuTensor>>> = Mutex::new(Vec::new());
 
 thread_local! {
     // Stack of scopes. Each scope contains a list of tensors allocated within it.
     // When a scope exits, all tensors in it are returned to the global pool.
-    static SCOPE_STACK: RefCell<Vec<Vec<*mut CpuTensor>>> = RefCell::new(Vec::new());
+    #[allow(clippy::vec_box)]
+    static SCOPE_STACK: RefCell<Vec<Vec<*mut CpuTensor>>> = const { RefCell::new(Vec::new()) };
 }
 
 pub fn enter_scope() {

@@ -45,6 +45,7 @@ pub trait GpuTensor: Clone + Send + Sync + Sized {
     /// テンソルの Box ポインタを解放し、Drop を発動する。
     /// GPU: Drop → pool_release（プール返却）
     /// CPU: Drop → free（メモリ解放）
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn release(ptr: *mut Self) {
         if !ptr.is_null() {
             unsafe { let _ = Box::from_raw(ptr); }

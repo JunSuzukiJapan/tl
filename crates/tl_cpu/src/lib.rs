@@ -1,3 +1,4 @@
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 //! CPU テンソルバックエンド
 
 pub mod tensor;
@@ -8,4 +9,3 @@ pub mod memory;
 
 pub use tensor::CpuTensor;
 pub use tl_backend::DType;
-

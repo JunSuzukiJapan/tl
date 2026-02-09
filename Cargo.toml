@@ -74,4 +74,5 @@ glob = "0.3"
 assert_cmd = "2.0"
 predicates = "3.0"
 serial_test = "3.3.1"
+regex = "1.12.3"
 

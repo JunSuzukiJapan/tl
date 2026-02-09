@@ -331,7 +331,7 @@ mod tests {
         let tokens: Vec<Token> = tokenize(input).into_iter().map(|r| r.unwrap().token).collect();
         assert_eq!(tokens, vec![
             Token::IntLiteral(42),
-            Token::FloatLiteral(3.14),
+            Token::FloatLiteral(std::f64::consts::PI),
             Token::StringLiteral("hello".to_string()),
         ]);
     }
