@@ -1,5 +1,5 @@
-# TensorLogic Memory Management Strategy V2.1 (Hybrid Static Analysis + Strict RefCounting)
-# TensorLogic メモリ管理戦略 V2.1 (ハイブリッド静的解析 + 厳格な参照カウント)
+# TensorLogic Memory Management Strategy V4.5 (Hybrid Static Analysis + Strict RefCounting + Scope-Based Tensor)
+# TensorLogic メモリ管理戦略 V4.5 (ハイブリッド静的解析 + 厳格な参照カウント + スコープベーステンソル管理)
 
 This document outlines the **V2.1 Memory Management Strategy** implemented in TensorLogic.
 This strategy combines **Static Analysis (Arena)** for high-performance tensor operations and **Strict Reference Counting** for complex data structures (Structs/Objects).
@@ -348,3 +348,199 @@ V4.0 戦略は、GPU メモリを OS に解放しない **Persistent GPU Pool** 
 
 ### 4. 環境変数
 - `TL_GPU_PREALLOCATE_MB=<size>`: 起動時に GPU メモリを事前確保（将来実装）
+
+---
+
+## [English] Scope-Based Tensor Management (V4.5)
+
+### 1. Problem: `Type::Struct("Tensor")` Misidentification
+The parser resolves `-> Tensor` return type annotations as `Type::Struct("Tensor", [])` rather than `Type::Tensor(_, _)`. Since `Tensor` is an **opaque pointer** in LLVM IR (not a struct with accessible fields), this causes failures whenever the codegen treats it as a real struct:
+
+- **SRET (Struct Return)**: Functions returning Tensor incorrectly used a hidden struct-return pointer
+- **GEP (GetElementPtr)**: `build_struct_gep` on an opaque pointer → `"GEP pointee is not a struct"` error
+- **Deep Clone**: `emit_deep_clone` attempted struct field traversal on Tensor pointers
+- **ABI Adapter**: Post-call wrapper tried to pack Tensor pointer into a struct via GEP
+
+### 2. Solution: Type Normalization at Codegen Boundaries
+Instead of modifying the parser, we normalize `Struct("Tensor")` → `Type::Tensor(F32, 0)` at every codegen boundary where type-specific dispatch occurs:
+
+| Location | File | Fix |
+|:---|:---|:---|
+| `uses_sret` (prototype) | `mod.rs` | Exclude `Struct("Tensor")` from SRET |
+| `uses_sret` (body) | `mod.rs` | Same |
+| `uses_sret` (static call) | `expr.rs` | Same |
+| `uses_sret` (method call) | `expr.rs` | Same |
+| `uses_sret` (fn call DPS) | `expr.rs` | Same |
+| `emit_cleanup_vars_in_scope` | `mod.rs` | Pass `Type::Tensor` to `emit_recursive_free` |
+| `emit_deep_clone` | `stmt.rs` | Redirect to `Type::Tensor` branch |
+| Post-call ABI adapter | `expr.rs` | Replace struct wrapping with type normalization |
+
+### 3. Tensor Lifecycle in Scopes
+
+```
+┌─ make_tensor() ──────────────────────────────┐
+│  let t = Tensor::ones([2, 3])                │
+│    → tl_tensor_ones_i64() returns ptr        │
+│    → t registered in current scope           │
+│                                              │
+│  return t                                    │
+│    → tl_tensor_promote(t) (unregister+float) │
+│    → emit_all_scopes_cleanup (skips t)       │
+│    → return ptr                              │
+└──────────────────────────────────────────────┘
+         │ ptr (floating)
+         ▼
+┌─ main() ─────────────────────────────────────┐
+│  let t = make_tensor()                       │
+│    → call returns ptr                        │
+│    → tl_tensor_register(t) (caller-side)     │
+│    → store to alloca                         │
+│                                              │
+│  // ... use t ...                            │
+│                                              │
+│  scope exit:                                 │
+│    → emit_recursive_free(t, Type::Tensor)    │
+│    → tl_tensor_release_safe(t)               │
+└──────────────────────────────────────────────┘
+```
+
+### 4. Key Invariant
+**`Struct("Tensor")` must never reach `build_struct_gep` or `emit_struct_copy`.** These functions require a concrete LLVM struct type with accessible fields, but Tensor is an opaque `ptr` managed exclusively by runtime functions (`tl_tensor_acquire`, `tl_tensor_release_safe`, `tl_tensor_promote`).
+
+---
+
+## [Japanese] スコープ内テンソル管理 (V4.5)
+
+### 1. 問題: `Type::Struct("Tensor")` の誤認識
+パーサーが `-> Tensor` 型注釈を `Type::Struct("Tensor", [])` として解析する。しかし Tensor は LLVM IR 上では**不透明ポインタ** (`ptr`) であり、フィールドアクセス可能な構造体ではない。codegen が Tensor を構造体として扱おうとすると、以下のエラーが発生する：
+
+- **SRET（構造体返し）**: Tensor を返す関数が隠しポインタ引数を誤って使用
+- **GEP**: 不透明ポインタに `build_struct_gep` → `"GEP pointee is not a struct"` エラー
+- **Deep Clone**: `emit_deep_clone` が Tensor ポインタの構造体フィールド走査を試行
+- **ABI アダプタ**: 関数呼び出し後に Tensor ポインタを GEP で構造体にパックしようとして失敗
+
+### 2. 解決策: codegen 境界での型正規化
+パーサーを変更する代わりに、型に基づくディスパッチが行われるすべての codegen 境界で `Struct("Tensor")` → `Type::Tensor(F32, 0)` に正規化する：
+
+| 箇所 | ファイル | 修正 |
+|:---|:---|:---|
+| `uses_sret`（プロトタイプ） | `mod.rs` | `Struct("Tensor")` を SRET から除外 |
+| `uses_sret`（関数本体） | `mod.rs` | 同上 |
+| `uses_sret`（静的メソッド呼び出し） | `expr.rs` | 同上 |
+| `uses_sret`（メソッド呼び出し） | `expr.rs` | 同上 |
+| `uses_sret`（関数呼び出し DPS） | `expr.rs` | 同上 |
+| `emit_cleanup_vars_in_scope` | `mod.rs` | `Type::Tensor` で `emit_recursive_free` を呼出 |
+| `emit_deep_clone` | `stmt.rs` | `Type::Tensor` ブランチにリダイレクト |
+| 呼び出し後 ABI アダプタ | `expr.rs` | 構造体ラッピングを型正規化に置換 |
+
+### 3. スコープ内テンソルのライフサイクル
+
+```
+┌─ make_tensor() ──────────────────────────────┐
+│  let t = Tensor::ones([2, 3])                │
+│    → tl_tensor_ones_i64() がポインタを返す    │
+│    → t を現在のスコープに登録                  │
+│                                              │
+│  return t                                    │
+│    → tl_tensor_promote(t) (登録解除+浮遊化)   │
+│    → emit_all_scopes_cleanup (t をスキップ)   │
+│    → ポインタを返す                           │
+└──────────────────────────────────────────────┘
+         │ ptr (浮遊状態)
+         ▼
+┌─ main() ─────────────────────────────────────┐
+│  let t = make_tensor()                       │
+│    → 呼び出しがポインタを返す                  │
+│    → tl_tensor_register(t) (呼び出し元で登録)  │
+│    → alloca に格納                            │
+│                                              │
+│  // ... t を使用 ...                          │
+│                                              │
+│  スコープ脱出:                                │
+│    → emit_recursive_free(t, Type::Tensor)    │
+│    → tl_tensor_release_safe(t)               │
+└──────────────────────────────────────────────┘
+```
+
+### 4. 重要な不変条件
+**`Struct("Tensor")` は `build_struct_gep` や `emit_struct_copy` に到達してはならない。** これらの関数はフィールドアクセス可能な具体的な LLVM 構造体型を必要とするが、Tensor はランタイム関数（`tl_tensor_acquire`, `tl_tensor_release_safe`, `tl_tensor_promote`）により排他的に管理される不透明な `ptr` である。
+
+## [English] V5.0 Hybrid Cleanup Strategy (Autograd Graph Management)
+
+### 1. The Challenge of Autograd Graphs
+Autograd computational graphs introduce unique memory management challenges:
+- **Cyclic/Long-lived References**: Tensors within the graph hold raw pointers (`*mut CpuTensor`) to their parents to enable backpropagation.
+- **Reference Cycles**: The graph structure often outlives the local scope of the variables that created it.
+- **Dangling Pointers**: Immediate scope-based deallocation (`release_safe`) causes use-after-free errors when the autograd engine traverses the graph later.
+
+### 2. The Solution: Hybrid Lifecycle Management
+We implemented a **Hybrid Strategy** that treats tensors differently based on their participation in Autograd:
+
+| Tensor Type | Lifecycle Manager | Cleanup Trigger | Mechanism |
+|:---|:---|:---|:---|
+| **Pure Data** (No Autograd) | **Compiler Scope** | Scope Exit | `tl_tensor_release_safe` calls `clear_data` immediately. |
+| **Autograd Node** (Requires Grad) | **Graph Engine** | `backward()` / `detach()` | `release_safe` is **No-Op**. Cleanup assumes graph traversal. |
+
+### 3. Implementation Details
+
+#### A. Conditional `release_safe`
+The runtime's `tl_tensor_release_safe` checks if a tensor has an active Autograd component.
+- **If No Autograd**: It calls `tl_cpu_tensor_clear_data`, freeing the underlying `Vec<f32>` but keeping the struct (safe against double-free).
+- **If Autograd**: It does nothing. The tensor remains alive for the graph.
+
+#### B. Event-Driven Graph Cleanup
+Since autograd tensors are ignored by scope cleanup, they must be explicitly cleaned up by graph events:
+
+1.  **Backward Pass Cleanup**:
+    -   At the end of `backward()`, the engine traverses the topological order.
+    -   **Non-Leaf Nodes** (intermediate calculation results) are identified.
+    -   Their data buffers (`data_f32`, `shape`) and autograd metadata are cleared immediately.
+    -   **Result**: Memory spikes during training are suppressed as intermediate tensors die immediately after use.
+
+2.  **Detach Cleanup**:
+    -   When `t.detach()` is called (typically at epoch boundaries), the **source tensor's** entire upstream graph is traversed recursively.
+    -   All nodes in the detached graph are effectively "garbage collected".
+
+### 4. Results
+This strategy reduced memory growth in the N-Queens solver from **4MB/100 epochs** to **0.33MB/100 epochs** (12x improvement), with zero segmentation faults.
+
+---
+
+## [Japanese] V5.0 ハイブリッドクリーンアップ戦略 (Autograd グラフ管理)
+
+### 1. Autograd グラフの課題
+自動微分（Autograd）の計算グラフは、独特なメモリ管理の課題をもたらします：
+- **長寿命な参照**: グラフ内のテンソルは、逆伝播を可能にするために親テンソルへの生ポインタ (`*mut CpuTensor`) を保持します。
+- **参照サイクル**: グラフ構造は、それを作成した変数のローカルスコープよりも長く生き続けることがよくあります。
+- **ダングリングポインタ**: スコープベースの即時解放 (`release_safe`) を行うと、後で Autograd エンジンがグラフを走査する際に `use-after-free` エラー（不正参照）が発生します。
+
+### 2. 解決策: ハイブリッド・ライフサイクル管理
+テンソルが Autograd に参加しているかどうかに応じて扱いを変える **ハイブリッド戦略** を実装しました：
+
+| テンソル種別 | 管理主体 | 解放トリガー | メカニズム |
+|:---|:---|:---|:---|
+| **純粋データ** (Autograd なし) | **コンパイラスコープ** | スコープ脱出 | `tl_tensor_release_safe` が即座に `clear_data` を呼ぶ。 |
+| **Autograd ノード** (Grad あり) | **グラフエンジン** | `backward()` / `detach()` | `release_safe` は **No-Op (何もしない)**。クリーンアップはグラフ走査に委ねる。 |
+
+### 3. 実装詳細
+
+#### A. 条件付き `release_safe`
+ランタイムの `tl_tensor_release_safe` は、テンソルがアクティブな Autograd コンポーネントを持っているか確認します。
+- **Autograd なし**: `tl_cpu_tensor_clear_data` を呼び出し、下層の `Vec<f32>` を解放しますが、構造体自体は残します（二重解放に対して安全）。
+- **Autograd あり**: 何もしません。テンソルはグラフのために生き続けます。
+
+#### B. イベント駆動型グラフクリーンアップ
+Autograd テンソルはスコープ解放で無視されるため、グラフイベントによって明示的にクリーンアップされる必要があります：
+
+1.  **Backward パス・クリーンアップ**:
+    -   `backward()` の終了時に、エンジンはトポロジカル順序を走査します。
+    -   **非リーフノード**（中間計算結果）を特定します。
+    -   それらのデータバッファ（`data_f32`, `shape`）と autograd メタデータは即座にクリアされます。
+    -   **結果**: 学習中の中間テンソルが使用直後に死ぬため、メモリスパイクが抑制されます。
+
+2.  **Detach クリーンアップ**:
+    -   `t.detach()` が呼ばれると（通常はエポックの境界で）、**ソーステンソル** の上流グラフ全体が再帰的に走査されます。
+    -   切り離されたグラフ内の全ノードは実質的に「ガベージコレクション」されます。
+
+### 4. 結果
+この戦略により、N-Queens ソルバーにおけるメモリ増加は **100エポックあたり 4MB** から **0.33MB** に減少（12倍の改善）し、セグメンテーションフォールトも完全に解消されました。
