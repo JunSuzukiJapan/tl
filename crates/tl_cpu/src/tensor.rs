@@ -20,6 +20,7 @@ pub struct CpuTensor {
     pub autograd: Option<Box<AutogradMeta>>,
 }
 
+/*
 impl CpuTensor {
     /// テンソルの内部データをクリアしてメモリを OS に返却する。
     /// 構造体ポインタ自体は有効なまま残るため、use-after-free を防止できる。
@@ -31,6 +32,7 @@ impl CpuTensor {
         self.autograd = None;
     }
 }
+*/
 
 impl Clone for CpuTensor {
     fn clone(&self) -> Self {

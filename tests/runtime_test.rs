@@ -157,7 +157,7 @@ fn test_tensor_arithmetic() {
 #[serial]
 fn test_tensor_zeros() {
     let shape: Vec<usize> = vec![2, 5];
-    let t = unwrap_tensor(tl_tensor_zeros(2, shape.as_ptr()));
+    let t = unwrap_tensor(tl_tensor_zeros(2, shape.as_ptr(), false));
     assert_tensor_valid(t);
     safe_free(t);
 }

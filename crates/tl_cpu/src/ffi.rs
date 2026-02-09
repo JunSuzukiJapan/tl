@@ -30,16 +30,25 @@ pub extern "C" fn tl_cpu_tensor_new_i64(
     make_tensor(CpuTensor::from_slice(&f32_data, shape_slice, DType::F32))
 }
 
-pub extern "C" fn tl_cpu_tensor_zeros(rank: usize, shape: *const usize) -> *mut OpaqueTensor {
+pub extern "C" fn tl_cpu_tensor_zeros(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor {
     if shape.is_null() { return std::ptr::null_mut(); }
     let shape_slice = unsafe { std::slice::from_raw_parts(shape, rank) };
-    make_tensor(CpuTensor::zeros(shape_slice, DType::F32))
+    let t = CpuTensor::zeros(shape_slice, DType::F32);
+    let ptr = make_tensor(t);
+    if req_grad { unsafe { (&mut *ptr).enable_grad(); } }
+    ptr
 }
 
-pub extern "C" fn tl_cpu_tensor_ones(rank: usize, shape: *const usize, _req_grad: bool) -> *mut OpaqueTensor {
+pub extern "C" fn tl_cpu_tensor_ones(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor {
     if shape.is_null() { return std::ptr::null_mut(); }
     let shape_slice = unsafe { std::slice::from_raw_parts(shape, rank) };
-    make_tensor(CpuTensor::ones(shape_slice, DType::F32))
+    let mut t = CpuTensor::ones(shape_slice, DType::F32);
+    
+    if req_grad {
+        t.enable_grad();
+    }
+    
+    make_tensor(t)
 }
 
 pub extern "C" fn tl_cpu_tensor_randn(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor {
@@ -86,18 +95,17 @@ fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
 
 pub extern "C" fn tl_cpu_tensor_free(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
-    let tensor = unsafe { &mut *t };
-    tensor.clear_data();
+    unsafe { let _ = Box::from_raw(t); }
 }
 
+#[no_mangle]
 pub extern "C" fn tl_cpu_tensor_acquire(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    t // noop: V3.3 でテンソルの Acquire は無効化済み
+    t // No-op: Persistent Pool Strategy (Leak intentional)
 }
 
 pub extern "C" fn tl_cpu_tensor_release(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
-    let tensor = unsafe { &mut *t };
-    tensor.clear_data();
+    unsafe { let _ = Box::from_raw(t); }
 }
 
 // ========== テンソル情報 ==========
@@ -277,7 +285,14 @@ pub extern "C" fn tl_cpu_tensor_rem(a: *mut OpaqueTensor, b: *mut OpaqueTensor) 
 
 pub extern "C" fn tl_cpu_tensor_neg(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
-    make_tensor(unsafe { (&*t).neg_impl() })
+    let tensor = unsafe { &*t };
+    let res = tensor.neg_impl();
+    let ptr = make_tensor(res);
+    if tensor.requires_grad() {
+        use crate::autograd::ops::NegBackward;
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(NegBackward { a: t })); }
+    }
+    ptr
 }
 
 pub extern "C" fn tl_cpu_tensor_abs(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
@@ -289,17 +304,51 @@ pub extern "C" fn tl_cpu_tensor_abs(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 
 pub extern "C" fn tl_cpu_tensor_add_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
-    make_tensor(unsafe { (&*t).add_scalar_impl(s as f32) })
+    let tensor = unsafe { &*t };
+    let res = tensor.add_scalar_impl(s as f32);
+    let ptr = make_tensor(res);
+    if tensor.requires_grad() {
+        use crate::autograd::ops::AddScalarBackward;
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(AddScalarBackward { a: t })); }
+    }
+    ptr
 }
 
 pub extern "C" fn tl_cpu_tensor_mul_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
-    make_tensor(unsafe { (&*t).mul_scalar_impl(s as f32) })
+    let tensor = unsafe { &*t };
+    let res = tensor.mul_scalar_impl(s as f32);
+    let ptr = make_tensor(res);
+    if tensor.requires_grad() {
+        use crate::autograd::ops::MulScalarBackward;
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(MulScalarBackward { a: t, s: s as f32 })); }
+    }
+    // println!("tl_cpu_tensor_mul_scalar: returning {:p}", ptr);
+    ptr
 }
 
 pub extern "C" fn tl_cpu_tensor_div_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
-    make_tensor(unsafe { (&*t).div_scalar_impl(s as f32) })
+    let tensor = unsafe { &*t };
+    let res = tensor.div_scalar_impl(s as f32);
+    let ptr = make_tensor(res);
+    if tensor.requires_grad() {
+        use crate::autograd::ops::DivScalarBackward;
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(DivScalarBackward { a: t, s: s as f32 })); }
+    }
+    ptr
+}
+
+pub extern "C" fn tl_cpu_tensor_sub_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    let res = tensor.sub_scalar_impl(s as f32);
+    let ptr = make_tensor(res);
+    if tensor.requires_grad() {
+        use crate::autograd::ops::SubScalarBackward;
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(SubScalarBackward { a: t })); }
+    }
+    ptr
 }
 
 pub extern "C" fn tl_cpu_tensor_pow_scalar(t: *mut OpaqueTensor, exp: f32) -> *mut OpaqueTensor {

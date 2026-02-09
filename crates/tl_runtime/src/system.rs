@@ -122,15 +122,11 @@ pub extern "C" fn tl_gguf_load(path: *mut StringStruct) -> *mut crate::tensor_ma
 
     unsafe {
         if path.is_null() || (*path).ptr.is_null() {
-            eprintln!("Error: tl_gguf_load received null path");
-            return std::ptr::null_mut();
+             return std::ptr::null_mut();
         }
-        let path_str = std::ffi::CStr::from_ptr((*path).ptr)
-            .to_string_lossy()
-            .into_owned();
+        let path_slice = std::slice::from_raw_parts((*path).ptr as *const u8, (*path).len as usize);
+        let path_str = String::from_utf8_lossy(path_slice).into_owned();
         let expanded = crate::file_io::expand_path(&path_str);
-
-        eprintln!("[tl_gguf_load] Loading GGUF from: {:?}", expanded);
 
         // GGUF ファイルを読み込む
         let mut file = match std::fs::File::open(&expanded) {

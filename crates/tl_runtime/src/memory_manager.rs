@@ -22,7 +22,8 @@ pub use crate::memory_ffi::{
     tl_mem_register_struct_named,
     tl_mem_register_tensor,
     tl_tensor_acquire,
-    tl_tensor_release,
+    tl_tensor_release_safe,
+    tl_tensor_finalize,
     // ptr 関数も memory_ffi から re-export
     tl_ptr_acquire,
     tl_ptr_release,

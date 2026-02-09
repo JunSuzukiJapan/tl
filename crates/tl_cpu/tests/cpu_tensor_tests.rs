@@ -692,7 +692,7 @@ mod ffi_tests {
     #[test]
     fn test_ffi_zeros_ones() {
         let shape = [2usize, 3];
-        let z = ffi::tl_cpu_tensor_zeros(2, shape.as_ptr());
+        let z = ffi::tl_cpu_tensor_zeros(2, shape.as_ptr(), false);
         assert_eq!(ffi::tl_cpu_tensor_len(z), 6);
 
         let o = ffi::tl_cpu_tensor_ones(2, shape.as_ptr(), false);

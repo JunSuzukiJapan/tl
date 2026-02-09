@@ -659,6 +659,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(())
     }
 
+/*
     pub(crate) fn emit_log_free(&self, ptr: inkwell::values::BasicValueEnum<'ctx>) -> Result<(), String> {
         // tl_log_free(ptr, file, line)
         let f_name = "tl_log_free";
@@ -709,6 +710,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         
         Ok(())
     }
+*/
 
     // Exit the current scope
     // Exit the current scope

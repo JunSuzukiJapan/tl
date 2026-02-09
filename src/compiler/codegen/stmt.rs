@@ -483,14 +483,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                     
                     self.builder.build_call(finalize_fn, &[val.into()], "").map_err(|e| e.to_string())?;
                 } else {
-                    // Call tl_tensor_release (Standard RefCount check + Free)
+                    // Call tl_tensor_release_safe (Renamed to avoid symbol collision)
                     let free_fn = self
                         .module
-                        .get_function("tl_tensor_release")
-                        .ok_or("tl_tensor_release not found")?;
+                        .get_function("tl_tensor_release_safe")
+                        .or_else(|| {
+                             // Declare if missing
+                             let void_ty = self.context.void_type();
+                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                             let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                             Some(self.module.add_function("tl_tensor_release_safe", ft, None))
+                        })
+                        .ok_or("tl_tensor_release_safe not found")?;
 
-                    // LOG FREE
-                    self.emit_log_free(val)?;
+                    // LOG FREE - intentionally removed for Persistent Pool
+                    // self.emit_log_free(val)?;
 
                     self.builder
                         .build_call(free_fn, &[val.into()], "")
@@ -507,6 +514,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Primitives like u8 might be represented as Struct("u8") but are IntValue
                 if !val.is_pointer_value() {
                     return Ok(());
+                }
+
+                // Generic Tensor wrapper (special case) must take precedence over Struct cleanup
+                if name == "Tensor" {
+                    // Force Tensor handling regardless of Struct definition
+                    return self.emit_recursive_free(val, &Type::Tensor(Box::new(Type::F32), 1), mode);
                 }
                 
                 let ptr = val.into_pointer_value();
@@ -687,11 +700,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 
                 // D. Free Wrapper Memory
-                let mem_free_fn = self.module.get_function("tl_mem_free")
-                     .ok_or("tl_mem_free not found")?;
-                
-                self.emit_log_free(val)?;
-                self.builder.build_call(mem_free_fn, &[cast_void.into()], "").map_err(|e| e.to_string())?;
+                // Skip for Vec (stack value semantics)
+                if name != "Vec" {
+                    let mem_free_fn = self.module.get_function("tl_mem_free")
+                         .ok_or("tl_mem_free not found")?;
+                    
+                    // self.emit_log_free(val)?;
+                    self.builder.build_call(mem_free_fn, &[cast_void.into()], "").map_err(|e| e.to_string())?;
+                }
                 self.builder.build_unconditional_branch(merge_block)
                     .map_err(|e| e.to_string())?;
 
@@ -2091,93 +2107,133 @@ impl<'ctx> CodeGenerator<'ctx> {
             (lhs, rhs, rhs_type)
         };
 
-        let val_f32 = if scalar_val.is_int_value() {
+        // Prepare scalar value as F64 for arithmetic ops
+        let val_f64 = if scalar_val.is_int_value() {
             let v = scalar_val.into_int_value();
             self.builder
-                .build_signed_int_to_float(v, self.context.f32_type(), "cast_scalar")
+                .build_signed_int_to_float(v, self.context.f64_type(), "cast_scalar_f64")
                 .map_err(|e| e.to_string())?
         } else {
-            scalar_val.into_float_value()
+            let v = scalar_val.into_float_value();
+            self.builder
+                .build_float_cast(v, self.context.f64_type(), "cast_scalar_f64")
+                .map_err(|e| e.to_string())?
         };
 
-        // 1. Alloca in Entry Block
-        let current_block = self.builder.get_insert_block().unwrap();
-        let parent_fn = current_block.get_parent().unwrap();
+        let tensor_ptr = tensor_val.into_pointer_value();
 
-        let data_alloca =
-            self.create_entry_block_alloca(parent_fn, "scalar_data", &Type::F32)?;
-        self.builder
-            .build_store(data_alloca, val_f32)
-            .map_err(|e| e.to_string())?;
+        match op {
+            BinOp::Add => {
+                // Commutative: t + s
+                let fn_val = self.module.get_function("tl_tensor_add_scalar").ok_or("tl_tensor_add_scalar not found")?;
+                let call = self.builder.build_call(fn_val, &[tensor_ptr.into(), val_f64.into()], "add_scalar_res");
+                let res = self.check_tensor_result(call.map_err(|e| e.to_string())?, "add_scalar_err")?;
+                Ok((res.into_pointer_value().into(), tensor_ty))
+            }
+            BinOp::Mul => {
+                // Commutative: t * s
+                let fn_val = self.module.get_function("tl_tensor_mul_scalar").ok_or("tl_tensor_mul_scalar not found")?;
+                let call = self.builder.build_call(fn_val, &[tensor_ptr.into(), val_f64.into()], "mul_scalar_res");
+                let res = self.check_tensor_result(call.map_err(|e| e.to_string())?, "mul_scalar_err")?;
+                Ok((res.into_pointer_value().into(), tensor_ty))
+            }
+            BinOp::Sub => {
+                if scalar_is_rhs {
+                    // t - s
+                    let fn_val = self.module.get_function("tl_tensor_sub_scalar").ok_or("tl_tensor_sub_scalar not found")?;
+                    let call = self.builder.build_call(fn_val, &[tensor_ptr.into(), val_f64.into()], "sub_scalar_res");
+                    let res = self.check_tensor_result(call.map_err(|e| e.to_string())?, "sub_scalar_err")?;
+                    Ok((res.into_pointer_value().into(), tensor_ty))
+                } else {
+                    // s - t  =>  neg(t - s)
+                    let sub_fn = self.module.get_function("tl_tensor_sub_scalar").ok_or("tl_tensor_sub_scalar not found")?;
+                    let sub_call = self.builder.build_call(sub_fn, &[tensor_ptr.into(), val_f64.into()], "sub_tmp");
+                    let sub_res = self.check_tensor_result(sub_call.map_err(|e| e.to_string())?, "sub_err")?.into_pointer_value();
+                    
+                    let neg_fn = self.module.get_function("tl_tensor_neg").ok_or("tl_tensor_neg not found")?;
+                    let neg_call = self.builder.build_call(neg_fn, &[sub_res.into()], "neg_res");
+                    let res = self.check_tensor_result(neg_call.map_err(|e| e.to_string())?, "neg_err")?;
+                    
+                    // Free intermediate sub result
+                    // if let Some(free_fn) = self.module.get_function("tl_tensor_free") { // Runtime free
+                    //      self.builder.build_call(free_fn, &[sub_res.into()], "").ok();
+                    // }
 
-        // 2. Shape Alloca (dummy i64)
-        let shape_alloca =
-            self.create_entry_block_alloca(parent_fn, "scalar_shape", &Type::I64)?;
+                    Ok((res.into_pointer_value().into(), tensor_ty))
+                }
+            }
+            BinOp::Div => {
+                if scalar_is_rhs {
+                    // t / s
+                    let fn_val = self.module.get_function("tl_tensor_div_scalar").ok_or("tl_tensor_div_scalar not found")?;
+                    let call = self.builder.build_call(fn_val, &[tensor_ptr.into(), val_f64.into()], "div_scalar_res");
+                    let res = self.check_tensor_result(call.map_err(|e| e.to_string())?, "div_scalar_err")?;
+                    Ok((res.into_pointer_value().into(), tensor_ty))
+                } else {
+                    // s / t  =>  pow(t, -1) * s
+                    let pow_fn = self.module.get_function("tl_tensor_pow_scalar").ok_or("tl_tensor_pow_scalar not found")?;
+                    let neg_one = self.context.f32_type().const_float(-1.0); // Pow uses f32
+                    let pow_call = self.builder.build_call(pow_fn, &[tensor_ptr.into(), neg_one.into()], "inv_tmp");
+                    let pow_res = self.check_tensor_result(pow_call.map_err(|e| e.to_string())?, "pow_err")?.into_pointer_value();
+                    
+                    let mul_fn = self.module.get_function("tl_tensor_mul_scalar").ok_or("tl_tensor_mul_scalar not found")?;
+                    let mul_call = self.builder.build_call(mul_fn, &[pow_res.into(), val_f64.into()], "div_res");
+                    let res = self.check_tensor_result(mul_call.map_err(|e| e.to_string())?, "div_err")?;
+                    
+                    // Free intermediate pow result
+                    if let Some(free_fn) = self.module.get_function("tl_tensor_free") {
+                         self.builder.build_call(free_fn, &[pow_res.into()], "").ok();
+                    }
 
-        // 3. New Tensor
-        let new_fn = self.module.get_function("tl_tensor_new").unwrap();
-        let rank_val = self.context.i64_type().const_int(0, false);
-        let call = self
-            .builder
-            .build_call(
-                new_fn,
-                &[data_alloca.into(), rank_val.into(), shape_alloca.into()],
-                "scalar_tensor",
-            )
-            .map_err(|e| e.to_string())?;
-        let scalar_tensor = self
-            .check_tensor_result(call, "scalar_tensor_error")?
-            .into_pointer_value();
-
-        // 4. Call Op
-        let fn_name = match op {
-            BinOp::Add => "tl_tensor_add",
-            BinOp::Mul => "tl_tensor_mul",
-            BinOp::Div => "tl_tensor_div",
-            BinOp::Sub => "tl_tensor_sub",
-            BinOp::Mod => "tl_tensor_rem",
-            BinOp::Eq => "tl_tensor_eq",
-            BinOp::Neq => "tl_tensor_neq",
-            BinOp::Lt => "tl_tensor_lt",
-            BinOp::Gt => "tl_tensor_gt",
-            BinOp::Le => "tl_tensor_le",
-            BinOp::Ge => "tl_tensor_ge",
-            _ => return Err("Unsupported tensor op".into()),
-        };
-
-        let fn_val = self
-            .module
-            .get_function(fn_name)
-            .ok_or(format!("Runtime function {} not found", fn_name))?;
-
-        let (arg1, arg2) = if scalar_is_rhs {
-            (
-                tensor_val.into_pointer_value().into(),
-                scalar_tensor.into(),
-            )
-        } else {
-            (
-                scalar_tensor.into(),
-                tensor_val.into_pointer_value().into(),
-            )
-        };
-
-        let call = self.builder.build_call(fn_val, &[arg1, arg2], "binop_res");
-
-        let res_val =
-            self.check_tensor_result(call.map_err(|e| e.to_string())?, "binop_scalar_error")?;
-
-        // Free temporary scalar tensor
-        let free_fn = self
-            .module
-            .get_function("tl_tensor_free")
-            .ok_or("tl_tensor_free not found")?;
-        self.builder
-            .build_call(free_fn, &[scalar_tensor.into()], "")
-            .map_err(|e| e.to_string())?;
-
-        let res_ptr = res_val.into_pointer_value();
-        Ok((res_ptr.into(), tensor_ty))
+                    Ok((res.into_pointer_value().into(), tensor_ty))
+                }
+            }
+            _ => {
+                // Fallback for Mod, Eq, etc. (uses unsafe stack alloc for now, but rarely used with scalars)
+                // Use F32 because fallback logic used F32
+                let val_f32 = if scalar_val.is_int_value() {
+                    self.builder.build_signed_int_to_float(scalar_val.into_int_value(), self.context.f32_type(), "cast_scalar").map_err(|e| e.to_string())?
+                } else {
+                    scalar_val.into_float_value()
+                };
+                
+                // Need to re-implement fallback logic briefly since I am replacing the whole function block.
+                
+                let current_block = self.builder.get_insert_block().unwrap();
+                let parent_fn = current_block.get_parent().unwrap();
+                let data_alloca = self.create_entry_block_alloca(parent_fn, "scalar_data", &Type::F32)?;
+                self.builder.build_store(data_alloca, val_f32).map_err(|e| e.to_string())?;
+                let shape_alloca = self.create_entry_block_alloca(parent_fn, "scalar_shape", &Type::I64)?;
+                let new_fn = self.module.get_function("tl_tensor_new").unwrap();
+                let rank_val = self.context.i64_type().const_int(0, false);
+                let call = self.builder.build_call(new_fn, &[data_alloca.into(), rank_val.into(), shape_alloca.into()], "scalar_tensor").map_err(|e| e.to_string())?;
+                let scalar_tensor = self.check_tensor_result(call, "scalar_tensor_error")?.into_pointer_value();
+                
+                let fn_name = match op {
+                    BinOp::Mod => "tl_tensor_rem",
+                    BinOp::Eq => "tl_tensor_eq",
+                    BinOp::Neq => "tl_tensor_neq",
+                    BinOp::Lt => "tl_tensor_lt",
+                    BinOp::Gt => "tl_tensor_gt",
+                    BinOp::Le => "tl_tensor_le",
+                    BinOp::Ge => "tl_tensor_ge",
+                    _ => return Err("Unsupported scalar op fallback".into()),
+                };
+                let fn_val = self.module.get_function(fn_name).ok_or(format!("Runtime function {} not found", fn_name))?;
+                let (arg1, arg2) = if scalar_is_rhs {
+                    (tensor_ptr.into(), scalar_tensor.into())
+                } else {
+                    (scalar_tensor.into(), tensor_ptr.into())
+                };
+                let call = self.builder.build_call(fn_val, &[arg1, arg2], "binop_res");
+                let res_val = self.check_tensor_result(call.map_err(|e| e.to_string())?, "binop_scalar_error")?;
+                
+                let free_fn = self.module.get_function("tl_tensor_free").ok_or("tl_tensor_free not found")?;
+                self.builder.build_call(free_fn, &[scalar_tensor.into()], "").map_err(|e| e.to_string())?;
+                
+                Ok((res_val.into_pointer_value().into(), tensor_ty))
+            }
+        }
     }
 
     fn compile_string_bin_op(
@@ -2546,12 +2602,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .build_pointer_cast(ptr, void_ptr_type, "cast_tensor_ptr")
                     .unwrap();
 
-                self.builder
-                    .build_call(acquire_fn, &[cast_ptr.into()], "")
+                let call = self.builder
+                    .build_call(acquire_fn, &[cast_ptr.into()], "acquired_ptr")
                     .map_err(|e| e.to_string())?;
 
-                // Return the SAME pointer
-                Ok(val)
+                let new_ptr = match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                    _ => return Err("tl_tensor_acquire returned void/invalid".to_string()),
+                };
+
+                // Cast back to tensor pointer type (struct ptr)
+                let tensor_ptr_ty = val.get_type().into_pointer_type();
+                let cast_new_ptr = self.builder.build_pointer_cast(new_ptr, tensor_ptr_ty, "cast_tensor_back").unwrap();
+
+                Ok(cast_new_ptr.into())
             }
             Type::String(_) => {
                 // String Deep Clone using tl_string_clone

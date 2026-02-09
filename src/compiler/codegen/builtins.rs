@@ -12,6 +12,14 @@ pub fn declare_runtime_functions<'ctx>(
     module: &InkwellModule<'ctx>,
     execution_engine: &ExecutionEngine<'ctx>,
 ) {
+
+    // Debug helper
+    #[unsafe(no_mangle)]
+    extern "C" fn tl_debug_print_ptr(name: *const i8, ptr: *const i8) {
+        let name_str = unsafe { std::ffi::CStr::from_ptr(name).to_string_lossy() };
+        eprintln!("Cleanup: {} Ptr: {:p}", name_str, ptr);
+    }
+
     // ゼロオーバーヘッド CPU/GPU 切替: JIT リンク時にシンボルを差し替え
     let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
 
@@ -347,8 +355,8 @@ pub fn declare_runtime_functions<'ctx>(
     let clone_type = void_ptr.fn_type(&[void_ptr.into()], false);
     add_fn("tl_tensor_clone", clone_type);
 
-    // tl_tensor_acquire(t: *mut) -> void
-    add_fn("tl_tensor_acquire", free_type);
+    // tl_tensor_acquire(t: *mut) -> *mut
+    add_fn("tl_tensor_acquire", clone_type);
 
     // tl_tensor_release(t: *mut) -> void
     add_fn("tl_tensor_release", free_type);
@@ -454,6 +462,13 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_pow_scalar(t: *mut Tensor, exponent: f32) -> *mut OpaqueTensor
     let pow_scalar_type = void_ptr.fn_type(&[void_ptr.into(), f32_type.into()], false);
     add_fn("tl_tensor_pow_scalar", pow_scalar_type);
+
+    // Scalar ops (add, sub, mul, div) taking f64
+    let scalar_op_type = void_ptr.fn_type(&[void_ptr.into(), f64_type.into()], false);
+    add_fn("tl_tensor_add_scalar", scalar_op_type.clone());
+    add_fn("tl_tensor_sub_scalar", scalar_op_type.clone());
+    add_fn("tl_tensor_mul_scalar", scalar_op_type.clone());
+    add_fn("tl_tensor_div_scalar", scalar_op_type);
 
     // tl_tensor_sqrt(t: *mut Tensor) -> *mut Tensor
     let unary_type = void_ptr.fn_type(&[void_ptr.into()], false);
@@ -788,6 +803,7 @@ pub fn declare_runtime_functions<'ctx>(
     );
 
     add_fn("tl_tensor_zeros", zeros_type);
+    add_fn("tl_tensor_ones", zeros_type); // Reusing zeros_type (signature matches)
 
     // VarBuilder
     // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize) -> *mut OpaqueTensor
@@ -1411,10 +1427,17 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_device_id") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_device_id as usize);
     }
-    map_tensor_fn!("tl_tensor_free", runtime::tl_tensor_free, cpu_ffi::tl_cpu_tensor_free);
-    map_tensor_fn!("tl_tensor_clone", runtime::tl_tensor_clone, cpu_ffi::tl_cpu_tensor_clone);
     map_tensor_fn!("tl_tensor_acquire", runtime::memory_ffi::tl_tensor_acquire, cpu_ffi::tl_cpu_tensor_acquire);
-    map_tensor_fn!("tl_tensor_release", runtime::tl_tensor_release, cpu_ffi::tl_cpu_tensor_release);
+    map_tensor_fn!("tl_tensor_release_safe", runtime::tl_tensor_release_safe, cpu_ffi::tl_cpu_tensor_release);
+    map_tensor_fn!("tl_tensor_add", cpu_ffi::tl_cpu_tensor_add, cpu_ffi::tl_cpu_tensor_add);
+    map_tensor_fn!("tl_tensor_sub", cpu_ffi::tl_cpu_tensor_sub, cpu_ffi::tl_cpu_tensor_sub);
+    map_tensor_fn!("tl_tensor_mul", cpu_ffi::tl_cpu_tensor_mul, cpu_ffi::tl_cpu_tensor_mul);
+    map_tensor_fn!("tl_tensor_div", cpu_ffi::tl_cpu_tensor_div, cpu_ffi::tl_cpu_tensor_div);
+    map_tensor_fn!("tl_tensor_add_scalar", cpu_ffi::tl_cpu_tensor_add_scalar, cpu_ffi::tl_cpu_tensor_add_scalar);
+    map_tensor_fn!("tl_tensor_sub_scalar", cpu_ffi::tl_cpu_tensor_sub_scalar, cpu_ffi::tl_cpu_tensor_sub_scalar);
+    map_tensor_fn!("tl_tensor_mul_scalar", cpu_ffi::tl_cpu_tensor_mul_scalar, cpu_ffi::tl_cpu_tensor_mul_scalar);
+    map_tensor_fn!("tl_tensor_div_scalar", cpu_ffi::tl_cpu_tensor_div_scalar, cpu_ffi::tl_cpu_tensor_div_scalar);
+    map_tensor_fn!("tl_tensor_pow_scalar", cpu_ffi::tl_cpu_tensor_pow_scalar, cpu_ffi::tl_cpu_tensor_pow_scalar);
     if let Some(f) = module.get_function("tl_tensor_prepare_return") {
         execution_engine.add_global_mapping(
             &f,
@@ -2741,5 +2764,15 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_sample", sample_type);
     if let Some(f) = module.get_function("tl_tensor_sample") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_sample as usize);
+    }
+    
+    // Debug Print
+    let i8_ptr = context.ptr_type(AddressSpace::default());
+    let void_type = context.void_type();
+    let debug_print_type = void_type.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+    module.add_function("tl_debug_print_ptr", debug_print_type, None);
+    
+    if let Some(f) = module.get_function("tl_debug_print_ptr") {
+        execution_engine.add_global_mapping(&f, tl_debug_print_ptr as usize);
     }
 }

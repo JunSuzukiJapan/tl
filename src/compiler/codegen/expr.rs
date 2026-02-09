@@ -4238,35 +4238,31 @@ impl<'ctx> CodeGenerator<'ctx> {
             let (path_val, path_ty) = self.compile_expr(&args[0])?;
             
             // TL String is StringStruct { ptr: *c_char, len: i64 }
-            // We need to extract the ptr field (index 0) for FFI
-            let cstr_ptr = if matches!(path_ty, Type::String(_)) {
+            // tl_gguf_load expects *mut StringStruct
+            let string_struct_ptr = if matches!(path_ty, Type::String(_)) {
                 let struct_ptr = path_val.into_pointer_value();
-                // Define StringStruct layout
-                let str_struct_ty = self.context.struct_type(&[
-                    self.context.ptr_type(inkwell::AddressSpace::default()).into(), // ptr
-                    self.context.i64_type().into(), // len
-                ], false);
-                // GEP to get pointer to ptr field (index 0)
-                let ptr_field_ptr = self.builder
-                    .build_struct_gep(str_struct_ty, struct_ptr, 0, "str_ptr_field")
-                    .map_err(|_| "Failed to GEP String.ptr")?;
-                // Load the ptr value
-                let ptr_val = self.builder
-                    .build_load(self.context.ptr_type(inkwell::AddressSpace::default()), ptr_field_ptr, "cstr_ptr")
-                    .map_err(|e| e.to_string())?;
-                ptr_val
+                struct_ptr
             } else {
-                path_val
+                return Err(format!("Map::load expects String argument, got {:?}", path_ty));
             };
             
             let fn_val = self
                 .module
                 .get_function("tl_gguf_load")
                 .ok_or("tl_gguf_load not found")?;
+            
+            // Cast to generic pointer if needed (though struct ptr usually works)
+            let cast_ptr = self.builder.build_pointer_cast(
+                string_struct_ptr,
+                self.context.ptr_type(inkwell::AddressSpace::default()), 
+                "string_struct_ptr"
+            ).map_err(|e| e.to_string())?;
+
             let call = self
                 .builder
-                .build_call(fn_val, &[cstr_ptr.into()], "map_load")
+                .build_call(fn_val, &[cast_ptr.into()], "map_load")
                 .map_err(|e| e.to_string())?;
+                
             let res = match call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v,
                 _ => return Err("Invalid return from Map::load".into()),

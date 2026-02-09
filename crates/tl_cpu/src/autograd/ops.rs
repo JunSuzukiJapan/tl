@@ -371,3 +371,88 @@ impl GradFn for ReshapeBackward {
 
 unsafe impl Send for ReshapeBackward {}
 unsafe impl Sync for ReshapeBackward {}
+
+/// スカラ加算の勾配 (t + s) -> grad_t = grad_output
+pub struct AddScalarBackward {
+    pub a: *mut CpuTensor,
+}
+
+impl GradFn for AddScalarBackward {
+    fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
+        vec![grad_output.shallow_clone()]
+    }
+    fn inputs(&self) -> Vec<*mut CpuTensor> {
+        vec![self.a]
+    }
+}
+
+/// スカラ減算の勾配 (t - s) -> grad_t = grad_output
+pub struct SubScalarBackward {
+    pub a: *mut CpuTensor,
+}
+
+impl GradFn for SubScalarBackward {
+    fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
+        vec![grad_output.shallow_clone()]
+    }
+    fn inputs(&self) -> Vec<*mut CpuTensor> {
+        vec![self.a]
+    }
+}
+
+/// スカラ乗算の勾配 (t * s) -> grad_t = grad_output * s
+pub struct MulScalarBackward {
+    pub a: *mut CpuTensor,
+    pub s: f32,
+}
+
+impl GradFn for MulScalarBackward {
+    fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
+        vec![grad_output.mul_scalar_impl(self.s)]
+    }
+    fn inputs(&self) -> Vec<*mut CpuTensor> {
+        vec![self.a]
+    }
+}
+
+/// スカラ除算の勾配 (t / s) -> grad_t = grad_output / s
+pub struct DivScalarBackward {
+    pub a: *mut CpuTensor,
+    pub s: f32,
+}
+
+impl GradFn for DivScalarBackward {
+    fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
+        vec![grad_output.div_scalar_impl(self.s)] // div_scalar_impl handles 1/s internally? No, div_scalar_impl does x/s.
+        // grad_output / s is correct.
+    }
+    fn inputs(&self) -> Vec<*mut CpuTensor> {
+        vec![self.a]
+    }
+}
+
+unsafe impl Send for AddScalarBackward {}
+unsafe impl Sync for AddScalarBackward {}
+unsafe impl Send for SubScalarBackward {}
+unsafe impl Sync for SubScalarBackward {}
+unsafe impl Send for MulScalarBackward {}
+unsafe impl Sync for MulScalarBackward {}
+unsafe impl Send for DivScalarBackward {}
+unsafe impl Sync for DivScalarBackward {}
+
+/// 符号反転の勾配 (-t) -> grad_t = -grad_output
+pub struct NegBackward {
+    pub a: *mut CpuTensor,
+}
+
+impl GradFn for NegBackward {
+    fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
+        vec![grad_output.neg()]
+    }
+    fn inputs(&self) -> Vec<*mut CpuTensor> {
+        vec![self.a]
+    }
+}
+
+unsafe impl Send for NegBackward {}
+unsafe impl Sync for NegBackward {}

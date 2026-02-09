@@ -119,10 +119,7 @@ pub use system::{
 };
 
 // ========== Memory Exports ==========
-pub use memory_ffi::{
-    tl_tensor_acquire, tl_tensor_release, tl_tensor_prepare_return,
-    tl_trace_mem, tl_register_tensor,
-};
+pub use memory_ffi::{tl_ptr_acquire, tl_tensor_release_safe, tl_tensor_finalize, tl_tensor_prepare_return, tl_register_tensor, tl_trace_mem};
 
 // ========== Checkpoint Exports ==========
 pub use checkpoint::{
@@ -299,23 +296,33 @@ pub extern "C" fn tl_tensor_new_i64(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_zeros(rank: usize, shape: *const usize) -> *mut OpaqueTensor {
+pub extern "C" fn tl_tensor_zeros(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor {
     if shape.is_null() {
         return std::ptr::null_mut();
     }
     let shape_slice = unsafe { std::slice::from_raw_parts(shape, rank) };
     let tensor = MetalTensor::zeros(shape_slice, DType::F32);
-    make_tensor(tensor)
+    let ptr = make_tensor(tensor);
+    if req_grad {
+        let t = unsafe { &mut *ptr };
+        t.enable_grad();
+    }
+    ptr
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_ones(rank: usize, shape: *const usize, _req_grad: bool) -> *mut OpaqueTensor {
+pub extern "C" fn tl_tensor_ones(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor {
     if shape.is_null() {
         return std::ptr::null_mut();
     }
     let shape_slice = unsafe { std::slice::from_raw_parts(shape, rank) };
     let tensor = MetalTensor::ones(shape_slice, DType::F32);
-    make_tensor(tensor)
+    let ptr = make_tensor(tensor);
+    if req_grad {
+        let t = unsafe { &mut *ptr };
+        t.enable_grad();
+    }
+    ptr
 }
 
 #[unsafe(no_mangle)]

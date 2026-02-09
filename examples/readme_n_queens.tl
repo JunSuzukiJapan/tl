@@ -6,7 +6,7 @@
 
 fn main() {
     let N = 8;
-    let solutions_to_find = 5;
+    let solutions_to_find = 1;
     let mut found_count = 0;
 
     println("Finding {} solutions for N-Queens...", solutions_to_find);
@@ -33,19 +33,20 @@ fn main() {
         println("=== Attempting solution #{}", found_count + 1);
         
         let lr = 0.5;
-        let epochs = 1500;
+        let epochs = 2000;
         let mut board = Tensor::randn([N, N], true);
-        let enable_epoch_item = false;
-        let enable_queens_check = false;
 
         for i in 0..epochs {
              let probs = board.softmax(1);
              
              // Constraint losses
-             let col_sums = probs.sum(0);
-             let col_loss = (col_sums - 1.0).pow(2).sumall();
+             let col_sums = probs.sum(0);             
+             let col_diff = col_sums - 1.0;
+             let col_pow = col_diff.pow(2);
+             let col_loss = col_pow.sumall();
 
              let probs_b = probs.reshape([1, N, N]);
+             
              let anti_diag_sums = (probs_b * anti_diag_mask).sum(2).sum(1);
              let main_diag_sums = (probs_b * main_diag_mask).sum(2).sum(1);
 
@@ -59,28 +60,18 @@ fn main() {
              let total_loss = constraint_loss + reg_loss;
 
             if i % 100 == 0 {
-                 if enable_epoch_item {
-                     println("Epoch {} - Loss: {}", i, total_loss.item());
-                 } else {
-                     println("Epoch {} (Mem: {} MB)", i, System::memory_mb());
-                 }
+                 println("Epoch {} (Mem: {} MB)", i, System::memory_mb());
 
                  // Early exit: Stop when we have N queens (prob > 0.5)
-                 // Checking this is expensive (Tensor Comprehension + synchronization), so we only do it periodically
-                 if enable_queens_check {
-                     let current_queens = [r, c | r <- 0..N, c <- 0..N {
-                         if probs[r, c] > 0.5 { 1.0 } else { 0.0 }
-                     }].sumall().item();
+                 let current_queens = [r, c | r <- 0..N, c <- 0..N {
+                     if probs[r, c] > 0.5 { 1.0 } else { 0.0 }
+                 }].sumall().item();
 
-                     if current_queens == 8.0 {
-                         println("Converged at epoch {} (found {} queens)", i, current_queens);
-                         break;
-                     }
+                 if current_queens == 8.0 {
+                     println("Converged at epoch {} (found {} queens)", i, current_queens);
+                     break;
                  }
             }
-
-             // Original simple loss check (optional, kept for reference but relying on queens count now)
-             // if constraint_loss.item() < 1e-3 && reg_loss.item() < 0.1 { ... }
 
              total_loss.backward();
              let g = board.grad();
@@ -135,6 +126,12 @@ fn main() {
         } else {
             println("Invalid (queens={}), retrying...", total_queens);
         }
+
+        if found_count == solutions_to_find {
+            break;
+        }
+
     }
+
     println("Done!");
 }

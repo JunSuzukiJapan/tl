@@ -111,10 +111,15 @@ pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::
 /// MetalTensor の Drop → pool_release で GPU バッファをプールに返却。
 /// CpuTensor の Drop → メモリ解放。
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_release(t: *mut crate::OpaqueTensor) {
-    if !t.is_null() {
-        unsafe { let _ = Box::from_raw(t); }
-    }
+pub extern "C" fn tl_tensor_release_safe(_t: *mut crate::OpaqueTensor) {
+    // No-op: Persistent Pool Strategy (Leak intentional)
+}
+
+/// テンソルファイナライズ（所有権放棄、メモリは維持）
+/// Persistent Pool では何もしない（メモリはリークされるため）
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_finalize(_t: *mut crate::OpaqueTensor) {
+    // No-op: Persistent Pool Strategy
 }
 
 use std::collections::HashMap;
