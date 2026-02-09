@@ -110,6 +110,26 @@ pub extern "C" fn tl_cpu_tensor_acquire(t: *mut OpaqueTensor) -> *mut OpaqueTens
 pub extern "C" fn tl_cpu_tensor_release(_t: *mut OpaqueTensor) {
 }
 
+/// テンソルの内部データをクリアしてメモリを OS に返却する。
+/// 構造体ポインタ自体は有効なまま残るため、autograd の *mut CpuTensor 参照は安全。
+/// autograd グラフは触らない（Drop チェーンで dangling pointer を避けるため）。
+/// `tl_runtime::tl_tensor_release_safe` から呼ばれる。
+pub extern "C" fn tl_cpu_tensor_clear_data(t: *mut OpaqueTensor) {
+    if t.is_null() { return; }
+    unsafe {
+        let tensor = &mut *t;
+        // 大きなデータバッファのみ解放（capacity もゼロ化）
+        tensor.data_f32 = Vec::new();
+        tensor.data_i64 = None;
+        // shape は小さいが念のためクリア
+        tensor.shape = Vec::new();
+        // autograd は触らない:
+        // GradFn 内の *mut CpuTensor 参照が他のテンソルを指しているため、
+        // Drop チェーンが走ると dangling pointer → SEGFAULT
+        // autograd グラフのメモリは構造体分のみ (数百バイト) なのでリークしても人畜無害
+    }
+}
+
 // ========== テンソル情報 ==========
 
 pub extern "C" fn tl_cpu_tensor_dim(t: *mut OpaqueTensor, dim: usize) -> usize {
@@ -771,7 +791,12 @@ pub extern "C" fn tl_cpu_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor 
 pub extern "C" fn tl_cpu_tensor_detach(t: *mut OpaqueTensor, _req_grad: bool) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
-    make_tensor(tensor.detach())
+    let result = make_tensor(tensor.detach());
+    // ソーステンソルの autograd グラフをクリーンアップ
+    // backward 完了後なので中間テンソルのデータバッファは不要
+    let tensor_mut = unsafe { &mut *t };
+    tensor_mut.clear_autograd_graph();
+    result
 }
 
 /// LLVM IR宣言は `(t) -> void`

@@ -1,6 +1,8 @@
 //! Memory 関連の FFI 関数
 
 use std::ffi::c_void;
+use std::collections::HashMap;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 static SCOPE_DEPTH: AtomicI64 = AtomicI64::new(0);
@@ -101,33 +103,36 @@ pub extern "C" fn tl_mem_unregister(_ptr: *mut c_void) {
     // スタブ
 }
 
-/// テンソル取得（V3.3: テンソルの RC 増分は行わない）
-/// テンソルのライフサイクルはランタイムのメモリマネージャーで管理される。
-/// 参照: MEMORY_MANAGEMENT_STRATEGY.md V3.3
+/// テンソル取得（RC 操作なし — テンソルは所有権ベースで管理）
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::OpaqueTensor {
-    t // スタブ: そのまま返す
+    t
 }
 
-/// テンソル解放（V5.0: Box::from_raw で Drop を発動）
-/// MetalTensor の Drop → pool_release で GPU バッファをプールに返却。
-/// CpuTensor の Drop → メモリ解放。
+/// テンソル解放（条件付きデータクリア）
+/// autograd を持たないテンソル（純データテンソル）のデータバッファをクリアする。
+/// 構造体自体は残すので二重呼び出しでも安全。
+/// autograd を持つテンソルは backward + detach クリーンアップに委ねる。
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_release_safe(_t: *mut crate::OpaqueTensor) {
-    // No-op: Persistent Pool Strategy (Leak intentional)
+pub extern "C" fn tl_tensor_release_safe(t: *mut crate::OpaqueTensor) {
+    if t.is_null() { return; }
+    let cpu_tensor = t as *mut tl_cpu::tensor::CpuTensor;
+    let has_autograd = unsafe { (*cpu_tensor).autograd.is_some() };
+    if !has_autograd {
+        // autograd なし: データバッファのみクリア（構造体は残す → 二重呼び出し安全）
+        tl_cpu::ffi::tl_cpu_tensor_clear_data(cpu_tensor);
+    }
+    // autograd あり: backward + detach クリーンアップに委ねる
 }
 
-/// テンソルファイナライズ（所有権放棄、メモリは維持）
-/// Persistent Pool では何もしない（メモリはリークされるため）
+/// テンソルファイナライズ（No-op: exit_scope で一括処理）
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_finalize(_t: *mut crate::OpaqueTensor) {
-    // No-op: Persistent Pool Strategy
+    // No-op
 }
 
-use std::collections::HashMap;
-use std::sync::Mutex;
 
-/// グローバル参照カウントマップ
+/// グローバル参照カウントマップ（構造体用）
 static REF_COUNTS: std::sync::LazyLock<Mutex<HashMap<usize, usize>>> = 
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 

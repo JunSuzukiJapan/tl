@@ -315,9 +315,31 @@ impl CpuTensor {
                 }
             }
         }
+
+        // 4. 全ノード走査で中間テンソルのデータバッファをクリア
+        //    build_topo は requires_grad==true のみ走査するため、
+        //    クリーンアップ用に requires_grad を無視した全ノード走査を行う。
+        let mut all_nodes: Vec<*mut CpuTensor> = Vec::new();
+        let mut cleanup_visited = std::collections::HashSet::<usize>::new();
+        Self::collect_all_graph_nodes(self_ptr, &mut cleanup_visited, &mut all_nodes);
+
+        for &ptr in &all_nodes {
+            if ptr == self_ptr { continue; } // 自身はスキップ
+            let tensor = unsafe { &mut *ptr };
+            let is_leaf = tensor.autograd.as_ref()
+                .map_or(true, |m| m.grad_fn.is_none());
+            if !is_leaf {
+                // 中間テンソルのデータバッファをクリア
+                tensor.data_f32 = Vec::new();
+                tensor.data_i64 = None;
+                tensor.shape = Vec::new();
+                tensor.autograd = None;
+            }
+        }
     }
 
     /// backward 用のトポロジカルソート（DFS）
+    /// 勾配伝播対象のみ（requires_grad==true）
     fn build_topo(
         ptr: *mut CpuTensor,
         visited: &mut std::collections::HashSet<usize>,
@@ -342,9 +364,68 @@ impl CpuTensor {
         topo.push(ptr);
     }
 
+    /// クリーンアップ用の全ノード走査（DFS）
+    /// requires_grad を無視して autograd グラフ内の全テンソルを収集する。
+    fn collect_all_graph_nodes(
+        ptr: *mut CpuTensor,
+        visited: &mut std::collections::HashSet<usize>,
+        nodes: &mut Vec<*mut CpuTensor>,
+    ) {
+        if ptr.is_null() { return; }
+        let key = ptr as usize;
+        if visited.contains(&key) {
+            return;
+        }
+        visited.insert(key);
+        let tensor = unsafe { &*ptr };
+        if let Some(ref meta) = tensor.autograd {
+            if let Some(ref gf) = meta.grad_fn {
+                for input in gf.inputs() {
+                    Self::collect_all_graph_nodes(input, visited, nodes);
+                }
+            }
+        }
+        nodes.push(ptr);
+    }
+
 
     pub fn detach(&self) -> CpuTensor {
         self.shallow_clone()
+    }
+
+    /// autograd グラフを再帰的に走査し、全中間テンソルのデータバッファをクリアする。
+    /// backward 完了後の detach 時に呼ばれる想定。
+    /// 自身の autograd もクリアする。
+    pub fn clear_autograd_graph(&mut self) {
+        use std::collections::HashSet;
+        let mut visited = HashSet::new();
+        Self::clear_autograd_recursive(self as *mut CpuTensor, &mut visited);
+    }
+
+    fn clear_autograd_recursive(ptr: *mut CpuTensor, visited: &mut std::collections::HashSet<usize>) {
+        if ptr.is_null() { return; }
+        let key = ptr as usize;
+        if visited.contains(&key) { return; }
+        visited.insert(key);
+
+        unsafe {
+            let tensor = &mut *ptr;
+            // 先に GradFn の inputs を再帰的に走査
+            if let Some(ref autograd) = tensor.autograd {
+                if let Some(ref grad_fn) = autograd.grad_fn {
+                    let inputs = grad_fn.inputs();
+                    for input_ptr in inputs {
+                        Self::clear_autograd_recursive(input_ptr, visited);
+                    }
+                }
+            }
+            // データバッファをクリア（メモリを OS に返却）
+            tensor.data_f32 = Vec::new();
+            tensor.data_i64 = None;
+            tensor.shape = Vec::new();
+            // autograd をクリア（GradFn 内の参照が切断される）
+            tensor.autograd = None;
+        }
     }
 
     // ========== 演算実装 (_impl メソッド) ==========

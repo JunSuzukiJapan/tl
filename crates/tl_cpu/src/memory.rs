@@ -19,28 +19,12 @@ pub fn enter_scope() {
 }
 
 pub fn exit_scope() {
-    let tensors_to_free = SCOPE_STACK.with(|stack| {
-        stack.borrow_mut().pop()
+    // スコープスタックをポップするのみ。
+    // テンソルの解放は codegen の emit_cleanup_vars_in_scope → tl_tensor_release_safe が個別に行う。
+    // ここで Box::from_raw するとcodegen 側の release_safe と二重解放になる。
+    SCOPE_STACK.with(|stack| {
+        let _ = stack.borrow_mut().pop();
     });
-
-    if let Some(tensors) = tensors_to_free {
-        let mut pool = TENSOR_POOL.lock().unwrap();
-        for ptr in tensors {
-            if ptr.is_null() { continue; }
-            // Safety: The tensor is owned by the scope and we are the only ones
-            // who should be freeing it (except for promoted ones which are removed).
-            // We convert it back to Box to own it, then push to pool.
-            let mut t = unsafe { Box::from_raw(ptr) };
-            
-            // Reset tensor for reuse (keep capacity)
-            t.data_f32.clear();
-            t.data_i64 = None;
-            t.shape.clear();
-            t.autograd = None;
-
-            pool.push(t);
-        }
-    }
 }
 
 pub fn register_tensor(t: *mut CpuTensor) {
