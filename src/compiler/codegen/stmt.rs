@@ -2690,6 +2690,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     return self.emit_enum_deep_clone(val, &enum_def);
                 }
                 
+                // Handle Tensor struct (opaque pointer, not a real struct)
+                if name == "Tensor" {
+                    return self.emit_deep_clone(val, &Type::Tensor(Box::new(Type::F32), 0));
+                }
+
                 // Handle String struct
                 if name == "String" {
                     return self.emit_deep_clone(val, &Type::String(name.clone()));

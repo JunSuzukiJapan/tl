@@ -81,7 +81,10 @@ pub extern "C" fn tl_cpu_tensor_from_u8(data: *const u8, len: usize) -> *mut Opa
 }
 
 fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
-    Box::into_raw(Box::new(t))
+    let boxed = Box::new(t);
+    let ptr = Box::into_raw(boxed);
+    crate::memory::register_tensor(ptr);
+    ptr
 }
 
 // ========== テンソル解放（データクリア方式） ==========
@@ -95,17 +98,16 @@ fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
 
 pub extern "C" fn tl_cpu_tensor_free(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
+    crate::memory::promote_tensor(t);
     unsafe { let _ = Box::from_raw(t); }
 }
 
 #[no_mangle]
 pub extern "C" fn tl_cpu_tensor_acquire(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    t // No-op: Persistent Pool Strategy (Leak intentional)
+    t
 }
 
-pub extern "C" fn tl_cpu_tensor_release(t: *mut OpaqueTensor) {
-    if t.is_null() { return; }
-    unsafe { let _ = Box::from_raw(t); }
+pub extern "C" fn tl_cpu_tensor_release(_t: *mut OpaqueTensor) {
 }
 
 // ========== テンソル情報 ==========
@@ -782,5 +784,27 @@ pub extern "C" fn tl_cpu_tensor_enable_grad(t: *mut OpaqueTensor) {
 /// CPU版では noop（CPU autograd はグローバル grad 管理をしないため）
 pub extern "C" fn tl_cpu_clear_grads() {
     // noop
+}
+
+// ========== Scope Management (V4.5) ==========
+
+#[no_mangle]
+pub extern "C" fn tl_cpu_enter_scope() {
+    crate::memory::enter_scope();
+}
+
+#[no_mangle]
+pub extern "C" fn tl_cpu_exit_scope() {
+    crate::memory::exit_scope();
+}
+
+#[no_mangle]
+pub extern "C" fn tl_cpu_tensor_promote(t: *mut OpaqueTensor) {
+    crate::memory::promote_tensor(t);
+}
+
+#[no_mangle]
+pub extern "C" fn tl_cpu_tensor_register(t: *mut OpaqueTensor) {
+    crate::memory::register_tensor(t);
 }
 

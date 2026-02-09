@@ -39,11 +39,13 @@ pub extern "C" fn tl_get_refcount_count() -> i64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_function_enter() {
     tl_mem_enter_scope();
+    tl_cpu::ffi::tl_cpu_enter_scope();
 }
 
 /// 関数スコープ終了
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_function_exit() {
+    tl_cpu::ffi::tl_cpu_exit_scope();
     tl_mem_exit_scope();
 }
 
@@ -231,4 +233,18 @@ pub extern "C" fn tl_tensor_prepare_return(t: *mut crate::OpaqueTensor) -> *mut 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_register_tensor(_t: *mut crate::OpaqueTensor) {
     // スタブ
+}
+
+/// テンソル昇格（スコープから除外）（V4.5）
+/// Metal: No-op (Persistent Pool)
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_promote(_t: *mut crate::OpaqueTensor) {
+    // No-op
+}
+
+/// テンソル登録（スコープに追加）（V4.5）
+/// Metal: No-op
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_register(_t: *mut crate::OpaqueTensor) {
+    // No-op
 }

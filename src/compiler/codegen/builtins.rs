@@ -361,6 +361,12 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_release(t: *mut) -> void
     add_fn("tl_tensor_release", free_type);
 
+    // tl_tensor_promote(t: *mut) -> void
+    add_fn("tl_tensor_promote", free_type);
+
+    // tl_tensor_register(t: *mut) -> void
+    add_fn("tl_tensor_register", free_type);
+
     // tl_tensor_data(t: *mut) -> *mut
     let data_type = void_ptr.fn_type(&[void_ptr.into()], false);
     add_fn("tl_tensor_data", data_type);
@@ -1464,6 +1470,8 @@ pub fn declare_runtime_functions<'ctx>(
     map_tensor_fn!("tl_tensor_backward", runtime::tl_tensor_backward, cpu_ffi::tl_cpu_tensor_backward);
     map_tensor_fn!("tl_tensor_grad", runtime::tl_tensor_grad, cpu_ffi::tl_cpu_tensor_grad);
     map_tensor_fn!("tl_tensor_detach", runtime::tl_tensor_detach, cpu_ffi::tl_cpu_tensor_detach);
+    map_tensor_fn!("tl_tensor_promote", runtime::tl_tensor_promote, cpu_ffi::tl_cpu_tensor_promote);
+    map_tensor_fn!("tl_tensor_register", runtime::tl_tensor_register, cpu_ffi::tl_cpu_tensor_register);
     map_tensor_fn!("tl_tensor_enable_grad", runtime::tl_tensor_enable_grad, cpu_ffi::tl_cpu_tensor_enable_grad);
     map_tensor_fn!("tl_tensor_softmax", runtime::tl_tensor_softmax, cpu_ffi::tl_cpu_tensor_softmax);
     if let Some(f) = module.get_function("tl_tensor_cross_entropy") {

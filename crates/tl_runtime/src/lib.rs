@@ -43,6 +43,7 @@ pub use memory_ffi::{
     tl_mem_function_enter, tl_mem_function_exit, tl_mem_get_buffer,
     tl_mem_enter_scope, tl_mem_exit_scope,
     tl_get_metal_pool_mb, tl_get_metal_pool_count, tl_get_metal_pool_bytes,
+    tl_tensor_promote, tl_tensor_register,
 };
 
 // ========== TensorMap Exports ==========

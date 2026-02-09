@@ -490,7 +490,7 @@ fn compile_tensor_contiguous<'ctx>(
         _ => return Err("Invalid contiguous return".into()),
     };
 
-    codegen.emit_register_tensor(res, &obj_ty)?;
+    // codegen.emit_register_tensor(res, &obj_ty)?;
     Ok((res, obj_ty))
 }
 
@@ -608,7 +608,7 @@ fn compile_tensor_slice<'ctx>(
         _ => return Err("Invalid slice return".into()),
     };
 
-    codegen.emit_register_tensor(res, &obj_ty)?;
+    // codegen.emit_register_tensor(res, &obj_ty)?;
     Ok((res, obj_ty))
 }
 
@@ -1448,10 +1448,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Ok(());
         }
 
+        // V4.5: Use tl_tensor_register (mapped to backend-specific implementation)
         let reg_fn = self
             .module
-            .get_function("tl_mem_register_tensor")
-            .ok_or("tl_mem_register_tensor not found")?;
+            .get_function("tl_tensor_register")
+            .ok_or("tl_tensor_register not found")?;
 
         let ptr = val.into_pointer_value();
         let cast_ptr = self
@@ -1704,14 +1705,13 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn emit_retain(&self, val: BasicValueEnum<'ctx>, ty: &Type) -> Result<(), String> {
         match ty {
             Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
-                // FIX: Temporarily disable tensor acquire to test memory leak reduction
-                // v0.2.1 did not have this call and had no memory leak
-                // let acquire_fn = self.module.get_function("tl_tensor_acquire")
-                //     .ok_or("tl_tensor_acquire not found")?;
-                // let ptr = val.into_pointer_value();
-                // let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                // let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_aq").map_err(|e| e.to_string())?;
-                // self.builder.build_call(acquire_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
+                // V4.5: Promote returned tensor (remove from scope)
+                let promote_fn = self.module.get_function("tl_tensor_promote")
+                    .ok_or("tl_tensor_promote not found")?;
+                let ptr = val.into_pointer_value();
+                let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_prom").map_err(|e| e.to_string())?;
+                self.builder.build_call(promote_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
             }
 
             Type::Struct(_, _) | Type::String(_) | Type::Enum(_, _) | Type::Path(_, _) => {
@@ -4320,7 +4320,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         // SRET Logic
-        let uses_sret = matches!(ret_ty, Type::Struct(_, _));
+        let uses_sret = matches!(&ret_ty, Type::Struct(name, _) if name != "Tensor" && name != "String");
         let mut sret_ptr = None;
 
         if uses_sret {
@@ -6074,7 +6074,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // SRET Check
         // String is a pointer (RefCounted), handled as value return, not SRET.
         let uses_sret = match &ret_ty {
-            Type::Struct(n, _) => n != "String",
+            Type::Struct(n, _) => n != "String" && n != "Tensor",
             _ => false,
         };
         let mut sret_ptr = None;
@@ -6262,7 +6262,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                       self.emit_recursive_free(obj_val, &obj_ty, super::CLEANUP_FULL)?;
                   }
 
-                  self.emit_register_tensor(res, &obj_ty)?;
+                  // self.emit_register_tensor(res, &obj_ty)?;
                   Ok((res, obj_ty))
               }
               "detach" => {
@@ -6286,7 +6286,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                   };
 
                   // Register intermediate tensor result for automatic cleanup
-                  self.emit_register_tensor(res, &obj_ty)?;
+                  // self.emit_register_tensor(res, &obj_ty)?;
 
                   Ok((res, obj_ty))
               }
@@ -6303,7 +6303,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                   };
 
                   // Register intermediate tensor result for automatic cleanup
-                  self.emit_register_tensor(res, &obj_ty)?;
+                  // self.emit_register_tensor(res, &obj_ty)?;
 
                   Ok((res, obj_ty))
               }
@@ -6320,7 +6320,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                   };
 
                   // Register intermediate tensor result for automatic cleanup
-                  self.emit_register_tensor(res, &obj_ty)?;
+                  // self.emit_register_tensor(res, &obj_ty)?;
 
                   Ok((res, obj_ty))
               }
@@ -6414,7 +6414,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                       self.emit_recursive_free(obj_val, &obj_ty, super::CLEANUP_FULL)?;
                   }
 
-                  self.emit_register_tensor(res, &obj_ty)?;
+                  // self.emit_register_tensor(res, &obj_ty)?;
                   Ok((res, obj_ty))
               }
               "to" | "to_device" => {
@@ -6517,7 +6517,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if self.is_safe_to_free(obj, &obj_ty) {
                         self.emit_recursive_free(obj_val, &obj_ty, super::CLEANUP_FULL)?;
                     }
-                    self.emit_register_tensor(res, &obj_ty)?;
+                    // self.emit_register_tensor(res, &obj_ty)?;
                     Ok((res, obj_ty))
                 }
                 "exp" | "log" => {
@@ -6536,7 +6536,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if self.is_safe_to_free(obj, &obj_ty) {
                         self.emit_recursive_free(obj_val, &obj_ty, super::CLEANUP_FULL)?;
                     }
-                    self.emit_register_tensor(res, &obj_ty)?;
+                    // self.emit_register_tensor(res, &obj_ty)?;
                     Ok((res, obj_ty))
                 }
                 _ => {
@@ -7173,7 +7173,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Tensors are returned by pointer directly, so exclude them.
         let mut dest_val = None;
         let uses_sret = match ret_type {
-             Type::Struct(_, _) => true,
+             Type::Struct(ref name, _) => name != "Tensor" && name != "String",
              _ => false 
         };
         if uses_sret {
@@ -7261,27 +7261,28 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         };
 
-        // ABI ADAPTER: If return type is Struct("Tensor"), wrap handle
-        if let Type::Struct(name, _) = &ret_type {
-            if name == "Tensor" {
-                 if res.is_pointer_value() {
-                     // Create temp struct
-                     let current_block = self.builder.get_insert_block().unwrap();
-                     let current_func = current_block.get_parent().unwrap();
-                     let alloca = self.create_entry_block_alloca(current_func, "tensor_res_struct", &ret_type)?;
-                     
-                     // Handle is res (pointer) -> int
-                     let handle_i64 = self.builder.build_ptr_to_int(res.into_pointer_value(), self.context.i64_type(), "handle_i64").map_err(|e| e.to_string())?;
-                     
-                     // Store at index 0
-                     let struct_ty = self.get_llvm_type(&ret_type)?;
-                     let field_ptr = self.builder.build_struct_gep(struct_ty, alloca, 0, "handle_ptr").map_err(|e| e.to_string())?;
-                     self.builder.build_store(field_ptr, handle_i64).map_err(|e| e.to_string())?;
-                     
-                     return Ok((alloca.into(), ret_type));
-                 }
+        // V4.5: Caller-Side Registration
+        // When a function returns a tensor, it is "promoted" (floating).
+        // The caller must register it to its own scope immediately.
+        // We only do this for USER functions (which have basic blocks). 
+        // Builtins/FFI functions (blocks=0) register internally to the current scope.
+        if matches!(ret_type, Type::Tensor(_, _)) {
+            if func.count_basic_blocks() > 0 {
+                self.emit_register_tensor(res, &ret_type)?;
             }
         }
+
+        // Normalize: If return type is Struct("Tensor"), treat it as Type::Tensor
+        // (Parser may resolve `-> Tensor` as Struct("Tensor"))
+        let ret_type = if let Type::Struct(ref name, _) = ret_type {
+            if name == "Tensor" {
+                Type::Tensor(Box::new(Type::F32), 0)
+            } else {
+                ret_type
+            }
+        } else {
+            ret_type
+        };
 
         // For Struct returns (SRET deprecated logic, assuming by-value or pointer return if not SRET)
         Ok((res, ret_type))

@@ -43,36 +43,65 @@ impl Clone for CpuTensor {
 impl CpuTensor {
     // ========== コンストラクタ ==========
 
-    pub fn zeros(shape: &[usize], dtype: DType) -> Self {
-        let count: usize = shape.iter().product();
-        CpuTensor {
-            data_f32: vec![0.0; count],
-            data_i64: None,
-            shape: shape.to_vec(),
-            dtype,
-            autograd: None,
+    fn alloc_from_pool() -> Self {
+        // Recycle from pool if available, preserving Vec capacity
+        if let Some(boxed) = crate::memory::recycle_tensor() {
+            *boxed
+        } else {
+             CpuTensor {
+                data_f32: Vec::new(),
+                data_i64: None,
+                shape: Vec::new(),
+                dtype: DType::F32,
+                autograd: None,
+            }
         }
     }
 
+    pub fn zeros(shape: &[usize], dtype: DType) -> Self {
+        let count: usize = shape.iter().product();
+        let mut t = Self::alloc_from_pool();
+        
+        // Reconfigure
+        t.dtype = dtype;
+        t.shape = shape.to_vec();
+        t.autograd = None;
+        t.data_i64 = None;
+
+        // Resize buffer (uses existing capacity)
+        t.data_f32.clear();
+        t.data_f32.resize(count, 0.0);
+        
+        t
+    }
+    
     pub fn ones(shape: &[usize], dtype: DType) -> Self {
         let count: usize = shape.iter().product();
-        CpuTensor {
-            data_f32: vec![1.0; count],
-            data_i64: None,
-            shape: shape.to_vec(),
-            dtype,
-            autograd: None,
-        }
+        let mut t = Self::alloc_from_pool();
+        
+        t.dtype = dtype;
+        t.shape = shape.to_vec();
+        t.autograd = None;
+        t.data_i64 = None;
+
+        t.data_f32.clear();
+        t.data_f32.resize(count, 1.0);
+        
+        t
     }
 
     pub fn from_slice(data: &[f32], shape: &[usize], dtype: DType) -> Self {
-        CpuTensor {
-            data_f32: data.to_vec(),
-            data_i64: None,
-            shape: shape.to_vec(),
-            dtype,
-            autograd: None,
-        }
+         let mut t = Self::alloc_from_pool();
+         
+         t.dtype = dtype;
+         t.shape = shape.to_vec();
+         t.autograd = None;
+         t.data_i64 = None;
+         
+         t.data_f32.clear();
+         t.data_f32.extend_from_slice(data);
+         
+         t
     }
 
     pub fn from_slice_i64_data(data: &[i64], shape: &[usize], dtype: DType) -> Self {

@@ -477,7 +477,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 if let Ok(struct_val) =
                                     self.builder.build_load(load_type, ptr, "tensor_to_free")
                                 {
-                                    let _ = self.emit_recursive_free(struct_val, &ty, cleanup_mode);
+                                    // Use Type::Tensor to avoid GEP on opaque pointer
+                                    let tensor_ty = Type::Tensor(Box::new(Type::F32), 0);
+                                    let _ = self.emit_recursive_free(struct_val, &tensor_ty, cleanup_mode);
                                 }
                             } else {
                                 // For other structs (including Vec), load handle from alloca
@@ -1503,7 +1505,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Check if this function        // matches!(func.return_type, Type::Struct(_, _) | Type::Struct(_, _))
         // Let's assume Structs needs SRET, but Tensors do NOT.
         // String is a pointer, so exclusion is needed.
-        let uses_sret = matches!(func.return_type, Type::Struct(_, _));
+        let uses_sret = matches!(&func.return_type, Type::Struct(name, _) if name != "Tensor");
 
         let mut args_types = Vec::new();
 
@@ -1608,7 +1610,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
         // Check if this function uses sret
-        let uses_sret = matches!(func.return_type, Type::Struct(_, _));
+        let uses_sret = matches!(&func.return_type, Type::Struct(name, _) if name != "Tensor");
         let param_offset = if uses_sret { 1 } else { 0 };
 
         if uses_sret {
