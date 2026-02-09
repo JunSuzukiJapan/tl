@@ -66,7 +66,18 @@ pub fn recycle_tensor() -> Option<Box<CpuTensor>> {
 }
 
 // Diagnostics
+
 pub fn get_pool_size() -> usize {
     let pool = TENSOR_POOL.lock().unwrap();
     pool.len()
+}
+
+pub fn return_to_pool(mut t: Box<CpuTensor>) {
+    t.data_f32.clear(); // Keep capacity
+    t.data_i64 = None;
+    t.shape.clear();
+    t.autograd = None;
+    
+    let mut pool = TENSOR_POOL.lock().unwrap();
+    pool.push(t);
 }

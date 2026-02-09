@@ -80,12 +80,6 @@ pub extern "C" fn tl_cpu_tensor_from_u8(data: *const u8, len: usize) -> *mut Opa
     make_tensor(CpuTensor::from_slice(&f32_data, &[len], DType::F32))
 }
 
-fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
-    let boxed = Box::new(t);
-    let ptr = Box::into_raw(boxed);
-    crate::memory::register_tensor(ptr);
-    ptr
-}
 
 // ========== テンソル解放（データクリア方式） ==========
 // JIT の forループ末尾クリーンアップや変数再代入で同一テンソルに対して
@@ -818,6 +812,10 @@ pub extern "C" fn tl_cpu_enter_scope() {
     crate::memory::enter_scope();
 }
 
+
+
+
+
 #[no_mangle]
 pub extern "C" fn tl_cpu_exit_scope() {
     crate::memory::exit_scope();
@@ -833,3 +831,20 @@ pub extern "C" fn tl_cpu_tensor_register(t: *mut OpaqueTensor) {
     crate::memory::register_tensor(t);
 }
 
+#[no_mangle]
+pub extern "C" fn tl_cpu_tensor_return_to_pool(t: *mut OpaqueTensor) {
+    if t.is_null() { return; }
+    let tensor_box = unsafe { Box::from_raw(t as *mut CpuTensor) };
+    crate::memory::return_to_pool(tensor_box);
+}
+
+fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
+    let ptr = if let Some(mut boxed) = crate::memory::recycle_tensor() {
+        *boxed = t;
+        Box::into_raw(boxed)
+    } else {
+        Box::into_raw(Box::new(t))
+    };
+    crate::memory::register_tensor(ptr);
+    ptr as *mut OpaqueTensor
+}

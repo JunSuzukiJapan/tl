@@ -119,8 +119,8 @@ pub extern "C" fn tl_tensor_release_safe(t: *mut crate::OpaqueTensor) {
     let cpu_tensor = t as *mut tl_cpu::tensor::CpuTensor;
     let has_autograd = unsafe { (*cpu_tensor).autograd.is_some() };
     if !has_autograd {
-        // autograd なし: データバッファのみクリア（構造体は残す → 二重呼び出し安全）
-        tl_cpu::ffi::tl_cpu_tensor_clear_data(cpu_tensor);
+        // autograd なし: プールに返却（構造体・データの両方を再利用）
+        tl_cpu::ffi::tl_cpu_tensor_return_to_pool(cpu_tensor);
     }
     // autograd あり: backward + detach クリーンアップに委ねる
 }
