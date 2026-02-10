@@ -120,10 +120,6 @@ pub extern "C" fn tl_tensor_release_safe(t: *mut crate::OpaqueTensor) {
     // Ideally we should detect backend type, but for now we assume CPU if this path is hit in N-Queens.
     let cpu_tensor = t as *mut tl_cpu::tensor::CpuTensor;
     
-    // Debug print
-    // let has_autograd = unsafe { (*cpu_tensor).autograd.is_some() };
-    // eprintln!("[DEBUG] runtime::release_safe ptr={:p} autograd={}", t, has_autograd);
-
     tl_cpu::ffi::tl_cpu_tensor_return_to_pool(cpu_tensor);
 }
 

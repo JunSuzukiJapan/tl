@@ -103,7 +103,6 @@ pub extern "C" fn tl_cpu_tensor_acquire(t: *mut OpaqueTensor) -> *mut OpaqueTens
 
 pub extern "C" fn tl_cpu_tensor_release(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
-    // eprintln!("[DEBUG] release ptr={:p}", t);
     unsafe {
         let boxed = Box::from_raw(t as *mut CpuTensor);
         crate::memory::return_to_pool(boxed);
@@ -842,7 +841,6 @@ pub extern "C" fn tl_cpu_tensor_register(t: *mut OpaqueTensor) {
 #[no_mangle]
 pub extern "C" fn tl_cpu_tensor_return_to_pool(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
-    // eprintln!("[DEBUG] return_to_pool ptr={:p}", t);
     let tensor_box = unsafe { Box::from_raw(t as *mut CpuTensor) };
     crate::memory::return_to_pool(tensor_box);
 }
@@ -854,7 +852,6 @@ fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
     } else {
         Box::into_raw(Box::new(t))
     };
-    // eprintln!("[DEBUG] make_tensor ptr={:p}", ptr);
     crate::memory::register_tensor(ptr);
     ptr as *mut OpaqueTensor
 }
