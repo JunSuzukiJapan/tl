@@ -719,11 +719,9 @@ pub extern "C" fn tl_get_memory_bytes() -> i64 {
             #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             let rss = 0;
             
-            // Debug print (remove later)
-            eprintln!("[DEBUG] RSS: {} bytes", rss);
             return rss;
         } else {
-             eprintln!("[DEBUG] getrusage failed");
+             // eprintln!("[DEBUG] getrusage failed");
         }
     }
     0

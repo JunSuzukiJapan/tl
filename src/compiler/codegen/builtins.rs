@@ -1708,18 +1708,10 @@ pub fn declare_runtime_functions<'ctx>(
     }
 
     if let Some(f) = module.get_function("tl_get_memory_mb") {
-        if is_cpu {
-            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_get_memory_mb as usize);
-        } else {
-            execution_engine.add_global_mapping(&f, runtime::tl_get_memory_mb as usize);
-        }
+        execution_engine.add_global_mapping(&f, runtime::tl_get_memory_mb as usize);
     }
     if let Some(f) = module.get_function("tl_get_memory_bytes") {
-        if is_cpu {
-            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_get_memory_bytes as usize);
-        } else {
-            execution_engine.add_global_mapping(&f, runtime::tl_get_memory_bytes as usize);
-        }
+        execution_engine.add_global_mapping(&f, runtime::tl_get_memory_bytes as usize);
     }
     if let Some(f) = module.get_function("tl_get_metal_pool_bytes") {
         if is_cpu {
