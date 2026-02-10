@@ -95,7 +95,13 @@ pub fn return_to_pool(mut t: Box<CpuTensor>) {
     t.data_f32.clear(); // Keep capacity
     t.data_i64 = None;
     t.shape.clear();
-    t.autograd = None;
+    
+    // Recycle gradient tensor if it exists (prevents pool drain/churn)
+    if let Some(meta) = t.autograd.take() {
+        if let Some(grad) = meta.grad {
+            return_to_pool(Box::new(grad));
+        }
+    }
     
     let mut pool = TENSOR_POOL.lock().unwrap();
     pool.push(t);

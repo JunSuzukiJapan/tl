@@ -103,6 +103,8 @@ pub extern "C" fn tl_cpu_tensor_acquire(t: *mut OpaqueTensor) -> *mut OpaqueTens
 
 pub extern "C" fn tl_cpu_tensor_release(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
+    // Remove from scope stack to prevent pointer leak
+    crate::memory::promote_tensor(t);
     unsafe {
         let boxed = Box::from_raw(t as *mut CpuTensor);
         crate::memory::return_to_pool(boxed);
