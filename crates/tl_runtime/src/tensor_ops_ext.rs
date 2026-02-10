@@ -713,11 +713,17 @@ pub extern "C" fn tl_get_memory_bytes() -> i64 {
             let usage = usage.assume_init();
             // On Mac, ru_maxrss is in bytes. On Linux, it's in KB.
             #[cfg(target_os = "macos")]
-            return usage.ru_maxrss as i64;
+            let rss = usage.ru_maxrss as i64;
             #[cfg(target_os = "linux")]
-            return (usage.ru_maxrss * 1024) as i64;
+            let rss = (usage.ru_maxrss * 1024) as i64;
             #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-            return 0;
+            let rss = 0;
+            
+            // Debug print (remove later)
+            eprintln!("[DEBUG] RSS: {} bytes", rss);
+            return rss;
+        } else {
+             eprintln!("[DEBUG] getrusage failed");
         }
     }
     0

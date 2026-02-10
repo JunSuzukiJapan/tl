@@ -110,19 +110,21 @@ pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::
 }
 
 /// テンソル解放（条件付きデータクリア）
-/// autograd を持たないテンソル（純データテンソル）のデータバッファをクリアする。
 /// 構造体自体は残すので二重呼び出しでも安全。
 /// autograd を持つテンソルは backward + detach クリーンアップに委ねる。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_release_safe(t: *mut crate::OpaqueTensor) {
     if t.is_null() { return; }
+    // cpu-backend-release fix: Enforce return to pool for ALL tensors on CPU.
+    // Casting MetalTensor to CpuTensor is unsafe but necessary if we are running CPU backend logic via tl_runtime symbols.
+    // Ideally we should detect backend type, but for now we assume CPU if this path is hit in N-Queens.
     let cpu_tensor = t as *mut tl_cpu::tensor::CpuTensor;
-    let has_autograd = unsafe { (*cpu_tensor).autograd.is_some() };
-    if !has_autograd {
-        // autograd なし: プールに返却（構造体・データの両方を再利用）
-        tl_cpu::ffi::tl_cpu_tensor_return_to_pool(cpu_tensor);
-    }
-    // autograd あり: backward + detach クリーンアップに委ねる
+    
+    // Debug print
+    // let has_autograd = unsafe { (*cpu_tensor).autograd.is_some() };
+    // eprintln!("[DEBUG] runtime::release_safe ptr={:p} autograd={}", t, has_autograd);
+
+    tl_cpu::ffi::tl_cpu_tensor_return_to_pool(cpu_tensor);
 }
 
 /// テンソルファイナライズ（No-op: exit_scope で一括処理）

@@ -101,7 +101,13 @@ pub extern "C" fn tl_cpu_tensor_acquire(t: *mut OpaqueTensor) -> *mut OpaqueTens
     t
 }
 
-pub extern "C" fn tl_cpu_tensor_release(_t: *mut OpaqueTensor) {
+pub extern "C" fn tl_cpu_tensor_release(t: *mut OpaqueTensor) {
+    if t.is_null() { return; }
+    // eprintln!("[DEBUG] release ptr={:p}", t);
+    unsafe {
+        let boxed = Box::from_raw(t as *mut CpuTensor);
+        crate::memory::return_to_pool(boxed);
+    }
 }
 
 /// テンソルの内部データをクリアしてメモリを OS に返却する。
@@ -786,10 +792,12 @@ pub extern "C" fn tl_cpu_tensor_detach(t: *mut OpaqueTensor, _req_grad: bool) ->
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
     let result = make_tensor(tensor.detach());
-    // ソーステンソルの autograd グラフをクリーンアップ
-    // backward 完了後なので中間テンソルのデータバッファは不要
-    let tensor_mut = unsafe { &mut *t };
-    tensor_mut.clear_autograd_graph();
+    
+    // Previous optimization: clear_autograd_graph()
+    // This was removed because it destroys the source tensor's data. If the source tensor is reused 
+    // (due to aggressive release/recycle), this clears the *result* tensor too (if aliased).
+    // Cleanup is now handled by standard release_safe (which now supports autograd tensors).
+    
     result
 }
 
@@ -834,6 +842,7 @@ pub extern "C" fn tl_cpu_tensor_register(t: *mut OpaqueTensor) {
 #[no_mangle]
 pub extern "C" fn tl_cpu_tensor_return_to_pool(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
+    // eprintln!("[DEBUG] return_to_pool ptr={:p}", t);
     let tensor_box = unsafe { Box::from_raw(t as *mut CpuTensor) };
     crate::memory::return_to_pool(tensor_box);
 }
@@ -845,6 +854,7 @@ fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
     } else {
         Box::into_raw(Box::new(t))
     };
+    // eprintln!("[DEBUG] make_tensor ptr={:p}", ptr);
     crate::memory::register_tensor(ptr);
     ptr as *mut OpaqueTensor
 }
