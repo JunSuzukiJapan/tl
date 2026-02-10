@@ -847,6 +847,7 @@ pub extern "C" fn tl_cpu_tensor_return_to_pool(t: *mut OpaqueTensor) {
     crate::memory::return_to_pool(tensor_box);
 }
 
+#[track_caller]
 fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
     let ptr = if let Some(mut boxed) = crate::memory::recycle_tensor() {
         *boxed = t;
@@ -854,6 +855,10 @@ fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
     } else {
         Box::into_raw(Box::new(t))
     };
+    let loc = std::panic::Location::caller();
+    if crate::memory::is_mem_log_enabled() {
+        eprintln!("[ALLOC] Ptr: {:p} at {}:{}", ptr, loc.file(), loc.line());
+    }
     crate::memory::register_tensor(ptr);
     ptr as *mut OpaqueTensor
 }

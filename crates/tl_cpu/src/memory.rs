@@ -2,7 +2,21 @@ use std::cell::RefCell;
 use std::sync::Mutex;
 use crate::tensor::CpuTensor;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Once;
+
+// メモリログフラグ (TL_MEM_LOG 環境変数で有効化、--mem_log CLI フラグ経由)
+static MEM_LOG_ENABLED: AtomicBool = AtomicBool::new(false);
+static MEM_LOG_INIT: Once = Once::new();
+
+pub fn is_mem_log_enabled() -> bool {
+    MEM_LOG_INIT.call_once(|| {
+        if std::env::var("TL_MEM_LOG").is_ok() {
+            MEM_LOG_ENABLED.store(true, Ordering::Relaxed);
+        }
+    });
+    MEM_LOG_ENABLED.load(Ordering::Relaxed)
+}
 
 // Global Tensor Pool to reduce allocation overhead
 // Stores released tensors for reuse.
@@ -92,6 +106,9 @@ pub fn get_pool_size() -> usize {
 }
 
 pub fn return_to_pool(mut t: Box<CpuTensor>) {
+    if is_mem_log_enabled() {
+        eprintln!("[FREE] Ptr: {:p} at {}:{}", t, file!(), line!());
+    }
     t.data_f32.clear(); // Keep capacity
     t.data_i64 = None;
     t.shape.clear();
@@ -99,7 +116,11 @@ pub fn return_to_pool(mut t: Box<CpuTensor>) {
     // Recycle gradient tensor if it exists (prevents pool drain/churn)
     if let Some(meta) = t.autograd.take() {
         if let Some(grad) = meta.grad {
-            return_to_pool(Box::new(grad));
+            let boxed_grad = Box::new(grad);
+            if is_mem_log_enabled() {
+                eprintln!("[ALLOC] (GradRecycle) Ptr: {:p} at {}:{}", boxed_grad, file!(), line!());
+            }
+            return_to_pool(boxed_grad);
         }
     }
     

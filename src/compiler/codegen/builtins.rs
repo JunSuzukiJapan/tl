@@ -361,6 +361,9 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_release(t: *mut) -> void
     add_fn("tl_tensor_release", free_type);
 
+    // tl_tensor_release_safe(t: *mut) -> void
+    add_fn("tl_tensor_release_safe", free_type);
+
     // tl_tensor_promote(t: *mut) -> void
     add_fn("tl_tensor_promote", free_type);
 
