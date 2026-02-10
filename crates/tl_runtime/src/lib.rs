@@ -113,7 +113,7 @@ pub use tensor_ops_ext::{
     tl_tensor_cat_i64, tl_tensor_narrow, tl_tensor_reshape_dims,
     tl_tensor_argmax, tl_tensor_reshape_new,
     tl_image_load_grayscale, tl_image_width, tl_image_height,
-    tl_tensor_save, tl_tensor_load, tl_get_memory_mb,
+    tl_tensor_save, tl_tensor_load, tl_get_memory_mb, tl_get_memory_bytes,
 };
 
 // ========== Print Ext Exports ==========

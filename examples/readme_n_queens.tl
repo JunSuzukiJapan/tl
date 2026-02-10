@@ -25,7 +25,7 @@ fn main() {
         System::metal_sync();
         println(
             "Memory: {} MB (metal_pool_mb={}, metal_pool_count={}, metal_pool_bytes={})",
-            System::memory_mb(),
+            System::memory_bytes() / 1024 / 1024,
             System::metal_pool_mb(),
             System::metal_pool_count(),
             System::metal_pool_bytes()
@@ -60,7 +60,7 @@ fn main() {
              let total_loss = constraint_loss + reg_loss;
 
             if i % 100 == 0 {
-                 println("Epoch {} (Mem: {} MB)", i, System::memory_mb());
+                 println("Epoch {} (Mem: {} MB)", i, System::memory_bytes() / 1024 / 1024);
 
                  // Early exit: Stop when we have N queens (prob > 0.5)
                  let current_queens = [r, c | r <- 0..N, c <- 0..N {

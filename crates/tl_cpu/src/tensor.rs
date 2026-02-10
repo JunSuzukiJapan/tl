@@ -44,9 +44,14 @@ impl CpuTensor {
     // ========== コンストラクタ ==========
 
     fn alloc_from_pool() -> Self {
-        // Recycle from pool if available, preserving Vec capacity
+        // Recycle from pool if available
         if let Some(boxed) = crate::memory::recycle_tensor() {
-            *boxed
+             // Returning from pool -> consider as re-allocation?
+             // Actually, when we take from pool, it's already "allocated" in system memory,
+             // but from user perspective it's a new tensor.
+             // However, to track *total allocated*, we should track when Vec grows.
+             // Here we just return the object wrapper.
+             *boxed
         } else {
              CpuTensor {
                 data_f32: Vec::new(),
@@ -57,6 +62,9 @@ impl CpuTensor {
             }
         }
     }
+
+
+
 
     pub fn zeros(shape: &[usize], dtype: DType) -> Self {
         let count: usize = shape.iter().product();
@@ -69,8 +77,13 @@ impl CpuTensor {
         t.data_i64 = None;
 
         // Resize buffer (uses existing capacity)
+        let old_cap = t.data_f32.capacity();
         t.data_f32.clear();
         t.data_f32.resize(count, 0.0);
+        let new_cap = t.data_f32.capacity();
+        if new_cap > old_cap {
+             crate::memory::track_alloc((new_cap - old_cap) * 4);
+        }
         
         t
     }
@@ -84,8 +97,13 @@ impl CpuTensor {
         t.autograd = None;
         t.data_i64 = None;
 
+        let old_cap = t.data_f32.capacity();
         t.data_f32.clear();
         t.data_f32.resize(count, 1.0);
+        let new_cap = t.data_f32.capacity();
+        if new_cap > old_cap {
+             crate::memory::track_alloc((new_cap - old_cap) * 4);
+        }
         
         t
     }
@@ -99,7 +117,13 @@ impl CpuTensor {
          t.data_i64 = None;
          
          t.data_f32.clear();
+         let old_cap = t.data_f32.capacity();
+         t.data_f32.clear();
          t.data_f32.extend_from_slice(data);
+         let new_cap = t.data_f32.capacity();
+         if new_cap > old_cap {
+             crate::memory::track_alloc((new_cap - old_cap) * 4);
+         }
          
          t
     }

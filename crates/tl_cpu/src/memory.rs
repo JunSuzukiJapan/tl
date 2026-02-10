@@ -2,10 +2,27 @@ use std::cell::RefCell;
 use std::sync::Mutex;
 use crate::tensor::CpuTensor;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 // Global Tensor Pool to reduce allocation overhead
 // Stores released tensors for reuse.
 #[allow(clippy::vec_box)]
 static TENSOR_POOL: Mutex<Vec<Box<CpuTensor>>> = Mutex::new(Vec::new());
+
+// Global memory tracker
+static TOTAL_ALLOCATED_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+pub fn track_alloc(bytes: usize) {
+    TOTAL_ALLOCATED_BYTES.fetch_add(bytes, Ordering::Relaxed);
+}
+
+pub fn track_free(bytes: usize) {
+    TOTAL_ALLOCATED_BYTES.fetch_sub(bytes, Ordering::Relaxed);
+}
+
+pub fn get_total_allocated() -> usize {
+    TOTAL_ALLOCATED_BYTES.load(Ordering::Relaxed)
+}
 
 thread_local! {
     // Stack of scopes. Each scope contains a list of tensors allocated within it.

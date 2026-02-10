@@ -706,8 +706,26 @@ pub extern "C" fn tl_tensor_load(_path: *const i8) -> *mut OpaqueTensor {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn tl_get_memory_bytes() -> i64 {
+    let mut usage = std::mem::MaybeUninit::uninit();
+    unsafe {
+        if libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) == 0 {
+            let usage = usage.assume_init();
+            // On Mac, ru_maxrss is in bytes. On Linux, it's in KB.
+            #[cfg(target_os = "macos")]
+            return usage.ru_maxrss as i64;
+            #[cfg(target_os = "linux")]
+            return (usage.ru_maxrss * 1024) as i64;
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            return 0;
+        }
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_get_memory_mb() -> f64 {
-    0.0
+    tl_get_memory_bytes() as f64 / 1024.0 / 1024.0
 }
 
 // ========== Legacy wrappers for compiler ==========

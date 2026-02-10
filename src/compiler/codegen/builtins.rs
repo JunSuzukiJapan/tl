@@ -1011,14 +1011,17 @@ pub fn declare_runtime_functions<'ctx>(
     let sys_sleep_type = void_type.fn_type(&[f32_type.into()], false);
     add_fn("tl_system_sleep", sys_sleep_type);
 
-    let mem_mb_type = i64_type.fn_type(&[], false);
+    let mem_mb_type = f64_type.fn_type(&[], false);
     add_fn("tl_get_memory_mb", mem_mb_type);
-    add_fn("tl_get_metal_pool_bytes", mem_mb_type);
     add_fn("tl_get_metal_pool_mb", mem_mb_type);
-    add_fn("tl_get_metal_pool_count", mem_mb_type);
-    add_fn("tl_get_pool_count", mem_mb_type);
-    add_fn("tl_get_refcount_count", mem_mb_type);
-    add_fn("tl_get_scope_depth", mem_mb_type);
+
+    let mem_count_type = i64_type.fn_type(&[], false);
+    add_fn("tl_get_memory_bytes", mem_count_type);
+    add_fn("tl_get_metal_pool_bytes", mem_count_type);
+    add_fn("tl_get_metal_pool_count", mem_count_type);
+    add_fn("tl_get_pool_count", mem_count_type);
+    add_fn("tl_get_refcount_count", mem_count_type);
+    add_fn("tl_get_scope_depth", mem_count_type);
     let trace_type = void_type.fn_type(
         &[
             i8_ptr.into(),
@@ -1705,31 +1708,45 @@ pub fn declare_runtime_functions<'ctx>(
     }
 
     if let Some(f) = module.get_function("tl_get_memory_mb") {
-        execution_engine.add_global_mapping(&f, runtime::tl_get_memory_mb as usize);
+        if is_cpu {
+            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_get_memory_mb as usize);
+        } else {
+            execution_engine.add_global_mapping(&f, runtime::tl_get_memory_mb as usize);
+        }
+    }
+    if let Some(f) = module.get_function("tl_get_memory_bytes") {
+        if is_cpu {
+            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_get_memory_bytes as usize);
+        } else {
+            execution_engine.add_global_mapping(&f, runtime::tl_get_memory_bytes as usize);
+        }
     }
     if let Some(f) = module.get_function("tl_get_metal_pool_bytes") {
-        execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_bytes as usize);
+        if is_cpu {
+            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_get_pool_bytes as usize);
+        } else {
+            execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_bytes as usize);
+        }
     }
     if let Some(f) = module.get_function("tl_get_metal_pool_mb") {
-        execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_mb as usize);
+        if is_cpu {
+            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_get_pool_mb as usize);
+        } else {
+            execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_mb as usize);
+        }
     }
     if let Some(f) = module.get_function("tl_get_metal_pool_count") {
-        execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_count as usize);
+        if is_cpu {
+            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_get_pool_count as usize);
+        } else {
+            execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_count as usize);
+        }
     }
     if let Some(f) = module.get_function("tl_metal_sync") {
         execution_engine.add_global_mapping(&f, runtime::tl_metal_sync as usize);
     }
     if let Some(f) = module.get_function("tl_trace_mem") {
         execution_engine.add_global_mapping(&f, runtime::tl_trace_mem as usize);
-    }
-    if let Some(f) = module.get_function("tl_get_metal_pool_bytes") {
-        execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_bytes as usize);
-    }
-    if let Some(f) = module.get_function("tl_get_metal_pool_mb") {
-        execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_mb as usize);
-    }
-    if let Some(f) = module.get_function("tl_get_metal_pool_count") {
-        execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_count as usize);
     }
     if let Some(f) = module.get_function("tl_get_pool_count") {
         execution_engine.add_global_mapping(&f, runtime::tl_get_pool_count as usize);

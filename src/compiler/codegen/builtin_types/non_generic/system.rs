@@ -30,10 +30,17 @@ pub fn register_system_types(manager: &mut TypeManager) {
     );
     
     // Memory / Stats
-    // System::memory_mb() -> i64
+    // System::memory_mb() -> f64
     system.register_evaluated_static_method(
         "memory_mb", 
         compile_memory_mb,
+        vec![],
+        Type::F64
+    );
+    // System::memory_bytes() -> i64
+    system.register_evaluated_static_method(
+        "memory_bytes", 
+        compile_memory_bytes,
         vec![],
         Type::I64
     );
@@ -67,12 +74,12 @@ pub fn register_system_types(manager: &mut TypeManager) {
         vec![],
         Type::I64
     );
-    // System::metal_pool_mb() -> i64
+    // System::metal_pool_mb() -> f64
     system.register_evaluated_static_method(
         "metal_pool_mb", 
         compile_metal_pool_mb,
         vec![],
-        Type::I64
+        Type::F64
     );
     // System::metal_pool_count() -> i64
     system.register_evaluated_static_method(
@@ -228,13 +235,37 @@ fn compile_simple_i64_call<'ctx>(
     Ok((res, Type::I64))
 }
 
+// Helper for 0-arg F64 return functions
+fn compile_simple_f64_call<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    fn_name: &str,
+    debug_name: &str,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
+    let call = codegen.builder.build_call(fn_val, &[], debug_name).map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err(format!("Invalid return from {}", debug_name)),
+    };
+    Ok((res, Type::F64))
+}
+
 fn compile_memory_mb<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if !args.is_empty() { return Err("System::memory_mb takes no arguments".into()); }
-    compile_simple_i64_call(codegen, "tl_get_memory_mb", "mem_mb")
+    compile_simple_f64_call(codegen, "tl_get_memory_mb", "mem_mb")
+}
+
+fn compile_memory_bytes<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("System::memory_bytes takes no arguments".into()); }
+    compile_simple_i64_call(codegen, "tl_get_memory_bytes", "mem_bytes")
 }
 
 fn compile_pool_count<'ctx>(
@@ -279,7 +310,7 @@ fn compile_metal_pool_mb<'ctx>(
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if !args.is_empty() { return Err("System::metal_pool_mb takes no arguments".into()); }
-    compile_simple_i64_call(codegen, "tl_get_metal_pool_mb", "metal_pool_mb")
+    compile_simple_f64_call(codegen, "tl_get_metal_pool_mb", "metal_pool_mb")
 }
 
 fn compile_metal_pool_count<'ctx>(
