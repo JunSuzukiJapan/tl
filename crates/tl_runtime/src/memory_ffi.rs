@@ -109,18 +109,21 @@ pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::
     t
 }
 
-/// テンソル解放（条件付きデータクリア）
+/// テンソル解放（安全なデータクリア方式）
 /// 構造体自体は残すので二重呼び出しでも安全。
-/// autograd を持つテンソルは backward + detach クリーンアップに委ねる。
+/// CPU バックエンド: 内部データ (Vec<f32> 等) のみ解放し、構造体ポインタは有効なまま残す。
+/// Metal バックエンド: No-op（MetalTensor の Drop で GPU バッファをプールに返却）。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_release_safe(t: *mut crate::OpaqueTensor) {
     if t.is_null() { return; }
-    // cpu-backend-release fix: Enforce return to pool for ALL tensors on CPU.
-    // Casting MetalTensor to CpuTensor is unsafe but necessary if we are running CPU backend logic via tl_runtime symbols.
-    // Ideally we should detect backend type, but for now we assume CPU if this path is hit in N-Queens.
-    let cpu_tensor = t as *mut tl_cpu::tensor::CpuTensor;
-    
-    tl_cpu::ffi::tl_cpu_tensor_return_to_pool(cpu_tensor);
+    let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
+    if is_cpu {
+        // CPU バックエンド: 安全なデータクリア方式
+        // 二重呼び出しでもセグフォしない（既にクリア済みなら空 Vec のクリアは no-op）
+        tl_cpu::ffi::tl_cpu_tensor_clear_data(t as *mut tl_cpu::tensor::CpuTensor);
+    }
+    // Metal バックエンド: MetalTensor は Drop で GPU バッファをプールに返却する。
+    // ここでは何もしない（MetalTensor を CpuTensor にキャストするのは未定義動作）。
 }
 
 /// テンソルファイナライズ（No-op: exit_scope で一括処理）

@@ -1441,15 +1441,15 @@ pub fn declare_runtime_functions<'ctx>(
     }
     map_tensor_fn!("tl_tensor_acquire", runtime::memory_ffi::tl_tensor_acquire, cpu_ffi::tl_cpu_tensor_acquire);
     map_tensor_fn!("tl_tensor_release_safe", runtime::tl_tensor_release_safe, cpu_ffi::tl_cpu_tensor_release);
-    map_tensor_fn!("tl_tensor_add", cpu_ffi::tl_cpu_tensor_add, cpu_ffi::tl_cpu_tensor_add);
-    map_tensor_fn!("tl_tensor_sub", cpu_ffi::tl_cpu_tensor_sub, cpu_ffi::tl_cpu_tensor_sub);
-    map_tensor_fn!("tl_tensor_mul", cpu_ffi::tl_cpu_tensor_mul, cpu_ffi::tl_cpu_tensor_mul);
-    map_tensor_fn!("tl_tensor_div", cpu_ffi::tl_cpu_tensor_div, cpu_ffi::tl_cpu_tensor_div);
-    map_tensor_fn!("tl_tensor_add_scalar", cpu_ffi::tl_cpu_tensor_add_scalar, cpu_ffi::tl_cpu_tensor_add_scalar);
-    map_tensor_fn!("tl_tensor_sub_scalar", cpu_ffi::tl_cpu_tensor_sub_scalar, cpu_ffi::tl_cpu_tensor_sub_scalar);
-    map_tensor_fn!("tl_tensor_mul_scalar", cpu_ffi::tl_cpu_tensor_mul_scalar, cpu_ffi::tl_cpu_tensor_mul_scalar);
-    map_tensor_fn!("tl_tensor_div_scalar", cpu_ffi::tl_cpu_tensor_div_scalar, cpu_ffi::tl_cpu_tensor_div_scalar);
-    map_tensor_fn!("tl_tensor_pow_scalar", cpu_ffi::tl_cpu_tensor_pow_scalar, cpu_ffi::tl_cpu_tensor_pow_scalar);
+    map_tensor_fn!("tl_tensor_add", runtime::tl_tensor_add, cpu_ffi::tl_cpu_tensor_add);
+    map_tensor_fn!("tl_tensor_sub", runtime::tl_tensor_sub, cpu_ffi::tl_cpu_tensor_sub);
+    map_tensor_fn!("tl_tensor_mul", runtime::tl_tensor_mul, cpu_ffi::tl_cpu_tensor_mul);
+    map_tensor_fn!("tl_tensor_div", runtime::tl_tensor_div, cpu_ffi::tl_cpu_tensor_div);
+    map_tensor_fn!("tl_tensor_add_scalar", runtime::tl_tensor_add_scalar, cpu_ffi::tl_cpu_tensor_add_scalar);
+    map_tensor_fn!("tl_tensor_sub_scalar", runtime::tl_tensor_sub_scalar, cpu_ffi::tl_cpu_tensor_sub_scalar);
+    map_tensor_fn!("tl_tensor_mul_scalar", runtime::tl_tensor_mul_scalar, cpu_ffi::tl_cpu_tensor_mul_scalar);
+    map_tensor_fn!("tl_tensor_div_scalar", runtime::tl_tensor_div_scalar, cpu_ffi::tl_cpu_tensor_div_scalar);
+    map_tensor_fn!("tl_tensor_pow_scalar", runtime::tl_tensor_pow_scalar, cpu_ffi::tl_cpu_tensor_pow_scalar);
     if let Some(f) = module.get_function("tl_tensor_prepare_return") {
         execution_engine.add_global_mapping(
             &f,
