@@ -2808,7 +2808,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .builder
                             .build_load(void_ptr_type, ptr_to_ptr, "tensor_ptr")
                             .map_err(|e| e.to_string())?;
+
+                        // FIX: テンソル方程式の中間変数 _comp_res_N の所有権を呼び出し元に移転。
+                        // tl_tensor_acquire は no-op のため、_comp_res_N と代入先変数が同じポインタを共有する。
+                        // 両方が CLEANUP_FULL のままだと exit_scope で二重解放が発生する。
+                        if let Some(scope) = self.variables.last_mut() {
+                            if let Some(entry) = scope.get_mut(&temp_name) {
+                                entry.2 = super::CLEANUP_NONE;
+                            }
+                        }
+
                         Ok((ptr, val_ty))
+
                     } else {
                         Err("Tensor variable should be a pointer".into())
                     }
