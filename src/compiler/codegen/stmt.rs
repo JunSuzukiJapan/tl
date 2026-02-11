@@ -470,7 +470,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // テンソルは Arc で所有権管理されるため、構造体用の tl_ptr_dec_ref チェックは不要。
                 // Arc::from_raw → drop で参照カウントが -1 され、RC=0 で自然に Drop される。
                 let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                let cast_void = self.builder
+                let _cast_void = self.builder
                     .build_pointer_cast(ptr, void_ptr_ty, "tensor_void_cast")
                     .unwrap();
 
