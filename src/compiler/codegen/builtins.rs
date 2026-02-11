@@ -1553,21 +1553,16 @@ pub fn declare_runtime_functions<'ctx>(
     map_tensor_fn!("tl_tensor_rope_new_sin", runtime::tl_tensor_rope_new_sin, cpu_ffi::tl_cpu_tensor_rope_new_sin);
     map_tensor_fn!("tl_tensor_apply_rope", runtime::tl_tensor_apply_rope, cpu_ffi::tl_cpu_tensor_apply_rope);
 
+    // 新規実装関数: CPU/GPU 両対応
+    map_tensor_fn!("tl_tensor_clone", runtime::tl_tensor_clone, cpu_ffi::tl_cpu_tensor_clone);
+    map_tensor_fn!("tl_tensor_free", runtime::tl_tensor_free, cpu_ffi::tl_cpu_tensor_free); // free も共通化
+    map_tensor_fn!("tl_tensor_release", runtime::tl_tensor_release, cpu_ffi::tl_cpu_tensor_release);
+    map_tensor_fn!("tl_tensor_numel", runtime::tl_tensor_numel, cpu_ffi::tl_cpu_tensor_numel);
+    map_tensor_fn!("tl_tensor_data", runtime::tl_tensor_data, cpu_ffi::tl_cpu_tensor_data);
+
     // ========== CPU 専用マッピング (runtime に対応関数がないもの) ==========
     // GPU 時は既存の if let Some ブロック (上記) で runtime 関数にマッピング済み
     if is_cpu {
-        if let Some(f) = module.get_function("tl_tensor_clone") {
-            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_clone as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_free") {
-            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_free as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_release") {
-            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_release as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_numel") {
-            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_numel as usize);
-        }
         if let Some(f) = module.get_function("tl_tensor_transpose_2d") {
             execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_transpose_2d as usize);
         }
@@ -1579,9 +1574,6 @@ pub fn declare_runtime_functions<'ctx>(
         }
         if let Some(f) = module.get_function("tl_tensor_reshape_3d_to_2d") {
             execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_reshape_3d_to_2d as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_data") {
-            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_data as usize);
         }
         if let Some(f) = module.get_function("tl_tensor_matmul_4d") {
             execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_matmul_4d as usize);

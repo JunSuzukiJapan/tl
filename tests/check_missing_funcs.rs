@@ -8,6 +8,7 @@ fn check_missing_runtime_functions() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let builtins_path = project_root.join("src/compiler/codegen/builtins.rs");
     let runtime_src_path = project_root.join("crates/tl_runtime/src");
+    let metal_src_path = project_root.join("crates/tl_metal/src");
     
     // 1. コンパイラが必要とする関数（Builtins）を抽出
     let builtins_content = fs::read_to_string(&builtins_path)
@@ -69,6 +70,8 @@ fn check_missing_runtime_functions() {
 
     visit_dirs(&runtime_src_path, &re_func_def, &mut provided_funcs)
         .expect("Failed to scan runtime source files");
+    visit_dirs(&metal_src_path, &re_func_def, &mut provided_funcs)
+        .expect("Failed to scan metal source files");
 
     // 3. 比較 & 検証
     let mut missing_funcs = Vec::new();

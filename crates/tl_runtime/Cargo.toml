@@ -22,8 +22,7 @@ tl_cpu = { path = "../tl_cpu" }
 tokenizers = "0.19.1"
 safetensors = "0.4.1"
 
-# Candle (for GGUF loading and quantized tensors)
-candle-core = { version = "0.9.1", features = ["metal", "accelerate"] }
+
 
 # Utils
 once_cell = "1.18.0"
@@ -34,6 +33,9 @@ image = "0.25"
 byteorder = "1.5"
 rand = "0.8.5"
 log = "0.4"
+gguf-rs = "0.1.5"
+memmap2 = "0.9.9"
+half = "2.7.1"
 
 [features]
 default = []

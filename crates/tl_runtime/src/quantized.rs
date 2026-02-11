@@ -1,0 +1,103 @@
+//! Quantized Tensor Module
+//! 
+//! Handles quantized tensors loaded from GGUF files.
+//! Supports dequantization to F32 for compatibility with Metal backend.
+
+
+use tl_metal::MetalTensor;
+
+/// Quantization Types (subset of GGML types)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(non_camel_case_types)]
+pub enum GGMLType {
+    F32,
+    F16,
+    Q4_0,
+    Q4_1,
+    Q5_0,
+    Q5_1,
+    Q8_0,
+    Q8_1,
+    // Add more as needed
+    Unknown,
+}
+
+/// Quantized Tensor Structure
+/// Holds raw data and metadata.
+#[derive(Debug)]
+pub struct QTensor {
+    pub data: Vec<u8>,
+    pub shape: Vec<usize>,
+    pub ggml_type: GGMLType,
+}
+
+impl QTensor {
+    pub fn new(data: Vec<u8>, shape: Vec<usize>, ggml_type: GGMLType) -> Self {
+        Self { data, shape, ggml_type }
+    }
+
+    /// Dequantize to F32 MetalTensor
+    /// Currently implements a simple conversion or returns error for unsupported types.
+    pub fn dequantize(&self) -> Result<MetalTensor, String> {
+        let f32_data = match self.ggml_type {
+            GGMLType::F32 => {
+                // reinterpret bytes as f32
+                if self.data.len() % 4 != 0 {
+                    return Err("Data length not multiple of 4 for F32".to_string());
+                }
+                let count = self.data.len() / 4;
+                let mut out = Vec::with_capacity(count);
+                unsafe {
+                    let ptr = self.data.as_ptr() as *const f32;
+                    let slice = std::slice::from_raw_parts(ptr, count);
+                    out.extend_from_slice(slice);
+                }
+                out
+            },
+            GGMLType::Q8_0 => self.dequantize_q8_0()?,
+            // TODO: Implement Q4_0, etc.
+            _ => return Err(format!("Unsupported quantization type: {:?}", self.ggml_type)),
+        };
+
+        let metal_shape = self.shape.clone();
+        Ok(MetalTensor::from_slice(&f32_data, &metal_shape, tl_metal::DType::F32))
+    }
+
+    fn dequantize_q8_0(&self) -> Result<Vec<f32>, String> {
+        // Q8_0 layout: [d: f16] [x: i8 * 32] -> block size 34 bytes (for 32 weights)
+        // x = d * x_i8
+        let block_size = 32;
+        let type_size = 2 + block_size; // f16 (2 bytes) + 32 * i8 (1 byte)
+        let num_elements: usize = self.shape.iter().product();
+        
+        if num_elements % block_size != 0 {
+            return Err("Number of elements must be multiple of 32 for Q8_0".to_string());
+        }
+        let num_blocks = num_elements / block_size;
+        
+        if self.data.len() != num_blocks * type_size {
+            return Err(format!("Data size mismatch for Q8_0: expected {}, got {}", num_blocks * type_size, self.data.len()));
+        }
+
+        let mut out = Vec::with_capacity(num_elements);
+        let mut ptr = 0;
+
+        for _ in 0..num_blocks {
+            // Read scale (f16)
+            let d_bytes = [self.data[ptr], self.data[ptr+1]];
+            let d = f16::from_le_bytes(d_bytes).to_f32();
+            ptr += 2;
+
+            for _ in 0..block_size {
+                let x_i8 = self.data[ptr] as i8;
+                out.push(d * x_i8 as f32);
+                ptr += 1;
+            }
+        }
+
+        Ok(out)
+    }
+}
+
+// Helper for F16 to F32 conversion
+use half::f16;

@@ -329,11 +329,13 @@ mod tests {
     fn test_literals() {
         let input = "42 3.14 \"hello\"";
         let tokens: Vec<Token> = tokenize(input).into_iter().map(|r| r.unwrap().token).collect();
-        assert_eq!(tokens, vec![
-            Token::IntLiteral(42),
-            Token::FloatLiteral(std::f64::consts::PI),
-            Token::StringLiteral("hello".to_string()),
-        ]);
+        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens[0], Token::IntLiteral(42));
+        match &tokens[1] {
+            Token::FloatLiteral(v) => assert!((v - 3.14).abs() < 1e-10, "expected ~3.14, got {}", v),
+            other => panic!("expected FloatLiteral, got {:?}", other),
+        }
+        assert_eq!(tokens[2], Token::StringLiteral("hello".to_string()));
     }
 
     #[test]

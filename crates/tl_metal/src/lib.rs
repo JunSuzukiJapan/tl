@@ -11,6 +11,8 @@ pub mod shaders;
 pub mod autograd;
 pub mod backend_impl;
 pub mod optim;
+pub mod ffi;
+pub mod ffi_ops;
 
 pub use buffer_pool::MetalBufferPool;
 pub use device::{get_device, MetalDevice};

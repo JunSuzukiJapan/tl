@@ -117,13 +117,9 @@ pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_release_safe(t: *mut crate::OpaqueTensor) {
     if t.is_null() { return; }
-    let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
-    if is_cpu {
-        // CPU バックエンド: Arc の参照カウントを -1
-        tl_cpu::ffi::tl_cpu_tensor_release(t as *mut tl_cpu::tensor::CpuTensor);
-    }
-    // Metal バックエンド: MetalTensor は Drop で GPU バッファをプールに返却する。
-    // ここでは何もしない（MetalTensor を CpuTensor にキャストするのは未定義動作）。
+    // Metal バックエンド: Box::from_raw で drop (tl_metal::ffi::tl_tensor_release と同等)
+    // CPU バックエンドへの分岐は廃止 (tl_cpu 側で独立して管理)
+    unsafe { let _ = Box::from_raw(t); }
 }
 
 /// テンソルファイナライズ（No-op: exit_scope で一括処理）

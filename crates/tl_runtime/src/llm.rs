@@ -6,7 +6,8 @@ use crate::OpaqueTensor;
 use tl_metal::{MetalTensor, DType};
 
 // tensor_ops_ext からの re-export
-pub use crate::tensor_ops_ext::tl_tensor_silu;
+// tensor_ops_ext からの re-export
+pub use crate::tl_tensor_silu;
 
 // system からの kv_cache 関数を re-export
 pub use crate::system::{
@@ -20,11 +21,10 @@ pub use crate::tokenizer::{
     tl_tokenizer_new, tl_tokenizer_encode, tl_tokenizer_decode,
 };
 
-// system から gguf_load を re-export
-pub use crate::system::tl_gguf_load;
+
 
 // tensor_ops_ext から LLM 関連関数を re-export (silu は lib.rs でエクスポート済み)
-pub use crate::tensor_ops_ext::{
+pub use crate::{
     tl_tensor_rms_norm, 
     tl_tensor_sample,
     tl_tensor_rope_new_cos, tl_tensor_rope_new_sin, tl_tensor_apply_rope,

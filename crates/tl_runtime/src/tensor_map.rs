@@ -6,7 +6,7 @@ use crate::OpaqueTensor;
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::sync::Arc;
-use candle_core::quantized::QTensor;
+
 
 /// テンソルのデータを型非依存に保持するエントリ
 pub(crate) struct TensorEntry {
@@ -20,7 +20,7 @@ pub(crate) struct TensorEntry {
 /// TensorMap 構造体 — CPU/GPU 両方で使用可能
 pub struct OpaqueTensorMap {
     pub(crate) entries: HashMap<String, TensorEntry>,
-    pub qtensors: HashMap<String, Arc<QTensor>>,
+    pub qtensors: HashMap<String, std::sync::Arc<crate::quantized::QTensor>>,
 }
 
 fn is_cpu_mode() -> bool {
@@ -212,23 +212,22 @@ pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *mut Strin
 pub extern "C" fn tl_tensor_map_get_quantized(
     map: *mut OpaqueTensorMap,
     name: *mut StringStruct,
-) -> *mut QTensor {
+) -> *mut crate::quantized::QTensor {
     unsafe {
         if map.is_null() || name.is_null() || (*name).ptr.is_null() {
             return std::ptr::null_mut();
         }
         let map_ref = &(*map);
-        let key = CStr::from_ptr((*name).ptr).to_string_lossy();
+        let key = std::ffi::CStr::from_ptr((*name).ptr).to_string_lossy();
 
-        // まず qtensors マップから検索
         if let Some(qtensor_arc) = map_ref.qtensors.get(key.as_ref()) {
-            // Arc のクローンを Box に入れてから raw pointer に変換
-            // 呼び出し元は Arc<QTensor> として扱う
             let arc_clone = Arc::clone(qtensor_arc);
-            return Arc::into_raw(arc_clone) as *mut QTensor;
+            return Arc::into_raw(arc_clone) as *mut crate::quantized::QTensor;
         }
 
         eprintln!("Warning: Quantized tensor '{}' not found", key);
         std::ptr::null_mut()
     }
 }
+
+
