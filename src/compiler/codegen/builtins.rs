@@ -1994,7 +1994,7 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_decode as usize);
     }
     if let Some(f) = module.get_function("tl_gguf_load") {
-        execution_engine.add_global_mapping(&f, runtime::llm::tl_gguf_load as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_gguf_load as usize);
     }
     if !is_cpu {
         if let Some(f) = module.get_function("tl_tensor_map_get") {

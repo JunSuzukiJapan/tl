@@ -5,7 +5,7 @@
 
 use crate::tensor::MetalTensor;
 use crate::DType;
-use std::ffi::c_void;
+// use std::ffi::c_void;
 
 // OpaqueTensor は MetalTensor のエイリアス
 type OpaqueTensor = MetalTensor;
@@ -410,7 +410,7 @@ pub extern "C" fn tl_tensor_set_f32_md(
     let idx_slice = unsafe { std::slice::from_raw_parts(indices, rank) };
     
     let mut linear_idx = 0usize;
-    let mut stride = 1usize;
+    // let _stride = 1usize;
     // stride 計算 (row-major)
     if !shape.is_empty() {
         let mut strides = vec![1; rank];
@@ -531,7 +531,7 @@ pub extern "C" fn tl_tensor_replace_data(a: *mut OpaqueTensor, b: *mut OpaqueTen
 // ========== Device/Grad ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_device_id(t: *mut OpaqueTensor) -> i32 {
+pub extern "C" fn tl_tensor_device_id(_t: *mut OpaqueTensor) -> i32 {
     0 // GPU
 }
 
