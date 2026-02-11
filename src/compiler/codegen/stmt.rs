@@ -1495,6 +1495,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                                          let void_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "").unwrap();
                                          self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
                                      }
+                                     
+                                     // Move semantics: RHS 変数の alloca を NULL にクリアして
+                                     // exit_scope での二重解放を防止。
+                                     // while ループ内で inner scope の変数を outer scope の
+                                     // mutable 変数に代入する場合に必須。
+                                     if let ExprKind::Variable(ref rhs_name) = value.inner {
+                                         let _ = self.null_out_variable(rhs_name);
+                                     }
                                 }
                                 _ => {}
                              }
