@@ -186,24 +186,28 @@ pub extern "C" fn tl_cpu_tensor_get_i64(t: *mut OpaqueTensor, indices: *const us
     tl_cpu_tensor_get_f32(t, indices, rank) as i64
 }
 
-/// runtime::tl_tensor_get_f32_md と同じシグネチャ (2D インデックスアクセス)
-pub extern "C" fn tl_cpu_tensor_get_f32_md(t: *mut OpaqueTensor, idx0: i64, idx1: i64) -> f32 {
-    if t.is_null() { return 0.0; }
-    let tensor = unsafe { &*t };
+/// runtime::tl_tensor_get_f32_md と同じシグネチャ (多次元インデックスアクセス)
+/// LLVM 宣言: (tensor: *mut, indices: *const i64, rank: i64) -> f32
+pub extern "C" fn tl_cpu_tensor_get_f32_md(t: *mut OpaqueTensor, indices: *const i64, rank: i64) -> f32 {
+    if t.is_null() || indices.is_null() { return 0.0; }
+    let tensor = unsafe { &*(t as *mut CpuTensor) };
     let shape = tensor.shape();
     if shape.is_empty() { return 0.0; }
     let data = tensor.data_f32();
-    if shape.len() >= 2 {
-        let idx = (idx0 as usize) * shape[1] + (idx1 as usize);
-        data.get(idx).cloned().unwrap_or(0.0)
-    } else {
-        data.get(idx0 as usize).cloned().unwrap_or(0.0)
+    let rank = rank as usize;
+    // indices から各次元のインデックスを読み取り、フラットインデックスを計算
+    let mut flat_idx = 0usize;
+    for d in 0..rank.min(shape.len()) {
+        let idx = unsafe { *indices.add(d) } as usize;
+        let stride: usize = shape[d+1..].iter().product();
+        flat_idx += idx * stride.max(1);
     }
+    data.get(flat_idx).cloned().unwrap_or(0.0)
 }
 
 /// runtime::tl_tensor_get_i64_md と同じシグネチャ
-pub extern "C" fn tl_cpu_tensor_get_i64_md(t: *mut OpaqueTensor, idx0: i64, idx1: i64) -> i64 {
-    tl_cpu_tensor_get_f32_md(t, idx0, idx1) as i64
+pub extern "C" fn tl_cpu_tensor_get_i64_md(t: *mut OpaqueTensor, indices: *const i64, rank: i64) -> i64 {
+    tl_cpu_tensor_get_f32_md(t, indices, rank) as i64
 }
 
 pub extern "C" fn tl_cpu_tensor_set_f32(t: *mut OpaqueTensor, indices: *const usize, _rank: usize, value: f32) {

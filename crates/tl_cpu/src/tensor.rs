@@ -340,9 +340,9 @@ impl CpuTensor {
             }
         }
 
-        // 4. 全ノード走査で中間テンソルのデータバッファをクリア
-        //    build_topo は requires_grad==true のみ走査するため、
-        //    クリーンアップ用に requires_grad を無視した全ノード走査を行う。
+        // 4. 全ノード走査で中間テンソルの autograd グラフを切断
+        //    データバッファ (data_f32, shape) は残す（ユーザーコードから参照される可能性がある）。
+        //    grad_fn のみクリアしてグラフの循環参照を防ぐ。
         let mut all_nodes: Vec<*mut CpuTensor> = Vec::new();
         let mut cleanup_visited = std::collections::HashSet::<usize>::new();
         Self::collect_all_graph_nodes(self_ptr, &mut cleanup_visited, &mut all_nodes);
@@ -353,11 +353,11 @@ impl CpuTensor {
             let is_leaf = tensor.autograd.as_ref()
                 .map_or(true, |m| m.grad_fn.is_none());
             if !is_leaf {
-                // 中間テンソルのデータバッファをクリア
-                tensor.data_f32 = Vec::new();
-                tensor.data_i64 = None;
-                tensor.shape = Vec::new();
-                tensor.autograd = None;
+                // grad_fn のみクリアして計算グラフを切断（データは保持）
+                if let Some(ref mut meta) = tensor.autograd {
+                    meta.grad_fn = None;
+                    meta.grad = None;
+                }
             }
         }
     }
