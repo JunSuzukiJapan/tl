@@ -109,18 +109,18 @@ pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::
     t
 }
 
-/// テンソル解放（安全なデータクリア方式）
-/// 構造体自体は残すので二重呼び出しでも安全。
-/// CPU バックエンド: 内部データ (Vec<f32> 等) のみ解放し、構造体ポインタは有効なまま残す。
+/// テンソル解放（Arc ベース）
+/// Arc の参照カウントを -1 する。RC=0 になれば CpuTensor（autograd グラフ含む）が
+/// 自然に Drop される。
+/// CPU バックエンド: Arc::from_raw で復元し drop で RC-1。
 /// Metal バックエンド: No-op（MetalTensor の Drop で GPU バッファをプールに返却）。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_release_safe(t: *mut crate::OpaqueTensor) {
     if t.is_null() { return; }
     let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
     if is_cpu {
-        // CPU バックエンド: 安全なデータクリア方式
-        // 二重呼び出しでもセグフォしない（既にクリア済みなら空 Vec のクリアは no-op）
-        tl_cpu::ffi::tl_cpu_tensor_clear_data(t as *mut tl_cpu::tensor::CpuTensor);
+        // CPU バックエンド: Arc の参照カウントを -1
+        tl_cpu::ffi::tl_cpu_tensor_release(t as *mut tl_cpu::tensor::CpuTensor);
     }
     // Metal バックエンド: MetalTensor は Drop で GPU バッファをプールに返却する。
     // ここでは何もしない（MetalTensor を CpuTensor にキャストするのは未定義動作）。

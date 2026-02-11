@@ -2,6 +2,41 @@
 
 use crate::autograd::GradFn;
 use crate::DType;
+use std::sync::Arc;
+use std::cell::UnsafeCell;
+
+/// テンソルへの共有所有権付きハンドル。
+/// Autograd グラフ内でテンソル間の参照を安全に管理する。
+/// CPU 版はシングルスレッドなので UnsafeCell で内部可変性を確保。
+pub type TensorRef = Arc<UnsafeCell<CpuTensor>>;
+
+/// 生ポインタから TensorRef を取得する (RC+1)。
+/// FFI 境界で `*mut OpaqueTensor` を Autograd 用の `TensorRef` に変換する際に使用。
+///
+/// # Safety
+/// `ptr` は `Arc::into_raw` で作成された有効なポインタでなければならない。
+pub unsafe fn tensor_ref_from_ptr(ptr: *mut CpuTensor) -> TensorRef {
+    let arc: TensorRef = Arc::from_raw(ptr as *const UnsafeCell<CpuTensor>);
+    let cloned = arc.clone();  // RC+1
+    let _ = Arc::into_raw(arc);        // 元の参照を戻す（RC を減らさない）
+    cloned
+}
+
+/// TensorRef から内部の CpuTensor への不変参照を取得する。
+///
+/// # Safety
+/// 同時に可変参照が存在しないことを呼び出し元が保証すること。
+pub unsafe fn tensor_ref_get(r: &TensorRef) -> &CpuTensor {
+    &*r.get()
+}
+
+/// TensorRef から内部の CpuTensor への可変参照を取得する。
+///
+/// # Safety
+/// 同時に他の参照が存在しないことを呼び出し元が保証すること。
+pub unsafe fn tensor_ref_get_mut(r: &TensorRef) -> &mut CpuTensor {
+    &mut *r.get()
+}
 
 
 /// Autograd メタデータ
@@ -44,22 +79,12 @@ impl CpuTensor {
     // ========== コンストラクタ ==========
 
     fn alloc_from_pool() -> Self {
-        // Recycle from pool if available
-        if let Some(boxed) = crate::memory::recycle_tensor() {
-             // Returning from pool -> consider as re-allocation?
-             // Actually, when we take from pool, it's already "allocated" in system memory,
-             // but from user perspective it's a new tensor.
-             // However, to track *total allocated*, we should track when Vec grows.
-             // Here we just return the object wrapper.
-             *boxed
-        } else {
-             CpuTensor {
-                data_f32: Vec::new(),
-                data_i64: None,
-                shape: Vec::new(),
-                dtype: DType::F32,
-                autograd: None,
-            }
+        CpuTensor {
+            data_f32: Vec::new(),
+            data_i64: None,
+            shape: Vec::new(),
+            dtype: DType::F32,
+            autograd: None,
         }
     }
 
@@ -324,8 +349,9 @@ impl CpuTensor {
                 });
 
                 if let Some((grads, inputs)) = propagation {
-                    for (input_ptr, grad) in inputs.into_iter().zip(grads.into_iter()) {
-                        let input = unsafe { &mut *input_ptr };
+                    for (input_ref, grad) in inputs.into_iter().zip(grads.into_iter()) {
+                        // TensorRef (Arc<UnsafeCell<CpuTensor>>) から可変参照を取得
+                        let input = unsafe { &mut *input_ref.get() };
                         if input.requires_grad() {
                             if let Some(ref mut meta) = input.autograd {
                                 if let Some(ref mut existing) = meta.grad {
@@ -340,25 +366,13 @@ impl CpuTensor {
             }
         }
 
-        // 4. 全ノード走査で中間テンソルの autograd グラフを切断
-        //    データバッファ (data_f32, shape) は残す（ユーザーコードから参照される可能性がある）。
-        //    grad_fn のみクリアしてグラフの循環参照を防ぐ。
-        let mut all_nodes: Vec<*mut CpuTensor> = Vec::new();
-        let mut cleanup_visited = std::collections::HashSet::<usize>::new();
-        Self::collect_all_graph_nodes(self_ptr, &mut cleanup_visited, &mut all_nodes);
-
-        for &ptr in &all_nodes {
-            if ptr == self_ptr { continue; } // 自身はスキップ
-            let tensor = unsafe { &mut *ptr };
-            let is_leaf = tensor.autograd.as_ref()
-                .map_or(true, |m| m.grad_fn.is_none());
-            if !is_leaf {
-                // grad_fn のみクリアして計算グラフを切断（データは保持）
-                if let Some(ref mut meta) = tensor.autograd {
-                    meta.grad_fn = None;
-                    meta.grad = None;
-                }
-            }
+        // 4. 出力テンソルの grad_fn をクリア
+        //    grad_fn = None により、GradFn 内の TensorRef (Arc) が drop される。
+        //    入力テンソルの Arc RC が下がり、それらの grad_fn も連鎖的に drop
+        //    → グラフ全体が自然に解放される。
+        //    以前のように全ノードを走査する必要はない。
+        if let Some(ref mut meta) = self.autograd {
+            meta.grad_fn = None;
         }
     }
 
@@ -377,41 +391,18 @@ impl CpuTensor {
         let tensor = unsafe { &*ptr };
         if let Some(ref meta) = tensor.autograd {
             if let Some(ref gf) = meta.grad_fn {
-                for input in gf.inputs() {
-                    let input_tensor = unsafe { &*input };
+                for input_ref in gf.inputs() {
+                    // TensorRef から生ポインタを取得して再帰
+                    let input_ptr = input_ref.get() as *mut CpuTensor;
+                    let input_tensor = unsafe { &*input_ptr };
                     if input_tensor.requires_grad() {
-                        Self::build_topo(input, visited, topo);
+                        Self::build_topo(input_ptr, visited, topo);
                     }
                 }
             }
         }
         topo.push(ptr);
     }
-
-    /// クリーンアップ用の全ノード走査（DFS）
-    /// requires_grad を無視して autograd グラフ内の全テンソルを収集する。
-    fn collect_all_graph_nodes(
-        ptr: *mut CpuTensor,
-        visited: &mut std::collections::HashSet<usize>,
-        nodes: &mut Vec<*mut CpuTensor>,
-    ) {
-        if ptr.is_null() { return; }
-        let key = ptr as usize;
-        if visited.contains(&key) {
-            return;
-        }
-        visited.insert(key);
-        let tensor = unsafe { &*ptr };
-        if let Some(ref meta) = tensor.autograd {
-            if let Some(ref gf) = meta.grad_fn {
-                for input in gf.inputs() {
-                    Self::collect_all_graph_nodes(input, visited, nodes);
-                }
-            }
-        }
-        nodes.push(ptr);
-    }
-
 
     pub fn detach(&self) -> CpuTensor {
         self.shallow_clone()
@@ -438,7 +429,8 @@ impl CpuTensor {
             if let Some(ref autograd) = tensor.autograd {
                 if let Some(ref grad_fn) = autograd.grad_fn {
                     let inputs = grad_fn.inputs();
-                    for input_ptr in inputs {
+                    for input_ref in inputs {
+                        let input_ptr = input_ref.get() as *mut CpuTensor;
                         Self::clear_autograd_recursive(input_ptr, visited);
                     }
                 }
@@ -447,7 +439,7 @@ impl CpuTensor {
             tensor.data_f32 = Vec::new();
             tensor.data_i64 = None;
             tensor.shape = Vec::new();
-            // autograd をクリア（GradFn 内の参照が切断される）
+            // autograd をクリア（Arc の参照カウント管理で安全）
             tensor.autograd = None;
         }
     }

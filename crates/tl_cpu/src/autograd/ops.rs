@@ -1,7 +1,7 @@
 //! CPU 版 演算の勾配関数
 
 use super::GradFn;
-use crate::tensor::CpuTensor;
+use crate::tensor::{CpuTensor, TensorRef};
 use tl_backend::GpuOps;
 
 /// ブロードキャスト勾配集約:
@@ -46,8 +46,8 @@ fn reduce_grad_for_broadcast(grad: &CpuTensor, target_shape: &[usize]) -> CpuTen
 
 /// 加算の勾配
 pub struct AddBackward {
-    pub a: *mut CpuTensor,
-    pub b: *mut CpuTensor,
+    pub a: TensorRef,
+    pub b: TensorRef,
     pub a_shape: Vec<usize>,
     pub b_shape: Vec<usize>,
 }
@@ -58,15 +58,15 @@ impl GradFn for AddBackward {
         let grad_b = reduce_grad_for_broadcast(grad_output, &self.b_shape);
         vec![grad_a, grad_b]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a, self.b]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone(), self.b.clone()]
     }
 }
 
 /// 減算の勾配
 pub struct SubBackward {
-    pub a: *mut CpuTensor,
-    pub b: *mut CpuTensor,
+    pub a: TensorRef,
+    pub b: TensorRef,
     pub a_shape: Vec<usize>,
     pub b_shape: Vec<usize>,
 }
@@ -77,15 +77,15 @@ impl GradFn for SubBackward {
         let grad_b = reduce_grad_for_broadcast(&grad_output.neg(), &self.b_shape);
         vec![grad_a, grad_b]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a, self.b]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone(), self.b.clone()]
     }
 }
 
 /// 乗算の勾配
 pub struct MulBackward {
-    pub a: *mut CpuTensor,
-    pub b: *mut CpuTensor,
+    pub a: TensorRef,
+    pub b: TensorRef,
     pub a_data: CpuTensor,
     pub b_data: CpuTensor,
     pub a_shape: Vec<usize>,
@@ -98,15 +98,15 @@ impl GradFn for MulBackward {
         let grad_b = reduce_grad_for_broadcast(&grad_output.mul(&self.a_data), &self.b_shape);
         vec![grad_a, grad_b]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a, self.b]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone(), self.b.clone()]
     }
 }
 
 /// 除算の勾配
 pub struct DivBackward {
-    pub a: *mut CpuTensor,
-    pub b: *mut CpuTensor,
+    pub a: TensorRef,
+    pub b: TensorRef,
     pub a_data: CpuTensor,
     pub b_data: CpuTensor,
     pub a_shape: Vec<usize>,
@@ -120,14 +120,14 @@ impl GradFn for DivBackward {
         let grad_b = reduce_grad_for_broadcast(&grad_output.mul(&self.a_data).neg().div(&b_sq), &self.b_shape);
         vec![grad_a, grad_b]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a, self.b]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone(), self.b.clone()]
     }
 }
 
 /// べき乗の勾配
 pub struct PowBackward {
-    pub a: *mut CpuTensor,
+    pub a: TensorRef,
     pub a_data: CpuTensor,
     pub b_data: CpuTensor,
     pub output: CpuTensor,
@@ -140,14 +140,14 @@ impl GradFn for PowBackward {
         let grad_a = grad_output.mul(&self.b_data).mul(&self.a_data.pow(&b_minus_1));
         vec![grad_a]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
 /// sumall の勾配
 pub struct SumallBackward {
-    pub a: *mut CpuTensor,
+    pub a: TensorRef,
     pub shape: Vec<usize>,
 }
 
@@ -158,14 +158,14 @@ impl GradFn for SumallBackward {
         let grads = vec![grad_val; count];
         vec![CpuTensor::from_slice(&grads, &self.shape, grad_output.dtype())]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
 /// ReLU の勾配
 pub struct ReluBackward {
-    pub a: *mut CpuTensor,
+    pub a: TensorRef,
     pub a_data: CpuTensor,
 }
 
@@ -178,14 +178,14 @@ impl GradFn for ReluBackward {
             .collect();
         vec![CpuTensor::from_slice(&result, self.a_data.shape(), self.a_data.dtype())]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
 /// Softmax の勾配
 pub struct SoftmaxBackward {
-    pub a: *mut CpuTensor,
+    pub a: TensorRef,
     pub output: CpuTensor,
     pub axis: i32,
 }
@@ -218,15 +218,15 @@ impl GradFn for SoftmaxBackward {
             vec![CpuTensor::from_slice(&result, shape, self.output.dtype())]
         }
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
 /// matmul の勾配
 pub struct MatmulBackward {
-    pub a: *mut CpuTensor,
-    pub b: *mut CpuTensor,
+    pub a: TensorRef,
+    pub b: TensorRef,
     pub a_data: CpuTensor,
     pub b_data: CpuTensor,
 }
@@ -237,14 +237,14 @@ impl GradFn for MatmulBackward {
         let grad_b = self.a_data.transpose_impl(0, 1).matmul_impl(grad_output);
         vec![grad_a, grad_b]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a, self.b]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone(), self.b.clone()]
     }
 }
 
 /// sigmoid の勾配
 pub struct SigmoidBackward {
-    pub a: *mut CpuTensor,
+    pub a: TensorRef,
     pub output: CpuTensor,
 }
 
@@ -255,14 +255,14 @@ impl GradFn for SigmoidBackward {
         let grad = grad_output.mul(&self.output).mul(&one_minus_s);
         vec![grad]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
 /// exp の勾配
 pub struct ExpBackward {
-    pub a: *mut CpuTensor,
+    pub a: TensorRef,
     pub output: CpuTensor,
 }
 
@@ -270,14 +270,14 @@ impl GradFn for ExpBackward {
     fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
         vec![grad_output.mul(&self.output)]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
 /// log の勾配
 pub struct LogBackward {
-    pub a: *mut CpuTensor,
+    pub a: TensorRef,
     pub a_data: CpuTensor,
 }
 
@@ -285,14 +285,14 @@ impl GradFn for LogBackward {
     fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
         vec![grad_output.div(&self.a_data)]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
 /// sum(dim) の勾配
 pub struct SumDimBackward {
-    pub a: *mut CpuTensor,
+    pub a: TensorRef,
     pub input_shape: Vec<usize>,
     pub axis: i32,
 }
@@ -329,12 +329,13 @@ impl GradFn for SumDimBackward {
         }
         vec![CpuTensor::from_slice(&result, &self.input_shape, grad_output.dtype())]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
-// unsafe impl Send/Sync for raw pointer types
+// TensorRef は Arc<UnsafeCell<CpuTensor>> なので Send/Sync を手動実装
+// CPU 版はシングルスレッドなので安全
 unsafe impl Send for AddBackward {}
 unsafe impl Sync for AddBackward {}
 unsafe impl Send for SubBackward {}
@@ -364,7 +365,7 @@ unsafe impl Sync for SumDimBackward {}
 
 /// reshape の勾配
 pub struct ReshapeBackward {
-    pub input: *mut CpuTensor,
+    pub input: TensorRef,
     pub input_shape: Vec<usize>,
 }
 
@@ -373,8 +374,8 @@ impl GradFn for ReshapeBackward {
         // grad を元のshapeに戻す
         vec![grad_output.reshape_impl(&self.input_shape)]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.input]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.input.clone()]
     }
 }
 
@@ -383,35 +384,35 @@ unsafe impl Sync for ReshapeBackward {}
 
 /// スカラ加算の勾配 (t + s) -> grad_t = grad_output
 pub struct AddScalarBackward {
-    pub a: *mut CpuTensor,
+    pub a: TensorRef,
 }
 
 impl GradFn for AddScalarBackward {
     fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
         vec![grad_output.shallow_clone()]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
 /// スカラ減算の勾配 (t - s) -> grad_t = grad_output
 pub struct SubScalarBackward {
-    pub a: *mut CpuTensor,
+    pub a: TensorRef,
 }
 
 impl GradFn for SubScalarBackward {
     fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
         vec![grad_output.shallow_clone()]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
 /// スカラ乗算の勾配 (t * s) -> grad_t = grad_output * s
 pub struct MulScalarBackward {
-    pub a: *mut CpuTensor,
+    pub a: TensorRef,
     pub s: f32,
 }
 
@@ -419,24 +420,23 @@ impl GradFn for MulScalarBackward {
     fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
         vec![grad_output.mul_scalar_impl(self.s)]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
 /// スカラ除算の勾配 (t / s) -> grad_t = grad_output / s
 pub struct DivScalarBackward {
-    pub a: *mut CpuTensor,
+    pub a: TensorRef,
     pub s: f32,
 }
 
 impl GradFn for DivScalarBackward {
     fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
-        vec![grad_output.div_scalar_impl(self.s)] // div_scalar_impl handles 1/s internally? No, div_scalar_impl does x/s.
-        // grad_output / s is correct.
+        vec![grad_output.div_scalar_impl(self.s)]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
@@ -451,15 +451,15 @@ unsafe impl Sync for DivScalarBackward {}
 
 /// 符号反転の勾配 (-t) -> grad_t = -grad_output
 pub struct NegBackward {
-    pub a: *mut CpuTensor,
+    pub a: TensorRef,
 }
 
 impl GradFn for NegBackward {
     fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
         vec![grad_output.neg()]
     }
-    fn inputs(&self) -> Vec<*mut CpuTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 

@@ -2,10 +2,10 @@
 
 pub mod ops;
 
-use crate::tensor::CpuTensor;
+use crate::tensor::{CpuTensor, TensorRef};
 
 /// 勾配関数のトレイト
 pub trait GradFn {
     fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor>;
-    fn inputs(&self) -> Vec<*mut CpuTensor>;
+    fn inputs(&self) -> Vec<TensorRef>;
 }

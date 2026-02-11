@@ -122,34 +122,21 @@ ZSTを安全かつ低コストに扱うため、以下の戦略を採用しま�
 
 ---
 
-## [Japanese] Autograd メモリリーク修正 (V3.3)
+## [Japanese] Autograd メモリリーク修正 (V3.3) — ※ V5.0 で置換済み
+
+> [!NOTE]
+> V3.3 の `emit_retain` 制限と `tl_clear_grads` 自動挿入は、V5.0 の Arc ベース統一所有権モデルにより不要となりました。
+> 以下は歴史的な経緯として残しています。
 
 ### 1. 問題点
-Autograd を多用するワークロード（例: N-Queens の勾配降下法）において、訓練イテレーションごとにメモリ使用量が線形に増加していました：
-- **症状**: 1回の実行で 1237 MB → 2168 MB（+930 MB リーク）
-- **根本原因**: テンソル型に対する `emit_retain()` が `tl_tensor_acquire()` を過剰に呼び出していた（v0.2.1 の 3回 に対し 31回）
+Autograd を多用するワークロード（例: N-Queens の勾配降下法）において、訓練イテレーションごとにメモリ使用量が線形に増加していました。
 
-### 2. 分析 (v0.2.1 vs rebuild-from-scratch)
-LLVM IR の比較により、決定的な差異が判明しました：
+### 2. 解決策
+1. **`emit_retain()` でのテンソル Acquire を無効化**
+2. **ループ内での自動 `tl_clear_grads()`**
 
-| 関数呼び出し | v0.2.1 | 修正前 (現在) |
-|--------------|--------|--------------|
-| `tl_tensor_acquire` | **3** | **31** (10倍増) |
-
-`emit_retain()` 関数は、構造体の返却時における UAF (Use-After-Free) バグを修正するために v0.2.1 以降に追加されました。しかし、これをテンソルにも適用したことで **過剰な参照保持** が発生し、計算グラフの解放が妨げられていました。
-
-### 3. 解決策
-1. **`emit_retain()` でのテンソル Acquire を無効化**: テンソル型は `tl_tensor_acquire()` を呼び出さなくなりました。ライフサイクルはランタイムのメモリマネージャーで既に管理されています。
-2. **ループ内での自動 `tl_clear_grads()`**: コンパイラは各 `for` ループイテレーションの終了時（`for_latch` ブロック）に `tl_clear_grads()` を自動挿入し、勾配ストレージを自動的にクリアします。
-
-### 4. 結果
-| 指標 | 修正前 | 修正後 |
-|------|--------|--------|
-| N-Queens メモリ | 1237→2168 MB (+930 MB) | **39 MB 安定（リークゼロ）** |
-| テスト成功率 | 83.4% | **維持** |
-
-### 5. 重要な知見
-**テンソルと構造体では所有権セマンティクスが異なります。** 構造体は UAF を防ぐために `emit_retain()` の恩恵を受けますが、テンソルはランタイムの集約されたメモリマネージャー（`TensorPool`、`MemoryManager`）によって既に管理されています。構造体と同様の retain ロジックをテンソルに適用すると、重複した参照追跡が発生し、Candle 内部の計算グラフのクリーンアップを妨害します。
+### 3. V5.0 での置換
+Arc ベースの所有権統一により、テンソルも構造体と同様に参照カウントで管理されるようになりました。詳細は V5.0 セクションを参照。
 
 ---
 
@@ -240,41 +227,85 @@ V4.0 戦略は、GPU メモリを OS に解放しない **Persistent GPU Pool** 
 
 ---
 
-## [Japanese] V5.0 ハイブリッドクリーンアップ戦略 (Autograd グラフ管理)
+## [Japanese] Arc ベース統一所有権 (V5.0)
 
-### 1. Autograd グラフの課題
-自動微分（Autograd）の計算グラフは、独特なメモリ管理の課題をもたらします：
-- **長寿命な参照**: グラフ内のテンソルは、逆伝播を可能にするために親テンソルへの生ポインタ (`*mut CpuTensor`) を保持します。
-- **参照サイクル**: グラフ構造は、それを作成した変数のローカルスコープよりも長く生き続けることがよくあります。
-- **ダングリングポインタ**: スコープベースの即時解放 (`release_safe`) を行うと、後で Autograd エンジンがグラフを走査する際に `use-after-free` エラー（不正参照）が発生します。
+### 1. 動機
+V3.3 および以前の戦略では、Autograd テンソルと通常テンソルで異なるメモリ管理を行っていました：
+- **通常テンソル**: `Box::into_raw` で割り当て、`Box::from_raw` で解放
+- **Autograd テンソル**: `release_safe` が No-Op、`backward()` 完了時に全ノード走査で手動クリーンアップ
+- **GradFn が `*mut CpuTensor` 生ポインタで入力を保持**: 所有権が曖昧で dangling pointer のリスク
 
-### 2. 解決策: ハイブリッド・ライフサイクル管理
-テンソルが Autograd に参加しているかどうかに応じて扱いを変える **ハイブリッド戦略** を実装しました：
+これにより、`backward()` や `release_safe` 内での特別な条件分岐が必要で、コードの複雑化およびメモリリークの原因となっていました。
 
-| テンソル種別 | 管理主体 | 解放トリガー | メカニズム |
-|:---|:---|:---|:---|
-| **純粋データ** (Autograd なし) | **コンパイラスコープ** | スコープ脱出 | `tl_tensor_release_safe` が即座に `clear_data` を呼ぶ。 |
-| **Autograd ノード** (Grad あり) | **グラフエンジン** | `backward()` / `detach()` | `release_safe` は **No-Op (何もしない)**。クリーンアップはグラフ走査に委ねる。 |
+### 2. 解決策: Arc ベース統一
 
-### 3. 実装詳細
+Autograd テンソルも通常テンソルも、**同じ `Arc<UnsafeCell<CpuTensor>>` で管理** します。
 
-#### A. 条件付き `release_safe`
-ランタイムの `tl_tensor_release_safe` は、テンソルがアクティブな Autograd コンポーネントを持っているか確認します。
-- **Autograd なし**: `tl_cpu_tensor_clear_data` を呼び出し、下層の `Vec<f32>` を解放しますが、構造体自体は残します（二重解放に対して安全）。
-- **Autograd あり**: 何もしません。テンソルはグラフのために生き続けます。
+```rust
+// 型エイリアス
+pub type TensorRef = Arc<UnsafeCell<CpuTensor>>;
 
-#### B. イベント駆動型グラフクリーンアップ
-Autograd テンソルはスコープ解放で無視されるため、グラフイベントによって明示的にクリーンアップされる必要があります：
+// FFI 割り当て
+fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
+    let arc = Arc::new(UnsafeCell::new(t));
+    Arc::into_raw(arc) as *mut CpuTensor
+}
 
-1.  **Backward パス・クリーンアップ**:
-    -   `backward()` の終了時に、エンジンはトポロジカル順序を走査します。
-    -   **非リーフノード**（中間計算結果）を特定します。
-    -   それらのデータバッファ（`data_f32`, `shape`）と autograd メタデータは即座にクリアされます。
-    -   **結果**: 学習中の中間テンソルが使用直後に死ぬため、メモリスパイクが抑制されます。
+// FFI 解放
+fn tl_cpu_tensor_release(t: *mut OpaqueTensor) {
+    unsafe { drop(Arc::from_raw(t as *const UnsafeCell<CpuTensor>)); }
+}
+```
 
-2.  **Detach クリーンアップ**:
-    -   `t.detach()` が呼ばれると（通常はエポックの境界で）、**ソーステンソル** の上流グラフ全体が再帰的に走査されます。
-    -   切り離されたグラフ内の全ノードは実質的に「ガベージコレクション」されます。
+### 3. Autograd グラフの所有権
 
-### 4. 結果
-この戦略により、N-Queens ソルバーにおけるメモリ増加は **100エポックあたり 4MB** から **0.33MB** に減少（12倍の改善）し、セグメンテーションフォールトも完全に解消されました。
+GradFn の入力参照は `TensorRef` (`Arc::clone`) で保持されます：
+
+```rust
+// 以前: 生ポインタ（所有権曖昧）
+struct AddBackward { a: *mut CpuTensor, b: *mut CpuTensor, ... }
+
+// V5.0: Arc で共有所有（参照カウントで安全）
+struct AddBackward { a: TensorRef, b: TensorRef, ... }
+```
+
+`tensor_ref_from_ptr(ptr)` で FFI ポインタから `Arc::clone` (RC+1) を取得し、`set_grad_fn` に渡します。
+
+### 4. backward() の簡素化
+
+V5.0 では `backward()` 完了後のクリーンアップが大幅に簡素化されました：
+
+```diff
+ // 以前: 全ノード DFS 走査で手動クリーンアップ
+-let mut all_nodes = Vec::new();
+-Self::collect_all_graph_nodes(self_ptr, &mut visited, &mut all_nodes);
+-for &ptr in &all_nodes { /* 手動 grad_fn クリア */ }
+
+ // V5.0: 出力テンソルの grad_fn をクリアするだけ
++if let Some(ref mut meta) = self.autograd {
++    meta.grad_fn = None;  // → GradFn Drop → TensorRef Drop → 連鎖解放
++}
+```
+
+出力テンソルの `grad_fn = None` で GradFn が Drop され、その内部の `TensorRef` が Drop され、中間テンソルの Arc RC が連鎖的に減少し、不要なテンソルが自然に解放されます。
+
+### 5. release_safe の統一
+
+`tl_tensor_release_safe` は Autograd の有無にかかわらず **常に `Arc::from_raw(ptr)` で RC-1** を行います：
+
+| テンソル種別 | release_safe の挙動 | 結果 |
+|:---|:---|:---|
+| 純粋データ (RC=1) | Arc Drop → CpuTensor 解放 | メモリ即座解放 |
+| Autograd ノード (RC>1) | Arc RC-1 | GradFn の TensorRef がまだ保持中、テンソルは生存 |
+| Autograd ノード (RC=1) | Arc Drop → autograd含む全解放 | backward() 後の自然解放 |
+
+### 6. 変更対象ファイル
+
+| ファイル | 変更内容 |
+|:---|:---|
+| `tensor.rs` | `TensorRef` 型定義、`backward()` 簡素化、`collect_all_graph_nodes` 削除 |
+| `autograd/mod.rs` | `GradFn::inputs()` → `Vec<TensorRef>` |
+| `autograd/ops.rs` | 全 19 Backward 構造体を `TensorRef` に変更 |
+| `ffi.rs` | `make_tensor`: Box→Arc、全 19 `set_grad_fn`: `tensor_ref_from_ptr` |
+| `memory.rs` | テンソルプール廃止、`release_tensor` で Arc RC-1 |
+| `memory_ffi.rs` | `release_safe`: `clear_data` → `release` (Arc drop) |

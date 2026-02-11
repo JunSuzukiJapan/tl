@@ -2,8 +2,10 @@
 //! GPU 版 (tl_runtime/src/lib.rs) と同じ C シグネチャで CpuTensor を操作。
 //! JIT の add_global_mapping で同じシンボル名にマッピングされる。
 
-use crate::tensor::CpuTensor;
+use crate::tensor::{CpuTensor, tensor_ref_from_ptr};
 use crate::DType;
+use std::sync::Arc;
+use std::cell::UnsafeCell;
 
 type OpaqueTensor = CpuTensor;
 
@@ -82,53 +84,50 @@ pub extern "C" fn tl_cpu_tensor_from_u8(data: *const u8, len: usize) -> *mut Opa
 }
 
 
-// ========== テンソル解放（データクリア方式） ==========
-// JIT の forループ末尾クリーンアップや変数再代入で同一テンソルに対して
-// 複数回 release が呼ばれる場合がある。Box::from_raw による即時解放は
-// use-after-free を招くため、内部データのみクリアして構造体は保持する。
-// これにより:
-//   - Vec<f32> 等のデータメモリは OS に返却（メモリリーク解消）
-//   - OpaqueTensor ポインタは有効なまま（use-after-free 防止）
-//   - 構造体（~80バイト）のリークは許容範囲
+// ========== テンソル解放 (Arc ベース) ==========
+// Arc::into_raw で作成されたポインタを Arc::from_raw で復元し、
+// 参照カウントを -1 する。RC=0 になれば CpuTensor（autograd グラフ含む）が
+// 自然に Drop される。
 
 pub extern "C" fn tl_cpu_tensor_free(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
     crate::memory::promote_tensor(t);
-    unsafe { let _ = Box::from_raw(t); }
+    crate::memory::release_tensor(t);
 }
 
 #[no_mangle]
 pub extern "C" fn tl_cpu_tensor_acquire(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    t
+    // Arc の参照カウントを +1 して同じポインタを返す
+    if t.is_null() { return t; }
+    unsafe {
+        let arc = Arc::from_raw(t as *const UnsafeCell<CpuTensor>);
+        let _clone = arc.clone();  // RC+1
+        let _ = Arc::into_raw(arc);        // 元の参照を戻す
+        Arc::into_raw(_clone) as *mut OpaqueTensor
+    }
 }
 
 pub extern "C" fn tl_cpu_tensor_release(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
-    // Remove from scope stack to prevent pointer leak
     crate::memory::promote_tensor(t);
-    unsafe {
-        let boxed = Box::from_raw(t as *mut CpuTensor);
-        crate::memory::return_to_pool(boxed);
-    }
+    crate::memory::release_tensor(t);
 }
 
 /// テンソルの内部データをクリアしてメモリを OS に返却する。
-/// 構造体ポインタ自体は有効なまま残るため、autograd の *mut CpuTensor 参照は安全。
-/// autograd グラフは触らない（Drop チェーンで dangling pointer を避けるため）。
+/// Arc ベースの所有権管理により、autograd グラフも安全にクリアできる。
+/// GradFn 内の TensorRef (Arc) が他のテンソルを保持するため、
+/// autograd をクリアしても参照先テンソルは Arc の RC で生存が保証される。
 /// `tl_runtime::tl_tensor_release_safe` から呼ばれる。
 pub extern "C" fn tl_cpu_tensor_clear_data(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
     unsafe {
         let tensor = &mut *t;
-        // 大きなデータバッファのみ解放（capacity もゼロ化）
+        // データバッファを解放
         tensor.data_f32 = Vec::new();
         tensor.data_i64 = None;
-        // shape は小さいが念のためクリア
         tensor.shape = Vec::new();
-        // autograd は触らない:
-        // GradFn 内の *mut CpuTensor 参照が他のテンソルを指しているため、
-        // Drop チェーンが走ると dangling pointer → SEGFAULT
-        // autograd グラフのメモリは構造体分のみ (数百バイト) なのでリークしても人畜無害
+        // autograd も完全クリア（Arc が所有権を管理するため安全）
+        tensor.autograd = None;
     }
 }
 
@@ -287,7 +286,7 @@ pub extern "C" fn tl_cpu_tensor_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) 
     if ta.requires_grad() || tb.requires_grad() {
         use crate::autograd::ops::AddBackward;
         unsafe { (&mut *ptr).set_grad_fn(Box::new(AddBackward {
-            a, b,
+            a: tensor_ref_from_ptr(a), b: tensor_ref_from_ptr(b),
             a_shape: ta.shape().to_vec(),
             b_shape: tb.shape().to_vec(),
         })); }
@@ -303,7 +302,7 @@ pub extern "C" fn tl_cpu_tensor_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) 
     if ta.requires_grad() || tb.requires_grad() {
         use crate::autograd::ops::SubBackward;
         unsafe { (&mut *ptr).set_grad_fn(Box::new(SubBackward {
-            a, b,
+            a: tensor_ref_from_ptr(a), b: tensor_ref_from_ptr(b),
             a_shape: ta.shape().to_vec(),
             b_shape: tb.shape().to_vec(),
         })); }
@@ -319,7 +318,7 @@ pub extern "C" fn tl_cpu_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) 
     if ta.requires_grad() || tb.requires_grad() {
         use crate::autograd::ops::MulBackward;
         unsafe { (&mut *ptr).set_grad_fn(Box::new(MulBackward {
-            a, b, a_data: ta.shallow_clone(), b_data: tb.shallow_clone(),
+            a: tensor_ref_from_ptr(a), b: tensor_ref_from_ptr(b), a_data: ta.shallow_clone(), b_data: tb.shallow_clone(),
             a_shape: ta.shape().to_vec(), b_shape: tb.shape().to_vec(),
         })); }
     }
@@ -334,7 +333,7 @@ pub extern "C" fn tl_cpu_tensor_div(a: *mut OpaqueTensor, b: *mut OpaqueTensor) 
     if ta.requires_grad() || tb.requires_grad() {
         use crate::autograd::ops::DivBackward;
         unsafe { (&mut *ptr).set_grad_fn(Box::new(DivBackward {
-            a, b, a_data: ta.shallow_clone(), b_data: tb.shallow_clone(),
+            a: tensor_ref_from_ptr(a), b: tensor_ref_from_ptr(b), a_data: ta.shallow_clone(), b_data: tb.shallow_clone(),
             a_shape: ta.shape().to_vec(), b_shape: tb.shape().to_vec(),
         })); }
     }
@@ -354,7 +353,7 @@ pub extern "C" fn tl_cpu_tensor_neg(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let ptr = make_tensor(res);
     if tensor.requires_grad() {
         use crate::autograd::ops::NegBackward;
-        unsafe { (&mut *ptr).set_grad_fn(Box::new(NegBackward { a: t })); }
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(NegBackward { a: tensor_ref_from_ptr(t) })); }
     }
     ptr
 }
@@ -373,7 +372,7 @@ pub extern "C" fn tl_cpu_tensor_add_scalar(t: *mut OpaqueTensor, s: f64) -> *mut
     let ptr = make_tensor(res);
     if tensor.requires_grad() {
         use crate::autograd::ops::AddScalarBackward;
-        unsafe { (&mut *ptr).set_grad_fn(Box::new(AddScalarBackward { a: t })); }
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(AddScalarBackward { a: tensor_ref_from_ptr(t) })); }
     }
     ptr
 }
@@ -385,7 +384,7 @@ pub extern "C" fn tl_cpu_tensor_mul_scalar(t: *mut OpaqueTensor, s: f64) -> *mut
     let ptr = make_tensor(res);
     if tensor.requires_grad() {
         use crate::autograd::ops::MulScalarBackward;
-        unsafe { (&mut *ptr).set_grad_fn(Box::new(MulScalarBackward { a: t, s: s as f32 })); }
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(MulScalarBackward { a: tensor_ref_from_ptr(t), s: s as f32 })); }
     }
     // println!("tl_cpu_tensor_mul_scalar: returning {:p}", ptr);
     ptr
@@ -398,7 +397,7 @@ pub extern "C" fn tl_cpu_tensor_div_scalar(t: *mut OpaqueTensor, s: f64) -> *mut
     let ptr = make_tensor(res);
     if tensor.requires_grad() {
         use crate::autograd::ops::DivScalarBackward;
-        unsafe { (&mut *ptr).set_grad_fn(Box::new(DivScalarBackward { a: t, s: s as f32 })); }
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(DivScalarBackward { a: tensor_ref_from_ptr(t), s: s as f32 })); }
     }
     ptr
 }
@@ -410,7 +409,7 @@ pub extern "C" fn tl_cpu_tensor_sub_scalar(t: *mut OpaqueTensor, s: f64) -> *mut
     let ptr = make_tensor(res);
     if tensor.requires_grad() {
         use crate::autograd::ops::SubScalarBackward;
-        unsafe { (&mut *ptr).set_grad_fn(Box::new(SubScalarBackward { a: t })); }
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(SubScalarBackward { a: tensor_ref_from_ptr(t) })); }
     }
     ptr
 }
@@ -425,7 +424,7 @@ pub extern "C" fn tl_cpu_tensor_pow_scalar(t: *mut OpaqueTensor, exp: f32) -> *m
         use crate::autograd::ops::PowBackward;
         let result_clone = unsafe { (&*ptr).shallow_clone() };
         unsafe { (&mut *ptr).set_grad_fn(Box::new(PowBackward {
-            a: t, a_data: tensor.shallow_clone(), b_data: exp_tensor, output: result_clone,
+            a: tensor_ref_from_ptr(t), a_data: tensor.shallow_clone(), b_data: exp_tensor, output: result_clone,
         })); }
     }
     ptr
@@ -442,7 +441,7 @@ pub extern "C" fn tl_cpu_tensor_pow(t: *mut OpaqueTensor, exp: *mut OpaqueTensor
         use crate::autograd::ops::PowBackward;
         let result_clone = unsafe { (&*ptr).shallow_clone() };
         unsafe { (&mut *ptr).set_grad_fn(Box::new(PowBackward {
-            a: t, a_data: tensor.shallow_clone(), b_data: exp_tensor.shallow_clone(), output: result_clone,
+            a: tensor_ref_from_ptr(t), a_data: tensor.shallow_clone(), b_data: exp_tensor.shallow_clone(), output: result_clone,
         })); }
     }
     ptr
@@ -546,7 +545,7 @@ pub extern "C" fn tl_cpu_tensor_exp(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if tensor.requires_grad() {
         use crate::autograd::ops::ExpBackward;
         let output = unsafe { (&*ptr).shallow_clone() };
-        unsafe { (&mut *ptr).set_grad_fn(Box::new(ExpBackward { a: t, output })); }
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(ExpBackward { a: tensor_ref_from_ptr(t), output })); }
     }
     ptr
 }
@@ -558,7 +557,7 @@ pub extern "C" fn tl_cpu_tensor_log(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let ptr = make_tensor(result);
     if tensor.requires_grad() {
         use crate::autograd::ops::LogBackward;
-        unsafe { (&mut *ptr).set_grad_fn(Box::new(LogBackward { a: t, a_data: tensor.shallow_clone() })); }
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(LogBackward { a: tensor_ref_from_ptr(t), a_data: tensor.shallow_clone() })); }
     }
     ptr
 }
@@ -585,7 +584,7 @@ pub extern "C" fn tl_cpu_tensor_relu(t: *mut OpaqueTensor) -> *mut OpaqueTensor 
     let ptr = make_tensor(result);
     if tensor.requires_grad() {
         use crate::autograd::ops::ReluBackward;
-        unsafe { (&mut *ptr).set_grad_fn(Box::new(ReluBackward { a: t, a_data: tensor.shallow_clone() })); }
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(ReluBackward { a: tensor_ref_from_ptr(t), a_data: tensor.shallow_clone() })); }
     }
     ptr
 }
@@ -598,7 +597,7 @@ pub extern "C" fn tl_cpu_tensor_softmax(t: *mut OpaqueTensor, dim: i64) -> *mut 
     if tensor.requires_grad() {
         use crate::autograd::ops::SoftmaxBackward;
         let output = unsafe { (&*ptr).shallow_clone() };
-        unsafe { (&mut *ptr).set_grad_fn(Box::new(SoftmaxBackward { a: t, output, axis: dim as i32 })); }
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(SoftmaxBackward { a: tensor_ref_from_ptr(t), output, axis: dim as i32 })); }
     }
     ptr
 }
@@ -613,7 +612,7 @@ pub extern "C" fn tl_cpu_tensor_sum(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let ptr = make_tensor(result);
     if tensor.requires_grad() {
         use crate::autograd::ops::SumallBackward;
-        unsafe { (&mut *ptr).set_grad_fn(Box::new(SumallBackward { a: t, shape: tensor.shape().to_vec() })); }
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(SumallBackward { a: tensor_ref_from_ptr(t), shape: tensor.shape().to_vec() })); }
     }
     ptr
 }
@@ -671,7 +670,7 @@ pub extern "C" fn tl_cpu_tensor_reshape(t: *mut OpaqueTensor, rank: usize, shape
     if tensor.requires_grad() {
         use crate::autograd::ops::ReshapeBackward;
         unsafe { (&mut *ptr).set_grad_fn(Box::new(ReshapeBackward {
-            input: t,
+            input: tensor_ref_from_ptr(t),
             input_shape,
         })); }
     }
@@ -765,7 +764,7 @@ pub extern "C" fn tl_cpu_tensor_matmul(a: *mut OpaqueTensor, b: *mut OpaqueTenso
     if ta.requires_grad() || tb.requires_grad() {
         use crate::autograd::ops::MatmulBackward;
         unsafe { (&mut *ptr).set_grad_fn(Box::new(MatmulBackward {
-            a, b, a_data: ta.shallow_clone(), b_data: tb.shallow_clone(),
+            a: tensor_ref_from_ptr(a), b: tensor_ref_from_ptr(b), a_data: ta.shallow_clone(), b_data: tb.shallow_clone(),
         })); }
     }
     ptr
@@ -805,7 +804,7 @@ pub extern "C" fn tl_cpu_tensor_sum_dim(t: *mut OpaqueTensor, dim: usize, keep_d
     if tensor.requires_grad() {
         use crate::autograd::ops::SumDimBackward;
         unsafe { (&mut *ptr).set_grad_fn(Box::new(SumDimBackward {
-            a: t,
+            a: tensor_ref_from_ptr(t),
             input_shape: tensor.shape().to_vec(),
             axis: dim as i32,
         })); }
@@ -906,8 +905,7 @@ pub extern "C" fn tl_cpu_tensor_register(t: *mut OpaqueTensor) {
 #[no_mangle]
 pub extern "C" fn tl_cpu_tensor_return_to_pool(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
-    let tensor_box = unsafe { Box::from_raw(t as *mut CpuTensor) };
-    crate::memory::return_to_pool(tensor_box);
+    crate::memory::release_tensor(t);
 }
 
 // ========== Phase 2: テスト影響の大きい新規実装 ==========
@@ -1200,12 +1198,8 @@ pub extern "C" fn tl_cpu_tensor_apply_rope(
 
 #[track_caller]
 fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
-    let ptr = if let Some(mut boxed) = crate::memory::recycle_tensor() {
-        *boxed = t;
-        Box::into_raw(boxed)
-    } else {
-        Box::into_raw(Box::new(t))
-    };
+    let arc = Arc::new(UnsafeCell::new(t));
+    let ptr = Arc::into_raw(arc) as *mut CpuTensor;
     let loc = std::panic::Location::caller();
     if crate::memory::is_mem_log_enabled() {
         eprintln!("[ALLOC] Ptr: {:p} at {}:{}", ptr, loc.file(), loc.line());
