@@ -786,7 +786,7 @@ mod ffi_tests {
 
         let w = ffi::tl_cpu_tensor_new(w_data.as_ptr(), 2, w_shape.as_ptr());
         let idx = ffi::tl_cpu_tensor_new(idx_data.as_ptr(), 1, idx_shape.as_ptr());
-        let e = ffi::tl_cpu_tensor_embedding(idx, w);
+        let e = ffi::tl_cpu_tensor_embedding(w, idx, -1, false, false);
         let et = unsafe { &*e };
         assert_eq!(et.shape(), &[2, 2]);
         let d = et.data_f32();
@@ -860,7 +860,7 @@ mod ffi_tests {
         assert!(ffi::tl_cpu_tensor_gelu(std::ptr::null_mut()).is_null());
         assert!(ffi::tl_cpu_tensor_tril(std::ptr::null_mut(), 0).is_null());
         assert!(ffi::tl_cpu_tensor_sum_dim(std::ptr::null_mut(), 0, false).is_null());
-        assert!(ffi::tl_cpu_tensor_embedding(std::ptr::null_mut(), std::ptr::null_mut()).is_null());
+        assert!(ffi::tl_cpu_tensor_embedding(std::ptr::null_mut(), std::ptr::null_mut(), -1, false, false).is_null());
         assert_eq!(ffi::tl_cpu_tensor_dim(std::ptr::null_mut(), 0), 0);
         assert_eq!(ffi::tl_cpu_tensor_len(std::ptr::null_mut()), 0);
         ffi::tl_cpu_tensor_free(std::ptr::null_mut()); // クラッシュしない
