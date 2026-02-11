@@ -8,6 +8,7 @@
 pub mod arena;
 pub mod args;
 pub mod error;
+pub mod device_ffi;
 
 // ========== FFI Modules ==========
 pub mod string_ffi;

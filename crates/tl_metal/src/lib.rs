@@ -13,6 +13,7 @@ pub mod backend_impl;
 pub mod optim;
 pub mod ffi;
 pub mod ffi_ops;
+pub mod device_impl;
 
 pub use buffer_pool::MetalBufferPool;
 pub use device::{get_device, MetalDevice};
