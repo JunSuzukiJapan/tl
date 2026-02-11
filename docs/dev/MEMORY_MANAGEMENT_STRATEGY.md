@@ -1,75 +1,10 @@
-# TensorLogic Memory Management Strategy V4.5 (Hybrid Static Analysis + Strict RefCounting + Scope-Based Tensor)
-# TensorLogic メモリ管理戦略 V4.5 (ハイブリッド静的解析 + 厳格な参照カウント + スコープベーステンソル管理)
 
-This document outlines the **V2.1 Memory Management Strategy** implemented in TensorLogic.
-This strategy combines **Static Analysis (Arena)** for high-performance tensor operations and **Strict Reference Counting** for complex data structures (Structs/Objects).
+# TensorLogic メモリ管理戦略 V4.5 (ハイブリッド静的解析 + 厳格な参照カウント + スコープベーステンソル管理)
 
 本ドキュメントでは、TensorLogicに実装された **V2.1 メモリ管理戦略** について概説します。
 この戦略は、高性能なテンソル演算のための **静的解析 (Arena)** と、複雑なデータ構造（構造体/オブジェクト）のための **厳格な参照カウント (Strict RefCounting)** を組み合わせたものです。
 
 ---
-
-## [English] Memory Management Strategy V2.1
-
-### 1. Core Philosophy: "Zero-Overhead for Tensors, Safety for Structs"
-
-The system aims to optimize the most common case (Tensor computations) while ensuring safety for the most complex case (Dynamic Structs).
-
--   **Tensors (Arena)**: Short-lived tensors within functions use **Stack-Like Linear Allocation** (Arena). No malloc/free.
--   **Structs (Heap)**: User-defined structs and potentially long-lived tensors use **Heap Allocation** managed by **Reference Counting**.
--   **Ownership Transfer**: Explicit rules for passing ownership between scopes to prevent leaks and double-frees.
-
-### 2. Compiler Pipeline (Static Analysis)
-
-The memory optimization happens in several passes:
-
-#### Phase 1: Shape Inference & Liveness Analysis
-The compiler analyzes the lifespan of every tensor variable.
--   **Liveness**: Tracks "Start" and "End" statement index.
--   **Result**: Determines which tensors can share memory slots.
-
-#### Phase 2: Slot Allocation (Linear Scan)
--   Assigns **Offsets** in the Function Frame for temporary tensors.
--   **Shared Slots**: Variables with non-overlapping lifespans share the same offset.
--   **Result**: Total `FrameSize` is calculated for the function.
-
-### 3. Runtime Mechanisms
-
-#### A. Memory Arena (Function Frames)
-Each thread maintains a large Arena.
--   **Function Entry**: `tl_mem_function_enter(slots)` pushes a new frame.
--   **Method Calls**: Even methods (`impl` blocks) must establish a frame to support temporary tensors (fixed in V2.1).
--   **Alloc**: `get_buffer(slot_id)` returns a pointer to the pre-allocated slot.
-
-#### B. Struct & Reference Counting (The "Shallow Unregister" Pattern)
-Structs require careful lifecycle management:
-
-1.  **Creation (Deep Clone)**:
-    -   When initializing a struct (`Point { x: a, y: b }`), we call `emit_deep_clone` (Reference Acquire) for fields.
-    -   Local variable `a` (RC=1) -> Struct field `.x` (RC=2).
-    -   Both the local variable and the struct hold references.
-
-2.  **Scope Exit (DecRef)**:
-    -   When a scope ends (`exit_scope`), all registered local variables are decremented.
-    -   `a` (RC=2 -> 1). The struct's reference survives.
-
-3.  **Return (Shallow Unregister)**:
-    -   When returning a struct, we must prevent `exit_scope` from freeing the *container* struct itself.
-    -   We call `unregister(struct_ptr)` (Shallow). This removes the struct container from the scope's cleanup list.
-    -   **Crucially**, we do **NOT** recurse into fields.
-    -   Fields remain effectively "owned" by their original local variables until `exit_scope` decrements them.
-    -   Result: Struct Container (Unregistered, Survives) + Fields (Refcount > 0, Survive).
-
----
-#### C. Function Argument Strategy: "Borrowing" (V2.2 Optimization)
-To further reduce overhead and ambiguity, specialized handling for function arguments is introduced:
-
--   **Borrowing**: Arguments passed to a function are considered "Owned by the Caller" (or external scope).
--   **No Registration**: The callee function does **NOT** register arguments (`tl_mem_register_*`) or increment their reference counts upon entry.
--   **Implication**:
-    -   Arguments are treated as "valid references" guaranteed to outlive the function call.
-    -   **Reassignment**: If an argument variable is reassigned, the old value is NOT decremented (because it wasn't owned). The new value IS registered.
-    -   **Return/Struct**: If an argument is returned or stored in a struct, explicit `tl_ptr_acquire` (retain) is required to promote the borrowed reference to an owned one.
 
 ## [Japanese] メモリ管理戦略 V2.1 (ハイブリッド静的解析)
 
@@ -143,28 +78,6 @@ V2.1システムは、最も頻繁な計算（テンソル演算）を最適化�
 
 ---
 
-## [English] V3.0 Optimizations (Implemented)
-
-### 1. Return Value Optimization (RVO / DPS)
-Strict "Destination Passing Style" (DPS) has been implemented to eliminate return value overhead.
--   **Mechanism**: The caller acts as the "Owner" of the return value slot. It pre-allocates uninitialized stack memory (or reuses a slot) and passes a pointer (`*dest`) to the callee.
--   **Execution**:
-    1.  The callee constructs the result directly into `*dest`.
-    2.  `tl_ptr_cleanup` is NOT called on `*dest` within the callee (ownership remains with caller).
-    3.  Returning a struct/tensor involves NO `inc_ref` operations.
--   **Benefit**: Zero-copy returns for large structs and tensors.
-
-### 2. Move Semantics / Last-Use Optimization
-Variables that are passed to a function or assigned as their "last use" in a scope are "moved".
--   **Mechanism**: 
-    1.  **Liveness Analysis (V3.1)**: The compiler identifies the last statement where a variable is used.
-    2.  **Codegen**: At the point of last use, the compiler omits the `inc_ref` (retain) operation.
-    3.  **Ownership**: Ownership is effectively transferred to the receiving variable or function.
-    4.  **No Cleanup**: The original variable is not decremented at end of scope (handled by `CLEANUP_NONE` flag or skipped), preventing double-free.
--   **Benefit**: Eliminates redundant `inc_ref`/`dec_ref` pairs, critical for performance in deep call chains.
-
----
-
 ## [Japanese] V3.0 最適化 (実装済み)
 
 ### 1. 戻り値の最適化 (RVO / DPS)
@@ -187,28 +100,6 @@ Variables that are passed to a function or assigned as their "last use" in a sco
 
 ---
 
-## [English] Zero-Sized Types (ZST) Strategy (V3.2)
-
-### 1. The Problem
-Zero-Sized Types (ZSTs) like `struct Empty {}` or `PhantomData<T>` occupy 0 bytes.
-However, `malloc(0)` is behaviorally undefined (can return NULL or a unique pointer) and inconsistent across platforms.
-Historically, the compiler optimized ZSTs by returning an Aggregate Value instead of a Pointer. This violated the "Struct = Managed Pointer" invariant, causing the runtime to treat the aggregate value as an invalid address (`0x7` etc.) and crash during `free()`.
-
-### 2. The Solution: "ZST = NULL"
-To handle ZSTs safely without runtime overhead:
--   **Compiler**: When compiling a struct initialization (`compile_struct_init`), if the struct has no fields (empty), it **returns a NULL pointer** (`i8* null`) constant. `malloc` is skipped entirely.
--   **Runtime**: The `MemoryManager` (`inc_ref`, `dec_ref`, `register`, `release`) detects `ptr == NULL` and **returns immediately (No-Op)**.
-    -   Reference counts for ZSTs are effectively non-existent (Logically 0 or Infinite).
-    -   Double-free is impossible (freeing NULL is safe).
-    -   Key collision in RefCount map is avoided because we early-return before map access.
-
-### 3. Why NULL? (Rationale)
--   **Performance**: Zero allocation cost. Zero tracking cost.
--   **Safety**: Valid pointers are never NULL. NULL is universally recognized as "No Object".
--   **Simplicity**: No need to change the runtime architecture to support "Global ZST Singletons" or "1-byte allocations".
-
----
-
 ## [Japanese] ZST (ゼロサイズ型) 戦略 (V3.2)
 
 ### 1. 問題点
@@ -228,37 +119,6 @@ ZSTを安全かつ低コストに扱うため、以下の戦略を採用しま�
 -   **パフォーマンス**: 割り当てコストも追跡コストもゼロです。
 -   **安全性**: 有効なヒープポインタがNULLになることはありません。
 -   **単純性**: 「グローバルZSTシングルトン」や「1バイト割り当て」のような複雑な仕組みをランタイムに導入する必要がありません。
-
----
-
-## [English] Autograd Memory Leak Fix (V3.3)
-
-### 1. The Problem
-In autograd-heavy workloads (e.g., N-Queens gradient descent), memory usage grew linearly with each training iteration:
-- **Symptom**: 1237 MB → 2168 MB over a single run (+930 MB leak)
-- **Root Cause**: `emit_retain()` for Tensor types was calling `tl_tensor_acquire()` excessively (31 times vs 3 times in v0.2.1)
-
-### 2. Analysis (v0.2.1 vs rebuild-from-scratch)
-Comparison of LLVM IR revealed the key difference:
-
-| Function Call | v0.2.1 | Current (before fix) |
-|---------------|--------|----------------------|
-| `tl_tensor_acquire` | **3** | **31** (10x increase) |
-
-The `emit_retain()` function was added after v0.2.1 to fix UAF (Use-After-Free) bugs in struct returns. However, applying it to Tensors caused **over-retention**: tensors held extra references that prevented the computational graph from being freed.
-
-### 3. The Solution
-1. **Disable Tensor Acquire in `emit_retain()`**: Tensor types no longer call `tl_tensor_acquire()`. Their lifecycle is already managed by the runtime's memory manager.
-2. **Automatic `tl_clear_grads()` in Loops**: The compiler inserts `tl_clear_grads()` at the end of each `for` loop iteration (in the `for_latch` block) to clear gradient storage automatically.
-
-### 4. Results
-| Metric | Before | After |
-|--------|--------|-------|
-| N-Queens Memory | 1237→2168 MB (+930 MB) | **39 MB stable (Zero Leak)** |
-| Test Pass Rate | 83.4% | **Maintained** |
-
-### 5. Key Insight
-**Tensors have different ownership semantics than Structs.** While structs benefit from `emit_retain()` to prevent UAF, tensors are already managed by the runtime's centralized memory manager (`TensorPool`, `MemoryManager`). Applying struct-like retain logic to tensors creates duplicate reference tracking that interferes with Candle's internal computational graph cleanup.
 
 ---
 
@@ -293,35 +153,6 @@ LLVM IR の比較により、決定的な差異が判明しました：
 
 ---
 
-## [English] Persistent GPU Pool Strategy (V4.0)
-
-### 1. Problem: Metal RSS Growth
-On Metal devices, repeatedly allocating and freeing GPU memory causes **Resident Set Size (RSS)** to grow continuously, even when the TL runtime's internal buffer pool remains stable. This is a known Metal driver behavior where released memory is not always returned to the OS.
-
-### 2. Solution: Never Release GPU Memory
-The V4.0 strategy implements a **Persistent GPU Pool** that never deallocates GPU memory back to the OS:
-
-- **`acquire()`**: Currently disabled (Phase 1). Always returns `None`, forcing new allocations.
-- **`release()`**: Drops tensor **contents** (internal Candle tensors, Arcs) but intentionally **leaks** the `OpaqueTensor` struct memory.
-
-This approach:
-1. **Prevents RSS growth** from repeated alloc/free cycles
-2. **Avoids Metal driver issues** with memory reclamation
-3. **Memory is reclaimed by OS** when the process exits
-
-### 3. Statistics API
-New C-ABI functions for monitoring:
-- `tl_get_gpu_total_allocated_bytes()`: Total bytes ever allocated
-- `tl_get_gpu_free_count()`: Number of "freed" (leaked) tensors
-- `tl_get_gpu_free_bytes()`: Bytes in freed tensors
-- `tl_get_gpu_pool_hit_rate()`: Pool hit rate (currently 0%)
-- `tl_dump_gpu_pool_stats()`: Dump all stats to stderr
-
-### 4. Environment Variable
-- `TL_GPU_PREALLOCATE_MB=<size>`: Pre-allocate GPU memory at startup (future implementation)
-
----
-
 ## [Japanese] Persistent GPU Pool 戦略 (V4.0)
 
 ### 1. 問題: Metal の RSS 膨張
@@ -348,64 +179,6 @@ V4.0 戦略は、GPU メモリを OS に解放しない **Persistent GPU Pool** 
 
 ### 4. 環境変数
 - `TL_GPU_PREALLOCATE_MB=<size>`: 起動時に GPU メモリを事前確保（将来実装）
-
----
-
-## [English] Scope-Based Tensor Management (V4.5)
-
-### 1. Problem: `Type::Struct("Tensor")` Misidentification
-The parser resolves `-> Tensor` return type annotations as `Type::Struct("Tensor", [])` rather than `Type::Tensor(_, _)`. Since `Tensor` is an **opaque pointer** in LLVM IR (not a struct with accessible fields), this causes failures whenever the codegen treats it as a real struct:
-
-- **SRET (Struct Return)**: Functions returning Tensor incorrectly used a hidden struct-return pointer
-- **GEP (GetElementPtr)**: `build_struct_gep` on an opaque pointer → `"GEP pointee is not a struct"` error
-- **Deep Clone**: `emit_deep_clone` attempted struct field traversal on Tensor pointers
-- **ABI Adapter**: Post-call wrapper tried to pack Tensor pointer into a struct via GEP
-
-### 2. Solution: Type Normalization at Codegen Boundaries
-Instead of modifying the parser, we normalize `Struct("Tensor")` → `Type::Tensor(F32, 0)` at every codegen boundary where type-specific dispatch occurs:
-
-| Location | File | Fix |
-|:---|:---|:---|
-| `uses_sret` (prototype) | `mod.rs` | Exclude `Struct("Tensor")` from SRET |
-| `uses_sret` (body) | `mod.rs` | Same |
-| `uses_sret` (static call) | `expr.rs` | Same |
-| `uses_sret` (method call) | `expr.rs` | Same |
-| `uses_sret` (fn call DPS) | `expr.rs` | Same |
-| `emit_cleanup_vars_in_scope` | `mod.rs` | Pass `Type::Tensor` to `emit_recursive_free` |
-| `emit_deep_clone` | `stmt.rs` | Redirect to `Type::Tensor` branch |
-| Post-call ABI adapter | `expr.rs` | Replace struct wrapping with type normalization |
-
-### 3. Tensor Lifecycle in Scopes
-
-```
-┌─ make_tensor() ──────────────────────────────┐
-│  let t = Tensor::ones([2, 3])                │
-│    → tl_tensor_ones_i64() returns ptr        │
-│    → t registered in current scope           │
-│                                              │
-│  return t                                    │
-│    → tl_tensor_promote(t) (unregister+float) │
-│    → emit_all_scopes_cleanup (skips t)       │
-│    → return ptr                              │
-└──────────────────────────────────────────────┘
-         │ ptr (floating)
-         ▼
-┌─ main() ─────────────────────────────────────┐
-│  let t = make_tensor()                       │
-│    → call returns ptr                        │
-│    → tl_tensor_register(t) (caller-side)     │
-│    → store to alloca                         │
-│                                              │
-│  // ... use t ...                            │
-│                                              │
-│  scope exit:                                 │
-│    → emit_recursive_free(t, Type::Tensor)    │
-│    → tl_tensor_release_safe(t)               │
-└──────────────────────────────────────────────┘
-```
-
-### 4. Key Invariant
-**`Struct("Tensor")` must never reach `build_struct_gep` or `emit_struct_copy`.** These functions require a concrete LLVM struct type with accessible fields, but Tensor is an opaque `ptr` managed exclusively by runtime functions (`tl_tensor_acquire`, `tl_tensor_release_safe`, `tl_tensor_promote`).
 
 ---
 
@@ -464,45 +237,6 @@ Instead of modifying the parser, we normalize `Struct("Tensor")` → `Type::Tens
 
 ### 4. 重要な不変条件
 **`Struct("Tensor")` は `build_struct_gep` や `emit_struct_copy` に到達してはならない。** これらの関数はフィールドアクセス可能な具体的な LLVM 構造体型を必要とするが、Tensor はランタイム関数（`tl_tensor_acquire`, `tl_tensor_release_safe`, `tl_tensor_promote`）により排他的に管理される不透明な `ptr` である。
-
-## [English] V5.0 Hybrid Cleanup Strategy (Autograd Graph Management)
-
-### 1. The Challenge of Autograd Graphs
-Autograd computational graphs introduce unique memory management challenges:
-- **Cyclic/Long-lived References**: Tensors within the graph hold raw pointers (`*mut CpuTensor`) to their parents to enable backpropagation.
-- **Reference Cycles**: The graph structure often outlives the local scope of the variables that created it.
-- **Dangling Pointers**: Immediate scope-based deallocation (`release_safe`) causes use-after-free errors when the autograd engine traverses the graph later.
-
-### 2. The Solution: Hybrid Lifecycle Management
-We implemented a **Hybrid Strategy** that treats tensors differently based on their participation in Autograd:
-
-| Tensor Type | Lifecycle Manager | Cleanup Trigger | Mechanism |
-|:---|:---|:---|:---|
-| **Pure Data** (No Autograd) | **Compiler Scope** | Scope Exit | `tl_tensor_release_safe` calls `clear_data` immediately. |
-| **Autograd Node** (Requires Grad) | **Graph Engine** | `backward()` / `detach()` | `release_safe` is **No-Op**. Cleanup assumes graph traversal. |
-
-### 3. Implementation Details
-
-#### A. Conditional `release_safe`
-The runtime's `tl_tensor_release_safe` checks if a tensor has an active Autograd component.
-- **If No Autograd**: It calls `tl_cpu_tensor_clear_data`, freeing the underlying `Vec<f32>` but keeping the struct (safe against double-free).
-- **If Autograd**: It does nothing. The tensor remains alive for the graph.
-
-#### B. Event-Driven Graph Cleanup
-Since autograd tensors are ignored by scope cleanup, they must be explicitly cleaned up by graph events:
-
-1.  **Backward Pass Cleanup**:
-    -   At the end of `backward()`, the engine traverses the topological order.
-    -   **Non-Leaf Nodes** (intermediate calculation results) are identified.
-    -   Their data buffers (`data_f32`, `shape`) and autograd metadata are cleared immediately.
-    -   **Result**: Memory spikes during training are suppressed as intermediate tensors die immediately after use.
-
-2.  **Detach Cleanup**:
-    -   When `t.detach()` is called (typically at epoch boundaries), the **source tensor's** entire upstream graph is traversed recursively.
-    -   All nodes in the detached graph are effectively "garbage collected".
-
-### 4. Results
-This strategy reduced memory growth in the N-Queens solver from **4MB/100 epochs** to **0.33MB/100 epochs** (12x improvement), with zero segmentation faults.
 
 ---
 
