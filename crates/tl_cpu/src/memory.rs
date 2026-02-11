@@ -85,12 +85,12 @@ pub fn get_pool_size() -> usize {
 /// RC が 0 になれば CpuTensor（autograd グラフ含む）が自然に Drop される。
 pub fn release_tensor(t: *mut CpuTensor) {
     if t.is_null() { return; }
-    if is_mem_log_enabled() {
-        eprintln!("[FREE] Ptr: {:p} (Arc RC-1) at {}:{}", t, file!(), line!());
-    }
-    // Arc::from_raw で復元し、drop で RC-1
-    // UnsafeCell は #[repr(transparent)] なので CpuTensor とメモリレイアウトが同一
     unsafe {
-        drop(Arc::from_raw(t as *const UnsafeCell<CpuTensor>));
+        let arc_ref = Arc::from_raw(t as *const UnsafeCell<CpuTensor>);
+        if is_mem_log_enabled() {
+            let rc = Arc::strong_count(&arc_ref);
+            eprintln!("[RELEASE] Ptr: {:p} (RC={}, {})", t, rc, if rc == 1 { "DROP" } else { "RC-1" });
+        }
+        drop(arc_ref);
     }
 }

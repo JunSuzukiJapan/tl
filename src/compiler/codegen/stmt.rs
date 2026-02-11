@@ -467,39 +467,12 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 self.builder.position_at_end(free_block);
 
-                // 参照カウントチェック: dec_ref して 0 でなければ解放しない
-                let dec_ref_fn = self
-                    .module
-                    .get_function("tl_ptr_dec_ref")
-                    .ok_or("tl_ptr_dec_ref not found")?;
-
+                // テンソルは Arc で所有権管理されるため、構造体用の tl_ptr_dec_ref チェックは不要。
+                // Arc::from_raw → drop で参照カウントが -1 され、RC=0 で自然に Drop される。
                 let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                 let cast_void = self.builder
                     .build_pointer_cast(ptr, void_ptr_ty, "tensor_void_cast")
                     .unwrap();
-
-                let call = self
-                    .builder
-                    .build_call(dec_ref_fn, &[cast_void.into()], "should_free_tensor")
-                    .map_err(|e| e.to_string())?;
-
-                let should_free_val = match call.try_as_basic_value() {
-                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-                    _ => return Err("tl_ptr_dec_ref returned void/invalid".to_string()),
-                };
-
-                let should_free = self.builder.build_int_compare(
-                    inkwell::IntPredicate::NE,
-                    should_free_val,
-                    self.context.i32_type().const_int(0, false),
-                    "should_free_tensor_bool"
-                ).map_err(|e| e.to_string())?;
-
-                let do_release_block = self.context.append_basic_block(func, "do_tensor_release");
-                self.builder.build_conditional_branch(should_free, do_release_block, merge_block)
-                    .map_err(|e| e.to_string())?;
-
-                self.builder.position_at_end(do_release_block);
 
                 if mode == super::CLEANUP_FINALIZE {
                     // Call tl_tensor_finalize (Drop content, Keep struct)

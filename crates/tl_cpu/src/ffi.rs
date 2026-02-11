@@ -99,6 +99,9 @@ pub extern "C" fn tl_cpu_tensor_free(t: *mut OpaqueTensor) {
 pub extern "C" fn tl_cpu_tensor_acquire(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     // Arc の参照カウントを +1 して同じポインタを返す
     if t.is_null() { return t; }
+    if crate::memory::is_mem_log_enabled() {
+        eprintln!("[ACQUIRE] Ptr: {:p} (Arc RC+1)", t);
+    }
     unsafe {
         let arc = Arc::from_raw(t as *const UnsafeCell<CpuTensor>);
         let _clone = arc.clone();  // RC+1
