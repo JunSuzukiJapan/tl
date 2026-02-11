@@ -98,7 +98,7 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_instance_signature("softmax", vec![Type::I64], any_tensor.clone());
     tensor.register_instance_signature("log_softmax", vec![Type::I64], any_tensor.clone());
     tensor.register_instance_signature("matmul", vec![any_tensor.clone()], any_tensor.clone());
-    tensor.register_instance_signature("embedding", vec![any_tensor.clone()], any_tensor.clone());
+    tensor.register_evaluated_instance_method("embedding", compile_tensor_embedding, vec![any_tensor.clone()], any_tensor.clone());
     tensor.register_instance_signature("cross_entropy", vec![any_tensor.clone()], any_tensor.clone());
     tensor.register_instance_signature("pow", vec![Type::I64], any_tensor.clone());
     
@@ -342,6 +342,33 @@ fn compile_tensor_tril<'ctx>(
         ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from tril()".into()),
     };
+    Ok((res, obj_ty))
+}
+
+fn compile_tensor_embedding<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,      // self = indices tensor
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("embedding requires 1 argument (weight)".into()); }
+    let fn_val = codegen.module.get_function("tl_tensor_embedding")
+        .ok_or("tl_tensor_embedding not found")?;
+
+    let (weight_val, _) = &args[0];
+
+    // デフォルト引数: padding_idx=-1, scale_grad_by_freq=false, sparse=false
+    let padding_idx = codegen.context.i64_type().const_int((-1i64) as u64, true);
+    let false_val = codegen.context.bool_type().const_int(0, false);
+
+    // runtime順序: (weight, indices, padding_idx, scale_grad_by_freq, sparse)
+    let call = codegen.builder.build_call(
+        fn_val,
+        &[(*weight_val).into(), obj.into(), padding_idx.into(), false_val.into(), false_val.into()],
+        "embedding_res",
+    ).map_err(|e| e.to_string())?;
+
+    let res = codegen.check_tensor_result(call, "embedding_error")?;
     Ok((res, obj_ty))
 }
 

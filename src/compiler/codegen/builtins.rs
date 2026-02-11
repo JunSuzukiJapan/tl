@@ -623,8 +623,14 @@ pub fn declare_runtime_functions<'ctx>(
     );
     add_fn("tl_tensor_sum_dim", sum_dim_type);
 
-    // tl_tensor_embedding(indices: *mut Tensor, weights: *mut Tensor) -> *mut Tensor
-    let embedding_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    // tl_tensor_embedding(weight: *mut, indices: *mut, padding_idx: i64, scale_grad_by_freq: bool, sparse: bool) -> *mut
+    let embedding_type = void_ptr.fn_type(&[
+        void_ptr.into(),                // weight
+        void_ptr.into(),                // indices
+        i64_type.into(),                // padding_idx
+        context.bool_type().into(),     // scale_grad_by_freq
+        context.bool_type().into(),     // sparse
+    ], false);
     add_fn("tl_tensor_embedding", embedding_type);
 
     // tl_tensor_sum(t: *mut) -> *mut OpaqueTensor
@@ -1459,13 +1465,13 @@ pub fn declare_runtime_functions<'ctx>(
     map_tensor_fn!("tl_tensor_len", runtime::tl_tensor_len, cpu_ffi::tl_cpu_tensor_len);
 
     map_tensor_fn!("tl_tensor_dim", runtime::tl_tensor_dim, cpu_ffi::tl_cpu_tensor_dim);
-    map_tensor_fn!("tl_tensor_get_f32_md", runtime::tl_tensor_get_f32_md, cpu_ffi::tl_cpu_tensor_get_f32);
-    map_tensor_fn!("tl_tensor_get_i64_md", runtime::tl_tensor_get_i64_md, cpu_ffi::tl_cpu_tensor_get_i64);
+    map_tensor_fn!("tl_tensor_get_f32_md", runtime::tl_tensor_get_f32_md, cpu_ffi::tl_cpu_tensor_get_f32_md);
+    map_tensor_fn!("tl_tensor_get_i64_md", runtime::tl_tensor_get_i64_md, cpu_ffi::tl_cpu_tensor_get_i64_md);
     map_tensor_fn!("tl_tensor_neg", runtime::tl_tensor_neg, cpu_ffi::tl_cpu_tensor_neg);
     map_tensor_fn!("tl_tensor_transpose", runtime::tl_tensor_transpose, cpu_ffi::tl_cpu_tensor_transpose);
     map_tensor_fn!("tl_tensor_reshape_new", runtime::tl_tensor_reshape_new, cpu_ffi::tl_cpu_tensor_reshape_new);
 
-    map_tensor_fn!("tl_tensor_get", runtime::tl_tensor_get, cpu_ffi::tl_cpu_tensor_get_f32);
+    map_tensor_fn!("tl_tensor_get", runtime::tl_tensor_get, cpu_ffi::tl_cpu_tensor_get);
     map_tensor_fn!("tl_tensor_slice", runtime::tl_tensor_slice, cpu_ffi::tl_cpu_tensor_slice);
     if let Some(f) = module.get_function("tl_register_tensor") {
         execution_engine.add_global_mapping(&f, runtime::registry::tl_register_tensor as usize);
@@ -1506,7 +1512,7 @@ pub fn declare_runtime_functions<'ctx>(
     map_tensor_fn!("tl_tensor_ge", runtime::tl_tensor_ge, cpu_ffi::tl_cpu_tensor_ge);
     map_tensor_fn!("tl_tensor_le", runtime::tl_tensor_le, cpu_ffi::tl_cpu_tensor_le);
 
-    map_tensor_fn!("tl_tensor_pow", runtime::tl_tensor_pow, cpu_ffi::tl_cpu_tensor_pow_scalar);
+    map_tensor_fn!("tl_tensor_pow", runtime::tl_tensor_pow, cpu_ffi::tl_cpu_tensor_pow);
     map_tensor_fn!("tl_tensor_pow_scalar", runtime::tl_tensor_pow_scalar, cpu_ffi::tl_cpu_tensor_pow_scalar);
     map_tensor_fn!("tl_tensor_add_assign", runtime::tl_tensor_add_assign, cpu_ffi::tl_cpu_tensor_add_assign);
     map_tensor_fn!("tl_tensor_set_f32_md", runtime::tl_tensor_set_f32_md, cpu_ffi::tl_cpu_tensor_set_f32_md);
@@ -1923,33 +1929,27 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_tanh as usize);
     }
     add_fn("tl_tensor_max", unary_type);
-    if let Some(f) = module.get_function("tl_tensor_max") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_max as usize);
-    }
+    map_tensor_fn!("tl_tensor_max", runtime::tl_tensor_max, cpu_ffi::tl_cpu_tensor_max);
     add_fn("tl_tensor_max_dim", sum_dim_type);
     if let Some(f) = module.get_function("tl_tensor_max_dim") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_max_dim as usize);
     }
     add_fn("tl_tensor_min", unary_type);
-    if let Some(f) = module.get_function("tl_tensor_min") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_min as usize);
-    }
+    map_tensor_fn!("tl_tensor_min", runtime::tl_tensor_min, cpu_ffi::tl_cpu_tensor_min);
     add_fn("tl_tensor_min_dim", sum_dim_type);
     if let Some(f) = module.get_function("tl_tensor_min_dim") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_min_dim as usize);
     }
     add_fn("tl_tensor_mean", unary_type);
-    if let Some(f) = module.get_function("tl_tensor_mean") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_mean as usize);
-    }
+    map_tensor_fn!("tl_tensor_mean", runtime::tl_tensor_mean, cpu_ffi::tl_cpu_tensor_mean);
     add_fn("tl_tensor_mean_dim", sum_dim_type);
     if let Some(f) = module.get_function("tl_tensor_mean_dim") {
         execution_engine.add_global_mapping(&f, runtime::tl_tensor_mean_dim as usize);
     }
     add_fn("tl_tensor_argmin", sum_dim_type);
-    if let Some(f) = module.get_function("tl_tensor_argmin") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_argmin as usize);
-    }
+    map_tensor_fn!("tl_tensor_argmin", runtime::tl_tensor_argmin, cpu_ffi::tl_cpu_tensor_argmin);
+    add_fn("tl_tensor_argmax", unary_type);
+    map_tensor_fn!("tl_tensor_argmax", runtime::tl_tensor_argmax, cpu_ffi::tl_cpu_tensor_argmax);
 
 
     // --- LLM Mappings ---

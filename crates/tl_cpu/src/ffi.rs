@@ -66,8 +66,9 @@ pub extern "C" fn tl_cpu_tensor_randn_debug(
     tl_cpu_tensor_randn(rank, shape, req_grad)
 }
 
-pub extern "C" fn tl_cpu_tensor_from_i64(data: *const i64, len: usize) -> *mut OpaqueTensor {
+pub extern "C" fn tl_cpu_tensor_from_i64(data: *const i64, len: i64) -> *mut OpaqueTensor {
     if data.is_null() { return std::ptr::null_mut(); }
+    let len = len as usize;
     let data_slice = unsafe { std::slice::from_raw_parts(data, len) };
     let f32_data: Vec<f32> = data_slice.iter().map(|&x| x as f32).collect();
     make_tensor(CpuTensor::from_slice(&f32_data, &[len], DType::F32))
@@ -140,7 +141,9 @@ pub extern "C" fn tl_cpu_tensor_dim(t: *mut OpaqueTensor, dim: usize) -> usize {
 
 pub extern "C" fn tl_cpu_tensor_len(t: *mut OpaqueTensor) -> usize {
     if t.is_null() { return 0; }
-    unsafe { (&*t).shape().iter().product() }
+    let tensor = unsafe { &*t };
+    if tensor.shape().is_empty() { return 0; } // clear_data 済みテンソル
+    tensor.shape().iter().product()
 }
 
 pub extern "C" fn tl_cpu_tensor_shape(t: *mut OpaqueTensor, out: *mut usize) -> usize {
@@ -165,6 +168,7 @@ pub extern "C" fn tl_cpu_tensor_get_f32(t: *mut OpaqueTensor, indices: *const us
     if t.is_null() || indices.is_null() { return 0.0; }
     let tensor = unsafe { &*t };
     let shape = tensor.shape();
+    if shape.is_empty() { return 0.0; } // clear_data 済みテンソル
     let idx_slice = unsafe { std::slice::from_raw_parts(indices, shape.len()) };
     let mut flat_idx = 0;
     let mut stride = 1;
@@ -176,13 +180,37 @@ pub extern "C" fn tl_cpu_tensor_get_f32(t: *mut OpaqueTensor, indices: *const us
 }
 
 pub extern "C" fn tl_cpu_tensor_get_i64(t: *mut OpaqueTensor, indices: *const usize, rank: usize) -> i64 {
+    if t.is_null() { return 0; }
+    let tensor = unsafe { &*t };
+    if tensor.shape().is_empty() { return 0; } // clear_data 済みテンソル
     tl_cpu_tensor_get_f32(t, indices, rank) as i64
+}
+
+/// runtime::tl_tensor_get_f32_md と同じシグネチャ (2D インデックスアクセス)
+pub extern "C" fn tl_cpu_tensor_get_f32_md(t: *mut OpaqueTensor, idx0: i64, idx1: i64) -> f32 {
+    if t.is_null() { return 0.0; }
+    let tensor = unsafe { &*t };
+    let shape = tensor.shape();
+    if shape.is_empty() { return 0.0; }
+    let data = tensor.data_f32();
+    if shape.len() >= 2 {
+        let idx = (idx0 as usize) * shape[1] + (idx1 as usize);
+        data.get(idx).cloned().unwrap_or(0.0)
+    } else {
+        data.get(idx0 as usize).cloned().unwrap_or(0.0)
+    }
+}
+
+/// runtime::tl_tensor_get_i64_md と同じシグネチャ
+pub extern "C" fn tl_cpu_tensor_get_i64_md(t: *mut OpaqueTensor, idx0: i64, idx1: i64) -> i64 {
+    tl_cpu_tensor_get_f32_md(t, idx0, idx1) as i64
 }
 
 pub extern "C" fn tl_cpu_tensor_set_f32(t: *mut OpaqueTensor, indices: *const usize, _rank: usize, value: f32) {
     if t.is_null() || indices.is_null() { return; }
     let tensor = unsafe { &mut *t };
     let shape = tensor.shape().to_vec();
+    if shape.is_empty() { return; } // clear_data 済みテンソル
     let idx_slice = unsafe { std::slice::from_raw_parts(indices, shape.len()) };
     let mut flat_idx = 0;
     let mut stride = 1;
@@ -207,6 +235,7 @@ pub extern "C" fn tl_cpu_tensor_set_f32_md(
     if t.is_null() || indices.is_null() { return t; }
     let tensor = unsafe { &mut *t };
     let shape = tensor.shape().to_vec();
+    if shape.is_empty() { return t; } // clear_data 済みテンソル
     let idx_slice = unsafe { std::slice::from_raw_parts(indices, rank) };
     let mut flat_idx = 0usize;
     let mut stride = 1usize;
@@ -222,6 +251,14 @@ pub extern "C" fn tl_cpu_tensor_set_f32_md(
         data[flat_idx] = value;
     }
     t
+}
+
+/// for ループ等で使われる flat index アクセス。
+/// runtime::tl_tensor_get と同じシグネチャ (t, idx: i64) -> f32
+pub extern "C" fn tl_cpu_tensor_get(t: *mut OpaqueTensor, idx: i64) -> f32 {
+    if t.is_null() { return 0.0; }
+    let tensor = unsafe { &*t };
+    tensor.data_f32().get(idx as usize).copied().unwrap_or(0.0)
 }
 
 pub extern "C" fn tl_cpu_tensor_item(t: *mut OpaqueTensor) -> f32 {
@@ -385,6 +422,23 @@ pub extern "C" fn tl_cpu_tensor_pow_scalar(t: *mut OpaqueTensor, exp: f32) -> *m
         let result_clone = unsafe { (&*ptr).shallow_clone() };
         unsafe { (&mut *ptr).set_grad_fn(Box::new(PowBackward {
             a: t, a_data: tensor.shallow_clone(), b_data: exp_tensor, output: result_clone,
+        })); }
+    }
+    ptr
+}
+
+/// runtime::tl_tensor_pow と同じシグネチャ (テンソル同士の pow)
+pub extern "C" fn tl_cpu_tensor_pow(t: *mut OpaqueTensor, exp: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    if t.is_null() || exp.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    let exp_tensor = unsafe { &*exp };
+    let result = tensor.pow_impl(exp_tensor);
+    let ptr = make_tensor(result);
+    if tensor.requires_grad() {
+        use crate::autograd::ops::PowBackward;
+        let result_clone = unsafe { (&*ptr).shallow_clone() };
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(PowBackward {
+            a: t, a_data: tensor.shallow_clone(), b_data: exp_tensor.shallow_clone(), output: result_clone,
         })); }
     }
     ptr
@@ -583,16 +637,18 @@ pub extern "C" fn tl_cpu_tensor_min(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     make_tensor(CpuTensor::from_slice(&[min_val], &[1], DType::F32))
 }
 
-pub extern "C" fn tl_cpu_tensor_argmax(t: *mut OpaqueTensor, _dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
+pub extern "C" fn tl_cpu_tensor_argmax(t: *mut OpaqueTensor, dim: i64, _keep_dim: bool) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
+    let _ = dim; // 現在は全要素の argmax のみ実装
     let max_idx = tensor.argmax_all_impl();
     make_tensor(CpuTensor::from_slice(&[max_idx as f32], &[1], DType::F32))
 }
 
-pub extern "C" fn tl_cpu_tensor_argmin(t: *mut OpaqueTensor, _dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
+pub extern "C" fn tl_cpu_tensor_argmin(t: *mut OpaqueTensor, dim: i64, _keep_dim: bool) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
+    let _ = dim;
     let data = tensor.data_f32();
     let min_idx = data.iter().enumerate()
         .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
@@ -661,10 +717,9 @@ pub extern "C" fn tl_cpu_tensor_narrow(t: *mut OpaqueTensor, dim: usize, start: 
     make_tensor(unsafe { (&*t).narrow_impl(dim, start, len) })
 }
 
-pub extern "C" fn tl_cpu_tensor_slice(t: *mut OpaqueTensor, dim: usize, start: usize, end: usize) -> *mut OpaqueTensor {
+pub extern "C" fn tl_cpu_tensor_slice(t: *mut OpaqueTensor, dim: i64, start: i64, len: i64) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
-    let len = end.saturating_sub(start);
-    make_tensor(unsafe { (&*t).narrow_impl(dim, start, len) })
+    make_tensor(unsafe { (&*t).narrow_impl(dim as usize, start as usize, len as usize) })
 }
 
 pub extern "C" fn tl_cpu_tensor_cat(a: *mut OpaqueTensor, b: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
@@ -687,6 +742,7 @@ pub extern "C" fn tl_cpu_tensor_clone(t: *mut OpaqueTensor) -> *mut OpaqueTensor
 pub extern "C" fn tl_cpu_tensor_print(t: *mut OpaqueTensor) {
     if t.is_null() { println!("Tensor[null]"); return; }
     let tensor = unsafe { &*t };
+    if tensor.shape().is_empty() { println!("Tensor[cleared]"); return; }
     println!("Tensor(shape={:?}, data={:?})", tensor.shape(), tensor.data_f32());
 }
 
@@ -754,11 +810,14 @@ pub extern "C" fn tl_cpu_tensor_sum_dim(t: *mut OpaqueTensor, dim: usize, keep_d
 }
 
 pub extern "C" fn tl_cpu_tensor_embedding(
+    weight: *mut OpaqueTensor,
     indices: *mut OpaqueTensor,
-    weights: *mut OpaqueTensor,
+    _padding_idx: i64,
+    _scale_grad_by_freq: bool,
+    _sparse: bool,
 ) -> *mut OpaqueTensor {
-    if weights.is_null() || indices.is_null() { return std::ptr::null_mut(); }
-    let weights_tensor = unsafe { &*weights };
+    if weight.is_null() || indices.is_null() { return std::ptr::null_mut(); }
+    let weights_tensor = unsafe { &*weight };
     let indices_tensor = unsafe { &*indices };
     make_tensor(weights_tensor.embedding_impl(indices_tensor))
 }

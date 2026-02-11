@@ -3558,19 +3558,12 @@ impl SemanticAnalyzer {
                     self.check_expr(&mut args[1])?; // diagonal (int)
                     return Ok(Type::Tensor(Box::new(Type::F32), 0));
                 } else if name == "embedding" {
-                    if args.len() != 2 {
-                        return self.err(
-                            SemanticError::ArgumentCountMismatch {
-                                name: name.clone(),
-                                expected: 2,
-                                found: args.len(),
-                            },
-                            Some(expr.span.clone()),
-                        );
-                    }
-                    self.check_expr(&mut args[0])?; // indices
-                    self.check_expr(&mut args[1])?; // weights
-                    return Ok(Type::Tensor(Box::new(Type::F32), 0));
+                    return self.err(
+                        SemanticError::FunctionNotFound(
+                            "embedding() はグローバル関数として使用できません。indices.embedding(weight) の形式を使ってください".into(),
+                        ),
+                        Some(expr.span.clone()),
+                    );
                 } else if name == "sum" {
                     if args.len() != 1 && args.len() != 2 {
                         return self.err(
