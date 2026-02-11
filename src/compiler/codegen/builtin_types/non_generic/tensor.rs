@@ -764,6 +764,10 @@ fn compile_tensor_reshape<'ctx>(
                ValueKind::Basic(v) => v,
                _ => return Err("Invalid return".into()),
           };
+          // Free shape tensor after reshape (it was only used as a shape descriptor)
+          if let Some(release_fn) = codegen.module.get_function("tl_tensor_release_safe") {
+               codegen.builder.build_call(release_fn, &[(*shape_val).into()], "").ok();
+          }
           return Ok((res, Type::Tensor(Box::new(Type::F32), 0))); // Dynamic rank
      } else {
           // Case 2: Shape is Vec. Use tl_tensor_reshape_dims(obj, ptr, rank).

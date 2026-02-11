@@ -2159,10 +2159,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let neg_call = self.builder.build_call(neg_fn, &[sub_res.into()], "neg_res");
                     let res = self.check_tensor_result(neg_call.map_err(|e| e.to_string())?, "neg_err")?;
                     
-                    // Free intermediate sub result
-                    // if let Some(free_fn) = self.module.get_function("tl_tensor_free") { // Runtime free
-                    //      self.builder.build_call(free_fn, &[sub_res.into()], "").ok();
-                    // }
+                    // Free intermediate sub result (Arc-managed tensor)
+                    if let Some(release_fn) = self.module.get_function("tl_tensor_release_safe") {
+                         self.builder.build_call(release_fn, &[sub_res.into()], "").ok();
+                    }
 
                     Ok((res.into_pointer_value().into(), tensor_ty))
                 }

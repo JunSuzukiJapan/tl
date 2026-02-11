@@ -1201,6 +1201,17 @@ pub extern "C" fn tl_cpu_tensor_apply_rope(
 
 #[track_caller]
 fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
+    // track_alloc: テンソルのデータバッファ容量を追跡 (Drop の track_free と対称)
+    let f32_bytes = t.data_f32.capacity() * std::mem::size_of::<f32>();
+    if f32_bytes > 0 {
+        crate::memory::track_alloc(f32_bytes);
+    }
+    if let Some(ref v) = t.data_i64 {
+        let i64_bytes = v.capacity() * std::mem::size_of::<i64>();
+        if i64_bytes > 0 {
+            crate::memory::track_alloc(i64_bytes);
+        }
+    }
     let arc = Arc::new(UnsafeCell::new(t));
     let ptr = Arc::into_raw(arc) as *mut CpuTensor;
     let loc = std::panic::Location::caller();
@@ -1217,13 +1228,76 @@ pub extern "C" fn tl_cpu_get_pool_count() -> usize {
 
 #[no_mangle]
 pub extern "C" fn tl_cpu_get_memory_mb() -> f64 {
-    let bytes = crate::memory::get_total_allocated();
+    let bytes = get_rss_bytes();
     bytes as f64 / 1024.0 / 1024.0
 }
 
 #[no_mangle]
 pub extern "C" fn tl_cpu_get_memory_bytes() -> usize {
-    crate::memory::get_total_allocated()
+    get_rss_bytes()
+}
+
+/// OS レベルの RSS (Resident Set Size) を取得。
+/// 内部カウンタではなくプロセス全体の物理メモリ使用量を返す。
+fn get_rss_bytes() -> usize {
+    #[cfg(target_os = "macos")]
+    {
+        use std::mem;
+        extern "C" {
+            fn mach_task_self() -> u32;
+            fn task_info(
+                target_task: u32,
+                flavor: i32,
+                task_info_out: *mut std::ffi::c_void,
+                task_info_outCnt: *mut u32,
+            ) -> i32;
+        }
+        // MACH_TASK_BASIC_INFO = 20
+        #[repr(C)]
+        struct MachTaskBasicInfo {
+            virtual_size: u64,
+            resident_size: u64,
+            resident_size_max: u64,
+            user_time: [u32; 2],     // time_value_t
+            system_time: [u32; 2],   // time_value_t
+            policy: i32,
+            suspend_count: i32,
+        }
+        let mut info: MachTaskBasicInfo = unsafe { mem::zeroed() };
+        let mut count = (mem::size_of::<MachTaskBasicInfo>() / mem::size_of::<u32>()) as u32;
+        let kr = unsafe {
+            task_info(
+                mach_task_self(),
+                20, // MACH_TASK_BASIC_INFO
+                &mut info as *mut _ as *mut std::ffi::c_void,
+                &mut count,
+            )
+        };
+        if kr == 0 {
+            info.resident_size as usize
+        } else {
+            // Fallback to internal counter
+            crate::memory::get_total_allocated()
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // /proc/self/statm: columns are in pages
+        // Column 2 (resident) * page_size
+        if let Ok(statm) = std::fs::read_to_string("/proc/self/statm") {
+            let parts: Vec<&str> = statm.split_whitespace().collect();
+            if parts.len() >= 2 {
+                if let Ok(pages) = parts[1].parse::<usize>() {
+                    return pages * 4096; // typical page size
+                }
+            }
+        }
+        crate::memory::get_total_allocated()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        crate::memory::get_total_allocated()
+    }
 }
 
 #[no_mangle]
