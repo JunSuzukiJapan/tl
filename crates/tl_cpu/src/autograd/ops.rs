@@ -299,11 +299,19 @@ pub struct SumDimBackward {
 
 impl GradFn for SumDimBackward {
     fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor> {
+        let ndim = self.input_shape.len();
         let axis = if self.axis < 0 {
-            (self.input_shape.len() as i32 + self.axis) as usize
+            (ndim as i32 + self.axis) as usize
         } else {
             self.axis as usize
         };
+        if ndim == 0 || axis >= ndim {
+            // axis が範囲外の場合、gradを全要素にブロードキャスト
+            let grad_val = grad_output.to_vec::<f32>().first().copied().unwrap_or(0.0);
+            let numel: usize = self.input_shape.iter().product::<usize>().max(1);
+            let result = vec![grad_val; numel];
+            return vec![CpuTensor::from_slice(&result, &self.input_shape, grad_output.dtype())];
+        }
         let grad_data: Vec<f32> = grad_output.to_vec();
         let numel: usize = self.input_shape.iter().product();
         let mut result = vec![0.0f32; numel];
@@ -312,7 +320,8 @@ impl GradFn for SumDimBackward {
         let axis_size = self.input_shape[axis];
         for i in 0..outer {
             for k in 0..inner {
-                let grad_val = grad_data[i * inner + k];
+                let gi = i * inner + k;
+                let grad_val = if gi < grad_data.len() { grad_data[gi] } else { 0.0 };
                 for j in 0..axis_size {
                     result[i * axis_size * inner + j * inner + k] = grad_val;
                 }

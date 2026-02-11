@@ -1,24 +1,71 @@
 //! TensorMap 関連の FFI 関数
+//! CPU/GPU 両方で動作するよう抽象化
 
 use crate::string_ffi::StringStruct;
 use crate::OpaqueTensor;
-use tl_metal::{MetalTensor, DType};
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::sync::Arc;
 use candle_core::quantized::QTensor;
 
-/// TensorMap 構造体
+/// テンソルのデータを型非依存に保持するエントリ
+pub(crate) struct TensorEntry {
+    data_f32: Vec<f32>,
+    shape: Vec<usize>,
+    /// 0=F32, 1=F16, 2=BF16, 3=I32, 4=I64
+    #[allow(dead_code)]
+    dtype_tag: u8,
+}
+
+/// TensorMap 構造体 — CPU/GPU 両方で使用可能
 pub struct OpaqueTensorMap {
-    pub map: HashMap<String, Arc<MetalTensor>>,
+    pub(crate) entries: HashMap<String, TensorEntry>,
     pub qtensors: HashMap<String, Arc<QTensor>>,
+}
+
+fn is_cpu_mode() -> bool {
+    std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu")
+}
+
+/// OpaqueTensor ポインタからデータと shape を抽出 (CPU/GPU 両対応)
+unsafe fn extract_tensor_data(tensor: *mut OpaqueTensor) -> Option<(Vec<f32>, Vec<usize>, u8)> {
+    if tensor.is_null() {
+        return None;
+    }
+    if is_cpu_mode() {
+        unsafe {
+            let cpu = &*(tensor as *mut tl_cpu::CpuTensor);
+            let data = cpu.data_f32().to_vec();
+            let shape = cpu.shape().to_vec();
+            Some((data, shape, 0)) // F32
+        }
+    } else {
+        unsafe {
+            let metal = &*tensor;
+            let data: Vec<f32> = metal.to_vec();
+            let shape = tl_metal::MetalTensor::shape(metal).to_vec();
+            Some((data, shape, 0)) // F32
+        }
+    }
+}
+
+/// TensorEntry から OpaqueTensor を作成 (CPU/GPU 両対応)
+fn create_tensor_from_entry(entry: &TensorEntry) -> *mut OpaqueTensor {
+    if is_cpu_mode() {
+        let dtype = tl_cpu::DType::F32; // 現時点では F32 のみサポート
+        let cpu = tl_cpu::CpuTensor::from_slice(&entry.data_f32, &entry.shape, dtype);
+        Box::into_raw(Box::new(cpu)) as *mut OpaqueTensor
+    } else {
+        let metal = tl_metal::MetalTensor::from_slice(&entry.data_f32, &entry.shape, tl_metal::DType::F32);
+        Box::into_raw(Box::new(metal))
+    }
 }
 
 /// 新しい TensorMap を作成
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_new() -> *mut OpaqueTensorMap {
     Box::into_raw(Box::new(OpaqueTensorMap {
-        map: HashMap::new(),
+        entries: HashMap::new(),
         qtensors: HashMap::new(),
     }))
 }
@@ -44,10 +91,11 @@ pub extern "C" fn tl_tensor_map_insert(
         if map.is_null() || name.is_null() || (*name).ptr.is_null() || tensor.is_null() {
             return;
         }
-        let map_ref = &mut (*map).map;
+        let map_ref = &mut (*map).entries;
         let key = CStr::from_ptr((*name).ptr).to_string_lossy().into_owned();
-        let tensor_clone = (*tensor).clone();
-        map_ref.insert(key, Arc::new(tensor_clone));
+        if let Some((data, shape, dtype_tag)) = extract_tensor_data(tensor) {
+            map_ref.insert(key, TensorEntry { data_f32: data, shape, dtype_tag });
+        }
     }
 }
 
@@ -61,12 +109,11 @@ pub extern "C" fn tl_tensor_map_get(
         if map.is_null() || name.is_null() || (*name).ptr.is_null() {
             return std::ptr::null_mut();
         }
-        let map_ref = &(*map).map;
+        let map_ref = &(*map).entries;
         let key = CStr::from_ptr((*name).ptr).to_string_lossy();
         
-        if let Some(tensor_arc) = map_ref.get(key.as_ref()) {
-            let tensor_clone = tensor_arc.as_ref().clone();
-            Box::into_raw(Box::new(tensor_clone))
+        if let Some(entry) = map_ref.get(key.as_ref()) {
+            create_tensor_from_entry(entry)
         } else {
             crate::error::set_last_error(
                 format!("Weight '{}' not found in loaded file.", key),
@@ -90,7 +137,7 @@ pub extern "C" fn tl_tensor_map_load(path: *mut StringStruct) -> *mut OpaqueTens
         // safetensors ファイルを読み込み
         match safetensors::SafeTensors::deserialize(&std::fs::read(&path_buf).unwrap_or_default()) {
             Ok(tensors) => {
-                let mut map = HashMap::new();
+                let mut entries = HashMap::new();
                 for (name, view) in tensors.tensors() {
                     // データを f32 として読み込み
                     let data: Vec<f32> = match view.dtype() {
@@ -111,11 +158,14 @@ pub extern "C" fn tl_tensor_map_load(path: *mut StringStruct) -> *mut OpaqueTens
                         }
                     };
                     let shape: Vec<usize> = view.shape().to_vec();
-                    let tensor = MetalTensor::from_slice(&data, &shape, DType::F32);
-                    map.insert(name.to_string(), Arc::new(tensor));
+                    entries.insert(name.to_string(), TensorEntry {
+                        data_f32: data,
+                        shape,
+                        dtype_tag: 0, // F32
+                    });
                 }
-                println!("Loaded {} tensors from {:?}", map.len(), path_buf);
-                Box::into_raw(Box::new(OpaqueTensorMap { map, qtensors: HashMap::new() }))
+                println!("Loaded {} tensors from {:?}", entries.len(), path_buf);
+                Box::into_raw(Box::new(OpaqueTensorMap { entries, qtensors: HashMap::new() }))
             }
             Err(e) => {
                 eprintln!("Failed to load safetensors: {}", e);
@@ -135,25 +185,21 @@ pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *mut Strin
         }
         let path_str = CStr::from_ptr((*path).ptr).to_string_lossy();
         let path_buf = crate::file_io::expand_path(&path_str);
-        let map_ref = &(*map).map;
+        let entries = &(*map).entries;
 
         // 最初のテンソルをバイナリ形式で保存（tl_tensor_load 互換）
-        if let Some((_name, tensor_arc)) = map_ref.iter().next() {
-            let tensor = tensor_arc.as_ref();
-            let data: Vec<f32> = tensor.to_vec();
-            let shape = MetalTensor::shape(tensor);
-
+        if let Some((_name, entry)) = entries.iter().next() {
             let mut bytes = Vec::new();
-            bytes.extend_from_slice(&(shape.len() as u64).to_le_bytes());
-            for &dim in shape {
+            bytes.extend_from_slice(&(entry.shape.len() as u64).to_le_bytes());
+            for &dim in &entry.shape {
                 bytes.extend_from_slice(&(dim as u64).to_le_bytes());
             }
-            for &val in &data {
+            for &val in &entry.data_f32 {
                 bytes.extend_from_slice(&val.to_le_bytes());
             }
 
             match std::fs::write(&path_buf, &bytes) {
-                Ok(_) => println!("Saved {} tensors to {:?}", map_ref.len(), path_buf),
+                Ok(_) => println!("Saved {} tensors to {:?}", entries.len(), path_buf),
                 Err(e) => eprintln!("Failed to save tensor: {}", e),
             }
         }

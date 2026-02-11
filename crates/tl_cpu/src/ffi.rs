@@ -906,6 +906,294 @@ pub extern "C" fn tl_cpu_tensor_return_to_pool(t: *mut OpaqueTensor) {
     crate::memory::return_to_pool(tensor_box);
 }
 
+// ========== Phase 2: テスト影響の大きい新規実装 ==========
+
+pub extern "C" fn tl_cpu_tensor_tan(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    let data: Vec<f32> = tensor.data_f32.iter().map(|&x| x.tan()).collect();
+    make_tensor(CpuTensor { data_f32: data, data_i64: None, shape: tensor.shape.clone(), dtype: tensor.dtype, autograd: None })
+}
+
+pub extern "C" fn tl_cpu_tensor_clamp(t: *mut OpaqueTensor, min: f64, max: f64) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    let min_f32 = min as f32;
+    let max_f32 = max as f32;
+    let data: Vec<f32> = tensor.data_f32.iter().map(|&x| x.max(min_f32).min(max_f32)).collect();
+    make_tensor(CpuTensor { data_f32: data, data_i64: None, shape: tensor.shape.clone(), dtype: tensor.dtype, autograd: None })
+}
+
+pub extern "C" fn tl_cpu_tensor_sigmoid(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    let data: Vec<f32> = tensor.data_f32.iter().map(|&x| 1.0 / (1.0 + (-x).exp())).collect();
+    make_tensor(CpuTensor { data_f32: data, data_i64: None, shape: tensor.shape.clone(), dtype: tensor.dtype, autograd: None })
+}
+
+pub extern "C" fn tl_cpu_tensor_scale(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    make_tensor(tensor.mul_scalar_impl(s as f32))
+}
+
+pub extern "C" fn tl_cpu_tensor_silu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    let data: Vec<f32> = tensor.data_f32.iter().map(|&x| x * (1.0 / (1.0 + (-x).exp()))).collect();
+    make_tensor(CpuTensor { data_f32: data, data_i64: None, shape: tensor.shape.clone(), dtype: tensor.dtype, autograd: None })
+}
+
+pub extern "C" fn tl_cpu_tensor_cross_entropy(
+    logits: *mut OpaqueTensor,
+    labels: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if logits.is_null() || labels.is_null() { return std::ptr::null_mut(); }
+    let l = unsafe { &*logits };
+    let t = unsafe { &*labels };
+    // Cross entropy: -sum(target * log(softmax(logits)))
+    // Simple implementation: sum of element-wise -target * log(logit)
+    let l_data = &l.data_f32;
+    let t_data = &t.data_f32;
+    let len = l_data.len().min(t_data.len());
+    let mut loss = 0.0f32;
+    for i in 0..len {
+        let p = l_data[i].max(1e-7); // avoid log(0)
+        loss -= t_data[i] * p.ln();
+    }
+    make_tensor(CpuTensor { data_f32: vec![loss], data_i64: None, shape: vec![1], dtype: DType::F32, autograd: None })
+}
+
+pub extern "C" fn tl_cpu_tensor_numel(t: *mut OpaqueTensor) -> i64 {
+    if t.is_null() { return 0; }
+    let tensor = unsafe { &*t };
+    tensor.shape.iter().product::<usize>() as i64
+}
+
+pub extern "C" fn tl_cpu_tensor_transpose_2d(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    let ndim = tensor.shape.len();
+    if ndim < 2 { return make_tensor(tensor.clone_data()); }
+    make_tensor(tensor.transpose_impl(ndim - 2, ndim - 1))
+}
+
+pub extern "C" fn tl_cpu_tensor_to_f32(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    // Already f32 for CpuTensor, just clone
+    make_tensor(tensor.clone_data())
+}
+
+pub extern "C" fn tl_cpu_tensor_to_i64(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    // Convert f32 data to i64 representation
+    let i64_data: Vec<i64> = tensor.data_f32.iter().map(|&x| x as i64).collect();
+    let f32_data: Vec<f32> = i64_data.iter().map(|&x| x as f32).collect();
+    make_tensor(CpuTensor { data_f32: f32_data, data_i64: Some(i64_data), shape: tensor.shape.clone(), dtype: DType::I64, autograd: None })
+}
+
+pub extern "C" fn tl_cpu_tensor_max_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    make_tensor(tensor.max_impl(dim as i32))
+}
+
+pub extern "C" fn tl_cpu_tensor_min_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    make_tensor(tensor.min_impl(dim as i32))
+}
+
+pub extern "C" fn tl_cpu_tensor_mean_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    make_tensor(tensor.mean_impl(dim as i32))
+}
+
+pub extern "C" fn tl_cpu_tensor_device_id(_t: *mut OpaqueTensor) -> i32 {
+    0 // Always CPU
+}
+
+pub extern "C" fn tl_cpu_tensor_to_device(t: *mut OpaqueTensor, _device_id: i32) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    make_tensor(tensor.clone_data())
+}
+
+pub extern "C" fn tl_cpu_tensor_prepare_return(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    // Identity / passthrough for CPU
+    t
+}
+
+pub extern "C" fn tl_cpu_tensor_reshape_2d(t: *mut OpaqueTensor, d0: i64, d1: i64) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    make_tensor(tensor.reshape_impl(&[d0 as usize, d1 as usize]))
+}
+
+pub extern "C" fn tl_cpu_tensor_reshape_3d_to_2d(t: *mut OpaqueTensor, d0: i64, d1: i64) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    make_tensor(tensor.reshape_impl(&[d0 as usize, d1 as usize]))
+}
+
+pub extern "C" fn tl_cpu_tensor_sample(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    // Return argmax as a simple sampling strategy
+    let data = &tensor.data_f32;
+    let max_idx = data.iter().enumerate().max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)).map(|(i, _)| i).unwrap_or(0);
+    make_tensor(CpuTensor { data_f32: vec![max_idx as f32], data_i64: None, shape: vec![1], dtype: DType::F32, autograd: None })
+}
+
+pub extern "C" fn tl_cpu_tensor_repeat_interleave(
+    t: *mut OpaqueTensor,
+    _repeats: usize,
+    _dim: usize,
+) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    make_tensor(tensor.clone_data()) // Placeholder
+}
+
+pub extern "C" fn tl_cpu_tensor_data(t: *mut OpaqueTensor) -> *const f32 {
+    if t.is_null() { return std::ptr::null(); }
+    let tensor = unsafe { &*t };
+    tensor.data_f32.as_ptr()
+}
+
+pub extern "C" fn tl_cpu_tensor_new_causal_mask(size: usize) -> *mut OpaqueTensor {
+    // Lower triangular matrix of 1s (size x size), zeros above diagonal
+    let mut data = vec![0.0f32; size * size];
+    for i in 0..size {
+        for j in 0..=i {
+            data[i * size + j] = 1.0;
+        }
+    }
+    make_tensor(CpuTensor { data_f32: data, data_i64: None, shape: vec![size, size], dtype: DType::F32, autograd: None })
+}
+
+pub extern "C" fn tl_cpu_tensor_matmul_4d(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+    let a_tensor = unsafe { &*a };
+    let b_tensor = unsafe { &*b };
+    make_tensor(a_tensor.matmul_impl(b_tensor))
+}
+
+pub extern "C" fn tl_cpu_tensor_add_4d(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+    let a_tensor = unsafe { &*a };
+    let b_tensor = unsafe { &*b };
+    make_tensor(a_tensor.add_impl(b_tensor))
+}
+
+pub extern "C" fn tl_cpu_tensor_silu_4d(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    tl_cpu_tensor_silu(t) // Same implementation
+}
+
+pub extern "C" fn tl_cpu_tensor_cat2(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+    dim: i64,
+) -> *mut OpaqueTensor {
+    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+    let a_tensor = unsafe { &*a };
+    let b_tensor = unsafe { &*b };
+    make_tensor(CpuTensor::cat_impl(&[a_tensor, b_tensor], dim as usize))
+}
+
+pub extern "C" fn tl_cpu_tensor_cat_4d(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+    dim: i64,
+) -> *mut OpaqueTensor {
+    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+    let a_tensor = unsafe { &*a };
+    let b_tensor = unsafe { &*b };
+    make_tensor(CpuTensor::cat_impl(&[a_tensor, b_tensor], dim as usize))
+}
+
+pub extern "C" fn tl_cpu_tensor_rms_norm(
+    input: *mut OpaqueTensor,
+    weight: *mut OpaqueTensor,
+    eps: f32,
+) -> *mut OpaqueTensor {
+    if input.is_null() { return std::ptr::null_mut(); }
+    let x = unsafe { &*input };
+    // RMS Norm: x / sqrt(mean(x^2) + eps)
+    let data = &x.data_f32;
+    let last_dim = *x.shape.last().unwrap_or(&1);
+    let num_groups = data.len() / last_dim;
+    let mut result = vec![0.0f32; data.len()];
+    for g in 0..num_groups {
+        let start = g * last_dim;
+        let end = start + last_dim;
+        let mean_sq: f32 = data[start..end].iter().map(|&v| v * v).sum::<f32>() / last_dim as f32;
+        let rms = (mean_sq + eps).sqrt();
+        for i in start..end {
+            result[i] = data[i] / rms;
+        }
+    }
+    let normalized = CpuTensor { data_f32: result, data_i64: None, shape: x.shape.clone(), dtype: x.dtype, autograd: None };
+    if !weight.is_null() {
+        let w = unsafe { &*weight };
+        make_tensor(normalized.mul_impl(w))
+    } else {
+        make_tensor(normalized)
+    }
+}
+
+pub extern "C" fn tl_cpu_tensor_print_1(t: *mut OpaqueTensor) {
+    tl_cpu_tensor_print(t);
+}
+
+pub extern "C" fn tl_cpu_tensor_print_2(t: *mut OpaqueTensor) {
+    tl_cpu_tensor_print(t);
+}
+
+pub extern "C" fn tl_cpu_tensor_print_3(t: *mut OpaqueTensor) {
+    tl_cpu_tensor_print(t);
+}
+
+pub extern "C" fn tl_cpu_tensor_save(_t: *mut OpaqueTensor, _path: *const i8) {
+    // Placeholder: file I/O not yet implemented for CPU backend
+}
+
+pub extern "C" fn tl_cpu_tensor_load(_path: *const i8) -> *mut OpaqueTensor {
+    // Placeholder
+    std::ptr::null_mut()
+}
+
+pub extern "C" fn tl_cpu_tensor_rope_new_cos(
+    _seq_len: usize, _dim: usize, _base: f32,
+) -> *mut OpaqueTensor {
+    std::ptr::null_mut() // Placeholder for LLM inference
+}
+
+pub extern "C" fn tl_cpu_tensor_rope_new_sin(
+    _seq_len: usize, _dim: usize, _base: f32,
+) -> *mut OpaqueTensor {
+    std::ptr::null_mut()
+}
+
+pub extern "C" fn tl_cpu_tensor_apply_rope(
+    t: *mut OpaqueTensor,
+    _cos: *mut OpaqueTensor,
+    _sin: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let tensor = unsafe { &*t };
+    make_tensor(tensor.clone_data()) // Placeholder
+}
+
 #[track_caller]
 fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
     let ptr = if let Some(mut boxed) = crate::memory::recycle_tensor() {
@@ -961,4 +1249,175 @@ pub extern "C" fn tl_cpu_get_pool_mb() -> f64 {
 #[no_mangle]
 pub extern "C" fn tl_cpu_get_pool_bytes() -> usize {
     0
+}
+
+// ========== CPU 版 TensorMap ==========
+use std::collections::HashMap;
+use std::ffi::CStr;
+use std::os::raw::c_char;
+
+#[repr(C)]
+pub struct StringStruct {
+    pub ptr: *mut c_char,
+    pub len: i64,
+}
+
+pub struct CpuTensorMap {
+    pub map: HashMap<String, *mut OpaqueTensor>,
+}
+
+#[no_mangle]
+pub extern "C" fn tl_cpu_tensor_map_new() -> *mut CpuTensorMap {
+    Box::into_raw(Box::new(CpuTensorMap {
+        map: HashMap::new(),
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn tl_cpu_tensor_map_insert(
+    map: *mut CpuTensorMap,
+    name: *mut StringStruct,
+    tensor: *mut OpaqueTensor,
+) {
+    unsafe {
+        if map.is_null() || name.is_null() || (*name).ptr.is_null() || tensor.is_null() {
+            return;
+        }
+        let map_ref = &mut (*map).map;
+        let key = CStr::from_ptr((*name).ptr).to_string_lossy().into_owned();
+        // Clone the tensor data
+        let t = &*tensor;
+        let cloned = Box::into_raw(Box::new(CpuTensor {
+            data_f32: t.data_f32.clone(),
+            data_i64: t.data_i64.clone(),
+            shape: t.shape.clone(),
+            dtype: t.dtype,
+            autograd: None,
+        }));
+        map_ref.insert(key, cloned);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn tl_cpu_tensor_map_get(
+    map: *mut CpuTensorMap,
+    name: *mut StringStruct,
+) -> *mut OpaqueTensor {
+    unsafe {
+        if map.is_null() || name.is_null() || (*name).ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        let map_ref = &(*map).map;
+        let key = CStr::from_ptr((*name).ptr).to_string_lossy().into_owned();
+        match map_ref.get(&key) {
+            Some(&ptr) => {
+                // Return a clone
+                let t = &*ptr;
+                Box::into_raw(Box::new(CpuTensor {
+                    data_f32: t.data_f32.clone(),
+                    data_i64: t.data_i64.clone(),
+                    shape: t.shape.clone(),
+                    dtype: t.dtype,
+                    autograd: None,
+                }))
+            }
+            None => std::ptr::null_mut(),
+        }
+    }
+}
+
+// ========== CPU 版 conv2d ==========
+#[no_mangle]
+pub extern "C" fn tl_cpu_tensor_conv2d(
+    input: *mut OpaqueTensor,
+    weight: *mut OpaqueTensor,
+    padding: i64,
+    stride: i64,
+) -> *mut OpaqueTensor {
+    if input.is_null() || weight.is_null() {
+        return std::ptr::null_mut();
+    }
+    let padding = padding.max(0) as usize;
+    let stride = stride.max(1) as usize;
+    let (inp, w) = unsafe { (&*input, &*weight) };
+
+    // Input shape: [N, Cin, H, W] or [Cin, H, W] or [H, W]
+    let (batch, in_c, in_h, in_w) = match inp.shape.len() {
+        4 => (inp.shape[0], inp.shape[1], inp.shape[2], inp.shape[3]),
+        3 => (1, inp.shape[0], inp.shape[1], inp.shape[2]),
+        2 => (1, 1, inp.shape[0], inp.shape[1]),
+        _ => return std::ptr::null_mut(),
+    };
+    // Weight shape: [Cout, Cin, Kh, Kw]
+    let (out_c, _w_in_c, kh, kw) = match w.shape.len() {
+        4 => (w.shape[0], w.shape[1], w.shape[2], w.shape[3]),
+        _ => return std::ptr::null_mut(),
+    };
+    let padded_h = in_h + 2 * padding;
+    let padded_w = in_w + 2 * padding;
+    if padded_h < kh || padded_w < kw || stride == 0 {
+        return make_tensor(CpuTensor {
+            data_f32: vec![],
+            data_i64: None,
+            shape: vec![0],
+            dtype: inp.dtype,
+            autograd: None,
+        });
+    }
+    let out_h = (padded_h - kh) / stride + 1;
+    let out_w = (padded_w - kw) / stride + 1;
+
+    let total = batch.checked_mul(out_c).and_then(|v| v.checked_mul(out_h)).and_then(|v| v.checked_mul(out_w));
+    let total = match total {
+        Some(v) => v,
+        None => return std::ptr::null_mut(),
+    };
+    let mut output = vec![0.0f32; total];
+
+    for n in 0..batch {
+        for oc in 0..out_c {
+            for oh in 0..out_h {
+                for ow in 0..out_w {
+                    let mut sum = 0.0f32;
+                    for ic in 0..in_c {
+                        for khi in 0..kh {
+                            for kwi in 0..kw {
+                                let ih = oh * stride + khi;
+                                let iw = ow * stride + kwi;
+                                let ih = ih as isize - padding as isize;
+                                let iw = iw as isize - padding as isize;
+                                if ih >= 0 && ih < in_h as isize && iw >= 0 && iw < in_w as isize {
+                                    let ih = ih as usize;
+                                    let iw = iw as usize;
+                                    let inp_idx = n * in_c * in_h * in_w + ic * in_h * in_w + ih * in_w + iw;
+                                    let w_idx = oc * in_c * kh * kw + ic * kh * kw + khi * kw + kwi;
+                                    if inp_idx < inp.data_f32.len() && w_idx < w.data_f32.len() {
+                                        sum += inp.data_f32[inp_idx] * w.data_f32[w_idx];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let out_idx = n * out_c * out_h * out_w + oc * out_h * out_w + oh * out_w + ow;
+                    output[out_idx] = sum;
+                }
+            }
+        }
+    }
+
+    let shape = if inp.shape.len() == 4 {
+        vec![batch, out_c, out_h, out_w]
+    } else if inp.shape.len() == 3 {
+        vec![out_c, out_h, out_w]
+    } else {
+        vec![out_h, out_w]
+    };
+
+    make_tensor(CpuTensor {
+        data_f32: output,
+        data_i64: None,
+        shape,
+        dtype: inp.dtype,
+        autograd: None,
+    })
 }

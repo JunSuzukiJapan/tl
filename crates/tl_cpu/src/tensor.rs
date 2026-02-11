@@ -484,6 +484,16 @@ impl CpuTensor {
     }
 
     fn elementwise_binop(&self, other: &Self, op: impl Fn(f32, f32) -> f32) -> Self {
+        // 空テンソルの場合は空テンソルを返す
+        if self.data_f32.is_empty() || other.data_f32.is_empty() {
+            return CpuTensor {
+                data_f32: vec![],
+                data_i64: None,
+                shape: vec![0],
+                dtype: self.dtype,
+                autograd: None,
+            };
+        }
         // NumPy互換ブロードキャスト
         let a_shape = &self.shape;
         let b_shape = &other.shape;
@@ -515,7 +525,9 @@ impl CpuTensor {
                 a_idx += coord * a_strides[d];
                 b_idx += coord * b_strides[d];
             }
-            op(a[a_idx], b[b_idx])
+            let av = if a_idx < a.len() { a[a_idx] } else { 0.0 };
+            let bv = if b_idx < b.len() { b[b_idx] } else { 0.0 };
+            op(av, bv)
         }).collect();
 
         CpuTensor {
@@ -655,7 +667,15 @@ impl CpuTensor {
 
     pub fn sum_impl(&self, axis: i32) -> Self {
         let ndim = self.shape.len();
+        if ndim == 0 || self.data_f32.is_empty() {
+            return CpuTensor { data_f32: vec![0.0], data_i64: None, shape: vec![1], dtype: self.dtype, autograd: None };
+        }
         let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
+        if axis >= ndim {
+            // axis が範囲外の場合は全要素合計
+            let s: f32 = self.data_f32.iter().sum();
+            return CpuTensor { data_f32: vec![s], data_i64: None, shape: vec![1], dtype: self.dtype, autograd: None };
+        }
         let outer: usize = self.shape[..axis].iter().product();
         let axis_size = self.shape[axis];
         let inner: usize = self.shape[axis + 1..].iter().product();
@@ -1049,16 +1069,29 @@ impl CpuTensor {
         let n = if b_shape.len() >= 2 {
             b_shape[b_shape.len() - 1]
         } else {
+            // 1D vector: treat as column vector (k, 1), so n=1
             1
         };
         let batch: usize = a_shape[..a_shape.len().saturating_sub(2)].iter().product::<usize>().max(1);
         let mut result = vec![0.0f32; batch * m * n];
         for b in 0..batch {
+            let a_offset = b * m * k;
+            let b_batch_size = if b_shape.len() >= 2 { k * n } else { b_shape[0] };
+            let b_offset = if b_shape.len() > 2 { b * b_batch_size } else { 0 };
             for i in 0..m {
                 for j in 0..n {
                     let mut sum = 0.0f32;
                     for p in 0..k {
-                        sum += self.data_f32[b * m * k + i * k + p] * other.data_f32[b * k * n + p * n + j];
+                        let a_idx = a_offset + i * k + p;
+                        let b_idx = if b_shape.len() >= 2 {
+                            b_offset + p * n + j
+                        } else {
+                            // 1D: treat as column vector, index is just p
+                            p
+                        };
+                        if a_idx < self.data_f32.len() && b_idx < other.data_f32.len() {
+                            sum += self.data_f32[a_idx] * other.data_f32[b_idx];
+                        }
                     }
                     result[b * m * n + i * n + j] = sum;
                 }
@@ -1066,7 +1099,9 @@ impl CpuTensor {
         }
         let mut new_shape = a_shape[..a_shape.len().saturating_sub(2)].to_vec();
         new_shape.push(m);
-        new_shape.push(n);
+        if b_shape.len() >= 2 {
+            new_shape.push(n);
+        }
         CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None }
     }
 

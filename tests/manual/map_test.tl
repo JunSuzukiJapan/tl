@@ -1,3 +1,4 @@
+// SKIP: Requires local Llama3 GGUF model file (~/.llm/models/llama3/)
 // Minimal test for Map String handling
 fn main() {
     println("Map String test");

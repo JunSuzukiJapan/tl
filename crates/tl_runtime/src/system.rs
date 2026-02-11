@@ -154,7 +154,7 @@ pub extern "C" fn tl_gguf_load(path: *mut StringStruct) -> *mut crate::tensor_ma
         let device = candle_core::Device::new_metal(0).unwrap_or(candle_core::Device::Cpu);
 
         // テンソルをロードし、OpaqueTensorMap に格納
-        let tensor_map = HashMap::new();
+        let entries = HashMap::new();
         let mut qtensor_map = HashMap::new();
 
         for (name, _) in content.tensor_infos.iter() {
@@ -172,15 +172,15 @@ pub extern "C" fn tl_gguf_load(path: *mut StringStruct) -> *mut crate::tensor_ma
             }
         }
 
-        let _total = tensor_map.len() + qtensor_map.len();
+        let _total = entries.len() + qtensor_map.len();
         eprintln!(
             "[tl_gguf_load] Loaded {} regular + {} quantized tensors",
-            tensor_map.len(),
+            entries.len(),
             qtensor_map.len()
         );
 
         let map = crate::tensor_map::OpaqueTensorMap {
-            map: tensor_map,
+            entries,
             qtensors: qtensor_map,
         };
 

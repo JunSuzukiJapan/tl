@@ -693,16 +693,103 @@ pub extern "C" fn tl_image_height(_t: *mut OpaqueTensor) -> i64 {
 // ========== IO/System Stubs for Compiler ==========
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_save(_t: *mut OpaqueTensor, _path: *const i8) {
-    // Stub
+pub extern "C" fn tl_tensor_save(path: *mut super::StringStruct, t: *mut OpaqueTensor) {
+    if t.is_null() || path.is_null() {
+        return;
+    }
+    let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
+    unsafe {
+        if (*path).ptr.is_null() { return; }
+        let path_str = std::ffi::CStr::from_ptr((*path).ptr).to_string_lossy();
+        let path_buf = crate::file_io::expand_path(&path_str);
+
+        let (data, shape) = if is_cpu {
+            let tensor = &*(t as *mut tl_cpu::CpuTensor);
+            (tensor.data_f32().to_vec(), tensor.shape().to_vec())
+        } else {
+            let tensor = &*t;
+            (tensor.to_vec(), tl_metal::MetalTensor::shape(tensor).to_vec())
+        };
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&(shape.len() as u64).to_le_bytes());
+        for &dim in &shape {
+            bytes.extend_from_slice(&(dim as u64).to_le_bytes());
+        }
+        for &val in &data {
+            bytes.extend_from_slice(&val.to_le_bytes());
+        }
+        if let Err(e) = std::fs::write(&path_buf, &bytes) {
+            eprintln!("Failed to save tensor: {}", e);
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_load(_path: *const i8) -> *mut OpaqueTensor {
-    // Stub: return a 1-element tensor or null
-    // Returning null might crash unwraps. Let's return zeros(1).
-    let result = MetalTensor::zeros(&[1], DType::F32);
-    Box::into_raw(Box::new(result))
+pub extern "C" fn tl_tensor_load(path: *mut super::StringStruct) -> *mut OpaqueTensor {
+    let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
+    unsafe {
+        if path.is_null() || (*path).ptr.is_null() {
+            return create_fallback_tensor(is_cpu);
+        }
+        let path_str = std::ffi::CStr::from_ptr((*path).ptr).to_string_lossy();
+        let path_buf = crate::file_io::expand_path(&path_str);
+
+        let bytes = match std::fs::read(&path_buf) {
+            Ok(b) => b,
+            Err(_) => return create_fallback_tensor(is_cpu),
+        };
+
+        if bytes.len() < 8 {
+            return create_fallback_tensor(is_cpu);
+        }
+
+        let mut offset = 0;
+        let rank = u64::from_le_bytes(bytes[offset..offset+8].try_into().unwrap()) as usize;
+        offset += 8;
+
+        if bytes.len() < offset + rank * 8 {
+            return create_fallback_tensor(is_cpu);
+        }
+
+        let mut shape = Vec::with_capacity(rank);
+        for _ in 0..rank {
+            let dim = u64::from_le_bytes(bytes[offset..offset+8].try_into().unwrap()) as usize;
+            shape.push(dim);
+            offset += 8;
+        }
+
+        let numel: usize = shape.iter().product();
+        let expected_data_size = numel * 4;
+        if bytes.len() < offset + expected_data_size {
+            return create_fallback_tensor(is_cpu);
+        }
+
+        let mut data = Vec::with_capacity(numel);
+        for _ in 0..numel {
+            let val = f32::from_le_bytes(bytes[offset..offset+4].try_into().unwrap());
+            data.push(val);
+            offset += 4;
+        }
+
+        if is_cpu {
+            let t = tl_cpu::CpuTensor::from_slice(&data, &shape, tl_cpu::DType::F32);
+            Box::into_raw(Box::new(t)) as *mut OpaqueTensor
+        } else {
+            let t = tl_metal::MetalTensor::from_slice(&data, &shape, tl_metal::DType::F32);
+            Box::into_raw(Box::new(t))
+        }
+    }
+}
+
+fn create_fallback_tensor(is_cpu: bool) -> *mut OpaqueTensor {
+    if is_cpu {
+        let t = tl_cpu::CpuTensor::from_slice(&[0.0f32], &[1], tl_cpu::DType::F32);
+        Box::into_raw(Box::new(t)) as *mut OpaqueTensor
+    } else {
+        let t = tl_metal::MetalTensor::zeros(&[1], tl_metal::DType::F32);
+        Box::into_raw(Box::new(t))
+    }
 }
 
 #[unsafe(no_mangle)]

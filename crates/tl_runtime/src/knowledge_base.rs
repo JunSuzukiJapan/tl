@@ -826,13 +826,19 @@ pub extern "C" fn tl_query(
     tags: *const u8,
 ) -> *mut OpaqueTensor {
     let pred_name = unsafe { extract_string(name as *const i8) };
+    let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
 
     let store = KB.lock().unwrap();
 
-    // args_tensor から引数の i64 配列を取得
+    // args_tensor から引数の i64 配列を取得 (CPU/GPU 両対応)
     let args_slice: Option<Vec<i64>> = if !args_tensor.is_null() {
-        let tensor = unsafe { &*args_tensor };
-        let data: Vec<f32> = tensor.to_vec();
+        let data: Vec<f32> = if is_cpu {
+            let tensor = unsafe { &*(args_tensor as *mut tl_cpu::CpuTensor) };
+            tensor.data_f32().to_vec()
+        } else {
+            let tensor = unsafe { &*args_tensor };
+            tensor.to_vec()
+        };
         Some(data.iter().map(|&v| v as i64).collect())
     } else {
         None
@@ -845,20 +851,25 @@ pub extern "C" fn tl_query(
         tags,
     );
 
+    // CPU/GPU 両対応のテンソル作成ヘルパー
+    let create_result_tensor = |data: &[f32], shape: &[usize]| -> *mut OpaqueTensor {
+        if is_cpu {
+            let t = tl_cpu::CpuTensor::from_slice(data, shape, tl_cpu::DType::F32);
+            Box::into_raw(Box::new(t)) as *mut OpaqueTensor
+        } else {
+            let t = MetalTensor::from_slice(data, shape, DType::F32);
+            Box::into_raw(Box::new(t))
+        }
+    };
+
     if results.is_empty() {
-        // false を返す — 空のテンソルまたは null
-        // クエリの呼び出し元は bool 結果としてチェックする
-        // 空結果 = false のケース: ?p(c) のような ground query
-        let data: Vec<f32> = vec![0.0];
-        let shape = vec![1usize];
-        let t = MetalTensor::from_slice(&data, &shape, DType::F32);
-        Box::into_raw(Box::new(t))
+        // false を返す — [0.0] のスカラーテンソル
+        create_result_tensor(&[0.0], &[1])
     } else {
         // 結果エンコーディング:
         // Ground query (全引数指定): [1.0] (true)
         // Variable query (一部未指定): 変数値のリストをテンソルとして返す
 
-        // mask 内の未指定ビットの数を数える
         let total_args = results[0].len();
         let mut free_var_indices = Vec::new();
         for i in 0..total_args {
@@ -869,10 +880,7 @@ pub extern "C" fn tl_query(
 
         if free_var_indices.is_empty() {
             // Ground query — 結果あり = true
-            let data: Vec<f32> = vec![1.0];
-            let shape = vec![1usize];
-            let t = MetalTensor::from_slice(&data, &shape, DType::F32);
-            Box::into_raw(Box::new(t))
+            create_result_tensor(&[1.0], &[1])
         } else if free_var_indices.len() == 1 {
             // 1変数クエリ — 値のリストを返す
             let var_idx = free_var_indices[0];
@@ -887,8 +895,7 @@ pub extern "C" fn tl_query(
                 })
                 .collect();
             let shape = vec![data.len()];
-            let t = MetalTensor::from_slice(&data, &shape, DType::F32);
-            Box::into_raw(Box::new(t))
+            create_result_tensor(&data, &shape)
         } else {
             // 多変数クエリ — 2Dテンソルを返す
             let num_rows = results.len();
@@ -906,8 +913,7 @@ pub extern "C" fn tl_query(
                 }
             }
             let shape = vec![num_rows, num_cols];
-            let t = MetalTensor::from_slice(&data, &shape, DType::F32);
-            Box::into_raw(Box::new(t))
+            create_result_tensor(&data, &shape)
         }
     }
 }
