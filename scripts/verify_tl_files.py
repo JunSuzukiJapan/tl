@@ -127,35 +127,9 @@ SKIP_FILES = {
     "system_test.tl",
 
     # --- autograd 使用ファイル ---
-    # Metal GPU の autograd 逆伝播が GPU リソースを蓄積し、テスト終了後に
-    # WindowServer ウォッチドッグタイムアウトで Mac がクラッシュする。
-    # autograd の安定性が確認できるまで全てスキップする。
-    "inverse_life.tl",
-    "lenia.tl",
-    "repro.tl",             # lenia repro
-    "logic.tl",
-    "gnn.tl",
-    "adam.tl",
-    # classification_test.tl は forward + backward が動作するため有効化
-    "sgd_test.tl",
-    "mem_leak_autograd.tl",
-    "mem_leak_autograd_fixed.tl",
-    "mem_leak_extended.tl",
-    "mem_leak_test.tl",
-    "leak_scope_refcount.tl",
-    "n_queens_debug.tl",
-    "raycast.tl",
-    "sudoku.tl",
-    "test_cpu_perf.tl",
-    "test_diag_only.tl",
-    "test_index_select.tl",
-    "test_linear_grad.tl",
-    "test_nqueens_debug.tl",
-    "test_stack.tl",
-    "test_struct_emb.tl",
-    "test_varbuilder.tl",
-    "test_varbuilder_scalar.tl",
-    "test_varbuilder_simple.tl",
+    # randn_debug の codegen/runtime 引数不一致修正 (2026-02-12) により大半が動作。
+    # sudoku.tl のみ型エラー (autograd 無関係) で残留。
+    "sudoku.tl",  # 型エラー: expected Bool, found String
 }
 
 
