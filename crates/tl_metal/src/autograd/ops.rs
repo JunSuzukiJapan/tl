@@ -2,6 +2,7 @@
 
 use super::GradFn;
 use crate::tensor::{MetalTensor, TensorRef};
+use crate::DType;
 use tl_backend::GpuOps;
 
 /// ブロードキャスト勾配集約:
@@ -424,6 +425,464 @@ impl GradFn for DivScalarBackward {
     }
 }
 
+/// Embedding の勾配
+/// forward: output = weight[indices]  (shape: [N, embed_dim])
+/// backward: grad_weight = zeros_like(weight); 各 i について grad_weight[indices[i]] += grad_output[i]
+pub struct EmbeddingBackward {
+    pub weight: TensorRef,
+    pub indices: TensorRef,
+    pub num_embeddings: usize,
+    pub embed_dim: usize,
+}
+
+impl GradFn for EmbeddingBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        // grad_weight = zeros([num_embeddings, embed_dim])
+        let indices_tensor = unsafe { &*self.indices.get() };
+        let grad_data: Vec<f32> = grad_output.to_vec();
+        let idx_data: Vec<f32> = indices_tensor.to_vec(); // indices は f32 として格納されている
+        let n = idx_data.len();
+
+        // grad_weight を可変スライスとして取得し scatter_add を手動実行
+        let mut gw_data = vec![0.0f32; self.num_embeddings * self.embed_dim];
+        for i in 0..n {
+            let idx = idx_data[i] as usize;
+            if idx < self.num_embeddings {
+                for j in 0..self.embed_dim {
+                    gw_data[idx * self.embed_dim + j] += grad_data[i * self.embed_dim + j];
+                }
+            }
+        }
+        // grad_weight を再構築
+        let grad_weight = MetalTensor::from_slice(&gw_data, &[self.num_embeddings, self.embed_dim], DType::F32);
+
+        vec![grad_weight]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.weight.clone()]
+    }
+}
+
+/// tanh の勾配: grad_t = grad_output * (1 - tanh(x)^2)
+pub struct TanhBackward {
+    pub a: TensorRef,
+    pub output: MetalTensor, // tanh(x) の出力値
+}
+
+impl GradFn for TanhBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        // 1 - output^2
+        let one_minus_sq = self.output.mul_impl(&self.output).neg_impl().add_scalar_impl(1.0);
+        vec![grad_output.mul_impl(&one_minus_sq)]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
+    }
+}
+
+/// sqrt の勾配: grad_t = grad_output * 0.5 / sqrt(x)
+pub struct SqrtBackward {
+    pub a: TensorRef,
+    pub output: MetalTensor, // sqrt(x) の出力値
+}
+
+impl GradFn for SqrtBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        // 0.5 / sqrt(x) = 0.5 / output
+        let half_over_sqrt = self.output.pow_scalar_impl(-1.0).mul_scalar_impl(0.5);
+        vec![grad_output.mul_impl(&half_over_sqrt)]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
+    }
+}
+
+/// transpose の勾配: grad_t = transpose(grad_output, dim0, dim1)
+pub struct TransposeBackward {
+    pub a: TensorRef,
+    pub dim0: usize,
+    pub dim1: usize,
+}
+
+impl GradFn for TransposeBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        vec![grad_output.transpose(self.dim0, self.dim1)]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
+    }
+}
+
+/// cross_entropy の勾配 (softmax + NLL)
+/// forward: loss = -sum(labels * log(softmax(logits))) / batch
+/// backward: grad_logits = (softmax(logits) - labels) / batch
+pub struct CrossEntropyBackward {
+    pub logits: TensorRef,
+    pub labels: TensorRef,
+}
+
+impl GradFn for CrossEntropyBackward {
+    fn backward(&self, _grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        let logits = unsafe { &*self.logits.get() };
+        let labels = unsafe { &*self.labels.get() };
+        let sm = logits.softmax(-1);
+        let diff = sm.sub_impl(labels);
+        let batch = logits.shape()[0] as f32;
+        vec![diff.div_scalar_impl(batch)]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.logits.clone()]
+    }
+}
+
+/// mean (全要素) の勾配: grad_t = grad_output / numel, broadcast
+pub struct MeanAllBackward {
+    pub a: TensorRef,
+    pub shape: Vec<usize>,
+}
+
+impl GradFn for MeanAllBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        let numel: usize = self.shape.iter().product();
+        let ones = MetalTensor::ones(&self.shape, DType::F32);
+        let scalar: Vec<f32> = grad_output.to_vec();
+        vec![ones.mul_scalar_impl(scalar[0] / numel as f32)]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
+    }
+}
+
+/// abs の勾配: grad_t = grad_output * sign(x)
+pub struct AbsBackward {
+    pub a: TensorRef,
+}
+
+impl GradFn for AbsBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        // sign(x) = x > 0 ? 1 : (x < 0 ? -1 : 0)
+        let input = unsafe { &*self.a.get() };
+        let data: Vec<f32> = input.to_vec();
+        let sign_data: Vec<f32> = data.iter().map(|&v| {
+            if v > 0.0 { 1.0 } else if v < 0.0 { -1.0 } else { 0.0 }
+        }).collect();
+        let sign_tensor = MetalTensor::from_slice(&sign_data, input.shape(), DType::F32);
+        vec![grad_output.mul_impl(&sign_tensor)]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
+    }
+}
+
+/// GELU の勾配
+/// gelu(x) = x * 0.5 * (1 + erf(x/sqrt(2)))
+/// gelu'(x) = 0.5 * (1 + erf(x/sqrt(2))) + x * (1/sqrt(2*pi)) * exp(-x^2/2)
+pub struct GeluBackward {
+    pub a: TensorRef,
+}
+
+impl GradFn for GeluBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        let input = unsafe { &*self.a.get() };
+        let data: Vec<f32> = input.to_vec();
+        let sqrt_2: f32 = std::f32::consts::SQRT_2;
+        let inv_sqrt_2pi: f32 = 1.0 / (2.0 * std::f32::consts::PI).sqrt();
+
+        let grad_data: Vec<f32> = data.iter().map(|&x| {
+            // erf 近似 (Abramowitz and Stegun)
+            let t = 1.0 / (1.0 + 0.3275911 * (x / sqrt_2).abs());
+            let erf_approx = 1.0 - (0.254829592 * t - 0.284496736 * t * t
+                + 1.421413741 * t * t * t - 1.453152027 * t * t * t * t
+                + 1.061405429 * t * t * t * t * t) * (-(x / sqrt_2) * (x / sqrt_2)).exp();
+            let erf_val = if x >= 0.0 { erf_approx } else { -erf_approx };
+            let cdf = 0.5 * (1.0 + erf_val);
+            let pdf = inv_sqrt_2pi * (-0.5 * x * x).exp();
+            cdf + x * pdf
+        }).collect();
+        let grad_tensor = MetalTensor::from_slice(&grad_data, input.shape(), DType::F32);
+        vec![grad_output.mul_impl(&grad_tensor)]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
+    }
+}
+
+/// SiLU (Swish) の勾配
+/// silu(x) = x * sigmoid(x)
+/// silu'(x) = sigmoid(x) + x * sigmoid(x) * (1 - sigmoid(x))
+///          = sigmoid(x) * (1 + x * (1 - sigmoid(x)))
+pub struct SiluBackward {
+    pub a: TensorRef,
+}
+
+impl GradFn for SiluBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        let input = unsafe { &*self.a.get() };
+        let data: Vec<f32> = input.to_vec();
+        let grad_data: Vec<f32> = data.iter().map(|&x| {
+            let sig = 1.0 / (1.0 + (-x).exp());
+            sig * (1.0 + x * (1.0 - sig))
+        }).collect();
+        let grad_tensor = MetalTensor::from_slice(&grad_data, input.shape(), DType::F32);
+        vec![grad_output.mul_impl(&grad_tensor)]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
+    }
+}
+
+/// mean(dim) の勾配: grad_t = grad_output.expand / dim_size
+pub struct MeanDimBackward {
+    pub a: TensorRef,
+    pub dim: usize,
+    pub input_shape: Vec<usize>,
+}
+
+impl GradFn for MeanDimBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        let dim_size = self.input_shape[self.dim] as f32;
+        // grad_output の shape を input_shape に expand してから dim_size で割る
+        let ones = MetalTensor::ones(&self.input_shape, DType::F32);
+        // grad をブロードキャストで掛ける
+        let expanded = ones.mul_impl(grad_output);
+        vec![expanded.div_scalar_impl(dim_size)]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
+    }
+}
+
+/// layer_norm の勾配 (簡易近似)
+/// 完全な backward は複雑なので、weight に対する勾配のみを正しく伝播する近似実装
+pub struct LayerNormBackward {
+    pub input: TensorRef,
+    pub weight: Option<TensorRef>,
+    pub eps: f32,
+}
+
+impl GradFn for LayerNormBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        let x = unsafe { &*self.input.get() };
+        let shape = x.shape();
+        let last_dim = *shape.last().unwrap();
+        let n = last_dim as f32;
+        let data: Vec<f32> = x.to_vec();
+        let grad_data: Vec<f32> = grad_output.to_vec();
+        let total = data.len();
+        let num_groups = total / last_dim;
+
+        let mut result = vec![0.0f32; total];
+
+        for g in 0..num_groups {
+            let start = g * last_dim;
+            let end = start + last_dim;
+            let group = &data[start..end];
+
+            // compute mean & variance
+            let mean: f32 = group.iter().sum::<f32>() / n;
+            let var: f32 = group.iter().map(|&v| (v - mean) * (v - mean)).sum::<f32>() / n;
+            let std_inv = 1.0 / (var + self.eps).sqrt();
+
+            let g_out = &grad_data[start..end];
+
+            // apply weight if present
+            let weighted_grad: Vec<f32> = if let Some(ref w_ref) = self.weight {
+                let w = unsafe { &*w_ref.get() };
+                let w_data: Vec<f32> = w.to_vec();
+                g_out.iter().enumerate().map(|(i, &g)| g * w_data[i % w_data.len()]).collect()
+            } else {
+                g_out.to_vec()
+            };
+
+            let sum_g: f32 = weighted_grad.iter().sum();
+            let x_hat: Vec<f32> = group.iter().map(|&v| (v - mean) * std_inv).collect();
+            let sum_gx: f32 = weighted_grad.iter().zip(x_hat.iter()).map(|(&g, &x)| g * x).sum();
+
+            for i in 0..last_dim {
+                result[start + i] = std_inv * (weighted_grad[i] - sum_g / n - x_hat[i] * sum_gx / n);
+            }
+        }
+
+        vec![MetalTensor::from_slice(&result, shape, DType::F32)]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.input.clone()]
+    }
+}
+
+/// scale (定数倍) の勾配: grad_t = grad_output * s
+pub struct ScaleBackward {
+    pub a: TensorRef,
+    pub s: f32,
+}
+
+impl GradFn for ScaleBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        vec![grad_output.mul_scalar_impl(self.s)]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
+    }
+}
+
+/// Conv2D の勾配
+/// forward: output = conv2d(input, weight, stride, padding)
+/// backward:
+///   grad_input  = conv2d_transposed(grad_output, weight)
+///   grad_weight = conv2d(input^T, grad_output)
+pub struct Conv2dBackward {
+    pub input: TensorRef,
+    pub weight: TensorRef,
+    pub stride: (usize, usize),
+    pub padding: (usize, usize),
+}
+
+impl GradFn for Conv2dBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        let input = unsafe { &*self.input.get() };
+        let weight = unsafe { &*self.weight.get() };
+        let in_shape = input.shape();
+        let w_shape = weight.shape();
+        let g_shape = grad_output.shape();
+
+        let (n, c_in, h_in, w_in) = (in_shape[0], in_shape[1], in_shape[2], in_shape[3]);
+        let (c_out, _, kh, kw) = (w_shape[0], w_shape[1], w_shape[2], w_shape[3]);
+        let (_, _, h_out, w_out) = (g_shape[0], g_shape[1], g_shape[2], g_shape[3]);
+        let (stride_h, stride_w) = self.stride;
+        let (pad_h, pad_w) = self.padding;
+
+        let input_data: Vec<f32> = input.to_vec();
+        let weight_data: Vec<f32> = weight.to_vec();
+        let grad_data: Vec<f32> = grad_output.to_vec();
+
+        // grad_input: transposed convolution
+        let mut grad_input = vec![0.0f32; n * c_in * h_in * w_in];
+        // grad_weight
+        let mut grad_weight = vec![0.0f32; c_out * c_in * kh * kw];
+
+        for batch in 0..n {
+            for oc in 0..c_out {
+                for oh in 0..h_out {
+                    for ow in 0..w_out {
+                        let g_idx = batch * c_out * h_out * w_out + oc * h_out * w_out + oh * w_out + ow;
+                        let g_val = grad_data[g_idx];
+
+                        for ic in 0..c_in {
+                            for khi in 0..kh {
+                                for kwi in 0..kw {
+                                    let ih = oh * stride_h + khi;
+                                    let iw = ow * stride_w + kwi;
+                                    if ih >= pad_h && ih < h_in + pad_h && iw >= pad_w && iw < w_in + pad_w {
+                                        let in_idx = batch * c_in * h_in * w_in + ic * h_in * w_in + (ih - pad_h) * w_in + (iw - pad_w);
+                                        let k_idx = oc * c_in * kh * kw + ic * kh * kw + khi * kw + kwi;
+
+                                        // grad_input
+                                        grad_input[in_idx] += g_val * weight_data[k_idx];
+                                        // grad_weight
+                                        grad_weight[k_idx] += g_val * input_data[in_idx];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let gi = MetalTensor::from_slice(&grad_input, &[n, c_in, h_in, w_in], DType::F32);
+        let gw = MetalTensor::from_slice(&grad_weight, &[c_out, c_in, kh, kw], DType::F32);
+        vec![gi, gw]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.input.clone(), self.weight.clone()]
+    }
+}
+
+/// BatchNorm の勾配
+/// forward: y = gamma * (x - mean) / sqrt(var + eps) + beta
+/// backward: dx, dgamma, dbeta
+pub struct BatchNormBackward {
+    pub input: TensorRef,
+    pub weight: TensorRef,  // gamma
+    pub running_mean: TensorRef,
+    pub running_var: TensorRef,
+    pub eps: f32,
+}
+
+impl GradFn for BatchNormBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        let x = unsafe { &*self.input.get() };
+        let gamma = unsafe { &*self.weight.get() };
+        let mean = unsafe { &*self.running_mean.get() };
+        let var = unsafe { &*self.running_var.get() };
+        let shape = x.shape();
+        let (n, c, h, w) = (shape[0], shape[1], shape[2], shape[3]);
+        let spatial = h * w;
+
+        let x_data: Vec<f32> = x.to_vec();
+        let gamma_data: Vec<f32> = gamma.to_vec();
+        let mean_data: Vec<f32> = mean.to_vec();
+        let var_data: Vec<f32> = var.to_vec();
+        let grad_data: Vec<f32> = grad_output.to_vec();
+
+        let mut grad_input = vec![0.0f32; n * c * spatial];
+        let mut dgamma = vec![0.0f32; c];
+        let mut dbeta = vec![0.0f32; c];
+
+        for ch in 0..c {
+            let inv_std = 1.0 / (var_data[ch] + self.eps).sqrt();
+            let g = gamma_data[ch];
+
+            for batch in 0..n {
+                for s in 0..spatial {
+                    let idx = batch * c * spatial + ch * spatial + s;
+                    let x_hat = (x_data[idx] - mean_data[ch]) * inv_std;
+                    // dx = gamma * inv_std * grad_output
+                    grad_input[idx] = grad_data[idx] * g * inv_std;
+                    // dgamma += grad_output * x_hat
+                    dgamma[ch] += grad_data[idx] * x_hat;
+                    // dbeta += grad_output
+                    dbeta[ch] += grad_data[idx];
+                }
+            }
+        }
+
+        vec![MetalTensor::from_slice(&grad_input, &[n, c, h, w], DType::F32)]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.input.clone()]
+    }
+}
+
+/// Dropout の勾配
+/// forward: output = input * mask * scale,  mask[i] = (rand > p) ? 1 : 0
+/// backward: grad_input = grad_output * mask * scale
+/// 注: training=false の場合は identity なので backward 不要（grad_fn 設定なし）
+pub struct DropoutBackward {
+    pub a: TensorRef,
+    pub output: MetalTensor,  // forward の出力を保存（マスク復元用）
+    pub p: f32,
+}
+
+impl GradFn for DropoutBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        // dropout の output は input * mask * scale
+        // mask を復元: output[i] == 0.0 の位置がマスクされた位置
+        // grad = grad_output * (output != 0 ? scale : 0)
+        let scale = 1.0 / (1.0 - self.p);
+        let out_data: Vec<f32> = self.output.to_vec();
+        let grad_data: Vec<f32> = grad_output.to_vec();
+        let result: Vec<f32> = out_data.iter().zip(grad_data.iter()).map(|(&o, &g)| {
+            if o != 0.0 { g * scale } else { 0.0 }
+        }).collect();
+        let shape = grad_output.shape();
+        vec![MetalTensor::from_slice(&result, shape, DType::F32)]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
+    }
+}
+
 // TensorRef は Arc<UnsafeCell<MetalTensor>> なので Send/Sync を手動実装
 // Metal 版はシングルスレッドなので安全
 unsafe impl Send for AddBackward {}
@@ -464,3 +923,33 @@ unsafe impl Send for MulScalarBackward {}
 unsafe impl Sync for MulScalarBackward {}
 unsafe impl Send for DivScalarBackward {}
 unsafe impl Sync for DivScalarBackward {}
+unsafe impl Send for EmbeddingBackward {}
+unsafe impl Sync for EmbeddingBackward {}
+unsafe impl Send for TanhBackward {}
+unsafe impl Sync for TanhBackward {}
+unsafe impl Send for SqrtBackward {}
+unsafe impl Sync for SqrtBackward {}
+unsafe impl Send for TransposeBackward {}
+unsafe impl Sync for TransposeBackward {}
+unsafe impl Send for CrossEntropyBackward {}
+unsafe impl Sync for CrossEntropyBackward {}
+unsafe impl Send for MeanAllBackward {}
+unsafe impl Sync for MeanAllBackward {}
+unsafe impl Send for AbsBackward {}
+unsafe impl Sync for AbsBackward {}
+unsafe impl Send for GeluBackward {}
+unsafe impl Sync for GeluBackward {}
+unsafe impl Send for SiluBackward {}
+unsafe impl Sync for SiluBackward {}
+unsafe impl Send for MeanDimBackward {}
+unsafe impl Sync for MeanDimBackward {}
+unsafe impl Send for LayerNormBackward {}
+unsafe impl Sync for LayerNormBackward {}
+unsafe impl Send for ScaleBackward {}
+unsafe impl Sync for ScaleBackward {}
+unsafe impl Send for Conv2dBackward {}
+unsafe impl Sync for Conv2dBackward {}
+unsafe impl Send for BatchNormBackward {}
+unsafe impl Sync for BatchNormBackward {}
+unsafe impl Send for DropoutBackward {}
+unsafe impl Sync for DropoutBackward {}

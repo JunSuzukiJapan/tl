@@ -1,9 +1,7 @@
 //! Autograd テスト（V5.0 Arc ベース）
 //! FFI 関数経由で autograd グラフが正しく構築・逆伝播されることを検証する。
 
-use tl_metal::{DType, MetalTensor};
 use tl_metal::ffi_ops;
-use tl_backend::GpuOps;
 
 fn main() {
     println!("=== Autograd テスト (V5.0 Arc ベース) ===\n");

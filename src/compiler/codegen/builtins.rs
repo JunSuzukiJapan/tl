@@ -2449,6 +2449,51 @@ pub fn declare_runtime_functions<'ctx>(
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_conv2d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_conv2d as usize); }
 
+    // tl_tensor_batch_norm(input, running_mean, running_var, weight, bias, training, momentum, eps) -> *mut
+    let batch_norm_type = void_ptr.fn_type(
+        &[
+            void_ptr.into(),           // input
+            void_ptr.into(),           // running_mean
+            void_ptr.into(),           // running_var
+            void_ptr.into(),           // weight
+            void_ptr.into(),           // bias
+            context.bool_type().into(), // training
+            f64_type.into(),           // momentum
+            f64_type.into(),           // eps
+        ],
+        false,
+    );
+    module.add_function("tl_tensor_batch_norm", batch_norm_type, None);
+    if let Some(f) = module.get_function("tl_tensor_batch_norm") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_batch_norm as usize); }
+
+    // tl_tensor_layer_norm(input, weight, bias, eps) -> *mut
+    let layer_norm_type = void_ptr.fn_type(
+        &[void_ptr.into(), void_ptr.into(), void_ptr.into(), f64_type.into()],
+        false,
+    );
+    module.add_function("tl_tensor_layer_norm", layer_norm_type, None);
+    if let Some(f) = module.get_function("tl_tensor_layer_norm") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_layer_norm as usize); }
+
+    // tl_tensor_dropout(input, p, training) -> *mut
+    let dropout_type = void_ptr.fn_type(
+        &[void_ptr.into(), f64_type.into(), context.bool_type().into()],
+        false,
+    );
+    module.add_function("tl_tensor_dropout", dropout_type, None);
+    if let Some(f) = module.get_function("tl_tensor_dropout") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_dropout as usize); }
+
+    // tl_tensor_max_pool2d(input, kernel_size, stride, padding) -> *mut
+    let pool2d_type = void_ptr.fn_type(
+        &[void_ptr.into(), i64_type.into(), i64_type.into(), i64_type.into()],
+        false,
+    );
+    module.add_function("tl_tensor_max_pool2d", pool2d_type, None);
+    if let Some(f) = module.get_function("tl_tensor_max_pool2d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_max_pool2d as usize); }
+
+    // tl_tensor_avg_pool2d(input, kernel_size, stride, padding) -> *mut
+    module.add_function("tl_tensor_avg_pool2d", pool2d_type, None);
+    if let Some(f) = module.get_function("tl_tensor_avg_pool2d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_avg_pool2d as usize); }
+
     // tl_tensor_clamp(t: *mut, min: f32, max: f32) -> *mut
     let clamp_type = void_ptr.fn_type(&[void_ptr.into(), f32_type.into(), f32_type.into()], false);
     module.add_function("tl_tensor_clamp", clamp_type, None);

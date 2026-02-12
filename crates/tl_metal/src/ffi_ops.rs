@@ -15,7 +15,7 @@ use tl_backend::GpuOps;
 
 /// 内部ヘルパー: MetalTensor を Arc で包んでポインタを返す（V5.0 メモリ管理）
 /// CPU バックエンドの make_tensor と同じパターン。
-fn make_tensor(t: MetalTensor) -> *mut OpaqueTensor {
+pub fn make_tensor(t: MetalTensor) -> *mut OpaqueTensor {
     let arc = Arc::new(UnsafeCell::new(t));
     Arc::into_raw(arc) as *mut OpaqueTensor
 }
@@ -55,7 +55,15 @@ pub extern "C" fn tl_metal_tan(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 #[no_mangle]
 pub extern "C" fn tl_metal_tanh(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
-    unsafe { make_tensor((&*t).tanh()) }
+    let tensor = unsafe { &*t };
+    let result = tensor.tanh();
+    let ptr = make_tensor(result);
+    if tensor.requires_grad() {
+        use crate::autograd::ops::TanhBackward;
+        let output = unsafe { &*ptr }.shallow_clone();
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(TanhBackward { a: tensor_ref_from_ptr(t), output })); }
+    }
+    ptr
 }
 
 #[no_mangle]
@@ -82,7 +90,14 @@ pub extern "C" fn tl_metal_argmax(t: *mut OpaqueTensor, dim: i64, _keepdim: bool
 #[no_mangle]
 pub extern "C" fn tl_metal_gelu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
-    unsafe { make_tensor((&*t).gelu()) }
+    let tensor = unsafe { &*t };
+    let result = tensor.gelu();
+    let ptr = make_tensor(result);
+    if tensor.requires_grad() {
+        use crate::autograd::ops::GeluBackward;
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(GeluBackward { a: tensor_ref_from_ptr(t) })); }
+    }
+    ptr
 }
 
 #[no_mangle]
@@ -90,7 +105,13 @@ pub extern "C" fn tl_metal_silu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     // silu = x * sigmoid(x)
     let tensor = unsafe { &*t };
-    make_tensor(tensor.mul(&tensor.sigmoid()))
+    let result = tensor.mul(&tensor.sigmoid());
+    let ptr = make_tensor(result);
+    if tensor.requires_grad() {
+        use crate::autograd::ops::SiluBackward;
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(SiluBackward { a: tensor_ref_from_ptr(t) })); }
+    }
+    ptr
 }
 
 #[no_mangle]
@@ -162,7 +183,15 @@ pub extern "C" fn tl_metal_min_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: 
 #[no_mangle]
 pub extern "C" fn tl_metal_mean_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
-    unsafe { make_tensor((&*t).mean((dim as usize).try_into().unwrap())) }
+    let tensor = unsafe { &*t };
+    let input_shape = tensor.shape().to_vec();
+    let result = tensor.mean((dim as usize).try_into().unwrap());
+    let ptr = make_tensor(result);
+    if tensor.requires_grad() {
+        use crate::autograd::ops::MeanDimBackward;
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(MeanDimBackward { a: tensor_ref_from_ptr(t), dim, input_shape })); }
+    }
+    ptr
 }
 
 #[no_mangle]
@@ -200,7 +229,15 @@ pub extern "C" fn tl_metal_min(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 #[no_mangle]
 pub extern "C" fn tl_metal_mean(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
-    unsafe { make_tensor(MetalTensor::from_slice(&[(&*t).mean_all()], &[1], DType::F32)) }
+    let tensor = unsafe { &*t };
+    let shape = tensor.shape().to_vec();
+    let result = MetalTensor::from_slice(&[tensor.mean_all()], &[1], DType::F32);
+    let ptr = make_tensor(result);
+    if tensor.requires_grad() {
+        use crate::autograd::ops::MeanAllBackward;
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(MeanAllBackward { a: tensor_ref_from_ptr(t), shape })); }
+    }
+    ptr
 }
 
 #[no_mangle]
@@ -253,11 +290,21 @@ pub extern "C" fn tl_metal_conv2d(
     let (i, w) = unsafe { (&*input, &*weight) };
     let b = if bias.is_null() { None } else { unsafe { Some(&*bias) } };
     let conv = i.conv2d(w, (stride, stride), (padding, padding));
-    if let Some(bias) = b {
+    let ptr = if let Some(bias) = b {
         make_tensor(conv.add(bias))
     } else {
         make_tensor(conv)
+    };
+    if i.requires_grad() || w.requires_grad() {
+        use crate::autograd::ops::Conv2dBackward;
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(Conv2dBackward {
+            input: tensor_ref_from_ptr(input),
+            weight: tensor_ref_from_ptr(weight),
+            stride: (stride, stride),
+            padding: (padding, padding),
+        })); }
     }
+    ptr
 }
 
 #[no_mangle]
@@ -289,7 +336,29 @@ pub extern "C" fn tl_metal_batch_norm(
     let mean_ref = mean.or(mean_default.as_ref()).unwrap();
     let var_ref = var.or(var_default.as_ref()).unwrap();
     
-    make_tensor(x.batch_norm(w_ref, b_ref, mean_ref, var_ref, eps as f32))
+    let result = x.batch_norm(w_ref, b_ref, mean_ref, var_ref, eps as f32);
+    let ptr = make_tensor(result);
+    if x.requires_grad() {
+        use crate::autograd::ops::BatchNormBackward;
+        let weight_ref = if !weight.is_null() { unsafe { tensor_ref_from_ptr(weight) } } else {
+            // gamma が null の場合はデフォルトの ones を使うので勾配伝播はスキップ
+            unsafe { tensor_ref_from_ptr(input) } // ダミー（input の参照を使う）
+        };
+        let mean_r = if !running_mean.is_null() { unsafe { tensor_ref_from_ptr(running_mean) } } else {
+            unsafe { tensor_ref_from_ptr(input) }
+        };
+        let var_r = if !running_var.is_null() { unsafe { tensor_ref_from_ptr(running_var) } } else {
+            unsafe { tensor_ref_from_ptr(input) }
+        };
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(BatchNormBackward {
+            input: tensor_ref_from_ptr(input),
+            weight: weight_ref,
+            running_mean: mean_r,
+            running_var: var_r,
+            eps: eps as f32,
+        })); }
+    }
+    ptr
 }
 
 #[no_mangle]
@@ -317,7 +386,18 @@ pub extern "C" fn tl_metal_layer_norm(
     let w_ref = w.or(w_default.as_ref()).unwrap();
     let b_ref = b.or(b_default.as_ref()).unwrap();
     
-    make_tensor(x.layer_norm(w_ref, b_ref, eps as f32))
+    let result = x.layer_norm(w_ref, b_ref, eps as f32);
+    let ptr = make_tensor(result);
+    if x.requires_grad() {
+        use crate::autograd::ops::LayerNormBackward;
+        let weight_ref = if !weight.is_null() { Some(unsafe { tensor_ref_from_ptr(weight) }) } else { None };
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(LayerNormBackward {
+            input: tensor_ref_from_ptr(input),
+            weight: weight_ref,
+            eps: eps as f32,
+        })); }
+    }
+    ptr
 }
 
 #[no_mangle]
@@ -349,7 +429,19 @@ pub extern "C" fn tl_metal_dropout(
     training: bool,
 ) -> *mut OpaqueTensor {
     if input.is_null() { return std::ptr::null_mut(); }
-    unsafe { make_tensor((&*input).dropout(p as f32, training)) }
+    let tensor = unsafe { &*input };
+    let result = tensor.dropout(p as f32, training);
+    let ptr = make_tensor(result);
+    if training && tensor.requires_grad() {
+        use crate::autograd::ops::DropoutBackward;
+        let output = unsafe { &*ptr }.shallow_clone();
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(DropoutBackward {
+            a: tensor_ref_from_ptr(input),
+            output,
+            p: p as f32,
+        })); }
+    }
+    ptr
 }
 
 #[no_mangle]
@@ -362,7 +454,20 @@ pub extern "C" fn tl_metal_embedding(
 ) -> *mut OpaqueTensor {
     if weight.is_null() || indices.is_null() { return std::ptr::null_mut(); }
     let (w, i) = unsafe { (&*weight, &*indices) };
-    make_tensor(w.embedding(i))
+    let result = w.embedding(i);
+    let ptr = make_tensor(result);
+    if w.requires_grad() {
+        use crate::autograd::ops::EmbeddingBackward;
+        let ws = w.shape();
+        let num_embeddings = ws[0];
+        let embed_dim = if ws.len() > 1 { ws[1] } else { 1 };
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(EmbeddingBackward {
+            weight: tensor_ref_from_ptr(weight),
+            indices: tensor_ref_from_ptr(indices),
+            num_embeddings, embed_dim,
+        })); }
+    }
+    ptr
 }
 
 #[no_mangle]
@@ -372,7 +477,16 @@ pub extern "C" fn tl_metal_cross_entropy(
 ) -> *mut OpaqueTensor {
     if logits.is_null() || labels.is_null() { return std::ptr::null_mut(); }
     let (l, t) = unsafe { (&*logits, &*labels) };
-    make_tensor(l.cross_entropy(t))
+    let result = l.cross_entropy(t);
+    let ptr = make_tensor(result);
+    if l.requires_grad() {
+        use crate::autograd::ops::CrossEntropyBackward;
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(CrossEntropyBackward {
+            logits: tensor_ref_from_ptr(logits),
+            labels: tensor_ref_from_ptr(labels),
+        })); }
+    }
+    ptr
 }
 
 #[no_mangle]
@@ -397,7 +511,15 @@ pub extern "C" fn tl_metal_rms_norm(
 #[no_mangle]
 pub extern "C" fn tl_metal_sqrt(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
-    unsafe { make_tensor((&*t).sqrt()) }
+    let tensor = unsafe { &*t };
+    let result = tensor.sqrt();
+    let ptr = make_tensor(result);
+    if tensor.requires_grad() {
+        use crate::autograd::ops::SqrtBackward;
+        let output = unsafe { &*ptr }.shallow_clone();
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(SqrtBackward { a: tensor_ref_from_ptr(t), output })); }
+    }
+    ptr
 }
 
 #[no_mangle]
@@ -566,7 +688,14 @@ pub extern "C" fn tl_metal_sample(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 #[no_mangle]
 pub extern "C" fn tl_metal_scale(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
-    unsafe { make_tensor((&*t).mul_scalar(s as f32)) }
+    let tensor = unsafe { &*t };
+    let result = tensor.mul_scalar(s as f32);
+    let ptr = make_tensor(result);
+    if tensor.requires_grad() {
+        use crate::autograd::ops::ScaleBackward;
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(ScaleBackward { a: tensor_ref_from_ptr(t), s: s as f32 })); }
+    }
+    ptr
 }
 
 #[no_mangle]
@@ -578,7 +707,14 @@ pub extern "C" fn tl_metal_clamp(t: *mut OpaqueTensor, min: f64, max: f64) -> *m
 #[no_mangle]
 pub extern "C" fn tl_metal_transpose(t: *mut OpaqueTensor, dim0: usize, dim1: usize) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
-    unsafe { make_tensor((&*t).transpose(dim0, dim1)) }
+    let tensor = unsafe { &*t };
+    let result = tensor.transpose(dim0, dim1);
+    let ptr = make_tensor(result);
+    if tensor.requires_grad() {
+        use crate::autograd::ops::TransposeBackward;
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(TransposeBackward { a: tensor_ref_from_ptr(t), dim0, dim1 })); }
+    }
+    ptr
 }
 
 #[no_mangle]
@@ -1028,7 +1164,13 @@ pub extern "C" fn tl_metal_neg(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 pub extern "C" fn tl_metal_abs(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
-    make_tensor(tensor.abs_impl())
+    let result = tensor.abs_impl();
+    let ptr = make_tensor(result);
+    if tensor.requires_grad() {
+        use crate::autograd::ops::AbsBackward;
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(AbsBackward { a: tensor_ref_from_ptr(t) })); }
+    }
+    ptr
 }
 
 // ========== スカラー演算 ==========

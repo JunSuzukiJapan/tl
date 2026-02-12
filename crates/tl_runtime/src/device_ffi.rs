@@ -181,6 +181,11 @@ where
 
 // ========== NN ==========
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_conv2d(input: *mut c_void, weight: *mut c_void, bias: *mut c_void, stride: usize, padding: usize, dilation: usize, groups: usize) -> *mut c_void { dispatch(|d| d.tensor_conv2d(input, weight, bias, stride, padding, dilation, groups)) }
+#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_batch_norm(input: *mut c_void, running_mean: *mut c_void, running_var: *mut c_void, weight: *mut c_void, bias: *mut c_void, training: bool, momentum: f64, eps: f64) -> *mut c_void { dispatch(|d| d.tensor_batch_norm(input, running_mean, running_var, weight, bias, training, momentum, eps)) }
+#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_layer_norm(input: *mut c_void, weight: *mut c_void, bias: *mut c_void, eps: f64) -> *mut c_void { dispatch(|d| d.tensor_layer_norm(input, weight, bias, eps)) }
+#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_dropout(input: *mut c_void, p: f64, training: bool) -> *mut c_void { dispatch(|d| d.tensor_dropout(input, p, training)) }
+#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_max_pool2d(input: *mut c_void, kernel_size: usize, stride: usize, padding: usize) -> *mut c_void { dispatch(|d| d.tensor_max_pool2d(input, kernel_size, stride, padding)) }
+#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_avg_pool2d(input: *mut c_void, kernel_size: usize, stride: usize, padding: usize) -> *mut c_void { dispatch(|d| d.tensor_avg_pool2d(input, kernel_size, stride, padding)) }
 
 // ========== CPU 専用 (device_ffi 経由) ==========
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_transpose_2d(a: *mut c_void) -> *mut c_void { dispatch(|d| d.tensor_transpose_2d(a)) }

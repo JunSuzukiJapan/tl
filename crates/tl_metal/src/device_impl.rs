@@ -208,10 +208,12 @@ impl IDevice for MetalDeviceImpl {
     #[inline] fn tensor_rope_new_cos(&self, seq_len: usize, dim: usize, base: f32) -> *mut c_void { v(ffi_ops::tl_metal_rope_new_cos(seq_len, dim, base)) }
     #[inline] fn tensor_rope_new_sin(&self, seq_len: usize, dim: usize, base: f32) -> *mut c_void { v(ffi_ops::tl_metal_rope_new_sin(seq_len, dim, base)) }
     #[inline] fn tensor_apply_rope(&self, a: *mut c_void, cos: *mut c_void, sin: *mut c_void) -> *mut c_void {
-        // Metal 版は (q, k, cos, sin, pos) シグネチャだが IDevice は (t, cos, sin)
-        // IDevice 経由では CPU compat で使うため、そのまま返す
-        let _ = (cos, sin);
-        a
+        if a.is_null() || cos.is_null() || sin.is_null() { return a; }
+        let tensor = unsafe { &*t(a) };
+        let c = unsafe { &*t(cos) };
+        let s = unsafe { &*t(sin) };
+        let result = tensor.apply_rope_impl(c, s, 0);
+        v(ffi_ops::make_tensor(result))
     }
 
     // ========== IO / Print ==========
@@ -226,13 +228,85 @@ impl IDevice for MetalDeviceImpl {
     #[inline] fn tensor_print_1(&self, a: *mut c_void) { self.tensor_print(a) }
     #[inline] fn tensor_print_2(&self, a: *mut c_void) { self.tensor_print(a) }
     #[inline] fn tensor_print_3(&self, a: *mut c_void) { self.tensor_print(a) }
-    #[inline] fn tensor_save(&self, _a: *mut c_void, _path: *const i8) { /* TODO */ }
-    #[inline] fn tensor_load(&self, _path: *const i8) -> *mut c_void { std::ptr::null_mut() }
+    #[inline] fn tensor_save(&self, a: *mut c_void, path: *const i8) {
+        if a.is_null() || path.is_null() { return; }
+        unsafe {
+            let path_str = std::ffi::CStr::from_ptr(path).to_string_lossy();
+            let tensor = &*t(a);
+            let data: Vec<f32> = tensor.to_vec_f32();
+            let shape = MetalTensor::shape(tensor).to_vec();
+
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&(shape.len() as u64).to_le_bytes());
+            for &dim in &shape {
+                bytes.extend_from_slice(&(dim as u64).to_le_bytes());
+            }
+            for &val in &data {
+                bytes.extend_from_slice(&val.to_le_bytes());
+            }
+            if let Err(e) = std::fs::write(path_str.as_ref(), &bytes) {
+                eprintln!("Failed to save tensor: {}", e);
+            }
+        }
+    }
+    #[inline] fn tensor_load(&self, path: *const i8) -> *mut c_void {
+        if path.is_null() { return v(ffi_ops::make_tensor(MetalTensor::zeros(&[1], crate::DType::F32))); }
+        unsafe {
+            let path_str = std::ffi::CStr::from_ptr(path).to_string_lossy();
+            let bytes = match std::fs::read(path_str.as_ref()) {
+                Ok(b) => b,
+                Err(_) => return v(ffi_ops::make_tensor(MetalTensor::zeros(&[1], crate::DType::F32))),
+            };
+            if bytes.len() < 8 {
+                return v(ffi_ops::make_tensor(MetalTensor::zeros(&[1], crate::DType::F32)));
+            }
+            let mut offset = 0;
+            let rank = u64::from_le_bytes(bytes[offset..offset+8].try_into().unwrap()) as usize;
+            offset += 8;
+            if bytes.len() < offset + rank * 8 {
+                return v(ffi_ops::make_tensor(MetalTensor::zeros(&[1], crate::DType::F32)));
+            }
+            let mut shape = Vec::with_capacity(rank);
+            for _ in 0..rank {
+                let dim = u64::from_le_bytes(bytes[offset..offset+8].try_into().unwrap()) as usize;
+                shape.push(dim);
+                offset += 8;
+            }
+            let numel: usize = shape.iter().product();
+            let expected_data_size = numel * 4;
+            if bytes.len() < offset + expected_data_size {
+                return v(ffi_ops::make_tensor(MetalTensor::zeros(&[1], crate::DType::F32)));
+            }
+            let mut data = Vec::with_capacity(numel);
+            for _ in 0..numel {
+                let val = f32::from_le_bytes(bytes[offset..offset+4].try_into().unwrap());
+                data.push(val);
+                offset += 4;
+            }
+            v(ffi_ops::make_tensor(MetalTensor::from_slice(&data, &shape, crate::DType::F32)))
+        }
+    }
 
     // ========== NN ==========
     #[inline] fn tensor_conv2d(&self, input: *mut c_void, weight: *mut c_void, bias: *mut c_void, stride: usize, padding: usize, dilation: usize, groups: usize) -> *mut c_void {
         v(ffi_ops::tl_metal_conv2d(t(input), t(weight), t(bias), stride, padding, dilation, groups))
     }
+    #[inline] fn tensor_batch_norm(&self, input: *mut c_void, running_mean: *mut c_void, running_var: *mut c_void, weight: *mut c_void, bias: *mut c_void, training: bool, momentum: f64, eps: f64) -> *mut c_void {
+        v(ffi_ops::tl_metal_batch_norm(t(input), t(running_mean), t(running_var), t(weight), t(bias), training, momentum, eps))
+    }
+    #[inline] fn tensor_layer_norm(&self, input: *mut c_void, weight: *mut c_void, bias: *mut c_void, eps: f64) -> *mut c_void {
+        v(ffi_ops::tl_metal_layer_norm(t(input), t(weight), t(bias), eps))
+    }
+    #[inline] fn tensor_dropout(&self, input: *mut c_void, p: f64, training: bool) -> *mut c_void {
+        v(ffi_ops::tl_metal_dropout(t(input), p, training))
+    }
+    #[inline] fn tensor_max_pool2d(&self, input: *mut c_void, kernel_size: usize, stride: usize, padding: usize) -> *mut c_void {
+        v(ffi_ops::tl_metal_max_pool2d(t(input), kernel_size, stride, padding))
+    }
+    #[inline] fn tensor_avg_pool2d(&self, input: *mut c_void, kernel_size: usize, stride: usize, padding: usize) -> *mut c_void {
+        v(ffi_ops::tl_metal_avg_pool2d(t(input), kernel_size, stride, padding))
+    }
 }
 
 use tl_backend::GpuTensor;
+

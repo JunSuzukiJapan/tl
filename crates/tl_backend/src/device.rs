@@ -164,6 +164,11 @@ pub trait IDevice {
 
     // ========== NN ==========
     fn tensor_conv2d(&self, input: *mut c_void, weight: *mut c_void, bias: *mut c_void, stride: usize, padding: usize, dilation: usize, groups: usize) -> *mut c_void;
+    fn tensor_batch_norm(&self, input: *mut c_void, running_mean: *mut c_void, running_var: *mut c_void, weight: *mut c_void, bias: *mut c_void, training: bool, momentum: f64, eps: f64) -> *mut c_void;
+    fn tensor_layer_norm(&self, input: *mut c_void, weight: *mut c_void, bias: *mut c_void, eps: f64) -> *mut c_void;
+    fn tensor_dropout(&self, input: *mut c_void, p: f64, training: bool) -> *mut c_void;
+    fn tensor_max_pool2d(&self, input: *mut c_void, kernel_size: usize, stride: usize, padding: usize) -> *mut c_void;
+    fn tensor_avg_pool2d(&self, input: *mut c_void, kernel_size: usize, stride: usize, padding: usize) -> *mut c_void;
 
     // ========== CPU 専用 (デフォルト実装: GPU では呼ばれない) ==========
     fn tensor_transpose_2d(&self, t: *mut c_void) -> *mut c_void { let _ = t; std::ptr::null_mut() }

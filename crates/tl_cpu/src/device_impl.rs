@@ -173,6 +173,98 @@ impl IDevice for CpuDevice {
         // CPU版: ffi は (input, weight, padding, stride) の4引数
         v(ffi::tl_cpu_tensor_conv2d(t(input), t(weight), padding as i64, stride as i64))
     }
+    #[inline] fn tensor_batch_norm(&self, input: *mut c_void, running_mean: *mut c_void, running_var: *mut c_void, weight: *mut c_void, bias: *mut c_void, _training: bool, _momentum: f64, eps: f64) -> *mut c_void {
+        // CPU fallback: (input - mean) / sqrt(var + eps) * weight + bias
+        if input.is_null() { return input; }
+        let inp = unsafe { &*t(input) };
+        let data = inp.data_f32();
+        let shape = inp.shape().to_vec();
+        if shape.len() < 2 { return input; }
+        let channels = shape[1];
+        let spatial: usize = shape[2..].iter().product();
+        let batch = shape[0];
+
+        let mean_data = if !running_mean.is_null() {
+            unsafe { &*t(running_mean) }.data_f32().to_vec()
+        } else {
+            vec![0.0f32; channels]
+        };
+        let var_data = if !running_var.is_null() {
+            unsafe { &*t(running_var) }.data_f32().to_vec()
+        } else {
+            vec![1.0f32; channels]
+        };
+        let w_data = if !weight.is_null() {
+            unsafe { &*t(weight) }.data_f32().to_vec()
+        } else {
+            vec![1.0f32; channels]
+        };
+        let b_data = if !bias.is_null() {
+            unsafe { &*t(bias) }.data_f32().to_vec()
+        } else {
+            vec![0.0f32; channels]
+        };
+
+        let mut result = data.to_vec();
+        for n in 0..batch {
+            for c in 0..channels {
+                let inv_std = 1.0 / (var_data[c] + eps as f32).sqrt();
+                for s in 0..spatial {
+                    let idx = n * channels * spatial + c * spatial + s;
+                    result[idx] = (result[idx] - mean_data[c]) * inv_std * w_data[c] + b_data[c];
+                }
+            }
+        }
+        let out = CpuTensor::from_slice(&result, &shape, crate::DType::F32);
+        v(Box::into_raw(Box::new(out)))
+    }
+    #[inline] fn tensor_layer_norm(&self, input: *mut c_void, weight: *mut c_void, bias: *mut c_void, eps: f64) -> *mut c_void {
+        // CPU fallback: 最後の次元に沿って正規化
+        if input.is_null() { return input; }
+        let inp = unsafe { &*t(input) };
+        let data = inp.data_f32();
+        let shape = inp.shape().to_vec();
+        let norm_size = *shape.last().unwrap_or(&1);
+        let outer = data.len() / norm_size;
+
+        let w_data = if !weight.is_null() {
+            unsafe { &*t(weight) }.data_f32().to_vec()
+        } else {
+            vec![1.0f32; norm_size]
+        };
+        let b_data = if !bias.is_null() {
+            unsafe { &*t(bias) }.data_f32().to_vec()
+        } else {
+            vec![0.0f32; norm_size]
+        };
+
+        let mut result = data.to_vec();
+        for i in 0..outer {
+            let start = i * norm_size;
+            let end = start + norm_size;
+            let slice = &result[start..end];
+            let mean: f32 = slice.iter().sum::<f32>() / norm_size as f32;
+            let var: f32 = slice.iter().map(|x| (x - mean) * (x - mean)).sum::<f32>() / norm_size as f32;
+            let inv_std = 1.0 / (var + eps as f32).sqrt();
+            for j in 0..norm_size {
+                result[start + j] = (result[start + j] - mean) * inv_std * w_data[j] + b_data[j];
+            }
+        }
+        let out = CpuTensor::from_slice(&result, &shape, crate::DType::F32);
+        v(Box::into_raw(Box::new(out)))
+    }
+    #[inline] fn tensor_dropout(&self, input: *mut c_void, _p: f64, _training: bool) -> *mut c_void {
+        // CPU: dropout は推論時 identity
+        input
+    }
+    #[inline] fn tensor_max_pool2d(&self, input: *mut c_void, _kernel_size: usize, _stride: usize, _padding: usize) -> *mut c_void {
+        // CPU: stub — 入力をそのまま返す (将来実装予定)
+        input
+    }
+    #[inline] fn tensor_avg_pool2d(&self, input: *mut c_void, _kernel_size: usize, _stride: usize, _padding: usize) -> *mut c_void {
+        // CPU: stub — 入力をそのまま返す (将来実装予定)
+        input
+    }
 
     // ========== CPU 専用 ==========
     #[inline] fn tensor_transpose_2d(&self, a: *mut c_void) -> *mut c_void { v(ffi::tl_cpu_tensor_transpose_2d(t(a))) }
