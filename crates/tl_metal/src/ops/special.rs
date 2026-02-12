@@ -263,7 +263,7 @@ impl MetalTensor {
         command_buffer.wait_until_completed();
 
         // Step 2: GPU sumall で合計 → スカラーテンソル
-        use tl_backend::GpuOps;
+        // sumall() は MetalTensor の inherent method
         let sum_val = temp.sumall();
         MetalTensor::from_slice(&[sum_val], &[1], DType::F32)
     }

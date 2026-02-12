@@ -1,7 +1,6 @@
 //! GpuAutograd トレイト定義 - 自動微分
 
 use crate::tensor::GpuTensor;
-use crate::ops::GpuOps;
 
 /// 自動微分対応テンソル
 pub trait GpuVar: Clone {
@@ -27,7 +26,7 @@ pub trait GpuVar: Clone {
 }
 
 /// 自動微分演算トレイト
-pub trait GpuAutograd: GpuOps {
+pub trait GpuAutograd: GpuTensor {
     type Var: GpuVar<Tensor = Self>;
     
     /// テンソルを Var に変換

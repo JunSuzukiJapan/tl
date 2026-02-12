@@ -11,7 +11,6 @@ pub mod device;
 
 pub use dtype::DType;
 pub use tensor::GpuTensor;
-pub use ops::GpuOps;
 pub use autograd::{GpuAutograd, GpuVar};
 pub use error::BackendError;
 pub use device::IDevice;

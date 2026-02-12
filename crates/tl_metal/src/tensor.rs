@@ -7,7 +7,7 @@ use crate::autograd::GradFn;
 use metal::{Buffer, MTLResourceOptions};
 use std::cell::UnsafeCell;
 use std::sync::Arc;
-use tl_backend::GpuOps;
+
 
 /// Arc ベースのテンソル参照（V5.0 メモリ管理）
 /// GradFn 内で入力テンソルの生存を保証する。

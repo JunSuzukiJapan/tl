@@ -3,7 +3,7 @@
 use super::ops::*;
 use super::MetalVar;
 use crate::tensor::MetalTensor;
-use tl_backend::GpuOps;
+
 
 impl MetalVar {
     /// 加算

@@ -11,7 +11,7 @@
 //!   - Batch Matmul (3D×2D, 3D×3D)
 //!   - エッジケース (大テンソル, 負の軸, 自動ブロードキャスト, 2D softmax)
 
-use tl_metal::{MetalTensor, DType, GpuOps};
+use tl_metal::{MetalTensor, DType};
 use serial_test::serial;
 
 // ========== ヘルパー関数 ==========
@@ -111,7 +111,7 @@ fn test_tan() {
         &[2],
         DType::F32,
     );
-    let c = GpuOps::tan(&a);
+    let c = a.tan();
     assert_tensor_approx_eq(&c, &[0.0, 1.0], 1e-4);
 }
 
@@ -119,7 +119,7 @@ fn test_tan() {
 #[serial]
 fn test_gelu() {
     let a = MetalTensor::from_slice(&[0.0f32, 1.0, -1.0, 2.0], &[4], DType::F32);
-    let c = GpuOps::gelu(&a);
+    let c = a.gelu();
     let data = c.to_vec::<f32>();
     // GELU(0) = 0
     assert_approx_eq(data[0], 0.0, 1e-4);
@@ -156,7 +156,7 @@ fn test_silu() {
 #[serial]
 fn test_sub_scalar() {
     let a = MetalTensor::from_slice(&[5.0f32, 6.0, 7.0], &[3], DType::F32);
-    let c = GpuOps::sub_scalar(&a, 2.0);
+    let c = a.sub_scalar(2.0);
     assert_tensor_approx_eq(&c, &[3.0, 4.0, 5.0], 1e-5);
 }
 
@@ -164,7 +164,7 @@ fn test_sub_scalar() {
 #[serial]
 fn test_div_scalar() {
     let a = MetalTensor::from_slice(&[10.0f32, 20.0, 30.0], &[3], DType::F32);
-    let c = GpuOps::div_scalar(&a, 5.0);
+    let c = a.div_scalar(5.0);
     assert_tensor_approx_eq(&c, &[2.0, 4.0, 6.0], 1e-5);
 }
 
@@ -193,7 +193,7 @@ fn test_fmod_scalar() {
 fn test_pow_binary() {
     let a = MetalTensor::from_slice(&[2.0f32, 3.0, 4.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[3.0f32, 2.0, 1.0], &[3], DType::F32);
-    let c = GpuOps::pow(&a, &b);
+    let c = a.pow(\&b);
     assert_tensor_approx_eq(&c, &[8.0, 9.0, 4.0], 1e-4);
 }
 
@@ -209,7 +209,7 @@ fn test_min_axis() {
         &[2, 3],
         DType::F32,
     );
-    let m = GpuOps::min(&a, 1);
+    let m = a.min(1);
     assert_eq!(m.shape(), &[2]);
     assert_tensor_approx_eq(&m, &[1.0, 4.0], 1e-5);
 }
@@ -222,7 +222,7 @@ fn test_argmax_axis() {
         &[2, 3],
         DType::F32,
     );
-    let idx = GpuOps::argmax(&a, 1);
+    let idx = a.argmax(1);
     assert_eq!(idx.shape(), &[2]);
     // 行0: max=5.0 at idx 1, 行1: max=6.0 at idx 2
     assert_tensor_approx_eq(&idx, &[1.0, 2.0], 1e-5);
@@ -236,7 +236,7 @@ fn test_argmin_axis() {
         &[2, 3],
         DType::F32,
     );
-    let idx = GpuOps::argmin(&a, 1);
+    let idx = a.argmin(1);
     assert_eq!(idx.shape(), &[2]);
     // 行0: min=1.0 at idx 1, 行1: min=4.0 at idx 1
     assert_tensor_approx_eq(&idx, &[1.0, 1.0], 1e-5);
@@ -250,7 +250,7 @@ fn test_mean_axis() {
         &[2, 3],
         DType::F32,
     );
-    let m = GpuOps::mean(&a, 1);
+    let m = a.mean(1);
     assert_eq!(m.shape(), &[2]);
     assert_tensor_approx_eq(&m, &[2.0, 5.0], 1e-5);
 }
@@ -263,7 +263,7 @@ fn test_argmax_all() {
         &[6],
         DType::F32,
     );
-    let idx = GpuOps::argmax_all(&a);
+    let idx = a.argmax_all();
     assert_eq!(idx, 5); // 6.0 is at index 5
 }
 
@@ -426,7 +426,7 @@ fn test_batch_matmul_3d_2d() {
         DType::F32,
     );
 
-    let c = GpuOps::matmul(&a, &b);
+    let c = a.matmul(\&b);
     assert_eq!(c.shape(), &[2, 2, 2]);
 
     let data = c.to_vec::<f32>();
@@ -473,7 +473,7 @@ fn test_batch_matmul_3d_3d() {
         DType::F32,
     );
 
-    let c = GpuOps::matmul(&a, &b);
+    let c = a.matmul(\&b);
     assert_eq!(c.shape(), &[2, 2, 2]);
 
     let data = c.to_vec::<f32>();
@@ -503,7 +503,7 @@ fn test_large_tensor_add() {
     let b_data: Vec<f32> = (0..n).map(|i| (n - i) as f32).collect();
     let a = MetalTensor::from_slice(&a_data, &[n], DType::F32);
     let b = MetalTensor::from_slice(&b_data, &[n], DType::F32);
-    let c = GpuOps::add(&a, &b);
+    let c = a.add(\&b);
 
     let result = c.to_vec::<f32>();
     assert_eq!(result.len(), n);
@@ -526,7 +526,7 @@ fn test_negative_axis_reduction() {
         DType::F32,
     );
     // axis=-1 は axis=1 と同等
-    let s = GpuOps::sum(&a, -1);
+    let s = a.sum(-1);
     assert_eq!(s.shape(), &[2]);
     assert_tensor_approx_eq(&s, &[6.0, 15.0], 1e-5);
 }
@@ -543,7 +543,7 @@ fn test_binary_broadcast_auto() {
     let b = MetalTensor::from_slice(&[10.0f32, 20.0, 30.0], &[3], DType::F32);
 
     // binary_op 内部で自動ブロードキャスト
-    let c = GpuOps::add(&a, &b);
+    let c = a.add(\&b);
     assert_eq!(c.shape(), &[2, 3]);
     assert_tensor_approx_eq(&c, &[11.0, 22.0, 33.0, 14.0, 25.0, 36.0], 1e-5);
 }
@@ -559,7 +559,7 @@ fn test_softmax_2d() {
     );
 
     // axis=1 (各行に対して softmax)
-    let s = GpuOps::softmax(&a, 1);
+    let s = a.softmax(1);
     assert_eq!(s.shape(), &[2, 3]);
 
     let data = s.to_vec::<f32>();
@@ -618,7 +618,7 @@ fn test_sum_axis0() {
         &[2, 3],
         DType::F32,
     );
-    let s = GpuOps::sum(&a, 0);
+    let s = a.sum(0);
     assert_eq!(s.shape(), &[3]);
     // 列ごとの合計: [1+4, 2+5, 3+6] = [5, 7, 9]
     assert_tensor_approx_eq(&s, &[5.0, 7.0, 9.0], 1e-5);
@@ -632,7 +632,7 @@ fn test_max_axis0() {
         &[2, 3],
         DType::F32,
     );
-    let m = GpuOps::max(&a, 0);
+    let m = a.max(0);
     assert_eq!(m.shape(), &[3]);
     assert_tensor_approx_eq(&m, &[3.0, 4.0, 5.0], 1e-5);
 }
@@ -645,7 +645,7 @@ fn test_min_axis0() {
         &[2, 3],
         DType::F32,
     );
-    let m = GpuOps::min(&a, 0);
+    let m = a.min(0);
     assert_eq!(m.shape(), &[3]);
     assert_tensor_approx_eq(&m, &[2.0, 1.0, 0.0], 1e-5);
 }
@@ -673,7 +673,7 @@ fn test_conv2d_numerical() {
         &[1, 1, 2, 2],
         DType::F32,
     );
-    let output = GpuOps::conv2d(&input, &kernel, (1, 1), (0, 0));
+    let output = input.conv2d( &kernel, (1, 1), (0, 0));
     assert_eq!(output.shape(), &[1, 1, 2, 2]);
 
     // 手計算:
@@ -692,7 +692,7 @@ fn test_conv2d_numerical() {
 #[serial]
 fn test_tril_positive_diagonal() {
     let a = MetalTensor::ones(&[3, 3], DType::F32);
-    let c = GpuOps::tril(&a, 1);
+    let c = a.tril(1);
     // diagonal=1: 主対角線 + 1つ上の対角線まで保持
     assert_tensor_approx_eq(&c, &[
         1.0, 1.0, 0.0,
@@ -705,7 +705,7 @@ fn test_tril_positive_diagonal() {
 #[serial]
 fn test_tril_negative_diagonal() {
     let a = MetalTensor::ones(&[3, 3], DType::F32);
-    let c = GpuOps::tril(&a, -1);
+    let c = a.tril(-1);
     // diagonal=-1: 主対角線の1つ下から保持
     assert_tensor_approx_eq(&c, &[
         0.0, 0.0, 0.0,

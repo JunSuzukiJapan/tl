@@ -1,5 +1,5 @@
 //! 単純 add テスト
-use tl_metal::{MetalTensor, DType, GpuOps};
+use tl_metal::{MetalTensor, DType};
 
 fn main() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
@@ -9,7 +9,7 @@ fn main() {
     println!("b data: {:?}", b.to_vec::<f32>());
     
     // UFCS 呼び出し（テストと同じ）
-    let c_ufcs = GpuOps::add(&a, &b);
+    let c_ufcs = a.add(\&b);
     println!("UFCS add result: {:?}", c_ufcs.to_vec::<f32>());
     
     // メソッド呼び出し（examples と同じ）

@@ -1,6 +1,6 @@
 //! matmul テスト
 
-use tl_metal::{DType, MetalTensor, GpuOps};
+use tl_metal::{DType, MetalTensor};
 
 fn main() {
     println!("=== matmul テスト ===\n");

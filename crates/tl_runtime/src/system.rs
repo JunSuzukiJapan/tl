@@ -4,7 +4,7 @@ use crate::string_ffi::StringStruct;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::io::Write;
-use tl_metal::GpuOps;
+
 
 /// スリープ（ミリ秒）
 #[unsafe(no_mangle)]

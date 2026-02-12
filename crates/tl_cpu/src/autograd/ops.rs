@@ -2,7 +2,7 @@
 
 use super::GradFn;
 use crate::tensor::{CpuTensor, TensorRef};
-use tl_backend::GpuOps;
+
 
 /// ブロードキャスト勾配集約:
 /// grad の shape を target_shape に合わせるため、ブロードキャストで追加された次元に沿って sum する。

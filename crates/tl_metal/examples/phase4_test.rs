@@ -1,6 +1,6 @@
 //! Phase 4 演算テスト
 
-use tl_metal::{DType, MetalTensor, GpuOps};
+use tl_metal::{DType, MetalTensor};
 
 fn main() {
     println!("=== Phase 4 演算テスト ===\n");

@@ -1,6 +1,6 @@
 //! tl_metal 包括的テスト
 
-use tl_metal::{MetalTensor, DType, GpuOps};
+use tl_metal::{MetalTensor, DType};
 use tl_metal::{SGD, Adam, AdamW, clip_grad_norm};
 use serial_test::serial;
 
@@ -58,7 +58,7 @@ fn test_randn() {
 fn test_add() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[4.0f32, 5.0, 6.0], &[3], DType::F32);
-    let c = GpuOps::add(&a, &b);
+    let c = a.add(\&b);
     assert_tensor_approx_eq(&c, &[5.0, 7.0, 9.0], 1e-5);
 }
 
@@ -67,7 +67,7 @@ fn test_add() {
 fn test_sub() {
     let a = MetalTensor::from_slice(&[5.0f32, 6.0, 7.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
-    let c = GpuOps::sub(&a, &b);
+    let c = a.sub(\&b);
     assert_tensor_approx_eq(&c, &[4.0, 4.0, 4.0], 1e-5);
 }
 
@@ -76,7 +76,7 @@ fn test_sub() {
 fn test_mul() {
     let a = MetalTensor::from_slice(&[2.0f32, 3.0, 4.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[3.0f32, 4.0, 5.0], &[3], DType::F32);
-    let c = GpuOps::mul(&a, &b);
+    let c = a.mul(\&b);
     assert_tensor_approx_eq(&c, &[6.0, 12.0, 20.0], 1e-5);
 }
 
@@ -85,7 +85,7 @@ fn test_mul() {
 fn test_div() {
     let a = MetalTensor::from_slice(&[10.0f32, 20.0, 30.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[2.0f32, 4.0, 5.0], &[3], DType::F32);
-    let c = GpuOps::div(&a, &b);
+    let c = a.div(\&b);
     assert_tensor_approx_eq(&c, &[5.0, 5.0, 6.0], 1e-5);
 }
 
@@ -94,7 +94,7 @@ fn test_div() {
 fn test_matmul() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3], DType::F32);
     let b = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], &[3, 2], DType::F32);
-    let c = GpuOps::matmul(&a, &b);
+    let c = a.matmul(\&b);
     assert_eq!(c.shape(), &[2, 2]);
     assert_tensor_approx_eq(&c, &[22.0, 28.0, 49.0, 64.0], 1e-5);
 }
@@ -105,7 +105,7 @@ fn test_matmul() {
 #[serial]
 fn test_add_scalar() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
-    let c = GpuOps::add_scalar(&a, 10.0);
+    let c = a.add_scalar(10.0);
     assert_tensor_approx_eq(&c, &[11.0, 12.0, 13.0], 1e-5);
 }
 
@@ -113,7 +113,7 @@ fn test_add_scalar() {
 #[serial]
 fn test_mul_scalar() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
-    let c = GpuOps::mul_scalar(&a, 2.0);
+    let c = a.mul_scalar(2.0);
     assert_tensor_approx_eq(&c, &[2.0, 4.0, 6.0], 1e-5);
 }
 
@@ -121,7 +121,7 @@ fn test_mul_scalar() {
 #[serial]
 fn test_clamp() {
     let a = MetalTensor::from_slice(&[-1.0f32, 0.5, 2.0], &[3], DType::F32);
-    let c = GpuOps::clamp(&a, 0.0, 1.0);
+    let c = a.clamp(0.0, 1.0);
     assert_tensor_approx_eq(&c, &[0.0, 0.5, 1.0], 1e-5);
 }
 
@@ -131,7 +131,7 @@ fn test_clamp() {
 #[serial]
 fn test_neg() {
     let a = MetalTensor::from_slice(&[1.0f32, -2.0, 3.0], &[3], DType::F32);
-    let c = GpuOps::neg(&a);
+    let c = a.neg();
     assert_tensor_approx_eq(&c, &[-1.0, 2.0, -3.0], 1e-5);
 }
 
@@ -139,7 +139,7 @@ fn test_neg() {
 #[serial]
 fn test_abs() {
     let a = MetalTensor::from_slice(&[-1.0f32, 2.0, -3.0], &[3], DType::F32);
-    let c = GpuOps::abs(&a);
+    let c = a.abs();
     assert_tensor_approx_eq(&c, &[1.0, 2.0, 3.0], 1e-5);
 }
 
@@ -147,7 +147,7 @@ fn test_abs() {
 #[serial]
 fn test_exp() {
     let a = MetalTensor::from_slice(&[0.0f32, 1.0, 2.0], &[3], DType::F32);
-    let c = GpuOps::exp(&a);
+    let c = a.exp();
     assert_tensor_approx_eq(&c, &[1.0, 2.7182817, 7.389056], 1e-4);
 }
 
@@ -155,7 +155,7 @@ fn test_exp() {
 #[serial]
 fn test_log() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.7182817, 7.389056], &[3], DType::F32);
-    let c = GpuOps::log(&a);
+    let c = a.log();
     assert_tensor_approx_eq(&c, &[0.0, 1.0, 2.0], 1e-4);
 }
 
@@ -163,7 +163,7 @@ fn test_log() {
 #[serial]
 fn test_sqrt() {
     let a = MetalTensor::from_slice(&[1.0f32, 4.0, 9.0], &[3], DType::F32);
-    let c = GpuOps::sqrt(&a);
+    let c = a.sqrt();
     assert_tensor_approx_eq(&c, &[1.0, 2.0, 3.0], 1e-5);
 }
 
@@ -171,7 +171,7 @@ fn test_sqrt() {
 #[serial]
 fn test_relu() {
     let a = MetalTensor::from_slice(&[-1.0f32, 0.0, 1.0, 2.0], &[4], DType::F32);
-    let c = GpuOps::relu(&a);
+    let c = a.relu();
     assert_tensor_approx_eq(&c, &[0.0, 0.0, 1.0, 2.0], 1e-5);
 }
 
@@ -179,7 +179,7 @@ fn test_relu() {
 #[serial]
 fn test_sigmoid() {
     let a = MetalTensor::from_slice(&[0.0f32], &[1], DType::F32);
-    let c = GpuOps::sigmoid(&a);
+    let c = a.sigmoid();
     assert_tensor_approx_eq(&c, &[0.5], 1e-5);
 }
 
@@ -187,7 +187,7 @@ fn test_sigmoid() {
 #[serial]
 fn test_tanh() {
     let a = MetalTensor::from_slice(&[0.0f32], &[1], DType::F32);
-    let c = GpuOps::tanh(&a);
+    let c = a.tanh();
     assert_tensor_approx_eq(&c, &[0.0], 1e-5);
 }
 
@@ -195,8 +195,8 @@ fn test_tanh() {
 #[serial]
 fn test_sin_cos() {
     let a = MetalTensor::from_slice(&[0.0f32, std::f32::consts::PI / 2.0], &[2], DType::F32);
-    let s = GpuOps::sin(&a);
-    let cos = GpuOps::cos(&a);
+    let s = a.sin();
+    let cos = a.cos();
     assert_tensor_approx_eq(&s, &[0.0, 1.0], 1e-5);
     assert_tensor_approx_eq(&cos, &[1.0, 0.0], 1e-5);
 }
@@ -207,7 +207,7 @@ fn test_sin_cos() {
 #[serial]
 fn test_sumall() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0], &[4], DType::F32);
-    let sum = GpuOps::sumall(&a);
+    let sum = a.sumall();
     assert_approx_eq(sum, 10.0, 1e-5);
 }
 
@@ -215,7 +215,7 @@ fn test_sumall() {
 #[serial]
 fn test_mean_all() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0], &[4], DType::F32);
-    let mean = GpuOps::mean_all(&a);
+    let mean = a.mean_all();
     assert_approx_eq(mean, 2.5, 1e-5);
 }
 
@@ -223,7 +223,7 @@ fn test_mean_all() {
 #[serial]
 fn test_sum_axis() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3], DType::F32);
-    let sum = GpuOps::sum(&a, 1);
+    let sum = a.sum(1);
     assert_eq!(sum.shape(), &[2]);
     assert_tensor_approx_eq(&sum, &[6.0, 15.0], 1e-5);
 }
@@ -232,7 +232,7 @@ fn test_sum_axis() {
 #[serial]
 fn test_max() {
     let a = MetalTensor::from_slice(&[1.0f32, 5.0, 2.0, 4.0, 3.0, 6.0], &[2, 3], DType::F32);
-    let max = GpuOps::max(&a, 1);
+    let max = a.max(1);
     assert_eq!(max.shape(), &[2]);
     assert_tensor_approx_eq(&max, &[5.0, 6.0], 1e-5);
 }
@@ -243,7 +243,7 @@ fn test_max() {
 #[serial]
 fn test_reshape() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3], DType::F32);
-    let b = GpuOps::reshape(&a, &[3, 2]);
+    let b = a.reshape( &[3, 2]);
     assert_eq!(b.shape(), &[3, 2]);
 }
 
@@ -251,7 +251,7 @@ fn test_reshape() {
 #[serial]
 fn test_transpose() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3], DType::F32);
-    let b = GpuOps::transpose(&a, 0, 1);
+    let b = a.transpose(0, 1);
     assert_eq!(b.shape(), &[3, 2]);
 }
 
@@ -259,10 +259,10 @@ fn test_transpose() {
 #[serial]
 fn test_squeeze_unsqueeze() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[1, 3], DType::F32);
-    let b = GpuOps::squeeze(&a, 0);
+    let b = a.squeeze(0);
     assert_eq!(b.shape(), &[3]);
     
-    let c = GpuOps::unsqueeze(&b, 0);
+    let c = b.unsqueeze(0);
     assert_eq!(c.shape(), &[1, 3]);
 }
 
@@ -270,7 +270,7 @@ fn test_squeeze_unsqueeze() {
 #[serial]
 fn test_softmax() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
-    let s = GpuOps::softmax(&a, 0);
+    let s = a.softmax(0);
     let data = s.to_vec::<f32>();
     
     let sum: f32 = data.iter().sum();
@@ -281,7 +281,7 @@ fn test_softmax() {
 #[serial]
 fn test_tril() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], &[3, 3], DType::F32);
-    let c = GpuOps::tril(&a, 0);
+    let c = a.tril(0);
     assert_tensor_approx_eq(&c, &[1.0, 0.0, 0.0, 4.0, 5.0, 0.0, 7.0, 8.0, 9.0], 1e-5);
 }
 
@@ -292,7 +292,7 @@ fn test_tril() {
 fn test_conv2d() {
     let input = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0], &[1, 1, 2, 2], DType::F32);
     let kernel = MetalTensor::from_slice(&[2.0f32], &[1, 1, 1, 1], DType::F32);
-    let output = GpuOps::conv2d(&input, &kernel, (1, 1), (0, 0));
+    let output = input.conv2d( &kernel, (1, 1), (0, 0));
     assert_eq!(output.shape(), &[1, 1, 2, 2]);
 }
 
@@ -308,7 +308,7 @@ fn test_batch_norm() {
     let mean = MetalTensor::from_slice(&[2.5f32, 6.5, 10.5], &[3], DType::F32);
     let var = MetalTensor::ones(&[3], DType::F32);
     
-    let _ = GpuOps::batch_norm(&input, &gamma, &beta, &mean, &var, 1e-5);
+    let _ = input.batch_norm( &gamma, &beta, &mean, &var, 1e-5);
 }
 
 #[test]
@@ -318,7 +318,7 @@ fn test_max_pool2d() {
         &[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0],
         &[1, 1, 4, 4], DType::F32
     );
-    let output = GpuOps::max_pool2d(&input, (2, 2), (2, 2));
+    let output = input.max_pool2d((2, 2), (2, 2));
     assert_eq!(output.shape(), &[1, 1, 2, 2]);
 }
 
@@ -328,7 +328,7 @@ fn test_layer_norm() {
     let input = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3], DType::F32);
     let gamma = MetalTensor::from_slice(&[1.0f32, 1.0, 1.0], &[3], DType::F32);
     let beta = MetalTensor::from_slice(&[0.0f32, 0.0, 0.0], &[3], DType::F32);
-    let output = GpuOps::layer_norm(&input, &gamma, &beta, 1e-5);
+    let output = input.layer_norm( &gamma, &beta, 1e-5);
     assert_eq!(output.shape(), &[2, 3]);
 }
 
@@ -338,7 +338,7 @@ fn test_layer_norm() {
 #[serial]
 fn test_autograd_backward() {
     let input = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0], &[4], DType::F32);
-    let sum = GpuOps::sumall(&input);
+    let sum = input.sumall();
     assert_approx_eq(sum, 10.0, 1e-5);
 }
 
@@ -402,6 +402,6 @@ fn test_simple_forward() {
     let x = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0], &[2, 2], DType::F32);
     let w = MetalTensor::from_slice(&[0.5f32, 0.5, 0.5, 0.5], &[2, 2], DType::F32);
     
-    let y = GpuOps::matmul(&x, &w);
+    let y = x.matmul(\&w);
     assert_eq!(y.shape(), &[2, 2]);
 }

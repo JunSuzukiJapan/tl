@@ -915,7 +915,7 @@ mod ffi_tests {
 mod trait_tests {
     use tl_cpu::tensor::CpuTensor;
     use tl_cpu::DType;
-    use tl_backend::GpuOps;
+    
     use tl_backend::tensor::GpuTensor;
 
     #[test]
@@ -935,29 +935,29 @@ mod trait_tests {
         let a = CpuTensor::from_slice(&[1.0, 2.0, 3.0], &[3], DType::F32);
         let b = CpuTensor::from_slice(&[4.0, 5.0, 6.0], &[3], DType::F32);
 
-        let c = GpuOps::add(&a, &b);
+        let c = a.add(\&b);
         assert_eq!(c.to_vec_f32(), vec![5.0, 7.0, 9.0]);
 
-        let d = GpuOps::mul_scalar(&a, 3.0);
+        let d = a.mul_scalar(3.0);
         assert_eq!(d.to_vec_f32(), vec![3.0, 6.0, 9.0]);
     }
 
     #[test]
     fn test_trait_math() {
         let a = CpuTensor::from_slice(&[4.0, 9.0], &[2], DType::F32);
-        let s = GpuOps::sqrt(&a);
+        let s = a.sqrt();
         let v = s.to_vec_f32();
         assert!((v[0] - 2.0).abs() < 1e-5);
         assert!((v[1] - 3.0).abs() < 1e-5);
 
-        let g = GpuOps::gelu(&a);
+        let g = a.gelu();
         assert!(g.to_vec_f32()[0] > 0.0); // gelu(4) > 0
     }
 
     #[test]
     fn test_trait_reshape() {
         let a = CpuTensor::from_slice(&[1.0, 2.0, 3.0, 4.0], &[2, 2], DType::F32);
-        let b = GpuOps::reshape(&a, &[4]);
+        let b = a.reshape( &[4]);
         assert_eq!(b.shape(), &[4]);
         assert_eq!(b.to_vec_f32(), vec![1.0, 2.0, 3.0, 4.0]);
     }
@@ -965,7 +965,7 @@ mod trait_tests {
     #[test]
     fn test_trait_reduction() {
         let a = CpuTensor::from_slice(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3], DType::F32);
-        let s = GpuOps::sum(&a, 1);
+        let s = a.sum(1);
         assert_eq!(s.shape(), &[2]);
         let v = s.to_vec_f32();
         assert!((v[0] - 6.0).abs() < 1e-5);

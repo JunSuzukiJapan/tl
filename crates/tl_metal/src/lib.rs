@@ -22,7 +22,7 @@ pub use autograd::GradFn;
 pub use optim::{SGD, Adam, AdamW, clip_grad_norm};
 
 // Re-export tl_backend traits
-pub use tl_backend::{GpuTensor, GpuOps};
+pub use tl_backend::GpuTensor;
 
 /// データ型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

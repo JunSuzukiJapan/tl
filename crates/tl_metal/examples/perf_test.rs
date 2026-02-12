@@ -1,7 +1,7 @@
 //! tl_metal GPU パフォーマンステスト
 
 use std::time::Instant;
-use tl_metal::{buffer_pool, DType, MetalTensor, GpuOps};
+use tl_metal::{buffer_pool, DType, MetalTensor};
 
 fn main() {
     println!("=== tl_metal GPU パフォーマンステスト ===\n");

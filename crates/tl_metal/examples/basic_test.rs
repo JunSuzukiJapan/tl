@@ -1,6 +1,6 @@
 //! tl_metal テスト
 
-use tl_metal::{buffer_pool, DType, MetalTensor, GpuOps};
+use tl_metal::{buffer_pool, DType, MetalTensor};
 
 fn main() {
     println!("=== tl_metal テスト ===");

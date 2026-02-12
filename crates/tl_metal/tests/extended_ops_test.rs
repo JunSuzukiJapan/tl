@@ -1,7 +1,7 @@
 //! tl_metal 拡張機能テスト
 //! 後から追加された機能の網羅的テスト
 
-use tl_metal::{MetalTensor, DType, GpuOps};
+use tl_metal::{MetalTensor, DType};
 use serial_test::serial;
 
 // ========== ヘルパー関数 ==========
@@ -201,7 +201,7 @@ fn test_batch_norm() {
     let mean = MetalTensor::from_slice(&[2.5f32, 6.5], &[2], DType::F32);
     let var = MetalTensor::from_slice(&[1.25f32, 1.25], &[2], DType::F32);
     
-    let output = GpuOps::batch_norm(&input, &gamma, &beta, &mean, &var, 1e-5);
+    let output = input.batch_norm( &gamma, &beta, &mean, &var, 1e-5);
     assert_eq!(output.shape(), &[1, 2, 2, 2]);
     
     let result = output.to_vec::<f32>();
@@ -222,7 +222,7 @@ fn test_max_pool2d() {
         13.0, 14.0, 15.0, 16.0,
     ], &[1, 1, 4, 4], DType::F32);
     
-    let output = GpuOps::max_pool2d(&input, (2, 2), (2, 2));
+    let output = input.max_pool2d((2, 2), (2, 2));
     assert_eq!(output.shape(), &[1, 1, 2, 2]);
     // max: max(1,2,5,6)=6, max(3,4,7,8)=8, max(9,10,13,14)=14, max(11,12,15,16)=16
     assert_tensor_approx_eq(&output, &[6.0, 8.0, 14.0, 16.0], 1e-5);
@@ -239,7 +239,7 @@ fn test_avg_pool2d() {
         13.0, 14.0, 15.0, 16.0,
     ], &[1, 1, 4, 4], DType::F32);
     
-    let output = GpuOps::avg_pool2d(&input, (2, 2), (2, 2));
+    let output = input.avg_pool2d((2, 2), (2, 2));
     assert_eq!(output.shape(), &[1, 1, 2, 2]);
     // 平均: (1+2+5+6)/4=3.5, (3+4+7+8)/4=5.5, etc.
     assert_tensor_approx_eq(&output, &[3.5, 5.5, 11.5, 13.5], 1e-5);
@@ -257,7 +257,7 @@ fn test_layer_norm() {
     let gamma = MetalTensor::from_slice(&[1.0f32, 1.0, 1.0, 1.0], &[4], DType::F32);
     let beta = MetalTensor::from_slice(&[0.0f32, 0.0, 0.0, 0.0], &[4], DType::F32);
     
-    let output = GpuOps::layer_norm(&input, &gamma, &beta, 1e-5);
+    let output = input.layer_norm( &gamma, &beta, 1e-5);
     assert_eq!(output.shape(), &[2, 4]);
     
     let result = output.to_vec::<f32>();
@@ -275,7 +275,7 @@ fn test_dropout() {
     let input = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0], &[4], DType::F32);
     
     // training=false の場合、入力がそのまま返る
-    let output = GpuOps::dropout(&input, 0.5, false);
+    let output = input.dropout(0.5, false);
     assert_eq!(output.shape(), &[4]);
     assert_tensor_approx_eq(&output, &[1.0, 2.0, 3.0, 4.0], 1e-5);
 }
@@ -287,7 +287,7 @@ fn test_dropout_training() {
     let data: Vec<f32> = (0..1000).map(|i| i as f32).collect();
     let input = MetalTensor::from_slice(&data, &[1000], DType::F32);
     
-    let output = GpuOps::dropout(&input, 0.5, true);
+    let output = input.dropout(0.5, true);
     assert_eq!(output.shape(), &[1000]);
     
     let result = output.to_vec::<f32>();
@@ -316,7 +316,7 @@ fn test_broadcast_add() {
     
     // b を [2, 3] にブロードキャスト
     let b_broadcast = b.broadcast_to(&[2, 3]);
-    let c = GpuOps::add(&a, &b_broadcast);
+    let c = a.add(\&b_broadcast);
     assert_tensor_approx_eq(&c, &[11.0, 22.0, 33.0, 14.0, 25.0, 36.0], 1e-5);
 }
 

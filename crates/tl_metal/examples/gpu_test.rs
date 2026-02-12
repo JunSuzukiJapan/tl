@@ -1,7 +1,7 @@
 //! Simple GPU shader test
 
 use tl_metal::{MetalTensor, DType};
-use tl_metal::GpuOps;
+
 
 fn main() {
     println!("=== tl_metal GPU TEST ===\n");

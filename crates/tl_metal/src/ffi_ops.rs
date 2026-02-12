@@ -11,7 +11,7 @@ use std::sync::Arc;
 // OpaqueTensor は MetalTensor のエイリアス
 type OpaqueTensor = MetalTensor;
 
-use tl_backend::GpuOps;
+// use 不要: MetalTensor の演算メソッドは inherent impl で定義
 
 /// 内部ヘルパー: MetalTensor を Arc で包んでポインタを返す（V5.0 メモリ管理）
 /// CPU バックエンドの make_tensor と同じパターン。
