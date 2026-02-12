@@ -1,82 +1,131 @@
-//! 演算の勾配関数
+//! 演算の勾配関数（V5.0: Arc ベース TensorRef）
 
 use super::GradFn;
-use crate::tensor::MetalTensor;
+use crate::tensor::{MetalTensor, TensorRef};
 use tl_backend::GpuOps;
+
+/// ブロードキャスト勾配集約:
+/// grad の shape を target_shape に合わせるため、ブロードキャストで追加された次元に沿って sum する。
+fn reduce_grad_for_broadcast(grad: &MetalTensor, target_shape: &[usize]) -> MetalTensor {
+    let grad_shape = grad.shape();
+    if grad_shape == target_shape {
+        return grad.shallow_clone();
+    }
+    
+    let mut result = grad.shallow_clone();
+    let grad_ndim = grad_shape.len();
+    let target_ndim = target_shape.len();
+    
+    // target_shape が短い場合、先頭の余分な次元を sum で潰す
+    if grad_ndim > target_ndim {
+        for _ in 0..(grad_ndim - target_ndim) {
+            result = result.sum_impl(0);
+        }
+    }
+    
+    // 同じ次元数で、target が 1 の次元を sum + keep_dim
+    let result_shape = result.shape().to_vec();
+    let min_ndim = result_shape.len().min(target_shape.len());
+    for d in 0..min_ndim {
+        if target_shape[d] == 1 && result_shape[d] > 1 {
+            result = result.sum_impl(d as i32);
+            let mut new_shape = result.shape().to_vec();
+            new_shape.insert(d, 1);
+            result = result.reshape_impl(&new_shape);
+        }
+    }
+    
+    if result.shape() != target_shape {
+        result = result.reshape_impl(target_shape);
+    }
+    
+    result
+}
 
 /// 加算の勾配
 pub struct AddBackward {
-    pub a: *mut MetalTensor,
-    pub b: *mut MetalTensor,
+    pub a: TensorRef,
+    pub b: TensorRef,
+    pub a_shape: Vec<usize>,
+    pub b_shape: Vec<usize>,
 }
 
 impl GradFn for AddBackward {
     fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
-        vec![grad_output.shallow_clone(), grad_output.shallow_clone()]
+        let grad_a = reduce_grad_for_broadcast(grad_output, &self.a_shape);
+        let grad_b = reduce_grad_for_broadcast(grad_output, &self.b_shape);
+        vec![grad_a, grad_b]
     }
-    fn inputs(&self) -> Vec<*mut MetalTensor> {
-        vec![self.a, self.b]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone(), self.b.clone()]
     }
 }
 
 /// 減算の勾配
 pub struct SubBackward {
-    pub a: *mut MetalTensor,
-    pub b: *mut MetalTensor,
+    pub a: TensorRef,
+    pub b: TensorRef,
+    pub a_shape: Vec<usize>,
+    pub b_shape: Vec<usize>,
 }
 
 impl GradFn for SubBackward {
     fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
-        vec![grad_output.shallow_clone(), grad_output.neg()]
+        let grad_a = reduce_grad_for_broadcast(grad_output, &self.a_shape);
+        let grad_b = reduce_grad_for_broadcast(&grad_output.neg(), &self.b_shape);
+        vec![grad_a, grad_b]
     }
-    fn inputs(&self) -> Vec<*mut MetalTensor> {
-        vec![self.a, self.b]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone(), self.b.clone()]
     }
 }
 
 /// 乗算の勾配
 pub struct MulBackward {
-    pub a: *mut MetalTensor,
-    pub b: *mut MetalTensor,
+    pub a: TensorRef,
+    pub b: TensorRef,
     pub a_data: MetalTensor,
     pub b_data: MetalTensor,
+    pub a_shape: Vec<usize>,
+    pub b_shape: Vec<usize>,
 }
 
 impl GradFn for MulBackward {
     fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
-        vec![
-            grad_output.mul(&self.b_data),
-            grad_output.mul(&self.a_data),
-        ]
+        let grad_a = reduce_grad_for_broadcast(&grad_output.mul(&self.b_data), &self.a_shape);
+        let grad_b = reduce_grad_for_broadcast(&grad_output.mul(&self.a_data), &self.b_shape);
+        vec![grad_a, grad_b]
     }
-    fn inputs(&self) -> Vec<*mut MetalTensor> {
-        vec![self.a, self.b]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone(), self.b.clone()]
     }
 }
 
 /// 除算の勾配
 pub struct DivBackward {
-    pub a: *mut MetalTensor,
-    pub b: *mut MetalTensor,
+    pub a: TensorRef,
+    pub b: TensorRef,
     pub a_data: MetalTensor,
     pub b_data: MetalTensor,
+    pub a_shape: Vec<usize>,
+    pub b_shape: Vec<usize>,
 }
 
 impl GradFn for DivBackward {
     fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
-        let grad_a = grad_output.div(&self.b_data);
+        let grad_a = reduce_grad_for_broadcast(&grad_output.div(&self.b_data), &self.a_shape);
         let b_sq = self.b_data.mul(&self.b_data);
-        let grad_b = grad_output.mul(&self.a_data).neg().div(&b_sq);
+        let grad_b = reduce_grad_for_broadcast(&grad_output.mul(&self.a_data).neg().div(&b_sq), &self.b_shape);
         vec![grad_a, grad_b]
     }
-    fn inputs(&self) -> Vec<*mut MetalTensor> {
-        vec![self.a, self.b]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone(), self.b.clone()]
     }
 }
 
 /// べき乗の勾配 (a^b)
 pub struct PowBackward {
-    pub a: *mut MetalTensor,
+    pub a: TensorRef,
     pub a_data: MetalTensor,
     pub b_data: MetalTensor,
     pub output: MetalTensor,
@@ -89,14 +138,14 @@ impl GradFn for PowBackward {
         let grad_a = grad_output.mul(&self.b_data).mul(&self.a_data.pow(&b_minus_1));
         vec![grad_a]
     }
-    fn inputs(&self) -> Vec<*mut MetalTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
 /// sumall の勾配
 pub struct SumallBackward {
-    pub a: *mut MetalTensor,
+    pub a: TensorRef,
     pub shape: Vec<usize>,
 }
 
@@ -107,14 +156,14 @@ impl GradFn for SumallBackward {
         let grads = vec![grad_val; count];
         vec![MetalTensor::from_slice(&grads, &self.shape, grad_output.dtype())]
     }
-    fn inputs(&self) -> Vec<*mut MetalTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
 /// ReLU の勾配
 pub struct ReluBackward {
-    pub a: *mut MetalTensor,
+    pub a: TensorRef,
     pub a_data: MetalTensor,
 }
 
@@ -127,14 +176,14 @@ impl GradFn for ReluBackward {
             .collect();
         vec![MetalTensor::from_slice(&result, self.a_data.shape(), self.a_data.dtype())]
     }
-    fn inputs(&self) -> Vec<*mut MetalTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
 /// Softmax の勾配
 pub struct SoftmaxBackward {
-    pub a: *mut MetalTensor,
+    pub a: TensorRef,
     pub output: MetalTensor,
     pub axis: i32,
 }
@@ -169,15 +218,15 @@ impl GradFn for SoftmaxBackward {
             vec![MetalTensor::from_slice(&result, shape, self.output.dtype())]
         }
     }
-    fn inputs(&self) -> Vec<*mut MetalTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
 /// matmul の勾配
 pub struct MatmulBackward {
-    pub a: *mut MetalTensor,
-    pub b: *mut MetalTensor,
+    pub a: TensorRef,
+    pub b: TensorRef,
     pub a_data: MetalTensor,
     pub b_data: MetalTensor,
 }
@@ -188,14 +237,14 @@ impl GradFn for MatmulBackward {
         let grad_b = self.a_data.transpose_impl(0, 1).matmul_impl(grad_output);
         vec![grad_a, grad_b]
     }
-    fn inputs(&self) -> Vec<*mut MetalTensor> {
-        vec![self.a, self.b]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone(), self.b.clone()]
     }
 }
 
 /// sigmoid の勾配
 pub struct SigmoidBackward {
-    pub a: *mut MetalTensor,
+    pub a: TensorRef,
     pub output: MetalTensor,
 }
 
@@ -206,14 +255,14 @@ impl GradFn for SigmoidBackward {
         let grad = grad_output.mul(&self.output).mul(&one_minus_s);
         vec![grad]
     }
-    fn inputs(&self) -> Vec<*mut MetalTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
 /// exp の勾配
 pub struct ExpBackward {
-    pub a: *mut MetalTensor,
+    pub a: TensorRef,
     pub output: MetalTensor,
 }
 
@@ -221,14 +270,14 @@ impl GradFn for ExpBackward {
     fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
         vec![grad_output.mul(&self.output)]
     }
-    fn inputs(&self) -> Vec<*mut MetalTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
 /// log の勾配
 pub struct LogBackward {
-    pub a: *mut MetalTensor,
+    pub a: TensorRef,
     pub a_data: MetalTensor,
 }
 
@@ -236,25 +285,32 @@ impl GradFn for LogBackward {
     fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
         vec![grad_output.div(&self.a_data)]
     }
-    fn inputs(&self) -> Vec<*mut MetalTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
 /// sum(dim) の勾配
 pub struct SumDimBackward {
-    pub a: *mut MetalTensor,
+    pub a: TensorRef,
     pub input_shape: Vec<usize>,
     pub axis: i32,
 }
 
 impl GradFn for SumDimBackward {
     fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        let ndim = self.input_shape.len();
         let axis = if self.axis < 0 {
-            (self.input_shape.len() as i32 + self.axis) as usize
+            (ndim as i32 + self.axis) as usize
         } else {
             self.axis as usize
         };
+        if ndim == 0 || axis >= ndim {
+            let grad_val = grad_output.to_vec::<f32>().first().copied().unwrap_or(0.0);
+            let numel: usize = self.input_shape.iter().product::<usize>().max(1);
+            let result = vec![grad_val; numel];
+            return vec![MetalTensor::from_slice(&result, &self.input_shape, grad_output.dtype())];
+        }
         
         let grad_data: Vec<f32> = grad_output.to_vec();
         let numel: usize = self.input_shape.iter().product();
@@ -266,7 +322,8 @@ impl GradFn for SumDimBackward {
         
         for i in 0..outer_size {
             for k in 0..inner_size {
-                let grad_val = grad_data[i * inner_size + k];
+                let gi = i * inner_size + k;
+                let grad_val = if gi < grad_data.len() { grad_data[gi] } else { 0.0 };
                 for j in 0..axis_size {
                     result[i * axis_size * inner_size + j * inner_size + k] = grad_val;
                 }
@@ -275,12 +332,100 @@ impl GradFn for SumDimBackward {
         
         vec![MetalTensor::from_slice(&result, &self.input_shape, grad_output.dtype())]
     }
-    fn inputs(&self) -> Vec<*mut MetalTensor> {
-        vec![self.a]
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
     }
 }
 
-// unsafe impl Send/Sync for raw pointer types
+/// reshape の勾配
+pub struct ReshapeBackward {
+    pub input: TensorRef,
+    pub input_shape: Vec<usize>,
+}
+
+impl GradFn for ReshapeBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        vec![grad_output.reshape_impl(&self.input_shape)]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.input.clone()]
+    }
+}
+
+/// 符号反転の勾配 (-t) -> grad_t = -grad_output
+pub struct NegBackward {
+    pub a: TensorRef,
+}
+
+impl GradFn for NegBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        vec![grad_output.neg()]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
+    }
+}
+
+/// スカラ加算の勾配 (t + s) -> grad_t = grad_output
+pub struct AddScalarBackward {
+    pub a: TensorRef,
+}
+
+impl GradFn for AddScalarBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        vec![grad_output.shallow_clone()]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
+    }
+}
+
+/// スカラ減算の勾配 (t - s) -> grad_t = grad_output
+pub struct SubScalarBackward {
+    pub a: TensorRef,
+}
+
+impl GradFn for SubScalarBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        vec![grad_output.shallow_clone()]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
+    }
+}
+
+/// スカラ乗算の勾配 (t * s) -> grad_t = grad_output * s
+pub struct MulScalarBackward {
+    pub a: TensorRef,
+    pub s: f32,
+}
+
+impl GradFn for MulScalarBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        vec![grad_output.mul_scalar_impl(self.s)]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
+    }
+}
+
+/// スカラ除算の勾配 (t / s) -> grad_t = grad_output / s
+pub struct DivScalarBackward {
+    pub a: TensorRef,
+    pub s: f32,
+}
+
+impl GradFn for DivScalarBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
+        vec![grad_output.div_scalar_impl(self.s)]
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
+    }
+}
+
+// TensorRef は Arc<UnsafeCell<MetalTensor>> なので Send/Sync を手動実装
+// Metal 版はシングルスレッドなので安全
 unsafe impl Send for AddBackward {}
 unsafe impl Sync for AddBackward {}
 unsafe impl Send for SubBackward {}
@@ -307,3 +452,15 @@ unsafe impl Send for LogBackward {}
 unsafe impl Sync for LogBackward {}
 unsafe impl Send for SumDimBackward {}
 unsafe impl Sync for SumDimBackward {}
+unsafe impl Send for ReshapeBackward {}
+unsafe impl Sync for ReshapeBackward {}
+unsafe impl Send for NegBackward {}
+unsafe impl Sync for NegBackward {}
+unsafe impl Send for AddScalarBackward {}
+unsafe impl Sync for AddScalarBackward {}
+unsafe impl Send for SubScalarBackward {}
+unsafe impl Sync for SubScalarBackward {}
+unsafe impl Send for MulScalarBackward {}
+unsafe impl Sync for MulScalarBackward {}
+unsafe impl Send for DivScalarBackward {}
+unsafe impl Sync for DivScalarBackward {}

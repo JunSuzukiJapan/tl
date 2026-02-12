@@ -5,8 +5,35 @@ use crate::device::{get_device, MetalDevice};
 use crate::{shape_to_bytes, DType};
 use crate::autograd::GradFn;
 use metal::{Buffer, MTLResourceOptions};
+use std::cell::UnsafeCell;
 use std::sync::Arc;
 use tl_backend::GpuOps;
+
+/// Arc ベースのテンソル参照（V5.0 メモリ管理）
+/// GradFn 内で入力テンソルの生存を保証する。
+pub type TensorRef = Arc<UnsafeCell<MetalTensor>>;
+
+/// 生ポインタから TensorRef を取得する（RC+1）。
+/// FFI 境界で `*mut MetalTensor` を Autograd 用の `TensorRef` に変換する際に使用。
+/// ポインタは `Arc::into_raw` で作成されたものでなければならない。
+pub unsafe fn tensor_ref_from_ptr(ptr: *mut MetalTensor) -> TensorRef {
+    let arc: TensorRef = Arc::from_raw(ptr as *const UnsafeCell<MetalTensor>);
+    let cloned = arc.clone(); // RC+1
+    std::mem::forget(arc);    // 元のポインタは生かす
+    cloned
+}
+
+/// TensorRef から内部の MetalTensor への不変参照を取得する。
+#[inline]
+pub unsafe fn tensor_ref_get(r: &TensorRef) -> &MetalTensor {
+    &*r.get()
+}
+
+/// TensorRef から内部の MetalTensor への可変参照を取得する。
+#[inline]
+pub unsafe fn tensor_ref_get_mut(r: &TensorRef) -> &mut MetalTensor {
+    &mut *r.get()
+}
 
 /// Autograd メタデータ
 pub struct AutogradMeta {
@@ -240,6 +267,7 @@ impl MetalTensor {
     }
 
     /// backward（逆伝播）— ワークリスト方式（スタックオーバーフロー防止）
+    /// TensorRef (Arc) ベースで入力テンソルの生存を保証。
     pub fn backward(&mut self) {
         if !self.requires_grad() {
             return; // extern "C" から呼ばれるため assert ではなく早期 return
@@ -249,7 +277,9 @@ impl MetalTensor {
         let ones = MetalTensor::ones(self.shape(), self.dtype());
         let self_ptr = self as *mut MetalTensor;
 
-        // ワークリスト: (テンソルポインタ, 出力勾配)
+        // ワークリスト: (テンソル生ポインタ, 出力勾配)
+        // 注意: self_ptr はスタック上の参照であり Arc 管理外。
+        // 後続の入力ポインタは TensorRef (Arc) から取得するため安全。
         let mut worklist: Vec<(*mut MetalTensor, MetalTensor)> = vec![(self_ptr, ones)];
 
         while let Some((tensor_ptr, grad_output)) = worklist.pop() {
@@ -278,7 +308,9 @@ impl MetalTensor {
             };
 
             if let Some((grads, inputs)) = propagation {
-                for (input_ptr, grad) in inputs.into_iter().zip(grads.into_iter()) {
+                for (input_ref, grad) in inputs.into_iter().zip(grads.into_iter()) {
+                    // TensorRef (Arc) から生ポインタを取得
+                    let input_ptr = input_ref.get() as *mut MetalTensor;
                     let input = unsafe { &*input_ptr };
                     if input.requires_grad() {
                         worklist.push((input_ptr, grad));

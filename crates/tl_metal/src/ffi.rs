@@ -5,14 +5,17 @@
 
 use crate::tensor::MetalTensor;
 
+use std::cell::UnsafeCell;
 use std::ffi::c_void;
+use std::sync::Arc;
 
 // OpaqueTensor は MetalTensor のエイリアスとして扱う
 type OpaqueTensor = MetalTensor;
 
-/// テンソルをヒープに確保してポインタを返す
+/// テンソルを Arc で包んでポインタを返す（V5.0 メモリ管理）
 fn make_tensor(t: MetalTensor) -> *mut OpaqueTensor {
-    Box::into_raw(Box::new(t))
+    let arc = Arc::new(UnsafeCell::new(t));
+    Arc::into_raw(arc) as *mut OpaqueTensor
 }
 
 #[no_mangle]
@@ -25,7 +28,8 @@ pub extern "C" fn tl_metal_clone(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 #[no_mangle]
 pub extern "C" fn tl_metal_release(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
-    unsafe { let _ = Box::from_raw(t); }
+    // Arc::from_raw で復元し drop。RC-1、RC=0 で MetalTensor が Drop される。
+    unsafe { let _ = Arc::from_raw(t as *const UnsafeCell<MetalTensor>); }
 }
 
 #[no_mangle]

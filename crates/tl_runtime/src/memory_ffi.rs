@@ -110,16 +110,14 @@ pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::
 }
 
 /// テンソル解放（Arc ベース）
-/// Arc の参照カウントを -1 する。RC=0 になれば CpuTensor（autograd グラフ含む）が
+/// Arc の参照カウントを -1 する。RC=0 になれば Tensor（autograd グラフ含む）が
 /// 自然に Drop される。
-/// CPU バックエンド: Arc::from_raw で復元し drop で RC-1。
-/// Metal バックエンド: No-op（MetalTensor の Drop で GPU バッファをプールに返却）。
+/// CPU/Metal 共通: Arc::from_raw で復元し drop で RC-1。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_release_safe(t: *mut crate::OpaqueTensor) {
     if t.is_null() { return; }
-    // Metal バックエンド: Box::from_raw で drop (tl_metal::ffi::tl_tensor_release と同等)
-    // CPU バックエンドへの分岐は廃止 (tl_cpu 側で独立して管理)
-    unsafe { let _ = Box::from_raw(t); }
+    // Arc<UnsafeCell<T>> として from_raw → drop → RC-1
+    unsafe { let _ = std::sync::Arc::from_raw(t as *const std::cell::UnsafeCell<crate::OpaqueTensor>); }
 }
 
 /// テンソルファイナライズ（No-op: exit_scope で一括処理）
