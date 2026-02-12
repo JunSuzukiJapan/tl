@@ -21,6 +21,8 @@ pub enum GGMLType {
     Unknown,
 }
 
+use std::sync::Mutex;
+
 /// Quantized Tensor Structure
 /// Holds raw data and metadata.
 #[derive(Debug)]
@@ -28,11 +30,46 @@ pub struct QTensor {
     pub data: Vec<u8>,
     pub shape: Vec<usize>,
     pub ggml_type: GGMLType,
+    /// Cache for dequantized tensor (on device)
+    /// Stored as usize to allow Send/Sync (raw pointers are not Send/Sync)
+    /// The cached tensor is owned by QTensor and will be freed when QTensor is dropped.
+    pub cache: Mutex<Option<usize>>,
+}
+
+impl Drop for QTensor {
+    fn drop(&mut self) {
+        if let Ok(mut cache_guard) = self.cache.lock() {
+            if let Some(ptr_val) = *cache_guard {
+                if ptr_val != 0 {
+                    // Free the cached tensor
+                    // Check if CPU or Metal based on TL_DEVICE env var at creation time?
+                    // Or just use runtime's free function?
+                    // Since specific backend free is not easily accessible here without knowing device,
+                    // we assume the same environment.
+                    // For now, we will just use the appropriate free function based on current env.
+                    // Ideally QTensor should know which device it cached for.
+                    let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
+                    unsafe {
+                        if is_cpu {
+                            let _ = Box::from_raw(ptr_val as *mut tl_cpu::CpuTensor);
+                        } else {
+                            tl_metal::ffi_ops::tl_metal_free(ptr_val as *mut tl_metal::OpaqueTensor);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl QTensor {
     pub fn new(data: Vec<u8>, shape: Vec<usize>, ggml_type: GGMLType) -> Self {
-        Self { data, shape, ggml_type }
+        Self { 
+            data, 
+            shape, 
+            ggml_type,
+            cache: Mutex::new(None),
+        }
     }
 
     /// Dequantize to F32 data vector
@@ -62,19 +99,39 @@ impl QTensor {
     }
 
     /// Dequantize to OpaqueTensor (CPU/GPU auto-detect)
+    /// Uses internal cache to avoid re-dequantizing
     pub fn dequantize_to_tensor(&self) -> Result<*mut crate::OpaqueTensor, String> {
-        let f32_data = self.dequantize_to_f32()?;
-        let shape = self.shape.clone();
-        let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
-        if is_cpu {
-            Ok(tl_cpu::ffi::tl_cpu_tensor_new(
-                f32_data.as_ptr(), shape.len(), shape.as_ptr()
-            ) as *mut crate::OpaqueTensor)
-        } else {
-            Ok(tl_metal::ffi_ops::tl_metal_new(
-                f32_data.as_ptr(), shape.len(), shape.as_ptr()
-            ))
+        // Check cache first
+        if let Ok(mut cache_guard) = self.cache.lock() {
+            if let Some(ptr_val) = *cache_guard {
+                return Ok(ptr_val as *mut crate::OpaqueTensor);
+            }
+        
+            // Cache miss, perform dequantization
+            let f32_data = self.dequantize_to_f32()?;
+            let shape = self.shape.clone();
+            let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
+            
+            let tensor_ptr = if is_cpu {
+                // tl_cpu::ffi::tl_cpu_tensor_new is extern "C" so it is unsafe
+                unsafe {
+                    tl_cpu::ffi::tl_cpu_tensor_new(
+                        f32_data.as_ptr(), shape.len(), shape.as_ptr()
+                    ) as *mut crate::OpaqueTensor
+                }
+            } else {
+                // tl_metal_new is a safe Rust function wrapper
+                tl_metal::ffi_ops::tl_metal_new(
+                    f32_data.as_ptr(), shape.len(), shape.as_ptr()
+                )
+            };
+            
+            // Store in cache
+            *cache_guard = Some(tensor_ptr as usize);
+            return Ok(tensor_ptr);
         }
+        
+        Err("Failed to acquire QTensor cache lock".to_string())
     }
 
     fn dequantize_f16(&self) -> Result<Vec<f32>, String> {

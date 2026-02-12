@@ -26,6 +26,7 @@ pub extern "C" fn tl_system_time() -> i64 {
 /// 標準入力から行を読み込み
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_read_line() -> *mut StringStruct {
+    let _ = std::io::stdout().flush();
     let mut input = String::new();
     match std::io::stdin().read_line(&mut input) {
         Ok(_) => {

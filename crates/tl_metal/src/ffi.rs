@@ -10,7 +10,7 @@ use std::ffi::c_void;
 use std::sync::Arc;
 
 // OpaqueTensor は MetalTensor のエイリアスとして扱う
-type OpaqueTensor = MetalTensor;
+pub type OpaqueTensor = MetalTensor;
 
 /// テンソルを Arc で包んでポインタを返す（V5.0 メモリ管理）
 fn make_tensor(t: MetalTensor) -> *mut OpaqueTensor {

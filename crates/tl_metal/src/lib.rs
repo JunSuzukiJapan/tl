@@ -23,6 +23,7 @@ pub use optim::{SGD, Adam, AdamW, clip_grad_norm};
 
 // Re-export tl_backend traits
 pub use tl_backend::GpuTensor;
+pub use ffi::OpaqueTensor;
 
 /// データ型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
