@@ -16,6 +16,7 @@ pub enum GGMLType {
     Q5_1,
     Q8_0,
     Q8_1,
+    Q4_K,
     Q6_K,
     Unknown,
 }
@@ -54,6 +55,7 @@ impl QTensor {
             GGMLType::F16 => self.dequantize_f16(),
             GGMLType::Q4_0 => self.dequantize_q4_0(),
             GGMLType::Q8_0 => self.dequantize_q8_0(),
+            GGMLType::Q4_K => self.dequantize_q4_k(),
             GGMLType::Q6_K => self.dequantize_q6_k(),
             _ => Err(format!("Unsupported quantization type: {:?}", self.ggml_type)),
         }
@@ -235,6 +237,92 @@ impl QTensor {
         }
 
         Ok(out)
+    }
+
+    /// Dequantize Q4_K: 4-bit K-quant with scales and mins (llama.cpp reference implementation)
+    /// Block layout (QK_K=256 weights per block, 144 bytes per block):
+    ///   d (f16)      - super-block scale for quantized scales
+    ///   dmin (f16)   - super-block scale for quantized mins
+    ///   scales[12]   - scales and mins, quantized with 6 bits
+    ///   qs[128]      - 4-bit quants (QK_K/2)
+    fn dequantize_q4_k(&self) -> Result<Vec<f32>, String> {
+        const QK_K: usize = 256;
+        const BLOCK_SIZE: usize = 2 + 2 + 12 + QK_K / 2; // 2 (d) + 2 (dmin) + 12 (scales) + 128 (qs) = 144
+        let num_elements: usize = self.shape.iter().product();
+
+        if num_elements % QK_K != 0 {
+            return Err(format!("Q4_K: num_elements {} not multiple of {}", num_elements, QK_K));
+        }
+        let num_blocks = num_elements / QK_K;
+
+        if self.data.len() != num_blocks * BLOCK_SIZE {
+            return Err(format!(
+                "Q4_K data size mismatch: expected {}, got {}",
+                num_blocks * BLOCK_SIZE, self.data.len()
+            ));
+        }
+
+        let mut out = vec![0.0f32; num_elements];
+
+        for block_idx in 0..num_blocks {
+            let base = block_idx * BLOCK_SIZE;
+
+            // Read d and dmin (f16)
+            let d = f16::from_le_bytes([self.data[base], self.data[base + 1]]).to_f32();
+            let dmin = f16::from_le_bytes([self.data[base + 2], self.data[base + 3]]).to_f32();
+
+            // scales start at base + 4, 12 bytes
+            let scales_off = base + 4;
+            // qs start at base + 16, 128 bytes
+            let qs_off = base + 16;
+
+            let y_base = block_idx * QK_K;
+            let mut is: usize = 0;
+            let mut q_ptr: usize = qs_off;
+
+            // Process 256 weights in 4 groups of 64
+            let mut j: usize = 0;
+            while j < QK_K {
+                // get_scale_min_k4(is + 0)
+                let (sc1, m1) = Self::get_scale_min_k4(is, &self.data[scales_off..scales_off + 12]);
+                let d1 = d * sc1 as f32;
+                let min1 = dmin * m1 as f32;
+
+                // get_scale_min_k4(is + 1)
+                let (sc2, m2) = Self::get_scale_min_k4(is + 1, &self.data[scales_off..scales_off + 12]);
+                let d2 = d * sc2 as f32;
+                let min2 = dmin * m2 as f32;
+
+                // Low nibble: 32 weights
+                for l in 0..32 {
+                    out[y_base + j + l] = d1 * (self.data[q_ptr + l] & 0xF) as f32 - min1;
+                }
+                // High nibble: 32 weights
+                for l in 0..32 {
+                    out[y_base + j + 32 + l] = d2 * (self.data[q_ptr + l] >> 4) as f32 - min2;
+                }
+
+                q_ptr += 32;
+                is += 2;
+                j += 64;
+            }
+        }
+
+        Ok(out)
+    }
+
+    /// Helper: extract scale and min from Q4_K scales array
+    /// Mirrors llama.cpp's get_scale_min_k4()
+    fn get_scale_min_k4(j: usize, scales: &[u8]) -> (u8, u8) {
+        if j < 4 {
+            let sc = scales[j] & 63;
+            let m = scales[j + 4] & 63;
+            (sc, m)
+        } else {
+            let sc = (scales[j + 4] & 0xF) | ((scales[j - 4] >> 6) << 4);
+            let m = (scales[j + 4] >> 4) | ((scales[j] >> 6) << 4);
+            (sc, m)
+        }
     }
 }
 
