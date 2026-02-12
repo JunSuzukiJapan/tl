@@ -1080,6 +1080,22 @@ pub extern "C" fn tl_cpu_tensor_new_causal_mask(size: usize) -> *mut OpaqueTenso
     make_tensor(CpuTensor { data_f32: data, data_i64: None, shape: vec![size, size], dtype: DType::F32, autograd: None })
 }
 
+pub extern "C" fn tl_cpu_tensor_from_vec_u8(data: *mut std::ffi::c_void, len: i64) -> *mut OpaqueTensor {
+    if data.is_null() { return std::ptr::null_mut(); }
+    let vec = unsafe { &*(data as *mut Vec<u8>) };
+    let f32_data: Vec<f32> = vec.iter().map(|&b| b as f32).collect();
+    let shape = vec![len as usize];
+    make_tensor(CpuTensor { data_f32: f32_data, data_i64: None, shape, dtype: DType::F32, autograd: None })
+}
+
+pub extern "C" fn tl_cpu_tensor_from_u8_labels(data: *const u8, len: i64) -> *mut OpaqueTensor {
+    if data.is_null() { return std::ptr::null_mut(); }
+    let slice = unsafe { std::slice::from_raw_parts(data, len as usize) };
+    let f32_data: Vec<f32> = slice.iter().map(|&b| b as f32).collect();
+    let shape = vec![len as usize];
+    make_tensor(CpuTensor { data_f32: f32_data, data_i64: None, shape, dtype: DType::F32, autograd: None })
+}
+
 pub extern "C" fn tl_cpu_tensor_matmul_4d(
     a: *mut OpaqueTensor,
     b: *mut OpaqueTensor,

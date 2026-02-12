@@ -7,7 +7,7 @@ use tl_metal::{MetalTensor, DType};
 
 // tensor_ops_ext からの re-export
 // tensor_ops_ext からの re-export
-pub use crate::tl_tensor_silu;
+pub use crate::tl_metal_silu;
 
 // system からの kv_cache 関数を re-export
 pub use crate::system::{
@@ -25,9 +25,9 @@ pub use crate::tokenizer::{
 
 // tensor_ops_ext から LLM 関連関数を re-export (silu は lib.rs でエクスポート済み)
 pub use crate::{
-    tl_tensor_rms_norm, 
-    tl_tensor_sample,
-    tl_tensor_rope_new_cos, tl_tensor_rope_new_sin, tl_tensor_apply_rope,
+    tl_metal_rms_norm, 
+    tl_metal_sample,
+    tl_metal_rope_new_cos, tl_metal_rope_new_sin, tl_metal_apply_rope,
 };
 
 // tensor_cat は lib.rs で定義済み - llm モジュールからは呼び出しラッパー
@@ -35,17 +35,17 @@ pub use crate::{
 /// tensor_cat2 - 2 テンソル連結（dim=0）
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_cat2(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    crate::tl_tensor_cat(a, b, 0)
+    crate::tl_metal_cat(a, b, 0)
 }
 
 /// tensor_cat_4d - 4D テンソル連結
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_cat_4d(a: *mut OpaqueTensor, b: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
-    crate::tl_tensor_cat(a, b, dim)
+    crate::tl_metal_cat(a, b, dim)
 }
 
-// tl_tensor_cat を lib.rs から re-export
-pub use crate::tl_tensor_cat;
+// tl_metal_cat を lib.rs から re-export
+pub use crate::tl_metal_cat;
 
 
 

@@ -80,7 +80,10 @@ fn check_missing_runtime_functions() {
             continue;
         }
         
-        if !provided_funcs.contains(req) {
+        // LLVM IR シンボル名 tl_tensor_* はランタイムで tl_metal_* にリネーム済み
+        // 両方のパターンで検索する
+        let metal_name = req.replace("tl_tensor_", "tl_metal_");
+        if !provided_funcs.contains(req) && !provided_funcs.contains(&metal_name) {
             missing_funcs.push(req.clone());
         }
     }

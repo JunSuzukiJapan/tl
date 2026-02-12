@@ -20,21 +20,21 @@ fn make_tensor(t: MetalTensor) -> *mut OpaqueTensor {
 // ========== 型変換 ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_to_f32(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_to_f32(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
     make_tensor(tensor.to_dtype(DType::F32))
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_to_i64(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_to_i64(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
     make_tensor(tensor.to_dtype(DType::I64))
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_to_device(t: *mut OpaqueTensor, _device_id: i32) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_to_device(t: *mut OpaqueTensor, _device_id: i32) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
     // Metalバックエンド内でのデバイス移動は現状ないため、クローンを返す
@@ -44,38 +44,38 @@ pub extern "C" fn tl_tensor_to_device(t: *mut OpaqueTensor, _device_id: i32) -> 
 // ========== 活性化関数 ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_tan(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_tan(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).tan()) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_tanh(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_tanh(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).tanh()) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_sigmoid(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_sigmoid(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).sigmoid()) }
 }
 
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_argmax(t: *mut OpaqueTensor, dim: i64, _keepdim: bool) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_argmax(t: *mut OpaqueTensor, dim: i64, _keepdim: bool) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).argmax((dim as usize).try_into().unwrap())) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_gelu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_gelu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).gelu()) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_silu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_silu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     // silu = x * sigmoid(x)
     let tensor = unsafe { &*t };
@@ -83,31 +83,31 @@ pub extern "C" fn tl_tensor_silu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_relu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_relu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).relu()) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_exp(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_exp(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).exp()) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_log(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_log(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).log()) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_sin(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_sin(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).sin()) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_cos(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_cos(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).cos()) }
 }
@@ -115,31 +115,31 @@ pub extern "C" fn tl_tensor_cos(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 // ========== リダクション ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_max_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_max_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).max((dim as usize).try_into().unwrap())) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_min_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_min_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).min((dim as usize).try_into().unwrap())) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_mean_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_mean_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).mean((dim as usize).try_into().unwrap())) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_sum_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_sum_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).sum((dim as usize).try_into().unwrap())) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_max(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_max(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     // GpuOps doesn't have max_all either.
     let t_ref = unsafe { &*t };
@@ -148,7 +148,7 @@ pub extern "C" fn tl_tensor_max(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_min(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_min(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     // GpuOps doesn't have min_all. flatten and min(0).
     let t_ref = unsafe { &*t };
@@ -157,25 +157,25 @@ pub extern "C" fn tl_tensor_min(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_mean(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_mean(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor(MetalTensor::from_slice(&[(&*t).mean_all()], &[1], DType::F32)) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_sum(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_sum(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor(MetalTensor::from_slice(&[(&*t).sumall()], &[1], DType::F32)) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_argmin(t: *mut OpaqueTensor, dim: i64, _keepdim: bool) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_argmin(t: *mut OpaqueTensor, dim: i64, _keepdim: bool) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).argmin((dim as usize).try_into().unwrap())) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_softmax(t: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_softmax(t: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).softmax((dim as usize).try_into().unwrap())) }
 }
@@ -183,7 +183,7 @@ pub extern "C" fn tl_tensor_softmax(t: *mut OpaqueTensor, dim: i64) -> *mut Opaq
 // ========== 畳み込み / NN ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_conv2d(
+pub extern "C" fn tl_metal_conv2d(
     input: *mut OpaqueTensor,
     weight: *mut OpaqueTensor,
     bias: *mut OpaqueTensor,
@@ -204,7 +204,7 @@ pub extern "C" fn tl_tensor_conv2d(
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_batch_norm(
+pub extern "C" fn tl_metal_batch_norm(
     input: *mut OpaqueTensor,
     running_mean: *mut OpaqueTensor,
     running_var: *mut OpaqueTensor,
@@ -236,7 +236,7 @@ pub extern "C" fn tl_tensor_batch_norm(
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_layer_norm(
+pub extern "C" fn tl_metal_layer_norm(
     input: *mut OpaqueTensor,
     weight: *mut OpaqueTensor,
     bias: *mut OpaqueTensor,
@@ -264,7 +264,7 @@ pub extern "C" fn tl_tensor_layer_norm(
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_max_pool2d(
+pub extern "C" fn tl_metal_max_pool2d(
     input: *mut OpaqueTensor,
     kernel_size: usize,
     stride: usize,
@@ -275,7 +275,7 @@ pub extern "C" fn tl_tensor_max_pool2d(
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_avg_pool2d(
+pub extern "C" fn tl_metal_avg_pool2d(
     input: *mut OpaqueTensor,
     kernel_size: usize,
     stride: usize,
@@ -286,7 +286,7 @@ pub extern "C" fn tl_tensor_avg_pool2d(
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_dropout(
+pub extern "C" fn tl_metal_dropout(
     input: *mut OpaqueTensor,
     p: f64,
     training: bool,
@@ -296,7 +296,7 @@ pub extern "C" fn tl_tensor_dropout(
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_embedding(
+pub extern "C" fn tl_metal_embedding(
     weight: *mut OpaqueTensor,
     indices: *mut OpaqueTensor,
     _padding_idx: i64,
@@ -309,7 +309,7 @@ pub extern "C" fn tl_tensor_embedding(
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_cross_entropy(
+pub extern "C" fn tl_metal_cross_entropy(
     logits: *mut OpaqueTensor,
     labels: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
@@ -319,7 +319,7 @@ pub extern "C" fn tl_tensor_cross_entropy(
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_rms_norm(
+pub extern "C" fn tl_metal_rms_norm(
     input: *mut OpaqueTensor,
     weight: *mut OpaqueTensor,
     eps: f32,
@@ -338,32 +338,32 @@ pub extern "C" fn tl_tensor_rms_norm(
 // ========== Math / Misc ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_sqrt(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_sqrt(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).sqrt()) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_pow(t: *mut OpaqueTensor, exp: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_pow(t: *mut OpaqueTensor, exp: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() || exp.is_null() { return std::ptr::null_mut(); }
     let (a, b) = unsafe { (&*t, &*exp) };
     make_tensor(a.pow(b))
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_sub_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_sub_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).add_scalar(-(s as f32))) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_tril(t: *mut OpaqueTensor, diagonal: i64) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_tril(t: *mut OpaqueTensor, diagonal: i64) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).tril(diagonal as i32)) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_get(t: *mut OpaqueTensor, idx: i64) -> f32 {
+pub extern "C" fn tl_metal_get(t: *mut OpaqueTensor, idx: i64) -> f32 {
     if t.is_null() { return 0.0; }
     let tensor = unsafe { &*t };
     let vec: Vec<f32> = tensor.to_vec();
@@ -371,7 +371,7 @@ pub extern "C" fn tl_tensor_get(t: *mut OpaqueTensor, idx: i64) -> f32 {
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_item(t: *mut OpaqueTensor) -> f32 {
+pub extern "C" fn tl_metal_item(t: *mut OpaqueTensor) -> f32 {
     if t.is_null() { return 0.0; }
     let tensor = unsafe { &*t };
     let vec: Vec<f32> = tensor.to_vec();
@@ -379,7 +379,7 @@ pub extern "C" fn tl_tensor_item(t: *mut OpaqueTensor) -> f32 {
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_get_f32_md(t: *mut OpaqueTensor, idx0: i64, idx1: i64) -> f32 {
+pub extern "C" fn tl_metal_get_f32_md(t: *mut OpaqueTensor, idx0: i64, idx1: i64) -> f32 {
     if t.is_null() { return 0.0; }
     let tensor = unsafe { &*t };
     let shape = tensor.shape();
@@ -393,12 +393,12 @@ pub extern "C" fn tl_tensor_get_f32_md(t: *mut OpaqueTensor, idx0: i64, idx1: i6
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_get_i64_md(t: *mut OpaqueTensor, idx0: i64, idx1: i64) -> i64 {
-    tl_tensor_get_f32_md(t, idx0, idx1) as i64
+pub extern "C" fn tl_metal_get_i64_md(t: *mut OpaqueTensor, idx0: i64, idx1: i64) -> i64 {
+    tl_metal_get_f32_md(t, idx0, idx1) as i64
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_set_f32_md(
+pub extern "C" fn tl_metal_set_f32_md(
     t: *mut OpaqueTensor,
     indices: *const i64,
     rank: usize,
@@ -438,7 +438,7 @@ pub extern "C" fn tl_tensor_set_f32_md(
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_from_vec_u8(data: *mut std::ffi::c_void, len: i64) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_from_vec_u8(data: *mut std::ffi::c_void, len: i64) -> *mut OpaqueTensor {
      if data.is_null() { return std::ptr::null_mut(); }
      // data は *mut Vec<u8> と仮定
      let vec = unsafe { &*(data as *mut Vec<u8>) };
@@ -448,7 +448,7 @@ pub extern "C" fn tl_tensor_from_vec_u8(data: *mut std::ffi::c_void, len: i64) -
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_from_u8_labels(data: *const u8, len: i64) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_from_u8_labels(data: *const u8, len: i64) -> *mut OpaqueTensor {
     if data.is_null() { return std::ptr::null_mut(); }
     let slice = unsafe { std::slice::from_raw_parts(data, len as usize) };
     let f32_data: Vec<f32> = slice.iter().map(|&b| b as f32).collect();
@@ -457,7 +457,7 @@ pub extern "C" fn tl_tensor_from_u8_labels(data: *const u8, len: i64) -> *mut Op
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_from_i64_array(data: *const i64, len: i64) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_from_i64_array(data: *const i64, len: i64) -> *mut OpaqueTensor {
     if data.is_null() { return std::ptr::null_mut(); }
     let slice = unsafe { std::slice::from_raw_parts(data, len as usize) };
     let f32_data: Vec<f32> = slice.iter().map(|&v| v as f32).collect();
@@ -466,7 +466,7 @@ pub extern "C" fn tl_tensor_from_i64_array(data: *const i64, len: i64) -> *mut O
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_cat(a: *mut OpaqueTensor, b: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_cat(a: *mut OpaqueTensor, b: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
     if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
     let (ta, tb) = unsafe { (&*a, &*b) };
     make_tensor(MetalTensor::cat_impl(&[ta, tb], dim as usize))
@@ -477,13 +477,13 @@ pub extern "C" fn tl_tensor_cat(a: *mut OpaqueTensor, b: *mut OpaqueTensor, dim:
 // ========== Misc 2 ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_repeat_interleave(t: *mut OpaqueTensor, repeats: usize, dim: usize) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_repeat_interleave(t: *mut OpaqueTensor, repeats: usize, dim: usize) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).repeat_interleave(repeats, dim)) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_sample(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_sample(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     // unsafe { make_tensor((&*t).multinomial(1, true)) }
     // multinomial未実装のためstub
@@ -491,37 +491,37 @@ pub extern "C" fn tl_tensor_sample(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_scale(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_scale(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).mul_scalar(s as f32)) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_clamp(t: *mut OpaqueTensor, min: f64, max: f64) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_clamp(t: *mut OpaqueTensor, min: f64, max: f64) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).clamp(min as f32, max as f32)) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_transpose(t: *mut OpaqueTensor, dim0: usize, dim1: usize) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_transpose(t: *mut OpaqueTensor, dim0: usize, dim1: usize) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).transpose(dim0, dim1)) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_matmul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_matmul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*a).matmul(&*b)) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_contiguous(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_contiguous(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).clone()) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_replace_data(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
+pub extern "C" fn tl_metal_replace_data(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
     if a.is_null() || b.is_null() { return; }
     unsafe {
         *a = (&*b).clone();
@@ -531,18 +531,18 @@ pub extern "C" fn tl_tensor_replace_data(a: *mut OpaqueTensor, b: *mut OpaqueTen
 // ========== Device/Grad ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_device_id(_t: *mut OpaqueTensor) -> i32 {
+pub extern "C" fn tl_metal_device_id(_t: *mut OpaqueTensor) -> i32 {
     0 // GPU
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_backward(t: *mut OpaqueTensor) {
+pub extern "C" fn tl_metal_backward(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
     unsafe { (&mut *t).backward(); }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
     if let Some(grad) = tensor.get_grad() {
@@ -553,13 +553,13 @@ pub extern "C" fn tl_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_detach(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_detach(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).detach()) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_enable_grad(t: *mut OpaqueTensor) {
+pub extern "C" fn tl_metal_enable_grad(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
     unsafe { (&mut *t).enable_grad(); }
 }
@@ -567,7 +567,7 @@ pub extern "C" fn tl_tensor_enable_grad(t: *mut OpaqueTensor) {
 // ========== RoPE ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_rope_new_cos(
+pub extern "C" fn tl_metal_rope_new_cos(
     head_dim: usize, max_seq: usize, freq_base: f32,
 ) -> *mut OpaqueTensor {
     let (cos, _) = MetalTensor::rope_cos_sin_impl(max_seq, head_dim, freq_base);
@@ -575,7 +575,7 @@ pub extern "C" fn tl_tensor_rope_new_cos(
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_rope_new_sin(
+pub extern "C" fn tl_metal_rope_new_sin(
     head_dim: usize, max_seq: usize, freq_base: f32,
 ) -> *mut OpaqueTensor {
     let (_, sin) = MetalTensor::rope_cos_sin_impl(max_seq, head_dim, freq_base);
@@ -583,7 +583,7 @@ pub extern "C" fn tl_tensor_rope_new_sin(
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_apply_rope(
+pub extern "C" fn tl_metal_apply_rope(
     q: *mut OpaqueTensor,
     k: *mut OpaqueTensor,
     cos: *mut OpaqueTensor,
@@ -608,25 +608,25 @@ pub extern "C" fn tl_tensor_apply_rope(
 // ========== Mask ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_new_causal_mask(size: usize) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_new_causal_mask(size: usize) -> *mut OpaqueTensor {
     make_tensor(MetalTensor::causal_mask_impl(size))
 }
 
 // ========== Narrow / Slice ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_narrow(t: *mut OpaqueTensor, dim: usize, start: usize, len: usize) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_narrow(t: *mut OpaqueTensor, dim: usize, start: usize, len: usize) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     unsafe { make_tensor((&*t).narrow(dim, start, len)) }
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_slice(t: *mut OpaqueTensor, dim: usize, start: usize, len: usize) -> *mut OpaqueTensor {
-    tl_tensor_narrow(t, dim, start, len)
+pub extern "C" fn tl_metal_slice(t: *mut OpaqueTensor, dim: usize, start: usize, len: usize) -> *mut OpaqueTensor {
+    tl_metal_narrow(t, dim, start, len)
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_reshape(t: *mut OpaqueTensor, dims: *const i64, num_dims: usize) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_reshape(t: *mut OpaqueTensor, dims: *const i64, num_dims: usize) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let dims_slice = unsafe { std::slice::from_raw_parts(dims, num_dims) };
     let dims_usize: Vec<usize> = dims_slice.iter().map(|&d| d as usize).collect();
@@ -636,7 +636,7 @@ pub extern "C" fn tl_tensor_reshape(t: *mut OpaqueTensor, dims: *const i64, num_
 // ========== テンソル作成 ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_new(
+pub extern "C" fn tl_metal_new(
     data: *const f32,
     rank: usize,
     shape: *const usize,
@@ -653,7 +653,7 @@ pub extern "C" fn tl_tensor_new(
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_new_i64(
+pub extern "C" fn tl_metal_new_i64(
     data: *const i64,
     rank: usize,
     shape: *const usize,
@@ -671,7 +671,7 @@ pub extern "C" fn tl_tensor_new_i64(
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_zeros(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_zeros(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor {
     if shape.is_null() {
         return std::ptr::null_mut();
     }
@@ -686,7 +686,7 @@ pub extern "C" fn tl_tensor_zeros(rank: usize, shape: *const usize, req_grad: bo
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_ones(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_ones(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor {
     if shape.is_null() {
         return std::ptr::null_mut();
     }
@@ -701,7 +701,7 @@ pub extern "C" fn tl_tensor_ones(rank: usize, shape: *const usize, req_grad: boo
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_randn(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_randn(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor {
     if shape.is_null() {
         return std::ptr::null_mut();
     }
@@ -716,17 +716,17 @@ pub extern "C" fn tl_tensor_randn(rank: usize, shape: *const usize, req_grad: bo
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_randn_debug(
+pub extern "C" fn tl_metal_randn_debug(
     rank: usize, 
     shape: *const usize, 
     _seed: u64,
     _req_grad: bool,
 ) -> *mut OpaqueTensor {
-    tl_tensor_randn(rank, shape, _req_grad)
+    tl_metal_randn(rank, shape, _req_grad)
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_from_i64(data: *const i64, len: usize) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_from_i64(data: *const i64, len: usize) -> *mut OpaqueTensor {
     if data.is_null() {
         return std::ptr::null_mut();
     }
@@ -737,7 +737,7 @@ pub extern "C" fn tl_tensor_from_i64(data: *const i64, len: usize) -> *mut Opaqu
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_from_u8(data: *const u8, len: usize) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_from_u8(data: *const u8, len: usize) -> *mut OpaqueTensor {
     if data.is_null() {
         return std::ptr::null_mut();
     }
@@ -750,7 +750,7 @@ pub extern "C" fn tl_tensor_from_u8(data: *const u8, len: usize) -> *mut OpaqueT
 // ========== テンソル解放 ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
+pub extern "C" fn tl_metal_free(t: *mut OpaqueTensor) {
     if !t.is_null() {
         unsafe {
             let _ = Box::from_raw(t);
@@ -763,7 +763,7 @@ pub extern "C" fn tl_tensor_free(t: *mut OpaqueTensor) {
 // ========== テンソル情報取得 ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_dim(t: *mut OpaqueTensor, dim: usize) -> usize {
+pub extern "C" fn tl_metal_dim(t: *mut OpaqueTensor, dim: usize) -> usize {
     if t.is_null() { return 0; }
     let tensor = unsafe { &*t };
     let dims = tensor.shape();
@@ -775,19 +775,19 @@ pub extern "C" fn tl_tensor_dim(t: *mut OpaqueTensor, dim: usize) -> usize {
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_len(t: *mut OpaqueTensor) -> usize {
+pub extern "C" fn tl_metal_len(t: *mut OpaqueTensor) -> usize {
     if t.is_null() { return 0; }
     let tensor = unsafe { &*t };
     tensor.shape().iter().product()
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_shape(t: *mut OpaqueTensor, dim: usize) -> i64 {
-    tl_tensor_dim(t, dim) as i64
+pub extern "C" fn tl_metal_shape(t: *mut OpaqueTensor, dim: usize) -> i64 {
+    tl_metal_dim(t, dim) as i64
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_get_shape(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_get_shape(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
     let dims: Vec<f32> = tensor.shape().iter().map(|&d| d as f32).collect();
@@ -798,7 +798,7 @@ pub extern "C" fn tl_tensor_get_shape(t: *mut OpaqueTensor) -> *mut OpaqueTensor
 // ========== テンソルデータアクセス ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_get_f32(t: *mut OpaqueTensor, idx: usize) -> f32 {
+pub extern "C" fn tl_metal_get_f32(t: *mut OpaqueTensor, idx: usize) -> f32 {
     if t.is_null() { return 0.0; }
     let tensor = unsafe { &*t };
     let data = tensor.to_vec();
@@ -810,12 +810,12 @@ pub extern "C" fn tl_tensor_get_f32(t: *mut OpaqueTensor, idx: usize) -> f32 {
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_get_i64(t: *mut OpaqueTensor, idx: usize) -> i64 {
-    tl_tensor_get_f32(t, idx) as i64
+pub extern "C" fn tl_metal_get_i64(t: *mut OpaqueTensor, idx: usize) -> i64 {
+    tl_metal_get_f32(t, idx) as i64
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_set_f32(t: *mut OpaqueTensor, idx: usize, val: f32) {
+pub extern "C" fn tl_metal_set_f32(t: *mut OpaqueTensor, idx: usize, val: f32) {
     if t.is_null() { return; }
     let tensor = unsafe { &mut *t };
     let mut data = tensor.to_vec();
@@ -826,7 +826,7 @@ pub extern "C" fn tl_tensor_set_f32(t: *mut OpaqueTensor, idx: usize, val: f32) 
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_item_i64(t: *mut OpaqueTensor) -> i64 {
+pub extern "C" fn tl_metal_item_i64(t: *mut OpaqueTensor) -> i64 {
     if t.is_null() { return 0; }
     let tensor = unsafe { &*t };
     let data: Vec<f32> = tensor.to_vec();
@@ -840,49 +840,49 @@ pub extern "C" fn tl_tensor_item_i64(t: *mut OpaqueTensor) -> i64 {
 // ========== 基本演算 ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
     let (ta, tb) = unsafe { (&*a, &*b) };
     make_tensor(ta.add_impl(tb))
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
     let (ta, tb) = unsafe { (&*a, &*b) };
     make_tensor(ta.sub_impl(tb))
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
     let (ta, tb) = unsafe { (&*a, &*b) };
     make_tensor(ta.mul_impl(tb))
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_div(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_div(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
     let (ta, tb) = unsafe { (&*a, &*b) };
     make_tensor(ta.div_impl(tb))
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_rem(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_rem(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
     let (ta, tb) = unsafe { (&*a, &*b) };
     make_tensor(ta.rem_impl(tb))
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_neg(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_neg(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
     make_tensor(tensor.neg_impl())
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_abs(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_abs(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
     make_tensor(tensor.abs_impl())
@@ -891,28 +891,28 @@ pub extern "C" fn tl_tensor_abs(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 // ========== スカラー演算 ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_add_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_add_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
     make_tensor(tensor.add_scalar_impl(s as f32))
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_mul_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_mul_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
     make_tensor(tensor.mul_scalar_impl(s as f32))
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_div_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_div_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
     make_tensor(tensor.div_scalar_impl(s as f32))
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_pow_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_pow_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
     let exp_tensor = MetalTensor::from_slice(&[s as f32], &[1], DType::F32);
@@ -922,28 +922,28 @@ pub extern "C" fn tl_tensor_pow_scalar(t: *mut OpaqueTensor, s: f64) -> *mut Opa
 // ========== インプレース演算 ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_add_assign(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
+pub extern "C" fn tl_metal_add_assign(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
     if a.is_null() || b.is_null() { return; }
     let (ta, tb) = unsafe { (&mut *a, &*b) };
     *ta = ta.add_impl(tb);
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_sub_assign(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
+pub extern "C" fn tl_metal_sub_assign(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
     if a.is_null() || b.is_null() { return; }
     let (ta, tb) = unsafe { (&mut *a, &*b) };
     *ta = ta.sub_impl(tb);
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_mul_assign(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
+pub extern "C" fn tl_metal_mul_assign(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
     if a.is_null() || b.is_null() { return; }
     let (ta, tb) = unsafe { (&mut *a, &*b) };
     *ta = ta.mul_impl(tb);
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_div_assign(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
+pub extern "C" fn tl_metal_div_assign(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
     if a.is_null() || b.is_null() { return; }
     let (ta, tb) = unsafe { (&mut *a, &*b) };
     *ta = ta.div_impl(tb);
@@ -952,42 +952,42 @@ pub extern "C" fn tl_tensor_div_assign(a: *mut OpaqueTensor, b: *mut OpaqueTenso
 // ========== 比較演算 ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_eq(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_eq(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
     let (ta, tb) = unsafe { (&*a, &*b) };
     make_tensor(ta.eq_impl(tb))
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_neq(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_neq(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
     let (ta, tb) = unsafe { (&*a, &*b) };
     make_tensor(ta.ne_impl(tb))
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_lt(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_lt(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
     let (ta, tb) = unsafe { (&*a, &*b) };
     make_tensor(ta.lt_impl(tb))
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_le(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_le(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
     let (ta, tb) = unsafe { (&*a, &*b) };
     make_tensor(ta.le_impl(tb))
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_gt(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_gt(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
     let (ta, tb) = unsafe { (&*a, &*b) };
     make_tensor(ta.gt_impl(tb))
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_ge(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_metal_ge(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
     let (ta, tb) = unsafe { (&*a, &*b) };
     make_tensor(ta.ge_impl(tb))
@@ -996,58 +996,58 @@ pub extern "C" fn tl_tensor_ge(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *m
 // ========== スカラー In-place 演算 ==========
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_add_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
+pub extern "C" fn tl_metal_add_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
     if t.is_null() { return; }
     let tensor = unsafe { &mut *t };
     *tensor = MetalTensor::add_scalar_impl(tensor, s);
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_sub_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
+pub extern "C" fn tl_metal_sub_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
     if t.is_null() { return; }
     let tensor = unsafe { &mut *t };
     *tensor = MetalTensor::add_scalar_impl(tensor, -s);
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_mul_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
+pub extern "C" fn tl_metal_mul_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
     if t.is_null() { return; }
     let tensor = unsafe { &mut *t };
     *tensor = MetalTensor::mul_scalar_impl(tensor, s);
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_div_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
+pub extern "C" fn tl_metal_div_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
     if t.is_null() { return; }
     let tensor = unsafe { &mut *t };
     *tensor = MetalTensor::div_scalar_impl(tensor, s);
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_mod_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
+pub extern "C" fn tl_metal_mod_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
     if t.is_null() { return; }
     let tensor = unsafe { &mut *t };
     *tensor = tensor.fmod_scalar_impl(s);
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_mod_assign(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
+pub extern "C" fn tl_metal_mod_assign(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
     if a.is_null() || b.is_null() { return; }
     let (ta, tb) = unsafe { (&mut *a, &*b) };
     *ta = ta.rem_impl(tb);
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_reshape_new(t: *mut OpaqueTensor, dims: *const i64, num_dims: usize) -> *mut OpaqueTensor {
-    tl_tensor_reshape(t, dims, num_dims)
+pub extern "C" fn tl_metal_reshape_new(t: *mut OpaqueTensor, dims: *const i64, num_dims: usize) -> *mut OpaqueTensor {
+    tl_metal_reshape(t, dims, num_dims)
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_reshape_dims(t: *mut OpaqueTensor, dims: *const i64, num_dims: usize) -> *mut OpaqueTensor {
-    tl_tensor_reshape(t, dims, num_dims)
+pub extern "C" fn tl_metal_reshape_dims(t: *mut OpaqueTensor, dims: *const i64, num_dims: usize) -> *mut OpaqueTensor {
+    tl_metal_reshape(t, dims, num_dims)
 }
 
 #[no_mangle]
-pub extern "C" fn tl_tensor_cat_i64(a: *mut OpaqueTensor, b: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
-    tl_tensor_cat(a, b, dim)
+pub extern "C" fn tl_metal_cat_i64(a: *mut OpaqueTensor, b: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
+    tl_metal_cat(a, b, dim)
 }

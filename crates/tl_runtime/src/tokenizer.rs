@@ -51,7 +51,7 @@ pub extern "C" fn tl_tokenizer_encode(
             Ok(encoding) => {
                 let ids: Vec<f32> = encoding.get_ids().iter().map(|&id| id as f32).collect();
                 let shape = vec![ids.len()];
-                crate::tl_tensor_new(ids.as_ptr(), shape.len(), shape.as_ptr())
+                crate::tl_metal_new(ids.as_ptr(), shape.len(), shape.as_ptr())
             }
             Err(e) => {
                 eprintln!("Tokenizer encode error: {}", e);

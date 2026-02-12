@@ -28,6 +28,8 @@ impl IDevice for CpuDevice {
     #[inline] fn tensor_ones(&self, rank: usize, shape: *const usize, req_grad: bool) -> *mut c_void { v(ffi::tl_cpu_tensor_ones(rank, shape, req_grad)) }
     #[inline] fn tensor_randn_debug(&self, rank: usize, shape: *const usize, seed: u64, req_grad: bool) -> *mut c_void { v(ffi::tl_cpu_tensor_randn_debug(rank, shape, seed, req_grad)) }
     #[inline] fn tensor_new_causal_mask(&self, size: usize) -> *mut c_void { v(ffi::tl_cpu_tensor_new_causal_mask(size)) }
+    #[inline] fn tensor_from_vec_u8(&self, data: *mut c_void, len: i64) -> *mut c_void { v(ffi::tl_cpu_tensor_from_vec_u8(data, len)) }
+    #[inline] fn tensor_from_u8_labels(&self, data: *const u8, len: i64) -> *mut c_void { v(ffi::tl_cpu_tensor_from_u8_labels(data, len)) }
 
     // ========== メモリ管理 ==========
     #[inline] fn tensor_clone(&self, a: *mut c_void) -> *mut c_void { v(ffi::tl_cpu_tensor_clone(t(a))) }

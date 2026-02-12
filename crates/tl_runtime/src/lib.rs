@@ -52,7 +52,7 @@ pub use memory_ffi::{
 
 // ========== Metal FFI Exports ==========
 pub use tl_metal::ffi::{
-    tl_tensor_clone, tl_tensor_data, tl_tensor_numel, tl_tensor_release,
+    tl_metal_clone, tl_metal_data, tl_metal_numel, tl_metal_release,
 };
 pub use tl_metal::ffi_ops::*;
 
@@ -245,61 +245,61 @@ pub extern "C" fn tl_amend_error_loc(
 }
 
 // ========== テンソル作成 ==========
-pub use tl_metal::ffi_ops::tl_tensor_new;
-pub use tl_metal::ffi_ops::tl_tensor_new_i64;
-pub use tl_metal::ffi_ops::tl_tensor_zeros;
-pub use tl_metal::ffi_ops::tl_tensor_ones;
-pub use tl_metal::ffi_ops::tl_tensor_randn;
-pub use tl_metal::ffi_ops::tl_tensor_randn_debug;
-pub use tl_metal::ffi_ops::tl_tensor_from_i64;
-pub use tl_metal::ffi_ops::tl_tensor_from_u8;
+pub use tl_metal::ffi_ops::tl_metal_new;
+pub use tl_metal::ffi_ops::tl_metal_new_i64;
+pub use tl_metal::ffi_ops::tl_metal_zeros;
+pub use tl_metal::ffi_ops::tl_metal_ones;
+pub use tl_metal::ffi_ops::tl_metal_randn;
+pub use tl_metal::ffi_ops::tl_metal_randn_debug;
+pub use tl_metal::ffi_ops::tl_metal_from_i64;
+pub use tl_metal::ffi_ops::tl_metal_from_u8;
 pub use gguf::tl_gguf_load;
 
 // ========== テンソル解放 ==========
-pub use tl_metal::ffi_ops::tl_tensor_free;
+pub use tl_metal::ffi_ops::tl_metal_free;
 
 // ========== テンソル情報取得 ==========
-pub use tl_metal::ffi_ops::tl_tensor_dim;
-pub use tl_metal::ffi_ops::tl_tensor_len;
-pub use tl_metal::ffi_ops::tl_tensor_shape;
-pub use tl_metal::ffi_ops::tl_tensor_get_shape;
+pub use tl_metal::ffi_ops::tl_metal_dim;
+pub use tl_metal::ffi_ops::tl_metal_len;
+pub use tl_metal::ffi_ops::tl_metal_shape;
+pub use tl_metal::ffi_ops::tl_metal_get_shape;
 
 // ========== テンソル要素アクセス ==========
-pub use tl_metal::ffi_ops::tl_tensor_get_f32;
-pub use tl_metal::ffi_ops::tl_tensor_get_i64;
-pub use tl_metal::ffi_ops::tl_tensor_set_f32;
-pub use tl_metal::ffi_ops::tl_tensor_item_i64;
+pub use tl_metal::ffi_ops::tl_metal_get_f32;
+pub use tl_metal::ffi_ops::tl_metal_get_i64;
+pub use tl_metal::ffi_ops::tl_metal_set_f32;
+pub use tl_metal::ffi_ops::tl_metal_item_i64;
 
 // ========== 基本テンソル演算 ==========
-pub use tl_metal::ffi_ops::tl_tensor_add;
-pub use tl_metal::ffi_ops::tl_tensor_sub;
-pub use tl_metal::ffi_ops::tl_tensor_mul;
-pub use tl_metal::ffi_ops::tl_tensor_div;
-pub use tl_metal::ffi_ops::tl_tensor_rem;
-pub use tl_metal::ffi_ops::tl_tensor_neg;
-pub use tl_metal::ffi_ops::tl_tensor_abs;
+pub use tl_metal::ffi_ops::tl_metal_add;
+pub use tl_metal::ffi_ops::tl_metal_sub;
+pub use tl_metal::ffi_ops::tl_metal_mul;
+pub use tl_metal::ffi_ops::tl_metal_div;
+pub use tl_metal::ffi_ops::tl_metal_rem;
+pub use tl_metal::ffi_ops::tl_metal_neg;
+pub use tl_metal::ffi_ops::tl_metal_abs;
 
 // ========== スカラー演算 ==========
-pub use tl_metal::ffi_ops::tl_tensor_add_scalar;
-pub use tl_metal::ffi_ops::tl_tensor_mul_scalar;
-pub use tl_metal::ffi_ops::tl_tensor_div_scalar;
-pub use tl_metal::ffi_ops::tl_tensor_pow_scalar;
+pub use tl_metal::ffi_ops::tl_metal_add_scalar;
+pub use tl_metal::ffi_ops::tl_metal_mul_scalar;
+pub use tl_metal::ffi_ops::tl_metal_div_scalar;
+pub use tl_metal::ffi_ops::tl_metal_pow_scalar;
 
 // ========== インプレース演算 ==========
-pub use tl_metal::ffi_ops::tl_tensor_add_assign_scalar_f32;
-pub use tl_metal::ffi_ops::tl_tensor_sub_assign_scalar_f32;
-pub use tl_metal::ffi_ops::tl_tensor_mul_assign_scalar_f32;
-pub use tl_metal::ffi_ops::tl_tensor_div_assign_scalar_f32;
-pub use tl_metal::ffi_ops::tl_tensor_mod_assign_scalar_f32;
-pub use tl_metal::ffi_ops::tl_tensor_mod_assign;
+pub use tl_metal::ffi_ops::tl_metal_add_assign_scalar_f32;
+pub use tl_metal::ffi_ops::tl_metal_sub_assign_scalar_f32;
+pub use tl_metal::ffi_ops::tl_metal_mul_assign_scalar_f32;
+pub use tl_metal::ffi_ops::tl_metal_div_assign_scalar_f32;
+pub use tl_metal::ffi_ops::tl_metal_mod_assign_scalar_f32;
+pub use tl_metal::ffi_ops::tl_metal_mod_assign;
 
 // ========== 比較演算 ==========
-pub use tl_metal::ffi_ops::tl_tensor_eq;
-pub use tl_metal::ffi_ops::tl_tensor_neq;
-pub use tl_metal::ffi_ops::tl_tensor_lt;
-pub use tl_metal::ffi_ops::tl_tensor_le;
-pub use tl_metal::ffi_ops::tl_tensor_gt;
-pub use tl_metal::ffi_ops::tl_tensor_ge;
+pub use tl_metal::ffi_ops::tl_metal_eq;
+pub use tl_metal::ffi_ops::tl_metal_neq;
+pub use tl_metal::ffi_ops::tl_metal_lt;
+pub use tl_metal::ffi_ops::tl_metal_le;
+pub use tl_metal::ffi_ops::tl_metal_gt;
+pub use tl_metal::ffi_ops::tl_metal_ge;
 
 
 

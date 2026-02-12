@@ -590,16 +590,18 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::tl_set_device as usize);
     }
 
+    // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_to_device") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_to_device as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_device as usize);
     }
 
     if let Some(f) = module.get_function("tl_report_runtime_error") {
         execution_engine.add_global_mapping(&f, runtime::tl_report_runtime_error as usize);
     }
 
+    // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_replace_data") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_replace_data as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_replace_data as usize);
     }
 
     // tl_tensor_sum_dim(t: *mut Tensor, dim: usize, keep: bool) -> *mut OpaqueTensor
@@ -1439,8 +1441,9 @@ pub fn declare_runtime_functions<'ctx>(
         if let Some(f) = module.get_function("tl_tensor_print_3") {
             execution_engine.add_global_mapping(&f, runtime::tl_tensor_print_3 as usize);
         }
+        // [IDevice] device_ffi 統一マッピング
         if let Some(f) = module.get_function("tl_tensor_device_id") {
-            execution_engine.add_global_mapping(&f, runtime::tl_tensor_device_id as usize);
+            execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_device_id as usize);
         }
         if let Some(f) = module.get_function("tl_tensor_prepare_return") {
             execution_engine.add_global_mapping(
@@ -1505,16 +1508,15 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_enable_grad") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_enable_grad as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_softmax") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_softmax as usize); }
-    if !is_cpu {
-        if let Some(f) = module.get_function("tl_tensor_cross_entropy") {
-            execution_engine.add_global_mapping(&f, runtime::tl_tensor_cross_entropy as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_conv2d") {
-            execution_engine.add_global_mapping(&f, runtime::tl_tensor_conv2d as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_clamp") {
-            execution_engine.add_global_mapping(&f, runtime::tl_tensor_clamp as usize);
-        }
+    // [IDevice] device_ffi 統一マッピング
+    if let Some(f) = module.get_function("tl_tensor_cross_entropy") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cross_entropy as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_conv2d") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_conv2d as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_clamp") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_clamp as usize);
     }
     // ========== テンソル演算: CPU/GPU 切替 (map_tensor_fn! マクロ使用) ==========
     // [IDevice] map_tensor_fn! → device_ffi
@@ -2014,8 +2016,9 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_varbuilder_grad") {
         execution_engine.add_global_mapping(&f, runtime::tl_varbuilder_grad as usize);
     }
+    // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_reshape_dims") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_reshape_dims as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_reshape_dims as usize);
     }
     // Map Support (runtime 側で CPU/GPU 抽象化済み)
     if let Some(f) = module.get_function("tl_tensor_map_save") {
@@ -2031,11 +2034,12 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::tl_free_tmp as usize);
     }
 
+    // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_argmax") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_argmax as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_argmax as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_to_i64") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_to_i64 as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_i64 as usize);
     }
     // tl_tensor_item / tl_tensor_item_i64 のマッピングは
     // 宣言セクション (L2225/L2231) の直後で map_tensor_fn! により実施
@@ -2104,68 +2108,68 @@ pub fn declare_runtime_functions<'ctx>(
             execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get as usize);
         }
     }
-    if !is_cpu {
-        if let Some(f) = module.get_function("tl_tensor_cat") {
-            execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_cat as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_silu") {
-            execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_silu as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_apply_rope") {
-            execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_apply_rope as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_rms_norm") {
-            execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_rms_norm as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_cat2") {
-            execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_cat2 as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_cat_4d") {
-            execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_cat_4d as usize);
-        }
-        // Alias Mappings
-        if let Some(f) = module.get_function("tl_tensor_transpose_2d") {
-            execution_engine.add_global_mapping(&f, runtime::tl_tensor_transpose as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_matmul_4d") {
-            execution_engine.add_global_mapping(&f, runtime::tl_tensor_matmul as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_add_4d") {
-            execution_engine.add_global_mapping(&f, runtime::tl_tensor_add as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_silu_4d") {
-            execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_silu as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_scale") {
-            execution_engine.add_global_mapping(&f, runtime::tl_tensor_scale as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_rope_new_cos") {
-            execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_rope_new_cos as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_rope_new_sin") {
-            execution_engine.add_global_mapping(&f, runtime::llm::tl_tensor_rope_new_sin as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_new_causal_mask") {
-            execution_engine.add_global_mapping(&f, runtime::tl_tensor_new_causal_mask as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_cat_i64") {
-            execution_engine.add_global_mapping(&f, runtime::tl_tensor_cat_i64 as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_narrow") {
-            execution_engine.add_global_mapping(&f, runtime::tl_tensor_narrow as usize);
-        }
-        if let Some(f) = module.get_function("tl_tensor_repeat_interleave") {
-            execution_engine.add_global_mapping(&f, runtime::tl_tensor_repeat_interleave as usize);
-        }
+    // [IDevice] device_ffi 統一マッピング — LLM 関連
+    if let Some(f) = module.get_function("tl_tensor_cat") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat as usize);
     }
+    if let Some(f) = module.get_function("tl_tensor_silu") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_silu as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_apply_rope") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_apply_rope as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_rms_norm") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rms_norm as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_cat2") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat2 as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_cat_4d") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat_4d as usize);
+    }
+    // [IDevice] device_ffi 統一マッピング — Alias
+    if let Some(f) = module.get_function("tl_tensor_transpose_2d") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_transpose_2d as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_matmul_4d") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_matmul_4d as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_add_4d") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_add_4d as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_silu_4d") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_silu_4d as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_scale") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_scale as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_rope_new_cos") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rope_new_cos as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_rope_new_sin") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rope_new_sin as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_new_causal_mask") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_new_causal_mask as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_cat_i64") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat_i64 as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_narrow") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_narrow as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_repeat_interleave") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_repeat_interleave as usize);
+    }
+    // [IDevice] device_ffi 統一マッピング — 形状操作
     if let Some(f) = module.get_function("tl_tensor_get_shape") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_get_shape as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_get_shape as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_reshape_2d") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_reshape_dims as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_reshape_2d as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_reshape_3d_to_2d") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_reshape_dims as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_reshape_3d_to_2d as usize);
     }
     if !is_cpu {
         if let Some(f) = module.get_function("tl_tensor_map_get_1d") {
@@ -2174,11 +2178,12 @@ pub fn declare_runtime_functions<'ctx>(
     }
 
 
+    // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_from_vec_u8") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_from_vec_u8 as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_from_vec_u8 as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_from_u8_labels") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_from_u8_labels as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_from_u8_labels as usize);
     }
 
 
@@ -2200,11 +2205,12 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_image_height") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_image_height as usize);
     }
+    // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_to_f32") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_to_f32 as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_f32 as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_to_i64") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_to_i64 as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_i64 as usize);
     }
 
     // End of function
@@ -2897,8 +2903,9 @@ pub fn declare_runtime_functions<'ctx>(
         false,
     );
     add_fn("tl_tensor_argmax", argmax_type);
+    // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_argmax") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_argmax as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_argmax as usize);
     }
 
     // tl_tensor_item_i64 — 宣言のみ (マッピングは L2233 の map_tensor_fn! で実施済み)
@@ -2906,8 +2913,9 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_item_i64", item_i64_type);
 
     // tl_tensor_cat_i64
+    // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_cat_i64") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_cat_i64 as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat_i64 as usize);
     }
     // Fix: register return type
 
@@ -2923,8 +2931,9 @@ pub fn declare_runtime_functions<'ctx>(
     // Also need return type
     let _tensor_type_local = Type::Tensor(Box::new(Type::F32), 1);
 
+    // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_reshape") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_reshape_new as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_reshape_new as usize);
     }
 
     // tl_tensor_sample(t, temp, topp) -> tensor (llm.rs)

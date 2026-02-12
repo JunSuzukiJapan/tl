@@ -39,6 +39,8 @@ where
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_ones(rank: usize, shape: *const usize, req_grad: bool) -> *mut c_void { dispatch(|d| d.tensor_ones(rank, shape, req_grad)) }
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_randn_debug(rank: usize, shape: *const usize, seed: u64, req_grad: bool) -> *mut c_void { dispatch(|d| d.tensor_randn_debug(rank, shape, seed, req_grad)) }
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_new_causal_mask(size: usize) -> *mut c_void { dispatch(|d| d.tensor_new_causal_mask(size)) }
+#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_from_vec_u8(data: *mut c_void, len: i64) -> *mut c_void { dispatch(|d| d.tensor_from_vec_u8(data, len)) }
+#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_from_u8_labels(data: *const u8, len: i64) -> *mut c_void { dispatch(|d| d.tensor_from_u8_labels(data, len)) }
 
 // ========== メモリ管理 ==========
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_clone(a: *mut c_void) -> *mut c_void { dispatch(|d| d.tensor_clone(a)) }

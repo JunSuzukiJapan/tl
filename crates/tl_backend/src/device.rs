@@ -22,6 +22,8 @@ pub trait IDevice {
     fn tensor_ones(&self, rank: usize, shape: *const usize, req_grad: bool) -> *mut c_void;
     fn tensor_randn_debug(&self, rank: usize, shape: *const usize, seed: u64, req_grad: bool) -> *mut c_void;
     fn tensor_new_causal_mask(&self, size: usize) -> *mut c_void;
+    fn tensor_from_vec_u8(&self, data: *mut c_void, len: i64) -> *mut c_void;
+    fn tensor_from_u8_labels(&self, data: *const u8, len: i64) -> *mut c_void;
 
     // ========== メモリ管理 ==========
     fn tensor_clone(&self, t: *mut c_void) -> *mut c_void;
