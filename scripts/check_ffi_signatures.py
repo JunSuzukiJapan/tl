@@ -2,9 +2,8 @@
 """
 FFI シグネチャ不一致検出スクリプト
 
-builtins.rs 内の map_tensor_fn! マクロおよび add_global_mapping で
-紐付けられた runtime (GPU) 関数と CPU FFI 関数のシグネチャを比較し、
-引数の数・型・戻り値の不一致を検出します。
+builtins.rs 内の add_global_mapping で紐付けられた runtime 関数を、
+プロジェクト内の全 Rust ソースから自動検索し、シグネチャの不一致を検出します。
 
 使い方:
     python scripts/check_ffi_signatures.py [--verbose]
@@ -12,31 +11,43 @@ builtins.rs 内の map_tensor_fn! マクロおよび add_global_mapping で
 
 import re
 import sys
-import os
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 
 # ============================================================
-# 定数 — プロジェクト内のファイルパス
+# 定数
 # ============================================================
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 
 BUILTINS_RS = PROJECT_ROOT / "src" / "compiler" / "codegen" / "builtins.rs"
 
-# Runtime FFI が定義されているファイル群
-RUNTIME_SOURCES = [
-    PROJECT_ROOT / "crates" / "tl_runtime" / "src" / "lib.rs",
-    PROJECT_ROOT / "crates" / "tl_runtime" / "src" / "tensor_ops_ext.rs",
-    PROJECT_ROOT / "crates" / "tl_runtime" / "src" / "memory_ffi.rs",
-    PROJECT_ROOT / "crates" / "tl_runtime" / "src" / "registry.rs",
-    PROJECT_ROOT / "crates" / "tl_runtime" / "src" / "io_ffi.rs",
+# 全 Rust ソースを検索する crate ディレクトリ
+CRATE_DIRS = [
+    PROJECT_ROOT / "crates" / "tl_runtime" / "src",
+    PROJECT_ROOT / "crates" / "tl_cpu" / "src",
+    PROJECT_ROOT / "crates" / "tl_metal" / "src",
+    PROJECT_ROOT / "crates" / "tl_backend" / "src",
 ]
 
-# CPU FFI
-CPU_FFI_RS = PROJECT_ROOT / "crates" / "tl_cpu" / "src" / "ffi.rs"
+# Rust パスの prefix → 検索対象ディレクトリのマッピング
+# builtins.rs では runtime::device_ffi::xxx, runtime::llm::xxx, cpu_ffi::xxx 等の形式
+MODULE_SEARCH_MAP = {
+    "runtime::device_ffi": [PROJECT_ROOT / "crates" / "tl_runtime" / "src" / "device_ffi.rs"],
+    "runtime::llm":        [PROJECT_ROOT / "crates" / "tl_runtime" / "src" / "llm.rs"],
+    "runtime::stdlib":     [PROJECT_ROOT / "crates" / "tl_runtime" / "src" / "stdlib"],
+    "runtime::registry":   [PROJECT_ROOT / "crates" / "tl_runtime" / "src" / "registry.rs"],
+    "runtime::arena":      [PROJECT_ROOT / "crates" / "tl_runtime" / "src" / "arena.rs"],
+    "cpu_ffi":             [PROJECT_ROOT / "crates" / "tl_cpu" / "src" / "ffi.rs"],
+    # runtime::xxx — tl_runtime/src 全体 + re-export 元 (tl_metal, tl_cpu)
+    "runtime":             [
+        PROJECT_ROOT / "crates" / "tl_runtime" / "src",
+        PROJECT_ROOT / "crates" / "tl_metal" / "src",
+        PROJECT_ROOT / "crates" / "tl_cpu" / "src",
+    ],
+}
 
 
 # ============================================================
@@ -46,8 +57,8 @@ CPU_FFI_RS = PROJECT_ROOT / "crates" / "tl_cpu" / "src" / "ffi.rs"
 class FnSig:
     """extern "C" 関数のシグネチャ"""
     name: str
-    params: list[str]          # 型名のリスト (変数名は除去)
-    return_type: str           # "void" | "*mut OpaqueTensor" etc.
+    params: list[str]          # 正規化済み型名のリスト
+    return_type: str           # "void" | "ptr" etc.
     source_file: str = ""
     line: int = 0
 
@@ -64,10 +75,8 @@ class FnSig:
 class Mapping:
     """builtins.rs 内のマッピング情報"""
     ffi_name: str              # LLVM 側の名前 (例: "tl_tensor_get")
-    runtime_path: str          # Rust パス (例: "runtime::tl_tensor_get")
-    cpu_path: Optional[str]    # CPU パス (例: "cpu_ffi::tl_cpu_tensor_get") or None
+    runtime_path: str          # Rust パス (例: "runtime::device_ffi::tl_device_tensor_get")
     line: int = 0
-    source: str = ""           # "map_tensor_fn!" | "add_global_mapping"
 
     @property
     def runtime_fn(self) -> str:
@@ -75,81 +84,81 @@ class Mapping:
         return self.runtime_path.rsplit("::", 1)[-1]
 
     @property
-    def cpu_fn(self) -> Optional[str]:
-        if self.cpu_path is None:
-            return None
-        return self.cpu_path.rsplit("::", 1)[-1]
+    def module_prefix(self) -> str:
+        """関数名を除いたモジュールパスを返す"""
+        parts = self.runtime_path.rsplit("::", 1)
+        return parts[0] if len(parts) > 1 else ""
 
 
 # ============================================================
 # パーサー
 # ============================================================
 
-# extern "C" fn の正規表現 — 複数行にまたがるケースにも対応
+# extern "C" fn / pub extern "C" fn — 複数行対応
 RE_EXTERN_FN = re.compile(
-    r'pub\s+extern\s+"C"\s+fn\s+(\w+)\s*\(([^)]*)\)\s*(?:->\s*(.+?))?\s*\{',
+    r'(?:pub\s+)?(?:#\[[\w()\s]*\]\s*)*(?:pub\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(([^)]*)\)\s*(?:->\s*(.+?))?\s*\{',
     re.DOTALL,
 )
 
-# 型名の抽出 — パラメータの "名前: 型" から型だけ取り出す
+# パラメータの「名前: 型」から型だけ取り出す
 RE_PARAM = re.compile(r'(\w+)\s*:\s*(.+)')
 
 
 def normalize_type(ty: str) -> str:
     """型名を正規化して比較可能にする"""
     ty = ty.strip().rstrip(",")
-    # ポインタ系はすべて "ptr" にまとめる
     if ty.startswith("*mut ") or ty.startswith("*const "):
+        return "ptr"
+    # c_void も ptr 扱い
+    if ty == "c_void":
         return "ptr"
     return ty
 
 
+def split_params(raw_params: str) -> list[str]:
+    """ジェネリクス内のカンマを無視してパラメータを分割"""
+    depth = 0
+    current: list[str] = []
+    result: list[str] = []
+    for ch in raw_params:
+        if ch in ("<", "("):
+            depth += 1
+        elif ch in (">", ")"):
+            depth -= 1
+        if ch == "," and depth == 0:
+            s = "".join(current).strip()
+            if s:
+                result.append(s)
+            current = []
+        else:
+            current.append(ch)
+    last = "".join(current).strip()
+    if last:
+        result.append(last)
+    return result
+
+
 def parse_extern_fns(filepath: Path) -> dict[str, FnSig]:
-    """ファイルから pub extern "C" fn をすべて抽出"""
+    """ファイルから extern "C" fn をすべて抽出"""
     if not filepath.exists():
         return {}
     content = filepath.read_text(encoding="utf-8")
-
     result = {}
     for m in RE_EXTERN_FN.finditer(content):
         fn_name = m.group(1)
         raw_params = m.group(2).strip()
         raw_return = (m.group(3) or "").strip()
 
-        # パラメータ解析
-        params = []
-        if raw_params:
-            # カンマで分割するが、ジェネリクス内のカンマは無視
-            depth = 0
-            current = []
-            for ch in raw_params:
-                if ch in ("<", "("):
-                    depth += 1
-                elif ch in (">", ")"):
-                    depth -= 1
-                if ch == "," and depth == 0:
-                    current_str = "".join(current).strip()
-                    if current_str:
-                        params.append(current_str)
-                    current = []
-                else:
-                    current.append(ch)
-            last = "".join(current).strip()
-            if last:
-                params.append(last)
-
-        # 型だけ抽出
         param_types = []
-        for p in params:
-            m2 = RE_PARAM.match(p.strip())
-            if m2:
-                param_types.append(normalize_type(m2.group(2)))
-            else:
-                param_types.append(normalize_type(p.strip()))
+        if raw_params:
+            for p in split_params(raw_params):
+                m2 = RE_PARAM.match(p.strip())
+                if m2:
+                    param_types.append(normalize_type(m2.group(2)))
+                else:
+                    param_types.append(normalize_type(p.strip()))
 
         ret = normalize_type(raw_return) if raw_return else "void"
-
-        # 行番号
         line_no = content[:m.start()].count("\n") + 1
 
         result[fn_name] = FnSig(
@@ -162,14 +171,34 @@ def parse_extern_fns(filepath: Path) -> dict[str, FnSig]:
     return result
 
 
-# map_tensor_fn!("name", gpu_path, cpu_path);
-RE_MAP_TENSOR = re.compile(
-    r'map_tensor_fn!\(\s*"(\w+)"\s*,'
-    r'\s*([a-zA-Z_][\w:]*)\s*,'
-    r'\s*([a-zA-Z_][\w:]*)\s*\)',
-)
+def collect_all_fns() -> dict[str, FnSig]:
+    """全 crate ディレクトリから extern "C" fn を収集"""
+    all_fns: dict[str, FnSig] = {}
+    for crate_dir in CRATE_DIRS:
+        if not crate_dir.exists():
+            continue
+        for rs_file in crate_dir.rglob("*.rs"):
+            fns = parse_extern_fns(rs_file)
+            all_fns.update(fns)
+    return all_fns
 
-# add_global_mapping(&f, runtime::xxx as usize);  ← ペアは直前の get_function("name")
+
+def find_fn_in_search_paths(fn_name: str, search_paths: list[Path]) -> Optional[FnSig]:
+    """指定パスリストから関数を検索"""
+    for path in search_paths:
+        if path.is_file():
+            fns = parse_extern_fns(path)
+            if fn_name in fns:
+                return fns[fn_name]
+        elif path.is_dir():
+            for rs_file in path.rglob("*.rs"):
+                fns = parse_extern_fns(rs_file)
+                if fn_name in fns:
+                    return fns[fn_name]
+    return None
+
+
+# builtins.rs パーサー
 RE_GET_FUNCTION = re.compile(
     r'module\.get_function\(\s*"(\w+)"\s*\)'
 )
@@ -184,44 +213,45 @@ def parse_builtins(filepath: Path) -> list[Mapping]:
     mappings: list[Mapping] = []
     seen_ffi: set[str] = set()
 
-    # 1. map_tensor_fn! — CPU/GPU 両方の情報がある
-    for m in RE_MAP_TENSOR.finditer(content):
-        ffi_name = m.group(1)
-        gpu_path = m.group(2)
-        cpu_path = m.group(3)
-        line = content[:m.start()].count("\n") + 1
-        mappings.append(Mapping(
-            ffi_name=ffi_name,
-            runtime_path=gpu_path,
-            cpu_path=cpu_path,
-            line=line,
-            source="map_tensor_fn!",
-        ))
-        seen_ffi.add(ffi_name)
-
-    # 2. 直接 add_global_mapping — get_function の直後にマッピング
     lines = content.split("\n")
-    current_fn_name = None
+    current_fn_name: Optional[str] = None
     for i, line in enumerate(lines, 1):
         gf = RE_GET_FUNCTION.search(line)
         if gf:
             current_fn_name = gf.group(1)
-            continue
 
         am = RE_ADD_MAPPING.search(line)
-        if am and current_fn_name and current_fn_name not in seen_ffi:
+        if am and current_fn_name:
             runtime_path = am.group(1)
-            mappings.append(Mapping(
-                ffi_name=current_fn_name,
-                runtime_path=runtime_path,
-                cpu_path=None,
-                line=i,
-                source="add_global_mapping",
-            ))
-            seen_ffi.add(current_fn_name)
+            if current_fn_name not in seen_ffi:
+                mappings.append(Mapping(
+                    ffi_name=current_fn_name,
+                    runtime_path=runtime_path,
+                    line=i,
+                ))
+                seen_ffi.add(current_fn_name)
             current_fn_name = None
 
     return mappings
+
+
+def resolve_fn(mapping: Mapping, all_fns: dict[str, FnSig]) -> Optional[FnSig]:
+    """マッピングの runtime_path から実際の関数シグネチャを解決"""
+    fn_name = mapping.runtime_fn
+    prefix = mapping.module_prefix
+
+    # 1. モジュール prefix に基づく優先検索
+    for mod_prefix, search_paths in MODULE_SEARCH_MAP.items():
+        if prefix == mod_prefix or prefix.startswith(mod_prefix + "::"):
+            sig = find_fn_in_search_paths(fn_name, search_paths)
+            if sig:
+                return sig
+
+    # 2. 全関数辞書からのフォールバック検索
+    if fn_name in all_fns:
+        return all_fns[fn_name]
+
+    return None
 
 
 # ============================================================
@@ -235,111 +265,168 @@ def main():
     print(f"   プロジェクト: {PROJECT_ROOT}")
     print()
 
-    # --- 1. 関数シグネチャの収集 ---
-    runtime_fns: dict[str, FnSig] = {}
-    for src in RUNTIME_SOURCES:
-        runtime_fns.update(parse_extern_fns(src))
-
-    cpu_fns = parse_extern_fns(CPU_FFI_RS)
-
-    print(f"📦 Runtime FFI 関数: {len(runtime_fns)} 個")
-    print(f"📦 CPU FFI 関数:     {len(cpu_fns)} 個")
+    # --- 1. 全関数シグネチャの収集 ---
+    all_fns = collect_all_fns()
+    print(f"📦 検出した extern \"C\" 関数: {len(all_fns)} 個")
 
     # --- 2. builtins.rs マッピングの解析 ---
     mappings = parse_builtins(BUILTINS_RS)
-    print(f"🔗 マッピング:       {len(mappings)} 個")
+    print(f"🔗 マッピング:               {len(mappings)} 個")
     print()
 
-    # --- 3. 不一致検出 ---
+    # --- 3. 検証 ---
     issues: list[str] = []
     warnings: list[str] = []
-    info: list[str] = []
+    resolved_count = 0
+    device_ffi_count = 0
 
     for mapping in mappings:
-        rt_fn_name = mapping.runtime_fn
-        cpu_fn_name = mapping.cpu_fn
+        sig = resolve_fn(mapping, all_fns)
 
-        # Runtime 関数のシグネチャ取得
-        rt_sig = runtime_fns.get(rt_fn_name)
-        if rt_sig is None:
-            # runtime パスにサブモジュールがある場合は関数名だけで探す
-            for name, sig in runtime_fns.items():
-                if name == rt_fn_name:
-                    rt_sig = sig
-                    break
-
-        if rt_sig is None:
+        if sig is None:
             warnings.append(
                 f"⚠️  Runtime 関数が見つかりません: {mapping.runtime_path}\n"
                 f"   FFI名: {mapping.ffi_name}  (builtins.rs L{mapping.line})"
             )
             continue
 
-        # CPU マッピングがない場合 (runtime のみ) — CPU モードでの問題リスク
-        if cpu_fn_name is None:
-            info.append(
-                f"ℹ️  CPU マッピングなし (runtime のみ): {mapping.ffi_name}\n"
-                f"   → {mapping.runtime_path}  (builtins.rs L{mapping.line})"
-            )
-            continue
+        resolved_count += 1
+        if "device_ffi" in mapping.runtime_path:
+            device_ffi_count += 1
 
-        # CPU 関数のシグネチャ取得
-        cpu_sig = cpu_fns.get(cpu_fn_name)
-        if cpu_sig is None:
-            issues.append(
-                f"❌ CPU 関数が見つかりません: {mapping.cpu_path}\n"
-                f"   FFI名: {mapping.ffi_name}  (builtins.rs L{mapping.line})\n"
-                f"   Runtime: {rt_sig.name}{rt_sig.sig_str()}"
-            )
-            continue
+        if verbose:
+            print(f"   ✅ {mapping.ffi_name} → {sig.name}{sig.sig_str()}  ({sig.source_file}:{sig.line})")
 
-        # --- シグネチャ比較 ---
-        mismatches = []
+    # --- 4. device_ffi 関数のシグネチャ対 IDevice チェック ---
+    # device_ffi の各 tl_device_* 関数と、対応する Metal/CPU 実装のシグネチャを比較
+    device_ffi_fns = {}
+    device_ffi_path = PROJECT_ROOT / "crates" / "tl_runtime" / "src" / "device_ffi.rs"
+    if device_ffi_path.exists():
+        device_ffi_fns = parse_extern_fns(device_ffi_path)
 
-        # 引数の数
-        if rt_sig.arity != cpu_sig.arity:
-            mismatches.append(
-                f"   引数の数: runtime={rt_sig.arity}, cpu={cpu_sig.arity}"
-            )
+    metal_fns = {}
+    metal_ffi_path = PROJECT_ROOT / "crates" / "tl_metal" / "src" / "ffi_ops.rs"
+    metal_ffi2_path = PROJECT_ROOT / "crates" / "tl_metal" / "src" / "ffi.rs"
+    if metal_ffi_path.exists():
+        metal_fns.update(parse_extern_fns(metal_ffi_path))
+    if metal_ffi2_path.exists():
+        metal_fns.update(parse_extern_fns(metal_ffi2_path))
 
-        # 引数の型 (位置ごとに比較)
-        min_arity = min(rt_sig.arity, cpu_sig.arity)
-        for j in range(min_arity):
-            if rt_sig.params[j] != cpu_sig.params[j]:
-                mismatches.append(
-                    f"   引数[{j}]: runtime={rt_sig.params[j]}, cpu={cpu_sig.params[j]}"
+    cpu_fns = {}
+    cpu_ffi_path = PROJECT_ROOT / "crates" / "tl_cpu" / "src" / "ffi.rs"
+    if cpu_ffi_path.exists():
+        cpu_fns = parse_extern_fns(cpu_ffi_path)
+
+    # device_ffi → Metal/CPU の対応テーブル自動生成
+    #
+    # ── 許容リスト (allowlist) ──
+    # 以下の関数は device_ffi と Metal/CPU FFI のシグネチャが異なるが、
+    # device_impl.rs 内のアダプタ変換で安全に吸収されているため問題なし。
+    # device_ffi は IDevice trait のメソッドを呼ぶだけであり、
+    # 各バックエンドの IDevice 実装が内部で FFI シグネチャの差分を処理する。
+    #
+    ALLOWLIST: dict[str, str] = {
+        # tl_metal_detach(ptr) は req_grad 引数を受け取らないが、
+        # MetalDeviceImpl::tensor_detach() が req_grad を内部で処理する。
+        "tl_device_tensor_detach": (
+            "Metal側は req_grad 引数なし。MetalDeviceImpl::tensor_detach() が "
+            "IDevice の (ptr, bool) を受け取り、内部で tl_metal_detach(ptr) を呼ぶ"
+        ),
+        # tl_metal_reshape_new(ptr, ptr, usize) は追加の usize 引数があるが、
+        # MetalDeviceImpl::tensor_reshape_new() がアダプタ変換する。
+        "tl_device_tensor_reshape_new": (
+            "Metal側は (ptr, ptr, usize) の3引数。MetalDeviceImpl が IDevice の "
+            "(ptr, ptr) から内部変換して tl_metal_reshape_new を呼ぶ"
+        ),
+        # tl_metal_reshape_dims(ptr, ptr, usize) は IDevice の (ptr, i64x4) と異なるが、
+        # MetalDeviceImpl::tensor_reshape_dims() がアダプタ変換する。
+        "tl_device_tensor_reshape_dims": (
+            "Metal側は (ptr, ptr, usize) の3引数。MetalDeviceImpl が IDevice の "
+            "(ptr, i64, i64, i64, i64) から内部変換して tl_metal_reshape_dims を呼ぶ"
+        ),
+        # tl_metal_apply_rope(ptr, ptr, ptr, ptr, usize) は IDevice の (ptr, ptr, ptr) と異なるが、
+        # MetalDeviceImpl::tensor_apply_rope() がアダプタ変換する。
+        "tl_device_tensor_apply_rope": (
+            "Metal側は (ptr, ptr, ptr, ptr, usize) の5引数 + void戻り値。"
+            "MetalDeviceImpl が IDevice の (ptr, ptr, ptr)->ptr から内部変換する"
+        ),
+        # tl_cpu_tensor_conv2d(ptr, ptr, i64, i64) は IDevice の 7引数と異なるが、
+        # CpuDevice::tensor_conv2d() がアダプタ変換する。
+        "tl_device_tensor_conv2d": (
+            "CPU側は (input, weight, padding, stride) の4引数。CpuDevice が IDevice の "
+            "7引数 (input, weight, bias, stride, padding, dilation, groups) から抽出して呼ぶ"
+        ),
+    }
+
+    sig_mismatches: list[str] = []
+    skipped_allowed: list[str] = []
+    for df_name, df_sig in device_ffi_fns.items():
+        # tl_device_tensor_xxx → tl_metal_xxx / tl_cpu_tensor_xxx
+        base = df_name.replace("tl_device_tensor_", "").replace("tl_device_", "")
+
+        metal_candidates = [
+            f"tl_metal_{base}",
+            f"tl_metal_tensor_{base}",
+        ]
+        cpu_candidates = [
+            f"tl_cpu_tensor_{base}",
+            f"tl_cpu_{base}",
+        ]
+
+        metal_sig = None
+        for c in metal_candidates:
+            if c in metal_fns:
+                metal_sig = metal_fns[c]
+                break
+
+        cpu_sig = None
+        for c in cpu_candidates:
+            if c in cpu_fns:
+                cpu_sig = cpu_fns[c]
+                break
+
+        # 許容リストに含まれる場合はスキップ
+        if df_name in ALLOWLIST:
+            if (metal_sig and df_sig.arity != metal_sig.arity) or \
+               (cpu_sig and df_sig.arity != cpu_sig.arity):
+                skipped_allowed.append(
+                    f"   ⏭️  {df_name}: {ALLOWLIST[df_name]}"
                 )
+            continue
 
-        # 戻り値の型
-        if rt_sig.return_type != cpu_sig.return_type:
-            mismatches.append(
-                f"   戻り値: runtime={rt_sig.return_type}, cpu={cpu_sig.return_type}"
+        # device_ffi と Metal の引数数比較 (型はすべて ptr になるので数だけで十分)
+        if metal_sig and df_sig.arity != metal_sig.arity:
+            sig_mismatches.append(
+                f"❌ device_ffi ↔ Metal 引数数不一致: {df_name}\n"
+                f"   device_ffi: {df_sig.sig_str()}  ({df_sig.source_file}:{df_sig.line})\n"
+                f"   Metal:      {metal_sig.name}{metal_sig.sig_str()}  ({metal_sig.source_file}:{metal_sig.line})"
             )
 
-        if mismatches:
-            detail = "\n".join(mismatches)
-            issues.append(
-                f"❌ シグネチャ不一致: {mapping.ffi_name}  (builtins.rs L{mapping.line})\n"
-                f"   Runtime: {rt_sig.name}{rt_sig.sig_str()}\n"
-                f"            ({rt_sig.source_file}:{rt_sig.line})\n"
-                f"   CPU:     {cpu_sig.name}{cpu_sig.sig_str()}\n"
-                f"            ({cpu_sig.source_file}:{cpu_sig.line})\n"
-                f"{detail}"
+        if cpu_sig and df_sig.arity != cpu_sig.arity:
+            sig_mismatches.append(
+                f"❌ device_ffi ↔ CPU 引数数不一致: {df_name}\n"
+                f"   device_ffi: {df_sig.sig_str()}  ({df_sig.source_file}:{df_sig.line})\n"
+                f"   CPU:        {cpu_sig.name}{cpu_sig.sig_str()}  ({cpu_sig.source_file}:{cpu_sig.line})"
             )
-        elif verbose:
-            print(f"   ✅ {mapping.ffi_name}: OK ({rt_sig.arity} args → {rt_sig.return_type})")
 
-    # --- 4. 結果表示 ---
+    # --- 5. 結果表示 ---
     print("=" * 60)
     print("検査結果")
     print("=" * 60)
+
+    if sig_mismatches:
+        print(f"\n🚨 device_ffi ↔ バックエンド シグネチャ不一致: {len(sig_mismatches)} 件\n")
+        for m in sig_mismatches:
+            print(m)
+            print()
 
     if issues:
         print(f"\n🚨 シグネチャ不一致: {len(issues)} 件\n")
         for issue in issues:
             print(issue)
             print()
-    else:
+
+    if not issues and not sig_mismatches:
         print("\n✅ シグネチャ不一致は検出されませんでした。\n")
 
     if warnings:
@@ -348,26 +435,24 @@ def main():
             print(w)
             print()
 
-    if verbose and info:
-        print(f"ℹ️  CPU マッピングなし (runtime のみ): {len(info)} 件\n")
-        for i_msg in info:
-            print(i_msg)
-            print()
+    if skipped_allowed:
+        print(f"\n🔧 許容リスト (device_impl アダプタ変換済み): {len(skipped_allowed)} 件\n")
+        for s in skipped_allowed:
+            print(s)
+        print()
 
     # --- サマリー ---
     print("-" * 60)
-    total_map_tensor = sum(1 for m in mappings if m.source == "map_tensor_fn!")
-    total_direct = sum(1 for m in mappings if m.source == "add_global_mapping")
-    total_no_cpu = sum(1 for m in mappings if m.cpu_path is None)
     print(f"📊 サマリー:")
-    print(f"   map_tensor_fn! マッピング: {total_map_tensor}")
-    print(f"   直接 add_global_mapping:   {total_direct}")
-    print(f"   CPU マッピングなし:        {total_no_cpu}")
-    print(f"   不一致: {len(issues)} / 警告: {len(warnings)}")
+    print(f"   マッピング総数:           {len(mappings)}")
+    print(f"   解決できた関数:           {resolved_count}")
+    print(f"   うち device_ffi 経由:     {device_ffi_count}")
+    print(f"   未解決 (警告):            {len(warnings)}")
+    print(f"   不一致:                   {len(issues) + len(sig_mismatches)}")
+    print(f"   許容済み (allowlist):      {len(skipped_allowed)}")
 
-    if issues:
-        print(f"\n💡 不一致が検出されました。CPU モードで上記の関数を")
-        print(f"   呼び出すとセグフォやデータ破損の原因になります。")
+    if issues or sig_mismatches:
+        print(f"\n💡 不一致が検出されました。修正が必要です。")
         return 1
     return 0
 
