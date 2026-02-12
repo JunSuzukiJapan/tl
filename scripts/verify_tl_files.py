@@ -646,10 +646,24 @@ def main():
     # ⚠️ 並列実行コードは意図的に削除済み。Metal GPU リソース競合で Mac がクラッシュするため。
     # テストは必ず逐次実行する（下記ブロック）。
 
+    # SIGTRAP で失敗しやすいテスト — 実行前に長めのクールダウンを入れる
+    heavy_gpu_tests = {
+        "tests/builtin/llm/kv_cache_test.tl",
+        "examples/tasks/tensor_logic/neuro_symbolic_fusion/recommendation.tl",
+    }
+    pre_cooldown = args.crash_cooldown * 2  # 通常クールダウンの 2 倍
+
     # 順次実行
     for i, tl_file in enumerate(tl_files, 1):
         rel_path = tl_file.relative_to(project_root)
-        print(f"[{i}/{len(tl_files)}] {rel_path} ... ", end="", flush=True)
+        
+        # GPU 負荷の高いテストは事前クールダウン
+        rel_str = str(rel_path)
+        if rel_str in heavy_gpu_tests:
+            print(f"[{i}/{len(tl_files)}] {rel_path} ... ⏳", end="", flush=True)
+            time.sleep(pre_cooldown)
+        else:
+            print(f"[{i}/{len(tl_files)}] {rel_path} ... ", end="", flush=True)
         
         result = run_tl_file(tl_file, tl_binary, args.timeout, args.verbose)
         
