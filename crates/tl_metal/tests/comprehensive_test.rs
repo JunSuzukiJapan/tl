@@ -58,7 +58,7 @@ fn test_randn() {
 fn test_add() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[4.0f32, 5.0, 6.0], &[3], DType::F32);
-    let c = a.add(\&b);
+    let c = a.add(&b);
     assert_tensor_approx_eq(&c, &[5.0, 7.0, 9.0], 1e-5);
 }
 
@@ -67,7 +67,7 @@ fn test_add() {
 fn test_sub() {
     let a = MetalTensor::from_slice(&[5.0f32, 6.0, 7.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
-    let c = a.sub(\&b);
+    let c = a.sub(&b);
     assert_tensor_approx_eq(&c, &[4.0, 4.0, 4.0], 1e-5);
 }
 
@@ -76,7 +76,7 @@ fn test_sub() {
 fn test_mul() {
     let a = MetalTensor::from_slice(&[2.0f32, 3.0, 4.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[3.0f32, 4.0, 5.0], &[3], DType::F32);
-    let c = a.mul(\&b);
+    let c = a.mul(&b);
     assert_tensor_approx_eq(&c, &[6.0, 12.0, 20.0], 1e-5);
 }
 
@@ -85,7 +85,7 @@ fn test_mul() {
 fn test_div() {
     let a = MetalTensor::from_slice(&[10.0f32, 20.0, 30.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[2.0f32, 4.0, 5.0], &[3], DType::F32);
-    let c = a.div(\&b);
+    let c = a.div(&b);
     assert_tensor_approx_eq(&c, &[5.0, 5.0, 6.0], 1e-5);
 }
 
@@ -94,7 +94,7 @@ fn test_div() {
 fn test_matmul() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3], DType::F32);
     let b = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], &[3, 2], DType::F32);
-    let c = a.matmul(\&b);
+    let c = a.matmul(&b);
     assert_eq!(c.shape(), &[2, 2]);
     assert_tensor_approx_eq(&c, &[22.0, 28.0, 49.0, 64.0], 1e-5);
 }
@@ -402,6 +402,6 @@ fn test_simple_forward() {
     let x = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0], &[2, 2], DType::F32);
     let w = MetalTensor::from_slice(&[0.5f32, 0.5, 0.5, 0.5], &[2, 2], DType::F32);
     
-    let y = x.matmul(\&w);
+    let y = x.matmul(&w);
     assert_eq!(y.shape(), &[2, 2]);
 }

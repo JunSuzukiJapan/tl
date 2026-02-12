@@ -316,7 +316,7 @@ fn test_broadcast_add() {
     
     // b を [2, 3] にブロードキャスト
     let b_broadcast = b.broadcast_to(&[2, 3]);
-    let c = a.add(\&b_broadcast);
+    let c = a.add(&b_broadcast);
     assert_tensor_approx_eq(&c, &[11.0, 22.0, 33.0, 14.0, 25.0, 36.0], 1e-5);
 }
 

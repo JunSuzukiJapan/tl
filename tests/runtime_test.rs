@@ -2,6 +2,7 @@ use serial_test::serial;
 use tl_runtime::error::CTensorResult;
 use tl_runtime::*;
 use tl_runtime::error::tl_get_last_error;
+use tl_metal::ffi_ops::*;
 
 // Helper to check if a tensor is not null
 fn assert_tensor_valid(t: *mut OpaqueTensor) {
@@ -108,7 +109,7 @@ fn test_tensor_creation_and_free() {
     assert_tensor_valid(t);
 
     // Check length (total numel)
-    let len = tl_metal_len(t);
+    let len = tl_metal::ffi::tl_metal_numel(t);
     assert_eq!(len, 4); // 2x2 tensor = 4 elements
 
     safe_free(t);
@@ -127,26 +128,6 @@ fn test_tensor_arithmetic() {
     // Add
     let t_add = unwrap_tensor(tl_metal_add(t_a, t_b));
     assert_tensor_valid(t_add);
-
-    // To verify values, we can use slice or item if implemented.
-    // tl_tensor_slice is implemented as "slice(t, start, len)".
-    // But we don't have a "get_data" function easily exposed to C-ABI (only print).
-    // EXCEPT tl_tensor_item_i64 which extracts scalar.
-    // Let's rely on that for scalar verification or simple stats.
-
-    // Or we can extract specific element via index logic if available...
-    // There is no `tl_tensor_get(t, idx)`.
-    // But we have `tl_tensor_slice`.
-    // Note: runtime/mod.rs line 1569: if name == "slice" in semantics...
-    // Wait, let's check runtime implementation of slice.
-    // I need to look deeper into mod.rs or check if I missed `tl_tensor_slice` export.
-    // I only saw `tl_tensor_argmax`, etc.
-    // Let's stick to what I saw: `tl_tensor_item_i64`.
-
-    // Test sum to verify?
-    // Is there a `sum` C function? `tl_metal_sum`?
-    // I need to check `src/runtime/mod.rs` again to see what functions are actually exported.
-    // I scrolled to line 800. I should look further.
 
     safe_free(t_a);
     safe_free(t_b);
@@ -200,8 +181,8 @@ fn test_matmul() {
     let t_c = unwrap_tensor(tl_metal_matmul(t_a, t_b));
     assert_tensor_valid(t_c);
 
-    // Check total numel via tl_metal_len
-    let numel = tl_metal_len(t_c);
+    // Check total numel
+    let numel = tl_metal::ffi::tl_metal_numel(t_c);
     assert_eq!(numel, 4); // 2x2 = 4 elements
 
     // Check Value at (0, 0) -> 22
@@ -286,8 +267,7 @@ fn test_basic_ops() {
     assert_approx_eq(get_item_f32(t_pow, 0), 4.0);
     assert_approx_eq(get_item_f32(t_pow, 1), 25.0);
 
-    // Log: log(e) approx 1? scalar check
-    // let's test log(10)
+    // Log: log(10)
     let t_log_input = unwrap_tensor(tl_metal_new(vec![10.0].as_ptr(), 1, vec![1].as_ptr()));
     let t_log = unwrap_tensor(tl_metal_log(t_log_input));
     // ln(10) ~ 2.30258
@@ -319,7 +299,7 @@ fn test_reshape_transpose() {
     let new_shape: Vec<i64> = vec![4, 1];
     let t_flat = tl_metal_reshape(t, new_shape.as_ptr(), 2);
     assert_tensor_valid(t_flat);
-    let numel = tl_metal_len(t_flat);
+    let numel = tl_metal::ffi::tl_metal_numel(t_flat);
     assert_eq!(numel, 4); // 4x1 = 4 elements
 
     safe_free(t);

@@ -193,7 +193,7 @@ fn test_fmod_scalar() {
 fn test_pow_binary() {
     let a = MetalTensor::from_slice(&[2.0f32, 3.0, 4.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[3.0f32, 2.0, 1.0], &[3], DType::F32);
-    let c = a.pow(\&b);
+    let c = a.pow(&b);
     assert_tensor_approx_eq(&c, &[8.0, 9.0, 4.0], 1e-4);
 }
 
@@ -426,7 +426,7 @@ fn test_batch_matmul_3d_2d() {
         DType::F32,
     );
 
-    let c = a.matmul(\&b);
+    let c = a.matmul(&b);
     assert_eq!(c.shape(), &[2, 2, 2]);
 
     let data = c.to_vec::<f32>();
@@ -473,7 +473,7 @@ fn test_batch_matmul_3d_3d() {
         DType::F32,
     );
 
-    let c = a.matmul(\&b);
+    let c = a.matmul(&b);
     assert_eq!(c.shape(), &[2, 2, 2]);
 
     let data = c.to_vec::<f32>();
@@ -503,7 +503,7 @@ fn test_large_tensor_add() {
     let b_data: Vec<f32> = (0..n).map(|i| (n - i) as f32).collect();
     let a = MetalTensor::from_slice(&a_data, &[n], DType::F32);
     let b = MetalTensor::from_slice(&b_data, &[n], DType::F32);
-    let c = a.add(\&b);
+    let c = a.add(&b);
 
     let result = c.to_vec::<f32>();
     assert_eq!(result.len(), n);
@@ -543,7 +543,7 @@ fn test_binary_broadcast_auto() {
     let b = MetalTensor::from_slice(&[10.0f32, 20.0, 30.0], &[3], DType::F32);
 
     // binary_op 内部で自動ブロードキャスト
-    let c = a.add(\&b);
+    let c = a.add(&b);
     assert_eq!(c.shape(), &[2, 3]);
     assert_tensor_approx_eq(&c, &[11.0, 22.0, 33.0, 14.0, 25.0, 36.0], 1e-5);
 }
