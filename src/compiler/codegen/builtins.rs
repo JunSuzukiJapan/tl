@@ -2172,10 +2172,8 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_reshape_3d_to_2d") {
         execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_reshape_3d_to_2d as usize);
     }
-    if !is_cpu {
-        if let Some(f) = module.get_function("tl_tensor_map_get_1d") {
-            execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get as usize);
-        }
+    if let Some(f) = module.get_function("tl_tensor_map_get_1d") {
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get as usize);
     }
 
 
