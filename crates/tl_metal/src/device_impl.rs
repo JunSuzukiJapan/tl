@@ -306,6 +306,29 @@ impl IDevice for MetalDeviceImpl {
     #[inline] fn tensor_avg_pool2d(&self, input: *mut c_void, kernel_size: usize, stride: usize, padding: usize) -> *mut c_void {
         v(ffi_ops::tl_metal_avg_pool2d(t(input), kernel_size, stride, padding))
     }
+
+    // ========== 次元特化メソッド (汎用 GPU メソッドに委譲) ==========
+    #[inline] fn tensor_transpose_2d(&self, a: *mut c_void) -> *mut c_void {
+        self.tensor_transpose(a, 0, 1)
+    }
+    #[inline] fn tensor_reshape_2d(&self, a: *mut c_void, d0: i64, d1: i64) -> *mut c_void {
+        // shape テンソルを作成して reshape に委譲
+        let shape_data = [d0 as f32, d1 as f32];
+        let shape_tensor = v(ffi_ops::make_tensor(MetalTensor::from_slice(&shape_data, &[2], crate::DType::F32)));
+        self.tensor_reshape_new(a, shape_tensor)
+    }
+    #[inline] fn tensor_reshape_3d_to_2d(&self, a: *mut c_void, d0: i64, d1: i64) -> *mut c_void {
+        self.tensor_reshape_2d(a, d0, d1)
+    }
+    #[inline] fn tensor_matmul_4d(&self, a: *mut c_void, b: *mut c_void) -> *mut c_void {
+        self.tensor_matmul(a, b)
+    }
+    #[inline] fn tensor_add_4d(&self, a: *mut c_void, b: *mut c_void) -> *mut c_void {
+        self.tensor_add(a, b)
+    }
+    #[inline] fn tensor_silu_4d(&self, a: *mut c_void) -> *mut c_void {
+        self.tensor_silu(a)
+    }
 }
 
 use tl_backend::GpuTensor;

@@ -170,11 +170,11 @@ pub trait IDevice {
     fn tensor_max_pool2d(&self, input: *mut c_void, kernel_size: usize, stride: usize, padding: usize) -> *mut c_void;
     fn tensor_avg_pool2d(&self, input: *mut c_void, kernel_size: usize, stride: usize, padding: usize) -> *mut c_void;
 
-    // ========== CPU 専用 (デフォルト実装: GPU では呼ばれない) ==========
-    fn tensor_transpose_2d(&self, t: *mut c_void) -> *mut c_void { let _ = t; std::ptr::null_mut() }
-    fn tensor_reshape_2d(&self, t: *mut c_void, d0: i64, d1: i64) -> *mut c_void { let _ = (t, d0, d1); std::ptr::null_mut() }
-    fn tensor_reshape_3d_to_2d(&self, t: *mut c_void, d0: i64, d1: i64) -> *mut c_void { let _ = (t, d0, d1); std::ptr::null_mut() }
-    fn tensor_matmul_4d(&self, a: *mut c_void, b: *mut c_void) -> *mut c_void { let _ = (a, b); std::ptr::null_mut() }
-    fn tensor_add_4d(&self, a: *mut c_void, b: *mut c_void) -> *mut c_void { let _ = (a, b); std::ptr::null_mut() }
-    fn tensor_silu_4d(&self, t: *mut c_void) -> *mut c_void { let _ = t; std::ptr::null_mut() }
+    // ========== 次元特化メソッド ==========
+    fn tensor_transpose_2d(&self, t: *mut c_void) -> *mut c_void;
+    fn tensor_reshape_2d(&self, t: *mut c_void, d0: i64, d1: i64) -> *mut c_void;
+    fn tensor_reshape_3d_to_2d(&self, t: *mut c_void, d0: i64, d1: i64) -> *mut c_void;
+    fn tensor_matmul_4d(&self, a: *mut c_void, b: *mut c_void) -> *mut c_void;
+    fn tensor_add_4d(&self, a: *mut c_void, b: *mut c_void) -> *mut c_void;
+    fn tensor_silu_4d(&self, t: *mut c_void) -> *mut c_void;
 }
