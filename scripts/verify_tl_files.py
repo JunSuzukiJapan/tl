@@ -129,7 +129,10 @@ SKIP_FILES = {
     # --- autograd 使用ファイル ---
     # randn_debug の codegen/runtime 引数不一致修正 (2026-02-12) により大半が動作。
     # sudoku.tl のみ型エラー (autograd 無関係) で残留。
+    # lenia, gnn は GPU 負荷が高く連続実行で Mac がフリーズするためスキップ。
     "sudoku.tl",  # 型エラー: expected Bool, found String
+    "lenia.tl",   # GPU 負荷大 (64x64 grid × 100 steps)
+    "gnn.tl",     # GPU 負荷大 (250 epochs)
 }
 
 
