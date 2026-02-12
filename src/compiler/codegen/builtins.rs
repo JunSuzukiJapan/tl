@@ -785,11 +785,12 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_reshape_new", reshape_tensor_type);
 
     // Randn
-    // tl_tensor_randn(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor
+    // tl_tensor_randn_debug(rank: usize, shape: *const usize, seed: u64, req_grad: bool) -> *mut OpaqueTensor
     let randn_type = void_ptr.fn_type(
         &[
             i64_type.into(),            // Rank
             usize_ptr.into(),           // Shape Ptr
+            i64_type.into(),            // Seed (unused, pass 0)
             context.bool_type().into(), // Req Grad
         ],
         false,

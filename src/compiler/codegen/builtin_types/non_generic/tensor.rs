@@ -1072,15 +1072,21 @@ fn compile_tensor_creation_helper<'ctx>(
     }
     .map_err(|e| e.to_string())?;
 
+    // Build args: randn_debug requires seed arg, zeros/ones do not
+    let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+    call_args.push(i64_type.const_int(rank as u64, false).into());
+    call_args.push(first_elem_ptr.into());
+    if runtime_func_name.contains("randn") {
+        // randn_debug has signature: (rank, shape, seed, req_grad)
+        call_args.push(i64_type.const_int(0, false).into()); // seed = 0 (unused)
+    }
+    call_args.push(req_grad_val.into());
+
     let call = codegen
         .builder
         .build_call(
             f,
-            &[
-                i64_type.const_int(rank as u64, false).into(),
-                first_elem_ptr.into(),
-                req_grad_val.into(),
-            ],
+            &call_args,
             "creation_res",
         )
         .map_err(|e| e.to_string())?;
