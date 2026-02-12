@@ -56,3 +56,8 @@ pub fn get_device() -> Arc<MetalDevice> {
         .get_or_init(|| Arc::new(MetalDevice::default()))
         .clone()
 }
+
+/// グローバルデバイスが初期化済みの場合のみ取得（初期化を引き起こさない）
+pub fn try_get_device() -> Option<Arc<MetalDevice>> {
+    GLOBAL_DEVICE.get().cloned()
+}

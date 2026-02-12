@@ -442,6 +442,9 @@ fn main() -> Result<()> {
             }
         }
 
+        // Metal GPU 同期 — プロセス終了前にすべての GPU 処理の完了を保証
+        tl_runtime::system::tl_metal_sync();
+
         // Logic program logic
         let is_logic_program = !combined_module.relations.is_empty()
             || !combined_module.rules.is_empty()

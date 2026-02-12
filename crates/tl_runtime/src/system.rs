@@ -252,10 +252,17 @@ pub extern "C" fn tl_kv_cache_update(
 
 // tl_download_file は file_io.rs で定義済み
 
-/// Metal 同期
+/// Metal 同期 — プロセス終了前に GPU 処理の完了を保証
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_metal_sync() {
-    // Metal バックエンドの同期（現在は何もしない）
+    // デバイスが既に初期化されている場合のみ同期
+    // get_device() を呼ぶと未初期化でもデバイスが作られるため、
+    // try_get_device() で確認してから同期する
+    if let Some(device) = tl_metal::device::try_get_device() {
+        let cmd = device.command_queue().new_command_buffer();
+        cmd.commit();
+        cmd.wait_until_completed();
+    }
 }
 
 // tl_register_tensor は memory_ffi.rs で定義済み

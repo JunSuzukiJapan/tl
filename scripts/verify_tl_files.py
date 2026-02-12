@@ -652,6 +652,17 @@ def main():
         print(f"[{i}/{len(tl_files)}] {rel_path} ... ", end="", flush=True)
         
         result = run_tl_file(tl_file, tl_binary, args.timeout, args.verbose)
+        
+        # GPU リソース競合による間欠的失敗 (SIGTRAP=-5, SIGABRT=-6) のリトライ
+        if result.status == Status.FAIL and result.reason and "Exit code: -5" in result.reason:
+            max_retries = 2
+            for retry in range(max_retries):
+                print(f"🔄", end="", flush=True)
+                time.sleep(args.crash_cooldown)
+                result = run_tl_file(tl_file, tl_binary, args.timeout, args.verbose)
+                if result.status == Status.PASS:
+                    break
+        
         results.append(result)
         
         print(f"{result.status.value} ({result.duration:.1f}s)")
