@@ -136,7 +136,7 @@ SKIP_FILES = {
     "logic.tl",
     "gnn.tl",
     "adam.tl",
-    "classification_test.tl",
+    # classification_test.tl は forward + backward が動作するため有効化
     "sgd_test.tl",
     "mem_leak_autograd.tl",
     "mem_leak_autograd_fixed.tl",
