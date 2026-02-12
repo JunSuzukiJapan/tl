@@ -186,9 +186,41 @@ impl MetalTensor {
             return result;
         }
 
+        // 4D × 4D: batched head matmul (Attention用)
+        // [B, H, M, K] × [B, H, K, N] → [B, H, M, N]
+        if self_shape.len() == 4 && other_shape.len() == 4 {
+            let b = self_shape[0];
+            let h = self_shape[1];
+            let m = self_shape[2];
+            let k = self_shape[3];
+            assert_eq!(b, other_shape[0], "Batch dim mismatch");
+            assert_eq!(h, other_shape[1], "Head dim mismatch");
+            assert_eq!(k, other_shape[2], "Inner dim mismatch: {} vs {}", k, other_shape[2]);
+            let n = other_shape[3];
+
+            // Flatten to 3D: [B*H, M, K] and [B*H, K, N]
+            let self_3d = MetalTensor::from_buffer_shared(
+                self.buffer_arc().clone(),
+                vec![b * h, m, k],
+                self.dtype(),
+            );
+            let other_3d = MetalTensor::from_buffer_shared(
+                other.buffer_arc().clone(),
+                vec![b * h, k, n],
+                other.dtype(),
+            );
+            let result_3d = self_3d.matmul_impl(&other_3d);
+            // Reshape back to 4D: [B, H, M, N]
+            return MetalTensor::from_buffer_shared(
+                result_3d.buffer_arc().clone(),
+                vec![b, h, m, n],
+                result_3d.dtype(),
+            );
+        }
+
         // 2D × 2D: 標準 matmul
-        assert!(self_shape.len() == 2, "self must be 2D or 3D, got {}D", self_shape.len());
-        assert!(other_shape.len() == 2, "other must be 2D or 3D, got {}D", other_shape.len());
+        assert!(self_shape.len() == 2, "self must be 2D, 3D, or 4D, got {}D", self_shape.len());
+        assert!(other_shape.len() == 2, "other must be 2D, 3D, or 4D, got {}D", other_shape.len());
 
         let m = self_shape[0];
         let k1 = self_shape[1];

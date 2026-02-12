@@ -161,7 +161,7 @@ impl IDevice for MetalDeviceImpl {
     #[inline] fn tensor_argmin(&self, a: *mut c_void, dim: i64, keep_dim: bool) -> *mut c_void { v(ffi_ops::tl_metal_argmin(t(a), dim, keep_dim)) }
     #[inline] fn tensor_tril(&self, a: *mut c_void, diagonal: i64) -> *mut c_void { v(ffi_ops::tl_metal_tril(t(a), diagonal)) }
     #[inline] fn tensor_clamp(&self, a: *mut c_void, min: f64, max: f64) -> *mut c_void { v(ffi_ops::tl_metal_clamp(t(a), min, max)) }
-    #[inline] fn tensor_sample(&self, a: *mut c_void) -> *mut c_void { v(ffi_ops::tl_metal_sample(t(a))) }
+    #[inline] fn tensor_sample(&self, a: *mut c_void, temp: f32, top_p: f32) -> *mut c_void { v(ffi_ops::tl_metal_sample(t(a), temp, top_p)) }
 
     // ========== Autograd ==========
     #[inline] fn tensor_backward(&self, a: *mut c_void) { ffi_ops::tl_metal_backward(t(a)) }

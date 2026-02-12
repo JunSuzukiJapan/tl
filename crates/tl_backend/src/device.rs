@@ -121,7 +121,7 @@ pub trait IDevice {
     fn tensor_argmin(&self, t: *mut c_void, dim: i64, keep_dim: bool) -> *mut c_void;
     fn tensor_tril(&self, t: *mut c_void, diagonal: i64) -> *mut c_void;
     fn tensor_clamp(&self, t: *mut c_void, min: f64, max: f64) -> *mut c_void;
-    fn tensor_sample(&self, t: *mut c_void) -> *mut c_void;
+    fn tensor_sample(&self, t: *mut c_void, temp: f32, top_p: f32) -> *mut c_void;
 
     // ========== Autograd ==========
     fn tensor_backward(&self, t: *mut c_void);

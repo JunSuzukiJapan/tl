@@ -127,7 +127,7 @@ impl IDevice for CpuDevice {
     #[inline] fn tensor_argmin(&self, a: *mut c_void, dim: i64, keep_dim: bool) -> *mut c_void { v(ffi::tl_cpu_tensor_argmin(t(a), dim, keep_dim)) }
     #[inline] fn tensor_tril(&self, a: *mut c_void, diagonal: i64) -> *mut c_void { v(ffi::tl_cpu_tensor_tril(t(a), diagonal)) }
     #[inline] fn tensor_clamp(&self, a: *mut c_void, min: f64, max: f64) -> *mut c_void { v(ffi::tl_cpu_tensor_clamp(t(a), min, max)) }
-    #[inline] fn tensor_sample(&self, a: *mut c_void) -> *mut c_void { v(ffi::tl_cpu_tensor_sample(t(a))) }
+    #[inline] fn tensor_sample(&self, a: *mut c_void, temp: f32, top_p: f32) -> *mut c_void { v(ffi::tl_cpu_tensor_sample(t(a), temp, top_p)) }
 
     // ========== Autograd ==========
     #[inline] fn tensor_backward(&self, a: *mut c_void) { ffi::tl_cpu_tensor_backward(t(a)) }

@@ -141,14 +141,11 @@ pub extern "C" fn tl_qtensor_matmul(
     }
 
     unsafe {
-        let input_tensor = &*input;
         let qtensor = &*weight;
 
-        // QTensor をデクォンタイズ (MetalTensor (F32) へ変換)
-        // 現状は CPU でデクォンタイズして新しい MetalTensor を作成している
-        // 将来的には Metal Kernel で直接扱えると良い
-        let weight_tensor = match qtensor.dequantize() {
-            Ok(t) => t,
+        // QTensor をデクォンタイズ (CPU/GPU両対応の OpaqueTensor に変換)
+        let weight_ptr = match qtensor.dequantize_to_tensor() {
+            Ok(t) => t as *mut std::ffi::c_void,
             Err(e) => {
                 eprintln!("Error: tl_qtensor_matmul dequantize failed: {}", e);
                 return std::ptr::null_mut();
@@ -156,12 +153,8 @@ pub extern "C" fn tl_qtensor_matmul(
         };
 
         // matmul: input * weight^T
-        // Transpose weight tensor (0, 1) to match input dimensions
-        let transposed_weight = weight_tensor.transpose(0, 1);
-        
-        let result = input_tensor.matmul(&transposed_weight);
-        
-        Box::into_raw(Box::new(result))
+        let transposed = crate::device_ffi::tl_device_tensor_transpose_2d(weight_ptr);
+        crate::device_ffi::tl_device_tensor_matmul(input as *mut std::ffi::c_void, transposed) as *mut crate::OpaqueTensor
     }
 }
 
@@ -238,7 +231,23 @@ pub extern "C" fn tl_kv_cache_update(
     while cache.layers.len() <= idx {
         cache.layers.push((None, None));
     }
-    cache.layers[idx] = (Some(k), Some(v));
+    // テンソルをcloneしてcacheが独立コピーを保持する
+    // (JITの自動メモリ管理で元テンソルが解放されてもcache内は有効)
+    let k_clone = if !k.is_null() {
+        Some(crate::device_ffi::tl_device_tensor_clone(
+            k as *mut std::ffi::c_void,
+        ) as *mut crate::OpaqueTensor)
+    } else {
+        None
+    };
+    let v_clone = if !v.is_null() {
+        Some(crate::device_ffi::tl_device_tensor_clone(
+            v as *mut std::ffi::c_void,
+        ) as *mut crate::OpaqueTensor)
+    } else {
+        None
+    };
+    cache.layers[idx] = (k_clone, v_clone);
 }
 
 

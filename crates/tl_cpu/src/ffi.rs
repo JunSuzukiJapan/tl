@@ -1055,13 +1055,54 @@ pub extern "C" fn tl_cpu_tensor_reshape_3d_to_2d(t: *mut OpaqueTensor, d0: i64, 
     make_tensor(tensor.reshape_impl(&[d0 as usize, d1 as usize]))
 }
 
-pub extern "C" fn tl_cpu_tensor_sample(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+pub extern "C" fn tl_cpu_tensor_sample(t: *mut OpaqueTensor, temp: f32, top_p: f32) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
-    // Return argmax as a simple sampling strategy
-    let data = &tensor.data_f32;
-    let max_idx = data.iter().enumerate().max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)).map(|(i, _)| i).unwrap_or(0);
-    make_tensor(CpuTensor { data_f32: vec![max_idx as f32], data_i64: None, shape: vec![1], dtype: DType::F32, autograd: None })
+    let logits = &tensor.data_f32;
+    
+    if logits.is_empty() {
+        return make_tensor(CpuTensor { data_f32: vec![0.0], data_i64: None, shape: vec![1], dtype: DType::F32, autograd: None });
+    }
+
+    // 温度適用 + softmax
+    let temp = if temp <= 0.0 { 1e-8 } else { temp };
+    let scaled: Vec<f32> = logits.iter().map(|&x| x / temp).collect();
+    let max_val = scaled.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let exps: Vec<f32> = scaled.iter().map(|&x| (x - max_val).exp()).collect();
+    let sum: f32 = exps.iter().sum();
+    let probs: Vec<f32> = exps.iter().map(|&x| x / sum).collect();
+
+    // Top-p (nucleus) sampling
+    let mut sorted_indices: Vec<usize> = (0..probs.len()).collect();
+    sorted_indices.sort_by(|&a, &b| probs[b].partial_cmp(&probs[a]).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut cumsum = 0.0f32;
+    let mut cutoff_idx = sorted_indices.len();
+    for (i, &idx) in sorted_indices.iter().enumerate() {
+        cumsum += probs[idx];
+        if cumsum >= top_p {
+            cutoff_idx = i + 1;
+            break;
+        }
+    }
+
+    let top_indices = &sorted_indices[..cutoff_idx];
+    let top_sum: f32 = top_indices.iter().map(|&i| probs[i]).sum();
+    
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let r: f32 = rng.gen();
+    let mut acc = 0.0f32;
+    let mut chosen = top_indices[0];
+    for &idx in top_indices {
+        acc += probs[idx] / top_sum;
+        if r < acc {
+            chosen = idx;
+            break;
+        }
+    }
+
+    make_tensor(CpuTensor { data_f32: vec![chosen as f32], data_i64: None, shape: vec![1], dtype: DType::F32, autograd: None })
 }
 
 pub extern "C" fn tl_cpu_tensor_repeat_interleave(

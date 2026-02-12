@@ -138,7 +138,7 @@ where
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_argmin(a: *mut c_void, dim: i64, keep_dim: bool) -> *mut c_void { dispatch(|d| d.tensor_argmin(a, dim, keep_dim)) }
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_tril(a: *mut c_void, diagonal: i64) -> *mut c_void { dispatch(|d| d.tensor_tril(a, diagonal)) }
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_clamp(a: *mut c_void, min: f64, max: f64) -> *mut c_void { dispatch(|d| d.tensor_clamp(a, min, max)) }
-#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_sample(a: *mut c_void) -> *mut c_void { dispatch(|d| d.tensor_sample(a)) }
+#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_sample(a: *mut c_void, temp: f32, top_p: f32) -> *mut c_void { dispatch(|d| d.tensor_sample(a, temp, top_p)) }
 
 // ========== Autograd ==========
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_backward(a: *mut c_void) { dispatch(|d| d.tensor_backward(a)) }

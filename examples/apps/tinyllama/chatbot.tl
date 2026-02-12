@@ -181,8 +181,9 @@ fn main() {
     let cos = Tensor::rope_new_cos(64, 2048, 10000.0);
     let sin = Tensor::rope_new_sin(64, 2048, 10000.0);
     let on = RMSNorm::new(weights, "output_norm.weight");
-    let oh = Linear::from_map(weights, "output.weight");
     let emb = weights.get("token_embd.weight");
+    // TinyLlama はLM headとembeddingがweight-tied (output.weight = token_embd.weight)
+    let oh = Linear { w: emb.transpose_2d(0, 1) };
 
     // Pre-load blocks (Unrolled for perf/safety)
     let b0 = Block::from_map(weights, 0);

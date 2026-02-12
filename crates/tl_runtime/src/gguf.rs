@@ -118,7 +118,14 @@ pub extern "C" fn tl_gguf_load(path: *mut StringStruct) -> *mut OpaqueTensorMap 
 
         for tensor in model.tensors() {
              let name = tensor.name.clone();
-             let shape = tensor.shape.iter().map(|&d| d as usize).collect::<Vec<_>>();
+             let mut shape: Vec<usize> = tensor.shape.iter().map(|&d| d as usize).collect();
+             // GGUFフォーマットは末尾を1でパディングするため、trim
+             while shape.len() > 1 && shape.last() == Some(&1) {
+                 shape.pop();
+             }
+             // GGML は列優先 (column-major) のshapeを使用するため、
+             // 行優先 (row-major) のテンソルシステムに合わせて反転
+             shape.reverse();
              // Tensor offset is relative to data_offset
              let offset = data_offset + tensor.offset; 
              let offset_usize = offset as usize;

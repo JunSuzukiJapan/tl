@@ -100,6 +100,7 @@ pub extern "C" fn tl_tensor_map_insert(
 }
 
 /// TensorMap からテンソルを取得
+/// entries (F32) を先に検索し、なければ qtensors (量子化) をデクォンタイズして返す
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_get(
     map: *mut OpaqueTensorMap,
@@ -109,18 +110,33 @@ pub extern "C" fn tl_tensor_map_get(
         if map.is_null() || name.is_null() || (*name).ptr.is_null() {
             return std::ptr::null_mut();
         }
-        let map_ref = &(*map).entries;
+        let map_ref = &(*map);
         let key = CStr::from_ptr((*name).ptr).to_string_lossy();
         
-        if let Some(entry) = map_ref.get(key.as_ref()) {
-            create_tensor_from_entry(entry)
-        } else {
-            crate::error::set_last_error(
-                format!("Weight '{}' not found in loaded file.", key),
-                crate::error::RuntimeErrorCode::ArgumentError,
-            );
-            std::ptr::null_mut()
+        // 1. entries (F32テンソル) を検索
+        if let Some(entry) = map_ref.entries.get(key.as_ref()) {
+            return create_tensor_from_entry(entry);
         }
+        
+        // 2. qtensors (量子化テンソル) をフォールバック検索
+        if let Some(qtensor_arc) = map_ref.qtensors.get(key.as_ref()) {
+            match qtensor_arc.dequantize_to_tensor() {
+                Ok(tensor_ptr) => return tensor_ptr,
+                Err(e) => {
+                    crate::error::set_last_error(
+                        format!("Failed to dequantize '{}': {}", key, e),
+                        crate::error::RuntimeErrorCode::ArgumentError,
+                    );
+                    return std::ptr::null_mut();
+                }
+            }
+        }
+        
+        crate::error::set_last_error(
+            format!("Weight '{}' not found in loaded file.", key),
+            crate::error::RuntimeErrorCode::ArgumentError,
+        );
+        std::ptr::null_mut()
     }
 }
 
