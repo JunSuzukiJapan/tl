@@ -666,8 +666,19 @@ pub extern "C" fn tl_cpu_tensor_argmin(t: *mut OpaqueTensor, dim: i64, _keep_dim
 
 pub extern "C" fn tl_cpu_tensor_reshape(t: *mut OpaqueTensor, rank: usize, shape: *const usize) -> *mut OpaqueTensor {
     if t.is_null() || shape.is_null() { return std::ptr::null_mut(); }
+    if rank == 0 || rank > 8 {
+        eprintln!("Warning: tl_cpu_tensor_reshape: invalid rank={}", rank);
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     let new_shape = unsafe { std::slice::from_raw_parts(shape, rank) };
+    // サニティチェック: 要素数が一致しない場合はnull返却（panic/abort防止）
+    let old_count: usize = tensor.shape().iter().product();
+    let new_count: usize = new_shape.iter().product();
+    if old_count != new_count {
+        eprintln!("Warning: tl_cpu_tensor_reshape: element count mismatch {} vs {}", old_count, new_count);
+        return std::ptr::null_mut();
+    }
     let input_shape = tensor.shape().to_vec();
     let ptr = make_tensor(tensor.reshape_impl(new_shape));
     if tensor.requires_grad() {

@@ -86,13 +86,18 @@ pub extern "C" fn tl_tensor_display(t: *mut OpaqueTensor) {
         print!("Tensor[null]");
         return;
     }
-    let tensor = unsafe { &*t };
-    let data: Vec<f32> = tensor.to_vec();
-    if data.len() <= 10 {
-        print!("{:?}", data);
-    } else {
-        let preview: Vec<f32> = data.iter().take(5).cloned().collect();
-        print!("{:?}...({} elements)", preview, data.len());
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let tensor = unsafe { &*t };
+        let data: Vec<f32> = tensor.to_vec();
+        if data.len() <= 10 {
+            print!("{:?}", data);
+        } else {
+            let preview: Vec<f32> = data.iter().take(5).cloned().collect();
+            print!("{:?}...({} elements)", preview, data.len());
+        }
+    }));
+    if result.is_err() {
+        print!("Tensor[invalid]");
     }
     let _ = std::io::stdout().flush();
 }

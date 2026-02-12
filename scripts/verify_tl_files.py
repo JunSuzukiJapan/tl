@@ -222,6 +222,8 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
 
     is_expected_to_fail = filepath.name in EXPECTED_FAILURES
     
+    exe_path = None  # Static モードで生成されるバイナリのパス
+    proc = None  # 子プロセスの参照（タイムアウト時のkill用）
     try:
         # Static Compilation Override
         import sys
@@ -233,22 +235,29 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
              exe_path = filepath.with_suffix('.bin') # Use .bin suffix to avoid collision with directories (e.g. tests/generics)
              
              compile_cmd = [str(tl_binary), "-c", str(filepath), "-o", str(exe_path)]
-             compile_result = subprocess.run(
+             proc = subprocess.Popen(
                  compile_cmd,
-                 capture_output=True,
+                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                  text=True,
-                 timeout=timeout,
                  cwd=project_root, # Fix: Compile from root so 'target/debug' path in tl main.rs works
                  env=env
              )
+             try:
+                 compile_stdout, compile_stderr = proc.communicate(timeout=timeout)
+                 compile_returncode = proc.returncode
+             except subprocess.TimeoutExpired:
+                 proc.kill()
+                 proc.wait()
+                 raise
+             proc = None  # コンパイル完了、参照をクリア
              
-             if compile_result.returncode != 0:
+             if compile_returncode != 0:
                  if is_expected_to_fail:
                      return TestResult(
                          file=str(filepath),
                          status=Status.PASS,
-                         output=compile_result.stdout,
-                         error=compile_result.stderr,
+                         output=compile_stdout,
+                         error=compile_stderr,
                          duration=time.time() - start_time,
                          reason="(Expected Compilation Failure)"
                      )
@@ -256,70 +265,88 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
                  return TestResult(
                      file=str(filepath),
                      status=Status.FAIL,
-                     output=compile_result.stdout,
-                     error=f"Compilation Failed:\n{compile_result.stderr}",
+                     output=compile_stdout,
+                     error=f"Compilation Failed:\n{compile_stderr}",
                      duration=time.time() - start_time,
-                     reason=f"Compilation Failed (Exit: {compile_result.returncode})"
+                     reason=f"Compilation Failed (Exit: {compile_returncode})"
                  )
 
              # 2. Run Executable
-             # exe_path is already set above to .bin
              run_cmd = [str(exe_path)]
-             result = subprocess.run(
+             proc = subprocess.Popen(
                  run_cmd,
-                 capture_output=True,
+                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                  text=True,
-                 timeout=timeout,
                  cwd=filepath.parent
              )
+             try:
+                 stdout, stderr = proc.communicate(timeout=timeout)
+                 returncode = proc.returncode
+             except subprocess.TimeoutExpired:
+                 proc.kill()
+                 proc.wait()
+                 raise
+             proc = None
         else:
             # JIT Execution (Default)
             # FIX: Must pass filename only (or absolute path) since we changed CWD to parent
             if verbose:
                  print(f"DEBUG: Running {tl_binary} {filepath.name} in {filepath.parent}")
-                 # Stream output directly to console in verbose mode to avoid buffer issues/aborts
-                 result = subprocess.run(
+                 # Stream output directly to console in verbose mode
+                 proc = subprocess.Popen(
                     [str(tl_binary), filepath.name],
-                    capture_output=False,
                     text=True,
-                    timeout=timeout,
                     cwd=filepath.parent
                  )
-                 # Mock stdout/stderr since we can't capture it easily without piping
-                 result.stdout = "(Streamed to console)"
-                 result.stderr = ""
+                 try:
+                     proc.communicate(timeout=timeout)
+                     returncode = proc.returncode
+                 except subprocess.TimeoutExpired:
+                     proc.kill()
+                     proc.wait()
+                     raise
+                 proc = None
+                 stdout = "(Streamed to console)"
+                 stderr = ""
             else:
-                 result = subprocess.run(
+                 proc = subprocess.Popen(
                     [str(tl_binary), filepath.name],
-                    capture_output=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     text=True,
-                    timeout=timeout,
                     cwd=filepath.parent
                  )
+                 try:
+                     stdout, stderr = proc.communicate(timeout=timeout)
+                     returncode = proc.returncode
+                 except subprocess.TimeoutExpired:
+                     proc.kill()
+                     proc.wait()
+                     raise
+                 proc = None
 
 
         duration = time.time() - start_time
         
         # セグメンテーションフォールトの検出
-        if result.returncode == -11 or result.returncode == 139:
+        if returncode == -11 or returncode == 139:
             return TestResult(
                 file=str(filepath),
                 status=Status.SEGFAULT,
-                output=result.stdout,
-                error=result.stderr,
+                output=stdout,
+                error=stderr,
                 duration=duration,
                 reason="Segmentation fault"
             )
         
         # 終了コードをチェック
-        if result.returncode != 0:
+        if returncode != 0:
             if is_expected_to_fail:
                 # 失敗が期待されていたので PASS とする
                 return TestResult(
                     file=str(filepath),
                     status=Status.PASS,
-                    output=result.stdout,
-                    error=result.stderr, 
+                    output=stdout,
+                    error=stderr, 
                     duration=duration,
                     reason="(Expected Failure)"
                 )
@@ -328,10 +355,10 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
             return TestResult(
                 file=str(filepath),
                 status=Status.FAIL,
-                output=result.stdout,
-                error=result.stderr,
+                output=stdout,
+                error=stderr,
                 duration=duration,
-                reason=f"Exit code: {result.returncode}"
+                reason=f"Exit code: {returncode}"
             )
         else:
             if is_expected_to_fail:
@@ -339,8 +366,8 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
                 return TestResult(
                     file=str(filepath),
                     status=Status.FAIL,
-                    output=result.stdout,
-                    error=result.stderr,
+                    output=stdout,
+                    error=stderr,
                     duration=duration,
                     reason="Unexpected Success: Expected failure but exited with 0"
                 )
@@ -348,8 +375,8 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
         return TestResult(
             file=str(filepath),
             status=Status.PASS,
-            output=result.stdout,
-            error=result.stderr,
+            output=stdout,
+            error=stderr,
             duration=duration
         )
         
@@ -364,6 +391,13 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
             reason=f"タイムアウト ({timeout}秒)"
         )
     except Exception as e:
+        # 予期しない例外でも子プロセスを確実にkill
+        if proc is not None:
+            try:
+                proc.kill()
+                proc.wait()
+            except Exception:
+                pass
         duration = time.time() - start_time
         return TestResult(
             file=str(filepath),
@@ -373,6 +407,13 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
             duration=duration,
             reason=str(e)
         )
+    finally:
+        # Static モードで生成されたバイナリを削除
+        if exe_path is not None and exe_path.exists():
+            try:
+                exe_path.unlink()
+            except Exception:
+                pass
 
 def find_tl_files(directories: List[Path], filter_pattern: Optional[str] = None) -> List[Path]:
     """ディレクトリから .tl ファイルを検索"""
@@ -459,6 +500,9 @@ def main():
     parser.add_argument("--parallel", "-p", type=int, default=1, help="並列実行数 (デフォルト: 1)")
     parser.add_argument("--static", action="store_true", help="静的コンパイルモードで実行 (JIT回避)")
     parser.add_argument("--clean", action="store_true", help="古いバイナリを削除して終了")
+    parser.add_argument("--cooldown", type=float, default=0.5, help="テスト間のクールダウン秒数 (デフォルト: 0.5)")
+    parser.add_argument("--crash-cooldown", type=float, default=2.0, help="クラッシュ後のクールダウン秒数 (デフォルト: 2.0)")
+    parser.add_argument("--max-crashes", type=int, default=5, help="連続クラッシュでの緊急停止閾値 (デフォルト: 5)")
     args = parser.parse_args()
     
     # プロジェクトルートを検出
@@ -508,6 +552,7 @@ def main():
     print("🔍 TL ファイル検証エージェント")
     print(f"📁 検索ディレクトリ: {', '.join(str(d) for d in directories)}")
     print(f"⏱️ タイムアウト: {args.timeout}秒")
+    print(f"🛡️ 安全策: クールダウン {args.cooldown}秒 / クラッシュ後 {args.crash_cooldown}秒 / 連続{args.max_crashes}回で緊急停止")
     print("")
     
     # ファイル検索
@@ -516,8 +561,17 @@ def main():
     
     results: List[TestResult] = []
     
-    # 結果格納用
-    results: List[TestResult] = []
+    # 連続クラッシュ検出用カウンター
+    consecutive_crashes = 0
+    emergency_stopped = False
+    
+    def is_crash(result: TestResult) -> bool:
+        """セグフォまたはabort (exit -6) かどうか判定"""
+        if result.status == Status.SEGFAULT:
+            return True
+        if result.status == Status.FAIL and "Exit code: -6" in result.reason:
+            return True
+        return False
     
     # 並列実行
     if args.parallel > 1:
@@ -533,6 +587,19 @@ def main():
                 result = future.result()
                 results.append(result)
                 completed_count += 1
+                
+                # 連続クラッシュ検出
+                if is_crash(result):
+                    consecutive_crashes += 1
+                    if consecutive_crashes >= args.max_crashes:
+                        print(f"\n🚨 緊急停止: {consecutive_crashes} 回連続でクラッシュが発生しました。")
+                        print("   GPU リソースの枯渇によるシステムクラッシュを防ぐため、テストを中断します。")
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        emergency_stopped = True
+                        break
+                else:
+                    if result.status != Status.SKIP:
+                        consecutive_crashes = 0
                 
                 # 進捗表示
                 status_icon = result.status.value
@@ -556,6 +623,23 @@ def main():
             if args.verbose and result.status == Status.FAIL:
                 if result.error:
                     print(f"      Error: {result.error[:100]}...")
+            
+            # 連続クラッシュ検出
+            if is_crash(result):
+                consecutive_crashes += 1
+                if consecutive_crashes >= args.max_crashes:
+                    print(f"\n🚨 緊急停止: {consecutive_crashes} 回連続でクラッシュが発生しました。")
+                    print("   GPU リソースの枯渇によるシステムクラッシュを防ぐため、テストを中断します。")
+                    emergency_stopped = True
+                    break
+                # クラッシュ後は長めのクールダウン (GPU リソース回収待ち)
+                time.sleep(args.crash_cooldown)
+            else:
+                if result.status != Status.SKIP:
+                    consecutive_crashes = 0
+                # 通常のクールダウン
+                if args.cooldown > 0 and result.status != Status.SKIP:
+                    time.sleep(args.cooldown)
     
     # サマリー表示
     failures = print_summary(results, args.verbose)

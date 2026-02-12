@@ -627,9 +627,25 @@ pub extern "C" fn tl_metal_slice(t: *mut OpaqueTensor, dim: usize, start: usize,
 
 #[no_mangle]
 pub extern "C" fn tl_metal_reshape(t: *mut OpaqueTensor, dims: *const i64, num_dims: usize) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() || dims.is_null() { return std::ptr::null_mut(); }
+    if num_dims == 0 || num_dims > 8 {
+        eprintln!("Warning: tl_metal_reshape: invalid num_dims={}", num_dims);
+        return std::ptr::null_mut();
+    }
     let dims_slice = unsafe { std::slice::from_raw_parts(dims, num_dims) };
+    // 負のdims値やゼロを検出 — 不正値が usize に変換されると
+    // 巨大サイズになりOOM → abort を引き起こすため
+    if dims_slice.iter().any(|&d| d <= 0) {
+        eprintln!("Warning: tl_metal_reshape: invalid dims {:?}", dims_slice);
+        return std::ptr::null_mut();
+    }
     let dims_usize: Vec<usize> = dims_slice.iter().map(|&d| d as usize).collect();
+    let old_count = unsafe { (&*t).elem_count() };
+    let new_count: usize = dims_usize.iter().product();
+    if old_count != new_count {
+        eprintln!("Warning: tl_metal_reshape: element count mismatch {} vs {}", old_count, new_count);
+        return std::ptr::null_mut();
+    }
     unsafe { make_tensor((&*t).reshape(&dims_usize)) }
 }
 
