@@ -12,13 +12,41 @@ import sys
 import os
 import re
 import time
+import signal
+import atexit
 import argparse
 import tempfile
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Set
 from enum import Enum
+
+# ── 子プロセス追跡 & クリーンアップ ──────────────────────────
+_active_procs: Set[subprocess.Popen] = set()
+
+def _cleanup_children():
+    """残存する全子プロセスを強制終了する"""
+    for proc in list(_active_procs):
+        try:
+            if proc.poll() is None:  # まだ生きている
+                proc.kill()
+                proc.wait(timeout=3)
+        except Exception:
+            pass
+    _active_procs.clear()
+
+# スクリプト終了時に必ずクリーンアップ
+atexit.register(_cleanup_children)
+
+def _signal_handler(signum, frame):
+    """SIGTERM/SIGINT 受信時にクリーンアップして終了"""
+    print(f"\n🛑 シグナル {signum} を受信。子プロセスをクリーンアップ中...")
+    _cleanup_children()
+    sys.exit(128 + signum)
+
+signal.signal(signal.SIGTERM, _signal_handler)
+signal.signal(signal.SIGINT, _signal_handler)
 
 class Status(Enum):
     PASS = "✅"
@@ -242,6 +270,7 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
                  cwd=project_root, # Fix: Compile from root so 'target/debug' path in tl main.rs works
                  env=env
              )
+             _active_procs.add(proc)
              try:
                  compile_stdout, compile_stderr = proc.communicate(timeout=timeout)
                  compile_returncode = proc.returncode
@@ -249,6 +278,8 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
                  proc.kill()
                  proc.wait()
                  raise
+             finally:
+                 _active_procs.discard(proc)
              proc = None  # コンパイル完了、参照をクリア
              
              if compile_returncode != 0:
@@ -279,6 +310,7 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
                  text=True,
                  cwd=filepath.parent
              )
+             _active_procs.add(proc)
              try:
                  stdout, stderr = proc.communicate(timeout=timeout)
                  returncode = proc.returncode
@@ -286,6 +318,8 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
                  proc.kill()
                  proc.wait()
                  raise
+             finally:
+                 _active_procs.discard(proc)
              proc = None
         else:
             # JIT Execution (Default)
@@ -298,6 +332,7 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
                     text=True,
                     cwd=filepath.parent
                  )
+                 _active_procs.add(proc)
                  try:
                      proc.communicate(timeout=timeout)
                      returncode = proc.returncode
@@ -305,6 +340,8 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
                      proc.kill()
                      proc.wait()
                      raise
+                 finally:
+                     _active_procs.discard(proc)
                  proc = None
                  stdout = "(Streamed to console)"
                  stderr = ""
@@ -315,6 +352,7 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
                     text=True,
                     cwd=filepath.parent
                  )
+                 _active_procs.add(proc)
                  try:
                      stdout, stderr = proc.communicate(timeout=timeout)
                      returncode = proc.returncode
@@ -322,6 +360,8 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
                      proc.kill()
                      proc.wait()
                      raise
+                 finally:
+                     _active_procs.discard(proc)
                  proc = None
 
 
@@ -643,6 +683,10 @@ def main():
     
     # サマリー表示
     failures = print_summary(results, args.verbose)
+    
+    # 終了前に残存プロセスをクリーンアップ
+    _cleanup_children()
+    print("\n🧹 子プロセスのクリーンアップ完了")
     
     sys.exit(1 if failures > 0 else 0)
 
