@@ -69,29 +69,37 @@ kernel void rope_cos_sin_f32(
     sin_out[idx] = sin(angle);
 }
 
-// RoPE 適用
-// input: [..., head_dim], cos/sin: [seq_len, half_dim]
-// output: [..., head_dim]
-// x1' = x1 * cos - x2 * sin
-// x2' = x1 * sin + x2 * cos
+// RoPE 適用 (4D対応: [batch, seq, heads, head_dim])
+// cos/sin: [seq_len, half_dim] (既にnarrowされたスライス)
+// 各 (batch, seq, head) の組み合わせに対して独立に回転を適用
 kernel void apply_rope_f32(
     device const float* input [[buffer(0)]],
     device float* output [[buffer(1)]],
     device const float* cos_table [[buffer(2)]],
     device const float* sin_table [[buffer(3)]],
     constant uint& half_dim [[buffer(4)]],
-    constant uint& pos [[buffer(5)]],
-    uint id [[thread_position_in_grid]]
+    constant uint& head_dim [[buffer(5)]],
+    constant uint& seq_len [[buffer(6)]],
+    constant uint& n_heads [[buffer(7)]],
+    uint2 gid [[thread_position_in_grid]]
 ) {
-    if (id >= half_dim) return;
+    uint i = gid.x;        // half_dim index
+    uint outer = gid.y;    // batch * seq * head flat index
     
-    float x1 = input[id];
-    float x2 = input[id + half_dim];
-    float c = cos_table[pos * half_dim + id];
-    float s = sin_table[pos * half_dim + id];
+    if (i >= half_dim) return;
+    uint total_outer = seq_len * n_heads; // batch=1 assumed
+    if (outer >= total_outer) return;
     
-    output[id] = x1 * c - x2 * s;
-    output[id + half_dim] = x1 * s + x2 * c;
+    uint seq_pos = outer / n_heads;
+    
+    uint base = outer * head_dim;
+    float x1 = input[base + i];
+    float x2 = input[base + i + half_dim];
+    float c = cos_table[seq_pos * half_dim + i];
+    float s = sin_table[seq_pos * half_dim + i];
+    
+    output[base + i] = x1 * c - x2 * s;
+    output[base + i + half_dim] = x1 * s + x2 * c;
 }
 
 // ========== CausalMask ==========
@@ -269,18 +277,35 @@ impl MetalTensor {
         (cos_tensor, sin_tensor)
     }
     
-    /// RoPE 適用 — Metal GPU 実装
-    pub fn apply_rope_impl(&self, cos_table: &MetalTensor, sin_table: &MetalTensor, pos: usize) -> MetalTensor {
+    /// RoPE 適用 — Metal GPU 実装 (4D対応)
+    /// input: [batch, seq_len, n_heads, head_dim] or [1, seq_len, n_heads, head_dim]
+    /// cos/sin: [seq_len, half_dim] (既にnarrowされたスライス)
+    pub fn apply_rope_impl(&self, cos_table: &MetalTensor, sin_table: &MetalTensor, _pos: usize) -> MetalTensor {
         let shape = MetalTensor::shape(self);
         let head_dim = *shape.last().unwrap();
         let half_dim = head_dim / 2;
+        
+        // 4D: [batch, seq, heads, head_dim]
+        // 3D: [seq, heads, head_dim]  
+        // 2D: [seq, head_dim] (single head)
+        let (seq_len, n_heads) = if shape.len() >= 4 {
+            (shape[1], shape[2])
+        } else if shape.len() == 3 {
+            (shape[0], shape[1])
+        } else {
+            (1, 1)
+        };
+        
+        let total_outer = seq_len * n_heads;
         
         let result = MetalTensor::uninit(shape, DType::F32);
         let device = get_device();
         let pipeline = get_apply_rope_pipeline();
         
         let half_dim_buf = make_u32_buf(half_dim as u32);
-        let pos_buf = make_u32_buf(pos as u32);
+        let head_dim_buf = make_u32_buf(head_dim as u32);
+        let seq_len_buf = make_u32_buf(seq_len as u32);
+        let n_heads_buf = make_u32_buf(n_heads as u32);
         
         let cb = device.command_queue().new_command_buffer();
         let enc = cb.new_compute_command_encoder();
@@ -290,12 +315,16 @@ impl MetalTensor {
         enc.set_buffer(2, Some(cos_table.buffer()), 0);
         enc.set_buffer(3, Some(sin_table.buffer()), 0);
         enc.set_buffer(4, Some(&half_dim_buf), 0);
-        enc.set_buffer(5, Some(&pos_buf), 0);
+        enc.set_buffer(5, Some(&head_dim_buf), 0);
+        enc.set_buffer(6, Some(&seq_len_buf), 0);
+        enc.set_buffer(7, Some(&n_heads_buf), 0);
         
-        let max_threads = pipeline.max_total_threads_per_threadgroup() as usize;
-        let threads = half_dim.min(max_threads);
-        let tpg = MTLSize::new(threads as u64, 1, 1);
-        let grid = MTLSize::new(((half_dim + threads - 1) / threads) as u64, 1, 1);
+        let tpg = MTLSize::new(half_dim.min(256) as u64, total_outer.min(4) as u64, 1);
+        let grid = MTLSize::new(
+            ((half_dim + tpg.width as usize - 1) / tpg.width as usize) as u64,
+            ((total_outer + tpg.height as usize - 1) / tpg.height as usize) as u64,
+            1,
+        );
         enc.dispatch_thread_groups(grid, tpg);
         enc.end_encoding();
         cb.commit();

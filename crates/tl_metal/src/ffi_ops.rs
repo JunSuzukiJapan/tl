@@ -732,14 +732,14 @@ pub fn tl_metal_sample(t: *mut OpaqueTensor, temp: f32, top_p: f32) -> *mut Opaq
 }
 
 #[no_mangle]
-pub fn tl_metal_scale(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
+pub fn tl_metal_scale(t: *mut OpaqueTensor, s: f32) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
-    let result = tensor.mul_scalar(s as f32);
+    let result = tensor.mul_scalar(s);
     let ptr = make_tensor(result);
     if tensor.requires_grad() {
         use crate::autograd::ops::ScaleBackward;
-        unsafe { (&mut *ptr).set_grad_fn(Box::new(ScaleBackward { a: tensor_ref_from_ptr(t), s: s as f32 })); }
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(ScaleBackward { a: tensor_ref_from_ptr(t), s })); }
     }
     ptr
 }
@@ -832,17 +832,17 @@ pub fn tl_metal_enable_grad(t: *mut OpaqueTensor) {
 
 #[no_mangle]
 pub fn tl_metal_rope_new_cos(
-    head_dim: usize, max_seq: usize, freq_base: f32,
+    dim: usize, seq_len: usize, freq_base: f32,
 ) -> *mut OpaqueTensor {
-    let (cos, _) = MetalTensor::rope_cos_sin_impl(max_seq, head_dim, freq_base);
+    let (cos, _) = MetalTensor::rope_cos_sin_impl(seq_len, dim, freq_base);
     make_tensor(cos)
 }
 
 #[no_mangle]
 pub fn tl_metal_rope_new_sin(
-    head_dim: usize, max_seq: usize, freq_base: f32,
+    dim: usize, seq_len: usize, freq_base: f32,
 ) -> *mut OpaqueTensor {
-    let (_, sin) = MetalTensor::rope_cos_sin_impl(max_seq, head_dim, freq_base);
+    let (_, sin) = MetalTensor::rope_cos_sin_impl(seq_len, dim, freq_base);
     make_tensor(sin)
 }
 

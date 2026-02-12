@@ -80,7 +80,7 @@ pub trait IDevice {
     fn tensor_mul_scalar(&self, t: *mut c_void, s: f64) -> *mut c_void;
     fn tensor_div_scalar(&self, t: *mut c_void, s: f64) -> *mut c_void;
     fn tensor_pow_scalar(&self, t: *mut c_void, exp: f32) -> *mut c_void;
-    fn tensor_scale(&self, t: *mut c_void, s: f64) -> *mut c_void;
+    fn tensor_scale(&self, t: *mut c_void, s: f32) -> *mut c_void;
 
     // ========== インプレース演算 ==========
     fn tensor_add_assign(&self, a: *mut c_void, b: *mut c_void);
@@ -149,8 +149,8 @@ pub trait IDevice {
 
     // ========== LLM ==========
     fn tensor_rms_norm(&self, input: *mut c_void, weight: *mut c_void, eps: f32) -> *mut c_void;
-    fn tensor_rope_new_cos(&self, seq_len: usize, dim: usize, base: f32) -> *mut c_void;
-    fn tensor_rope_new_sin(&self, seq_len: usize, dim: usize, base: f32) -> *mut c_void;
+    fn tensor_rope_new_cos(&self, dim: usize, seq_len: usize, base: f32) -> *mut c_void;
+    fn tensor_rope_new_sin(&self, dim: usize, seq_len: usize, base: f32) -> *mut c_void;
     fn tensor_apply_rope(&self, t: *mut c_void, cos: *mut c_void, sin: *mut c_void) -> *mut c_void;
 
     // ========== IO / Print ==========

@@ -16,7 +16,7 @@ pub enum GGMLType {
     Q5_1,
     Q8_0,
     Q8_1,
-    // Add more as needed
+    Q6_K,
     Unknown,
 }
 
@@ -54,6 +54,7 @@ impl QTensor {
             GGMLType::F16 => self.dequantize_f16(),
             GGMLType::Q4_0 => self.dequantize_q4_0(),
             GGMLType::Q8_0 => self.dequantize_q8_0(),
+            GGMLType::Q6_K => self.dequantize_q6_k(),
             _ => Err(format!("Unsupported quantization type: {:?}", self.ggml_type)),
         }
     }
@@ -107,22 +108,24 @@ impl QTensor {
             ));
         }
 
-        let mut out = Vec::with_capacity(num_elements);
+        let mut out = vec![0.0f32; num_elements];
         let mut ptr = 0;
 
-        for _ in 0..num_blocks {
+        for block_idx in 0..num_blocks {
             // Read scale (f16)
             let d_bytes = [self.data[ptr], self.data[ptr + 1]];
             let d = f16::from_le_bytes(d_bytes).to_f32();
             ptr += 2;
 
             // Decode 16 bytes -> 32 weights
+            // llama.cpp layout: lo nibble -> positions 0..15, hi nibble -> positions 16..31
+            let y_base = block_idx * block_size;
             for j in 0..16 {
                 let byte = self.data[ptr + j];
-                let lo = (byte & 0x0F) as i32 - 8;
-                let hi = ((byte >> 4) & 0x0F) as i32 - 8;
-                out.push(d * lo as f32);
-                out.push(d * hi as f32);
+                let x0 = (byte & 0x0F) as i32 - 8;
+                let x1 = ((byte >> 4) & 0x0F) as i32 - 8;
+                out[y_base + j]      = d * x0 as f32;
+                out[y_base + j + 16] = d * x1 as f32;
             }
             ptr += 16;
         }
@@ -159,6 +162,75 @@ impl QTensor {
                 let x_i8 = self.data[ptr] as i8;
                 out.push(d * x_i8 as f32);
                 ptr += 1;
+            }
+        }
+
+        Ok(out)
+    }
+
+    /// Dequantize Q6_K: 6-bit K-quant (llama.cpp reference implementation)
+    /// Block layout (QK_K=256 weights per block, 210 bytes per block):
+    ///   ql[128]    - lower 4 bits (interleaved)
+    ///   qh[64]     - upper 2 bits (interleaved)
+    ///   scales[16] - 8-bit signed scales for 16 groups of 16
+    ///   d (f16)    - super-block scale
+    fn dequantize_q6_k(&self) -> Result<Vec<f32>, String> {
+        const QK_K: usize = 256;
+        const BLOCK_SIZE: usize = QK_K / 2 + QK_K / 4 + QK_K / 16 + 2; // 128+64+16+2 = 210
+        let num_elements: usize = self.shape.iter().product();
+
+        if num_elements % QK_K != 0 {
+            return Err(format!("Q6_K: num_elements {} not multiple of {}", num_elements, QK_K));
+        }
+        let num_blocks = num_elements / QK_K;
+
+        if self.data.len() != num_blocks * BLOCK_SIZE {
+            return Err(format!(
+                "Q6_K data size mismatch: expected {}, got {}",
+                num_blocks * BLOCK_SIZE, self.data.len()
+            ));
+        }
+
+        let mut out = vec![0.0f32; num_elements];
+
+        for block_idx in 0..num_blocks {
+            let base = block_idx * BLOCK_SIZE;
+            let d_bytes = [self.data[base + 208], self.data[base + 209]];
+            let d = f16::from_le_bytes(d_bytes).to_f32();
+
+            let y_base = block_idx * QK_K;
+            let mut ql_off = base;         // ql starts at base, 128 bytes total
+            let mut qh_off = base + 128;   // qh starts at base+128, 64 bytes total
+            let mut sc_off = base + 192;   // scales starts at base+192, 16 bytes total
+
+            // Process 256 weights in 2 chunks of 128
+            for n_chunk in 0..2 {
+                let chunk_base = y_base + n_chunk * 128;
+                for l in 0..32 {
+                    let is = l / 16;  // sub-scale index within chunk (0 or 1)
+
+                    let ql_lo = self.data[ql_off + l];       // ql[l+0]
+                    let ql_hi = self.data[ql_off + l + 32];  // ql[l+32]
+                    let qh_val = self.data[qh_off + l];      // qh[l]
+
+                    let q1 = ((ql_lo & 0xF) | (((qh_val >> 0) & 3) << 4)) as i32 - 32;
+                    let q2 = ((ql_hi & 0xF) | (((qh_val >> 2) & 3) << 4)) as i32 - 32;
+                    let q3 = ((ql_lo >> 4)   | (((qh_val >> 4) & 3) << 4)) as i32 - 32;
+                    let q4 = ((ql_hi >> 4)   | (((qh_val >> 6) & 3) << 4)) as i32 - 32;
+
+                    let sc1 = self.data[sc_off + is + 0] as i8;
+                    let sc2 = self.data[sc_off + is + 2] as i8;
+                    let sc3 = self.data[sc_off + is + 4] as i8;
+                    let sc4 = self.data[sc_off + is + 6] as i8;
+
+                    out[chunk_base + l +  0] = d * sc1 as f32 * q1 as f32;
+                    out[chunk_base + l + 32] = d * sc2 as f32 * q2 as f32;
+                    out[chunk_base + l + 64] = d * sc3 as f32 * q3 as f32;
+                    out[chunk_base + l + 96] = d * sc4 as f32 * q4 as f32;
+                }
+                ql_off += 64;
+                qh_off += 32;
+                sc_off += 8;
             }
         }
 

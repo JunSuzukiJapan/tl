@@ -97,7 +97,7 @@ where
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_mul_scalar(a: *mut c_void, s: f64) -> *mut c_void { dispatch(|d| d.tensor_mul_scalar(a, s)) }
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_div_scalar(a: *mut c_void, s: f64) -> *mut c_void { dispatch(|d| d.tensor_div_scalar(a, s)) }
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_pow_scalar(a: *mut c_void, exp: f32) -> *mut c_void { dispatch(|d| d.tensor_pow_scalar(a, exp)) }
-#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_scale(a: *mut c_void, s: f64) -> *mut c_void { dispatch(|d| d.tensor_scale(a, s)) }
+#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_scale(a: *mut c_void, s: f32) -> *mut c_void { dispatch(|d| d.tensor_scale(a, s)) }
 
 // ========== インプレース演算 ==========
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_add_assign(a: *mut c_void, b: *mut c_void) { dispatch(|d| d.tensor_add_assign(a, b)) }
@@ -166,8 +166,8 @@ where
 
 // ========== LLM ==========
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_rms_norm(a: *mut c_void, w: *mut c_void, eps: f32) -> *mut c_void { dispatch(|d| d.tensor_rms_norm(a, w, eps)) }
-#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_rope_new_cos(seq_len: usize, dim: usize, base: f32) -> *mut c_void { dispatch(|d| d.tensor_rope_new_cos(seq_len, dim, base)) }
-#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_rope_new_sin(seq_len: usize, dim: usize, base: f32) -> *mut c_void { dispatch(|d| d.tensor_rope_new_sin(seq_len, dim, base)) }
+#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_rope_new_cos(dim: usize, seq_len: usize, base: f32) -> *mut c_void { dispatch(|d| d.tensor_rope_new_cos(dim, seq_len, base)) }
+#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_rope_new_sin(dim: usize, seq_len: usize, base: f32) -> *mut c_void { dispatch(|d| d.tensor_rope_new_sin(dim, seq_len, base)) }
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_apply_rope(a: *mut c_void, cos: *mut c_void, sin: *mut c_void) -> *mut c_void { dispatch(|d| d.tensor_apply_rope(a, cos, sin)) }
 
 // ========== IO / Print ==========

@@ -120,7 +120,7 @@ impl IDevice for MetalDeviceImpl {
     #[inline] fn tensor_mul_scalar(&self, a: *mut c_void, s: f64) -> *mut c_void { v(ffi_ops::tl_metal_mul_scalar(t(a), s)) }
     #[inline] fn tensor_div_scalar(&self, a: *mut c_void, s: f64) -> *mut c_void { v(ffi_ops::tl_metal_div_scalar(t(a), s)) }
     #[inline] fn tensor_pow_scalar(&self, a: *mut c_void, exp: f32) -> *mut c_void { v(ffi_ops::tl_metal_pow_scalar(t(a), exp as f64)) }
-    #[inline] fn tensor_scale(&self, a: *mut c_void, s: f64) -> *mut c_void { v(ffi_ops::tl_metal_scale(t(a), s)) }
+    #[inline] fn tensor_scale(&self, a: *mut c_void, s: f32) -> *mut c_void { v(ffi_ops::tl_metal_scale(t(a), s)) }
 
     // ========== インプレース演算 ==========
     #[inline] fn tensor_add_assign(&self, a: *mut c_void, b: *mut c_void) { ffi_ops::tl_metal_add_assign(t(a), t(b)) }
@@ -205,8 +205,8 @@ impl IDevice for MetalDeviceImpl {
 
     // ========== LLM ==========
     #[inline] fn tensor_rms_norm(&self, a: *mut c_void, w: *mut c_void, eps: f32) -> *mut c_void { v(ffi_ops::tl_metal_rms_norm(t(a), t(w), eps)) }
-    #[inline] fn tensor_rope_new_cos(&self, seq_len: usize, dim: usize, base: f32) -> *mut c_void { v(ffi_ops::tl_metal_rope_new_cos(seq_len, dim, base)) }
-    #[inline] fn tensor_rope_new_sin(&self, seq_len: usize, dim: usize, base: f32) -> *mut c_void { v(ffi_ops::tl_metal_rope_new_sin(seq_len, dim, base)) }
+    #[inline] fn tensor_rope_new_cos(&self, dim: usize, seq_len: usize, base: f32) -> *mut c_void { v(ffi_ops::tl_metal_rope_new_cos(dim, seq_len, base)) }
+    #[inline] fn tensor_rope_new_sin(&self, dim: usize, seq_len: usize, base: f32) -> *mut c_void { v(ffi_ops::tl_metal_rope_new_sin(dim, seq_len, base)) }
     #[inline] fn tensor_apply_rope(&self, a: *mut c_void, cos: *mut c_void, sin: *mut c_void) -> *mut c_void {
         if a.is_null() || cos.is_null() || sin.is_null() { return a; }
         let tensor = unsafe { &*t(a) };

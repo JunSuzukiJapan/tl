@@ -328,7 +328,7 @@ impl MetalTensor {
     pub fn slice_impl(&self, axis: usize, start: usize, len: usize) -> MetalTensor {
         let shape = MetalTensor::shape(self);
         assert!(axis < shape.len(), "axis out of range");
-        assert!(start + len <= shape[axis], "slice out of range");
+        assert!(start + len <= shape[axis], "slice out of range: axis={}, start={}, len={}, shape={:?}", axis, start, len, shape);
         
         let mut new_shape = shape.to_vec();
         new_shape[axis] = len;

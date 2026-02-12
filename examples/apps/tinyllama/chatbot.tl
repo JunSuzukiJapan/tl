@@ -181,9 +181,10 @@ fn main() {
     let cos = Tensor::rope_new_cos(64, 2048, 10000.0);
     let sin = Tensor::rope_new_sin(64, 2048, 10000.0);
     let on = RMSNorm::new(weights, "output_norm.weight");
-    let emb = weights.get("token_embd.weight");
-    // TinyLlama はLM headとembeddingがweight-tied (output.weight = token_embd.weight)
-    let oh = Linear { w: emb.transpose_2d(0, 1) };
+    let emb: Tensor<f32, 2> = weights.get("token_embd.weight");
+    // Load output.weight (Q6_K) properly instead of reusing token_embd
+    let oh_w: Tensor<f32, 2> = weights.get("output.weight");
+    let oh = Linear { w: oh_w.transpose_2d(0, 1) };
 
     // Pre-load blocks (Unrolled for perf/safety)
     let b0 = Block::from_map(weights, 0);

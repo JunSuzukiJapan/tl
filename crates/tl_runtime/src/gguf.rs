@@ -155,6 +155,7 @@ pub extern "C" fn tl_gguf_load(path: *mut StringStruct) -> *mut OpaqueTensorMap 
                  RsGgmlType::Q5_1 => GGMLType::Q5_1,
                  RsGgmlType::Q8_0 => GGMLType::Q8_0,
                  RsGgmlType::Q8_1 => GGMLType::Q8_1,
+                 RsGgmlType::Q6_K => GGMLType::Q6_K,
                  _ => GGMLType::Unknown,
              };
              
