@@ -46,6 +46,9 @@ pub const SHADER_LE_F32: &str = "le_f32";
 pub const SHADER_GT_F32: &str = "gt_f32";
 pub const SHADER_GE_F32: &str = "ge_f32";
 
+/// Shader 関数名 - Quantize
+pub const SHADER_DEQUANTIZE_Q4_K: &str = "dequantize_q4_k";
+
 /// Metal Shader ソースコード
 const SHADER_SOURCE: &str = r#"
 #include <metal_stdlib>
@@ -430,6 +433,79 @@ kernel void argmin_f32(
     if (tid == 0) {
         partial_min[tg_id] = shared_val[0];
         partial_idx[tg_id] = shared_idx[0];
+    }
+}
+
+// ========== Quantization (Q4_K) ==========
+// Block size: 256, Size: 144 bytes
+
+kernel void dequantize_q4_k(
+    device const uchar* in [[buffer(0)]],
+    device float* out [[buffer(1)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    // 1 thread per block (256 elements)
+    uint block_idx = gid;
+    uint in_offset = block_idx * 144;
+    uint out_offset = block_idx * 256;
+    
+    device const uchar* b = in + in_offset;
+    
+    // d, dmin (f16)
+    half d = *(device const half*)(b);
+    half dmin = *(device const half*)(b + 2);
+    
+    device const uchar* scales = b + 4;
+    device const uchar* qs = b + 16;
+    
+    float df = (float)d;
+    float dminf = (float)dmin;
+
+    // Process 4 pairs of sub-blocks (8 sub-blocks total)
+    for (int k = 0; k < 4; ++k) {
+        // Pair of sub-blocks: 2*k and 2*k+1
+        int is0 = 2 * k;
+        int is1 = 2 * k + 1;
+        
+        // Decode scales/mins for is0
+        uchar sc0, m0;
+        if (is0 < 4) {
+            sc0 = scales[is0] & 63;
+            m0  = scales[is0 + 4] & 63;
+        } else {
+            sc0 = (scales[is0 + 4] & 0x0F) | ((scales[is0 - 4] >> 6) << 4);
+            m0  = (scales[is0 + 4] >> 4)   | ((scales[is0] >> 6) << 4);
+        }
+        float d1 = df * sc0;
+        float min1 = dminf * m0;
+
+        // Decode scales/mins for is1
+        uchar sc1, m1;
+        if (is1 < 4) {
+            sc1 = scales[is1] & 63;
+            m1  = scales[is1 + 4] & 63;
+        } else {
+            sc1 = (scales[is1 + 4] & 0x0F) | ((scales[is1 - 4] >> 6) << 4);
+            m1  = (scales[is1 + 4] >> 4)   | ((scales[is1] >> 6) << 4);
+        }
+        float d2 = df * sc1;
+        float min2 = dminf * m1;
+        
+        // qs offset for this pair (32 bytes)
+        device const uchar* qs_ptr = qs + k * 32;
+        device float* y_ptr = out + out_offset + k * 64;
+        
+        // First 32 elements (is0) use low nibbles
+        for (int l = 0; l < 32; ++l) {
+            uchar val = qs_ptr[l] & 0x0F;
+            y_ptr[l] = d1 * val - min1;
+        }
+        
+        // Next 32 elements (is1) use high nibbles
+        for (int l = 0; l < 32; ++l) {
+            uchar val = qs_ptr[l] >> 4;
+            y_ptr[32 + l] = d2 * val - min2;
+        }
     }
 }
 "#;

@@ -999,8 +999,9 @@ pub fn declare_runtime_functions<'ctx>(
     let string_len_type = i64_type.fn_type(&[i8_ptr.into()], false);
     add_fn("tl_string_len", string_len_type);
 
-    // tl_read_line(prompt: *const i8) -> *mut i8
-    let read_line_type = i8_ptr.fn_type(&[i8_ptr.into()], false);
+    // tl_read_line(prompt: *mut StringStruct) -> *mut StringStruct (void_ptr -> i8_ptr/void_ptr)
+    // TL String is passed as pointer to struct, usually treated as void* in declarations if struct type not avail.
+    let read_line_type = i8_ptr.fn_type(&[void_ptr.into()], false); // prompt is StringStruct*
     add_fn("tl_read_line", read_line_type);
 
     // System

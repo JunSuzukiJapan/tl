@@ -39,21 +39,16 @@ pub struct QTensor {
 impl Drop for QTensor {
     fn drop(&mut self) {
         if let Ok(mut cache_guard) = self.cache.lock() {
-            if let Some(ptr_val) = *cache_guard {
+            if let Some(ptr_val) = cache_guard.take() {
                 if ptr_val != 0 {
                     // Free the cached tensor
-                    // Check if CPU or Metal based on TL_DEVICE env var at creation time?
-                    // Or just use runtime's free function?
-                    // Since specific backend free is not easily accessible here without knowing device,
-                    // we assume the same environment.
-                    // For now, we will just use the appropriate free function based on current env.
-                    // Ideally QTensor should know which device it cached for.
                     let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
                     unsafe {
                         if is_cpu {
+                            // Uses free function from cpu crate
                             let _ = Box::from_raw(ptr_val as *mut tl_cpu::CpuTensor);
                         } else {
-                            tl_metal::ffi_ops::tl_metal_free(ptr_val as *mut tl_metal::OpaqueTensor);
+                            tl_metal::ffi::tl_metal_release(ptr_val as *mut tl_metal::MetalTensor);
                         }
                     }
                 }
@@ -99,39 +94,63 @@ impl QTensor {
     }
 
     /// Dequantize to OpaqueTensor (CPU/GPU auto-detect)
-    /// Uses internal cache to avoid re-dequantizing
+    /// ON-DEMAND DEQUANTIZATION Strategy for Memory Efficiency
+    /// 1. Uploads raw quantized data (u8) to GPU and caches it.
+    /// 2. Executes dequantize kernel (for Q4_K) to create temporary F32 tensor.
+    /// 3. Returns the temporary F32 tensor (caller must free it).
     pub fn dequantize_to_tensor(&self) -> Result<*mut crate::OpaqueTensor, String> {
-        // Check cache first
-        if let Ok(mut cache_guard) = self.cache.lock() {
-            if let Some(ptr_val) = *cache_guard {
-                return Ok(ptr_val as *mut crate::OpaqueTensor);
-            }
-        
-            // Cache miss, perform dequantization
-            let f32_data = self.dequantize_to_f32()?;
-            let shape = self.shape.clone();
-            let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
-            
-            let tensor_ptr = if is_cpu {
-                // tl_cpu::ffi::tl_cpu_tensor_new is extern "C" so it is unsafe
-                unsafe {
+        let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
+
+        if is_cpu {
+            // CPU fallback: perform dequantization and cache the F32 tensor
+            if let Ok(mut cache_guard) = self.cache.lock() {
+                 if let Some(ptr_val) = *cache_guard {
+                     return Ok(ptr_val as *mut crate::OpaqueTensor);
+                 }
+                 
+                 let f32_data = self.dequantize_to_f32()?;
+                 let shape = self.shape.clone();
+                 let tensor_ptr = 
                     tl_cpu::ffi::tl_cpu_tensor_new(
                         f32_data.as_ptr(), shape.len(), shape.as_ptr()
-                    ) as *mut crate::OpaqueTensor
-                }
-            } else {
-                // tl_metal_new is a safe Rust function wrapper
-                tl_metal::ffi_ops::tl_metal_new(
-                    f32_data.as_ptr(), shape.len(), shape.as_ptr()
-                )
-            };
-            
-            // Store in cache
-            *cache_guard = Some(tensor_ptr as usize);
-            return Ok(tensor_ptr);
+                    ) as *mut crate::OpaqueTensor;
+                 *cache_guard = Some(tensor_ptr as usize);
+                 return Ok(tensor_ptr);
+            }
+            return Err("CPU cache lock failed".to_string());
         }
+
+        // Metal (GPU) Path: On-demand
+        let mut cache_guard = self.cache.lock().unwrap();
         
-        Err("Failed to acquire QTensor cache lock".to_string())
+        // 1. Get or upload raw data to GPU (cached)
+        let device_raw_ptr = if let Some(ptr) = *cache_guard {
+            // println!("DEBUG: QTensor cache HIT (Raw U8) {:p}", self as *const _);
+            ptr as *mut tl_metal::MetalTensor
+        } else {
+             println!("DEBUG: QTensor cache MISS (Upload U8) {:p}", self as *const _);
+             let raw_shape = vec![self.data.len()];
+             let t = tl_metal::MetalTensor::from_slice(&self.data, &raw_shape, tl_metal::DType::U8);
+             let ptr = Box::into_raw(Box::new(t));
+             *cache_guard = Some(ptr as usize);
+             ptr
+        };
+        
+        // 2. Run dequantize kernel or fallback
+        let device_tensor = unsafe { &*device_raw_ptr };
+        
+        let out_tensor = match self.ggml_type {
+            GGMLType::Q4_K => device_tensor.dequantize_q4_k(&self.shape),
+            _ => {
+                // Fallback for Q6_K, Q8_0 etc.
+                // println!("DEBUG: GPU dequantize fallback for {:?}", self.ggml_type);
+                let f32_data = self.dequantize_to_f32()?;
+                tl_metal::MetalTensor::from_slice(&f32_data, &self.shape, tl_metal::DType::F32)
+            }
+        };
+        
+        // 3. Return PROVISIONAL F32 tensor (Caller MUST free)
+        Ok(Box::into_raw(Box::new(out_tensor)) as *mut _)
     }
 
     fn dequantize_f16(&self) -> Result<Vec<f32>, String> {
@@ -140,9 +159,11 @@ impl QTensor {
         }
         let count = self.data.len() / 2;
         let mut out = Vec::with_capacity(count);
-        for i in 0..count {
-            let bytes = [self.data[i * 2], self.data[i * 2 + 1]];
+        let mut ptr = 0;
+        while ptr < self.data.len() {
+            let bytes = [self.data[ptr], self.data[ptr+1]];
             out.push(f16::from_le_bytes(bytes).to_f32());
+            ptr += 2;
         }
         Ok(out)
     }
@@ -385,4 +406,3 @@ impl QTensor {
 
 // Helper for F16 to F32 conversion
 use half::f16;
-

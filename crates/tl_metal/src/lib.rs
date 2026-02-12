@@ -6,7 +6,22 @@
 pub mod buffer_pool;
 pub mod device;
 pub mod tensor;
-pub mod ops;
+pub mod ops {
+    pub mod binary;
+    pub mod unary;
+    pub mod activation;
+    pub mod reduce;
+    pub mod reduce_axis;
+    pub mod matmul;
+    pub mod broadcast;
+    pub mod index;
+    pub mod shape;
+    pub mod special;
+    pub mod scalar;
+    pub mod llm;
+    pub mod nn;
+    pub mod quantized;
+}
 pub mod shaders;
 pub mod autograd;
 pub mod backend_impl;

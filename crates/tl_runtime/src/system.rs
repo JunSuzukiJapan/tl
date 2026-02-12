@@ -2,7 +2,6 @@
 
 use crate::string_ffi::StringStruct;
 use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
 use std::io::Write;
 
 
@@ -24,9 +23,25 @@ pub extern "C" fn tl_system_time() -> i64 {
 }
 
 /// 標準入力から行を読み込み
+/// 標準入力から行を読み込み (prompt があれば表示)
+/// 引数は StringStruct* (TLのString型)
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_read_line() -> *mut StringStruct {
-    let _ = std::io::stdout().flush();
+pub extern "C" fn tl_read_line(prompt: *mut StringStruct) -> *mut StringStruct {
+    if !prompt.is_null() {
+        unsafe {
+            // StringStruct { ptr: *mut c_char, len: i64 }
+            if !(*prompt).ptr.is_null() {
+                let prompt_str = CStr::from_ptr((*prompt).ptr).to_string_lossy();
+                if !prompt_str.is_empty() {
+                    print!("{}", prompt_str);
+                    let _ = std::io::stdout().flush();
+                }
+            }
+        }
+    } else {
+        let _ = std::io::stdout().flush();
+    }
+
     let mut input = String::new();
     match std::io::stdin().read_line(&mut input) {
         Ok(_) => {
@@ -47,14 +62,11 @@ pub extern "C" fn tl_read_line() -> *mut StringStruct {
 }
 
 /// プロンプト表示して入力を読み込み
+/// プロンプト表示して入力を読み込み (Legacy wrapper)
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_prompt(prompt: *const c_char) -> *mut StringStruct {
-    if !prompt.is_null() {
-        let prompt_str = unsafe { CStr::from_ptr(prompt).to_string_lossy() };
-        print!("{}", prompt_str);
-        let _ = std::io::stdout().flush();
-    }
-    tl_read_line()
+pub extern "C" fn tl_prompt(prompt: *mut StringStruct) -> *mut StringStruct {
+    // tl_read_line がプロンプトを処理するようになったのでそのまま移譲
+    tl_read_line(prompt)
 }
 
 /// デバイス設定（Metal のみなのでスタブ）
@@ -143,8 +155,11 @@ pub extern "C" fn tl_qtensor_matmul(
 
     unsafe {
         let qtensor = &*weight;
+        let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
 
-        // QTensor をデクォンタイズ (CPU/GPU両対応の OpaqueTensor に変換)
+        // QTensor をデクォンタイズ
+        // CPU: キャッシュされたポインタを返す（解放不要）
+        // GPU: 一時的なF32テンソルを返す（解放必要）
         let weight_ptr = match qtensor.dequantize_to_tensor() {
             Ok(t) => t as *mut std::ffi::c_void,
             Err(e) => {
@@ -154,8 +169,27 @@ pub extern "C" fn tl_qtensor_matmul(
         };
 
         // matmul: input * weight^T
+        // Transpose also creates a new tensor (should be freed?)
+        // tl_device_tensor_transpose_2d returns a new tensor.
         let transposed = crate::device_ffi::tl_device_tensor_transpose_2d(weight_ptr);
-        crate::device_ffi::tl_device_tensor_matmul(input as *mut std::ffi::c_void, transposed) as *mut crate::OpaqueTensor
+        let res = crate::device_ffi::tl_device_tensor_matmul(input as *mut std::ffi::c_void, transposed) as *mut crate::OpaqueTensor;
+        
+        // Clean up
+        if !is_cpu {
+             // GPU Mode: weight_ptr is temporary F32 dequantized tensor
+             tl_metal::ffi::tl_metal_release(weight_ptr as *mut tl_metal::MetalTensor);
+        }
+        
+        // transposed is also temporary
+        if is_cpu {
+             // CPU transpose... device_ffi handles it?
+             // cpu ffi should implement free
+             tl_cpu::ffi::tl_cpu_tensor_free(transposed as *mut tl_cpu::CpuTensor);
+        } else {
+             tl_metal::ffi::tl_metal_release(transposed as *mut tl_metal::MetalTensor);
+        }
+        
+        res
     }
 }
 
