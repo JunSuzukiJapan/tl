@@ -116,7 +116,6 @@ pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_release_safe(t: *mut crate::OpaqueTensor) {
     if t.is_null() { return; }
-    eprintln!("[DEBUG release_safe] ptr={:?}", t);
     // Arc<UnsafeCell<T>> として from_raw → drop → RC-1
     unsafe { let _ = std::sync::Arc::from_raw(t as *const std::cell::UnsafeCell<crate::OpaqueTensor>); }
 }

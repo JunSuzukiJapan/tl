@@ -116,9 +116,12 @@ pub extern "C" fn tl_get_memory_bytes() -> i64 {
     unsafe {
         if libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) == 0 {
             let usage = usage.assume_init();
-            usage.ru_maxrss as i64 * 1024 // ru_maxrss is in kilobytes on Mac/Linux usually? Mac is bytes?
-            // On Mac, ru_maxrss is in bytes. On Linux, it's kilobytes.
-            // Check target_os
+            // macOS: ru_maxrss はバイト単位
+            // Linux: ru_maxrss は KB 単位 → バイトに変換
+            #[cfg(target_os = "macos")]
+            { usage.ru_maxrss as i64 }
+            #[cfg(not(target_os = "macos"))]
+            { usage.ru_maxrss as i64 * 1024 }
         } else {
             0
         }
