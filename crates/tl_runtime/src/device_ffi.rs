@@ -101,7 +101,10 @@ where
 
 // ========== インプレース演算 ==========
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_add_assign(a: *mut c_void, b: *mut c_void) { dispatch(|d| d.tensor_add_assign(a, b)) }
-#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_sub_assign(a: *mut c_void, b: *mut c_void) { dispatch(|d| d.tensor_sub_assign(a, b)) }
+#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_sub_assign(a: *mut c_void, b: *mut c_void) { 
+    eprintln!("[DEBUG device_ffi] tl_device_tensor_sub_assign a={:?} b={:?}", a, b);
+    dispatch(|d| d.tensor_sub_assign(a, b)) 
+}
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_mul_assign(a: *mut c_void, b: *mut c_void) { dispatch(|d| d.tensor_mul_assign(a, b)) }
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_div_assign(a: *mut c_void, b: *mut c_void) { dispatch(|d| d.tensor_div_assign(a, b)) }
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_mod_assign(a: *mut c_void, b: *mut c_void) { dispatch(|d| d.tensor_mod_assign(a, b)) }

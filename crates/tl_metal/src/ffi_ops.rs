@@ -916,7 +916,18 @@ pub fn tl_metal_reshape(t: *mut OpaqueTensor, dims: *const i64, num_dims: usize)
         eprintln!("Warning: tl_metal_reshape: element count mismatch {} vs {}", old_count, new_count);
         return std::ptr::null_mut();
     }
-    unsafe { make_tensor((&*t).reshape(&dims_usize)) }
+    let result = unsafe { (&*t).reshape(&dims_usize) };
+    let ptr = make_tensor(result);
+    let tensor = unsafe { &*t };
+    if tensor.requires_grad() {
+        use crate::autograd::ops::ReshapeBackward;
+        let input_shape = tensor.shape().to_vec();
+        unsafe { (&mut *ptr).set_grad_fn(Box::new(ReshapeBackward {
+            input: tensor_ref_from_ptr(t),
+            input_shape,
+        })); }
+    }
+    ptr
 }
 
 // ========== テンソル作成 ==========
@@ -1144,23 +1155,17 @@ pub fn tl_metal_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTe
 
 #[no_mangle]
 pub fn tl_metal_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    // eprintln!("[DEBUG sub] a={:?} b={:?}", a, b);
     if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
     let (ta, tb) = unsafe { (&*a, &*b) };
-    // eprintln!("[DEBUG sub] a.shape={:?} b.shape={:?}", ta.shape(), tb.shape());
     let result = ta.sub_impl(tb);
-    // eprintln!("[DEBUG sub] sub_impl done");
     let ptr = make_tensor(result);
     if ta.requires_grad() || tb.requires_grad() {
         use crate::autograd::ops::SubBackward;
-        // eprintln!("[DEBUG sub] creating SubBackward (requires_grad=true)");
         unsafe { (&mut *ptr).set_grad_fn(Box::new(SubBackward {
             a: tensor_ref_from_ptr(a), b: tensor_ref_from_ptr(b),
             a_shape: ta.shape().to_vec(), b_shape: tb.shape().to_vec(),
         })); }
-            // eprintln!("[DEBUG sub] SubBackward created");
     }
-    // eprintln!("[DEBUG sub] returning ptr={:?}", ptr);
     ptr
 }
 

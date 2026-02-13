@@ -38,11 +38,31 @@ fn main() {
             println("Epoch {} - anti_diag_loss: {}", i, anti_diag_loss.item());
         }
         
+        println("Calling backward...");
         anti_diag_loss.backward();
+        println("backward done.");
+        
         let g = board.grad();
-        board = board - g * lr;
+        println("grad obtained.");
+        
+        let scaled_g = g * lr;
+        // println("scaled_g done.");
+        // println("g shape:"); g.print_shape(); // Assuming print_shape exists or use shape()
+        println("g shape:");
+        // tl_tensor_shape is not directly exposed as method usually, but print() works.
+        // g.print(); // Might be too big? 4x4 is small.
+        g.print();
+        println("scaled_g shape:");
+        scaled_g.print();
+        
+        board = board - scaled_g; 
+        println("update done.");
+        
         board = board.detach();
+        println("detach done.");
+        
         board.enable_grad();
+        println("enable_grad done.");
     }
     
     let probs = board.softmax(1);
