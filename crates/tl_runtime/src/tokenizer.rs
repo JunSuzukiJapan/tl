@@ -101,12 +101,17 @@ pub extern "C" fn tl_tokenizer_decode(
                                 .into_raw();
                         }
                     }
-                    // SentencePiece: ▁ (U+2581) → スペース
-                    // BPE (GPT-2): Ġ (U+0120) → スペース, Ċ (U+010A) → 改行
-                    token_str
-                        .replace('\u{2581}', " ")
-                        .replace('\u{0120}', " ")
-                        .replace('\u{010A}', "\n")
+                    // 特殊トークン (<|...|>) はスキップ
+                    if token_str.starts_with("<|") && token_str.ends_with("|>") {
+                        String::new()
+                    } else {
+                        // SentencePiece: ▁ (U+2581) → スペース
+                        // BPE (GPT-2): Ġ (U+0120) → スペース, Ċ (U+010A) → 改行
+                        token_str
+                            .replace('\u{2581}', " ")
+                            .replace('\u{0120}', " ")
+                            .replace('\u{010A}', "\n")
+                    }
                 },
                 None => String::new(),
             }

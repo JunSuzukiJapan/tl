@@ -189,15 +189,20 @@ fn main() {
             
             let nxt = lo.narrow(0, batch_len - 1, 1).sample(0.7, 0.9);
             
-            let s_nxt = tok.decode(nxt);
-            print(s_nxt);
-            
-            gen_str = string_concat(gen_str, s_nxt);
-            
             let nxt_val = nxt.item_i64();
+            let s_nxt = tok.decode(nxt);
+            
+            // EOT (128009) / EOS (128001) → 出力せず停止
             if (nxt_val == 128009 || nxt_val == 128001) {
                 gen_idx = 200;
             }
+            
+            // 停止条件に該当しなければ出力
+            if gen_idx < 200 {
+                print(s_nxt);
+            }
+            
+            gen_str = string_concat(gen_str, s_nxt);
             
             tokens = tokens.cat_i64(nxt, 0);
             
