@@ -155,11 +155,22 @@ pub extern "C" fn tl_qtensor_matmul(
 
     unsafe {
         let qtensor = &*weight;
-        let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
 
-        // QTensor をデクォンタイズ
-        // CPU: キャッシュされたポインタを返す（解放不要）
-        // GPU: 一時的なF32テンソルを返す（解放必要）
+        // Transposed キャッシュチェック（最速パス）
+        // 重みテンソルは不変なので、transposed 結果をキャッシュして再利用
+        {
+            let cache_guard = qtensor.cache_transposed.lock().unwrap();
+            if let Some(ptr_val) = *cache_guard {
+                // キャッシュヒット: transpose 済みテンソルで直接 matmul
+                let transposed = ptr_val as *mut std::ffi::c_void;
+                let res = crate::device_ffi::tl_device_tensor_matmul(
+                    input as *mut std::ffi::c_void, transposed
+                ) as *mut crate::OpaqueTensor;
+                return res;
+            }
+        }
+
+        // キャッシュミス: dequantize → transpose → cache
         let weight_ptr = match qtensor.dequantize_to_tensor() {
             Ok(t) => t as *mut std::ffi::c_void,
             Err(e) => {
@@ -168,19 +179,20 @@ pub extern "C" fn tl_qtensor_matmul(
             }
         };
 
-        // matmul: input * weight^T
+        // transpose して結果をキャッシュ
         let transposed = crate::device_ffi::tl_device_tensor_transpose_2d(weight_ptr);
-        let res = crate::device_ffi::tl_device_tensor_matmul(input as *mut std::ffi::c_void, transposed) as *mut crate::OpaqueTensor;
         
-        // Clean up
-        // weight_ptr は QTensor の cache が所有 → 解放しない（CPU/GPU 共通）
-        // transposed のみ解放（毎回新規作成される一時テンソル）
-        if is_cpu {
-             tl_cpu::ffi::tl_cpu_tensor_free(transposed as *mut tl_cpu::CpuTensor);
-        } else {
-             tl_metal::ffi::tl_metal_release(transposed as *mut tl_metal::MetalTensor);
+        // transposed をキャッシュに保存（QTensor の Drop で解放される）
+        {
+            let mut cache_guard = qtensor.cache_transposed.lock().unwrap();
+            *cache_guard = Some(transposed as usize);
         }
+
+        let res = crate::device_ffi::tl_device_tensor_matmul(
+            input as *mut std::ffi::c_void, transposed
+        ) as *mut crate::OpaqueTensor;
         
+        // transposed は cache_transposed が所有 → 解放しない
         res
     }
 }
