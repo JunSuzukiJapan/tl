@@ -10,8 +10,12 @@ const MATMUL_SHADER: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
 
-// 行列積: C = A * B
+// タイル化行列積: C = A * B
 // A: [M, K], B: [K, N], C: [M, N]
+// 16×16 タイル + threadgroup shared memory
+// 各 threadgroup が 16×16 の出力タイルを協調計算
+constant uint TILE_SIZE = 16;
+
 kernel void matmul_f32(
     device const float* A [[buffer(0)]],
     device const float* B [[buffer(1)]],
@@ -19,18 +23,56 @@ kernel void matmul_f32(
     constant uint& M [[buffer(3)]],
     constant uint& N [[buffer(4)]],
     constant uint& K [[buffer(5)]],
-    uint2 gid [[thread_position_in_grid]]
+    uint2 gid [[thread_position_in_grid]],
+    uint2 tid [[thread_position_in_threadgroup]]
 ) {
     uint row = gid.y;  // M 方向
     uint col = gid.x;  // N 方向
     
-    if (row >= M || col >= N) return;
+    // Shared memory for A and B tiles
+    threadgroup float A_tile[TILE_SIZE][TILE_SIZE];
+    threadgroup float B_tile[TILE_SIZE][TILE_SIZE];
     
     float sum = 0.0f;
-    for (uint k = 0; k < K; k++) {
-        sum += A[row * K + k] * B[k * N + col];
+    
+    uint local_row = tid.y;
+    uint local_col = tid.x;
+    
+    // K 方向をタイルサイズずつストライド
+    uint num_tiles = (K + TILE_SIZE - 1) / TILE_SIZE;
+    
+    for (uint t = 0; t < num_tiles; ++t) {
+        // A タイルを shared memory にロード
+        uint a_col = t * TILE_SIZE + local_col;
+        if (row < M && a_col < K) {
+            A_tile[local_row][local_col] = A[row * K + a_col];
+        } else {
+            A_tile[local_row][local_col] = 0.0f;
+        }
+        
+        // B タイルを shared memory にロード
+        uint b_row = t * TILE_SIZE + local_row;
+        if (b_row < K && col < N) {
+            B_tile[local_row][local_col] = B[b_row * N + col];
+        } else {
+            B_tile[local_row][local_col] = 0.0f;
+        }
+        
+        // 全スレッドのロード完了を待機
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        
+        // タイル内乗算
+        for (uint i = 0; i < TILE_SIZE; ++i) {
+            sum += A_tile[local_row][i] * B_tile[i][local_col];
+        }
+        
+        // 次のタイルのロード前に現在のタイルの読み取り完了を待機
+        threadgroup_barrier(mem_flags::mem_threadgroup);
     }
-    C[row * N + col] = sum;
+    
+    if (row < M && col < N) {
+        C[row * N + col] = sum;
+    }
 }
 
 // ========== 融合量子化 matmul: Q4_K (simdgroup 並列リダクション版) ==========
