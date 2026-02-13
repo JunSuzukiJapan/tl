@@ -193,11 +193,14 @@ pub extern "C" fn tl_qtensor_matmul(
         let n = shape[0]; // output features
         let k = shape[1]; // input features
 
-        // Q4_K のみ融合カーネルを使用
-        // Q6_K やその他は dequantize + transpose + matmul フォールバック
-        if qtensor.ggml_type != crate::quantized::GGMLType::Q4_K {
-            // 非 Q4_K: 既存方式 (dequantize → transpose → matmul)
-            // Transposed キャッシュチェック
+        // 融合カーネル対応の量子化タイプかチェック
+        let use_fused = matches!(
+            qtensor.ggml_type,
+            crate::quantized::GGMLType::Q4_K | crate::quantized::GGMLType::Q6_K
+        );
+
+        if !use_fused {
+            // 未対応型: 既存方式 (dequantize → transpose → matmul)
             {
                 let cache_guard = qtensor.cache_transposed.lock().unwrap();
                 if let Some(ptr_val) = *cache_guard {
@@ -224,10 +227,7 @@ pub extern "C" fn tl_qtensor_matmul(
             ) as *mut crate::OpaqueTensor;
         }
 
-        // ========== Q4_K 融合カーネルパス ==========
-        // Q4_K 生データを GPU にアップロード（初回のみ）→ 融合カーネルで直接 matmul
-        // transpose 不要、CPU dequantize 不要
-
+        // ========== 融合カーネルパス (Q4_K / Q6_K) ==========
         // GPU raw buffer キャッシュチェック
         let gpu_raw_ptr = {
             let cache_guard = qtensor.gpu_raw_cache.lock().unwrap();
@@ -237,7 +237,6 @@ pub extern "C" fn tl_qtensor_matmul(
         let w_raw_ptr = if let Some(ptr_val) = gpu_raw_ptr {
             ptr_val as *const tl_metal::MetalTensor
         } else {
-            // キャッシュミス: Q4_K 生データを GPU にアップロード
             let raw_bytes = &qtensor.data;
             let raw_shape = &[raw_bytes.len()];
             let gpu_tensor = tl_metal::MetalTensor::from_slice(
@@ -251,10 +250,14 @@ pub extern "C" fn tl_qtensor_matmul(
             ptr as *const tl_metal::MetalTensor
         };
 
-        // 融合カーネルで matmul 実行
         let input_mt = &*(input as *const tl_metal::MetalTensor);
         let w_raw_mt = &*w_raw_ptr;
-        let result = input_mt.mul_mv_q4_k(w_raw_mt, n, k);
+
+        let result = match qtensor.ggml_type {
+            crate::quantized::GGMLType::Q4_K => input_mt.mul_mv_q4_k(w_raw_mt, n, k),
+            crate::quantized::GGMLType::Q6_K => input_mt.mul_mv_q6_k(w_raw_mt, n, k),
+            _ => unreachable!(),
+        };
         
         crate::make_metal_tensor(result)
     }

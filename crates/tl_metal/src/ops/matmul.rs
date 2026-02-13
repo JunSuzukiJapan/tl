@@ -463,4 +463,168 @@ impl MetalTensor {
         result
     }
 
+    /// 融合量子化 matmul: x[M, K] × W_q6k[N, K]^T → out[M, N]
+    /// simdgroup 並列リダクション版 (Q6_K)
+    pub fn mul_mv_q6_k(&self, w_raw: &MetalTensor, n: usize, k: usize) -> MetalTensor {
+        let self_shape = MetalTensor::shape(self);
+        let m = if self_shape.len() == 2 {
+            self_shape[0]
+        } else if self_shape.len() == 1 {
+            1
+        } else {
+            panic!("mul_mv_q6_k: input must be 1D or 2D, got {}D", self_shape.len());
+        };
+
+        assert!(k % 256 == 0, "mul_mv_q6_k: K must be multiple of 256, got {}", k);
+
+        let n_rows_per_tg: usize = 4;
+
+        let result = MetalTensor::uninit(&[m, n], DType::F32);
+        let device = get_device();
+        let command_queue = device.command_queue();
+        let pipeline = get_mul_mv_q6k_pipeline();
+
+        let m_u32 = m as u32;
+        let n_u32 = n as u32;
+        let k_u32 = k as u32;
+
+        let command_buffer = command_queue.new_command_buffer();
+        let encoder = command_buffer.new_compute_command_encoder();
+
+        encoder.set_compute_pipeline_state(pipeline);
+        encoder.set_buffer(0, Some(self.buffer()), 0);
+        encoder.set_buffer(1, Some(w_raw.buffer()), 0);
+        encoder.set_buffer(2, Some(result.buffer()), 0);
+        encoder.set_bytes(3, 4, &m_u32 as *const u32 as *const std::ffi::c_void);
+        encoder.set_bytes(4, 4, &n_u32 as *const u32 as *const std::ffi::c_void);
+        encoder.set_bytes(5, 4, &k_u32 as *const u32 as *const std::ffi::c_void);
+
+        let threads_per_group = MTLSize::new(32, n_rows_per_tg as u64, 1);
+        let grid_size = MTLSize::new(
+            n as u64,
+            ((m + n_rows_per_tg - 1) / n_rows_per_tg) as u64,
+            1,
+        );
+        encoder.dispatch_thread_groups(grid_size, threads_per_group);
+        encoder.end_encoding();
+
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+
+        result
+    }
+
+}
+
+// ========== Q6_K 融合カーネルシェーダ ==========
+const MUL_MV_Q6K_SHADER: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+// Q6_K ブロック: 256 要素 = 210 bytes
+//   ql: 128 bytes (下位4bit)
+//   qh: 64 bytes (上位2bit)
+//   scales: 16 bytes (i8 × 16)
+//   d: 2 bytes (f16)
+// dequant: val = d * scale * (q6 - 32)
+//   q6 = (ql_nibble) | (qh_2bits << 4)  → 0..63 range
+
+constant uint Q6K_N_ROWS_PER_TG = 4;
+
+kernel void mul_mv_q6_K_f32(
+    device const float* x       [[buffer(0)]],
+    device const uchar* w_raw   [[buffer(1)]],
+    device float*       out     [[buffer(2)]],
+    constant uint& M            [[buffer(3)]],
+    constant uint& N            [[buffer(4)]],
+    constant uint& K            [[buffer(5)]],
+    uint2 tg_id  [[threadgroup_position_in_grid]],
+    uint2 tid    [[thread_position_in_threadgroup]]
+) {
+    uint col = tg_id.x;
+    uint row = tg_id.y * Q6K_N_ROWS_PER_TG + tid.y;
+    uint lane = tid.x;
+    
+    if (col >= N || row >= M) return;
+    
+    uint K_blocks = K / 256;
+    
+    float sum = 0.0f;
+    
+    device const float* x_row = x + row * K;
+    device const uchar* w_row = w_raw + col * (K_blocks * 210);
+    
+    for (uint bi = lane; bi < K_blocks; bi += 32) {
+        device const uchar* block = w_row + bi * 210;
+        uint k_base = bi * 256;
+        
+        device const uchar* ql = block;          // 128 bytes
+        device const uchar* qh = block + 128;    // 64 bytes
+        device const char*  sc = (device const char*)(block + 192);  // 16 bytes (i8)
+        float d = float(*(device const half*)(block + 208));
+        
+        // Process 256 weights in 2 chunks of 128
+        for (int n_chunk = 0; n_chunk < 2; ++n_chunk) {
+            uint chunk_k = k_base + n_chunk * 128;
+            device const uchar* ql_ptr = ql + n_chunk * 64;
+            device const uchar* qh_ptr = qh + n_chunk * 32;
+            device const char*  sc_ptr = sc + n_chunk * 8;
+            
+            for (int l = 0; l < 32; ++l) {
+                int is = l / 16;
+                
+                uchar ql_lo = ql_ptr[l];
+                uchar ql_hi = ql_ptr[l + 32];
+                uchar qh_val = qh_ptr[l];
+                
+                int q1 = int((ql_lo & 0x0F) | ((qh_val & 0x03) << 4)) - 32;
+                int q2 = int((ql_hi & 0x0F) | (((qh_val >> 2) & 0x03) << 4)) - 32;
+                int q3 = int((ql_lo >> 4)    | (((qh_val >> 4) & 0x03) << 4)) - 32;
+                int q4 = int((ql_hi >> 4)    | (((qh_val >> 6) & 0x03) << 4)) - 32;
+                
+                float s1 = d * float(sc_ptr[is + 0]);
+                float s2 = d * float(sc_ptr[is + 2]);
+                float s3 = d * float(sc_ptr[is + 4]);
+                float s4 = d * float(sc_ptr[is + 6]);
+                
+                sum += x_row[chunk_k + l +  0] * (s1 * float(q1));
+                sum += x_row[chunk_k + l + 32] * (s2 * float(q2));
+                sum += x_row[chunk_k + l + 64] * (s3 * float(q3));
+                sum += x_row[chunk_k + l + 96] * (s4 * float(q4));
+            }
+        }
+    }
+    
+    // simdgroup 並列リダクション
+    sum += simd_shuffle_down(sum, 16);
+    sum += simd_shuffle_down(sum, 8);
+    sum += simd_shuffle_down(sum, 4);
+    sum += simd_shuffle_down(sum, 2);
+    sum += simd_shuffle_down(sum, 1);
+    
+    if (lane == 0) {
+        out[row * N + col] = sum;
+    }
+}
+"#;
+
+/// Q6_K 融合 matmul パイプライン
+static MUL_MV_Q6K_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
+
+fn get_mul_mv_q6k_pipeline() -> &'static ComputePipelineState {
+    MUL_MV_Q6K_PIPELINE.get_or_init(|| {
+        let device = get_device();
+        let options = metal::CompileOptions::new();
+        let library = device
+            .device()
+            .new_library_with_source(MUL_MV_Q6K_SHADER, &options)
+            .expect("Failed to compile Q6_K matmul shader");
+        let function = library
+            .get_function("mul_mv_q6_K_f32", None)
+            .expect("mul_mv_q6_K_f32 not found");
+        device
+            .device()
+            .new_compute_pipeline_state_with_function(&function)
+            .expect("Failed to create mul_mv_q6k pipeline")
+    })
 }
