@@ -257,7 +257,7 @@ impl GradFn for MatmulBackward {
         };
         let grad_b_raw = a_t.matmul_impl(grad_output);
         
-        eprintln!("DEBUG: MatmulBackward raw grad_a={:?} grad_b={:?}", grad_a_raw.shape(), grad_b_raw.shape());
+        // eprintln!("DEBUG: MatmulBackward raw grad_a={:?} grad_b={:?}", grad_a_raw.shape(), grad_b_raw.shape());
         
         let a_shape = unsafe { &*self.a.get() }.shape().to_vec();
         let b_shape = unsafe { &*self.b.get() }.shape().to_vec();
