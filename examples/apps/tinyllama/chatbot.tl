@@ -255,20 +255,25 @@ fn main() {
             x = b20.forward(x, cos, sin, batch_len, cache, 20, start_pos);
             x = b21.forward(x, cos, sin, batch_len, cache, 21, start_pos);
             let lo = oh.forward(on.forward(x));
-            let nxt = lo.narrow(0, batch_len - 1, 1).sample(0.7, 0.9);
+            let nxt = lo.narrow(0, batch_len - 1, 1).sample(0.5, 0.9);
             let tid = nxt.item_i64();
             let s_nxt = tok.decode(nxt);
             print(s_nxt);
             
-            // Stop String Check (Vicuna format)
+            // Stop conditions
             gen_str = gen_str.concat(s_nxt);
             if gen_str.contains("USER:") {
-                gen_idx = 200; // Break loop
+                gen_idx = 200;
             }
             if gen_str.contains("ASSISTANT:") {
-                gen_idx = 200; // Break loop
+                gen_idx = 200;
+            }
+            // 連続改行で停止
+            if gen_str.contains("\n\n") {
+                gen_idx = 200;
             }
 
+            // EOS token (</s> = 2)
             if tid == 2 { gen_idx = 200; }
             tokens = tokens.cat_i64(nxt, 0);
             cur_tokens = nxt;
