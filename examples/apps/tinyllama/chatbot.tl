@@ -258,9 +258,11 @@ fn main() {
             let nxt = lo.narrow(0, batch_len - 1, 1).sample(0.5, 0.9);
             let tid = nxt.item_i64();
             let s_nxt = tok.decode(nxt);
-            print(s_nxt);
             
-            // Stop conditions
+            // EOS token (</s> = 2) → 出力せず停止
+            if tid == 2 { gen_idx = 200; }
+
+            // 停止チェック（出力前）
             gen_str = gen_str.concat(s_nxt);
             if gen_str.contains("USER:") {
                 gen_idx = 200;
@@ -268,13 +270,14 @@ fn main() {
             if gen_str.contains("ASSISTANT:") {
                 gen_idx = 200;
             }
-            // 連続改行で停止
             if gen_str.contains("\n\n") {
                 gen_idx = 200;
             }
 
-            // EOS token (</s> = 2)
-            if tid == 2 { gen_idx = 200; }
+            // 停止条件に該当しなければ出力
+            if gen_idx < 200 {
+                print(s_nxt);
+            }
             tokens = tokens.cat_i64(nxt, 0);
             cur_tokens = nxt;
             gen_idx = gen_idx + 1;
