@@ -169,20 +169,12 @@ pub extern "C" fn tl_qtensor_matmul(
         };
 
         // matmul: input * weight^T
-        // Transpose also creates a new tensor (should be freed?)
-        // tl_device_tensor_transpose_2d returns a new tensor.
         let transposed = crate::device_ffi::tl_device_tensor_transpose_2d(weight_ptr);
         let res = crate::device_ffi::tl_device_tensor_matmul(input as *mut std::ffi::c_void, transposed) as *mut crate::OpaqueTensor;
         
         // Clean up
-        // dequantize_to_tensor() は Arc<UnsafeCell<MetalTensor>> で返すため、
-        // tl_metal_release (Arc::from_raw) で正しく解放できる
-        if !is_cpu {
-             // GPU Mode: weight_ptr is temporary F32 dequantized tensor (Arc-based)
-             tl_metal::ffi::tl_metal_release(weight_ptr as *mut tl_metal::MetalTensor);
-        }
-        
-        // transposed is also temporary (device_ffi make_tensor → Arc-based)
+        // weight_ptr は QTensor の cache が所有 → 解放しない（CPU/GPU 共通）
+        // transposed のみ解放（毎回新規作成される一時テンソル）
         if is_cpu {
              tl_cpu::ffi::tl_cpu_tensor_free(transposed as *mut tl_cpu::CpuTensor);
         } else {

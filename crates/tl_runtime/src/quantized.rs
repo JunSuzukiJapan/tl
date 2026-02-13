@@ -120,42 +120,27 @@ impl QTensor {
             return Err("CPU cache lock failed".to_string());
         }
 
-        // Metal (GPU) Path: On-demand
+        // Metal (GPU) Path: CPU dequantize + GPU 転送 + F32 キャッシュ
+        // 
+        // 戦略: CPU 側で正確に dequantize し、F32 データを GPU に転送。
+        // 結果を cache に保持し、2回目以降は即座に返す。
+        // これにより:
+        //   - 速度: 毎回の dequantize を回避
+        //   - 精度: CPU dequantize は確実に正しい
+        //   - メモリ: F32 テンソルは QTensor の Drop で解放
         let mut cache_guard = self.cache.lock().unwrap();
         
-        // 1. Get or upload raw data to GPU (cached)
-        let device_raw_ptr = if let Some(ptr) = *cache_guard {
-            // println!("DEBUG: QTensor cache HIT (Raw U8) {:p}", self as *const _);
-            ptr as *mut tl_metal::MetalTensor
-        } else {
-             // println!("DEBUG: QTensor cache MISS (Upload U8) {:p}", self as *const _);
-             let raw_shape = vec![self.data.len()];
-             let t = tl_metal::MetalTensor::from_slice(&self.data, &raw_shape, tl_metal::DType::U8);
-             // tl_metal_release (Arc::from_raw) で解放するため Arc ベースで作成
-             let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(t));
-             let ptr = std::sync::Arc::into_raw(arc) as *mut tl_metal::MetalTensor;
-             *cache_guard = Some(ptr as usize);
-             ptr
-        };
+        // キャッシュヒット: 既に dequantized F32 テンソルがある
+        if let Some(ptr_val) = *cache_guard {
+            return Ok(ptr_val as *mut crate::OpaqueTensor);
+        }
         
-        // 2. Run dequantize kernel or fallback
-        let device_tensor = unsafe { &*device_raw_ptr };
-        
-        let out_tensor = match self.ggml_type {
-            GGMLType::Q4_K => device_tensor.dequantize_q4_k(&self.shape),
-            _ => {
-                // Fallback for Q6_K, Q8_0 etc.
-                // println!("DEBUG: GPU dequantize fallback for {:?}", self.ggml_type);
-                let f32_data = self.dequantize_to_f32()?;
-                tl_metal::MetalTensor::from_slice(&f32_data, &self.shape, tl_metal::DType::F32)
-            }
-        };
-        
-        // 3. Return PROVISIONAL F32 tensor (Caller MUST free)
-        // Metal テンソルは Arc<UnsafeCell<MetalTensor>> で管理されるため、
-        // tl_metal_release (Arc::from_raw) で解放できるように Arc ベースで返す
-        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out_tensor));
-        Ok(std::sync::Arc::into_raw(arc) as *mut _)
+        // キャッシュミス: CPU dequantize → GPU 転送 → キャッシュ
+        let f32_data = self.dequantize_to_f32()?;
+        let out_tensor = tl_metal::MetalTensor::from_slice(&f32_data, &self.shape, tl_metal::DType::F32);
+        let ptr = crate::make_metal_tensor(out_tensor);
+        *cache_guard = Some(ptr as usize);
+        Ok(ptr as *mut _)
     }
 
     fn dequantize_f16(&self) -> Result<Vec<f32>, String> {

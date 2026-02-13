@@ -163,12 +163,9 @@ fn main() {
             return;
         }
         
-        let p1 = "<|start_header_id|>user<|end_header_id|>\n\n";
-        let p2 = "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n";
-        let prompt = string_concat(p1, string_concat(input_str, p2));
-        // let prompt = "hello";
-        
-        let mut tokens = tok.encode(prompt);
+        // Llama 3 チャットテンプレート準拠でトークン列を構築
+        // BOS + system("You are a helpful assistant.") + user(input_str) + assistant header
+        let mut tokens = tok.encode_chat(input_str);
         let cache = KVCache::new(32);  
         let mut cur_tokens = tokens.clone();
         let mut gen_idx = 0;

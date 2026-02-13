@@ -102,3 +102,85 @@ pub extern "C" fn tl_tokenizer_decode(
     }
 }
 
+/// Llama 3 チャットテンプレートに準拠したトークン列を生成
+/// llama.cpp の LLM_CHAT_TEMPLATE_LLAMA_3 と同じフォーマット:
+///   <|begin_of_text|>
+///   <|start_header_id|>system<|end_header_id|>\n\n{system_msg}<|eot_id|>
+///   <|start_header_id|>user<|end_header_id|>\n\n{user_msg}<|eot_id|>
+///   <|start_header_id|>assistant<|end_header_id|>\n\n
+///
+/// codegen ABI: (tok_handle: i64, user_text: *const c_char) -> *mut OpaqueTensor
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tokenizer_encode_chat(
+    tokenizer_handle: i64,
+    user_text: *const c_char,
+) -> *mut crate::OpaqueTensor {
+    unsafe {
+        if tokenizer_handle == 0 || user_text.is_null() {
+            return std::ptr::null_mut();
+        }
+        let tokenizer = &*(tokenizer_handle as *const OpaqueTokenizer);
+        let tok = &tokenizer.inner;
+        let user_str = CStr::from_ptr(user_text).to_string_lossy();
+
+        // Llama 3 特殊トークンID
+        const BOS: u32        = 128000; // <|begin_of_text|>
+        const START_HDR: u32  = 128006; // <|start_header_id|>
+        const END_HDR: u32    = 128007; // <|end_header_id|>
+        const EOT: u32        = 128009; // <|eot_id|>
+
+        let mut ids: Vec<u32> = Vec::new();
+
+        // <|begin_of_text|>
+        ids.push(BOS);
+
+        // System message
+        let system_msg = "You are a helpful assistant.";
+        ids.push(START_HDR);
+        if let Ok(enc) = tok.encode("system", false) {
+            ids.extend(enc.get_ids());
+        }
+        ids.push(END_HDR);
+        if let Ok(enc) = tok.encode("\n\n", false) {
+            ids.extend(enc.get_ids());
+        }
+        if let Ok(enc) = tok.encode(system_msg, false) {
+            ids.extend(enc.get_ids());
+        }
+        ids.push(EOT);
+
+        // User message
+        ids.push(START_HDR);
+        if let Ok(enc) = tok.encode("user", false) {
+            ids.extend(enc.get_ids());
+        }
+        ids.push(END_HDR);
+        if let Ok(enc) = tok.encode("\n\n", false) {
+            ids.extend(enc.get_ids());
+        }
+        if let Ok(enc) = tok.encode(user_str.as_ref(), false) {
+            ids.extend(enc.get_ids());
+        }
+        ids.push(EOT);
+
+        // Assistant generation prompt
+        ids.push(START_HDR);
+        if let Ok(enc) = tok.encode("assistant", false) {
+            ids.extend(enc.get_ids());
+        }
+        ids.push(END_HDR);
+        if let Ok(enc) = tok.encode("\n\n", false) {
+            ids.extend(enc.get_ids());
+        }
+
+        // f32 テンソルとして返す
+        let f32_ids: Vec<f32> = ids.iter().map(|&id| id as f32).collect();
+        let shape = vec![f32_ids.len()];
+        let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
+        if is_cpu {
+            tl_cpu::ffi::tl_cpu_tensor_new(f32_ids.as_ptr(), shape.len(), shape.as_ptr()) as *mut crate::OpaqueTensor
+        } else {
+            tl_metal::ffi_ops::tl_metal_new(f32_ids.as_ptr(), shape.len(), shape.as_ptr())
+        }
+    }
+}

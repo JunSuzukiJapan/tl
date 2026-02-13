@@ -17,7 +17,7 @@ pub use crate::system::{
 
 // tokenizer 関数を re-export（存在する関数のみ）
 pub use crate::tokenizer::{
-    tl_tokenizer_new, tl_tokenizer_encode, tl_tokenizer_decode,
+    tl_tokenizer_new, tl_tokenizer_encode, tl_tokenizer_decode, tl_tokenizer_encode_chat,
 };
 
 

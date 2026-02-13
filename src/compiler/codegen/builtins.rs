@@ -1087,6 +1087,10 @@ pub fn declare_runtime_functions<'ctx>(
     let tok_enc_type = void_ptr.fn_type(&[i64_type.into(), i8_ptr.into()], false);
     add_fn("tl_tokenizer_encode", tok_enc_type);
 
+    // tl_tokenizer_encode_chat(tok: i64, user_text: *const c_char) -> *mut OpaqueTensor
+    let tok_enc_chat_type = void_ptr.fn_type(&[i64_type.into(), i8_ptr.into()], false);
+    add_fn("tl_tokenizer_encode_chat", tok_enc_chat_type);
+
     // tl_tokenizer_decode(tok: i64, ids: *mut OpaqueTensor) -> *const c_char
     let tok_dec_type = i8_ptr.fn_type(&[i64_type.into(), void_ptr.into()], false);
     add_fn("tl_tokenizer_decode", tok_dec_type);
@@ -2098,6 +2102,9 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_tokenizer_encode") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_encode as usize);
+    }
+    if let Some(f) = module.get_function("tl_tokenizer_encode_chat") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_encode_chat as usize);
     }
     if let Some(f) = module.get_function("tl_tokenizer_decode") {
         execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_decode as usize);

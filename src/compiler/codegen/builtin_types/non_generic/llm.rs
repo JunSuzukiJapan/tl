@@ -35,6 +35,14 @@ pub fn register_llm_types(manager: &mut TypeManager) {
         vec![Type::Tensor(Box::new(Type::I64), 1)],
         string_type.clone()
     );
+    // Tokenizer.encode_chat(user_msg: String) -> Tensor<i64>
+    // Llama 3 チャットテンプレートに準拠したトークン列を生成
+    tokenizer.register_evaluated_instance_method(
+        "encode_chat", 
+        compile_tokenizer_encode_chat,
+        vec![string_type.clone()],
+        Type::Tensor(Box::new(Type::I64), 1)
+    );
     manager.register_type(tokenizer);
 
     // Register KVCache
@@ -236,6 +244,30 @@ fn compile_tokenizer_encode<'ctx>(
     let call = codegen.builder.build_call(fn_val, &[handle.into(), inkwell::values::BasicMetadataValueEnum::from(prompt_ptr_val)], "tok_encode").map_err(|e| e.to_string())?;
     // check_tensor_result(val, msg) is method of codegen.
     let res = codegen.check_tensor_result(call, "tok_encode_error")?;
+    Ok((res, Type::Tensor(Box::new(Type::I64), 0)))
+}
+
+fn compile_tokenizer_encode_chat<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("Tokenizer::encode_chat requires 1 argument".into()); }
+    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
+    let (prompt_val, prompt_ty) = &args[0];
+    
+    let prompt_ptr = match prompt_ty {
+        Type::String(_) => {
+             codegen.load_struct_i64_field(*prompt_val, prompt_ty, "ptr")?
+                .into_int_value()
+        },
+        _ => return Err("Tokenizer::encode_chat expects String argument".into()),
+    };
+    let prompt_ptr_val = codegen.builder.build_int_to_ptr(prompt_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "prompt_str_ptr").map_err(|e| e.to_string())?;
+    let fn_val = codegen.module.get_function("tl_tokenizer_encode_chat").ok_or("tl_tokenizer_encode_chat not found")?;
+    let call = codegen.builder.build_call(fn_val, &[handle.into(), inkwell::values::BasicMetadataValueEnum::from(prompt_ptr_val)], "tok_encode_chat").map_err(|e| e.to_string())?;
+    let res = codegen.check_tensor_result(call, "tok_encode_chat_error")?;
     Ok((res, Type::Tensor(Box::new(Type::I64), 0)))
 }
 

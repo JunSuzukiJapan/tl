@@ -4197,7 +4197,7 @@ impl SemanticAnalyzer {
                             check_all_args(args)?;
                             return Ok(Type::I64);
                         }
-                        "tl_tokenizer_encode" => {
+                        "tl_tokenizer_encode" | "tl_tokenizer_encode_chat" => {
                             if arg_len != 2 {
                                 return self.err(
                                     SemanticError::ArgumentCountMismatch {
