@@ -128,10 +128,12 @@ impl QTensor {
             // println!("DEBUG: QTensor cache HIT (Raw U8) {:p}", self as *const _);
             ptr as *mut tl_metal::MetalTensor
         } else {
-             println!("DEBUG: QTensor cache MISS (Upload U8) {:p}", self as *const _);
+             // println!("DEBUG: QTensor cache MISS (Upload U8) {:p}", self as *const _);
              let raw_shape = vec![self.data.len()];
              let t = tl_metal::MetalTensor::from_slice(&self.data, &raw_shape, tl_metal::DType::U8);
-             let ptr = Box::into_raw(Box::new(t));
+             // tl_metal_release (Arc::from_raw) で解放するため Arc ベースで作成
+             let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(t));
+             let ptr = std::sync::Arc::into_raw(arc) as *mut tl_metal::MetalTensor;
              *cache_guard = Some(ptr as usize);
              ptr
         };
@@ -150,7 +152,10 @@ impl QTensor {
         };
         
         // 3. Return PROVISIONAL F32 tensor (Caller MUST free)
-        Ok(Box::into_raw(Box::new(out_tensor)) as *mut _)
+        // Metal テンソルは Arc<UnsafeCell<MetalTensor>> で管理されるため、
+        // tl_metal_release (Arc::from_raw) で解放できるように Arc ベースで返す
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out_tensor));
+        Ok(std::sync::Arc::into_raw(arc) as *mut _)
     }
 
     fn dequantize_f16(&self) -> Result<Vec<f32>, String> {

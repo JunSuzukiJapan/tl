@@ -72,11 +72,13 @@ impl MetalTensor {
     pub fn uninit(shape: &[usize], dtype: DType) -> Self {
         let device = get_device();
         let size = shape_to_bytes(shape, dtype);
+        // eprintln!("[DEBUG] uninit: shape={:?} dtype={:?} size={}", shape, dtype, size);
         let options = MTLResourceOptions::StorageModeShared;
 
         // プールから取得を試みる
         let buffer = pool_acquire(size, options).unwrap_or_else(|| {
             // プールになければ新規確保
+            // eprintln!("[DEBUG] uninit: allocating new buffer size={}", size);
             Arc::new(device.allocate_buffer(size, options))
         });
 
@@ -101,9 +103,11 @@ impl MetalTensor {
     }
 
     /// スライスからテンソルを作成
-    pub fn from_slice<T: Copy>(data: &[T], shape: &[usize], dtype: DType) -> Self {
+    pub fn from_slice<T: Copy + std::fmt::Debug>(data: &[T], shape: &[usize], dtype: DType) -> Self {
+        // eprintln!("[DEBUG] from_slice: shape={:?} dtype={:?} len={}", shape, dtype, data.len());
         let tensor = Self::uninit(shape, dtype);
         let ptr = tensor.buffer.contents() as *mut T;
+        // eprintln!("[DEBUG] from_slice: dst_ptr={:p} src_ptr={:p}", ptr, data.as_ptr());
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
         }
@@ -218,9 +222,28 @@ impl MetalTensor {
         result
     }
 
-    /// データを GPU→CPU→GPU で完全コピー
+    /// データを GPU 上で完全にコピー（Blit）
     pub fn clone_data(&self) -> MetalTensor {
-        MetalTensor::from_slice(&self.to_vec::<f32>(), self.shape(), self.dtype())
+        let result = MetalTensor::uninit(self.shape(), self.dtype());
+        let device = get_device();
+        let command_queue = device.command_queue();
+        let command_buffer = command_queue.new_command_buffer();
+        let blit_encoder = command_buffer.new_blit_command_encoder();
+        
+        let size = shape_to_bytes(self.shape(), self.dtype());
+        blit_encoder.copy_from_buffer(
+            self.buffer(),
+            0,
+            result.buffer(),
+            0,
+            size as u64,
+        );
+        blit_encoder.end_encoding();
+        
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+        
+        result
     }
 
     // ========== Autograd メソッド ==========

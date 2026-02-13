@@ -55,7 +55,7 @@ pub extern "C" fn tl_rope_cos_cache_new(
     }
     let shape = vec![seq_len as usize, (head_dim / 2) as usize];
     let result = MetalTensor::from_slice(&cos_data, &shape, DType::F32);
-    Box::into_raw(Box::new(result))
+    crate::make_metal_tensor(result)
 }
 
 /// RoPE sin キャッシュ作成
@@ -74,7 +74,7 @@ pub extern "C" fn tl_rope_sin_cache_new(
     }
     let shape = vec![seq_len as usize, (head_dim / 2) as usize];
     let result = MetalTensor::from_slice(&sin_data, &shape, DType::F32);
-    Box::into_raw(Box::new(result))
+    crate::make_metal_tensor(result)
 }
 
 /// RMS Norm
@@ -89,7 +89,7 @@ pub extern "C" fn tl_tensor_rms_norm_llm(t: *mut OpaqueTensor, eps: f64) -> *mut
     let rms = (mean_sq + eps as f32).sqrt();
     let result_data: Vec<f32> = data.iter().map(|&x| x / rms).collect();
     let result = MetalTensor::from_slice(&result_data, tensor.shape(), DType::F32);
-    Box::into_raw(Box::new(result))
+    crate::make_metal_tensor(result)
 }
 
 // tl_gguf_load と tl_tokenizer_new_from_gguf は system.rs で定義

@@ -454,6 +454,7 @@ pub fn tl_metal_embedding(
 ) -> *mut OpaqueTensor {
     if weight.is_null() || indices.is_null() { return std::ptr::null_mut(); }
     let (w, i) = unsafe { (&*weight, &*indices) };
+//    eprintln!("[DEBUG] tl_metal_embedding w={:p} i={:p}", weight, indices);
     let result = w.embedding(i);
     let ptr = make_tensor(result);
     if w.requires_grad() {
@@ -500,7 +501,13 @@ pub fn tl_metal_rms_norm(
     let norm = x.rms_norm_impl(eps as f32);
     if !weight.is_null() {
         let w = unsafe { &*weight };
-        make_tensor(norm.mul(w))
+        // eprintln!("[DEBUG] rms_norm w.dtype={:?} norm.dtype={:?}", w.dtype(), norm.dtype());
+        if w.dtype() != norm.dtype() {
+            let w_casted = w.to_dtype(norm.dtype());
+            make_tensor(norm.mul(&w_casted))
+        } else {
+            make_tensor(norm.mul(w))
+        }
     } else {
         make_tensor(norm)
     }
@@ -637,9 +644,8 @@ pub fn tl_metal_from_vec_u8(data: *mut std::ffi::c_void, len: i64) -> *mut Opaqu
      if data.is_null() { return std::ptr::null_mut(); }
      // data は *mut Vec<u8> と仮定
      let vec = unsafe { &*(data as *mut Vec<u8>) };
-     let f32_data: Vec<f32> = vec.iter().map(|&b| b as f32).collect();
      let shape = vec![len as usize];
-     make_tensor(MetalTensor::from_slice(&f32_data, &shape, DType::F32))
+     make_tensor(MetalTensor::from_slice(vec, &shape, DType::U8))
 }
 
 #[no_mangle]
@@ -1138,23 +1144,23 @@ pub fn tl_metal_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTe
 
 #[no_mangle]
 pub fn tl_metal_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    eprintln!("[DEBUG sub] a={:?} b={:?}", a, b);
+    // eprintln!("[DEBUG sub] a={:?} b={:?}", a, b);
     if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
     let (ta, tb) = unsafe { (&*a, &*b) };
-    eprintln!("[DEBUG sub] a.shape={:?} b.shape={:?}", ta.shape(), tb.shape());
+    // eprintln!("[DEBUG sub] a.shape={:?} b.shape={:?}", ta.shape(), tb.shape());
     let result = ta.sub_impl(tb);
-    eprintln!("[DEBUG sub] sub_impl done");
+    // eprintln!("[DEBUG sub] sub_impl done");
     let ptr = make_tensor(result);
     if ta.requires_grad() || tb.requires_grad() {
         use crate::autograd::ops::SubBackward;
-        eprintln!("[DEBUG sub] creating SubBackward (requires_grad=true)");
+        // eprintln!("[DEBUG sub] creating SubBackward (requires_grad=true)");
         unsafe { (&mut *ptr).set_grad_fn(Box::new(SubBackward {
             a: tensor_ref_from_ptr(a), b: tensor_ref_from_ptr(b),
             a_shape: ta.shape().to_vec(), b_shape: tb.shape().to_vec(),
         })); }
-        eprintln!("[DEBUG sub] SubBackward created");
+            // eprintln!("[DEBUG sub] SubBackward created");
     }
-    eprintln!("[DEBUG sub] returning ptr={:?}", ptr);
+    // eprintln!("[DEBUG sub] returning ptr={:?}", ptr);
     ptr
 }
 

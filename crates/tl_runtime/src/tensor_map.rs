@@ -10,11 +10,11 @@ use std::sync::Arc;
 
 /// テンソルのデータを型非依存に保持するエントリ
 pub(crate) struct TensorEntry {
-    data_f32: Vec<f32>,
-    shape: Vec<usize>,
+    pub(crate) data_f32: Vec<f32>,
+    pub(crate) shape: Vec<usize>,
     /// 0=F32, 1=F16, 2=BF16, 3=I32, 4=I64
     #[allow(dead_code)]
-    dtype_tag: u8,
+    pub(crate) dtype_tag: u8,
 }
 
 /// TensorMap 構造体 — CPU/GPU 両方で使用可能
@@ -57,7 +57,7 @@ fn create_tensor_from_entry(entry: &TensorEntry) -> *mut OpaqueTensor {
         Box::into_raw(Box::new(cpu)) as *mut OpaqueTensor
     } else {
         let metal = tl_metal::MetalTensor::from_slice(&entry.data_f32, &entry.shape, tl_metal::DType::F32);
-        Box::into_raw(Box::new(metal))
+        crate::make_metal_tensor(metal)
     }
 }
 

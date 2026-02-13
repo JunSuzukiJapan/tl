@@ -46,6 +46,10 @@ pub const SHADER_LE_F32: &str = "le_f32";
 pub const SHADER_GT_F32: &str = "gt_f32";
 pub const SHADER_GE_F32: &str = "ge_f32";
 
+/// Shader 関数名 - Cast
+pub const SHADER_CAST_F16_TO_F32: &str = "cast_f16_to_f32";
+pub const SHADER_CAST_F32_TO_F16: &str = "cast_f32_to_f16";
+
 /// Shader 関数名 - Quantize
 pub const SHADER_DEQUANTIZE_Q4_K: &str = "dequantize_q4_k";
 
@@ -436,14 +440,34 @@ kernel void argmin_f32(
     }
 }
 
+// ========== Cast ==========
+
+kernel void cast_f16_to_f32(
+    device const half* in [[buffer(0)]],
+    device float* out [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = float(in[id]);
+}
+
+kernel void cast_f32_to_f16(
+    device const float* in [[buffer(0)]],
+    device half* out [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = half(in[id]);
+}
+
 // ========== Quantization (Q4_K) ==========
 // Block size: 256, Size: 144 bytes
 
 kernel void dequantize_q4_k(
     device const uchar* in [[buffer(0)]],
     device float* out [[buffer(1)]],
+    constant uint& num_blocks [[buffer(2)]],
     uint gid [[thread_position_in_grid]]
 ) {
+    if (gid >= num_blocks) return;
     // 1 thread per block (256 elements)
     uint block_idx = gid;
     uint in_offset = block_idx * 144;

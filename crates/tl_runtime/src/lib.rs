@@ -186,7 +186,14 @@ fn mem_trace_enabled() -> bool {
     *MEM_TRACE_ENABLED.get_or_init(|| std::env::var("TL_MEM_TRACE").is_ok())
 }
 
-/// テンソルをヒープに配置して返す
+/// MetalTensor を Arc<UnsafeCell> でポインタに変換するヘルパー
+/// tl_metal_release (Arc::from_raw) と対をなす。
+/// 重要: Box::into_raw(Box::new(MetalTensor)) を直接使ってはいけない。
+/// Box と Arc はメモリレイアウトが異なるため、ヒープ破損を引き起こす。
+pub fn make_metal_tensor(t: MetalTensor) -> *mut OpaqueTensor {
+    let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(t));
+    std::sync::Arc::into_raw(arc) as *mut OpaqueTensor
+}
 
 
 #[allow(dead_code)]

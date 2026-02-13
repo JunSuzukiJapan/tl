@@ -175,15 +175,15 @@ pub extern "C" fn tl_qtensor_matmul(
         let res = crate::device_ffi::tl_device_tensor_matmul(input as *mut std::ffi::c_void, transposed) as *mut crate::OpaqueTensor;
         
         // Clean up
+        // dequantize_to_tensor() は Arc<UnsafeCell<MetalTensor>> で返すため、
+        // tl_metal_release (Arc::from_raw) で正しく解放できる
         if !is_cpu {
-             // GPU Mode: weight_ptr is temporary F32 dequantized tensor
+             // GPU Mode: weight_ptr is temporary F32 dequantized tensor (Arc-based)
              tl_metal::ffi::tl_metal_release(weight_ptr as *mut tl_metal::MetalTensor);
         }
         
-        // transposed is also temporary
+        // transposed is also temporary (device_ffi make_tensor → Arc-based)
         if is_cpu {
-             // CPU transpose... device_ffi handles it?
-             // cpu ffi should implement free
              tl_cpu::ffi::tl_cpu_tensor_free(transposed as *mut tl_cpu::CpuTensor);
         } else {
              tl_metal::ffi::tl_metal_release(transposed as *mut tl_metal::MetalTensor);

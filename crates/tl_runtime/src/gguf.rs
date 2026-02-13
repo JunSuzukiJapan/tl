@@ -112,6 +112,7 @@ pub extern "C" fn tl_gguf_load(path: *mut StringStruct) -> *mut OpaqueTensorMap 
         let data_offset = metadata_end + padding;
 
         eprintln!("[tl_gguf_load] Meta end: {}, Align: {}, Data offset: {}", metadata_end, alignment, data_offset);
+        
 
         let entries = HashMap::new();
         let mut qtensors = HashMap::new();

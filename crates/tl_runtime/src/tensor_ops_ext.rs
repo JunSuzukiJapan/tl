@@ -15,7 +15,7 @@ fn create_fallback_tensor(is_cpu: bool) -> *mut OpaqueTensor {
         Box::into_raw(Box::new(t)) as *mut OpaqueTensor
     } else {
         let t = tl_metal::MetalTensor::zeros(&[1], tl_metal::DType::F32);
-        Box::into_raw(Box::new(t))
+        crate::make_metal_tensor(t)
     }
 }
 
@@ -105,7 +105,7 @@ pub extern "C" fn tl_tensor_load(path: *mut super::StringStruct) -> *mut OpaqueT
             Box::into_raw(Box::new(t)) as *mut OpaqueTensor
         } else {
             let t = tl_metal::MetalTensor::from_slice(&data, &shape, tl_metal::DType::F32);
-            Box::into_raw(Box::new(t))
+            crate::make_metal_tensor(t)
         }
     }
 }
@@ -140,7 +140,7 @@ pub extern "C" fn tl_get_memory_mb() -> f64 {
 pub extern "C" fn tl_image_load_grayscale(_path: *const i8) -> *mut OpaqueTensor {
     // Stub
     let t = tl_metal::MetalTensor::zeros(&[1, 1], DType::F32);
-    Box::into_raw(Box::new(t))
+    crate::make_metal_tensor(t)
 }
 
 #[unsafe(no_mangle)]

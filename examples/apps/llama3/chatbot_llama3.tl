@@ -78,7 +78,7 @@ impl Attention {
         let kr = k_4d.clone().apply_rope(cs.clone(), ss.clone());
         
         let kt = kr.transpose(1, 2);
-        let vt = v_4d.transpose(1, 2); // v_4d
+        let vt = v_4d.transpose(1, 2);
         
         let k_tot = if sp == 0 { kt } else { ch.get_k(li).cat_4d(kt.clone(), 2) };
         let v_tot = if sp == 0 { vt } else { ch.get_v(li).cat_4d(vt.clone(), 2) };
@@ -93,7 +93,7 @@ impl Attention {
         let sm = if sl > 1 { 
             let mm = qt.clone().matmul_4d(kw.clone().transpose(2, 3));
             let sc = mm.scale(0.08839);
-            let mask = Tensor::new_causal_mask(sl).reshape([1, 1, sl, sl]); // Reshape on Tensor::new_causal_mask
+            let mask = Tensor::new_causal_mask(sl).reshape([1, 1, sl, sl]);
             sc.add_4d(mask)
         } else { 
             let mm = qt.clone().matmul_4d(kw.clone().transpose(2, 3));

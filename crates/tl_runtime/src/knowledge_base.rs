@@ -858,7 +858,7 @@ pub extern "C" fn tl_query(
             Box::into_raw(Box::new(t)) as *mut OpaqueTensor
         } else {
             let t = MetalTensor::from_slice(data, shape, DType::F32);
-            Box::into_raw(Box::new(t))
+            crate::make_metal_tensor(t)
         }
     };
 
