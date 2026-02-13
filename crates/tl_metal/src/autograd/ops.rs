@@ -10,11 +10,11 @@ use crate::DType;
 fn reduce_grad_for_broadcast(grad: &MetalTensor, target_shape: &[usize]) -> MetalTensor {
     let grad_shape = grad.shape();
     if grad_shape == target_shape {
-        eprintln!("DEBUG: reduce_grad_for_broadcast match {:?} -> {:?}", grad_shape, target_shape);
+// eprintln!("DEBUG: reduce_grad_for_broadcast match {:?} -> {:?}", grad_shape, target_shape);
         return grad.shallow_clone();
     }
     
-    eprintln!("DEBUG: reduce_grad_for_broadcast {:?} -> {:?}", grad_shape, target_shape);
+// eprintln!("DEBUG: reduce_grad_for_broadcast {:?} -> {:?}", grad_shape, target_shape);
     
     let mut result = grad.shallow_clone();
     let grad_ndim = grad_shape.len();
@@ -23,7 +23,7 @@ fn reduce_grad_for_broadcast(grad: &MetalTensor, target_shape: &[usize]) -> Meta
     if grad_ndim > target_ndim {
         for _ in 0..(grad_ndim - target_ndim) {
             result = result.sum_impl(0);
-            eprintln!("DEBUG: after sum(0): {:?} ptr={:p}", result.shape(), result.buffer().contents());
+// eprintln!("DEBUG: after sum(0): {:?} ptr={:p}", result.shape(), result.buffer().contents());
         }
     }
     
@@ -36,14 +36,14 @@ fn reduce_grad_for_broadcast(grad: &MetalTensor, target_shape: &[usize]) -> Meta
             let mut new_shape = result.shape().to_vec();
             new_shape.insert(d, 1);
             result = result.reshape_impl(&new_shape);
-            eprintln!("DEBUG: after sum/reshape dim {}: {:?} ptr={:p}", d, result.shape(), result.buffer().contents());
+// eprintln!("DEBUG: after sum/reshape dim {}: {:?} ptr={:p}", d, result.shape(), result.buffer().contents());
         }
     }
     
     if result.shape() != target_shape {
-        eprintln!("DEBUG: reshape {:?} -> {:?}", result.shape(), target_shape);
+// eprintln!("DEBUG: reshape {:?} -> {:?}", result.shape(), target_shape);
         result = result.reshape_impl(target_shape);
-        eprintln!("DEBUG: after final reshape: {:?} ptr={:p}", result.shape(), result.buffer().contents());
+// eprintln!("DEBUG: after final reshape: {:?} ptr={:p}", result.shape(), result.buffer().contents());
     }
     
     result
