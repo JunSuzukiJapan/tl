@@ -88,17 +88,32 @@ pub extern "C" fn tl_tokenizer_decode(
         let data: Vec<f32> = tensor.to_vec();
         let token_ids: Vec<u32> = data.iter().map(|&f| f as u32).collect();
         
-        match tok.decode(&token_ids, true) {
-            Ok(text) => {
-                let c_str = CString::new(text).unwrap_or_else(|_| CString::new("").unwrap());
-                c_str.into_raw()
+        let text = if token_ids.len() == 1 {
+            // 1 トークンの場合: id_to_token で直接変換
+            // decode() は post-processing で先頭スペースを消すため
+            match tok.id_to_token(token_ids[0]) {
+                Some(token_str) => {
+                    // BPE のスペース表現を通常文字に変換
+                    // Ġ (U+0120) → スペース、Ċ (U+010A) → 改行
+                    token_str
+                        .replace('\u{0120}', " ")
+                        .replace('\u{010A}', "\n")
+                },
+                None => String::new(),
             }
-            Err(e) => {
-                eprintln!("Tokenizer decode error: {}", e);
-                let empty = CString::new("").unwrap();
-                empty.into_raw()
+        } else {
+            // 複数トークンの場合: 通常の decode
+            match tok.decode(&token_ids, true) {
+                Ok(text) => text,
+                Err(e) => {
+                    eprintln!("Tokenizer decode error: {}", e);
+                    String::new()
+                }
             }
-        }
+        };
+        
+        let c_str = CString::new(text).unwrap_or_else(|_| CString::new("").unwrap());
+        c_str.into_raw()
     }
 }
 

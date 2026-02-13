@@ -226,7 +226,7 @@ fn main() {
         let mut gen_idx = 0;
         let mut gen_str = "";
         print("Assistant> ");
-        while gen_idx < 100 {
+        while gen_idx < 64 {
             let total_len = tokens.len();
             let batch_len = cur_tokens.len();
             let start_pos = total_len - batch_len;
