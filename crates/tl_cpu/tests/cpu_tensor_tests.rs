@@ -935,7 +935,7 @@ mod trait_tests {
         let a = CpuTensor::from_slice(&[1.0, 2.0, 3.0], &[3], DType::F32);
         let b = CpuTensor::from_slice(&[4.0, 5.0, 6.0], &[3], DType::F32);
 
-        let c = a.add(\&b);
+        let c = a.add(&b);
         assert_eq!(c.to_vec_f32(), vec![5.0, 7.0, 9.0]);
 
         let d = a.mul_scalar(3.0);
