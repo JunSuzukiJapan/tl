@@ -20,9 +20,15 @@ fn make_tensor(t: MetalTensor) -> *mut OpaqueTensor {
 
 #[no_mangle]
 pub extern "C" fn tl_metal_clone(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    // TL言語の変数は参照として振る舞うべきなので、複製ではなく参照カウントを増やす。
+    // Autograd 情報を共有するためにはこれが必須。
     if t.is_null() { return std::ptr::null_mut(); }
-    let tensor = unsafe { &*t };
-    make_tensor(tensor.clone())
+    unsafe {
+        let arc = Arc::from_raw(t as *const UnsafeCell<MetalTensor>);
+        let cloned = arc.clone();
+        let _ = Arc::into_raw(arc); // Keep original alive
+        Arc::into_raw(cloned) as *mut OpaqueTensor
+    }
 }
 
 #[no_mangle]

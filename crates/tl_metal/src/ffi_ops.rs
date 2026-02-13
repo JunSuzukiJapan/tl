@@ -558,6 +558,8 @@ pub fn tl_metal_sub_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
     ptr
 }
 
+
+
 #[no_mangle]
 pub fn tl_metal_tril(t: *mut OpaqueTensor, diagonal: i64) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }

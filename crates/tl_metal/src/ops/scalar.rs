@@ -42,6 +42,7 @@ impl MetalTensor {
     }
 
     pub fn mul_scalar_impl(&self, scalar: f32) -> MetalTensor {
+        eprintln!("DEBUG: mul_scalar_impl self={:p} buf={:p} shape={:?} s={}", self, self.buffer().contents(), self.shape(), scalar);
         let result = MetalTensor::uninit(MetalTensor::shape(self), MetalTensor::dtype(self));
         let device = get_device();
         let command_queue = device.command_queue();

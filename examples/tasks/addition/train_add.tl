@@ -72,6 +72,9 @@ fn my_cross_entropy(logits: Tensor<f32, 3>, targets: Tensor<f32, 2>) -> Tensor<f
 // ---------------
 
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
+
+// ... (skip)
+
 struct LinearPair { a: Linear, b: Linear }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
@@ -81,32 +84,17 @@ impl Linear {
         x.matmul(self.W) + self.b 
     } 
     fn update(self, lr: f32) -> Linear { 
-        print("DEBUG: Linear::update start");
         let mut s = self; 
-        
-        print("DEBUG: getting W grad");
         let w_grad = s.W.grad();
-        print("DEBUG: w_grad obtained");
-        // w_grad.print();
-        print("DEBUG: calc W diff");
         let w_diff = w_grad * lr;
-        // let w_diff = s.W * 0.000001;
-        print("DEBUG: calc W new");
-        let w_new = s.W - w_diff;
-        print("DEBUG: detaching W new");
-        s.W = w_new.detach(true);
+        s.W = (s.W - w_diff).detach(true);
         
-        print("DEBUG: getting b grad");
         let b_grad = s.b.grad();
-        print("DEBUG: calc b diff");
         let b_diff = b_grad * lr;
-        print("DEBUG: calc b new");
-        let b_new = s.b - b_diff;
-        print("DEBUG: detaching b new");
-        s.b = b_new.detach(true);
-        print("DEBUG: Linear::update end");
-        s 
-    } 
+        s.b = (s.b - b_diff).detach(true);
+        
+        s
+    }
     fn dup(self) -> LinearPair {
         LinearPair(
             Linear(self.W.clone(), self.b.clone()),
@@ -120,6 +108,7 @@ impl Linear {
         Linear(self.W.shallow_clone(), self.b.shallow_clone())
     }
 }
+
 
 
 

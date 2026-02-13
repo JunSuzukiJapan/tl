@@ -10,17 +10,20 @@ use crate::DType;
 fn reduce_grad_for_broadcast(grad: &MetalTensor, target_shape: &[usize]) -> MetalTensor {
     let grad_shape = grad.shape();
     if grad_shape == target_shape {
+        eprintln!("DEBUG: reduce_grad_for_broadcast match {:?} -> {:?}", grad_shape, target_shape);
         return grad.shallow_clone();
     }
+    
+    eprintln!("DEBUG: reduce_grad_for_broadcast {:?} -> {:?}", grad_shape, target_shape);
     
     let mut result = grad.shallow_clone();
     let grad_ndim = grad_shape.len();
     let target_ndim = target_shape.len();
     
-    // target_shape が短い場合、先頭の余分な次元を sum で潰す
     if grad_ndim > target_ndim {
         for _ in 0..(grad_ndim - target_ndim) {
             result = result.sum_impl(0);
+            eprintln!("DEBUG: after sum(0): {:?} ptr={:p}", result.shape(), result.buffer().contents());
         }
     }
     
@@ -33,11 +36,14 @@ fn reduce_grad_for_broadcast(grad: &MetalTensor, target_shape: &[usize]) -> Meta
             let mut new_shape = result.shape().to_vec();
             new_shape.insert(d, 1);
             result = result.reshape_impl(&new_shape);
+            eprintln!("DEBUG: after sum/reshape dim {}: {:?} ptr={:p}", d, result.shape(), result.buffer().contents());
         }
     }
     
     if result.shape() != target_shape {
+        eprintln!("DEBUG: reshape {:?} -> {:?}", result.shape(), target_shape);
         result = result.reshape_impl(target_shape);
+        eprintln!("DEBUG: after final reshape: {:?} ptr={:p}", result.shape(), result.buffer().contents());
     }
     
     result
@@ -234,8 +240,31 @@ pub struct MatmulBackward {
 
 impl GradFn for MatmulBackward {
     fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor> {
-        let grad_a = grad_output.matmul_impl(&self.b_data.transpose_impl(0, 1));
-        let grad_b = self.a_data.transpose_impl(0, 1).matmul_impl(grad_output);
+        let a_ndim = self.a_data.shape().len();
+        let b_ndim = self.b_data.shape().len();
+
+        let b_t = if b_ndim >= 2 {
+            self.b_data.transpose_impl(b_ndim - 2, b_ndim - 1)
+        } else {
+            self.b_data.transpose_impl(0, 1)
+        };
+        let grad_a_raw = grad_output.matmul_impl(&b_t);
+
+        let a_t = if a_ndim >= 2 {
+            self.a_data.transpose_impl(a_ndim - 2, a_ndim - 1)
+        } else {
+            self.a_data.transpose_impl(0, 1)
+        };
+        let grad_b_raw = a_t.matmul_impl(grad_output);
+        
+        eprintln!("DEBUG: MatmulBackward raw grad_a={:?} grad_b={:?}", grad_a_raw.shape(), grad_b_raw.shape());
+        
+        let a_shape = unsafe { &*self.a.get() }.shape().to_vec();
+        let b_shape = unsafe { &*self.b.get() }.shape().to_vec();
+        
+        let grad_a = reduce_grad_for_broadcast(&grad_a_raw, &a_shape);
+        let grad_b = reduce_grad_for_broadcast(&grad_b_raw, &b_shape);
+        
         vec![grad_a, grad_b]
     }
     fn inputs(&self) -> Vec<TensorRef> {

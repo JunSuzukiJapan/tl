@@ -159,7 +159,15 @@ impl MetalTensor {
             shape: self.shape.clone(),
             dtype: self.dtype,
             device: Arc::clone(&self.device),
-            autograd: None,
+            autograd: if self.requires_grad() {
+                Some(Box::new(AutogradMeta {
+                    grad: None,
+                    grad_fn: None,
+                    requires_grad: true,
+                }))
+            } else {
+                None
+            },
         }
     }
 
@@ -289,6 +297,16 @@ impl MetalTensor {
         }
     }
 
+    pub(crate) fn accumulate_grad(&mut self, grad: MetalTensor) {
+        if let Some(ref mut meta) = self.autograd {
+            if let Some(ref mut g) = meta.grad {
+                *g = g.add_impl(&grad);
+            } else {
+                meta.grad = Some(grad.shallow_clone());
+            }
+        }
+    }
+
     /// backward（逆伝播）— ワークリスト方式（スタックオーバーフロー防止）
     /// TensorRef (Arc) ベースで入力テンソルの生存を保証。
     pub fn backward(&mut self) {
@@ -308,16 +326,6 @@ impl MetalTensor {
         while let Some((tensor_ptr, grad_output)) = worklist.pop() {
             let tensor = unsafe { &mut *tensor_ptr };
 
-            // 勾配を累積
-            if let Some(ref mut meta) = tensor.autograd {
-                if let Some(ref mut grad) = meta.grad {
-                    let new_grad = grad.add(&grad_output);
-                    *grad = new_grad;
-                } else {
-                    meta.grad = Some(grad_output.shallow_clone());
-                }
-            }
-
             // grad_fn から入力勾配を計算してワークリストに追加
             let propagation = {
                 let meta = tensor.autograd.as_ref();
@@ -329,6 +337,9 @@ impl MetalTensor {
                     })
                 })
             };
+
+            // 勾配を累積 (grad_output の所有権を渡すため最後に実行)
+            tensor.accumulate_grad(grad_output);
 
             if let Some((grads, inputs)) = propagation {
                 for (input_ref, grad) in inputs.into_iter().zip(grads.into_iter()) {

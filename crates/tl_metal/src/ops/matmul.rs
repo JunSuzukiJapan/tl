@@ -307,14 +307,23 @@ impl MetalTensor {
         // 3D × 3D: batch matmul
         if self_shape.len() == 3 && other_shape.len() == 3 {
             let batch = self_shape[0];
-            assert_eq!(batch, other_shape[0], "Batch dimensions must match: {} vs {}", batch, other_shape[0]);
+            let other_batch = other_shape[0];
+            
+            // Broadcasting check
+            assert!(
+                batch == other_batch || batch == 1 || other_batch == 1,
+                "Batch dimensions must match or be broadcastable: {} vs {}", batch, other_batch
+            );
+            
+            let out_batch = usize::max(batch, other_batch);
+            
             let m = self_shape[1];
             let k = self_shape[2];
             let k2 = other_shape[1];
             let n = other_shape[2];
             assert_eq!(k, k2, "Inner dimensions must match: {} vs {}", k, k2);
 
-            let result = MetalTensor::uninit(&[batch, m, n], DType::F32);
+            let result = MetalTensor::uninit(&[out_batch, m, n], DType::F32);
             let device = get_device();
             let command_queue = device.command_queue();
             let pipeline = get_matmul_pipeline();
@@ -334,9 +343,12 @@ impl MetalTensor {
 
             let command_buffer = command_queue.new_command_buffer();
 
-            for b in 0..batch {
-                let self_offset = (b * m * k * 4) as u64;
-                let other_offset = (b * k * n * 4) as u64;
+            for b in 0..out_batch {
+                let self_b = if batch == 1 { 0 } else { b };
+                let other_b = if other_batch == 1 { 0 } else { b };
+                
+                let self_offset = (self_b * m * k * 4) as u64;
+                let other_offset = (other_b * k * n * 4) as u64;
                 let result_offset = (b * m * n * 4) as u64;
 
                 let encoder = command_buffer.new_compute_command_encoder();
