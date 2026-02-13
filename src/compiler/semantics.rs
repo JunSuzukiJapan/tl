@@ -805,13 +805,13 @@ impl SemanticAnalyzer {
     pub fn check_module(&mut self, module: &mut Module) -> Result<(), TlError> {
         // Debug: Print all top-level functions
         for f in &module.functions {
-            eprintln!("DEBUG: Top-level function: {}", f.name);
+            // eprintln!("DEBUG: Top-level function: {}", f.name);
         }
         for i in &module.impls {
             let target = i.target_type.get_base_name();
-            eprintln!("DEBUG: Impl block for {}", target);
+            // eprintln!("DEBUG: Impl block for {}", target);
             for m in &i.methods {
-                eprintln!("DEBUG:   Method: {}", m.name);
+                // eprintln!("DEBUG:   Method: {}", m.name);
             }
         }
 
@@ -1490,7 +1490,7 @@ impl SemanticAnalyzer {
         func: &mut FunctionDef,
         self_type: Option<Type>,
     ) -> Result<(), TlError> {
-        eprintln!("DEBUG: check_function {}", func.name);
+        // eprintln!("DEBUG: check_function {}", func.name);
         self.enter_scope();
 
         // Set expected return type for this function (resolve first)
@@ -1513,7 +1513,7 @@ impl SemanticAnalyzer {
                 if type_name == "Self" {
                     // Resolve Self -> Actual Type
                     self_type.clone().ok_or_else(|| {
-                        eprintln!("DEBUG: Self type not available in function: {}", func.name);
+                        // eprintln!("DEBUG: Self type not available in function: {}", func.name);
                         SemanticError::VariableNotFound(
                             "Self type not available in this context".into(),
                         )
@@ -5541,7 +5541,7 @@ impl SemanticAnalyzer {
                         if sigs.is_empty() { None }
                         else { 
                             if method_name == "detach" {
-                                eprintln!("DEBUG: semantics detach signatures for {}: {:?}", type_name, sigs.iter().map(|s| s.0.len()).collect::<Vec<_>>());
+                                // eprintln!("DEBUG: semantics detach signatures for {}: {:?}", type_name, sigs.iter().map(|s| s.0.len()).collect::<Vec<_>>());
                             }
                             Some(sigs.into_iter().map(|(a, r)| (a.clone(), r.clone())).collect()) 
                         }
