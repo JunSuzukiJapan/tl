@@ -7,30 +7,10 @@
 // ---------------
 
 // One-Hot Embedding (embedding()の代替)
-fn my_embedding(indices: Tensor<f32, 2>, w: Tensor<f32, 2>, V: i64) -> Tensor<f32, 3> {
-    let T = 12;
-    let flat_indices = indices.reshape([T]);
-    
-    let mut one_hot: Tensor<f32, 2> = Tensor::randn([T, V], false) * 0.0;
-    for t in range(0, T) {
-        let idx = flat_indices[t] as i64;
-        one_hot[t, idx] = 1.0;
-    }
-    let one_hot_d = one_hot.detach();
-    
-    print("DEBUG: my_embedding matmul");
-    print("DEBUG: one_hot_d:");
-    one_hot_d.print();
-    print("DEBUG: w:");
-    w.print();
-    let out_flat = one_hot_d.matmul(w);
-    out_flat.reshape([1, 12, 128])
-} 
+ 
 // ...
 // ...
-    fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
-        my_embedding(i, self.w, self.vocab_size) 
-    }
+
 
 // Causal Mask (tril()の代替)
 fn get_causal_mask(size: i64) -> Tensor<f32, 2> {
@@ -42,7 +22,7 @@ fn get_causal_mask(size: i64) -> Tensor<f32, 2> {
             }
         }
     }
-    return mask.detach();
+    return mask.detach(false);
 }
 
 // Cross Entropy (手動実装)
@@ -61,7 +41,7 @@ fn my_cross_entropy(logits: Tensor<f32, 3>, targets: Tensor<f32, 2>) -> Tensor<f
         let t = targets_flat[i] as i64;
         mask[i, t] = 1.0;
     }
-    let mask_d = mask.detach();
+    let mask_d = mask.detach(false);
     
     let selected = mask_d * log_probs_flat;
     print("DEBUG: my_cross_entropy selected calculated");
@@ -71,14 +51,18 @@ fn my_cross_entropy(logits: Tensor<f32, 3>, targets: Tensor<f32, 2>) -> Tensor<f
     // -1 * mean を計算
     let mut neg_one: Tensor<f32, 1> = Tensor::randn([1], false) * 0.0;
     neg_one[0] = -1.0;
-    let neg_one_d = neg_one.detach();
+    let neg_one_d = neg_one.detach(false);
+    print("DEBUG: neg_one created");
     
     let mut n_float: Tensor<f32, 1> = Tensor::randn([1], false) * 0.0;
     n_float[0] = 12.0;
-    let n_float_d = n_float.detach();
+    let n_float_d = n_float.detach(false);
+    print("DEBUG: n_float created");
     
     let mean = sum_log_probs / n_float_d;
+    print("DEBUG: mean calculated");
     let neg_mean = mean * neg_one_d;
+    print("DEBUG: neg_mean calculated");
     
     neg_mean
 }
@@ -88,25 +72,60 @@ fn my_cross_entropy(logits: Tensor<f32, 3>, targets: Tensor<f32, 2>) -> Tensor<f
 // ---------------
 
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
+struct LinearPair { a: Linear, b: Linear }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
-        Linear((Tensor::randn([i, o], true)*0.1).detach(), (Tensor::randn([o], true)*0.0).detach()) 
+        Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true))
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         x.matmul(self.W) + self.b 
     } 
     fn update(self, lr: f32) -> Linear { 
+        print("DEBUG: Linear::update start");
         let mut s = self; 
-        s.W = (s.W - s.W.grad() * lr).detach(); 
-        s.b = (s.b - s.b.grad() * lr).detach(); 
+        
+        print("DEBUG: getting W grad");
+        let w_grad = s.W.grad();
+        print("DEBUG: w_grad obtained");
+        // w_grad.print();
+        print("DEBUG: calc W diff");
+        let w_diff = w_grad * lr;
+        // let w_diff = s.W * 0.000001;
+        print("DEBUG: calc W new");
+        let w_new = s.W - w_diff;
+        print("DEBUG: detaching W new");
+        s.W = w_new.detach(true);
+        
+        print("DEBUG: getting b grad");
+        let b_grad = s.b.grad();
+        print("DEBUG: calc b diff");
+        let b_diff = b_grad * lr;
+        print("DEBUG: calc b new");
+        let b_new = s.b - b_diff;
+        print("DEBUG: detaching b new");
+        s.b = b_new.detach(true);
+        print("DEBUG: Linear::update end");
         s 
     } 
+    fn dup(self) -> LinearPair {
+        LinearPair(
+            Linear(self.W.clone(), self.b.clone()),
+            Linear(self.W.clone(), self.b.clone())
+        )
+    }
+    fn clone(self) -> Linear {
+        Linear(self.W.clone(), self.b.clone())
+    }
+    fn shallow_clone(self) -> Linear {
+        Linear(self.W.shallow_clone(), self.b.shallow_clone())
+    }
 }
 
 
 
 
 struct CausalSelfAttention { q_proj: Linear, k_proj: Linear, v_proj: Linear, p_proj: Linear }
+struct CausalSelfAttentionPair { a: CausalSelfAttention, b: CausalSelfAttention }
 impl CausalSelfAttention { 
     fn new(d: i64) -> CausalSelfAttention { 
         CausalSelfAttention(Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d)) 
@@ -128,16 +147,45 @@ impl CausalSelfAttention {
         self.p_proj.forward(y) 
     } 
     fn update(self, lr: f32) -> CausalSelfAttention { 
+        print("DEBUG: CausalSelfAttention::update start");
         let mut s = self; 
         s.q_proj = s.q_proj.update(lr); 
+        print("DEBUG: q_proj updated");
         s.k_proj = s.k_proj.update(lr); 
         s.v_proj = s.v_proj.update(lr); 
         s.p_proj = s.p_proj.update(lr); 
         s 
     } 
+    fn dup(self) -> CausalSelfAttentionPair {
+        let q = self.q_proj.dup();
+        let k = self.k_proj.dup();
+        let v = self.v_proj.dup();
+        let p = self.p_proj.dup();
+        CausalSelfAttentionPair(
+            CausalSelfAttention(q.a, k.a, v.a, p.a),
+            CausalSelfAttention(q.b, k.b, v.b, p.b)
+        )
+    }
+    fn clone(self) -> CausalSelfAttention {
+        CausalSelfAttention(
+            self.q_proj.clone(), 
+            self.k_proj.clone(), 
+            self.v_proj.clone(), 
+            self.p_proj.clone()
+        )
+    }
+    fn shallow_clone(self) -> CausalSelfAttention {
+        CausalSelfAttention(
+            self.q_proj.shallow_clone(),
+            self.k_proj.shallow_clone(),
+            self.v_proj.shallow_clone(),
+            self.p_proj.shallow_clone()
+        )
+    }
 }
 
 struct MLP { f: Linear, p: Linear }
+struct MLPPair { a: MLP, b: MLP }
 impl MLP { 
     fn new(d: i64) -> MLP { 
         MLP(Linear::new(d, d*4), Linear::new(d*4, d)) 
@@ -146,14 +194,27 @@ impl MLP {
         self.p.forward(self.f.forward(x).relu()) 
     } 
     fn update(self, lr: f32) -> MLP { 
+        print("DEBUG: MLP::update start");
         let mut s = self; 
         s.f = s.f.update(lr); 
         s.p = s.p.update(lr); 
         s 
     } 
+    fn dup(self) -> MLPPair {
+        let f = self.f.dup();
+        let p = self.p.dup();
+        MLPPair(MLP(f.a, p.a), MLP(f.b, p.b))
+    }
+    fn clone(self) -> MLP {
+        MLP(self.f.clone(), self.p.clone())
+    }
+    fn shallow_clone(self) -> MLP {
+        MLP(self.f.shallow_clone(), self.p.shallow_clone())
+    }
 }
 
 struct Block { a: CausalSelfAttention, m: MLP }
+struct BlockPair { a: Block, b: Block }
 impl Block { 
     fn new(d: i64) -> Block { 
         Block(CausalSelfAttention::new(d), MLP::new(d)) 
@@ -163,17 +224,34 @@ impl Block {
         x + self.m.forward(x) 
     } 
     fn update(self, lr: f32) -> Block { 
+        print("DEBUG: Block::update start");
         let mut s = self; 
         s.a = s.a.update(lr); 
+        print("DEBUG: Block::update attention done");
         s.m = s.m.update(lr); 
         s 
     } 
+    fn dup(self) -> BlockPair {
+        let a = self.a.dup();
+        let m = self.m.dup();
+        BlockPair(Block(a.a, m.a), Block(a.b, m.b))
+    }
+    fn clone(self) -> Block {
+        Block(self.a.clone(), self.m.clone())
+    }
+    fn shallow_clone(self) -> Block {
+        Block(
+            self.a.shallow_clone(),
+            self.m.shallow_clone()
+        )
+    }
 }
 
 // 3-Layer GPT
 // struct GPT { w: Embedding, wp: Embedding, b1: Block, b2: Block, b3: Block, l: LayerNorm, h: Linear }
 // struct GPT { b1: Block, b2: Block, b3: Block, l: LayerNorm, h: Linear }
 struct GPT { b1: Block, b2: Block, b3: Block, h: Linear }
+struct GPTPair { a: GPT, b: GPT }
 impl GPT { 
     fn new(v: i64, d: i64) -> GPT { 
         GPT(
@@ -199,16 +277,36 @@ impl GPT {
         self.h.forward(x)
     } 
     fn update(self, lr: f32) -> GPT { 
+        print("DEBUG: GPT::update start");
         let mut s = self; 
         // s.w = s.w.update(lr); 
         // s.wp = s.wp.update(lr); 
         s.b1 = s.b1.update(lr); 
+        print("DEBUG: b1 updated");
         s.b2 = s.b2.update(lr); 
         s.b3 = s.b3.update(lr); 
         // s.l = s.l.update(lr); 
         s.h = s.h.update(lr); 
         s 
     } 
+    fn dup(self) -> GPTPair {
+        let b1 = self.b1.dup();
+        let b2 = self.b2.dup();
+        let b3 = self.b3.dup();
+        let h = self.h.dup();
+        GPTPair(
+            GPT(b1.a, b2.a, b3.a, h.a),
+            GPT(b1.b, b2.b, b3.b, h.b)
+        )
+    }
+    fn clone(self) -> GPT {
+        GPT(
+            self.b1.clone(), 
+            self.b2.clone(), 
+            self.b3.clone(), 
+            self.h.clone()
+        )
+    }
 }
 
 // ---------------
@@ -245,19 +343,29 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
     
     let target = [
         v_i_d10, 10.0, 
-        v_j_d1, v_j_d10, 11.0, 
-        v_s_d1, v_s_d10, v_s_d100, 
-        12.0, 12.0, 12.0, 12.0
+        12.0, 12.0, 12.0, 12.0, 
+        v_s_d100, v_s_d10, v_s_d1, 
+        12.0, 12.0, 12.0
     ];
 
     let X = data.reshape([1, 12]);
     let Y = target.reshape([1, 12]);
     
-    let logits = model.forward(X);
+    // Duplicate model to keep one copy for update while forward consumes the other
+    // let models = model.dup();
+    let model_update = model.clone();
+    let model_forward = model;
+
+    let logits = model_forward.forward(X);
+    // print("DEBUG: loss computed");
     let loss = my_cross_entropy(logits, Y);
-    
+    // print("DEBUG: loss backward start");
+
     loss.backward();
-    model = model.update(lr);
+    // print("DEBUG: backward done");
+
+    let model = model_update.update(lr);
+    // print("DEBUG: update done");
     model
 }
 
@@ -279,7 +387,7 @@ fn train_epoch(model: GPT, lr: f32, epoch: i64) -> GPT {
 }
 
 fn get_memory() -> i64 {
-    System::memory_mb()
+    System::memory_mb() as i64
 }
 
 fn main() {

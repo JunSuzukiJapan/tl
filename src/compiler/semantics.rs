@@ -242,6 +242,13 @@ impl SemanticAnalyzer {
     }
 
     fn err<T>(&self, error: SemanticError, span: Option<Span>) -> Result<T, TlError> {
+        if let SemanticError::TypeMismatch { expected, found } = &error {
+            if let Some(s) = &span {
+                eprintln!("DEBUG: TypeMismatch expected {:?}, found {:?} at line {:?}", expected, found, s.line);
+            } else {
+                eprintln!("DEBUG: TypeMismatch expected {:?}, found {:?} at unknown line", expected, found);
+            }
+        }
         Err(error.to_tl_error(span))
     }
 
@@ -796,6 +803,18 @@ impl SemanticAnalyzer {
     }
 
     pub fn check_module(&mut self, module: &mut Module) -> Result<(), TlError> {
+        // Debug: Print all top-level functions
+        for f in &module.functions {
+            eprintln!("DEBUG: Top-level function: {}", f.name);
+        }
+        for i in &module.impls {
+            let target = i.target_type.get_base_name();
+            eprintln!("DEBUG: Impl block for {}", target);
+            for m in &i.methods {
+                eprintln!("DEBUG:   Method: {}", m.name);
+            }
+        }
+
         self.register_module_symbols(module, "")?;
 
         // Resolve types in struct definitions
@@ -1471,6 +1490,7 @@ impl SemanticAnalyzer {
         func: &mut FunctionDef,
         self_type: Option<Type>,
     ) -> Result<(), TlError> {
+        eprintln!("DEBUG: check_function {}", func.name);
         self.enter_scope();
 
         // Set expected return type for this function (resolve first)
@@ -1493,6 +1513,7 @@ impl SemanticAnalyzer {
                 if type_name == "Self" {
                     // Resolve Self -> Actual Type
                     self_type.clone().ok_or_else(|| {
+                        eprintln!("DEBUG: Self type not available in function: {}", func.name);
                         SemanticError::VariableNotFound(
                             "Self type not available in this context".into(),
                         )
@@ -5041,6 +5062,10 @@ impl SemanticAnalyzer {
                     }
                     (Type::I64, Type::F32) => Ok(Type::F32),
                     (Type::F32, Type::I64) => Ok(Type::I64),
+                    (Type::I64, Type::F64) => Ok(Type::F64),
+                    (Type::F64, Type::I64) => Ok(Type::I64),
+                    (Type::F64, Type::F32) => Ok(Type::F32),
+                    (Type::F32, Type::F64) => Ok(Type::F64),
                     (Type::I64, Type::Usize) => Ok(Type::Usize),
                     (Type::Usize, Type::I64) => Ok(Type::I64),
                     (Type::I64, Type::I32) => Ok(Type::I32),
@@ -5514,7 +5539,12 @@ impl SemanticAnalyzer {
                     .and_then(|ti| {
                         let sigs = ti.get_instance_signatures(method_name);
                         if sigs.is_empty() { None }
-                        else { Some(sigs.into_iter().map(|(a, r)| (a.clone(), r.clone())).collect()) }
+                        else { 
+                            if method_name == "detach" {
+                                eprintln!("DEBUG: semantics detach signatures for {}: {:?}", type_name, sigs.iter().map(|s| s.0.len()).collect::<Vec<_>>());
+                            }
+                            Some(sigs.into_iter().map(|(a, r)| (a.clone(), r.clone())).collect()) 
+                        }
                     });
                 
                 if let Some(sigs) = sigs_cloned {

@@ -33,6 +33,7 @@ impl IDevice for CpuDevice {
 
     // ========== メモリ管理 ==========
     #[inline] fn tensor_clone(&self, a: *mut c_void) -> *mut c_void { v(ffi::tl_cpu_tensor_clone(t(a))) }
+    #[inline] fn tensor_shallow_clone(&self, a: *mut c_void) -> *mut c_void { v(ffi::tl_cpu_tensor_shallow_clone(t(a))) }
     #[inline] fn tensor_free(&self, a: *mut c_void) { ffi::tl_cpu_tensor_free(t(a)) }
     #[inline] fn tensor_release(&self, a: *mut c_void) { ffi::tl_cpu_tensor_release(t(a)) }
     #[inline] fn tensor_acquire(&self, a: *mut c_void) -> *mut c_void { v(ffi::tl_cpu_tensor_acquire(t(a))) }

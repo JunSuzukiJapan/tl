@@ -26,6 +26,17 @@ pub extern "C" fn tl_metal_clone(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 }
 
 #[no_mangle]
+pub extern "C" fn tl_metal_shallow_clone(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    if t.is_null() { return std::ptr::null_mut(); }
+    unsafe {
+        let arc = Arc::from_raw(t as *const UnsafeCell<MetalTensor>);
+        let cloned = arc.clone();
+        let _ = Arc::into_raw(arc); // Keep original alive
+        Arc::into_raw(cloned) as *mut OpaqueTensor
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn tl_metal_release(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
     // Arc::from_raw で復元し drop。RC-1、RC=0 で MetalTensor が Drop される。

@@ -34,6 +34,7 @@ impl IDevice for MetalDeviceImpl {
 
     // ========== メモリ管理 ==========
     #[inline] fn tensor_clone(&self, a: *mut c_void) -> *mut c_void { v(ffi::tl_metal_clone(t(a))) }
+    #[inline] fn tensor_shallow_clone(&self, a: *mut c_void) -> *mut c_void { v(ffi::tl_metal_shallow_clone(t(a))) }
     #[inline] fn tensor_free(&self, a: *mut c_void) { ffi_ops::tl_metal_free(t(a)) }
     #[inline] fn tensor_release(&self, a: *mut c_void) { ffi::tl_metal_release(t(a)) }
     #[inline] fn tensor_acquire(&self, a: *mut c_void) -> *mut c_void {

@@ -2276,6 +2276,38 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .map_err(|e| e.to_string())?;
                         Ok((i.into(), Type::I64))
                     }
+                    (Type::I64, Type::F64) => {
+                        let i = val.into_int_value();
+                        let f = self
+                            .builder
+                            .build_signed_int_to_float(i, self.context.f64_type(), "cast")
+                            .map_err(|e| e.to_string())?;
+                        Ok((f.into(), Type::F64))
+                    }
+                    (Type::F64, Type::I64) => {
+                        let f = val.into_float_value();
+                        let i = self
+                            .builder
+                            .build_float_to_signed_int(f, self.context.i64_type(), "cast")
+                            .map_err(|e| e.to_string())?;
+                        Ok((i.into(), Type::I64))
+                    }
+                    (Type::F32, Type::F64) => {
+                        let f = val.into_float_value();
+                        let f64_val = self
+                            .builder
+                            .build_float_ext(f, self.context.f64_type(), "cast")
+                            .map_err(|e| e.to_string())?;
+                        Ok((f64_val.into(), Type::F64))
+                    }
+                    (Type::F64, Type::F32) => {
+                        let f = val.into_float_value();
+                        let f32_val = self
+                            .builder
+                            .build_float_trunc(f, self.context.f32_type(), "cast")
+                            .map_err(|e| e.to_string())?;
+                        Ok((f32_val.into(), Type::F32))
+                    }
                     (Type::Bool, Type::I64) => {
                         let b = val.into_int_value();
                         let i = self

@@ -27,6 +27,7 @@ pub trait IDevice {
 
     // ========== メモリ管理 ==========
     fn tensor_clone(&self, t: *mut c_void) -> *mut c_void;
+    fn tensor_shallow_clone(&self, t: *mut c_void) -> *mut c_void;
     fn tensor_free(&self, t: *mut c_void);
     fn tensor_release(&self, t: *mut c_void);
     fn tensor_acquire(&self, t: *mut c_void) -> *mut c_void;

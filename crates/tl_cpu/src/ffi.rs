@@ -349,6 +349,11 @@ pub extern "C" fn tl_cpu_tensor_rem(a: *mut OpaqueTensor, b: *mut OpaqueTensor) 
     make_tensor(ta.rem_impl(tb))
 }
 
+#[no_mangle]
+pub extern "C" fn tl_cpu_tensor_shallow_clone(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+    tl_cpu_tensor_clone(t)
+}
+
 pub extern "C" fn tl_cpu_tensor_neg(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
@@ -865,17 +870,19 @@ pub extern "C" fn tl_cpu_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor 
     make_tensor(CpuTensor::zeros(tensor.shape(), DType::F32))
 }
 
-pub extern "C" fn tl_cpu_tensor_detach(t: *mut OpaqueTensor, _req_grad: bool) -> *mut OpaqueTensor {
+pub extern "C" fn tl_cpu_tensor_detach(t: *mut OpaqueTensor, req_grad: bool) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
-    let result = make_tensor(tensor.detach());
+    let result_ptr = make_tensor(tensor.detach());
     
-    // Previous optimization: clear_autograd_graph()
-    // This was removed because it destroys the source tensor's data. If the source tensor is reused 
-    // (due to aggressive release/recycle), this clears the *result* tensor too (if aliased).
-    // Cleanup is now handled by standard release_safe (which now supports autograd tensors).
+    if req_grad {
+        unsafe {
+             let res_tensor = &mut *result_ptr;
+             res_tensor.enable_grad();
+        }
+    }
     
-    result
+    result_ptr
 }
 
 /// LLVM IR宣言は `(t) -> void`

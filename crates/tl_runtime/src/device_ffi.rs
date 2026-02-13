@@ -44,6 +44,7 @@ where
 
 // ========== メモリ管理 ==========
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_clone(a: *mut c_void) -> *mut c_void { dispatch(|d| d.tensor_clone(a)) }
+#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_shallow_clone(a: *mut c_void) -> *mut c_void { dispatch(|d| d.tensor_shallow_clone(a)) }
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_free(a: *mut c_void) { dispatch(|d| d.tensor_free(a)) }
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_release(a: *mut c_void) { dispatch(|d| d.tensor_release(a)) }
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_acquire(a: *mut c_void) -> *mut c_void { dispatch(|d| d.tensor_acquire(a)) }

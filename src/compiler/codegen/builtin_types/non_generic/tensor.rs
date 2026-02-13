@@ -57,10 +57,12 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_instance_method("argmin", compile_tensor_argmin_impl, vec![Type::I64], any_tensor.clone());
 
     // Other instance methods (no overloads)
+    tensor.register_evaluated_instance_method("detach", compile_tensor_detach, vec![Type::Bool], any_tensor.clone());
     tensor.register_evaluated_instance_method("detach", compile_tensor_detach, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("tril", compile_tensor_tril, vec![Type::I64], any_tensor.clone());
     tensor.register_evaluated_instance_method("contiguous", compile_tensor_contiguous, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("clone", compile_tensor_clone, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("shallow_clone", compile_tensor_shallow_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("grad", compile_tensor_grad, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("to_i64", compile_tensor_to_i64, vec![], Type::Tensor(Box::new(Type::I64), 0));
     tensor.register_evaluated_instance_method("cuda", compile_tensor_cuda, vec![], any_tensor.clone());
@@ -311,10 +313,16 @@ fn compile_tensor_detach<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     obj: BasicValueEnum<'ctx>,
     obj_ty: Type,
-    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     let fn_val = codegen.module.get_function("tl_tensor_detach").ok_or("tl_tensor_detach not found")?;
-    let req_grad = codegen.context.bool_type().const_int(0, false);
+    // Optional arg: req_grad (bool). Default to false.
+    let req_grad = if !args.is_empty() {
+        let (arg_val, _) = args[0];
+        arg_val.into_int_value()
+    } else {
+        codegen.context.bool_type().const_int(0, false)
+    };
     let call = codegen.builder.build_call(fn_val, &[obj.into(), req_grad.into()], "detach_res").map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
@@ -551,6 +559,21 @@ fn compile_tensor_clone<'ctx>(
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from clone()".into()),
+    };
+    Ok((res, obj_ty))
+}
+
+fn compile_tensor_shallow_clone<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function("tl_tensor_shallow_clone").ok_or("tl_tensor_shallow_clone not found")?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into()], "clone_res").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from shallow_clone()".into()),
     };
     Ok((res, obj_ty))
 }

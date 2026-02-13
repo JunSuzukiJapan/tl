@@ -2993,6 +2993,12 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_sample", sample_type);
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_sample") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sample as usize); }
+
+    // tl_tensor_shallow_clone(t) -> t
+    add_fn("tl_tensor_shallow_clone", clone_type);
+    if let Some(f) = module.get_function("tl_tensor_shallow_clone") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_shallow_clone as usize);
+    }
     
     // Debug Print
     let i8_ptr = context.ptr_type(AddressSpace::default());
