@@ -33,16 +33,16 @@ kernel void matmul_f32(
     C[row * N + col] = sum;
 }
 
-// ========== 融合量子化 matmul: Q4_K ==========
+// ========== 融合量子化 matmul: Q4_K (simdgroup 並列リダクション版) ==========
 // out[M, N] = x[M, K] × W_q4k[N, K]^T
 // W は [N, K] の行優先格納 (=nn.Linear の weight)、transpose 不要
-// 各スレッドが out[row, col] = dot(x[row,:], dequant(W[col,:]))
+//
+// 1 simdgroup (32 threads) で 1 出力要素を協調計算:
+//   - 各スレッドが K 方向の 1/32 を担当
+//   - simd_shuffle_down で高速合算
 //
 // Q4_K ブロック: 256 要素 = 144 bytes
 //   d:f16(2), dmin:f16(2), scales:u8×12, qs:u8×128
-//
-// Weight layout: row col_block → W_raw[col * K_blocks * 144 + block_idx * 144]
-//   where K_blocks = K / 256, col ∈ [0, N), block_idx ∈ [0, K_blocks)
 
 // Helper: decode scale and min from 12-byte scales array
 inline float2 get_scale_min_k4(int j, device const uchar* scales) {
@@ -57,6 +57,14 @@ inline float2 get_scale_min_k4(int j, device const uchar* scales) {
     return float2(sc, m);
 }
 
+// Threadgroup layout: (32, N_ROWS_PER_TG)
+//   - x方向: 32 threads = 1 simdgroup (K方向の分担)
+//   - y方向: N_ROWS_PER_TG 個の出力行を同時処理
+// Grid layout: (N, ceil(M / N_ROWS_PER_TG))
+//   - x方向のthreadgroup数 = N (各出力列に1つ)
+//   - y方向のthreadgroup数 = ceil(M / N_ROWS_PER_TG)
+constant uint N_ROWS_PER_TG = 4;
+
 kernel void mul_mv_q4_K_f32(
     device const float* x       [[buffer(0)]],  // [M, K]  input activations
     device const uchar* w_raw   [[buffer(1)]],  // Q4_K raw bytes [N * K_blocks * 144]
@@ -64,14 +72,16 @@ kernel void mul_mv_q4_K_f32(
     constant uint& M            [[buffer(3)]],
     constant uint& N            [[buffer(4)]],
     constant uint& K            [[buffer(5)]],
-    uint2 gid [[thread_position_in_grid]]       // (col, row)
+    uint2 tg_id  [[threadgroup_position_in_grid]],   // (col, row_group)
+    uint2 tid    [[thread_position_in_threadgroup]]   // (lane, local_row)
 ) {
-    uint row = gid.y;  // M direction (input sequence)
-    uint col = gid.x;  // N direction (output features)
+    uint col = tg_id.x;           // 出力列 (N方向)
+    uint row = tg_id.y * N_ROWS_PER_TG + tid.y;  // 出力行 (M方向)
+    uint lane = tid.x;            // simd lane (0..31), K方向の分担
     
-    if (row >= M || col >= N) return;
+    if (col >= N || row >= M) return;
     
-    uint K_blocks = K / 256;  // number of Q4_K blocks per weight row
+    uint K_blocks = K / 256;  // Q4_K blocks per weight row
     
     float sum = 0.0f;
     
@@ -81,19 +91,19 @@ kernel void mul_mv_q4_K_f32(
     // W row pointer for output neuron 'col'
     device const uchar* w_row = w_raw + col * (K_blocks * 144);
     
-    // Iterate over Q4_K blocks along K dimension
-    for (uint bi = 0; bi < K_blocks; ++bi) {
+    // 各 lane が担当するブロック範囲
+    // 32 lanes で K_blocks を分担
+    // lane i は block i, i+32, i+64, ... を担当
+    for (uint bi = lane; bi < K_blocks; bi += 32) {
         device const uchar* block = w_row + bi * 144;
         uint k_base = bi * 256;
         
-        // Read d, dmin (f16)
-        float df   = float(*(device const half*)(block));
+        float df    = float(*(device const half*)(block));
         float dminf = float(*(device const half*)(block + 2));
         
         device const uchar* scales = block + 4;
         device const uchar* qs = block + 16;
         
-        // Process 256 elements in 4 pairs of sub-blocks (8 sub-blocks total)
         uint k_off = k_base;
         for (int pair = 0; pair < 4; ++pair) {
             int is0 = 2 * pair;
@@ -109,14 +119,12 @@ kernel void mul_mv_q4_K_f32(
             
             device const uchar* qs_ptr = qs + pair * 32;
             
-            // Low nibble: 32 elements (sub-block is0)
             for (int l = 0; l < 32; ++l) {
                 float w_val = d1 * float(qs_ptr[l] & 0x0F) - min1;
                 sum += x_row[k_off + l] * w_val;
             }
             k_off += 32;
             
-            // High nibble: 32 elements (sub-block is1) 
             for (int l = 0; l < 32; ++l) {
                 float w_val = d2 * float(qs_ptr[l] >> 4) - min2;
                 sum += x_row[k_off + l] * w_val;
@@ -125,7 +133,18 @@ kernel void mul_mv_q4_K_f32(
         }
     }
     
-    out[row * N + col] = sum;
+    // simdgroup 並列リダクション: 32 lanes の部分和を合算
+    // simd_shuffle_down で隣接 lane と合算 (5 ステップ: 16,8,4,2,1)
+    sum += simd_shuffle_down(sum, 16);
+    sum += simd_shuffle_down(sum, 8);
+    sum += simd_shuffle_down(sum, 4);
+    sum += simd_shuffle_down(sum, 2);
+    sum += simd_shuffle_down(sum, 1);
+    
+    // lane 0 が結果を書き出し
+    if (lane == 0) {
+        out[row * N + col] = sum;
+    }
 }
 "#;
 
@@ -391,9 +410,8 @@ impl MetalTensor {
     }
 
     /// 融合量子化 matmul: x[M, K] × W_q4k[N, K]^T → out[M, N]
-    /// Q4_K の生データ (u8) を GPU バッファとして受け取り、
-    /// インライン dequantize しながら matmul を 1 パスで実行。
-    /// transpose 不要。
+    /// simdgroup 並列リダクション版:
+    ///   32 threads (1 simdgroup) で 1 出力要素を協調計算
     pub fn mul_mv_q4_k(&self, w_raw: &MetalTensor, n: usize, k: usize) -> MetalTensor {
         let self_shape = MetalTensor::shape(self);
         let m = if self_shape.len() == 2 {
@@ -405,6 +423,8 @@ impl MetalTensor {
         };
 
         assert!(k % 256 == 0, "mul_mv_q4_k: K must be multiple of 256, got {}", k);
+
+        let n_rows_per_tg: usize = 4; // MSL 側の N_ROWS_PER_TG と一致
 
         let result = MetalTensor::uninit(&[m, n], DType::F32);
         let device = get_device();
@@ -426,10 +446,12 @@ impl MetalTensor {
         encoder.set_bytes(4, 4, &n_u32 as *const u32 as *const std::ffi::c_void);
         encoder.set_bytes(5, 4, &k_u32 as *const u32 as *const std::ffi::c_void);
 
-        let threads_per_group = MTLSize::new(16, 16, 1);
+        // Threadgroup: (32, N_ROWS_PER_TG) — 32 = simd 幅
+        let threads_per_group = MTLSize::new(32, n_rows_per_tg as u64, 1);
+        // Grid: N threadgroups in x (各出力列), ceil(M/N_ROWS_PER_TG) in y
         let grid_size = MTLSize::new(
-            ((n + 15) / 16) as u64,
-            ((m + 15) / 16) as u64,
+            n as u64,
+            ((m + n_rows_per_tg - 1) / n_rows_per_tg) as u64,
             1,
         );
         encoder.dispatch_thread_groups(grid_size, threads_per_group);
