@@ -187,14 +187,46 @@ pub extern "C" fn tl_qtensor_matmul(
             ) as *mut crate::OpaqueTensor;
         }
 
-        // ========== GPU パス: 融合量子化 matmul ==========
-        // Q4_K 生データを GPU にアップロード（初回のみ）→ 融合カーネルで直接 matmul
-        // transpose 不要、CPU dequantize 不要
-        
+        // ========== GPU パス ==========
         let shape = &qtensor.shape;
         assert!(shape.len() == 2, "QTensor must be 2D, got {}D", shape.len());
         let n = shape[0]; // output features
         let k = shape[1]; // input features
+
+        // Q4_K のみ融合カーネルを使用
+        // Q6_K やその他は dequantize + transpose + matmul フォールバック
+        if qtensor.ggml_type != crate::quantized::GGMLType::Q4_K {
+            // 非 Q4_K: 既存方式 (dequantize → transpose → matmul)
+            // Transposed キャッシュチェック
+            {
+                let cache_guard = qtensor.cache_transposed.lock().unwrap();
+                if let Some(ptr_val) = *cache_guard {
+                    let transposed = ptr_val as *mut std::ffi::c_void;
+                    return crate::device_ffi::tl_device_tensor_matmul(
+                        input as *mut std::ffi::c_void, transposed
+                    ) as *mut crate::OpaqueTensor;
+                }
+            }
+            let weight_ptr = match qtensor.dequantize_to_tensor() {
+                Ok(t) => t as *mut std::ffi::c_void,
+                Err(e) => {
+                    eprintln!("Error: tl_qtensor_matmul dequantize failed: {}", e);
+                    return std::ptr::null_mut();
+                }
+            };
+            let transposed = crate::device_ffi::tl_device_tensor_transpose_2d(weight_ptr);
+            {
+                let mut cache_guard = qtensor.cache_transposed.lock().unwrap();
+                *cache_guard = Some(transposed as usize);
+            }
+            return crate::device_ffi::tl_device_tensor_matmul(
+                input as *mut std::ffi::c_void, transposed
+            ) as *mut crate::OpaqueTensor;
+        }
+
+        // ========== Q4_K 融合カーネルパス ==========
+        // Q4_K 生データを GPU にアップロード（初回のみ）→ 融合カーネルで直接 matmul
+        // transpose 不要、CPU dequantize 不要
 
         // GPU raw buffer キャッシュチェック
         let gpu_raw_ptr = {
