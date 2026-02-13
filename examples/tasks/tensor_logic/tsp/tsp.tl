@@ -39,7 +39,7 @@ fn main() {
     }
     
     let mut i = 0;
-    while i < 2000 {
+    while i < 200 {
         let probs = logits.softmax(1);
         
         let path = probs.matmul(cities); 

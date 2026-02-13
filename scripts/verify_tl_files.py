@@ -116,13 +116,13 @@ SKIP_FILES = {
     "train_recall.tl",
     "reverse_train.tl",
     "readme_n_queens.tl",
-    "n_queens.tl",
+    # "n_queens.tl",
     # 既知の問題があるファイル
     "train_verify_2digit.tl",
-    "reverse_infer.tl",
+    # "reverse_infer.tl",
     # 計算量が多くタイムアウトする
-    "mln.tl",
-    "tsp.tl",  # backward が重く 30秒タイムアウト超過
+    # "mln.tl",
+    # "tsp.tl",  # backward が重く 30秒タイムアウト超過
     # システムテスト (タイムアウト)
     "system_test.tl",
 

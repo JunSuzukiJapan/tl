@@ -1,6 +1,6 @@
 fn main() {
     let N = 20;
-    let epochs = 500;
+    let epochs = 100;
     let lr = 0.5;
 
     print("Initializing MLN for N=");

@@ -1,21 +1,12 @@
-// SKIP: Requires external resources or model files
+// N-Queens solver (Simulated Annealing/Gradient Descent)
 fn main() {
-    let argc = Args::count();
-    
-    let mut N = 8;
-    if argc > 0 {
-        N = Args::get(0).to_i64();
-    }
-    
-    let mut num_solutions = 10;
-    if argc > 1 {
-        num_solutions = Args::get(1).to_i64();
-    }
+    let N = 8;
+    let num_solutions = 1;
     
     println("Initializing N-Queens Solver. N={}, Solutions to find={}", N, num_solutions);
 
     let lr = 0.5;
-    let epochs = 2000;
+    let epochs = 500;
     
     let solutions_found = 0;
     
