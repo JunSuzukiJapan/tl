@@ -273,6 +273,9 @@ fn main() {
             if gen_str.contains("\n\n") {
                 gen_idx = 200;
             }
+            if gen_str.contains("\n\"") {
+                gen_idx = 200;
+            }
 
             // 停止条件に該当しなければ出力
             if gen_idx < 200 {
