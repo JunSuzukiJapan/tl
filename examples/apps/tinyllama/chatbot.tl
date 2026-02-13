@@ -225,6 +225,7 @@ fn main() {
         let mut cur_tokens = tokens.clone();
         let mut gen_idx = 0;
         let mut gen_str = "";
+        let mut newline_count = 0;
         print("Assistant> ");
         while gen_idx < 64 {
             let total_len = tokens.len();
@@ -259,8 +260,18 @@ fn main() {
             let tid = nxt.item_i64();
             let s_nxt = tok.decode(nxt);
             
-            // EOS token (</s> = 2) → 出力せず停止
+            // EOS token (</s> = 2)
             if tid == 2 { gen_idx = 200; }
+
+            // 改行トークン (token_id=13) の連続検出
+            if tid == 13 {
+                newline_count = newline_count + 1;
+                if newline_count >= 2 {
+                    gen_idx = 200;
+                }
+            } else {
+                newline_count = 0;
+            }
 
             // 停止チェック（出力前）
             gen_str = gen_str.concat(s_nxt);
