@@ -804,16 +804,16 @@ impl SemanticAnalyzer {
 
     pub fn check_module(&mut self, module: &mut Module) -> Result<(), TlError> {
         // Debug: Print all top-level functions
-        for f in &module.functions {
-            // eprintln!("DEBUG: Top-level function: {}", f.name);
-        }
-        for i in &module.impls {
-            let target = i.target_type.get_base_name();
-            // eprintln!("DEBUG: Impl block for {}", target);
-            for m in &i.methods {
-                // eprintln!("DEBUG:   Method: {}", m.name);
-            }
-        }
+        // for f in &module.functions {
+        //     eprintln!("DEBUG: Top-level function: {}", f.name);
+        // }
+        // for i in &module.impls {
+        //     let target = i.target_type.get_base_name();
+        //     eprintln!("DEBUG: Impl block for {}", target);
+        //     for m in &i.methods {
+        //         eprintln!("DEBUG:   Method: {}", m.name);
+        //     }
+        // }
 
         self.register_module_symbols(module, "")?;
 
