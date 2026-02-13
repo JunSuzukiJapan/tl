@@ -13,10 +13,10 @@ use std::sync::Arc;
 pub type OpaqueTensor = MetalTensor;
 
 /// テンソルを Arc で包んでポインタを返す（V5.0 メモリ管理）
-fn make_tensor(t: MetalTensor) -> *mut OpaqueTensor {
-    let arc = Arc::new(UnsafeCell::new(t));
-    Arc::into_raw(arc) as *mut OpaqueTensor
-}
+// fn make_tensor(t: MetalTensor) -> *mut OpaqueTensor {
+//     let arc = Arc::new(UnsafeCell::new(t));
+//     Arc::into_raw(arc) as *mut OpaqueTensor
+// }
 
 #[no_mangle]
 pub extern "C" fn tl_metal_clone(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
