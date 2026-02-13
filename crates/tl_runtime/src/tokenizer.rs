@@ -93,9 +93,18 @@ pub extern "C" fn tl_tokenizer_decode(
             // decode() は post-processing で先頭スペースを消すため
             match tok.id_to_token(token_ids[0]) {
                 Some(token_str) => {
-                    // BPE のスペース表現を通常文字に変換
-                    // Ġ (U+0120) → スペース、Ċ (U+010A) → 改行
+                    // <0xHH> バイトトークンを実際のバイト値に変換
+                    if token_str.starts_with("<0x") && token_str.ends_with('>') && token_str.len() == 6 {
+                        if let Ok(byte_val) = u8::from_str_radix(&token_str[3..5], 16) {
+                            return CString::new(vec![byte_val])
+                                .unwrap_or_else(|_| CString::new("").unwrap())
+                                .into_raw();
+                        }
+                    }
+                    // SentencePiece: ▁ (U+2581) → スペース
+                    // BPE (GPT-2): Ġ (U+0120) → スペース, Ċ (U+010A) → 改行
                     token_str
+                        .replace('\u{2581}', " ")
                         .replace('\u{0120}', " ")
                         .replace('\u{010A}', "\n")
                 },
