@@ -137,6 +137,13 @@ SKIP_FILES = {
     # 計算量が多い/GPU負荷が高いテスト (システムクラッシュ回避のためスキップ)
     "kv_cache_test.tl",
     "recommendation.tl",
+
+    # --- Crash Reproduction Files (System Instability Risk) ---
+    # These files are designed to crash or leak resources (GPU/Memory).
+    # Running them might cause WindowServer watchdog timeouts (Mac freeze).
+    "repro_kv_crash.tl",
+    "repro_reshape_segfault.tl",
+    "repro_segfault_minimal.tl",
 }
 
 

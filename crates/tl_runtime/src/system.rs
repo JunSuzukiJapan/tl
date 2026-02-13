@@ -273,6 +273,19 @@ pub struct OpaqueKVCache {
     pub layers: Vec<(Option<*mut crate::OpaqueTensor>, Option<*mut crate::OpaqueTensor>)>,
 }
 
+impl Drop for OpaqueKVCache {
+    fn drop(&mut self) {
+        for (k_opt, v_opt) in &self.layers {
+            if let Some(k) = k_opt {
+                crate::memory_ffi::tl_tensor_release_safe(*k);
+            }
+            if let Some(v) = v_opt {
+                crate::memory_ffi::tl_tensor_release_safe(*v);
+            }
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_kv_cache_new(num_layers: i64) -> i64 {
     let n = num_layers.max(1) as usize;
