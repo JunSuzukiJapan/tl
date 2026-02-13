@@ -32,7 +32,103 @@ kernel void matmul_f32(
     }
     C[row * N + col] = sum;
 }
+
+// ========== 融合量子化 matmul: Q4_K ==========
+// out[M, N] = x[M, K] × W_q4k[N, K]^T
+// W は [N, K] の行優先格納 (=nn.Linear の weight)、transpose 不要
+// 各スレッドが out[row, col] = dot(x[row,:], dequant(W[col,:]))
+//
+// Q4_K ブロック: 256 要素 = 144 bytes
+//   d:f16(2), dmin:f16(2), scales:u8×12, qs:u8×128
+//
+// Weight layout: row col_block → W_raw[col * K_blocks * 144 + block_idx * 144]
+//   where K_blocks = K / 256, col ∈ [0, N), block_idx ∈ [0, K_blocks)
+
+// Helper: decode scale and min from 12-byte scales array
+inline float2 get_scale_min_k4(int j, device const uchar* scales) {
+    float sc, m;
+    if (j < 4) {
+        sc = float(scales[j] & 63);
+        m  = float(scales[j + 4] & 63);
+    } else {
+        sc = float((scales[j + 4] & 0x0F) | ((scales[j - 4] >> 6) << 4));
+        m  = float((scales[j + 4] >> 4)   | ((scales[j] >> 6) << 4));
+    }
+    return float2(sc, m);
+}
+
+kernel void mul_mv_q4_K_f32(
+    device const float* x       [[buffer(0)]],  // [M, K]  input activations
+    device const uchar* w_raw   [[buffer(1)]],  // Q4_K raw bytes [N * K_blocks * 144]
+    device float*       out     [[buffer(2)]],  // [M, N]  output
+    constant uint& M            [[buffer(3)]],
+    constant uint& N            [[buffer(4)]],
+    constant uint& K            [[buffer(5)]],
+    uint2 gid [[thread_position_in_grid]]       // (col, row)
+) {
+    uint row = gid.y;  // M direction (input sequence)
+    uint col = gid.x;  // N direction (output features)
+    
+    if (row >= M || col >= N) return;
+    
+    uint K_blocks = K / 256;  // number of Q4_K blocks per weight row
+    
+    float sum = 0.0f;
+    
+    // x row pointer
+    device const float* x_row = x + row * K;
+    
+    // W row pointer for output neuron 'col'
+    device const uchar* w_row = w_raw + col * (K_blocks * 144);
+    
+    // Iterate over Q4_K blocks along K dimension
+    for (uint bi = 0; bi < K_blocks; ++bi) {
+        device const uchar* block = w_row + bi * 144;
+        uint k_base = bi * 256;
+        
+        // Read d, dmin (f16)
+        float df   = float(*(device const half*)(block));
+        float dminf = float(*(device const half*)(block + 2));
+        
+        device const uchar* scales = block + 4;
+        device const uchar* qs = block + 16;
+        
+        // Process 256 elements in 4 pairs of sub-blocks (8 sub-blocks total)
+        uint k_off = k_base;
+        for (int pair = 0; pair < 4; ++pair) {
+            int is0 = 2 * pair;
+            int is1 = 2 * pair + 1;
+            
+            float2 sm0 = get_scale_min_k4(is0, scales);
+            float d1   = df * sm0.x;
+            float min1 = dminf * sm0.y;
+            
+            float2 sm1 = get_scale_min_k4(is1, scales);
+            float d2   = df * sm1.x;
+            float min2 = dminf * sm1.y;
+            
+            device const uchar* qs_ptr = qs + pair * 32;
+            
+            // Low nibble: 32 elements (sub-block is0)
+            for (int l = 0; l < 32; ++l) {
+                float w_val = d1 * float(qs_ptr[l] & 0x0F) - min1;
+                sum += x_row[k_off + l] * w_val;
+            }
+            k_off += 32;
+            
+            // High nibble: 32 elements (sub-block is1) 
+            for (int l = 0; l < 32; ++l) {
+                float w_val = d2 * float(qs_ptr[l] >> 4) - min2;
+                sum += x_row[k_off + l] * w_val;
+            }
+            k_off += 32;
+        }
+    }
+    
+    out[row * N + col] = sum;
+}
 "#;
+
 
 /// Matmul 用パイプライン（キャッシュ）
 static MATMUL_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
@@ -52,6 +148,27 @@ fn get_matmul_pipeline() -> &'static ComputePipelineState {
             .device()
             .new_compute_pipeline_state_with_function(&function)
             .expect("Failed to create matmul pipeline")
+    })
+}
+
+/// 融合量子化 matmul 用パイプライン（キャッシュ）
+static MUL_MV_Q4K_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
+
+fn get_mul_mv_q4k_pipeline() -> &'static ComputePipelineState {
+    MUL_MV_Q4K_PIPELINE.get_or_init(|| {
+        let device = get_device();
+        let options = metal::CompileOptions::new();
+        let library = device
+            .device()
+            .new_library_with_source(MATMUL_SHADER, &options)
+            .expect("Failed to compile matmul shader (q4k)");
+        let function = library
+            .get_function("mul_mv_q4_K_f32", None)
+            .expect("mul_mv_q4_K_f32 not found");
+        device
+            .device()
+            .new_compute_pipeline_state_with_function(&function)
+            .expect("Failed to create mul_mv_q4k pipeline")
     })
 }
 
@@ -257,6 +374,57 @@ impl MetalTensor {
         encoder.set_buffer(3, Some(&m_buf), 0);
         encoder.set_buffer(4, Some(&n_buf), 0);
         encoder.set_buffer(5, Some(&k_buf), 0);
+
+        let threads_per_group = MTLSize::new(16, 16, 1);
+        let grid_size = MTLSize::new(
+            ((n + 15) / 16) as u64,
+            ((m + 15) / 16) as u64,
+            1,
+        );
+        encoder.dispatch_thread_groups(grid_size, threads_per_group);
+        encoder.end_encoding();
+
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+
+        result
+    }
+
+    /// 融合量子化 matmul: x[M, K] × W_q4k[N, K]^T → out[M, N]
+    /// Q4_K の生データ (u8) を GPU バッファとして受け取り、
+    /// インライン dequantize しながら matmul を 1 パスで実行。
+    /// transpose 不要。
+    pub fn mul_mv_q4_k(&self, w_raw: &MetalTensor, n: usize, k: usize) -> MetalTensor {
+        let self_shape = MetalTensor::shape(self);
+        let m = if self_shape.len() == 2 {
+            self_shape[0]
+        } else if self_shape.len() == 1 {
+            1
+        } else {
+            panic!("mul_mv_q4_k: input must be 1D or 2D, got {}D", self_shape.len());
+        };
+
+        assert!(k % 256 == 0, "mul_mv_q4_k: K must be multiple of 256, got {}", k);
+
+        let result = MetalTensor::uninit(&[m, n], DType::F32);
+        let device = get_device();
+        let command_queue = device.command_queue();
+        let pipeline = get_mul_mv_q4k_pipeline();
+
+        let m_u32 = m as u32;
+        let n_u32 = n as u32;
+        let k_u32 = k as u32;
+
+        let command_buffer = command_queue.new_command_buffer();
+        let encoder = command_buffer.new_compute_command_encoder();
+
+        encoder.set_compute_pipeline_state(pipeline);
+        encoder.set_buffer(0, Some(self.buffer()), 0);
+        encoder.set_buffer(1, Some(w_raw.buffer()), 0);
+        encoder.set_buffer(2, Some(result.buffer()), 0);
+        encoder.set_bytes(3, 4, &m_u32 as *const u32 as *const std::ffi::c_void);
+        encoder.set_bytes(4, 4, &n_u32 as *const u32 as *const std::ffi::c_void);
+        encoder.set_bytes(5, 4, &k_u32 as *const u32 as *const std::ffi::c_void);
 
         let threads_per_group = MTLSize::new(16, 16, 1);
         let grid_size = MTLSize::new(

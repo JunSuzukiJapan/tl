@@ -30,19 +30,19 @@ pub struct QTensor {
     pub data: Vec<u8>,
     pub shape: Vec<usize>,
     pub ggml_type: GGMLType,
-    /// Cache for dequantized tensor (on device)
-    /// Stored as usize to allow Send/Sync (raw pointers are not Send/Sync)
-    /// The cached tensor is owned by QTensor and will be freed when QTensor is dropped.
+    /// Cache for dequantized tensor (on device) — CPU fallback 用
     pub cache: Mutex<Option<usize>>,
     /// Cache for transposed dequantized tensor (on device)
-    /// Used by tl_qtensor_matmul to avoid repeated transpose operations.
     pub cache_transposed: Mutex<Option<usize>>,
+    /// Cache for raw Q4_K data on GPU (metal::Buffer as usize)
+    /// 融合カーネル用: 量子化データをそのまま GPU に保持
+    pub gpu_raw_cache: Mutex<Option<usize>>,
 }
 
 impl Drop for QTensor {
     fn drop(&mut self) {
         let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
-        // Free both caches
+        // Free tensor caches
         for cache in [&self.cache, &self.cache_transposed] {
             if let Ok(mut cache_guard) = cache.lock() {
                 if let Some(ptr_val) = cache_guard.take() {
@@ -58,6 +58,16 @@ impl Drop for QTensor {
                 }
             }
         }
+        // Free GPU raw buffer cache (MetalTensor holding u8 data)
+        if !is_cpu {
+            if let Ok(mut cache_guard) = self.gpu_raw_cache.lock() {
+                if let Some(ptr_val) = cache_guard.take() {
+                    if ptr_val != 0 {
+                        tl_metal::ffi::tl_metal_release(ptr_val as *mut tl_metal::MetalTensor);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -69,6 +79,7 @@ impl QTensor {
             ggml_type,
             cache: Mutex::new(None),
             cache_transposed: Mutex::new(None),
+            gpu_raw_cache: Mutex::new(None),
         }
     }
 

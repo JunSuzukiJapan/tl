@@ -141,7 +141,8 @@ pub extern "C" fn tl_qtensor_free(ptr: usize) {
 }
 
 /// QTensor matmul: input_tensor × quantized_weight
-/// QTensor をデクォンタイズしてから通常の matmul を実行
+/// GPU: 融合カーネル (mul_mv_q4_K_f32) で Q4_K データから直接 matmul
+/// CPU: フォールバック (dequantize → F32 matmul)
 /// コンパイラシグネチャ: (void_ptr, void_ptr) -> void_ptr
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_qtensor_matmul(
@@ -155,45 +156,75 @@ pub extern "C" fn tl_qtensor_matmul(
 
     unsafe {
         let qtensor = &*weight;
+        let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
 
-        // Transposed キャッシュチェック（最速パス）
-        // 重みテンソルは不変なので、transposed 結果をキャッシュして再利用
-        {
-            let cache_guard = qtensor.cache_transposed.lock().unwrap();
-            if let Some(ptr_val) = *cache_guard {
-                // キャッシュヒット: transpose 済みテンソルで直接 matmul
-                let transposed = ptr_val as *mut std::ffi::c_void;
-                let res = crate::device_ffi::tl_device_tensor_matmul(
-                    input as *mut std::ffi::c_void, transposed
-                ) as *mut crate::OpaqueTensor;
-                return res;
+        if is_cpu {
+            // CPU フォールバック: dequantize + transpose + matmul
+            let weight_ptr = match qtensor.dequantize_to_tensor() {
+                Ok(t) => t as *mut std::ffi::c_void,
+                Err(e) => {
+                    eprintln!("Error: tl_qtensor_matmul dequantize failed: {}", e);
+                    return std::ptr::null_mut();
+                }
+            };
+            // Transposed キャッシュ
+            {
+                let cache_guard = qtensor.cache_transposed.lock().unwrap();
+                if let Some(ptr_val) = *cache_guard {
+                    let transposed = ptr_val as *mut std::ffi::c_void;
+                    return crate::device_ffi::tl_device_tensor_matmul(
+                        input as *mut std::ffi::c_void, transposed
+                    ) as *mut crate::OpaqueTensor;
+                }
             }
+            let transposed = crate::device_ffi::tl_device_tensor_transpose_2d(weight_ptr);
+            {
+                let mut cache_guard = qtensor.cache_transposed.lock().unwrap();
+                *cache_guard = Some(transposed as usize);
+            }
+            return crate::device_ffi::tl_device_tensor_matmul(
+                input as *mut std::ffi::c_void, transposed
+            ) as *mut crate::OpaqueTensor;
         }
 
-        // キャッシュミス: dequantize → transpose → cache
-        let weight_ptr = match qtensor.dequantize_to_tensor() {
-            Ok(t) => t as *mut std::ffi::c_void,
-            Err(e) => {
-                eprintln!("Error: tl_qtensor_matmul dequantize failed: {}", e);
-                return std::ptr::null_mut();
-            }
+        // ========== GPU パス: 融合量子化 matmul ==========
+        // Q4_K 生データを GPU にアップロード（初回のみ）→ 融合カーネルで直接 matmul
+        // transpose 不要、CPU dequantize 不要
+        
+        let shape = &qtensor.shape;
+        assert!(shape.len() == 2, "QTensor must be 2D, got {}D", shape.len());
+        let n = shape[0]; // output features
+        let k = shape[1]; // input features
+
+        // GPU raw buffer キャッシュチェック
+        let gpu_raw_ptr = {
+            let cache_guard = qtensor.gpu_raw_cache.lock().unwrap();
+            *cache_guard
         };
 
-        // transpose して結果をキャッシュ
-        let transposed = crate::device_ffi::tl_device_tensor_transpose_2d(weight_ptr);
-        
-        // transposed をキャッシュに保存（QTensor の Drop で解放される）
-        {
-            let mut cache_guard = qtensor.cache_transposed.lock().unwrap();
-            *cache_guard = Some(transposed as usize);
-        }
+        let w_raw_ptr = if let Some(ptr_val) = gpu_raw_ptr {
+            ptr_val as *const tl_metal::MetalTensor
+        } else {
+            // キャッシュミス: Q4_K 生データを GPU にアップロード
+            let raw_bytes = &qtensor.data;
+            let raw_shape = &[raw_bytes.len()];
+            let gpu_tensor = tl_metal::MetalTensor::from_slice(
+                raw_bytes, raw_shape, tl_metal::DType::U8
+            );
+            let ptr = Box::into_raw(Box::new(gpu_tensor));
+            {
+                let mut cache_guard = qtensor.gpu_raw_cache.lock().unwrap();
+                *cache_guard = Some(ptr as usize);
+            }
+            ptr as *const tl_metal::MetalTensor
+        };
 
-        let res = crate::device_ffi::tl_device_tensor_matmul(
-            input as *mut std::ffi::c_void, transposed
-        ) as *mut crate::OpaqueTensor;
+        // 融合カーネルで matmul 実行
+        let input_mt = &*(input as *const tl_metal::MetalTensor);
+        let w_raw_mt = &*w_raw_ptr;
+        let result = input_mt.mul_mv_q4_k(w_raw_mt, n, k);
         
-        // transposed は cache_transposed が所有 → 解放しない
-        res
+        crate::make_metal_tensor(result)
     }
 }
 
