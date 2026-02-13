@@ -272,12 +272,12 @@ impl MetalTensor {
                 metal::MTLResourceOptions::StorageModeShared,
             );
 
-            // 各 batch を個別に GPU 実行
+            let command_buffer = command_queue.new_command_buffer();
+
             for b in 0..batch {
                 let self_offset = (b * m * k * 4) as u64;  // f32 = 4 bytes
                 let result_offset = (b * m * n * 4) as u64;
 
-                let command_buffer = command_queue.new_command_buffer();
                 let encoder = command_buffer.new_compute_command_encoder();
 
                 encoder.set_compute_pipeline_state(pipeline);
@@ -296,10 +296,10 @@ impl MetalTensor {
                 );
                 encoder.dispatch_thread_groups(grid_size, threads_per_group);
                 encoder.end_encoding();
-
-                command_buffer.commit();
-                command_buffer.wait_until_completed();
             }
+
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
 
             return result;
         }
@@ -332,12 +332,13 @@ impl MetalTensor {
                 metal::MTLResourceOptions::StorageModeShared,
             );
 
+            let command_buffer = command_queue.new_command_buffer();
+
             for b in 0..batch {
                 let self_offset = (b * m * k * 4) as u64;
                 let other_offset = (b * k * n * 4) as u64;
                 let result_offset = (b * m * n * 4) as u64;
 
-                let command_buffer = command_queue.new_command_buffer();
                 let encoder = command_buffer.new_compute_command_encoder();
 
                 encoder.set_compute_pipeline_state(pipeline);
@@ -356,10 +357,10 @@ impl MetalTensor {
                 );
                 encoder.dispatch_thread_groups(grid_size, threads_per_group);
                 encoder.end_encoding();
-
-                command_buffer.commit();
-                command_buffer.wait_until_completed();
             }
+
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
 
             return result;
         }
