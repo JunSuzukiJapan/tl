@@ -244,9 +244,9 @@ impl SemanticAnalyzer {
     fn err<T>(&self, error: SemanticError, span: Option<Span>) -> Result<T, TlError> {
         if let SemanticError::TypeMismatch { expected, found } = &error {
             if let Some(s) = &span {
-                eprintln!("DEBUG: TypeMismatch expected {:?}, found {:?} at line {:?}", expected, found, s.line);
+                // eprintln!("DEBUG: TypeMismatch expected {:?}, found {:?} at line {:?}", expected, found, s.line);
             } else {
-                eprintln!("DEBUG: TypeMismatch expected {:?}, found {:?} at unknown line", expected, found);
+                // eprintln!("DEBUG: TypeMismatch expected {:?}, found {:?} at unknown line", expected, found);
             }
         }
         Err(error.to_tl_error(span))

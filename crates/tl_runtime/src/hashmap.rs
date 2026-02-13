@@ -31,29 +31,29 @@ extern "C" fn hashmap_dtor_shim(ptr: *mut c_void) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_hashmap_insert(map_handle: u64, key: *mut crate::StringStruct, value: u64) {
-    println!("DEBUG: Insert handle: {}, key: {:p}, val: {}", map_handle, key, value);
+// println!("DEBUG: Insert handle: {}, key: {:p}, val: {}", map_handle, key, value);
     let map = map_handle as *mut TLHashMap;
     if map.is_null() || key.is_null() {
-        println!("DEBUG: Map or Key is null");
+// println!("DEBUG: Map or Key is null");
         return;
     }
     unsafe {
         if (*key).ptr.is_null() { 
-             println!("DEBUG: Key inner ptr is null");
+             // println!("DEBUG: Key inner ptr is null");
              return; 
         }
         let key_str = CStr::from_ptr((*key).ptr).to_string_lossy().into_owned();
-        println!("DEBUG: Key string: {}", key_str);
-        println!("DEBUG: Map addr: {:p}", map);
+        // println!("DEBUG: Key string: {}", key_str);
+        // println!("DEBUG: Map addr: {:p}", map);
         // data race if multi-threaded, but single threaded test
-        println!("DEBUG: Current Len: {}", (*map).inner.len());
+        // println!("DEBUG: Current Len: {}", (*map).inner.len());
         
-        println!("DEBUG: Reserving capacity...");
+        // println!("DEBUG: Reserving capacity...");
         (*map).inner.reserve(1);
-        println!("DEBUG: Capacity reserved. Inserting...");
+        // println!("DEBUG: Capacity reserved. Inserting...");
         
         (*map).inner.insert(key_str, value as *mut c_void);
-        println!("DEBUG: Insert done.");
+        // println!("DEBUG: Insert done.");
     }
 }
 
