@@ -59,6 +59,7 @@ fn run_fixture(path: &Path) -> Result<(), String> {
 
     // Run the compiler
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_tl"));
+    cmd.arg("--device").arg("cpu");
     cmd.arg(path);
 
     // Timeout or kill logic if needed? For now rely on simple execution.
