@@ -681,27 +681,5 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok((cond_bb, body_bb, aft_bb, phi, alloca))
     }
 
-    fn build_condition(
-        &mut self,
-        parent_fn: FunctionValue<'ctx>,
-        current_bb: BasicBlock<'ctx>,
-        cond_expr: &Expr,
-    ) -> Result<(BasicBlock<'ctx>, BasicBlock<'ctx>), String> {
-        let check_bb = self.context.append_basic_block(parent_fn, "check_cond");
-        let true_bb = self.context.append_basic_block(parent_fn, "cond_true");
-        let false_bb = self.context.append_basic_block(parent_fn, "cond_false");
 
-        self.builder.position_at_end(current_bb);
-        self.builder.build_unconditional_branch(check_bb).unwrap();
-        self.builder.position_at_end(check_bb);
-
-        let (cond_val, _) = self.compile_expr(cond_expr)?;
-        let cond_bool = cond_val.into_int_value();
-
-        self.builder
-            .build_conditional_branch(cond_bool, true_bb, false_bb)
-            .unwrap();
-
-        Ok((true_bb, false_bb))
-    }
 }

@@ -1174,7 +1174,7 @@ impl CpuTensor {
         } else {
             (1, a_shape[0])
         };
-        let (k2, n) = if b_shape.len() >= 2 {
+        let (k2, _n) = if b_shape.len() >= 2 {
             (b_shape[b_shape.len() - 2], b_shape[b_shape.len() - 1])
         } else {
             (b_shape[0], 1)
@@ -1551,7 +1551,7 @@ impl CpuTensor {
         }
 
         // Apply temperature
-        let mut probs: Vec<f32> = logits.iter().map(|&x| x / temp).collect();
+        let probs: Vec<f32> = logits.iter().map(|&x| x / temp).collect();
         // Softmax
         let max_val = probs.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
         let sum_exp: f32 = probs.iter().map(|x| (x - max_val).exp()).sum();

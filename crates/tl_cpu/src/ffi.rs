@@ -1862,8 +1862,8 @@ pub extern "C" fn tl_cpu_tensor_batch_norm(
     running_var: *mut OpaqueTensor,
     weight: *mut OpaqueTensor,
     bias: *mut OpaqueTensor,
-    training: bool,
-    momentum: f64,
+    _training: bool,
+    _momentum: f64,
     eps: f64,
 ) -> *mut OpaqueTensor {
     if input.is_null() { return std::ptr::null_mut(); }

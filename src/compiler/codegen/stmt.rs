@@ -101,41 +101,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
-    fn collect_indices(&self, expr: &Expr, indices: &mut std::collections::HashSet<String>) {
-        match &expr.inner {
-            ExprKind::IndexAccess(_, idxs) => {
-                for idx in idxs {
-                    if let ExprKind::Variable(name) = &idx.inner {
-                        indices.insert(name.clone());
-                    }
-                    // Recursive check? Indices usually simple vars.
-                }
-            }
-            ExprKind::BinOp(lhs, _, rhs) => {
-                self.collect_indices(lhs, indices);
-                self.collect_indices(rhs, indices);
-            }
-            ExprKind::UnOp(_, val) => {
-                self.collect_indices(val, indices);
-            }
-            ExprKind::FnCall(_, args)
-            | ExprKind::MethodCall(_, _, args)
-            | ExprKind::StaticMethodCall(_, _, args) => {
-                for arg in args {
-                    self.collect_indices(arg, indices);
-                }
-            }
-            ExprKind::TensorLiteral(elems) => {
-                for elem in elems {
-                    self.collect_indices(elem, indices);
-                }
-            }
-            ExprKind::IfExpr(cond, _, _) => {
-                self.collect_indices(cond, indices);
-            }
-            _ => {}
-        }
-    }
+
 
     fn variable_exists(&self, name: &str) -> bool {
         for scope in self.variables.iter().rev() {
