@@ -256,12 +256,10 @@ pub fn compile_path_new<'ctx>(
     let (path_val, path_ty) = &args[0]; // String (i8*)
     
     let path_ptr_val = if matches!(path_ty, Type::String(_)) {
-        if !path_val.is_pointer_value() {
-            return Err(format!("Path::new path must be a pointer, got {:?}", path_val));
-        }
-        let ptr = path_val.into_pointer_value();
-        // Just cast pointer to int to pass through
-        codegen.builder.build_ptr_to_int(ptr, codegen.context.i64_type(), "ptr_int").map_err(|e| e.to_string())?
+        let struct_ty = Type::String("String".to_string());
+        // Extract ptr field from StringStruct
+        let ptr_val = codegen.load_struct_i64_field(*path_val, &struct_ty, "ptr")?;
+        ptr_val.into_int_value()
     } else {
          return Err("Path::new argument must be String".into());
     };

@@ -31,6 +31,20 @@ pub extern "C" fn tl_string_new(s: *const c_char) -> *mut StringStruct {
     }
 }
 
+/// StringStruct を解放
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_free(s: *mut StringStruct) {
+    if !s.is_null() {
+        unsafe {
+            if !(*s).ptr.is_null() {
+                let _ = CString::from_raw((*s).ptr);
+            }
+            let layout = std::alloc::Layout::new::<StringStruct>();
+            std::alloc::dealloc(s as *mut u8, layout);
+        }
+    }
+}
+
 /// StringStruct の長さを取得
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_len(s: *mut StringStruct) -> i64 {

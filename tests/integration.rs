@@ -13,7 +13,7 @@ fn run_all_fixtures() {
     for entry in entries {
         match entry {
             Ok(path) => {
-                println!("Running test: {:?}", path);
+                eprintln!("Running test: {:?}", path);
                 if let Err(e) = run_fixture(&path) {
                     let msg = format!("{:?}: {}", path, e);
                     eprintln!("{}", msg);

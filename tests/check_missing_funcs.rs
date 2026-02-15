@@ -42,6 +42,7 @@ fn check_missing_runtime_functions() {
         "tl_tensor_reshape_3d_to_2d",
         "tl_tensor_transpose_2d", 
         "tl_tensor_map_get_1d",
+        "tl_tensor_reshape",
     ];
     
     // 2. ランタイムの全ソースファイルから関数定義を抽出
@@ -80,10 +81,14 @@ fn check_missing_runtime_functions() {
             continue;
         }
         
-        // LLVM IR シンボル名 tl_tensor_* はランタイムで tl_metal_* にリネーム済み
-        // 両方のパターンで検索する
+        // LLVM IR シンボル名 tl_tensor_* はランタイムで tl_metal_* または tl_device_tensor_* にリネーム
+        // すべてのパターンで検索する
         let metal_name = req.replace("tl_tensor_", "tl_metal_");
-        if !provided_funcs.contains(req) && !provided_funcs.contains(&metal_name) {
+        let device_name = req.replace("tl_tensor_", "tl_device_tensor_");
+        
+        if !provided_funcs.contains(req) 
+           && !provided_funcs.contains(&metal_name) 
+           && !provided_funcs.contains(&device_name) {
             missing_funcs.push(req.clone());
         }
     }

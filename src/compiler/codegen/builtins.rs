@@ -568,6 +568,9 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_string_eq") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_eq as usize);
     }
+    if let Some(f) = module.get_function("tl_string_free") {
+        execution_engine.add_global_mapping(&f, runtime::string_ffi::tl_string_free as usize);
+    }
     
     // tl_hash_string(s: *mut StringStruct) -> i64
     let hash_string_type = i64_type.fn_type(&[void_ptr.into()], false);
@@ -597,6 +600,10 @@ pub fn declare_runtime_functions<'ctx>(
 
     if let Some(f) = module.get_function("tl_report_runtime_error") {
         execution_engine.add_global_mapping(&f, runtime::tl_report_runtime_error as usize);
+    }
+
+    if let Some(f) = module.get_function("tl_tensor_acquire") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_acquire as usize);
     }
 
     // [IDevice] device_ffi 統一マッピング

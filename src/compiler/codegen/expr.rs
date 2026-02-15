@@ -1705,13 +1705,14 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn emit_retain(&self, val: BasicValueEnum<'ctx>, ty: &Type) -> Result<(), String> {
         match ty {
             Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
-                // V4.5: Promote returned tensor (remove from scope)
-                let promote_fn = self.module.get_function("tl_tensor_promote")
-                    .ok_or("tl_tensor_promote not found")?;
+                // V4.5 Fix: Use acquire to increment refcount (retain ownership)
+                // promote was a no-op which caused use-after-free
+                let acquire_fn = self.module.get_function("tl_tensor_acquire")
+                    .ok_or("tl_tensor_acquire not found")?;
                 let ptr = val.into_pointer_value();
                 let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_prom").map_err(|e| e.to_string())?;
-                self.builder.build_call(promote_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
+                let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_acq").map_err(|e| e.to_string())?;
+                self.builder.build_call(acquire_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
             }
 
             Type::Struct(_, _) | Type::String(_) | Type::Enum(_, _) | Type::Path(_, _) => {

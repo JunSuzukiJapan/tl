@@ -38,17 +38,15 @@ impl IDevice for MetalDeviceImpl {
     #[inline] fn tensor_free(&self, a: *mut c_void) { ffi_ops::tl_metal_free(t(a)) }
     #[inline] fn tensor_release(&self, a: *mut c_void) { ffi::tl_metal_release(t(a)) }
     #[inline] fn tensor_acquire(&self, a: *mut c_void) -> *mut c_void {
-        if a.is_null() { return a; }
-        // Arc<UnsafeCell<MetalTensor>> として from_raw + clone + forget
-        let arc = unsafe { std::sync::Arc::from_raw(t(a) as *const std::cell::UnsafeCell<MetalTensor>) };
-        let cloned = arc.clone();
-        std::mem::forget(arc); // 元のポインタは生かす
-        v(std::sync::Arc::into_raw(cloned) as *mut MetalTensor)
+        // Metal V4.0: Persistent GPU Pool Strategy
+        // 参照カウントを使用せず、意図的にリーク（またはプール管理）するため、
+        // 何もせずポインタをそのまま返す。
+        a
     }
-    #[inline] fn tensor_release_safe(&self, a: *mut c_void) {
-        if a.is_null() { return; }
-        // Arc::from_raw で復元し drop。RC-1、RC=0 で MetalTensor が Drop される。
-        unsafe { let _ = std::sync::Arc::from_raw(t(a) as *const std::cell::UnsafeCell<MetalTensor>); }
+    #[inline] fn tensor_release_safe(&self, _a: *mut c_void) {
+        // Metal V4.0: Persistent GPU Pool Strategy
+        // スコープ終了時の自動解放（RC-1）を無効化。
+        // 何もしない (No-op)。
     }
     #[inline] fn tensor_promote(&self, _a: *mut c_void) { /* Metal: pool-based — runtime 側で処理 */ }
     #[inline] fn tensor_register(&self, _a: *mut c_void) { /* Metal: noop */ }
