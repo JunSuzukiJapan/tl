@@ -389,12 +389,12 @@ impl<'ctx> CodeGenerator<'ctx> {
             .map_err(|e| e.to_string())?
             .as_pointer_value();
 
-        // Call tl_amend_error_loc(file, line, col)
+        // Call tl_report_runtime_error_loc(file, line, col)
         let i32_type = self.context.i32_type();
         let amend_fn = self
             .module
-            .get_function("tl_amend_error_loc")
-            .expect("tl_amend_error_loc missing");
+            .get_function("tl_report_runtime_error_loc")
+            .expect("tl_report_runtime_error_loc missing");
 
         // tl_amend_error_loc accepts (i8*, i32, i32)
         // file_ptr is i8* (from build_global_string_ptr)

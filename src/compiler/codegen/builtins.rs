@@ -251,11 +251,19 @@ pub fn declare_runtime_functions<'ctx>(
         void_type.fn_type(&[i8_ptr.into(), i32_type.into(), i32_type.into()], false);
     add_fn("tl_amend_error_loc", amend_err_type);
 
+    // tl_report_runtime_error_loc(file: *const i8, line: i32, col: i32) -> void
+    let report_err_loc_type =
+        void_type.fn_type(&[i8_ptr.into(), i32_type.into(), i32_type.into()], false);
+    add_fn("tl_report_runtime_error_loc", report_err_loc_type);
+
     if let Some(f) = module.get_function("tl_handle_runtime_error") {
         execution_engine.add_global_mapping(&f, runtime::tl_handle_runtime_error as usize);
     }
     if let Some(f) = module.get_function("tl_amend_error_loc") {
         execution_engine.add_global_mapping(&f, runtime::tl_amend_error_loc as usize);
+    }
+    if let Some(f) = module.get_function("tl_report_runtime_error_loc") {
+        execution_engine.add_global_mapping(&f, runtime::tl_report_runtime_error_loc as usize);
     }
 
     // tl_get_last_error() -> CTensorResult

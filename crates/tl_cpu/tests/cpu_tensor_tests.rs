@@ -92,7 +92,7 @@ fn test_shallow_clone() {
 fn test_add() {
     let a = t(&[1.0, 2.0, 3.0], &[3]);
     let b = t(&[4.0, 5.0, 6.0], &[3]);
-    let c = a.add_impl(&b);
+    let c = a.add_impl(&b).unwrap();
     assert_eq!(c.data_f32(), &[5.0, 7.0, 9.0]);
 }
 
@@ -100,7 +100,7 @@ fn test_add() {
 fn test_sub() {
     let a = t(&[5.0, 3.0, 1.0], &[3]);
     let b = t(&[1.0, 2.0, 3.0], &[3]);
-    let c = a.sub_impl(&b);
+    let c = a.sub_impl(&b).unwrap();
     assert_eq!(c.data_f32(), &[4.0, 1.0, -2.0]);
 }
 
@@ -108,7 +108,7 @@ fn test_sub() {
 fn test_mul() {
     let a = t(&[2.0, 3.0], &[2]);
     let b = t(&[4.0, 5.0], &[2]);
-    let c = a.mul_impl(&b);
+    let c = a.mul_impl(&b).unwrap();
     assert_eq!(c.data_f32(), &[8.0, 15.0]);
 }
 
@@ -116,7 +116,7 @@ fn test_mul() {
 fn test_div() {
     let a = t(&[10.0, 9.0], &[2]);
     let b = t(&[2.0, 3.0], &[2]);
-    let c = a.div_impl(&b);
+    let c = a.div_impl(&b).unwrap();
     assert_eq!(c.data_f32(), &[5.0, 3.0]);
 }
 
@@ -124,7 +124,7 @@ fn test_div() {
 fn test_pow() {
     let a = t(&[2.0, 3.0], &[2]);
     let b = t(&[3.0, 2.0], &[2]);
-    let c = a.pow_impl(&b);
+    let c = a.pow_impl(&b).unwrap();
     assert_approx(c.data_f32(), &[8.0, 9.0], 1e-5);
 }
 
@@ -132,21 +132,21 @@ fn test_pow() {
 fn test_rem() {
     let a = t(&[7.0, 10.0], &[2]);
     let b = t(&[3.0, 4.0], &[2]);
-    let c = a.rem_impl(&b);
+    let c = a.rem_impl(&b).unwrap();
     assert_approx(c.data_f32(), &[1.0, 2.0], 1e-5);
 }
 
 #[test]
 fn test_neg() {
     let a = t(&[1.0, -2.0, 3.0], &[3]);
-    let c = a.neg_impl();
+    let c = a.neg_impl().unwrap();
     assert_eq!(c.data_f32(), &[-1.0, 2.0, -3.0]);
 }
 
 #[test]
 fn test_abs() {
     let a = t(&[-1.0, 2.0, -3.0], &[3]);
-    let c = a.abs_impl();
+    let c = a.abs_impl().unwrap();
     assert_eq!(c.data_f32(), &[1.0, 2.0, 3.0]);
 }
 
@@ -154,7 +154,7 @@ fn test_abs() {
 fn test_broadcast_scalar() {
     let a = t(&[1.0, 2.0, 3.0], &[3]);
     let b = t(&[10.0], &[1]);
-    let c = a.add_impl(&b);
+    let c = a.add_impl(&b).unwrap();
     assert_eq!(c.data_f32(), &[11.0, 12.0, 13.0]);
 }
 
@@ -163,35 +163,35 @@ fn test_broadcast_scalar() {
 #[test]
 fn test_add_scalar() {
     let a = t(&[1.0, 2.0], &[2]);
-    let c = a.add_scalar_impl(10.0);
+    let c = a.add_scalar_impl(10.0).unwrap();
     assert_eq!(c.data_f32(), &[11.0, 12.0]);
 }
 
 #[test]
 fn test_sub_scalar() {
     let a = t(&[5.0, 3.0], &[2]);
-    let c = a.sub_scalar_impl(2.0);
+    let c = a.sub_scalar_impl(2.0).unwrap();
     assert_eq!(c.data_f32(), &[3.0, 1.0]);
 }
 
 #[test]
 fn test_mul_scalar() {
     let a = t(&[2.0, 3.0], &[2]);
-    let c = a.mul_scalar_impl(3.0);
+    let c = a.mul_scalar_impl(3.0).unwrap();
     assert_eq!(c.data_f32(), &[6.0, 9.0]);
 }
 
 #[test]
 fn test_div_scalar() {
     let a = t(&[10.0, 6.0], &[2]);
-    let c = a.div_scalar_impl(2.0);
+    let c = a.div_scalar_impl(2.0).unwrap();
     assert_eq!(c.data_f32(), &[5.0, 3.0]);
 }
 
 #[test]
 fn test_clamp() {
     let a = t(&[-1.0, 0.5, 2.0, 5.0], &[4]);
-    let c = a.clamp_impl(0.0, 3.0);
+    let c = a.clamp_impl(0.0, 3.0).unwrap();
     assert_eq!(c.data_f32(), &[0.0, 0.5, 2.0, 3.0]);
 }
 
@@ -202,12 +202,12 @@ fn test_comparisons() {
     let a = t(&[1.0, 2.0, 3.0], &[3]);
     let b = t(&[2.0, 2.0, 1.0], &[3]);
 
-    assert_eq!(a.eq_impl(&b).data_f32(), &[0.0, 1.0, 0.0]);
-    assert_eq!(a.neq_impl(&b).data_f32(), &[1.0, 0.0, 1.0]);
-    assert_eq!(a.lt_impl(&b).data_f32(), &[1.0, 0.0, 0.0]);
-    assert_eq!(a.le_impl(&b).data_f32(), &[1.0, 1.0, 0.0]);
-    assert_eq!(a.gt_impl(&b).data_f32(), &[0.0, 0.0, 1.0]);
-    assert_eq!(a.ge_impl(&b).data_f32(), &[0.0, 1.0, 1.0]);
+    assert_eq!(a.eq_impl(&b).unwrap().data_f32(), &[0.0, 1.0, 0.0]);
+    assert_eq!(a.neq_impl(&b).unwrap().data_f32(), &[1.0, 0.0, 1.0]);
+    assert_eq!(a.lt_impl(&b).unwrap().data_f32(), &[1.0, 0.0, 0.0]);
+    assert_eq!(a.le_impl(&b).unwrap().data_f32(), &[1.0, 1.0, 0.0]);
+    assert_eq!(a.gt_impl(&b).unwrap().data_f32(), &[0.0, 0.0, 1.0]);
+    assert_eq!(a.ge_impl(&b).unwrap().data_f32(), &[0.0, 1.0, 1.0]);
 }
 
 // ========== 数学関数 ==========
@@ -215,61 +215,61 @@ fn test_comparisons() {
 #[test]
 fn test_exp() {
     let a = t(&[0.0, 1.0], &[2]);
-    let c = a.exp_impl();
+    let c = a.exp_impl().unwrap();
     assert_approx(c.data_f32(), &[1.0, std::f32::consts::E], 1e-5);
 }
 
 #[test]
 fn test_log() {
     let a = t(&[1.0, std::f32::consts::E], &[2]);
-    let c = a.log_impl();
+    let c = a.log_impl().unwrap();
     assert_approx(c.data_f32(), &[0.0, 1.0], 1e-5);
 }
 
 #[test]
 fn test_sqrt() {
     let a = t(&[4.0, 9.0, 16.0], &[3]);
-    let c = a.sqrt_impl();
+    let c = a.sqrt_impl().unwrap();
     assert_approx(c.data_f32(), &[2.0, 3.0, 4.0], 1e-5);
 }
 
 #[test]
 fn test_sin_cos() {
     let a = t(&[0.0, std::f32::consts::FRAC_PI_2], &[2]);
-    assert_approx(a.sin_impl().data_f32(), &[0.0, 1.0], 1e-5);
-    assert_approx(a.cos_impl().data_f32(), &[1.0, 0.0], 1e-5);
+    assert_approx(a.sin_impl().unwrap().data_f32(), &[0.0, 1.0], 1e-5);
+    assert_approx(a.cos_impl().unwrap().data_f32(), &[1.0, 0.0], 1e-5);
 }
 
 #[test]
 fn test_tan() {
     let a = t(&[0.0], &[1]);
-    assert_approx(a.tan_impl().data_f32(), &[0.0], 1e-5);
+    assert_approx(a.tan_impl().unwrap().data_f32(), &[0.0], 1e-5);
 }
 
 #[test]
 fn test_tanh() {
     let a = t(&[0.0, 1.0], &[2]);
-    let c = a.tanh_impl();
+    let c = a.tanh_impl().unwrap();
     assert_approx(c.data_f32(), &[0.0, 0.7615942], 1e-5);
 }
 
 #[test]
 fn test_sigmoid() {
     let a = t(&[0.0], &[1]);
-    let c = a.sigmoid_impl();
+    let c = a.sigmoid_impl().unwrap();
     assert_approx(c.data_f32(), &[0.5], 1e-5);
 }
 
 #[test]
 fn test_relu() {
     let a = t(&[-2.0, -1.0, 0.0, 1.0, 2.0], &[5]);
-    assert_eq!(a.relu_impl().data_f32(), &[0.0, 0.0, 0.0, 1.0, 2.0]);
+    assert_eq!(a.relu_impl().unwrap().data_f32(), &[0.0, 0.0, 0.0, 1.0, 2.0]);
 }
 
 #[test]
 fn test_gelu() {
     let a = t(&[0.0, 1.0, -1.0], &[3]);
-    let c = a.gelu_impl();
+    let c = a.gelu_impl().unwrap();
     // GELU(0) = 0
     assert_approx(&c.data_f32()[0..1], &[0.0], 1e-4);
     // GELU(1) ≈ 0.914 (tanh 近似式による値)
@@ -295,7 +295,7 @@ fn test_mean_all() {
 #[test]
 fn test_sum_axis0() {
     let a = t(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
-    let c = a.sum_impl(0);
+    let c = a.sum_impl(0).unwrap();
     assert_eq!(c.shape(), &[3]);
     assert_approx(c.data_f32(), &[5.0, 7.0, 9.0], 1e-5);
 }
@@ -303,7 +303,7 @@ fn test_sum_axis0() {
 #[test]
 fn test_sum_axis1() {
     let a = t(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
-    let c = a.sum_impl(1);
+    let c = a.sum_impl(1).unwrap();
     assert_eq!(c.shape(), &[2]);
     assert_approx(c.data_f32(), &[6.0, 15.0], 1e-5);
 }
@@ -311,7 +311,7 @@ fn test_sum_axis1() {
 #[test]
 fn test_max_axis() {
     let a = t(&[1.0, 5.0, 3.0, 2.0, 4.0, 6.0], &[2, 3]);
-    let c = a.max_impl(1);
+    let c = a.max_impl(1).unwrap();
     assert_eq!(c.shape(), &[2]);
     assert_approx(c.data_f32(), &[5.0, 6.0], 1e-5);
 }
@@ -319,7 +319,7 @@ fn test_max_axis() {
 #[test]
 fn test_min_axis() {
     let a = t(&[3.0, 1.0, 5.0, 4.0, 2.0, 6.0], &[2, 3]);
-    let c = a.min_impl(1);
+    let c = a.min_impl(1).unwrap();
     assert_eq!(c.shape(), &[2]);
     assert_approx(c.data_f32(), &[1.0, 2.0], 1e-5);
 }
@@ -327,7 +327,7 @@ fn test_min_axis() {
 #[test]
 fn test_argmax() {
     let a = t(&[1.0, 3.0, 2.0, 6.0, 4.0, 5.0], &[2, 3]);
-    let c = a.argmax_impl(1);
+    let c = a.argmax_impl(1).unwrap();
     assert_eq!(c.shape(), &[2]);
     assert_approx(c.data_f32(), &[1.0, 0.0], 1e-5);
 }
@@ -341,7 +341,7 @@ fn test_argmax_all() {
 #[test]
 fn test_argmin() {
     let a = t(&[3.0, 1.0, 2.0, 6.0, 4.0, 5.0], &[2, 3]);
-    let c = a.argmin_impl(1);
+    let c = a.argmin_impl(1).unwrap();
     assert_eq!(c.shape(), &[2]);
     assert_approx(c.data_f32(), &[1.0, 1.0], 1e-5);
 }
@@ -349,7 +349,7 @@ fn test_argmin() {
 #[test]
 fn test_mean_axis() {
     let a = t(&[2.0, 4.0, 6.0, 8.0], &[2, 2]);
-    let c = a.mean_impl(1);
+    let c = a.mean_impl(1).unwrap();
     assert_eq!(c.shape(), &[2]);
     assert_approx(c.data_f32(), &[3.0, 7.0], 1e-5);
 }
@@ -359,7 +359,7 @@ fn test_mean_axis() {
 #[test]
 fn test_reshape() {
     let a = t(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
-    let b = a.reshape_impl(&[3, 2]);
+    let b = a.reshape_impl(&[3, 2]).unwrap();
     assert_eq!(b.shape(), &[3, 2]);
     assert_eq!(b.data_f32(), a.data_f32());
 }
@@ -367,7 +367,7 @@ fn test_reshape() {
 #[test]
 fn test_transpose_2d() {
     let a = t(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
-    let b = a.transpose_impl(0, 1);
+    let b = a.transpose_impl(0, 1).unwrap();
     assert_eq!(b.shape(), &[3, 2]);
     assert_approx(b.data_f32(), &[1.0, 4.0, 2.0, 5.0, 3.0, 6.0], 1e-5);
 }
@@ -375,23 +375,23 @@ fn test_transpose_2d() {
 #[test]
 fn test_squeeze() {
     let a = t(&[1.0, 2.0, 3.0], &[1, 3]);
-    let b = a.squeeze_impl(0);
+    let b = a.squeeze_impl(0).unwrap();
     assert_eq!(b.shape(), &[3]);
 }
 
 #[test]
 fn test_unsqueeze() {
     let a = t(&[1.0, 2.0, 3.0], &[3]);
-    let b = a.unsqueeze_impl(0);
+    let b = a.unsqueeze_impl(0).unwrap();
     assert_eq!(b.shape(), &[1, 3]);
-    let c = a.unsqueeze_impl(1);
+    let c = a.unsqueeze_impl(1).unwrap();
     assert_eq!(c.shape(), &[3, 1]);
 }
 
 #[test]
 fn test_broadcast_to() {
     let a = t(&[1.0, 2.0], &[2]);
-    let b = a.broadcast_to_impl(&[3, 2]);
+    let b = a.broadcast_to_impl(&[3, 2]).unwrap();
     assert_eq!(b.shape(), &[3, 2]);
     assert_eq!(b.data_f32(), &[1.0, 2.0, 1.0, 2.0, 1.0, 2.0]);
 }
@@ -399,11 +399,11 @@ fn test_broadcast_to() {
 #[test]
 fn test_narrow_and_slice() {
     let a = t(&[1.0, 2.0, 3.0, 4.0, 5.0], &[5]);
-    let b = a.narrow_impl(0, 1, 3);
+    let b = a.narrow_impl(0, 1, 3).unwrap();
     assert_eq!(b.shape(), &[3]);
     assert_eq!(b.data_f32(), &[2.0, 3.0, 4.0]);
 
-    let c = a.slice_impl(0, 1, 3);
+    let c = a.slice_impl(0, 1, 3).unwrap();
     assert_eq!(c.shape(), &[3]);
     assert_eq!(c.data_f32(), &[2.0, 3.0, 4.0]);
 }
@@ -411,7 +411,7 @@ fn test_narrow_and_slice() {
 #[test]
 fn test_contiguous() {
     let a = t(&[1.0, 2.0], &[2]);
-    let b = a.contiguous_impl();
+    let b = a.contiguous_impl().unwrap();
     assert_eq!(b.data_f32(), a.data_f32());
 }
 
@@ -419,7 +419,7 @@ fn test_contiguous() {
 fn test_cat() {
     let a = t(&[1.0, 2.0], &[2]);
     let b = t(&[3.0, 4.0, 5.0], &[3]);
-    let c = CpuTensor::cat_impl(&[&a, &b], 0);
+    let c = CpuTensor::cat_impl(&[&a, &b], 0).unwrap();
     assert_eq!(c.shape(), &[5]);
     assert_eq!(c.data_f32(), &[1.0, 2.0, 3.0, 4.0, 5.0]);
 }
@@ -428,7 +428,7 @@ fn test_cat() {
 fn test_cat_2d() {
     let a = t(&[1.0, 2.0, 3.0, 4.0], &[2, 2]);
     let b = t(&[5.0, 6.0, 7.0, 8.0], &[2, 2]);
-    let c = CpuTensor::cat_impl(&[&a, &b], 0);
+    let c = CpuTensor::cat_impl(&[&a, &b], 0).unwrap();
     assert_eq!(c.shape(), &[4, 2]);
     assert_eq!(c.data_f32(), &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
 }
@@ -438,7 +438,7 @@ fn test_cat_2d() {
 #[test]
 fn test_softmax() {
     let a = t(&[1.0, 2.0, 3.0], &[1, 3]);
-    let s = a.softmax_impl(1);
+    let s = a.softmax_impl(1).unwrap();
     assert_eq!(s.shape(), &[1, 3]);
     let sum: f32 = s.data_f32().iter().sum();
     assert_approx(&[sum], &[1.0], 1e-5);
@@ -453,7 +453,7 @@ fn test_embedding() {
     let w = t(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6], &[3, 2]);
     // indices: [2] → tokens 0, 2
     let idx = t(&[0.0, 2.0], &[2]);
-    let e = w.embedding_impl(&idx);
+    let e = w.embedding_impl(&idx).unwrap();
     assert_eq!(e.shape(), &[2, 2]);
     assert_approx(e.data_f32(), &[0.1, 0.2, 0.5, 0.6], 1e-5);
 }
@@ -461,7 +461,7 @@ fn test_embedding() {
 #[test]
 fn test_tril() {
     let a = t(&[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], &[3, 3]);
-    let c = a.tril_impl(0);
+    let c = a.tril_impl(0).unwrap();
     assert_eq!(c.shape(), &[3, 3]);
     assert_approx(c.data_f32(), &[1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0], 1e-5);
 }
@@ -469,7 +469,7 @@ fn test_tril() {
 #[test]
 fn test_tril_diagonal1() {
     let a = t(&[1.0; 9], &[3, 3]);
-    let c = a.tril_impl(1);
+    let c = a.tril_impl(1).unwrap();
     assert_approx(c.data_f32(), &[1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], 1e-5);
 }
 
@@ -478,7 +478,7 @@ fn test_cross_entropy() {
     // input: [1, 3] logits, target: [1] class index
     let input = t(&[2.0, 1.0, 0.1], &[1, 3]);
     let target = t(&[0.0], &[1]); // target class = 0
-    let loss = input.cross_entropy_impl(&target);
+    let loss = input.cross_entropy_impl(&target).unwrap();
     assert_eq!(loss.shape(), &[1]);
     // loss should be > 0
     assert!(loss.data_f32()[0] > 0.0);
@@ -489,7 +489,7 @@ fn test_matmul_2d() {
     // [2, 3] x [3, 2] = [2, 2]
     let a = t(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
     let b = t(&[7.0, 8.0, 9.0, 10.0, 11.0, 12.0], &[3, 2]);
-    let c = a.matmul_impl(&b);
+    let c = a.matmul_impl(&b).unwrap();
     assert_eq!(c.shape(), &[2, 2]);
     // [1*7+2*9+3*11, 1*8+2*10+3*12] = [58, 64]
     // [4*7+5*9+6*11, 4*8+5*10+6*12] = [139, 154]
@@ -499,7 +499,7 @@ fn test_matmul_2d() {
 #[test]
 fn test_repeat_interleave() {
     let a = t(&[1.0, 2.0, 3.0], &[3]);
-    let c = a.repeat_interleave_impl(2, 0);
+    let c = a.repeat_interleave_impl(2, 0).unwrap();
     assert_eq!(c.shape(), &[6]);
     assert_eq!(c.data_f32(), &[1.0, 1.0, 2.0, 2.0, 3.0, 3.0]);
 }
@@ -508,7 +508,7 @@ fn test_repeat_interleave() {
 fn test_index_select() {
     let a = t(&[10.0, 20.0, 30.0, 40.0, 50.0], &[5]);
     let idx = t(&[0.0, 2.0, 4.0], &[3]);
-    let c = a.index_select_impl(0, &idx);
+    let c = a.index_select_impl(0, &idx).unwrap();
     assert_eq!(c.shape(), &[3]);
     assert_eq!(c.data_f32(), &[10.0, 30.0, 50.0]);
 }
@@ -518,7 +518,7 @@ fn test_where_cond() {
     let cond = t(&[1.0, 0.0, 1.0], &[3]);
     let x = t(&[10.0, 20.0, 30.0], &[3]);
     let y = t(&[100.0, 200.0, 300.0], &[3]);
-    let c = CpuTensor::where_cond_impl(&cond, &x, &y);
+    let c = CpuTensor::where_cond_impl(&cond, &x, &y).unwrap();
     assert_eq!(c.data_f32(), &[10.0, 200.0, 30.0]);
 }
 
@@ -529,7 +529,7 @@ fn test_conv2d_basic() {
     // 1x1x3x3 input, 1x1x2x2 kernel
     let input = t(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], &[1, 1, 3, 3]);
     let weight = t(&[1.0, 0.0, 0.0, 1.0], &[1, 1, 2, 2]);
-    let c = input.conv2d_impl(&weight, (1, 1), (0, 0));
+    let c = input.conv2d_impl(&weight, (1, 1), (0, 0)).unwrap();
     assert_eq!(c.shape(), &[1, 1, 2, 2]);
     // out[0,0]=1*1+2*0+4*0+5*1=6, out[0,1]=2*1+3*0+5*0+6*1=8
     // out[1,0]=4*1+5*0+7*0+8*1=12, out[1,1]=5*1+6*0+8*0+9*1=14
@@ -546,7 +546,7 @@ fn test_conv2d_stride() {
         13.0, 14.0, 15.0, 16.0,
     ], &[1, 1, 4, 4]);
     let weight = t(&[1.0, 1.0, 1.0, 1.0], &[1, 1, 2, 2]);
-    let c = input.conv2d_impl(&weight, (2, 2), (0, 0));
+    let c = input.conv2d_impl(&weight, (2, 2), (0, 0)).unwrap();
     assert_eq!(c.shape(), &[1, 1, 2, 2]);
     // out[0,0]=1+2+5+6=14, out[0,1]=3+4+7+8=22
     // out[1,0]=9+10+13+14=46, out[1,1]=11+12+15+16=54
@@ -558,7 +558,7 @@ fn test_conv2d_padding() {
     // 1x1x2x2 input, 1x1x3x3 kernel, padding=1 → output same size
     let input = t(&[1.0, 2.0, 3.0, 4.0], &[1, 1, 2, 2]);
     let weight = t(&[0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0], &[1, 1, 3, 3]);
-    let c = input.conv2d_impl(&weight, (1, 1), (1, 1));
+    let c = input.conv2d_impl(&weight, (1, 1), (1, 1)).unwrap();
     assert_eq!(c.shape(), &[1, 1, 2, 2]);
     // identity kernel → same as input
     assert_approx(c.data_f32(), &[1.0, 2.0, 3.0, 4.0], 1e-5);
@@ -569,7 +569,7 @@ fn test_layer_norm() {
     let a = t(&[1.0, 2.0, 3.0, 4.0], &[2, 2]);
     let gamma = t(&[1.0, 1.0], &[2]);
     let beta = t(&[0.0, 0.0], &[2]);
-    let c = a.layer_norm_impl(&gamma, &beta, 1e-5);
+    let c = a.layer_norm_impl(&gamma, &beta, 1e-5).unwrap();
     assert_eq!(c.shape(), &[2, 2]);
     // 各行は独立に正規化される (平均≈0)
     let row1_mean = (c.data_f32()[0] + c.data_f32()[1]) / 2.0;
@@ -589,7 +589,7 @@ fn test_batch_norm() {
     let beta = t(&[0.0, 0.0], &[2]);
     let mean = t(&[3.0, 5.0], &[2]); // channel means: (1+5)/2=3, (3+7)/2=5
     let var = t(&[4.0, 4.0], &[2]);  // channel var: ((1-3)^2+(5-3)^2)/2=4
-    let c = a.batch_norm_impl(&gamma, &beta, &mean, &var, 1e-5);
+    let c = a.batch_norm_impl(&gamma, &beta, &mean, &var, 1e-5).unwrap();
     assert_eq!(c.shape(), &[2, 2, 1, 1]);
     // channel 0: (1-3)/sqrt(4)=-1, (5-3)/sqrt(4)=1
     // channel 1: (3-5)/sqrt(4)=-1, (7-5)/sqrt(4)=1
@@ -605,7 +605,7 @@ fn test_max_pool2d() {
         9.0, 10.0, 11.0, 12.0,
         13.0, 14.0, 15.0, 16.0,
     ], &[1, 1, 4, 4]);
-    let c = input.max_pool2d_impl((2, 2), (2, 2));
+    let c = input.max_pool2d_impl((2, 2), (2, 2)).unwrap();
     assert_eq!(c.shape(), &[1, 1, 2, 2]);
     assert_approx(c.data_f32(), &[6.0, 8.0, 14.0, 16.0], 1e-5);
 }
@@ -619,7 +619,7 @@ fn test_avg_pool2d() {
         9.0, 10.0, 11.0, 12.0,
         13.0, 14.0, 15.0, 16.0,
     ], &[1, 1, 4, 4]);
-    let c = input.avg_pool2d_impl((2, 2), (2, 2));
+    let c = input.avg_pool2d_impl((2, 2), (2, 2)).unwrap();
     assert_eq!(c.shape(), &[1, 1, 2, 2]);
     // avg([1,2,5,6])=3.5, avg([3,4,7,8])=5.5, ...
     assert_approx(c.data_f32(), &[3.5, 5.5, 11.5, 13.5], 1e-5);
@@ -920,13 +920,13 @@ mod trait_tests {
 
     #[test]
     fn test_trait_constructors() {
-        let z = <CpuTensor as GpuTensor>::zeros(&[2, 3], tl_backend::DType::F32);
+        let z = <CpuTensor as GpuTensor>::zeros(&[2, 3], tl_backend::DType::F32).unwrap();
         assert_eq!(z.shape(), &[2, 3]);
 
-        let o = <CpuTensor as GpuTensor>::ones(&[3], tl_backend::DType::F32);
+        let o = <CpuTensor as GpuTensor>::ones(&[3], tl_backend::DType::F32).unwrap();
         assert_eq!(o.to_vec_f32(), vec![1.0, 1.0, 1.0]);
 
-        let a = <CpuTensor as GpuTensor>::arange(0, 4, tl_backend::DType::F32);
+        let a = <CpuTensor as GpuTensor>::arange(0, 4, tl_backend::DType::F32).unwrap();
         assert_eq!(a.to_vec_f32(), vec![0.0, 1.0, 2.0, 3.0]);
     }
 
@@ -935,29 +935,29 @@ mod trait_tests {
         let a = CpuTensor::from_slice(&[1.0, 2.0, 3.0], &[3], DType::F32);
         let b = CpuTensor::from_slice(&[4.0, 5.0, 6.0], &[3], DType::F32);
 
-        let c = a.add(&b);
+        let c = a.add(&b).unwrap();
         assert_eq!(c.to_vec_f32(), vec![5.0, 7.0, 9.0]);
 
-        let d = a.mul_scalar(3.0);
+        let d = a.mul_scalar(3.0).unwrap();
         assert_eq!(d.to_vec_f32(), vec![3.0, 6.0, 9.0]);
     }
 
     #[test]
     fn test_trait_math() {
         let a = CpuTensor::from_slice(&[4.0, 9.0], &[2], DType::F32);
-        let s = a.sqrt();
+        let s = a.sqrt().unwrap();
         let v = s.to_vec_f32();
         assert!((v[0] - 2.0).abs() < 1e-5);
         assert!((v[1] - 3.0).abs() < 1e-5);
 
-        let g = a.gelu();
+        let g = a.gelu().unwrap();
         assert!(g.to_vec_f32()[0] > 0.0); // gelu(4) > 0
     }
 
     #[test]
     fn test_trait_reshape() {
         let a = CpuTensor::from_slice(&[1.0, 2.0, 3.0, 4.0], &[2, 2], DType::F32);
-        let b = a.reshape( &[4]);
+        let b = a.reshape( &[4]).unwrap();
         assert_eq!(b.shape(), &[4]);
         assert_eq!(b.to_vec_f32(), vec![1.0, 2.0, 3.0, 4.0]);
     }
@@ -965,7 +965,7 @@ mod trait_tests {
     #[test]
     fn test_trait_reduction() {
         let a = CpuTensor::from_slice(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3], DType::F32);
-        let s = a.sum(1);
+        let s = a.sum(1).unwrap();
         assert_eq!(s.shape(), &[2]);
         let v = s.to_vec_f32();
         assert!((v[0] - 6.0).abs() < 1e-5);

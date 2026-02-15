@@ -201,3 +201,33 @@ pub extern "C" fn tl_get_last_error() -> CTensorResult {
         }
     })
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_report_runtime_error_loc(
+    file: *const c_char,
+    line: i32,
+    col: i32,
+) {
+    let file_str = if file.is_null() {
+        "unknown".to_string()
+    } else {
+        unsafe {
+            std::ffi::CStr::from_ptr(file)
+                .to_string_lossy()
+                .into_owned()
+        }
+    };
+
+    LAST_ERROR.with(|e| {
+        let borrow = e.borrow();
+        if let Some(err) = borrow.as_ref() {
+             eprintln!("\n[Runtime Error] Code: {:?} ({})", err.code, err.code as u32);
+             eprintln!("  Message: {}", err.message);
+             eprintln!("  Location: {}:{}:{}", file_str, line, col);
+        } else {
+             eprintln!("\n[Runtime Error] Unknown Error (Null Pointer Returned)");
+             eprintln!("  Location: {}:{}:{}", file_str, line, col);
+        }
+    });
+    std::process::exit(1);
+}

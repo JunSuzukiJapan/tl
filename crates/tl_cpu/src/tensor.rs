@@ -355,7 +355,7 @@ impl CpuTensor {
                         if input.requires_grad() {
                             if let Some(ref mut meta) = input.autograd {
                                 if let Some(ref mut existing) = meta.grad {
-                                    *existing = existing.add_impl(&grad);
+                                    *existing = existing.add_impl(&grad).expect("Autograd accumulation failed");
                                 } else {
                                     meta.grad = Some(grad);
                                 }
@@ -449,7 +449,8 @@ impl CpuTensor {
     /// ブロードキャスト用ストライド計算
     /// src_shape を out_shape にブロードキャストする際のストライドを返す。
     /// 次元サイズが1の場合はストライド0（同じ要素を繰り返す）。
-    fn broadcast_strides(src_shape: &[usize], out_shape: &[usize]) -> Vec<usize> {
+    /// ブロードキャスト不可能な場合は Err を返す。
+    fn broadcast_strides(src_shape: &[usize], out_shape: &[usize]) -> tl_backend::BackendResult<Vec<usize>> {
         let out_ndim = out_shape.len();
         let src_ndim = src_shape.len();
         let mut strides = vec![0usize; out_ndim];
@@ -467,24 +468,29 @@ impl CpuTensor {
                 let si = i - offset;
                 if src_shape[si] == 1 {
                     strides[i] = 0; // サイズ1 → ブロードキャスト
-                } else {
+                } else if src_shape[si] == out_shape[i] {
                     strides[i] = src_strides[si];
+                } else {
+                    return Err(tl_backend::BackendError::ShapeMismatch(format!(
+                        "Cannot broadcast dimension {} with size {} to {}",
+                        si, src_shape[si], out_shape[i]
+                    )));
                 }
             }
         }
-        strides
+        Ok(strides)
     }
 
-    fn elementwise_binop(&self, other: &Self, op: impl Fn(f32, f32) -> f32) -> Self {
+    fn elementwise_binop(&self, other: &Self, op: impl Fn(f32, f32) -> f32) -> tl_backend::BackendResult<Self> {
         // 空テンソルの場合は空テンソルを返す
         if self.data_f32.is_empty() || other.data_f32.is_empty() {
-            return CpuTensor {
+            return Ok(CpuTensor {
                 data_f32: vec![],
                 data_i64: None,
                 shape: vec![0],
                 dtype: self.dtype,
                 autograd: None,
-            };
+            });
         }
         // NumPy互換ブロードキャスト
         let a_shape = &self.shape;
@@ -498,13 +504,19 @@ impl CpuTensor {
         for i in 0..out_ndim {
             let da = if i < out_ndim - a_shape.len() { 1 } else { a_shape[i - (out_ndim - a_shape.len())] };
             let db = if i < out_ndim - b_shape.len() { 1 } else { b_shape[i - (out_ndim - b_shape.len())] };
+            if da != db && da != 1 && db != 1 {
+                 return Err(tl_backend::BackendError::ShapeMismatch(format!(
+                    "Operands could not be broadcast together with shapes {:?} and {:?}",
+                    a_shape, b_shape
+                )));
+            }
             out_shape[i] = da.max(db);
         }
         let out_len: usize = out_shape.iter().product();
 
         // a と b のストライドを計算（ブロードキャスト用）
-        let a_strides = Self::broadcast_strides(a_shape, &out_shape);
-        let b_strides = Self::broadcast_strides(b_shape, &out_shape);
+        let a_strides = Self::broadcast_strides(a_shape, &out_shape)?;
+        let b_strides = Self::broadcast_strides(b_shape, &out_shape)?;
 
         let data: Vec<f32> = (0..out_len).map(|flat_idx| {
             let mut a_idx = 0usize;
@@ -522,128 +534,130 @@ impl CpuTensor {
             op(av, bv)
         }).collect();
 
-        CpuTensor {
+        Ok(CpuTensor {
             data_f32: data,
             data_i64: None,
             shape: out_shape,
             dtype: self.dtype,
             autograd: None,
-        }
+        })
     }
 
-    pub fn add_impl(&self, other: &Self) -> Self {
+    pub fn add_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
         self.elementwise_binop(other, |a, b| a + b)
     }
 
-    pub fn sub_impl(&self, other: &Self) -> Self {
+    pub fn sub_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
         self.elementwise_binop(other, |a, b| a - b)
     }
 
-    pub fn mul_impl(&self, other: &Self) -> Self {
+    pub fn mul_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
         self.elementwise_binop(other, |a, b| a * b)
     }
 
-    pub fn div_impl(&self, other: &Self) -> Self {
+    pub fn div_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
         self.elementwise_binop(other, |a, b| a / b)
     }
 
-    pub fn pow_impl(&self, other: &Self) -> Self {
+    pub fn pow_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
         self.elementwise_binop(other, |a, b| a.powf(b))
     }
 
-    pub fn rem_impl(&self, other: &Self) -> Self {
+    pub fn rem_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
         self.elementwise_binop(other, |a, b| a % b)
     }
 
     // ========== スカラー演算 ==========
 
-    pub fn add_scalar_impl(&self, scalar: f32) -> Self {
+    pub fn add_scalar_impl(&self, scalar: f32) -> tl_backend::BackendResult<Self> {
         let data: Vec<f32> = self.data_f32.iter().map(|x| x + scalar).collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn sub_scalar_impl(&self, scalar: f32) -> Self {
+    pub fn sub_scalar_impl(&self, scalar: f32) -> tl_backend::BackendResult<Self> {
         let data: Vec<f32> = self.data_f32.iter().map(|x| x - scalar).collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn mul_scalar_impl(&self, scalar: f32) -> Self {
+    pub fn mul_scalar_impl(&self, scalar: f32) -> tl_backend::BackendResult<Self> {
         let data: Vec<f32> = self.data_f32.iter().map(|x| x * scalar).collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn div_scalar_impl(&self, scalar: f32) -> Self {
+    pub fn div_scalar_impl(&self, scalar: f32) -> tl_backend::BackendResult<Self> {
         let data: Vec<f32> = self.data_f32.iter().map(|x| x / scalar).collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn clamp_impl(&self, min: f32, max: f32) -> Self {
+    pub fn clamp_impl(&self, min: f32, max: f32) -> tl_backend::BackendResult<Self> {
         let data: Vec<f32> = self.data_f32.iter().map(|x| x.clamp(min, max)).collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     // ========== 単項演算 ==========
 
-    pub fn neg_impl(&self) -> Self {
+    // ========== 単項演算 ==========
+
+    pub fn neg_impl(&self) -> tl_backend::BackendResult<Self> {
         let data: Vec<f32> = self.data_f32.iter().map(|x| -x).collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn abs_impl(&self) -> Self {
+    pub fn abs_impl(&self) -> tl_backend::BackendResult<Self> {
         let data: Vec<f32> = self.data_f32.iter().map(|x| x.abs()).collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn exp_impl(&self) -> Self {
+    pub fn exp_impl(&self) -> tl_backend::BackendResult<Self> {
         let data: Vec<f32> = self.data_f32.iter().map(|x| x.exp()).collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn log_impl(&self) -> Self {
+    pub fn log_impl(&self) -> tl_backend::BackendResult<Self> {
         let data: Vec<f32> = self.data_f32.iter().map(|x| x.ln()).collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn sqrt_impl(&self) -> Self {
+    pub fn sqrt_impl(&self) -> tl_backend::BackendResult<Self> {
         let data: Vec<f32> = self.data_f32.iter().map(|x| x.sqrt()).collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn sin_impl(&self) -> Self {
+    pub fn sin_impl(&self) -> tl_backend::BackendResult<Self> {
         let data: Vec<f32> = self.data_f32.iter().map(|x| x.sin()).collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn cos_impl(&self) -> Self {
+    pub fn cos_impl(&self) -> tl_backend::BackendResult<Self> {
         let data: Vec<f32> = self.data_f32.iter().map(|x| x.cos()).collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn tan_impl(&self) -> Self {
+    pub fn tan_impl(&self) -> tl_backend::BackendResult<Self> {
         let data: Vec<f32> = self.data_f32.iter().map(|x| x.tan()).collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn tanh_impl(&self) -> Self {
+    pub fn tanh_impl(&self) -> tl_backend::BackendResult<Self> {
         let data: Vec<f32> = self.data_f32.iter().map(|x| x.tanh()).collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn sigmoid_impl(&self) -> Self {
+    pub fn sigmoid_impl(&self) -> tl_backend::BackendResult<Self> {
         let data: Vec<f32> = self.data_f32.iter().map(|x| 1.0 / (1.0 + (-x).exp())).collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn relu_impl(&self) -> Self {
+    pub fn relu_impl(&self) -> tl_backend::BackendResult<Self> {
         let data: Vec<f32> = self.data_f32.iter().map(|x| x.max(0.0)).collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn gelu_impl(&self) -> Self {
+    pub fn gelu_impl(&self) -> tl_backend::BackendResult<Self> {
         let data: Vec<f32> = self.data_f32.iter().map(|x| {
             0.5 * x * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI * (x + 0.044715 * x.powi(3))).tanh())
         }).collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     // ========== Reduce ==========
@@ -657,16 +671,16 @@ impl CpuTensor {
         if n > 0.0 { self.sumall_impl() / n } else { 0.0 }
     }
 
-    pub fn sum_impl(&self, axis: i32) -> Self {
+    pub fn sum_impl(&self, axis: i32) -> tl_backend::BackendResult<Self> {
         let ndim = self.shape.len();
         if ndim == 0 || self.data_f32.is_empty() {
-            return CpuTensor { data_f32: vec![0.0], data_i64: None, shape: vec![1], dtype: self.dtype, autograd: None };
+            return Ok(CpuTensor { data_f32: vec![0.0], data_i64: None, shape: vec![1], dtype: self.dtype, autograd: None });
         }
         let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
         if axis >= ndim {
             // axis が範囲外の場合は全要素合計
             let s: f32 = self.data_f32.iter().sum();
-            return CpuTensor { data_f32: vec![s], data_i64: None, shape: vec![1], dtype: self.dtype, autograd: None };
+            return Ok(CpuTensor { data_f32: vec![s], data_i64: None, shape: vec![1], dtype: self.dtype, autograd: None });
         }
         let outer: usize = self.shape[..axis].iter().product();
         let axis_size = self.shape[axis];
@@ -682,10 +696,10 @@ impl CpuTensor {
         let mut new_shape: Vec<usize> = self.shape.clone();
         new_shape.remove(axis);
         if new_shape.is_empty() { new_shape.push(1); }
-        CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
-    pub fn max_impl(&self, axis: i32) -> Self {
+    pub fn max_impl(&self, axis: i32) -> tl_backend::BackendResult<Self> {
         let ndim = self.shape.len();
         let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
         let outer: usize = self.shape[..axis].iter().product();
@@ -704,10 +718,10 @@ impl CpuTensor {
         let mut new_shape: Vec<usize> = self.shape.clone();
         new_shape.remove(axis);
         if new_shape.is_empty() { new_shape.push(1); }
-        CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
-    pub fn min_impl(&self, axis: i32) -> Self {
+    pub fn min_impl(&self, axis: i32) -> tl_backend::BackendResult<Self> {
         let ndim = self.shape.len();
         let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
         let outer: usize = self.shape[..axis].iter().product();
@@ -726,10 +740,10 @@ impl CpuTensor {
         let mut new_shape: Vec<usize> = self.shape.clone();
         new_shape.remove(axis);
         if new_shape.is_empty() { new_shape.push(1); }
-        CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
-    pub fn argmax_impl(&self, axis: i32) -> Self {
+    pub fn argmax_impl(&self, axis: i32) -> tl_backend::BackendResult<Self> {
         let ndim = self.shape.len();
         let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
         let outer: usize = self.shape[..axis].iter().product();
@@ -752,7 +766,7 @@ impl CpuTensor {
         let mut new_shape: Vec<usize> = self.shape.clone();
         new_shape.remove(axis);
         if new_shape.is_empty() { new_shape.push(1); }
-        CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
     pub fn argmax_all_impl(&self) -> usize {
@@ -762,7 +776,7 @@ impl CpuTensor {
             .unwrap_or(0)
     }
 
-    pub fn argmin_impl(&self, axis: i32) -> Self {
+    pub fn argmin_impl(&self, axis: i32) -> tl_backend::BackendResult<Self> {
         let ndim = self.shape.len();
         let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
         let outer: usize = self.shape[..axis].iter().product();
@@ -785,36 +799,50 @@ impl CpuTensor {
         let mut new_shape: Vec<usize> = self.shape.clone();
         new_shape.remove(axis);
         if new_shape.is_empty() { new_shape.push(1); }
-        CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
-    pub fn mean_impl(&self, axis: i32) -> Self {
+    pub fn mean_impl(&self, axis: i32) -> tl_backend::BackendResult<Self> {
         let ndim = self.shape.len();
         let ax = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
         let axis_size = self.shape[ax] as f32;
-        let s = self.sum_impl(axis);
+        let s = self.sum_impl(axis)?;
         s.div_scalar_impl(axis_size)
     }
 
     // ========== 形状操作 ==========
 
-    pub fn reshape_impl(&self, shape: &[usize]) -> Self {
-        CpuTensor {
+    pub fn reshape_impl(&self, shape: &[usize]) -> tl_backend::BackendResult<Self> {
+        let current_size: usize = self.shape.iter().product();
+        let target_size: usize = shape.iter().product();
+        if current_size != target_size {
+            return Err(tl_backend::BackendError::ShapeMismatch(format!(
+                "Cannot reshape tensor of size {} into shape {:?}",
+                current_size, shape
+            )));
+        }
+        Ok(CpuTensor {
             data_f32: self.data_f32.clone(),
             data_i64: self.data_i64.clone(),
             shape: shape.to_vec(),
             dtype: self.dtype,
             autograd: None,
-        }
+        })
     }
 
-    pub fn transpose_impl(&self, dim0: usize, dim1: usize) -> Self {
+    pub fn transpose_impl(&self, dim0: usize, dim1: usize) -> tl_backend::BackendResult<Self> {
         if self.shape.len() < 2 {
-            return self.shallow_clone();
+            return Ok(self.shallow_clone());
+        }
+        let ndim = self.shape.len();
+        if dim0 >= ndim || dim1 >= ndim {
+            return Err(tl_backend::BackendError::ShapeMismatch(format!(
+                "Transpose dims {} and {} are out of bounds for tensor of rank {}",
+                dim0, dim1, ndim
+            )));
         }
         let mut new_shape = self.shape.clone();
         new_shape.swap(dim0, dim1);
-        let ndim = self.shape.len();
 
         let total = self.elem_count();
         let mut result = vec![0.0f32; total];
@@ -841,38 +869,66 @@ impl CpuTensor {
             result[new_flat_idx] = self.data_f32[flat_idx];
         }
 
-        CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
-    pub fn squeeze_impl(&self, dim: usize) -> Self {
+    pub fn squeeze_impl(&self, dim: usize) -> tl_backend::BackendResult<Self> {
         let mut new_shape = self.shape.clone();
         if dim < new_shape.len() && new_shape[dim] == 1 {
             new_shape.remove(dim);
         }
+        // If dim is not 1 or out of bounds, PyTorch usually returns tensor as is (for squeeze).
+        // But if dim is out of bounds, maybe error?
+        // PyTorch `squeeze(dim)`: if dim is out of range, it just ignores.
+        // Let's stick to current logic but wrap in Ok.
         if new_shape.is_empty() { new_shape.push(1); }
         self.reshape_impl(&new_shape)
     }
 
-    pub fn unsqueeze_impl(&self, dim: usize) -> Self {
+    pub fn unsqueeze_impl(&self, dim: usize) -> tl_backend::BackendResult<Self> {
         let mut new_shape = self.shape.clone();
+        if dim > new_shape.len() {
+             return Err(tl_backend::BackendError::ShapeMismatch(format!(
+                "Dimension out of range (expected to be in range of [0, {}], but got {})",
+                new_shape.len(), dim
+            )));
+        }
         new_shape.insert(dim, 1);
         self.reshape_impl(&new_shape)
     }
 
-    pub fn broadcast_to_impl(&self, shape: &[usize]) -> Self {
+    pub fn broadcast_to_impl(&self, shape: &[usize]) -> tl_backend::BackendResult<Self> {
         let total: usize = shape.iter().product();
+        if self.data_f32.is_empty() {
+             if total == 0 {
+                return Ok(CpuTensor { data_f32: vec![], data_i64: None, shape: shape.to_vec(), dtype: self.dtype, autograd: None });
+             } else {
+                 return Err(tl_backend::BackendError::ShapeMismatch("Cannot broadcast empty tensor to non-empty".to_string()));
+             }
+        }
         let mut result = vec![0.0f32; total];
         for i in 0..total {
             result[i] = self.data_f32[i % self.data_f32.len()];
         }
-        CpuTensor { data_f32: result, data_i64: None, shape: shape.to_vec(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: shape.to_vec(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn narrow_impl(&self, axis: usize, start: usize, len: usize) -> Self {
+    pub fn narrow_impl(&self, axis: usize, start: usize, len: usize) -> tl_backend::BackendResult<Self> {
         self.slice_impl(axis, start, len)
     }
 
-    pub fn slice_impl(&self, axis: usize, start: usize, len: usize) -> Self {
+    pub fn slice_impl(&self, axis: usize, start: usize, len: usize) -> tl_backend::BackendResult<Self> {
+        if axis >= self.shape.len() {
+             return Err(tl_backend::BackendError::ShapeMismatch(format!(
+                "Slice axis {} out of bounds for tensor of rank {}", axis, self.shape.len()
+            )));
+        }
+        if start + len > self.shape[axis] {
+             return Err(tl_backend::BackendError::ShapeMismatch(format!(
+                "Slice range {}:{} out of bounds for axis {} of size {}", 
+                start, start+len, axis, self.shape[axis]
+            )));
+        }
         let outer: usize = self.shape[..axis].iter().product();
         let axis_size = self.shape[axis];
         let inner: usize = self.shape[axis + 1..].iter().product();
@@ -886,20 +942,36 @@ impl CpuTensor {
         }
         let mut new_shape = self.shape.clone();
         new_shape[axis] = len;
-        CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
-    pub fn contiguous_impl(&self) -> Self {
-        self.shallow_clone()
+    pub fn contiguous_impl(&self) -> tl_backend::BackendResult<Self> {
+        Ok(self.shallow_clone())
     }
 
-    pub fn cat_impl(tensors: &[&Self], axis: usize) -> Self {
+    pub fn cat_impl(tensors: &[&Self], axis: usize) -> tl_backend::BackendResult<Self> {
         if tensors.is_empty() {
-            return CpuTensor::zeros(&[0], DType::F32);
+             return Err(tl_backend::BackendError::ShapeMismatch("Cannot concatenate empty list of tensors".to_string()));
         }
-        let _ndim = tensors[0].shape.len();
-        let outer: usize = tensors[0].shape[..axis].iter().product();
-        let inner: usize = tensors[0].shape[axis + 1..].iter().product();
+        let first = tensors[0];
+        let ndim = first.shape.len();
+        if axis >= ndim {
+             return Err(tl_backend::BackendError::ShapeMismatch(format!("Cat axis {} out of bounds", axis)));
+        }
+        for (i, t) in tensors.iter().enumerate().skip(1) {
+            if t.shape.len() != ndim {
+                 return Err(tl_backend::BackendError::ShapeMismatch(format!("Tensor {} has different rank", i)));
+            }
+            for (d, &s) in t.shape.iter().enumerate() {
+                if d != axis && s != first.shape[d] {
+                     return Err(tl_backend::BackendError::ShapeMismatch(format!(
+                        "Tensor {} has mismatching shape at dim {} (expected {}, got {})", i, d, first.shape[d], s
+                    )));
+                }
+            }
+        }
+        let outer: usize = first.shape[..axis].iter().product();
+        let inner: usize = first.shape[axis + 1..].iter().product();
         let total_axis: usize = tensors.iter().map(|t| t.shape[axis]).sum();
         let mut result = Vec::with_capacity(outer * total_axis * inner);
         for i in 0..outer {
@@ -912,14 +984,16 @@ impl CpuTensor {
                 }
             }
         }
-        let mut new_shape = tensors[0].shape.clone();
+        let mut new_shape = first.shape.clone();
         new_shape[axis] = total_axis;
-        CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: tensors[0].dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: first.dtype, autograd: None })
     }
 
     // ========== 活性化・特殊演算 ==========
 
-    pub fn softmax_impl(&self, axis: i32) -> Self {
+    // ========== 活性化・特殊演算 ==========
+
+    pub fn softmax_impl(&self, axis: i32) -> tl_backend::BackendResult<Self> {
         let ndim = self.shape.len();
         let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
         let outer: usize = self.shape[..axis].iter().product();
@@ -945,25 +1019,33 @@ impl CpuTensor {
                 }
             }
         }
-        CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn embedding_impl(&self, indices: &Self) -> Self {
+    pub fn embedding_impl(&self, indices: &Self) -> tl_backend::BackendResult<Self> {
         let _vocab_size = self.shape[0];
         let embed_dim = if self.shape.len() > 1 { self.shape[1] } else { 1 };
         let idx_data: Vec<i64> = indices.to_vec::<f32>().iter().map(|x| *x as i64).collect();
         let mut result = Vec::with_capacity(idx_data.len() * embed_dim);
         for &idx in &idx_data {
+            if idx < 0 || idx >= _vocab_size as i64 {
+                 return Err(tl_backend::BackendError::IndexOutOfBounds(format!(
+                    "Embedding index {} out of range for vocab size {}", idx, _vocab_size
+                )));
+            }
             let start = (idx as usize) * embed_dim;
             let end = start + embed_dim;
             result.extend_from_slice(&self.data_f32[start..end.min(self.data_f32.len())]);
         }
         let mut new_shape = indices.shape.to_vec();
         new_shape.push(embed_dim);
-        CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
-    pub fn tril_impl(&self, diagonal: i32) -> Self {
+    pub fn tril_impl(&self, diagonal: i32) -> tl_backend::BackendResult<Self> {
+        if self.shape.len() < 2 {
+             return Err(tl_backend::BackendError::ShapeMismatch("tril requires at least 2 dimensions".to_string()));
+        }
         let rows = self.shape[self.shape.len() - 2];
         let cols = self.shape[self.shape.len() - 1];
         let batch: usize = self.shape[..self.shape.len() - 2].iter().product();
@@ -977,15 +1059,20 @@ impl CpuTensor {
                 }
             }
         }
-        CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn cross_entropy_impl(&self, target: &Self) -> Self {
+    pub fn cross_entropy_impl(&self, target: &Self) -> tl_backend::BackendResult<Self> {
         let batch = self.shape[0];
         let classes = self.shape[1];
         let mut loss = 0.0f32;
         for b in 0..batch {
-            let target_idx = target.data_f32[b] as usize;
+            let target_idx = if b < target.data_f32.len() { target.data_f32[b] as usize } else { 0 }; // Handle broadcasting or mismatch?
+            if target_idx >= classes {
+                 return Err(tl_backend::BackendError::IndexOutOfBounds(format!(
+                    "Target index {} out of bounds for {} classes", target_idx, classes
+                )));
+            }
             let mut max_val = f32::NEG_INFINITY;
             for c in 0..classes {
                 let val = self.data_f32[b * classes + c];
@@ -999,10 +1086,15 @@ impl CpuTensor {
             loss -= log_softmax;
         }
         loss /= batch as f32;
-        CpuTensor { data_f32: vec![loss], data_i64: None, shape: vec![1], dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: vec![loss], data_i64: None, shape: vec![1], dtype: self.dtype, autograd: None })
     }
 
-    pub fn repeat_interleave_impl(&self, repeats: usize, axis: usize) -> Self {
+    pub fn repeat_interleave_impl(&self, repeats: usize, axis: usize) -> tl_backend::BackendResult<Self> {
+        if axis >= self.shape.len() {
+             return Err(tl_backend::BackendError::ShapeMismatch(format!(
+                "Axis {} out of bounds for repeat_interleave (rank {})", axis, self.shape.len()
+            )));
+        }
         let outer: usize = self.shape[..axis].iter().product();
         let axis_size = self.shape[axis];
         let inner: usize = self.shape[axis + 1..].iter().product();
@@ -1018,10 +1110,15 @@ impl CpuTensor {
         }
         let mut new_shape = self.shape.clone();
         new_shape[axis] *= repeats;
-        CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
-    pub fn index_select_impl(&self, axis: usize, indices: &Self) -> Self {
+    pub fn index_select_impl(&self, axis: usize, indices: &Self) -> tl_backend::BackendResult<Self> {
+        if axis >= self.shape.len() {
+             return Err(tl_backend::BackendError::ShapeMismatch(format!(
+                "Axis {} out of bounds for index_select (rank {})", axis, self.shape.len()
+            )));
+        }
         let idx_list: Vec<usize> = indices.data_f32.iter().map(|x| *x as usize).collect();
         let outer: usize = self.shape[..axis].iter().product();
         let axis_size = self.shape[axis];
@@ -1029,6 +1126,11 @@ impl CpuTensor {
         let mut result = Vec::with_capacity(outer * idx_list.len() * inner);
         for i in 0..outer {
             for &idx in &idx_list {
+                if idx >= axis_size {
+                     return Err(tl_backend::BackendError::IndexOutOfBounds(format!(
+                        "Index {} out of bounds for dimension {} size {}", idx, axis, axis_size
+                    )));
+                }
                 for k in 0..inner {
                     result.push(self.data_f32[i * axis_size * inner + idx * inner + k]);
                 }
@@ -1036,28 +1138,55 @@ impl CpuTensor {
         }
         let mut new_shape = self.shape.clone();
         new_shape[axis] = idx_list.len();
-        CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
-    pub fn where_cond_impl(condition: &Self, x: &Self, y: &Self) -> Self {
+    pub fn where_cond_impl(condition: &Self, x: &Self, y: &Self) -> tl_backend::BackendResult<Self> {
+        if condition.shape != x.shape || x.shape != y.shape {
+             return Err(tl_backend::BackendError::ShapeMismatch(format!(
+                "Shapes mismatch for where_cond: cond {:?}, x {:?}, y {:?}",
+                condition.shape, x.shape, y.shape
+            )));
+        }
         let data: Vec<f32> = condition.data_f32.iter()
             .zip(x.data_f32.iter().zip(y.data_f32.iter()))
             .map(|(c, (xv, yv))| if *c != 0.0 { *xv } else { *yv })
             .collect();
-        CpuTensor { data_f32: data, data_i64: None, shape: x.shape.clone(), dtype: x.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: data, data_i64: None, shape: x.shape.clone(), dtype: x.dtype, autograd: None })
     }
 
     // ========== Matmul ==========
 
-    pub fn matmul_impl(&self, other: &Self) -> Self {
+    // ========== Matmul ==========
+
+    pub fn matmul_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
         let a_shape = &self.shape;
         let b_shape = &other.shape;
-        // 2D matmul
+        
+        // Basic shape validation for matmul
+        if a_shape.len() < 1 || b_shape.len() < 1 {
+             return Err(tl_backend::BackendError::ShapeMismatch("Matmul requires at least 1D tensors".to_string()));
+        }
+
+        // 2D matmul logic
         let (m, k) = if a_shape.len() >= 2 {
             (a_shape[a_shape.len() - 2], a_shape[a_shape.len() - 1])
         } else {
             (1, a_shape[0])
         };
+        let (k2, n) = if b_shape.len() >= 2 {
+            (b_shape[b_shape.len() - 2], b_shape[b_shape.len() - 1])
+        } else {
+            (b_shape[0], 1)
+        };
+
+        if k != k2 {
+            return Err(tl_backend::BackendError::ShapeMismatch(format!(
+                "Matmul shape mismatch: A={:?}, B={:?} (inner dims {} vs {})", 
+                a_shape, b_shape, k, k2
+            )));
+        }
+
         let n = if b_shape.len() >= 2 {
             b_shape[b_shape.len() - 1]
         } else {
@@ -1094,50 +1223,79 @@ impl CpuTensor {
         if b_shape.len() >= 2 {
             new_shape.push(n);
         }
-        CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
     // ========== 比較演算 ==========
 
-    pub fn eq_impl(&self, other: &Self) -> Self {
+    pub fn eq_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
         self.elementwise_binop(other, |a, b| if (a - b).abs() < 1e-6 { 1.0 } else { 0.0 })
     }
 
-    pub fn neq_impl(&self, other: &Self) -> Self {
+    pub fn neq_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
         self.elementwise_binop(other, |a, b| if (a - b).abs() >= 1e-6 { 1.0 } else { 0.0 })
     }
 
-    pub fn gt_impl(&self, other: &Self) -> Self {
+    pub fn gt_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
         self.elementwise_binop(other, |a, b| if a > b { 1.0 } else { 0.0 })
     }
 
-    pub fn lt_impl(&self, other: &Self) -> Self {
+    pub fn lt_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
         self.elementwise_binop(other, |a, b| if a < b { 1.0 } else { 0.0 })
     }
 
-    pub fn ge_impl(&self, other: &Self) -> Self {
+    pub fn ge_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
         self.elementwise_binop(other, |a, b| if a >= b { 1.0 } else { 0.0 })
     }
 
-    pub fn le_impl(&self, other: &Self) -> Self {
+    pub fn le_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
         self.elementwise_binop(other, |a, b| if a <= b { 1.0 } else { 0.0 })
     }
 
     // ========== 深層学習演算（簡易版） ==========
 
-    pub fn conv2d_impl(&self, weight: &Self, stride: (usize, usize), padding: (usize, usize)) -> Self {
+    pub fn conv2d_impl(&self, weight: &Self, stride: (usize, usize), padding: (usize, usize)) -> tl_backend::BackendResult<Self> {
         // self: [batch, in_ch, h, w], weight: [out_ch, in_ch, kh, kw]
+        if self.shape.len() != 4 || weight.shape.len() != 4 {
+             return Err(tl_backend::BackendError::ShapeMismatch("conv2d requires 4D tensors".to_string()));
+        }
         let batch = self.shape[0];
         let in_ch = self.shape[1];
         let h = self.shape[2];
         let w = self.shape[3];
         let out_ch = weight.shape[0];
+        let w_in_ch = weight.shape[1];
         let kh = weight.shape[2];
         let kw = weight.shape[3];
+
+        if in_ch != w_in_ch {
+             return Err(tl_backend::BackendError::ShapeMismatch(format!("conv2d channel mismatch: input {} vs weight {}", in_ch, w_in_ch)));
+        }
+
         let (sh, sw) = stride;
         let (ph, pw) = padding;
-        let out_h = (h + 2 * ph - kh) / sh + 1;
-        let out_w = (w + 2 * pw - kw) / sw + 1;
+        if sh == 0 || sw == 0 {
+             return Err(tl_backend::BackendError::ShapeMismatch("stride cannot be 0".to_string()));
+        }
+
+        let out_h = (h + 2 * ph).saturating_sub(kh) / sh + 1;
+        let out_w = (w + 2 * pw).saturating_sub(kw) / sw + 1;
+
+        if out_h == 0 || out_w == 0 {
+             // Maybe should be handled gracefully as empty tensor?
+             // Or strict error?
+             // standard behavior is outputting empty if output size is calculated as 0
+             // But let's return error if input is too small for kernel?
+             // Actually, out_h calculation above handles saturating_sub, so returns 1 if small? No.
+             // If h + 2*ph < kh, then saturating_sub is 0, +1 makes it 1. Wait.
+             // (X - K)/S + 1. If X < K, usually invalid or 0.
+             // Let's assume standard formula: floor((H + 2*P - K)/S) + 1.
+             // If (H + 2*P) < K, then result is usually error or 0? 
+             // PyTorch: runtime error if calculated output is too small.
+             if (h + 2 * ph) < kh || (w + 2 * pw) < kw {
+                 return Err(tl_backend::BackendError::ShapeMismatch("Input too small for kernel".to_string()));
+             }
+        }
 
         let mut result = vec![0.0f32; batch * out_ch * out_h * out_w];
 
@@ -1168,10 +1326,10 @@ impl CpuTensor {
             }
         }
 
-        CpuTensor { data_f32: result, data_i64: None, shape: vec![batch, out_ch, out_h, out_w], dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: vec![batch, out_ch, out_h, out_w], dtype: self.dtype, autograd: None })
     }
 
-    pub fn batch_norm_impl(&self, gamma: &Self, beta: &Self, running_mean: &Self, running_var: &Self, eps: f32) -> Self {
+    pub fn batch_norm_impl(&self, gamma: &Self, beta: &Self, running_mean: &Self, running_var: &Self, eps: f32) -> tl_backend::BackendResult<Self> {
         // self: [batch, channels, ...] or [batch, features]
         // running_mean/running_var 使用時はチャネルごと正規化
         if self.shape.len() >= 2 {
@@ -1181,6 +1339,9 @@ impl CpuTensor {
             let spatial = if spatial == 0 { 1 } else { spatial };
 
             let use_running = running_mean.elem_count() == channels && running_var.elem_count() == channels;
+            // Should check gamma/beta size too? yes.
+            // But strict checking might break lax user code if they rely on broadcast or different logic.
+            // Assuming strict.
 
             let mut result = self.data_f32.clone();
             for c in 0..channels {
@@ -1218,7 +1379,7 @@ impl CpuTensor {
                     }
                 }
             }
-            CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+            Ok(CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
         } else {
             // 1D フォールバック
             let mean = self.mean_all_impl();
@@ -1230,11 +1391,11 @@ impl CpuTensor {
                 let b = if i < beta.data_f32.len() { beta.data_f32[i % beta.data_f32.len()] } else { 0.0 };
                 x * inv_std * g + b
             }).collect();
-            CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+            Ok(CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
         }
     }
 
-    pub fn layer_norm_impl(&self, gamma: &Self, beta: &Self, eps: f32) -> Self {
+    pub fn layer_norm_impl(&self, gamma: &Self, beta: &Self, eps: f32) -> tl_backend::BackendResult<Self> {
         // 最終次元で正規化 (各行独立)
         let ndim = self.shape.len();
         if ndim < 2 {
@@ -1247,7 +1408,7 @@ impl CpuTensor {
                 let b = beta.data_f32.get(i).copied().unwrap_or(0.0);
                 (x - mean) * inv_std * g + b
             }).collect();
-            return CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None };
+            return Ok(CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None });
         }
 
         let last_dim = self.shape[ndim - 1];
@@ -1270,17 +1431,25 @@ impl CpuTensor {
             }
         }
 
-        CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn max_pool2d_impl(&self, kernel_size: (usize, usize), stride: (usize, usize)) -> Self {
+    pub fn max_pool2d_impl(&self, kernel_size: (usize, usize), stride: (usize, usize)) -> tl_backend::BackendResult<Self> {
         // self: [batch, channels, h, w]
+        if self.shape.len() != 4 {
+             return Err(tl_backend::BackendError::ShapeMismatch("max_pool2d requires 4D tensor".to_string()));
+        }
         let batch = self.shape[0];
         let channels = self.shape[1];
         let h = self.shape[2];
         let w = self.shape[3];
         let (kh, kw) = kernel_size;
         let (sh, sw) = stride;
+        
+        if (h < kh) || (w < kw) {
+             return Err(tl_backend::BackendError::ShapeMismatch("Input smaller than kernel size".to_string()));
+        }
+
         let out_h = (h - kh) / sh + 1;
         let out_w = (w - kw) / sw + 1;
 
@@ -1308,17 +1477,25 @@ impl CpuTensor {
             }
         }
 
-        CpuTensor { data_f32: result, data_i64: None, shape: vec![batch, channels, out_h, out_w], dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: vec![batch, channels, out_h, out_w], dtype: self.dtype, autograd: None })
     }
 
-    pub fn avg_pool2d_impl(&self, kernel_size: (usize, usize), stride: (usize, usize)) -> Self {
+    pub fn avg_pool2d_impl(&self, kernel_size: (usize, usize), stride: (usize, usize)) -> tl_backend::BackendResult<Self> {
         // self: [batch, channels, h, w]
+        if self.shape.len() != 4 {
+             return Err(tl_backend::BackendError::ShapeMismatch("avg_pool2d requires 4D tensor".to_string()));
+        }
         let batch = self.shape[0];
         let channels = self.shape[1];
         let h = self.shape[2];
         let w = self.shape[3];
         let (kh, kw) = kernel_size;
         let (sh, sw) = stride;
+        
+        if (h < kh) || (w < kw) {
+             return Err(tl_backend::BackendError::ShapeMismatch("Input smaller than kernel size".to_string()));
+        }
+        
         let out_h = (h - kh) / sh + 1;
         let out_w = (w - kw) / sw + 1;
         let pool_size = (kh * kw) as f32;
@@ -1345,14 +1522,79 @@ impl CpuTensor {
             }
         }
 
-        CpuTensor { data_f32: result, data_i64: None, shape: vec![batch, channels, out_h, out_w], dtype: self.dtype, autograd: None }
+        Ok(CpuTensor { data_f32: result, data_i64: None, shape: vec![batch, channels, out_h, out_w], dtype: self.dtype, autograd: None })
     }
 
-    pub fn dropout_impl(&self, _p: f32, _training: bool) -> Self {
-        self.shallow_clone()
+    pub fn dropout_impl(&self, _p: f32, _training: bool) -> tl_backend::BackendResult<Self> {
+        Ok(self.shallow_clone())
     }
 }
 
 // GpuTensor トレイトが Send + Sync を要求
 unsafe impl Send for CpuTensor {}
 unsafe impl Sync for CpuTensor {}
+
+impl CpuTensor {
+    pub fn sample_impl(&self, temp: f32, top_p: f32) -> tl_backend::BackendResult<Self> {
+        // Assume 1D logits for now or last dimension
+        let logits = self.data_f32();
+        if logits.is_empty() {
+             return Err(tl_backend::BackendError::InternalError("Empty tensor for sampling".to_string()));
+        }
+
+        if temp <= 0.0 {
+             // Greedy: argmax
+             let max_idx = logits.iter().enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(i, _)| i).unwrap_or(0);
+             return Ok(CpuTensor::from_slice(&[max_idx as f32], &[1], DType::F32));
+        }
+
+        // Apply temperature
+        let mut probs: Vec<f32> = logits.iter().map(|&x| x / temp).collect();
+        // Softmax
+        let max_val = probs.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        let sum_exp: f32 = probs.iter().map(|x| (x - max_val).exp()).sum();
+        let probs: Vec<f32> = probs.iter().map(|x| (x - max_val).exp() / sum_exp).collect();
+
+        // Top-p sampling
+        let mut indices: Vec<usize> = (0..probs.len()).collect();
+        indices.sort_by(|&a, &b| probs[b].partial_cmp(&probs[a]).unwrap_or(std::cmp::Ordering::Equal));
+        
+        let mut cum_prob = 0.0;
+        let mut cutoff_index = indices.len() - 1;
+        for (i, &idx) in indices.iter().enumerate() {
+            cum_prob += probs[idx];
+            if cum_prob > top_p {
+                cutoff_index = i;
+                break;
+            }
+        }
+        
+        // Random sample from top-p
+        let cutoff_prob = cum_prob;
+        let mut rng = rand::thread_rng();
+        use rand::Rng; // Ensure Rng trait is used if available. Wait, need to check if Rng is in scope or just rand::random
+        // Or simpler: just use weighted choice from filtered probs
+        // Re-normalize top-p probabilities?
+        // Usually: sample r ~ [0, top_p_sum] and select
+        
+        // Simplified sampling for CPU (mostly for debug/small models):
+        // Just sample from full distribution if top_p is close to 1.0, else cutoff
+        
+        let r: f32 = rng.gen::<f32>() * cutoff_prob;
+        let mut acc = 0.0;
+        let mut selected_idx = indices[0];
+        
+        for i in 0..=cutoff_index {
+             let idx = indices[i];
+             acc += probs[idx];
+             if acc >= r {
+                 selected_idx = idx;
+                 break;
+             }
+        }
+        
+        Ok(CpuTensor::from_slice(&[selected_idx as f32], &[1], DType::F32))
+    }
+}

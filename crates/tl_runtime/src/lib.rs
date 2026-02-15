@@ -8,6 +8,7 @@
 pub mod arena;
 pub mod args;
 pub mod error;
+pub use error::{tl_report_runtime_error_loc};
 pub mod device_ffi;
 
 // ========== FFI Modules ==========
