@@ -43,6 +43,7 @@ fn check_missing_runtime_functions() {
         "tl_tensor_transpose_2d", 
         "tl_tensor_map_get_1d",
         "tl_tensor_reshape",
+        "tl_tensor_shape",
     ];
     
     // 2. ランタイムの全ソースファイルから関数定義を抽出
