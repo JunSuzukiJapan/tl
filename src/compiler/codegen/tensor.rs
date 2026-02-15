@@ -11,6 +11,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         name: &str,
         indices: &[String],
+        reduction_indices: &[String],
         clauses: &[ComprehensionClause],
         body: Option<&Expr>,
     ) -> Result<(), String> {
@@ -81,9 +82,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // 4. Identify Implicit Loops
-        let mut loops_to_generate = Vec::new();
+        let mut output_loops_to_generate = Vec::new();
 
-        // Implicit LHS Indices
+        // Implicit LHS Indices (Output Dimensions)
         for idx in indices {
             if !bound_vars.contains(idx) {
                 if !index_bounds.contains_key(idx) {
@@ -91,20 +92,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 let limit = *index_bounds.get(idx).unwrap();
                 loop_ranges.insert(idx.clone(), (i64_type.const_int(0, false), limit));
-                loops_to_generate.push(idx.clone());
+                output_loops_to_generate.push(idx.clone());
             }
         }
 
-        // Implicit Reduction: Free vars in body
-        // Simplified: Iterate through known bounds. If var is distinct and not bound, it's reduction.
-        let mut candidates: Vec<String> = index_bounds.keys().cloned().collect();
-        candidates.sort(); // Deterministic order
-
-        for var in candidates {
-            if !indices.contains(&var) && !bound_vars.contains(&var) {
-                let limit = *index_bounds.get(&var).unwrap();
-                loop_ranges.insert(var.clone(), (i64_type.const_int(0, false), limit));
-                loops_to_generate.push(var.clone());
+        // Implicit Reduction Indices
+        let mut reduction_loops_to_generate = Vec::new();
+        for idx in reduction_indices {
+             if !bound_vars.contains(idx) {
+                if !index_bounds.contains_key(idx) {
+                    // Try to infer from explicit intersection analysis from stmt.rs
+                    // If not found in index_bounds (which comes from body traversal), it's an error.
+                     return Err(format!("Implicit bound not found for reduction index {}", idx));
+                }
+                let limit = *index_bounds.get(idx).unwrap();
+                loop_ranges.insert(idx.clone(), (i64_type.const_int(0, false), limit));
+                reduction_loops_to_generate.push(idx.clone());
             }
         }
 
@@ -153,7 +156,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .get_parent()
             .unwrap();
 
-        // 6. Generate Loops
+        // 6. Generate Output Loops
         let mut current_bb = self.builder.get_insert_block().unwrap();
         self.enter_scope();
 
@@ -164,18 +167,29 @@ impl<'ctx> CodeGenerator<'ctx> {
             Implicit(&'a String),
         }
 
-        let mixed_items: Vec<LoopItem> = clauses
-            .iter()
-            .map(LoopItem::Clause)
-            .chain(loops_to_generate.iter().map(LoopItem::Implicit))
-            .collect();
+        // Mix Output loops and Generators. Generators usually bind vars used in body.
+        // Assuming Generators are for Output logic if they are in 'indices'?
+        // Actually, 'clauses' are explicit generators. 'indices' are LHS.
+        // If a generator variable is in 'indices', it's an output loop.
+        // If NOT in 'indices', it is a reduction loop (explicit reduction).
+        // For now, let's treat explicit clauses as occurring before implicit output loops?
+        // Or should we respect the order?
+        // Simple strategy:
+        // 1. Output Loops (Implicit LHS)
+        // 2. Reduction Loops (Implicit + Explicit Generators not in LHS)
+
+        // Correction: 'indices' defines the output nesting order.
+        // We should generate loops for 'indices' in order.
+        // If an index is bound by a Generator, use that generator's range.
+        // If not, use implicit range.
 
         let mut loop_skip_stack: Vec<Vec<BasicBlock>> = Vec::new();
 
-        for item in mixed_items {
-            match item {
-                LoopItem::Clause(c) => match c {
-                    ComprehensionClause::Generator { name, .. } => {
+        // 6a. Generate Output Loops (Iterate over LHS indices)
+        for idx in indices {
+             // Check if explicit generator exists for this index
+             if let Some(clause) = clauses.iter().find(|c| matches!(c, ComprehensionClause::Generator{name, ..} if name == idx)) {
+                 if let ComprehensionClause::Generator { name, range: _ } = clause {
                         let (start, end) = loop_ranges.get(name).unwrap();
                         let (cond, body_bb, aft, phi, alloca) = self
                             .build_loop_start(parent_fn, current_bb, name, *start, *end)
@@ -188,18 +202,105 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .last_mut()
                             .unwrap()
                             .insert(name.clone(), (alloca.into(), Type::I64, super::CLEANUP_NONE));
-                    }
-                    ComprehensionClause::Condition(cond_expr) => {
-                        let (true_bb, false_bb) = self
-                            .build_condition(parent_fn, current_bb, cond_expr)
+                 }
+             } else {
+                 // Implicit Output Loop
+                 let (start, end) = loop_ranges.get(idx).unwrap();
+                 let (cond, body_bb, aft, phi, alloca) = self
+                        .build_loop_start(parent_fn, current_bb, idx, *start, *end)
+                        .map_err(|e| e.to_string())?;
+                 current_bb = body_bb;
+                 active_loops.push((idx.clone(), cond, aft, phi));
+                 loop_skip_stack.push(Vec::new());
+
+                 self.variables
+                        .last_mut()
+                        .unwrap()
+                        .insert(idx.clone(), (alloca.into(), Type::I64, super::CLEANUP_NONE));
+             }
+        }
+
+        // Pre-Calculation of Output Offset (Optimization: calculate once inside output loops)
+        // Used to determine where to store/accumulate result.
+        self.builder.position_at_end(current_bb);
+        let mut offset = i64_type.const_int(0, false);
+        let mut stride = i64_type.const_int(body_elem_count as u64, false); // Base stride is body size
+
+        for idx_name in indices.iter().rev() {
+            let (start, end) = loop_ranges.get(idx_name).unwrap();
+            let limit = self.builder.build_int_sub(*end, *start, "lim").unwrap();
+
+            // Find phi for this index
+            let (_, _, _, phi) = active_loops
+                .iter()
+                .find(|(n, _, _, _)| n == idx_name)
+                .unwrap();
+            let iv = phi.as_basic_value().into_int_value();
+            let relative_idx = self.builder.build_int_sub(iv, *start, "rel_idx").unwrap(); // i - start
+
+            let term = self
+                .builder
+                .build_int_mul(relative_idx, stride, "term")
+                .unwrap();
+            offset = self.builder.build_int_add(offset, term, "off").unwrap();
+
+            stride = self
+                .builder
+                .build_int_mul(stride, limit, "new_str")
+                .unwrap();
+        }
+
+        // Initialize Accumulator (if reduction exists)
+        // For scalar body: 0.0
+        // For vector body: [0.0, ...]
+        // We initialize memory at 'offset' to 0.0 directly in the buffer.
+        // This avoids needing complex phi nodes for vector accumulators.
+        let has_reduction = !reduction_indices.is_empty() || clauses.iter().any(|c| matches!(c, ComprehensionClause::Generator{name, ..} if !indices.contains(name)));
+
+        if has_reduction {
+            for k in 0..body_elem_count {
+                 let elem_offset = self
+                    .builder
+                    .build_int_add(offset, i64_type.const_int(k as u64, false), "elem_off")
+                    .unwrap();
+                let ptr_bound = unsafe {
+                    self.builder
+                        .build_gep(f32_type, buffer_ptr, &[elem_offset], "ptr_init")
+                }
+                .unwrap();
+                self.builder.build_store(ptr_bound, f32_type.const_float(0.0)).unwrap();
+            }
+        }
+
+        // 6b. Generate Reduction Loops
+        // Explicit Generators NOT in LHS
+        let explicit_reductions: Vec<&ComprehensionClause> = clauses.iter().filter(|c| {
+            matches!(c, ComprehensionClause::Generator{name, ..} if !indices.contains(name))
+        }).collect();
+
+        let reduction_items: Vec<LoopItem> = explicit_reductions
+            .iter()
+            .map(|c| LoopItem::Clause(c))
+            .chain(reduction_loops_to_generate.iter().map(LoopItem::Implicit))
+            .collect();
+
+        for item in reduction_items {
+            match item {
+                LoopItem::Clause(c) => {
+                     if let ComprehensionClause::Generator { name, range: _ } = c {
+                        let (start, end) = loop_ranges.get(name).unwrap();
+                        let (cond, body_bb, aft, phi, alloca) = self
+                            .build_loop_start(parent_fn, current_bb, name, *start, *end)
                             .map_err(|e| e.to_string())?;
-                        current_bb = true_bb;
-                        if let Some(skips) = loop_skip_stack.last_mut() {
-                            skips.push(false_bb);
-                        } else {
-                            return Err("Condition found outside of any loop context".into());
-                        }
-                    }
+                        current_bb = body_bb;
+                        active_loops.push((name.clone(), cond, aft, phi));
+                        loop_skip_stack.push(Vec::new());
+
+                         self.variables
+                            .last_mut()
+                            .unwrap()
+                            .insert(name.clone(), (alloca.into(), Type::I64, super::CLEANUP_NONE));
+                     }
                 },
                 LoopItem::Implicit(name) => {
                     let (start, end) = loop_ranges.get(name).unwrap();
@@ -277,34 +378,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => return Err(format!("Unsupported body type: {:?}", rhs_ty)),
         };
 
-        let mut offset = i64_type.const_int(0, false);
-        let mut stride = i64_type.const_int(body_elem_count as u64, false); // Base stride is body size
-
-        for idx_name in indices.iter().rev() {
-            let (start, end) = loop_ranges.get(idx_name).unwrap();
-            let limit = self.builder.build_int_sub(*end, *start, "lim").unwrap();
-
-            // Find phi for this index
-            let (_, _, _, phi) = active_loops
-                .iter()
-                .find(|(n, _, _, _)| n == idx_name)
-                .unwrap();
-            let iv = phi.as_basic_value().into_int_value();
-            let relative_idx = self.builder.build_int_sub(iv, *start, "rel_idx").unwrap(); // i - start
-
-            let term = self
-                .builder
-                .build_int_mul(relative_idx, stride, "term")
-                .unwrap();
-            offset = self.builder.build_int_add(offset, term, "off").unwrap();
-
-            stride = self
-                .builder
-                .build_int_mul(stride, limit, "new_str")
-                .unwrap();
-        }
-
-        // Store Elements
+        // Store Elements (Accumulate or Overwrite)
         for (k, val) in elements_to_store.iter().enumerate() {
             let elem_offset = self
                 .builder
@@ -317,25 +391,24 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             .unwrap();
 
-            // Reduction Logic (if stride < total loop space? No, reduction is handled by repeatedly writing to same offset?)
-            // Wait, for reduction, 'offset' should NOT include reduction variables.
-            // Our offset calculation only iterates over 'indices'.
-            // So reduction vars do not affect 'offset'.
-            // Thus, we write to the same address multiple times.
-            // We need LOAD + ADD + STORE.
+            let val_to_store = if has_reduction {
+                // Load Accumulator
+                let current_acc = self
+                    .builder
+                    .build_load(f32_type, ptr_bound, "acc_load")
+                    .map_err(|e| e.to_string())?
+                    .into_float_value();
+                
+                // Add
+                self.builder
+                    .build_float_add(current_acc, val.into_float_value(), "acc_add")
+                    .unwrap()
+            } else {
+                // Direct Store (Overwrite)
+                val.into_float_value()
+            };
 
-            let current_val = self
-                .builder
-                .build_load(f32_type, ptr_bound, "curr_val")
-                .map_err(|e| e.to_string())?
-                .into_float_value();
-
-            let new_val = self
-                .builder
-                .build_float_add(current_val, val.into_float_value(), "accum")
-                .unwrap();
-
-            self.builder.build_store(ptr_bound, new_val).unwrap();
+            self.builder.build_store(ptr_bound, val_to_store).unwrap();
         }
 
         // Loop End Logic (no changes needed)

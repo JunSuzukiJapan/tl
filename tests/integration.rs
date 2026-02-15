@@ -10,9 +10,18 @@ fn run_all_fixtures() {
     // Find all .tl files in fixtures directory
     let entries = glob("tests/fixtures/**/*.tl").expect("Failed to read glob pattern");
 
+    let filter = std::env::var("TL_TEST_FILTER").ok();
+
     for entry in entries {
         match entry {
             Ok(path) => {
+                let path_str = path.to_string_lossy();
+                if let Some(f) = &filter {
+                    if !path_str.contains(f) {
+                        continue;
+                    }
+                }
+
                 eprintln!("Running test: {:?}", path);
                 if let Err(e) = run_fixture(&path) {
                     let msg = format!("{:?}: {}", path, e);

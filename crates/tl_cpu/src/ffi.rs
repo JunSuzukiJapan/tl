@@ -765,7 +765,7 @@ pub extern "C" fn tl_cpu_tensor_print(t: *mut OpaqueTensor) {
     if t.is_null() { println!("Tensor[null]"); return; }
     let tensor = unsafe { &*t };
     if tensor.shape().is_empty() { println!("Tensor[cleared]"); return; }
-    println!("Tensor(shape={:?}, data={:?})", tensor.shape(), tensor.data_f32());
+    println!("{:?}", tensor.data_f32());
 }
 
 pub extern "C" fn tl_cpu_tensor_replace_data(dst: *mut OpaqueTensor, src: *mut OpaqueTensor) {

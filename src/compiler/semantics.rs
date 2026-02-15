@@ -4726,8 +4726,8 @@ impl SemanticAnalyzer {
                 
                 match target_type {
                     Type::Ptr(inner) => Ok(*inner),
-                    Type::Tensor(inner, _rank) => Ok(*inner), 
-                    Type::Struct(name, _) if name == "Tensor" => Ok(Type::F32), // Assume F32 for opaque Tensor
+                    Type::Tensor(inner, _rank) => Ok(Type::Tensor(inner, 0)), // Return 0-rank Tensor (Scalar)
+                    Type::Struct(name, _) if name == "Tensor" => Ok(Type::Tensor(Box::new(Type::F32), 0)), // Return 0-rank Tensor (Scalar) to allow method calls
                     Type::Struct(_, _) => {
                          // Generic Struct Indexing -> Treat as .get()
                          // We verify that .get() exists and check types.

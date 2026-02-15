@@ -5,7 +5,7 @@ fn main() {
     
     // Explicit MatMul via equation
     // This should trigger the new optimization path
-    let C[i, k] = A[i, j] * B[j, k];
+    let C = A[i, j] * B[j, k];
 
     print("MatMul result shape:");
     print(C);

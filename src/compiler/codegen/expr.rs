@@ -2817,7 +2817,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Compile as a tensor equation: let temp[indices] = body;
                 // We pass the indices, clauses, and optional body directly.
-                self.compile_tensor_equation(&temp_name, indices, clauses, body.as_deref())
+                // Explicit Tensor Comprehension: No implicit reduction analysis yet (TODO)
+                let empty_reduction: Vec<String> = Vec::new();
+                self.compile_tensor_equation(&temp_name, indices, &empty_reduction, clauses, body.as_deref())
                     .map_err(|e| e.to_string())?;
 
                 // After compilation, the tensor 'temp_name' is registered in the scope.

@@ -198,3 +198,54 @@ where
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_matmul_4d(a: *mut c_void, b: *mut c_void) -> *mut c_void { dispatch(|d| d.tensor_matmul_4d(a, b)) }
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_add_4d(a: *mut c_void, b: *mut c_void) -> *mut c_void { dispatch(|d| d.tensor_add_4d(a, b)) }
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_silu_4d(a: *mut c_void) -> *mut c_void { dispatch(|d| d.tensor_silu_4d(a)) }
+
+// Helper: Convert tensor shape to Vec<i64> for JIT
+#[repr(C)]
+struct JitVec {
+    ptr: *mut i64,
+    cap: i64,
+    len: i64,
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_shape_vec(a: *mut c_void) -> *mut c_void {
+    // 1. Get shape as Tensor (F32)
+    let shape_tensor = tl_device_tensor_get_shape(a);
+    if shape_tensor.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    // 2. Get data and len
+    let len_i64 = tl_device_tensor_numel(shape_tensor);
+    let len = len_i64 as usize;
+    let data_ptr = tl_device_tensor_data(shape_tensor);
+    
+    // 3. Convert to Vec<i64>
+    let mut vec_i64 = Vec::with_capacity(len);
+    if !data_ptr.is_null() {
+        unsafe {
+            let slice = std::slice::from_raw_parts(data_ptr, len);
+            for &val in slice {
+                vec_i64.push(val as i64);
+            }
+        }
+    }
+
+    // 4. Free shape tensor
+    tl_device_tensor_free(shape_tensor);
+
+    // 5. Construct JitVec matching struct Vec<T> { ptr, cap, len }
+    let cap = vec_i64.capacity();
+    let len = vec_i64.len();
+    let ptr = vec_i64.as_mut_ptr();
+    std::mem::forget(vec_i64);
+
+    let jit_vec = JitVec {
+        ptr,
+        cap: cap as i64,
+        len: len as i64,
+    };
+
+    let boxed = Box::new(jit_vec);
+    Box::into_raw(boxed) as *mut c_void
+}

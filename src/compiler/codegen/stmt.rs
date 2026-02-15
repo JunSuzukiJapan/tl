@@ -4,24 +4,101 @@ use crate::compiler::ast::*;
 use inkwell::values::*;
 
 impl<'ctx> CodeGenerator<'ctx> {
-    // Helper to infer free indices from implicit tensor equation (RHS)
-    // Returns sorted list of unique variable names used as indices but not bound in scope
-    fn infer_free_indices(&self, expr: &Expr) -> Vec<String> {
-        let mut indices = std::collections::HashSet::new();
-        self.collect_indices(expr, &mut indices);
+    // Helper to infer free and reduction indices from implicit tensor equation (RHS)
+    // Returns (Free Indices, Reduction Indices)
+    fn analyze_tensor_indices(&self, expr: &Expr) -> (Vec<String>, Vec<String>) {
+        let (free, reduction) = self.analyze_indices_recur(expr);
+        
+        let mut free_vec: Vec<String> = free.into_iter().collect();
+        free_vec.sort();
+        
+        let mut reduction_vec: Vec<String> = reduction.into_iter().collect();
+        reduction_vec.sort();
+        
+        (free_vec, reduction_vec)
+    }
 
-        // Filter out variables that are defined in current scope (e.g. loops)
-        // If a variable is NOT in scope, it is a free index (implicit dimension)
-        let mut free_indices: Vec<String> = indices
-            .into_iter()
-            .filter(|idx| {
-                // If variable exists in scope, it's a bound value/loop var, NOT a free dimension
-                !self.variable_exists(idx)
-            })
-            .collect();
-
-        free_indices.sort();
-        free_indices
+    fn analyze_indices_recur(&self, expr: &Expr) -> (std::collections::HashSet<String>, std::collections::HashSet<String>) {
+        use std::collections::HashSet;
+        match &expr.inner {
+            ExprKind::BinOp(lhs, op, rhs) => {
+                let (lf, lr) = self.analyze_indices_recur(lhs);
+                let (rf, rr) = self.analyze_indices_recur(rhs);
+                
+                let mut combined_reduction = lr;
+                combined_reduction.extend(rr);
+                
+                match op {
+                    BinOp::Mul => {
+                        // Einstein Summation: Intersection of Free Indices becomes Reduction
+                        let intersection: HashSet<_> = lf.intersection(&rf).cloned().collect();
+                        combined_reduction.extend(intersection.clone());
+                        
+                        let mut combined_free = HashSet::new();
+                        for idx in lf.union(&rf) {
+                            if !combined_reduction.contains(idx) {
+                                combined_free.insert(idx.clone());
+                            }
+                        }
+                        (combined_free, combined_reduction)
+                    },
+                    _ => {
+                        // Add/Sub/etc: Union of Free, Union of Reduction
+                        // (Assuming valid broadcast/shape compatibility)
+                        let combined_free: HashSet<_> = lf.union(&rf).cloned().collect();
+                        (combined_free, combined_reduction)
+                    }
+                }
+            }
+            ExprKind::IndexAccess(_, idxs) => {
+                let mut free = HashSet::new();
+                for idx in idxs {
+                    if let ExprKind::Variable(name) = &idx.inner {
+                        if !self.variable_exists(name) {
+                            free.insert(name.clone());
+                        }
+                    }
+                }
+                (free, HashSet::new())
+            }
+            ExprKind::UnOp(_, inner) => self.analyze_indices_recur(inner),
+            ExprKind::MethodCall(obj, _, args) => {
+                let (mut f, mut r) = self.analyze_indices_recur(obj);
+                for arg in args {
+                    let (af, ar) = self.analyze_indices_recur(arg);
+                    f.extend(af);
+                    r.extend(ar);
+                }
+                (f, r)
+            }
+            ExprKind::StaticMethodCall(_, _, args) => {
+                let (mut f, mut r) = (HashSet::new(), HashSet::new());
+                for arg in args {
+                    let (af, ar) = self.analyze_indices_recur(arg);
+                    f.extend(af);
+                    r.extend(ar);
+                }
+                (f, r)
+            }
+            ExprKind::FnCall(_, args) => {
+                let mut f = HashSet::new();
+                let mut r = HashSet::new();
+                for arg in args {
+                    let (af, ar) = self.analyze_indices_recur(arg);
+                    f.extend(af);
+                    r.extend(ar);
+                }
+                (f, r)
+            }
+            ExprKind::IfExpr(cond, _, _) => {
+                 self.analyze_indices_recur(cond)
+            }
+            ExprKind::TensorComprehension { .. } => {
+                 // Nested implementation not fully supported in implicit analysis yet
+                 (HashSet::new(), HashSet::new())
+            }
+            _ => (HashSet::new(), HashSet::new())
+        }
     }
 
     fn collect_indices(&self, expr: &Expr, indices: &mut std::collections::HashSet<String>) {
@@ -1044,12 +1121,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let def_time = self.current_time;
 
                 // 1. Analyze value for Free Indices (Implicit Tensor Equation)
-                let free_indices = self.infer_free_indices(value);
+                // 1. Analyze value for Free and Reduction Indices (Implicit Tensor Equation)
+                let (free_indices, reduction_indices) = self.analyze_tensor_indices(value);
 
                 if !free_indices.is_empty() {
                     let clauses: Vec<ComprehensionClause> = Vec::new();
                     return self
-                        .compile_tensor_equation(name, &free_indices, &clauses, Some(value))
+                        .compile_tensor_equation(name, &free_indices, &reduction_indices, &clauses, Some(value))
                         .map_err(|e| e.to_string());
                 }
 

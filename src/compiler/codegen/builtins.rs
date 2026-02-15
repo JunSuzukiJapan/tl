@@ -2432,6 +2432,7 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_shape(t: *mut) -> *mut Vec
     let shape_type = void_ptr.fn_type(&[void_ptr.into()], false);
     module.add_function("tl_tensor_shape", shape_type, None);
+    if let Some(f) = module.get_function("tl_tensor_shape") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_shape_vec as usize); }
 
     // tl_load_all_params(path: *const i8) -> void
     let load_all_type = void_type.fn_type(&[i8_ptr.into()], false);
