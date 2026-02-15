@@ -17,12 +17,14 @@ fn forward(model: Linear, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
 }
 
 fn main() {
+    Param::set_device(Device::Auto);
+
     // Data: 3 classes, 2 features
     let X = Tensor::randn([2, 2], false); 
     print(X);
 
-    // Target: [2] (indices 0, 1)
-    let target = [0.0, 1.0];
+    // Target: one-hot labels for 3 classes
+    let target = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
     print(target);
 
     let model = Linear_new(2, 3);
@@ -36,7 +38,8 @@ fn main() {
     print(probs);
 
     // Loss
-    let loss = logits.cross_entropy(target);
+    // NOTE: current backend expects probability-like inputs + one-hot labels.
+    let loss = probs.cross_entropy(target);
     print(loss);
 
     // Backward

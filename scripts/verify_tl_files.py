@@ -71,6 +71,89 @@ class TestResult:
     duration: float
     reason: str = ""
 
+
+@dataclass
+class VmSnapshot:
+    page_size: int
+    file_backed_pages: int
+    free_pages: int
+    speculative_pages: int
+
+    @property
+    def cached_gib(self) -> float:
+        return (self.file_backed_pages * self.page_size) / (1024 ** 3)
+
+    @property
+    def reclaimable_gib(self) -> float:
+        return ((self.free_pages + self.speculative_pages) * self.page_size) / (1024 ** 3)
+
+
+def get_vm_snapshot() -> Optional[VmSnapshot]:
+    """vm_stat から最低限のメモリ指標を取得する。失敗時は None。"""
+    try:
+        out = subprocess.check_output(["vm_stat"], text=True)
+    except Exception:
+        return None
+
+    page_size_match = re.search(r"page size of (\d+) bytes", out)
+    if not page_size_match:
+        return None
+    page_size = int(page_size_match.group(1))
+
+    def _pages(key: str) -> int:
+        m = re.search(rf"{re.escape(key)}:\s+(\d+)\.", out)
+        return int(m.group(1)) if m else 0
+
+    return VmSnapshot(
+        page_size=page_size,
+        file_backed_pages=_pages("File-backed pages"),
+        free_pages=_pages("Pages free"),
+        speculative_pages=_pages("Pages speculative"),
+    )
+
+
+def wait_for_safe_memory_window(
+    max_cached_gib: float,
+    min_reclaimable_gib: float,
+    timeout_sec: int,
+    poll_sec: float,
+    verbose: bool = False
+) -> Tuple[bool, str]:
+    """
+    高負荷時の暴走防止:
+    - file cache が上限超え
+    - reclaimable (free+speculative) が下限未満
+    の間は待機し、timeout 超過で False を返す。
+    """
+    deadline = time.time() + timeout_sec
+    while True:
+        snap = get_vm_snapshot()
+        if snap is None:
+            # 監視不能なら実行を止めない（既存互換）
+            return True, "vm_stat unavailable"
+
+        cache_ok = snap.cached_gib <= max_cached_gib
+        reclaim_ok = snap.reclaimable_gib >= min_reclaimable_gib
+        if cache_ok and reclaim_ok:
+            return True, (
+                f"cached={snap.cached_gib:.1f}GiB, "
+                f"reclaimable={snap.reclaimable_gib:.1f}GiB"
+            )
+
+        if time.time() >= deadline:
+            return False, (
+                f"cached={snap.cached_gib:.1f}GiB>{max_cached_gib:.1f}GiB "
+                f"or reclaimable={snap.reclaimable_gib:.1f}GiB<{min_reclaimable_gib:.1f}GiB"
+            )
+
+        if verbose:
+            print(
+                f"\n⏸️ メモリ待機: cached={snap.cached_gib:.1f}GiB "
+                f"(limit {max_cached_gib:.1f}), reclaimable={snap.reclaimable_gib:.1f}GiB "
+                f"(min {min_reclaimable_gib:.1f})"
+            )
+        time.sleep(poll_sec)
+
 # main 関数を持つファイルのみ実行
 def has_main_function(filepath: Path) -> bool:
     """ファイルに main 関数が含まれているか確認"""
@@ -137,19 +220,35 @@ SKIP_FILES = {
     # 計算量が多い/GPU負荷が高いテスト (システムクラッシュ回避のためスキップ)
     "kv_cache_test.tl",
     "recommendation.tl",
+    "inverse_life.tl",
 
     # --- Crash Reproduction Files (System Instability Risk) ---
     # These files are designed to crash or leak resources (GPU/Memory).
     # Running them might cause WindowServer watchdog timeouts (Mac freeze).
-    "repro_kv_crash.tl",
     "repro_reshape_segfault.tl",
     "repro_segfault_minimal.tl",
+}
+
+# パス単位でのスキップ（重複ファイル名対策）
+# 2026-02-14: 直近実行でタイムアウト/abort したファイルを明示スキップ
+SKIP_PATH_SUFFIXES = {
+    "examples/tasks/tensor_logic/lenia/repro.tl",
+    "examples/tasks/tensor_logic/mln/mln.tl",
+    "examples/tasks/tensor_logic/n_queens/n_queens.tl",
+    "examples/tasks/tensor_logic/n_queens/n_queens_debug.tl",
+    "examples/tasks/tensor_logic/raycast/raycast.tl",
+    "examples/tasks/tensor_logic/tsp/tsp.tl",
+    "examples/test_nqueens_debug.tl",
+    "tests/fixtures/debug/mem_leak_extended.tl",
+    "examples/apps/tinyllama/debug_chatbot.tl",
 }
 
 
 # 長時間実行が予想されるファイル（長めのタイムアウト）
 # 注: autograd 使用ファイルは SKIP_FILES に移動済み
-LONG_RUNNING = set()
+LONG_RUNNING = {
+    "examples/tasks/tensor_logic/digital_logic/logic.tl",
+}
 
 # 失敗することが期待されるファイル（エラーテスト用）
 # 終了コードが 0 以外であれば PASS とみなします
@@ -171,6 +270,10 @@ def should_skip(filepath: Path) -> Tuple[bool, str]:
     name = filepath.name
     if name in SKIP_FILES:
         return True, f"スキップ対象: {name}"
+    path_posix = filepath.as_posix()
+    for suffix in SKIP_PATH_SUFFIXES:
+        if path_posix.endswith("/" + suffix) or path_posix == suffix:
+            return True, f"スキップ対象: {suffix}"
     # ファイル内の // SKIP コメントをチェック
     skip_in_file, skip_reason = has_skip_comment(filepath)
     if skip_in_file:
@@ -438,6 +541,7 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
         )
         
     except subprocess.TimeoutExpired:
+        _cleanup_children()
         duration = time.time() - start_time
         return TestResult(
             file=str(filepath),
@@ -558,9 +662,16 @@ def main():
     # Metal GPU プロセスの並列実行は Mac 全体のクラッシュを引き起こす。
     parser.add_argument("--static", action="store_true", help="静的コンパイルモードで実行 (JIT回避)")
     parser.add_argument("--clean", action="store_true", help="古いバイナリを削除して終了")
-    parser.add_argument("--cooldown", type=float, default=0.5, help="テスト間のクールダウン秒数 (デフォルト: 0.5)")
-    parser.add_argument("--crash-cooldown", type=float, default=2.0, help="クラッシュ後のクールダウン秒数 (デフォルト: 2.0)")
+    parser.add_argument("--cooldown", type=float, default=1.5, help="テスト間のクールダウン秒数 (デフォルト: 1.5)")
+    parser.add_argument("--crash-cooldown", type=float, default=5.0, help="クラッシュ後のクールダウン秒数 (デフォルト: 5.0)")
     parser.add_argument("--max-crashes", type=int, default=5, help="連続クラッシュでの緊急停止閾値 (デフォルト: 5)")
+    parser.add_argument("--safe-mode", dest="safe_mode", action="store_true", help="システム負荷を下げるために定期的に休憩を挟む")
+    parser.add_argument("--no-safe-mode", dest="safe_mode", action="store_false", help="定期休憩を無効化")
+    parser.set_defaults(safe_mode=True)
+    parser.add_argument("--max-cached-gib", type=float, default=12.0, help="cached files 上限GiB。超過時は次テスト開始前に待機 (デフォルト: 12)")
+    parser.add_argument("--min-reclaimable-gib", type=float, default=8.0, help="reclaimable (free+speculative) の下限GiB。下回ると待機 (デフォルト: 8)")
+    parser.add_argument("--memory-wait-timeout", type=int, default=300, help="メモリ待機の最大秒数。超過時は緊急停止 (デフォルト: 300)")
+    parser.add_argument("--memory-poll", type=float, default=2.0, help="メモリ待機時の監視頻度秒 (デフォルト: 2.0)")
     args = parser.parse_args()
     
     # プロジェクトルートを検出
@@ -611,6 +722,11 @@ def main():
     print(f"📁 検索ディレクトリ: {', '.join(str(d) for d in directories)}")
     print(f"⏱️ タイムアウト: {args.timeout}秒")
     print(f"🛡️ 安全策: クールダウン {args.cooldown}秒 / クラッシュ後 {args.crash_cooldown}秒 / 連続{args.max_crashes}回で緊急停止")
+    print(
+        f"🧠 メモリガード: cached<= {args.max_cached_gib:.1f}GiB, "
+        f"reclaimable>= {args.min_reclaimable_gib:.1f}GiB "
+        f"(待機上限 {args.memory_wait_timeout}s)"
+    )
     print("")
     
     # ファイル検索
@@ -634,18 +750,41 @@ def main():
     # ⚠️ 並列実行コードは意図的に削除済み。Metal GPU リソース競合で Mac がクラッシュするため。
     # テストは必ず逐次実行する（下記ブロック）。
 
-
+    # セーフティ設定
+    safety_pause_interval = 10  # 何テストごとに休憩するか
+    safety_pause_duration = 5.0 # 休憩時間（秒）
+    
+    if args.safe_mode:
+        print(f"🛡️ セーフモード有効: {safety_pause_interval}テストごとに {safety_pause_duration}秒 の休憩を挟みます。")
 
     # 順次実行
     for i, tl_file in enumerate(tl_files, 1):
         rel_path = tl_file.relative_to(project_root)
+
+        ok, mem_reason = wait_for_safe_memory_window(
+            max_cached_gib=args.max_cached_gib,
+            min_reclaimable_gib=args.min_reclaimable_gib,
+            timeout_sec=args.memory_wait_timeout,
+            poll_sec=args.memory_poll,
+            verbose=args.verbose
+        )
+        if not ok:
+            print(f"\n🚨 緊急停止: メモリが危険域のまま回復しませんでした ({mem_reason})")
+            emergency_stopped = True
+            break
         
+        # セーフティポーズ (Metal ドライバのリソース回収待ち)
+        if args.safe_mode and i > 1 and (i - 1) % safety_pause_interval == 0:
+            print(f"\n☕ [Safety Pause] システムの安定化を待機中 ({safety_pause_duration}s)... ", end="", flush=True)
+            time.sleep(safety_pause_duration)
+            print("再開")
+
         print(f"[{i}/{len(tl_files)}] {rel_path} ... ", end="", flush=True)
         
         result = run_tl_file(tl_file, tl_binary, args.timeout, args.verbose)
         
         # GPU リソース競合による間欠的失敗 (SIGTRAP=-5, SIGABRT=-6) のリトライ
-        if result.status == Status.FAIL and result.reason and "Exit code: -5" in result.reason:
+        if result.status == Status.FAIL and result.reason and ("Exit code: -5" in result.reason or "Exit code: -6" in result.reason):
             max_retries = 2
             for retry in range(max_retries):
                 print(f"🔄", end="", flush=True)

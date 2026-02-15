@@ -1,2 +1,7 @@
 [build]
 rustflags = ["-C", "link-arg=-rdynamic"]
+jobs = 1
+
+[env]
+RUST_TEST_THREADS = "1"
+CARGO_INCREMENTAL = "0"
