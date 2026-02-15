@@ -5,15 +5,21 @@ use crate::shaders::{self, SHADER_SUMALL_F32, SHADER_ARGMAX_F32, SHADER_ARGMIN_F
 use crate::tensor::MetalTensor;
 use crate::DType;
 use metal::{MTLResourceOptions, MTLSize};
+use tl_backend::{BackendResult, BackendError};
 
 impl MetalTensor {
     /// 全要素の合計
-    pub fn sumall_impl(&self) -> f32 {
-        assert_eq!(MetalTensor::dtype(self), DType::F32, "sumall only supports F32");
+    pub fn sumall_impl(&self) -> BackendResult<f32> {
+        if self.dtype() != DType::F32 {
+            return Err(BackendError::TypeMismatch(format!("sumall only supports F32, got {:?}", self.dtype())));
+        }
         
         let device = get_device();
         let command_queue = device.command_queue();
         let count = self.elem_count();
+        if count == 0 {
+            return Ok(0.0);
+        }
 
         // スレッドグループサイズ
         let tg_size: usize = 256;
@@ -36,7 +42,7 @@ impl MetalTensor {
         let mut shaders = shaders::get_shaders().lock().unwrap();
         let pipeline = shaders
             .get_pipeline(device.device(), SHADER_SUMALL_F32)
-            .expect("Failed to get shader pipeline");
+            .map_err(|e| BackendError::InternalError(format!("Failed to get shader pipeline: {}", e)))?;
 
         let command_buffer = command_queue.new_command_buffer();
         let encoder = command_buffer.new_compute_command_encoder();
@@ -63,21 +69,32 @@ impl MetalTensor {
             }
         }
 
-        total
+        Ok(total)
     }
 
     /// 全要素の平均
-    pub fn mean_all_impl(&self) -> f32 {
-        self.sumall_impl() / self.elem_count() as f32
+    pub fn mean_all_impl(&self) -> BackendResult<f32> {
+        let sum = self.sumall_impl()?;
+        let count = self.elem_count();
+        if count == 0 {
+            return Ok(0.0);
+        }
+        Ok(sum / count as f32)
     }
 
     /// 全要素の最大値インデックス（GPU アクセラレーション）
-    pub fn argmax_all_impl(&self) -> usize {
-        assert_eq!(MetalTensor::dtype(self), DType::F32, "argmax only supports F32");
+    pub fn argmax_all_impl(&self) -> BackendResult<usize> {
+        if self.dtype() != DType::F32 {
+            return Err(BackendError::TypeMismatch(format!("argmax only supports F32, got {:?}", self.dtype())));
+        }
         
+        let count = self.elem_count();
+        if count == 0 {
+            return Err(BackendError::ArgumentError("argmax called on empty tensor".to_string()));
+        }
+
         let device = get_device();
         let command_queue = device.command_queue();
-        let count = self.elem_count();
 
         let tg_size: usize = 256;
         let num_groups = (count + tg_size - 1) / tg_size;
@@ -102,7 +119,7 @@ impl MetalTensor {
         let mut shaders = shaders::get_shaders().lock().unwrap();
         let pipeline = shaders
             .get_pipeline(device.device(), SHADER_ARGMAX_F32)
-            .expect("Failed to get argmax shader pipeline");
+            .map_err(|e| BackendError::InternalError(format!("Failed to get argmax shader pipeline: {}", e)))?;
 
         let command_buffer = command_queue.new_command_buffer();
         let encoder = command_buffer.new_compute_command_encoder();
@@ -137,16 +154,22 @@ impl MetalTensor {
             }
         }
 
-        best_idx
+        Ok(best_idx)
     }
 
     /// 全要素の最小値インデックス（GPU アクセラレーション）
-    pub fn argmin_all_impl(&self) -> usize {
-        assert_eq!(MetalTensor::dtype(self), DType::F32, "argmin only supports F32");
+    pub fn argmin_all_impl(&self) -> BackendResult<usize> {
+        if self.dtype() != DType::F32 {
+            return Err(BackendError::TypeMismatch(format!("argmin only supports F32, got {:?}", self.dtype())));
+        }
         
+        let count = self.elem_count();
+        if count == 0 {
+            return Err(BackendError::ArgumentError("argmin called on empty tensor".to_string()));
+        }
+
         let device = get_device();
         let command_queue = device.command_queue();
-        let count = self.elem_count();
 
         let tg_size: usize = 256;
         let num_groups = (count + tg_size - 1) / tg_size;
@@ -171,7 +194,7 @@ impl MetalTensor {
         let mut shaders = shaders::get_shaders().lock().unwrap();
         let pipeline = shaders
             .get_pipeline(device.device(), SHADER_ARGMIN_F32)
-            .expect("Failed to get argmin shader pipeline");
+            .map_err(|e| BackendError::InternalError(format!("Failed to get argmin shader pipeline: {}", e)))?;
 
         let command_buffer = command_queue.new_command_buffer();
         let encoder = command_buffer.new_compute_command_encoder();
@@ -206,6 +229,6 @@ impl MetalTensor {
             }
         }
 
-        best_idx
+        Ok(best_idx)
     }
 }

@@ -3,17 +3,18 @@
 
 use crate::tensor::MetalTensor;
 use crate::DType;
+use tl_backend::{BackendResult, BackendError};
 
 impl MetalTensor {
     /// ブロードキャスト（形状を拡張）— shape.rs の GPU 実装に委譲
-    pub fn broadcast_to(&self, target_shape: &[usize]) -> MetalTensor {
+    pub fn broadcast_to(&self, target_shape: &[usize]) -> BackendResult<MetalTensor> {
         let src_shape = self.shape();
-        assert!(
-            Self::can_broadcast(src_shape, target_shape),
-            "Cannot broadcast {:?} to {:?}",
-            src_shape,
-            target_shape
-        );
+        if !Self::can_broadcast(src_shape, target_shape) {
+            return Err(BackendError::ShapeMismatch(format!(
+                "Cannot broadcast {:?} to {:?}",
+                src_shape, target_shape
+            )));
+        }
         self.broadcast_to_impl(target_shape)
     }
 
@@ -32,7 +33,7 @@ impl MetalTensor {
     }
 
     /// 二つのテンソルのブロードキャスト形状を計算
-    pub fn broadcast_shape(a: &[usize], b: &[usize]) -> Vec<usize> {
+    pub fn broadcast_shape(a: &[usize], b: &[usize]) -> BackendResult<Vec<usize>> {
         let max_ndim = a.len().max(b.len());
         let mut result = vec![1usize; max_ndim];
         
@@ -47,40 +48,42 @@ impl MetalTensor {
             } else if bi == 1 {
                 result[i] = ai;
             } else {
-                panic!("Cannot broadcast {:?} and {:?}", a, b);
+                return Err(BackendError::ShapeMismatch(format!(
+                    "Cannot broadcast {:?} and {:?}", a, b
+                )));
             }
         }
-        result
+        Ok(result)
     }
 
     /// テンソル結合（cat）— shape.rs の GPU 実装に委譲
-    pub fn cat(tensors: &[&MetalTensor], axis: usize) -> MetalTensor {
+    pub fn cat(tensors: &[&MetalTensor], axis: usize) -> BackendResult<MetalTensor> {
         MetalTensor::cat_impl(tensors, axis)
     }
 
     /// narrow（軸のスライス）— shape.rs の GPU 実装に委譲
-    pub fn narrow(&self, axis: usize, start: usize, len: usize) -> MetalTensor {
+    pub fn narrow(&self, axis: usize, start: usize, len: usize) -> BackendResult<MetalTensor> {
         self.slice_impl(axis, start, len)
     }
 
     /// contiguous（メモリ連続化）
-    pub fn contiguous(&self) -> MetalTensor {
-        self.clone_data()
+    pub fn contiguous(&self) -> BackendResult<MetalTensor> {
+        Ok(self.clone_data()?)
     }
 
     /// arange（連番生成）
-    pub fn arange(start: i64, end: i64, dtype: DType) -> MetalTensor {
+    pub fn arange(start: i64, end: i64, dtype: DType) -> BackendResult<MetalTensor> {
         let len = (end - start) as usize;
         match dtype {
             DType::F32 => {
                 let data: Vec<f32> = (start..end).map(|x| x as f32).collect();
-                MetalTensor::from_slice(&data, &[len], dtype)
+                Ok(MetalTensor::from_slice(&data, &[len], dtype))
             }
             DType::I64 => {
                 let data_f32: Vec<f32> = (start..end).map(|x| x as f32).collect();
-                MetalTensor::from_slice(&data_f32, &[len], DType::F32)
+                Ok(MetalTensor::from_slice(&data_f32, &[len], DType::F32))
             }
-            _ => unimplemented!("arange for {:?}", dtype),
+            _ => Err(BackendError::DeviceError(format!("arange for {:?}", dtype))),
         }
     }
 }

@@ -6,12 +6,14 @@
 
 pub mod ops;
 
+
 use crate::tensor::{MetalTensor, TensorRef};
+use tl_backend::BackendResult;
 
 /// 勾配関数のトレイト
 pub trait GradFn {
     /// 出力勾配から入力勾配を計算
-    fn backward(&self, grad_output: &MetalTensor) -> Vec<MetalTensor>;
+    fn backward(&self, grad_output: &MetalTensor) -> BackendResult<Vec<MetalTensor>>;
     
     /// 入力ノードへの Arc 参照
     /// TensorRef (Arc) で入力テンソルの生存を保証する。

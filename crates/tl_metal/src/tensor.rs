@@ -7,6 +7,7 @@ use crate::autograd::GradFn;
 use metal::{Buffer, MTLResourceOptions};
 use std::cell::UnsafeCell;
 use std::sync::Arc;
+use tl_backend::{BackendResult, BackendError};
 
 
 /// Arc ベースのテンソル参照（V5.0 メモリ管理）
@@ -63,7 +64,7 @@ pub struct MetalTensor {
 impl Clone for MetalTensor {
     fn clone(&self) -> Self {
         // データを複製して新しいテンソルを作成
-        self.clone_data()
+        self.clone_data().expect("Clone failed")
     }
 }
 
@@ -72,13 +73,11 @@ impl MetalTensor {
     pub fn uninit(shape: &[usize], dtype: DType) -> Self {
         let device = get_device();
         let size = shape_to_bytes(shape, dtype);
-        // eprintln!("[DEBUG] uninit: shape={:?} dtype={:?} size={}", shape, dtype, size);
         let options = MTLResourceOptions::StorageModeShared;
 
         // プールから取得を試みる
         let buffer = pool_acquire(size, options).unwrap_or_else(|| {
             // プールになければ新規確保
-            // eprintln!("[DEBUG] uninit: allocating new buffer size={}", size);
             Arc::new(device.allocate_buffer(size, options))
         });
 
@@ -104,10 +103,8 @@ impl MetalTensor {
 
     /// スライスからテンソルを作成
     pub fn from_slice<T: Copy + std::fmt::Debug>(data: &[T], shape: &[usize], dtype: DType) -> Self {
-        // eprintln!("[DEBUG] from_slice: shape={:?} dtype={:?} len={}", shape, dtype, data.len());
         let tensor = Self::uninit(shape, dtype);
         let ptr = tensor.buffer.contents() as *mut T;
-        // eprintln!("[DEBUG] from_slice: dst_ptr={:p} src_ptr={:p}", ptr, data.as_ptr());
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
         }
@@ -231,7 +228,7 @@ impl MetalTensor {
     }
 
     /// データを GPU 上で完全にコピー（Blit）
-    pub fn clone_data(&self) -> MetalTensor {
+    pub fn clone_data(&self) -> BackendResult<MetalTensor> {
         let result = MetalTensor::uninit(self.shape(), self.dtype());
         let device = get_device();
         let command_queue = device.command_queue();
@@ -251,7 +248,7 @@ impl MetalTensor {
         command_buffer.commit();
         command_buffer.wait_until_completed();
         
-        result
+        Ok(result)
     }
 
     // ========== Autograd メソッド ==========
@@ -297,21 +294,22 @@ impl MetalTensor {
         }
     }
 
-    pub(crate) fn accumulate_grad(&mut self, grad: MetalTensor) {
+    pub(crate) fn accumulate_grad(&mut self, grad: MetalTensor) -> BackendResult<()> {
         if let Some(ref mut meta) = self.autograd {
             if let Some(ref mut g) = meta.grad {
-                *g = g.add_impl(&grad);
+                *g = g.add_impl(&grad)?;
             } else {
                 meta.grad = Some(grad.shallow_clone());
             }
         }
+        Ok(())
     }
 
     /// backward（逆伝播）— ワークリスト方式（スタックオーバーフロー防止）
     /// TensorRef (Arc) ベースで入力テンソルの生存を保証。
-    pub fn backward(&mut self) {
+    pub fn backward(&mut self) -> BackendResult<()> {
         if !self.requires_grad() {
-            return; // extern "C" から呼ばれるため assert ではなく早期 return
+            return Ok(());
         }
 
         // 初期勾配: すべて 1
@@ -319,31 +317,29 @@ impl MetalTensor {
         let self_ptr = self as *mut MetalTensor;
 
         // ワークリスト: (テンソル生ポインタ, 出力勾配)
-        // 注意: self_ptr はスタック上の参照であり Arc 管理外。
-        // 後続の入力ポインタは TensorRef (Arc) から取得するため安全。
         let mut worklist: Vec<(*mut MetalTensor, MetalTensor)> = vec![(self_ptr, ones)];
 
         while let Some((tensor_ptr, grad_output)) = worklist.pop() {
             let tensor = unsafe { &mut *tensor_ptr };
 
             // grad_fn から入力勾配を計算してワークリストに追加
-            let propagation = {
-                let meta = tensor.autograd.as_ref();
-                meta.and_then(|m| {
-                    m.grad_fn.as_ref().map(|gf| {
-                        let grads = gf.backward(&grad_output);
-                        let inputs = gf.inputs();
-                        (grads, inputs)
-                    })
-                })
+            let propagation = if let Some(meta) = tensor.autograd.as_ref() {
+                if let Some(gf) = meta.grad_fn.as_ref() {
+                    let grads = gf.backward(&grad_output)?; // GradFn::backward now returns BackendResult
+                    let inputs = gf.inputs();
+                    Some((grads, inputs))
+                } else {
+                    None
+                }
+            } else {
+                None
             };
 
-            // 勾配を累積 (grad_output の所有権を渡すため最後に実行)
-            tensor.accumulate_grad(grad_output);
+            // 勾配を累積
+            tensor.accumulate_grad(grad_output)?;
 
             if let Some((grads, inputs)) = propagation {
                 for (input_ref, grad) in inputs.into_iter().zip(grads.into_iter()) {
-                    // TensorRef (Arc) から生ポインタを取得
                     let input_ptr = input_ref.get() as *mut MetalTensor;
                     let input = unsafe { &*input_ptr };
                     if input.requires_grad() {
@@ -352,6 +348,7 @@ impl MetalTensor {
                 }
             }
         }
+        Ok(())
     }
 
     /// 計算グラフから切り離す（データのみの shallow clone）
@@ -369,6 +366,5 @@ impl Drop for MetalTensor {
 }
 
 // GpuTensor トレイトが Send + Sync を要求
-// AutogradMeta は dyn GradFn を含むが JIT はシングルスレッド実行のため安全
 unsafe impl Send for MetalTensor {}
 unsafe impl Sync for MetalTensor {}

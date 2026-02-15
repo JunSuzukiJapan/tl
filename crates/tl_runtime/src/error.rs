@@ -81,6 +81,22 @@ impl std::fmt::Display for RuntimeError {
 
 impl std::error::Error for RuntimeError {}
 
+impl From<tl_backend::BackendError> for RuntimeError {
+    fn from(e: tl_backend::BackendError) -> Self {
+        match e {
+            tl_backend::BackendError::ShapeMismatch(msg) => RuntimeError::ShapeMismatch(msg),
+            tl_backend::BackendError::DeviceError(msg) => RuntimeError::DeviceError(msg),
+            tl_backend::BackendError::AllocationError(msg) => RuntimeError::AllocationError(msg),
+            tl_backend::BackendError::NullPointerError(msg) => RuntimeError::NullPointerError(msg),
+            tl_backend::BackendError::InternalError(msg) => RuntimeError::InternalError(msg),
+            tl_backend::BackendError::IndexOutOfBounds(msg) => RuntimeError::IndexOutOfBounds(msg),
+            tl_backend::BackendError::TypeMismatch(msg) => RuntimeError::TypeMismatch(msg),
+            tl_backend::BackendError::ArgumentError(msg) => RuntimeError::ArgumentError(msg),
+            tl_backend::BackendError::Unknown(msg) => RuntimeError::Unknown(msg),
+        }
+    }
+}
+
 /// Result struct for FFI functions returning a Tensor.
 #[repr(C)]
 pub struct CTensorResult {
@@ -160,6 +176,10 @@ pub fn set_last_error<S: Into<String>>(msg: S, code: RuntimeErrorCode) {
     });
 }
 
+pub fn set_backend_error(e: tl_backend::BackendError) {
+    let runtime_err: RuntimeError = e.into();
+    set_last_error(runtime_err.to_string(), runtime_err.code());
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_get_last_error() -> CTensorResult {

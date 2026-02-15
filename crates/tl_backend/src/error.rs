@@ -5,27 +5,29 @@ use std::fmt;
 /// バックエンドエラー
 #[derive(Debug)]
 pub enum BackendError {
-    ShapeMismatch { expected: Vec<usize>, got: Vec<usize> },
-    DTypeMismatch { expected: String, got: String },
+    ShapeMismatch(String),
     DeviceError(String),
-    UnsupportedOperation(String),
-    OutOfMemory,
-    Other(String),
+    AllocationError(String),
+    NullPointerError(String),
+    InternalError(String),
+    IndexOutOfBounds(String),
+    TypeMismatch(String),
+    ArgumentError(String),
+    Unknown(String),
 }
 
 impl fmt::Display for BackendError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BackendError::ShapeMismatch { expected, got } => {
-                write!(f, "Shape mismatch: expected {:?}, got {:?}", expected, got)
-            }
-            BackendError::DTypeMismatch { expected, got } => {
-                write!(f, "DType mismatch: expected {}, got {}", expected, got)
-            }
-            BackendError::DeviceError(msg) => write!(f, "Device error: {}", msg),
-            BackendError::UnsupportedOperation(op) => write!(f, "Unsupported operation: {}", op),
-            BackendError::OutOfMemory => write!(f, "Out of GPU memory"),
-            BackendError::Other(msg) => write!(f, "{}", msg),
+            BackendError::ShapeMismatch(msg) => write!(f, "ShapeMismatch: {}", msg),
+            BackendError::DeviceError(msg) => write!(f, "DeviceError: {}", msg),
+            BackendError::AllocationError(msg) => write!(f, "AllocationError: {}", msg),
+            BackendError::NullPointerError(msg) => write!(f, "NullPointerError: {}", msg),
+            BackendError::InternalError(msg) => write!(f, "InternalError: {}", msg),
+            BackendError::IndexOutOfBounds(msg) => write!(f, "IndexOutOfBounds: {}", msg),
+            BackendError::TypeMismatch(msg) => write!(f, "TypeMismatch: {}", msg),
+            BackendError::ArgumentError(msg) => write!(f, "ArgumentError: {}", msg),
+            BackendError::Unknown(msg) => write!(f, "Unknown Error: {}", msg),
         }
     }
 }

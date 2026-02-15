@@ -5,6 +5,7 @@ use crate::device::get_device;
 use crate::tensor::MetalTensor;
 use crate::DType;
 use metal::{ComputePipelineState, MTLSize};
+use tl_backend::{BackendResult, BackendError};
 
 /// 特殊演算用 Metal シェーダー
 const SPECIAL_SHADER: &str = r#"
@@ -167,8 +168,15 @@ fn make_i32_buf(v: i32) -> metal::Buffer {
 
 impl MetalTensor {
     /// where_cond — Metal GPU シェーダー実装
-    pub fn where_cond_impl(condition: &MetalTensor, x: &MetalTensor, y: &MetalTensor) -> MetalTensor {
+    pub fn where_cond_impl(condition: &MetalTensor, x: &MetalTensor, y: &MetalTensor) -> BackendResult<MetalTensor> {
         let count = x.elem_count();
+        if condition.elem_count() != count || y.elem_count() != count {
+             return Err(BackendError::ShapeMismatch(format!(
+                 "where_cond: shapes mismatch: cond {:?}, x {:?}, y {:?}",
+                 MetalTensor::shape(condition), MetalTensor::shape(x), MetalTensor::shape(y)
+             )));
+        }
+
         let result = MetalTensor::uninit(MetalTensor::shape(x), MetalTensor::dtype(x));
         let device = get_device();
         let pipeline = get_where_pipeline();
@@ -191,13 +199,15 @@ impl MetalTensor {
 
         command_buffer.commit();
         command_buffer.wait_until_completed();
-        result
+        Ok(result)
     }
 
     /// tril — Metal GPU シェーダー実装
-    pub fn tril_impl(&self, diagonal: i32) -> MetalTensor {
+    pub fn tril_impl(&self, diagonal: i32) -> BackendResult<MetalTensor> {
         let shape = MetalTensor::shape(self);
-        assert!(shape.len() >= 2, "tril requires at least 2D tensor");
+        if shape.len() < 2 {
+             return Err(BackendError::ShapeMismatch(format!("tril requires at least 2D tensor, got {:?}D", shape.len())));
+        }
         
         let rows = shape[shape.len() - 2];
         let cols = shape[shape.len() - 1];
@@ -233,11 +243,18 @@ impl MetalTensor {
 
         command_buffer.commit();
         command_buffer.wait_until_completed();
-        result
+        Ok(result)
     }
 
     /// cross_entropy — GPU element-wise + GPU sumall
-    pub fn cross_entropy_impl(&self, target: &MetalTensor) -> MetalTensor {
+    pub fn cross_entropy_impl(&self, target: &MetalTensor) -> BackendResult<MetalTensor> {
+        if MetalTensor::shape(self) != MetalTensor::shape(target) {
+            return Err(BackendError::ShapeMismatch(format!(
+                "cross_entropy: shape mismatch {:?} vs {:?}",
+                MetalTensor::shape(self), MetalTensor::shape(target)
+            )));
+        }
+
         let count = self.elem_count();
         let temp = MetalTensor::uninit(MetalTensor::shape(self), DType::F32);
         let device = get_device();
@@ -263,15 +280,16 @@ impl MetalTensor {
         command_buffer.wait_until_completed();
 
         // Step 2: GPU sumall で合計 → スカラーテンソル
-        // sumall() は MetalTensor の inherent method
-        let sum_val = temp.sumall();
-        MetalTensor::from_slice(&[sum_val], &[1], DType::F32)
+        let sum_val = temp.sumall_impl()?;
+        Ok(MetalTensor::from_slice(&[sum_val], &[1], DType::F32))
     }
 
     /// repeat_interleave — Metal GPU シェーダー実装
-    pub fn repeat_interleave_impl(&self, repeats: usize, axis: usize) -> MetalTensor {
+    pub fn repeat_interleave_impl(&self, repeats: usize, axis: usize) -> BackendResult<MetalTensor> {
         let shape = MetalTensor::shape(self);
-        assert!(axis < shape.len(), "axis out of range");
+        if axis >= shape.len() {
+             return Err(BackendError::IndexOutOfBounds(format!("repeat_interleave: axis {} out of range", axis)));
+        }
         
         let outer_size: usize = shape[..axis].iter().product::<usize>().max(1);
         let axis_size = shape[axis];
@@ -312,38 +330,33 @@ impl MetalTensor {
 
         command_buffer.commit();
         command_buffer.wait_until_completed();
-        result
+        Ok(result)
     }
 
     /// to_dtype — データ型変換（GPU 上でクローン）
-    pub fn to_dtype(&self, dtype: DType) -> MetalTensor {
+    pub fn to_dtype(&self, dtype: DType) -> BackendResult<MetalTensor> {
         if MetalTensor::dtype(self) == dtype {
-            return self.clone_data();
+                return Ok(self.clone_data()?);
         }
         
         match (MetalTensor::dtype(self), dtype) {
             (DType::F16, DType::F32) => self.cast_impl(crate::shaders::SHADER_CAST_F16_TO_F32, dtype),
             (DType::F32, DType::F16) => self.cast_impl(crate::shaders::SHADER_CAST_F32_TO_F16, dtype),
             _ => {
-                // Fallback: CPU経由で変換するか、未実装としてクローン（従来の挙動）
-                // ただし、異なる型のデータをそのままコピーするとゴミデータになる危険があるが、
-                // 現状のMetal実装の limitations として残す。
-                // 将来的には全ての組み合わせをサポートすべき。
-                self.clone_data()
+                // Fallback: Clone data (limitations)
+                Ok(self.clone_data()?)
             }
         }
     }
 
-    fn cast_impl(&self, shader_name: &str, target_dtype: DType) -> MetalTensor {
+    fn cast_impl(&self, shader_name: &str, target_dtype: DType) -> BackendResult<MetalTensor> {
         let result = MetalTensor::uninit(MetalTensor::shape(self), target_dtype);
         let device = get_device();
         let command_queue = device.command_queue();
         
-        // Use global shaders manager
         let mut shaders = crate::shaders::get_shaders().lock().unwrap();
         let pipeline = shaders
-            .get_pipeline(device.device(), shader_name)
-            .expect("Failed to get cast shader pipeline");
+            .get_pipeline(device.device(), shader_name).map_err(BackendError::InternalError)?;
             
         let command_buffer = command_queue.new_command_buffer();
         let encoder = command_buffer.new_compute_command_encoder();
@@ -359,13 +372,15 @@ impl MetalTensor {
         command_buffer.commit();
         command_buffer.wait_until_completed();
         
-        result
+        Ok(result)
     }
 
     /// index_select — Metal GPU シェーダー実装
-    pub fn index_select_impl(&self, axis: usize, indices: &MetalTensor) -> MetalTensor {
+    pub fn index_select_impl(&self, axis: usize, indices: &MetalTensor) -> BackendResult<MetalTensor> {
         let shape = MetalTensor::shape(self);
-        assert!(axis < shape.len(), "axis out of range");
+        if axis >= shape.len() {
+             return Err(BackendError::IndexOutOfBounds(format!("index_select: axis {} out of range", axis)));
+        }
         
         let num_indices = indices.elem_count();
         let outer_size: usize = shape[..axis].iter().product::<usize>().max(1);
@@ -408,6 +423,6 @@ impl MetalTensor {
 
         command_buffer.commit();
         command_buffer.wait_until_completed();
-        result
+        Ok(result)
     }
 }

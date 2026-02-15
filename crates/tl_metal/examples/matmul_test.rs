@@ -20,7 +20,7 @@ fn main() {
     println!("A (2x3): {:?}", a.to_vec::<f32>());
     println!("B (3x2): {:?}", b.to_vec::<f32>());
 
-    let c = a.matmul(&b);
+    let c = a.matmul(&b).unwrap();
     println!("\nC = A * B (2x2): {:?}", c.to_vec::<f32>());
 
     // 期待値:
@@ -36,7 +36,7 @@ fn main() {
     let big_b = MetalTensor::from_slice(&data, &[size, size], DType::F32);
 
     let start = std::time::Instant::now();
-    let big_c = big_a.matmul(&big_b);
+    let big_c = big_a.matmul(&big_b).unwrap();
     println!("matmul (512x512): {:?}", start.elapsed());
     println!("結果 shape: {:?}", big_c.shape());
 

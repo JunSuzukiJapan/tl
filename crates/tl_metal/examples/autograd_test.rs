@@ -124,6 +124,7 @@ fn main() {
     let grad_a: Vec<f32> = unsafe { &*ffi_ops::tl_metal_grad(a_ptr) }.to_vec();
     println!("∂loss/∂a = {:?} (expected: [3, 3, 3])", grad_a);
     assert_eq!(grad_a, vec![3.0, 3.0, 3.0]);
+
     println!("OK ✓\n");
 
     ffi_ops::tl_metal_free(loss_ptr);

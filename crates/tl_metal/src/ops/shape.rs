@@ -4,6 +4,7 @@
 use crate::device::get_device;
 use crate::tensor::MetalTensor;
 use metal::{ComputePipelineState, MTLSize};
+use tl_backend::{BackendResult, BackendError};
 
 /// 形状操作用 Metal シェーダー
 const SHAPE_OPS_SHADER: &str = r#"
@@ -124,54 +125,66 @@ fn make_u32_array_buf(values: &[u32]) -> metal::Buffer {
 
 impl MetalTensor {
     /// 形状変更（データコピーなし、参照共有）
-    pub fn reshape_impl(&self, new_shape: &[usize]) -> MetalTensor {
+    pub fn reshape_impl(&self, new_shape: &[usize]) -> BackendResult<MetalTensor> {
         let old_size: usize = MetalTensor::shape(self).iter().product();
         let new_size: usize = new_shape.iter().product();
-        assert_eq!(old_size, new_size, "reshape: element count mismatch {} vs {}", old_size, new_size);
+        if old_size != new_size {
+            return Err(BackendError::ShapeMismatch(format!(
+                "reshape: element count mismatch {} vs {}", old_size, new_size
+            )));
+        }
 
-        MetalTensor::from_buffer_shared(
+        Ok(MetalTensor::from_buffer_shared(
             self.buffer_arc().clone(),
             new_shape.to_vec(),
             MetalTensor::dtype(self),
-        )
+        ))
     }
 
     /// squeeze: サイズ1の次元を削除
-    pub fn squeeze_impl(&self, dim: usize) -> MetalTensor {
+    pub fn squeeze_impl(&self, dim: usize) -> BackendResult<MetalTensor> {
         let shape = MetalTensor::shape(self);
-        assert!(dim < shape.len(), "dim out of range");
-        assert_eq!(shape[dim], 1, "squeeze: dimension {} is not 1", dim);
+        if dim >= shape.len() {
+            return Err(BackendError::IndexOutOfBounds(format!("squeeze: dim {} out of range (ndim={})", dim, shape.len())));
+        }
+        if shape[dim] != 1 {
+            return Err(BackendError::ShapeMismatch(format!("squeeze: dimension {} is not 1 (got {})", dim, shape[dim])));
+        }
 
         let mut new_shape: Vec<usize> = shape.to_vec();
         new_shape.remove(dim);
         
-        MetalTensor::from_buffer_shared(
+        Ok(MetalTensor::from_buffer_shared(
             self.buffer_arc().clone(),
             new_shape,
             MetalTensor::dtype(self),
-        )
+        ))
     }
 
     /// unsqueeze: サイズ1の次元を追加
-    pub fn unsqueeze_impl(&self, dim: usize) -> MetalTensor {
+    pub fn unsqueeze_impl(&self, dim: usize) -> BackendResult<MetalTensor> {
         let mut new_shape: Vec<usize> = MetalTensor::shape(self).to_vec();
-        assert!(dim <= new_shape.len(), "dim out of range");
+        if dim > new_shape.len() {
+            return Err(BackendError::IndexOutOfBounds(format!("unsqueeze: dim {} out of range (ndim={})", dim, new_shape.len())));
+        }
         new_shape.insert(dim, 1);
         
-        MetalTensor::from_buffer_shared(
+        Ok(MetalTensor::from_buffer_shared(
             self.buffer_arc().clone(),
             new_shape,
             MetalTensor::dtype(self),
-        )
+        ))
     }
 
     /// transpose — 2D: Metal GPU シェーダー、N-D: CPU フォールバック
-    pub fn transpose_impl(&self, dim0: usize, dim1: usize) -> MetalTensor {
+    pub fn transpose_impl(&self, dim0: usize, dim1: usize) -> BackendResult<MetalTensor> {
         let shape = MetalTensor::shape(self);
-        assert!(dim0 < shape.len() && dim1 < shape.len(), "dim out of range");
+        if dim0 >= shape.len() || dim1 >= shape.len() {
+            return Err(BackendError::IndexOutOfBounds(format!("transpose: dim {} or {} out of range (ndim={})", dim0, dim1, shape.len())));
+        }
 
         if dim0 == dim1 {
-            return self.clone_data();
+            return Ok(self.clone_data()?);
         }
 
         // 2D テンソル → 既存 GPU シェーダー
@@ -209,7 +222,7 @@ impl MetalTensor {
             command_buffer.commit();
             command_buffer.wait_until_completed();
 
-            return result;
+            return Ok(result);
         }
 
         // N-D テンソル → CPU フォールバック（ストライドベースのインデックスマッピング）
@@ -248,21 +261,26 @@ impl MetalTensor {
             dst_data[dst_idx] = src_data[src_idx];
         }
 
-        MetalTensor::from_slice(&dst_data, &new_shape, MetalTensor::dtype(self))
+        Ok(MetalTensor::from_slice(&dst_data, &new_shape, MetalTensor::dtype(self)))
     }
 
     
     /// broadcast_to — Metal GPU シェーダー実装
-    pub fn broadcast_to_impl(&self, shape: &[usize]) -> MetalTensor {
+    pub fn broadcast_to_impl(&self, shape: &[usize]) -> BackendResult<MetalTensor> {
         let src_shape = MetalTensor::shape(self);
         
         // 形状が同じなら何もしない
         if src_shape == shape {
-            return self.clone_data();
+            return Ok(self.clone_data()?);
         }
 
         let src_ndim = src_shape.len();
         let dst_ndim = shape.len();
+        if src_ndim > dst_ndim {
+             return Err(BackendError::ShapeMismatch(format!(
+                 "broadcast_to: src dim {} > dst dim {}", src_ndim, dst_ndim
+             )));
+        }
         let ndim_diff = dst_ndim - src_ndim;
 
         // パディングされたソース形状
@@ -277,6 +295,10 @@ impl MetalTensor {
         for i in (0..dst_ndim).rev() {
             if padded_src_shape[i] == shape[i] as u32 {
                 src_strides[i] = stride;
+            } else if padded_src_shape[i] != 1 {
+                return Err(BackendError::ShapeMismatch(format!(
+                    "broadcast_to: incompatible dimension {} vs {}", padded_src_shape[i], shape[i]
+                )));
             }
             stride *= padded_src_shape[i];
         }
@@ -316,19 +338,25 @@ impl MetalTensor {
         command_buffer.commit();
         command_buffer.wait_until_completed();
 
-        result
+        Ok(result)
     }
     
     /// narrow
-    pub fn narrow_impl(&self, axis: usize, start: usize, len: usize) -> MetalTensor {
+    pub fn narrow_impl(&self, axis: usize, start: usize, len: usize) -> BackendResult<MetalTensor> {
         self.slice_impl(axis, start, len)
     }
     
     /// slice — Metal GPU シェーダー実装
-    pub fn slice_impl(&self, axis: usize, start: usize, len: usize) -> MetalTensor {
+    pub fn slice_impl(&self, axis: usize, start: usize, len: usize) -> BackendResult<MetalTensor> {
         let shape = MetalTensor::shape(self);
-        assert!(axis < shape.len(), "axis out of range");
-        assert!(start + len <= shape[axis], "slice out of range: axis={}, start={}, len={}, shape={:?}", axis, start, len, shape);
+        if axis >= shape.len() {
+            return Err(BackendError::IndexOutOfBounds(format!("slice: axis {} out of range (ndim={})", axis, shape.len())));
+        }
+        if start + len > shape[axis] {
+            return Err(BackendError::IndexOutOfBounds(format!(
+                "slice: slice out of range: axis={}, start={}, len={}, shape={:?}", axis, start, len, shape
+            )));
+        }
         
         let mut new_shape = shape.to_vec();
         new_shape[axis] = len;
@@ -373,17 +401,19 @@ impl MetalTensor {
         command_buffer.commit();
         command_buffer.wait_until_completed();
 
-        result
+        Ok(result)
     }
     
     /// contiguous
-    pub fn contiguous_impl(&self) -> MetalTensor {
-        self.clone_data()
+    pub fn contiguous_impl(&self) -> BackendResult<MetalTensor> {
+        Ok(self.clone_data()?)
     }
     
     /// cat — GPU blit コマンドでバッファ結合（axis=0）、それ以外はスライス+コピー
-    pub fn cat_impl(tensors: &[&MetalTensor], axis: usize) -> MetalTensor {
-        assert!(!tensors.is_empty(), "cat: empty tensor list");
+    pub fn cat_impl(tensors: &[&MetalTensor], axis: usize) -> BackendResult<MetalTensor> {
+        if tensors.is_empty() {
+            return Err(BackendError::ArgumentError("cat: empty tensor list".to_string()));
+        }
         
         let first_shape = MetalTensor::shape(tensors[0]);
         let mut new_shape = first_shape.to_vec();
@@ -393,7 +423,11 @@ impl MetalTensor {
             let ts = MetalTensor::shape(*t);
             for (i, (a, b)) in first_shape.iter().zip(ts.iter()).enumerate() {
                 if i != axis {
-                    assert_eq!(a, b, "cat: shape mismatch at dim {}", i);
+                    if a != b {
+                         return Err(BackendError::ShapeMismatch(format!(
+                             "cat: shape mismatch at dim {} ({} vs {})", i, a, b
+                         )));
+                    }
                 }
             }
             total_axis_size += ts[axis];
@@ -456,6 +490,6 @@ impl MetalTensor {
             command_buffer.wait_until_completed();
         }
 
-        result
+        Ok(result)
     }
 }

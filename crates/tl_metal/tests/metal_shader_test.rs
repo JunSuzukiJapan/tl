@@ -41,7 +41,7 @@ fn assert_tensor_approx_eq(t: &MetalTensor, expected: &[f32], eps: f32) {
 fn test_eq() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[1.0f32, 0.0, 3.0], &[3], DType::F32);
-    let c = a.eq_impl(&b);
+    let c = a.eq_impl(&b).unwrap();
     assert_tensor_approx_eq(&c, &[1.0, 0.0, 1.0], 1e-5);
 }
 
@@ -50,7 +50,7 @@ fn test_eq() {
 fn test_ne() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[1.0f32, 0.0, 3.0], &[3], DType::F32);
-    let c = a.ne_impl(&b);
+    let c = a.ne_impl(&b).unwrap();
     assert_tensor_approx_eq(&c, &[0.0, 1.0, 0.0], 1e-5);
 }
 
@@ -59,7 +59,7 @@ fn test_ne() {
 fn test_lt() {
     let a = MetalTensor::from_slice(&[1.0f32, 5.0, 3.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[2.0f32, 3.0, 3.0], &[3], DType::F32);
-    let c = a.lt_impl(&b);
+    let c = a.lt_impl(&b).unwrap();
     assert_tensor_approx_eq(&c, &[1.0, 0.0, 0.0], 1e-5);
 }
 
@@ -68,7 +68,7 @@ fn test_lt() {
 fn test_le() {
     let a = MetalTensor::from_slice(&[1.0f32, 5.0, 3.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[2.0f32, 3.0, 3.0], &[3], DType::F32);
-    let c = a.le_impl(&b);
+    let c = a.le_impl(&b).unwrap();
     assert_tensor_approx_eq(&c, &[1.0, 0.0, 1.0], 1e-5);
 }
 
@@ -77,7 +77,7 @@ fn test_le() {
 fn test_gt() {
     let a = MetalTensor::from_slice(&[1.0f32, 5.0, 3.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[2.0f32, 3.0, 3.0], &[3], DType::F32);
-    let c = a.gt_impl(&b);
+    let c = a.gt_impl(&b).unwrap();
     assert_tensor_approx_eq(&c, &[0.0, 1.0, 0.0], 1e-5);
 }
 
@@ -86,7 +86,7 @@ fn test_gt() {
 fn test_ge() {
     let a = MetalTensor::from_slice(&[1.0f32, 5.0, 3.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[2.0f32, 3.0, 3.0], &[3], DType::F32);
-    let c = a.ge_impl(&b);
+    let c = a.ge_impl(&b).unwrap();
     assert_tensor_approx_eq(&c, &[0.0, 1.0, 1.0], 1e-5);
 }
 
@@ -95,7 +95,7 @@ fn test_ge() {
 fn test_rem() {
     let a = MetalTensor::from_slice(&[10.0f32, 7.0, 5.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[3.0f32, 2.0, 3.0], &[3], DType::F32);
-    let c = a.rem_impl(&b);
+    let c = a.rem_impl(&b).unwrap();
     assert_tensor_approx_eq(&c, &[1.0, 1.0, 2.0], 1e-5);
 }
 
@@ -111,7 +111,7 @@ fn test_tan() {
         &[2],
         DType::F32,
     );
-    let c = a.tan();
+    let c = a.tan().unwrap();
     assert_tensor_approx_eq(&c, &[0.0, 1.0], 1e-4);
 }
 
@@ -119,7 +119,7 @@ fn test_tan() {
 #[serial]
 fn test_gelu() {
     let a = MetalTensor::from_slice(&[0.0f32, 1.0, -1.0, 2.0], &[4], DType::F32);
-    let c = a.gelu();
+    let c = a.gelu().unwrap();
     let data = c.to_vec::<f32>();
     // GELU(0) = 0
     assert_approx_eq(data[0], 0.0, 1e-4);
@@ -135,7 +135,7 @@ fn test_gelu() {
 #[serial]
 fn test_silu() {
     let a = MetalTensor::from_slice(&[0.0f32, 1.0, -1.0, 2.0], &[4], DType::F32);
-    let c = a.silu_impl();
+    let c = a.silu_impl().unwrap();
     let data = c.to_vec::<f32>();
     // SiLU(x) = x * sigmoid(x) = x / (1 + exp(-x))
     // SiLU(0) = 0
@@ -156,7 +156,7 @@ fn test_silu() {
 #[serial]
 fn test_sub_scalar() {
     let a = MetalTensor::from_slice(&[5.0f32, 6.0, 7.0], &[3], DType::F32);
-    let c = a.sub_scalar(2.0);
+    let c = a.sub_scalar(2.0).unwrap();
     assert_tensor_approx_eq(&c, &[3.0, 4.0, 5.0], 1e-5);
 }
 
@@ -164,7 +164,7 @@ fn test_sub_scalar() {
 #[serial]
 fn test_div_scalar() {
     let a = MetalTensor::from_slice(&[10.0f32, 20.0, 30.0], &[3], DType::F32);
-    let c = a.div_scalar(5.0);
+    let c = a.div_scalar(5.0).unwrap();
     assert_tensor_approx_eq(&c, &[2.0, 4.0, 6.0], 1e-5);
 }
 
@@ -172,7 +172,7 @@ fn test_div_scalar() {
 #[serial]
 fn test_pow_scalar() {
     let a = MetalTensor::from_slice(&[2.0f32, 3.0, 4.0], &[3], DType::F32);
-    let c = a.pow_scalar_impl(2.0);
+    let c = a.pow_scalar_impl(2.0).unwrap();
     assert_tensor_approx_eq(&c, &[4.0, 9.0, 16.0], 1e-4);
 }
 
@@ -180,7 +180,7 @@ fn test_pow_scalar() {
 #[serial]
 fn test_fmod_scalar() {
     let a = MetalTensor::from_slice(&[10.0f32, 7.0, 5.0], &[3], DType::F32);
-    let c = a.fmod_scalar_impl(3.0);
+    let c = a.fmod_scalar_impl(3.0).unwrap();
     assert_tensor_approx_eq(&c, &[1.0, 1.0, 2.0], 1e-5);
 }
 
@@ -193,7 +193,7 @@ fn test_fmod_scalar() {
 fn test_pow_binary() {
     let a = MetalTensor::from_slice(&[2.0f32, 3.0, 4.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[3.0f32, 2.0, 1.0], &[3], DType::F32);
-    let c = a.pow(&b);
+    let c = a.pow(&b).unwrap();
     assert_tensor_approx_eq(&c, &[8.0, 9.0, 4.0], 1e-4);
 }
 
@@ -209,7 +209,7 @@ fn test_min_axis() {
         &[2, 3],
         DType::F32,
     );
-    let m = a.min(1);
+    let m = a.min(1).unwrap();
     assert_eq!(m.shape(), &[2]);
     assert_tensor_approx_eq(&m, &[1.0, 4.0], 1e-5);
 }
@@ -222,7 +222,7 @@ fn test_argmax_axis() {
         &[2, 3],
         DType::F32,
     );
-    let idx = a.argmax(1);
+    let idx = a.argmax(1).unwrap();
     assert_eq!(idx.shape(), &[2]);
     // 行0: max=5.0 at idx 1, 行1: max=6.0 at idx 2
     assert_tensor_approx_eq(&idx, &[1.0, 2.0], 1e-5);
@@ -236,7 +236,7 @@ fn test_argmin_axis() {
         &[2, 3],
         DType::F32,
     );
-    let idx = a.argmin(1);
+    let idx = a.argmin(1).unwrap();
     assert_eq!(idx.shape(), &[2]);
     // 行0: min=1.0 at idx 1, 行1: min=4.0 at idx 1
     assert_tensor_approx_eq(&idx, &[1.0, 1.0], 1e-5);
@@ -250,7 +250,7 @@ fn test_mean_axis() {
         &[2, 3],
         DType::F32,
     );
-    let m = a.mean(1);
+    let m = a.mean(1).unwrap();
     assert_eq!(m.shape(), &[2]);
     assert_tensor_approx_eq(&m, &[2.0, 5.0], 1e-5);
 }
@@ -263,7 +263,7 @@ fn test_argmax_all() {
         &[6],
         DType::F32,
     );
-    let idx = a.argmax_all();
+    let idx = a.argmax_all().unwrap();
     assert_eq!(idx, 5); // 6.0 is at index 5
 }
 
@@ -275,7 +275,7 @@ fn test_argmin_all() {
         &[5],
         DType::F32,
     );
-    let idx = a.argmin_all_impl();
+    let idx = a.argmin_all_impl().unwrap();
     assert_eq!(idx, 1); // 1.0 is at index 1
 }
 
@@ -292,7 +292,7 @@ fn test_rms_norm() {
         &[2, 4],
         DType::F32,
     );
-    let output = input.rms_norm_impl(1e-5);
+    let output = input.rms_norm_impl(1e-5).unwrap();
     assert_eq!(output.shape(), &[2, 4]);
 
     let data = output.to_vec::<f32>();
@@ -318,7 +318,7 @@ fn test_rope_cos_sin() {
         4,     // seq_len
         8,     // head_dim
         10000.0, // base
-    );
+    ).unwrap();
 
     // 出力形状: [seq_len, half_dim] = [4, 4]
     assert_eq!(cos_table.shape(), &[4, 4]);
@@ -347,18 +347,18 @@ fn test_apply_rope() {
         seq_len,
         head_dim,
         10000.0,
-    );
+    ).unwrap();
 
-    // 入力: [head_dim] = [4]
+    // 入力: [1, head_dim] = [1, 4]
     let input = MetalTensor::from_slice(
         &[1.0f32, 2.0, 3.0, 4.0],
-        &[head_dim],
+        &[1, head_dim],
         DType::F32,
     );
 
     // pos=0 での RoPE 適用 (cos=1, sin=0 なので入力不変)
-    let output = input.apply_rope_impl(&cos_table, &sin_table, 0);
-    assert_eq!(output.shape(), &[head_dim]);
+    let output = input.apply_rope_impl(&cos_table, &sin_table, 0).unwrap();
+    assert_eq!(output.shape(), &[1, head_dim]);
 
     let data = output.to_vec::<f32>();
     // pos=0: x1' = x1*cos - x2*sin = x1*1 - x2*0 = x1
@@ -372,7 +372,7 @@ fn test_apply_rope() {
 #[test]
 #[serial]
 fn test_causal_mask() {
-    let mask = MetalTensor::causal_mask_impl(4);
+    let mask = MetalTensor::causal_mask_impl(4).unwrap();
     assert_eq!(mask.shape(), &[4, 4]);
 
     let data = mask.to_vec::<f32>();
@@ -426,7 +426,7 @@ fn test_batch_matmul_3d_2d() {
         DType::F32,
     );
 
-    let c = a.matmul(&b);
+    let c = a.matmul(&b).unwrap();
     assert_eq!(c.shape(), &[2, 2, 2]);
 
     let data = c.to_vec::<f32>();
@@ -473,7 +473,7 @@ fn test_batch_matmul_3d_3d() {
         DType::F32,
     );
 
-    let c = a.matmul(&b);
+    let c = a.matmul(&b).unwrap();
     assert_eq!(c.shape(), &[2, 2, 2]);
 
     let data = c.to_vec::<f32>();
@@ -503,7 +503,7 @@ fn test_large_tensor_add() {
     let b_data: Vec<f32> = (0..n).map(|i| (n - i) as f32).collect();
     let a = MetalTensor::from_slice(&a_data, &[n], DType::F32);
     let b = MetalTensor::from_slice(&b_data, &[n], DType::F32);
-    let c = a.add(&b);
+    let c = a.add(&b).unwrap();
 
     let result = c.to_vec::<f32>();
     assert_eq!(result.len(), n);
@@ -526,7 +526,7 @@ fn test_negative_axis_reduction() {
         DType::F32,
     );
     // axis=-1 は axis=1 と同等
-    let s = a.sum(-1);
+    let s = a.sum(-1).unwrap();
     assert_eq!(s.shape(), &[2]);
     assert_tensor_approx_eq(&s, &[6.0, 15.0], 1e-5);
 }
@@ -543,7 +543,7 @@ fn test_binary_broadcast_auto() {
     let b = MetalTensor::from_slice(&[10.0f32, 20.0, 30.0], &[3], DType::F32);
 
     // binary_op 内部で自動ブロードキャスト
-    let c = a.add(&b);
+    let c = a.add(&b).unwrap();
     assert_eq!(c.shape(), &[2, 3]);
     assert_tensor_approx_eq(&c, &[11.0, 22.0, 33.0, 14.0, 25.0, 36.0], 1e-5);
 }
@@ -559,7 +559,7 @@ fn test_softmax_2d() {
     );
 
     // axis=1 (各行に対して softmax)
-    let s = a.softmax(1);
+    let s = a.softmax(1).unwrap();
     assert_eq!(s.shape(), &[2, 3]);
 
     let data = s.to_vec::<f32>();
@@ -597,11 +597,11 @@ fn test_comparison_ops_2d() {
         DType::F32,
     );
 
-    let lt = a.lt_impl(&b);
+    let lt = a.lt_impl(&b).unwrap();
     assert_eq!(lt.shape(), &[2, 2]);
     assert_tensor_approx_eq(&lt, &[1.0, 0.0, 0.0, 1.0], 1e-5);
 
-    let eq = a.eq_impl(&b);
+    let eq = a.eq_impl(&b).unwrap();
     assert_tensor_approx_eq(&eq, &[0.0, 1.0, 0.0, 0.0], 1e-5);
 }
 
@@ -618,7 +618,7 @@ fn test_sum_axis0() {
         &[2, 3],
         DType::F32,
     );
-    let s = a.sum(0);
+    let s = a.sum(0).unwrap();
     assert_eq!(s.shape(), &[3]);
     // 列ごとの合計: [1+4, 2+5, 3+6] = [5, 7, 9]
     assert_tensor_approx_eq(&s, &[5.0, 7.0, 9.0], 1e-5);
@@ -632,7 +632,7 @@ fn test_max_axis0() {
         &[2, 3],
         DType::F32,
     );
-    let m = a.max(0);
+    let m = a.max(0).unwrap();
     assert_eq!(m.shape(), &[3]);
     assert_tensor_approx_eq(&m, &[3.0, 4.0, 5.0], 1e-5);
 }
@@ -645,7 +645,7 @@ fn test_min_axis0() {
         &[2, 3],
         DType::F32,
     );
-    let m = a.min(0);
+    let m = a.min(0).unwrap();
     assert_eq!(m.shape(), &[3]);
     assert_tensor_approx_eq(&m, &[2.0, 1.0, 0.0], 1e-5);
 }
@@ -673,7 +673,7 @@ fn test_conv2d_numerical() {
         &[1, 1, 2, 2],
         DType::F32,
     );
-    let output = input.conv2d( &kernel, (1, 1), (0, 0));
+    let output = input.conv2d(&kernel, (1, 1), (0, 0)).unwrap();
     assert_eq!(output.shape(), &[1, 1, 2, 2]);
 
     // 手計算:
@@ -692,7 +692,7 @@ fn test_conv2d_numerical() {
 #[serial]
 fn test_tril_positive_diagonal() {
     let a = MetalTensor::ones(&[3, 3], DType::F32);
-    let c = a.tril(1);
+    let c = a.tril(1).unwrap();
     // diagonal=1: 主対角線 + 1つ上の対角線まで保持
     assert_tensor_approx_eq(&c, &[
         1.0, 1.0, 0.0,
@@ -705,7 +705,7 @@ fn test_tril_positive_diagonal() {
 #[serial]
 fn test_tril_negative_diagonal() {
     let a = MetalTensor::ones(&[3, 3], DType::F32);
-    let c = a.tril(-1);
+    let c = a.tril(-1).unwrap();
     // diagonal=-1: 主対角線の1つ下から保持
     assert_tensor_approx_eq(&c, &[
         0.0, 0.0, 0.0,

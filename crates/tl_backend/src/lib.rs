@@ -13,7 +13,7 @@ pub use dtype::DType;
 pub use tensor::GpuTensor;
 pub use autograd::{GpuAutograd, GpuVar};
 pub use error::BackendError;
-pub use device::IDevice;
+pub use device::{IDevice, BackendResult};
 
 /// GPU バックエンドの種類
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

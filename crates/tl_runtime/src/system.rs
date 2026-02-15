@@ -259,7 +259,15 @@ pub extern "C" fn tl_qtensor_matmul(
             _ => unreachable!(),
         };
         
-        crate::make_metal_tensor(result)
+        let result_tensor = match result {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("Error: tl_qtensor_matmul failed: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        
+        crate::make_metal_tensor(result_tensor)
     }
 }
 

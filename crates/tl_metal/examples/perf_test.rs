@@ -25,22 +25,22 @@ fn main() {
 
     // add
     let start = Instant::now();
-    let c = a.add(&b);
+    let c = a.add(&b).unwrap();
     println!("add: {:?}", start.elapsed());
 
     // mul
     let start = Instant::now();
-    let _d = a.mul(&b);
+    let _d = a.mul(&b).unwrap();
     println!("mul: {:?}", start.elapsed());
 
     // exp
     let start = Instant::now();
-    let _e = a.exp();
+    let _e = a.exp().unwrap();
     println!("exp: {:?}", start.elapsed());
 
     // sqrt
     let start = Instant::now();
-    let _f = a.sqrt();
+    let _f = a.sqrt().unwrap();
     println!("sqrt: {:?}", start.elapsed());
 
     // 結果確認（先頭5要素）
@@ -59,7 +59,7 @@ fn main() {
     for i in 0..10 {
         let x = MetalTensor::zeros(&[size], DType::F32);
         let y = MetalTensor::zeros(&[size], DType::F32);
-        let z = x.add(&y);
+        let z = x.add(&y).unwrap();
         drop(x);
         drop(y);
         drop(z);

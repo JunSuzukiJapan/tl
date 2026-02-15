@@ -4,6 +4,7 @@
 use crate::device::get_device;
 use crate::{MetalTensor, DType};
 use metal::{ComputePipelineState, MTLSize};
+use tl_backend::{BackendResult, BackendError};
 
 // ========== Metal シェーダーソース ==========
 
@@ -393,12 +394,21 @@ impl MetalTensor {
         weight: &MetalTensor,
         stride: (usize, usize),
         padding: (usize, usize),
-    ) -> MetalTensor {
+    ) -> BackendResult<MetalTensor> {
         let in_shape = MetalTensor::shape(self);
         let w_shape = weight.shape();
         
+        if in_shape.len() != 4 || w_shape.len() != 4 {
+             return Err(BackendError::ShapeMismatch(format!("conv2d: inputs must be 4D (got {:?} and {:?})", in_shape, w_shape)));
+        }
+
         let (n, c_in, h_in, w_in) = (in_shape[0], in_shape[1], in_shape[2], in_shape[3]);
-        let (c_out, _, kh, kw) = (w_shape[0], w_shape[1], w_shape[2], w_shape[3]);
+        let (c_out, w_c_in, kh, kw) = (w_shape[0], w_shape[1], w_shape[2], w_shape[3]);
+        
+        if c_in != w_c_in {
+             return Err(BackendError::ShapeMismatch(format!("conv2d: channel mismatch: input {} vs weight {}", c_in, w_c_in)));
+        }
+        
         let (stride_h, stride_w) = stride;
         let (pad_h, pad_w) = padding;
         
@@ -443,7 +453,7 @@ impl MetalTensor {
         command_buffer.commit();
         command_buffer.wait_until_completed();
         
-        result
+        Ok(result)
     }
     
     /// BatchNorm: バッチ正規化 (Metal GPU 実装)
@@ -457,8 +467,11 @@ impl MetalTensor {
         running_mean: &MetalTensor,
         running_var: &MetalTensor,
         eps: f32,
-    ) -> MetalTensor {
+    ) -> BackendResult<MetalTensor> {
         let shape = MetalTensor::shape(self);
+        if shape.len() != 4 {
+             return Err(BackendError::ShapeMismatch(format!("batch_norm: input must be 4D, got {:?}D", shape.len())));
+        }
         let (n, c, h, w) = (shape[0], shape[1], shape[2], shape[3]);
         let spatial = h * w;
         
@@ -504,7 +517,7 @@ impl MetalTensor {
         command_buffer.commit();
         command_buffer.wait_until_completed();
         
-        result
+        Ok(result)
     }
     
     /// LayerNorm: レイヤー正規化 (Metal GPU 実装, 2パス)
@@ -513,7 +526,7 @@ impl MetalTensor {
         gamma: &MetalTensor,
         beta: &MetalTensor,
         eps: f32,
-    ) -> MetalTensor {
+    ) -> BackendResult<MetalTensor> {
         let shape = MetalTensor::shape(self);
         let n = shape[0];
         let rest: usize = shape[1..].iter().product();
@@ -588,7 +601,7 @@ impl MetalTensor {
             command_buffer.wait_until_completed();
         }
         
-        result
+        Ok(result)
     }
     
     /// MaxPool2D: 最大プーリング (Metal GPU 実装, padding = 0)
@@ -596,8 +609,11 @@ impl MetalTensor {
         &self,
         kernel: (usize, usize),
         stride: (usize, usize),
-    ) -> MetalTensor {
+    ) -> BackendResult<MetalTensor> {
         let shape = MetalTensor::shape(self);
+        if shape.len() != 4 {
+             return Err(BackendError::ShapeMismatch(format!("max_pool2d: input must be 4D, got {:?}D", shape.len())));
+        }
         let (n, c, h_in, w_in) = (shape[0], shape[1], shape[2], shape[3]);
         let (kh, kw) = kernel;
         let (stride_h, stride_w) = stride;
@@ -641,7 +657,7 @@ impl MetalTensor {
         command_buffer.commit();
         command_buffer.wait_until_completed();
         
-        result
+        Ok(result)
     }
     
     /// AvgPool2D: 平均プーリング (Metal GPU 実装, padding = 0)
@@ -649,8 +665,12 @@ impl MetalTensor {
         &self,
         kernel: (usize, usize),
         stride: (usize, usize),
-    ) -> MetalTensor {
+    ) -> BackendResult<MetalTensor> {
         let shape = MetalTensor::shape(self);
+        if shape.len() != 4 {
+             return Err(BackendError::ShapeMismatch(format!("avg_pool2d: input must be 4D, got {:?}D", shape.len())));
+        }
+
         let (n, c, h_in, w_in) = (shape[0], shape[1], shape[2], shape[3]);
         let (kh, kw) = kernel;
         let (stride_h, stride_w) = stride;
@@ -693,13 +713,13 @@ impl MetalTensor {
         command_buffer.commit();
         command_buffer.wait_until_completed();
         
-        result
+        Ok(result)
     }
     
     /// Dropout: ドロップアウト (Metal GPU 実装, Philox ハッシュ乱数)
-    pub fn dropout_impl(&self, p: f32, training: bool) -> MetalTensor {
+    pub fn dropout_impl(&self, p: f32, training: bool) -> BackendResult<MetalTensor> {
         if !training || p <= 0.0 {
-            return self.clone();
+            return Ok(self.clone());
         }
         
         let count: usize = MetalTensor::shape(self).iter().product();
@@ -746,6 +766,6 @@ impl MetalTensor {
         command_buffer.commit();
         command_buffer.wait_until_completed();
         
-        result
+        Ok(result)
     }
 }

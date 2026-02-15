@@ -5,6 +5,7 @@ use crate::device::get_device;
 use crate::tensor::MetalTensor;
 use crate::DType;
 use metal::{ComputePipelineState, MTLSize};
+use tl_backend::{BackendResult, BackendError};
 
 /// Softmax 用 Metal シェーダー（汎用 N-D 対応）
 /// outer × axis × inner の 3 軸分解パターン
@@ -89,17 +90,22 @@ fn make_u32_buf(v: u32) -> metal::Buffer {
 impl MetalTensor {
     /// Softmax（軸指定）— Metal GPU 実装
     /// 汎用 N-D 対応: outer × axis × inner の 3 軸分解
-    pub fn softmax_impl(&self, axis: i32) -> MetalTensor {
-        assert_eq!(MetalTensor::dtype(self), DType::F32, "softmax only supports F32");
+    pub fn softmax_impl(&self, axis: i32) -> BackendResult<MetalTensor> {
+        if self.dtype() != DType::F32 {
+            return Err(BackendError::TypeMismatch(format!("softmax only supports F32, got {:?}", self.dtype())));
+        }
         
         let shape = MetalTensor::shape(self);
         let ndim = shape.len();
-        let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
-        assert!(axis < ndim, "axis out of range");
+        let axis_idx = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
+        
+        if axis_idx >= ndim {
+            return Err(BackendError::IndexOutOfBounds(format!("softmax axis out of range: {} (ndim={})", axis, ndim)));
+        }
 
-        let outer_size: usize = shape[..axis].iter().product::<usize>().max(1);
-        let axis_size = shape[axis];
-        let inner_size: usize = shape[axis + 1..].iter().product::<usize>().max(1);
+        let outer_size: usize = shape[..axis_idx].iter().product::<usize>().max(1);
+        let axis_size = shape[axis_idx];
+        let inner_size: usize = shape[axis_idx + 1..].iter().product::<usize>().max(1);
 
         let result = MetalTensor::uninit(shape, DType::F32);
         let device = get_device();
@@ -137,6 +143,6 @@ impl MetalTensor {
         command_buffer.commit();
         command_buffer.wait_until_completed();
 
-        result
+        Ok(result)
     }
 }

@@ -5,6 +5,7 @@ use crate::device::get_device;
 use crate::tensor::MetalTensor;
 use crate::DType;
 use metal::{ComputePipelineState, MTLSize};
+use tl_backend::{BackendResult, BackendError};
 
 /// LLM 演算用 Metal シェーダー
 const LLM_SHADER: &str = r#"
@@ -178,8 +179,11 @@ impl MetalTensor {
     /// RMSNorm — Metal GPU 2-pass 実装
     /// Pass 1: mean(x²) を各行で計算
     /// Pass 2: x / sqrt(mean + eps)
-    pub fn rms_norm_impl(&self, eps: f32) -> MetalTensor {
+    pub fn rms_norm_impl(&self, eps: f32) -> BackendResult<MetalTensor> {
         let shape = MetalTensor::shape(self);
+        if shape.is_empty() {
+            return Err(BackendError::ShapeMismatch("rms_norm: input cannot be empty".to_string()));
+        }
         let dim = *shape.last().unwrap();
         let outer_size: usize = shape.iter().take(shape.len() - 1).product::<usize>().max(1);
         
@@ -237,12 +241,12 @@ impl MetalTensor {
             cb.wait_until_completed();
         }
         
-        result
+        Ok(result)
     }
     
     /// RoPE cos/sin テーブル生成 — Metal GPU 実装
     /// 2 つのテンソル [seq_len, half_dim] を返す (cos, sin)
-    pub fn rope_cos_sin_impl(seq_len: usize, head_dim: usize, base: f32) -> (MetalTensor, MetalTensor) {
+    pub fn rope_cos_sin_impl(seq_len: usize, head_dim: usize, base: f32) -> BackendResult<(MetalTensor, MetalTensor)> {
         let half_dim = head_dim / 2;
         let cos_tensor = MetalTensor::uninit(&[seq_len, half_dim], DType::F32);
         let sin_tensor = MetalTensor::uninit(&[seq_len, half_dim], DType::F32);
@@ -274,14 +278,17 @@ impl MetalTensor {
         cb.commit();
         cb.wait_until_completed();
         
-        (cos_tensor, sin_tensor)
+        Ok((cos_tensor, sin_tensor))
     }
     
     /// RoPE 適用 — Metal GPU 実装 (4D対応)
     /// input: [batch, seq_len, n_heads, head_dim] or [1, seq_len, n_heads, head_dim]
     /// cos/sin: [seq_len, half_dim] (既にnarrowされたスライス)
-    pub fn apply_rope_impl(&self, cos_table: &MetalTensor, sin_table: &MetalTensor, _pos: usize) -> MetalTensor {
+    pub fn apply_rope_impl(&self, cos_table: &MetalTensor, sin_table: &MetalTensor, _pos: usize) -> BackendResult<MetalTensor> {
         let shape = MetalTensor::shape(self);
+        if shape.is_empty() {
+             return Err(BackendError::ShapeMismatch("apply_rope: input cannot be empty".to_string()));
+        }
         let head_dim = *shape.last().unwrap();
         let half_dim = head_dim / 2;
         
@@ -292,8 +299,10 @@ impl MetalTensor {
             (shape[1], shape[2])
         } else if shape.len() == 3 {
             (shape[0], shape[1])
+        } else if shape.len() == 2 {
+            (shape[0], 1)
         } else {
-            (1, 1)
+            return Err(BackendError::ShapeMismatch(format!("apply_rope: input must be at least 2D, got: {:?}", shape)));
         };
         
         let total_outer = seq_len * n_heads;
@@ -330,11 +339,11 @@ impl MetalTensor {
         cb.commit();
         cb.wait_until_completed();
         
-        result
+        Ok(result)
     }
     
     /// CausalMask 生成 — Metal GPU 実装
-    pub fn causal_mask_impl(n: usize) -> MetalTensor {
+    pub fn causal_mask_impl(n: usize) -> BackendResult<MetalTensor> {
         let result = MetalTensor::uninit(&[n, n], DType::F32);
         let device = get_device();
         let pipeline = get_causal_mask_pipeline();
@@ -358,6 +367,6 @@ impl MetalTensor {
         cb.commit();
         cb.wait_until_completed();
         
-        result
+        Ok(result)
     }
 }

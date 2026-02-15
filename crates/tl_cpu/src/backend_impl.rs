@@ -32,16 +32,16 @@ impl GpuTensor for CpuTensor {
     fn dtype(&self) -> BackendDType { to_backend_dtype(CpuTensor::dtype(self)) }
     fn to_vec_f32(&self) -> Vec<f32> { self.to_vec::<f32>() }
     fn to_vec_i64(&self) -> Vec<i64> { self.to_vec::<f32>().into_iter().map(|x| x as i64).collect() }
-    fn from_slice_f32(data: &[f32], shape: &[usize]) -> Self { CpuTensor::from_slice(data, shape, DType::F32) }
-    fn from_slice_i64(data: &[i64], shape: &[usize]) -> Self {
+    fn from_slice_f32(data: &[f32], shape: &[usize]) -> tl_backend::BackendResult<Self> { Ok(CpuTensor::from_slice(data, shape, DType::F32)) }
+    fn from_slice_i64(data: &[i64], shape: &[usize]) -> tl_backend::BackendResult<Self> {
         let f32_data: Vec<f32> = data.iter().map(|x| *x as f32).collect();
-        CpuTensor::from_slice(&f32_data, shape, DType::F32)
+        Ok(CpuTensor::from_slice(&f32_data, shape, DType::F32))
     }
-    fn zeros(shape: &[usize], dtype: BackendDType) -> Self { CpuTensor::zeros(shape, from_backend_dtype(dtype)) }
-    fn ones(shape: &[usize], dtype: BackendDType) -> Self { CpuTensor::ones(shape, from_backend_dtype(dtype)) }
-    fn randn(shape: &[usize], dtype: BackendDType) -> Self { CpuTensor::randn(shape, from_backend_dtype(dtype)) }
-    fn arange(start: i64, end: i64, dtype: BackendDType) -> Self { CpuTensor::arange(start, end, from_backend_dtype(dtype)) }
-    fn clone_data(&self) -> Self { CpuTensor::clone_data(self) }
+    fn zeros(shape: &[usize], dtype: BackendDType) -> tl_backend::BackendResult<Self> { Ok(CpuTensor::zeros(shape, from_backend_dtype(dtype))) }
+    fn ones(shape: &[usize], dtype: BackendDType) -> tl_backend::BackendResult<Self> { Ok(CpuTensor::ones(shape, from_backend_dtype(dtype))) }
+    fn randn(shape: &[usize], dtype: BackendDType) -> tl_backend::BackendResult<Self> { Ok(CpuTensor::randn(shape, from_backend_dtype(dtype))) }
+    fn arange(start: i64, end: i64, dtype: BackendDType) -> tl_backend::BackendResult<Self> { Ok(CpuTensor::arange(start, end, from_backend_dtype(dtype))) }
+    fn clone_data(&self) -> tl_backend::BackendResult<Self> { Ok(CpuTensor::clone_data(self)) }
 }
 
 impl CpuTensor {

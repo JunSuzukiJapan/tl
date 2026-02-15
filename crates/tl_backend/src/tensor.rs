@@ -1,13 +1,14 @@
 //! GpuTensor トレイト定義
 
 use crate::dtype::DType;
+use crate::BackendResult;
 
 /// GPU テンソルの基本インターフェース
 pub trait GpuTensor: Clone + Send + Sync + Sized {
-    /// 形状を取得
+    /// 形状を取得 (メタデータなので Result 不要)
     fn shape(&self) -> &[usize];
     
-    /// データ型を取得
+    /// データ型を取得 (メタデータなので Result 不要)
     fn dtype(&self) -> DType;
     
     /// 要素数を取得
@@ -22,25 +23,25 @@ pub trait GpuTensor: Clone + Send + Sync + Sized {
     fn to_vec_i64(&self) -> Vec<i64>;
     
     /// F32 スライスからテンソルを作成
-    fn from_slice_f32(data: &[f32], shape: &[usize]) -> Self;
+    fn from_slice_f32(data: &[f32], shape: &[usize]) -> BackendResult<Self>;
     
     /// I64 スライスからテンソルを作成
-    fn from_slice_i64(data: &[i64], shape: &[usize]) -> Self;
+    fn from_slice_i64(data: &[i64], shape: &[usize]) -> BackendResult<Self>;
     
     /// ゼロで初期化
-    fn zeros(shape: &[usize], dtype: DType) -> Self;
+    fn zeros(shape: &[usize], dtype: DType) -> BackendResult<Self>;
     
     /// 1 で初期化
-    fn ones(shape: &[usize], dtype: DType) -> Self;
+    fn ones(shape: &[usize], dtype: DType) -> BackendResult<Self>;
     
     /// 正規分布乱数で初期化
-    fn randn(shape: &[usize], dtype: DType) -> Self;
+    fn randn(shape: &[usize], dtype: DType) -> BackendResult<Self>;
     
     /// 連番生成
-    fn arange(start: i64, end: i64, dtype: DType) -> Self;
+    fn arange(start: i64, end: i64, dtype: DType) -> BackendResult<Self>;
     
     /// データを複製
-    fn clone_data(&self) -> Self;
+    fn clone_data(&self) -> BackendResult<Self>;
 
     /// テンソルの Box ポインタを解放し、Drop を発動する。
     /// GPU: Drop → pool_release（プール返却）

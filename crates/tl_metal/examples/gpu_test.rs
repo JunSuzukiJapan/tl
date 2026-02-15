@@ -16,7 +16,7 @@ fn main() {
     
     // Test 2: GPU add
     let b = MetalTensor::from_slice(&[4.0f32, 5.0, 6.0], &[3], DType::F32);
-    let c = a.add(&b);
+    let c = a.add(&b).unwrap();
     let c_data = c.to_vec::<f32>();
     println!("Test 2 - GPU add:");
     println!("  a: {:?}", a.to_vec::<f32>());

@@ -4,6 +4,7 @@ use crate::device::get_device;
 use crate::tensor::MetalTensor;
 use crate::DType;
 use metal::{ComputePipelineState, MTLSize};
+use tl_backend::{BackendResult, BackendError};
 
 /// Matmul 用 Shader ソース
 const MATMUL_SHADER: &str = r#"
@@ -238,9 +239,10 @@ impl MetalTensor {
     /// 2D×2D: [M, K] × [K, N] → [M, N]
     /// 3D×2D: [B, M, K] × [K, N] → [B, M, N] (batch matmul)
     /// 3D×3D: [B, M, K] × [B, K, N] → [B, M, N] (batch matmul)
-    pub fn matmul_impl(&self, other: &MetalTensor) -> MetalTensor {
-        assert_eq!(MetalTensor::dtype(self), DType::F32, "matmul only supports F32");
-        assert_eq!(MetalTensor::dtype(other), DType::F32, "matmul only supports F32");
+    pub fn matmul_impl(&self, other: &MetalTensor) -> BackendResult<MetalTensor> {
+        if self.dtype() != DType::F32 || other.dtype() != DType::F32 {
+            return Err(BackendError::TypeMismatch("matmul only supports F32".to_string()));
+        }
 
         let self_shape = MetalTensor::shape(self);
         let other_shape = MetalTensor::shape(other);
@@ -252,7 +254,11 @@ impl MetalTensor {
             let k = self_shape[2];
             let k2 = other_shape[0];
             let n = other_shape[1];
-            assert_eq!(k, k2, "Inner dimensions must match: {} vs {}", k, k2);
+            if k != k2 {
+                return Err(BackendError::ShapeMismatch(format!(
+                    "matmul: Inner dimensions must match: {} vs {}", k, k2
+                )));
+            }
 
             let result = MetalTensor::uninit(&[batch, m, n], DType::F32);
             let device = get_device();
@@ -301,7 +307,7 @@ impl MetalTensor {
             command_buffer.commit();
             command_buffer.wait_until_completed();
 
-            return result;
+            return Ok(result);
         }
 
         // 3D × 3D: batch matmul
@@ -310,10 +316,11 @@ impl MetalTensor {
             let other_batch = other_shape[0];
             
             // Broadcasting check
-            assert!(
-                batch == other_batch || batch == 1 || other_batch == 1,
-                "Batch dimensions must match or be broadcastable: {} vs {}", batch, other_batch
-            );
+            if batch != other_batch && batch != 1 && other_batch != 1 {
+                 return Err(BackendError::ShapeMismatch(format!(
+                     "matmul: Batch dimensions must match or be broadcastable: {} vs {}", batch, other_batch
+                 )));
+            }
             
             let out_batch = usize::max(batch, other_batch);
             
@@ -321,7 +328,11 @@ impl MetalTensor {
             let k = self_shape[2];
             let k2 = other_shape[1];
             let n = other_shape[2];
-            assert_eq!(k, k2, "Inner dimensions must match: {} vs {}", k, k2);
+            if k != k2 {
+                return Err(BackendError::ShapeMismatch(format!(
+                    "matmul: Inner dimensions must match: {} vs {}", k, k2
+                )));
+            }
 
             let result = MetalTensor::uninit(&[out_batch, m, n], DType::F32);
             let device = get_device();
@@ -374,7 +385,7 @@ impl MetalTensor {
             command_buffer.commit();
             command_buffer.wait_until_completed();
 
-            return result;
+            return Ok(result);
         }
 
         // 4D × 4D: batched head matmul (Attention用)
@@ -384,9 +395,11 @@ impl MetalTensor {
             let h = self_shape[1];
             let m = self_shape[2];
             let k = self_shape[3];
-            assert_eq!(b, other_shape[0], "Batch dim mismatch");
-            assert_eq!(h, other_shape[1], "Head dim mismatch");
-            assert_eq!(k, other_shape[2], "Inner dim mismatch: {} vs {}", k, other_shape[2]);
+            if b != other_shape[0] || h != other_shape[1] || k != other_shape[2] {
+                return Err(BackendError::ShapeMismatch(format!(
+                    "matmul: 4D mismatch: [{:?}] vs [{:?}]", self_shape, other_shape
+                )));
+            }
             let n = other_shape[3];
 
             // Flatten to 3D: [B*H, M, K] and [B*H, K, N]
@@ -400,25 +413,32 @@ impl MetalTensor {
                 vec![b * h, k, n],
                 other.dtype(),
             );
-            let result_3d = self_3d.matmul_impl(&other_3d);
+            let result_3d = self_3d.matmul_impl(&other_3d)?;
             // Reshape back to 4D: [B, H, M, N]
-            return MetalTensor::from_buffer_shared(
+            return Ok(MetalTensor::from_buffer_shared(
                 result_3d.buffer_arc().clone(),
                 vec![b, h, m, n],
                 result_3d.dtype(),
-            );
+            ));
         }
 
         // 2D × 2D: 標準 matmul
-        assert!(self_shape.len() == 2, "self must be 2D, 3D, or 4D, got {}D", self_shape.len());
-        assert!(other_shape.len() == 2, "other must be 2D, 3D, or 4D, got {}D", other_shape.len());
+        if self_shape.len() != 2 || other_shape.len() != 2 {
+             return Err(BackendError::ShapeMismatch(format!(
+                 "matmul: shapes must be 2D, 3D, or 4D. Got {:?} and {:?}", self_shape, other_shape
+             )));
+        }
 
         let m = self_shape[0];
         let k1 = self_shape[1];
         let k2 = other_shape[0];
         let n = other_shape[1];
 
-        assert_eq!(k1, k2, "Inner dimensions must match: {} vs {}", k1, k2);
+        if k1 != k2 {
+            return Err(BackendError::ShapeMismatch(format!(
+                "matmul: Inner dimensions must match: {} vs {}", k1, k2
+            )));
+        }
 
         let result = MetalTensor::uninit(&[m, n], DType::F32);
         let device = get_device();
@@ -461,23 +481,29 @@ impl MetalTensor {
         command_buffer.commit();
         command_buffer.wait_until_completed();
 
-        result
+        Ok(result)
     }
 
     /// 融合量子化 matmul: x[M, K] × W_q4k[N, K]^T → out[M, N]
     /// simdgroup 並列リダクション版:
     ///   32 threads (1 simdgroup) で 1 出力要素を協調計算
-    pub fn mul_mv_q4_k(&self, w_raw: &MetalTensor, n: usize, k: usize) -> MetalTensor {
+    pub fn mul_mv_q4_k(&self, w_raw: &MetalTensor, n: usize, k: usize) -> BackendResult<MetalTensor> {
         let self_shape = MetalTensor::shape(self);
         let m = if self_shape.len() == 2 {
             self_shape[0]
         } else if self_shape.len() == 1 {
             1
         } else {
-            panic!("mul_mv_q4_k: input must be 1D or 2D, got {}D", self_shape.len());
+             return Err(BackendError::ShapeMismatch(format!(
+                 "mul_mv_q4_k: input must be 1D or 2D, got {}D", self_shape.len()
+             )));
         };
 
-        assert!(k % 256 == 0, "mul_mv_q4_k: K must be multiple of 256, got {}", k);
+        if k % 256 != 0 {
+            return Err(BackendError::ArgumentError(format!(
+                "mul_mv_q4_k: K must be multiple of 256, got {}", k
+            )));
+        }
 
         let n_rows_per_tg: usize = 4; // MSL 側の N_ROWS_PER_TG と一致
 
@@ -515,22 +541,28 @@ impl MetalTensor {
         command_buffer.commit();
         command_buffer.wait_until_completed();
 
-        result
+        Ok(result)
     }
 
     /// 融合量子化 matmul: x[M, K] × W_q6k[N, K]^T → out[M, N]
     /// simdgroup 並列リダクション版 (Q6_K)
-    pub fn mul_mv_q6_k(&self, w_raw: &MetalTensor, n: usize, k: usize) -> MetalTensor {
+    pub fn mul_mv_q6_k(&self, w_raw: &MetalTensor, n: usize, k: usize) -> BackendResult<MetalTensor> {
         let self_shape = MetalTensor::shape(self);
         let m = if self_shape.len() == 2 {
             self_shape[0]
         } else if self_shape.len() == 1 {
             1
         } else {
-            panic!("mul_mv_q6_k: input must be 1D or 2D, got {}D", self_shape.len());
+             return Err(BackendError::ShapeMismatch(format!(
+                 "mul_mv_q6_k: input must be 1D or 2D, got {}D", self_shape.len()
+             )));
         };
 
-        assert!(k % 256 == 0, "mul_mv_q6_k: K must be multiple of 256, got {}", k);
+        if k % 256 != 0 {
+             return Err(BackendError::ArgumentError(format!(
+                 "mul_mv_q6_k: K must be multiple of 256, got {}", k
+             )));
+        }
 
         let n_rows_per_tg: usize = 4;
 
@@ -566,7 +598,7 @@ impl MetalTensor {
         command_buffer.commit();
         command_buffer.wait_until_completed();
 
-        result
+        Ok(result)
     }
 
 }

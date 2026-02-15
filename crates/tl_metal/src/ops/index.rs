@@ -4,6 +4,7 @@
 use crate::device::get_device;
 use crate::tensor::MetalTensor;
 use metal::{ComputePipelineState, MTLSize};
+use tl_backend::{BackendResult, BackendError};
 
 /// Embedding 用 Metal シェーダー
 const EMBEDDING_SHADER: &str = r#"
@@ -49,17 +50,12 @@ fn get_embedding_pipeline() -> &'static ComputePipelineState {
 
 impl MetalTensor {
     /// スライス（1軸のみ）— shape.rs の GPU 実装に委譲
-    pub fn slice(&self, axis: usize, start: usize, len: usize) -> MetalTensor {
+    pub fn slice(&self, axis: usize, start: usize, len: usize) -> BackendResult<MetalTensor> {
         self.slice_impl(axis, start, len)
     }
 
     /// embedding lookup — Metal GPU シェーダー実装
-    /// weights: [V, D] (埋め込み行列), indices: [T] or [B, S] (インデックス)
-    /// → [T, D] or [B, S, D]
-    ///
-    /// 引数: self = weights (2D), other = indices (1D or 2D)
-    /// tl_tensor_embedding から呼び出される際は (weights, indices) の順序で渡される
-    pub fn embedding_impl(&self, other: &MetalTensor) -> MetalTensor {
+    pub fn embedding_impl(&self, other: &MetalTensor) -> BackendResult<MetalTensor> {
         let self_shape = MetalTensor::shape(self);
         let other_shape = MetalTensor::shape(other);
 
@@ -71,12 +67,10 @@ impl MetalTensor {
             // self=indices, other=weights
             (other, self, self_shape.to_vec())
         } else {
-            eprintln!(
-                "Warning: embedding_impl expects (2D weights, 1D/2D indices), got shapes {:?} and {:?}",
-                self_shape, other_shape
-            );
-            // フォールバック: self=weights と仮定
-            (self, other, other_shape.to_vec())
+             return Err(BackendError::ShapeMismatch(format!(
+                 "embedding_impl expects (2D weights, 1D/2D indices), got shapes {:?} and {:?}",
+                 self_shape, other_shape
+             )));
         };
 
         let dim = MetalTensor::shape(weights)[1];
@@ -139,13 +133,13 @@ impl MetalTensor {
         if indices_shape.len() == 2 {
             let batch = indices_shape[0];
             let seq = indices_shape[1];
-            MetalTensor::from_buffer_shared(
+            Ok(MetalTensor::from_buffer_shared(
                 result.buffer_arc().clone(),
                 vec![batch, seq, dim],
                 weights.dtype(),
-            )
+            ))
         } else {
-            result
+            Ok(result)
         }
     }
 

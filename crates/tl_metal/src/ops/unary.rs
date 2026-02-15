@@ -7,30 +7,31 @@ use crate::shaders::{self, SHADER_NEG_F32, SHADER_ABS_F32, SHADER_EXP_F32, SHADE
                      SHADER_SILU_F32};
 use crate::tensor::MetalTensor;
 use crate::DType;
+use tl_backend::{BackendResult, BackendError};
 
 impl MetalTensor {
-    pub fn neg_impl(&self) -> MetalTensor { self.unary_op(SHADER_NEG_F32) }
-    pub fn abs_impl(&self) -> MetalTensor { self.unary_op(SHADER_ABS_F32) }
-    pub fn exp_impl(&self) -> MetalTensor { self.unary_op(SHADER_EXP_F32) }
-    pub fn log_impl(&self) -> MetalTensor { self.unary_op(SHADER_LOG_F32) }
-    pub fn sqrt_impl(&self) -> MetalTensor { self.unary_op(SHADER_SQRT_F32) }
-    pub fn tanh_impl(&self) -> MetalTensor { self.unary_op(SHADER_TANH_F32) }
-    pub fn sigmoid_impl(&self) -> MetalTensor { self.unary_op(SHADER_SIGMOID_F32) }
-    pub fn relu_impl(&self) -> MetalTensor { self.unary_op(SHADER_RELU_F32) }
-    pub fn sin_impl(&self) -> MetalTensor { self.unary_op(SHADER_SIN_F32) }
-    pub fn cos_impl(&self) -> MetalTensor { self.unary_op(SHADER_COS_F32) }
-    pub fn tan_impl(&self) -> MetalTensor { self.unary_op(SHADER_TAN_F32) }
-    pub fn gelu_impl(&self) -> MetalTensor { self.unary_op(SHADER_GELU_F32) }
-    pub fn silu_impl(&self) -> MetalTensor { self.unary_op(SHADER_SILU_F32) }
+    pub fn neg_impl(&self) -> BackendResult<MetalTensor> { self.unary_op(SHADER_NEG_F32) }
+    pub fn abs_impl(&self) -> BackendResult<MetalTensor> { self.unary_op(SHADER_ABS_F32) }
+    pub fn exp_impl(&self) -> BackendResult<MetalTensor> { self.unary_op(SHADER_EXP_F32) }
+    pub fn log_impl(&self) -> BackendResult<MetalTensor> { self.unary_op(SHADER_LOG_F32) }
+    pub fn sqrt_impl(&self) -> BackendResult<MetalTensor> { self.unary_op(SHADER_SQRT_F32) }
+    pub fn tanh_impl(&self) -> BackendResult<MetalTensor> { self.unary_op(SHADER_TANH_F32) }
+    pub fn sigmoid_impl(&self) -> BackendResult<MetalTensor> { self.unary_op(SHADER_SIGMOID_F32) }
+    pub fn relu_impl(&self) -> BackendResult<MetalTensor> { self.unary_op(SHADER_RELU_F32) }
+    pub fn sin_impl(&self) -> BackendResult<MetalTensor> { self.unary_op(SHADER_SIN_F32) }
+    pub fn cos_impl(&self) -> BackendResult<MetalTensor> { self.unary_op(SHADER_COS_F32) }
+    pub fn tan_impl(&self) -> BackendResult<MetalTensor> { self.unary_op(SHADER_TAN_F32) }
+    pub fn gelu_impl(&self) -> BackendResult<MetalTensor> { self.unary_op(SHADER_GELU_F32) }
+    pub fn silu_impl(&self) -> BackendResult<MetalTensor> { self.unary_op(SHADER_SILU_F32) }
 
-    fn unary_op(&self, shader_name: &str) -> MetalTensor {
+    fn unary_op(&self, shader_name: &str) -> BackendResult<MetalTensor> {
         match MetalTensor::dtype(self) {
             DType::F32 => self.unary_op_gpu(shader_name),
-            _ => unimplemented!("{} for {:?}", shader_name, MetalTensor::dtype(self)),
+            _ => Err(BackendError::DeviceError(format!("{} for {:?}", shader_name, MetalTensor::dtype(self)))),
         }
     }
 
-    fn unary_op_gpu(&self, shader_name: &str) -> MetalTensor {
+    fn unary_op_gpu(&self, shader_name: &str) -> BackendResult<MetalTensor> {
         let result = MetalTensor::uninit(MetalTensor::shape(self), MetalTensor::dtype(self));
         let device = get_device();
         let command_queue = device.command_queue();
@@ -38,7 +39,7 @@ impl MetalTensor {
         let mut shaders = shaders::get_shaders().lock().unwrap();
         let pipeline = shaders
             .get_pipeline(device.device(), shader_name)
-            .expect("Failed to get shader pipeline");
+            .map_err(|e| BackendError::InternalError(format!("Failed to get shader pipeline ({}): {}", shader_name, e)))?;
 
         let command_buffer = command_queue.new_command_buffer();
         let encoder = command_buffer.new_compute_command_encoder();
@@ -54,6 +55,6 @@ impl MetalTensor {
         command_buffer.commit();
         command_buffer.wait_until_completed();
 
-        result
+        Ok(result)
     }
 }

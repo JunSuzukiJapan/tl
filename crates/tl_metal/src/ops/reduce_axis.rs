@@ -5,9 +5,9 @@ use crate::device::get_device;
 use crate::tensor::MetalTensor;
 use crate::DType;
 use metal::{ComputePipelineState, MTLSize};
+use tl_backend::{BackendResult, BackendError};
 
 /// 軸指定 Reduce 用 Metal シェーダー
-/// 各スレッドが (outer, inner) ペアを担当し、axis 方向にループして reduce
 const REDUCE_AXIS_SHADER: &str = r#"
 #include <metal_stdlib>
 using namespace metal;
@@ -173,10 +173,12 @@ fn make_u32_buf(v: u32) -> metal::Buffer {
 }
 
 /// 共通の軸パラメータ分解
-fn decompose_axis(shape: &[usize], axis: i32) -> (usize, usize, usize, usize, Vec<usize>) {
+fn decompose_axis(shape: &[usize], axis: i32) -> BackendResult<(usize, usize, usize, usize, Vec<usize>)> {
     let ndim = shape.len();
     let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
-    assert!(axis < ndim, "axis out of range");
+    if axis >= ndim {
+        return Err(BackendError::IndexOutOfBounds(format!("axis {} out of range (ndim={})", axis, ndim)));
+    }
 
     let axis_size = shape[axis];
     let outer_size: usize = shape[..axis].iter().product::<usize>().max(1);
@@ -188,7 +190,7 @@ fn decompose_axis(shape: &[usize], axis: i32) -> (usize, usize, usize, usize, Ve
         new_shape.push(1);
     }
 
-    (outer_size, axis_size, inner_size, axis, new_shape)
+    Ok((outer_size, axis_size, inner_size, axis, new_shape))
 }
 
 /// GPU reduce ディスパッチ（共通）
@@ -199,7 +201,7 @@ fn dispatch_reduce(
     axis_size: usize,
     inner_size: usize,
     new_shape: &[usize],
-) -> MetalTensor {
+) -> BackendResult<MetalTensor> {
     let result = MetalTensor::uninit(new_shape, DType::F32);
     let device = get_device();
     let command_queue = device.command_queue();
@@ -235,51 +237,63 @@ fn dispatch_reduce(
     command_buffer.commit();
     command_buffer.wait_until_completed();
 
-    result
+    Ok(result)
 }
 
 impl MetalTensor {
     /// 軸指定で合計 (Metal GPU 実装)
-    pub fn sum_impl(&self, axis: i32) -> MetalTensor {
-        assert_eq!(MetalTensor::dtype(self), DType::F32, "sum only supports F32");
-        let (outer, axis_size, inner, _, new_shape) = decompose_axis(MetalTensor::shape(self), axis);
+    pub fn sum_impl(&self, axis: i32) -> BackendResult<MetalTensor> {
+        if MetalTensor::dtype(self) != DType::F32 {
+            return Err(BackendError::TypeMismatch(format!("sum_impl supports F32, got {:?}", MetalTensor::dtype(self))));
+        }
+        let (outer, axis_size, inner, _, new_shape) = decompose_axis(MetalTensor::shape(self), axis)?;
         dispatch_reduce(self, get_reduce_sum_pipeline(), outer, axis_size, inner, &new_shape)
     }
 
     /// max（軸指定）(Metal GPU 実装)
-    pub fn max_impl(&self, axis: i32) -> MetalTensor {
-        assert_eq!(MetalTensor::dtype(self), DType::F32, "max only supports F32");
-        let (outer, axis_size, inner, _, new_shape) = decompose_axis(MetalTensor::shape(self), axis);
+    pub fn max_impl(&self, axis: i32) -> BackendResult<MetalTensor> {
+        if MetalTensor::dtype(self) != DType::F32 {
+            return Err(BackendError::TypeMismatch(format!("max_impl supports F32, got {:?}", MetalTensor::dtype(self))));
+        }
+        let (outer, axis_size, inner, _, new_shape) = decompose_axis(MetalTensor::shape(self), axis)?;
         dispatch_reduce(self, get_reduce_max_pipeline(), outer, axis_size, inner, &new_shape)
     }
 
     /// min（軸指定）(Metal GPU 実装)
-    pub fn min_impl(&self, axis: i32) -> MetalTensor {
-        assert_eq!(MetalTensor::dtype(self), DType::F32, "min only supports F32");
-        let (outer, axis_size, inner, _, new_shape) = decompose_axis(MetalTensor::shape(self), axis);
+    pub fn min_impl(&self, axis: i32) -> BackendResult<MetalTensor> {
+        if MetalTensor::dtype(self) != DType::F32 {
+             return Err(BackendError::TypeMismatch(format!("min_impl supports F32, got {:?}", MetalTensor::dtype(self))));
+        }
+        let (outer, axis_size, inner, _, new_shape) = decompose_axis(MetalTensor::shape(self), axis)?;
         dispatch_reduce(self, get_reduce_min_pipeline(), outer, axis_size, inner, &new_shape)
     }
 
     /// argmax（軸指定）(Metal GPU 実装)
-    pub fn argmax_impl(&self, axis: i32) -> MetalTensor {
-        assert_eq!(MetalTensor::dtype(self), DType::F32, "argmax only supports F32");
-        let (outer, axis_size, inner, _, new_shape) = decompose_axis(MetalTensor::shape(self), axis);
+    pub fn argmax_impl(&self, axis: i32) -> BackendResult<MetalTensor> {
+        if MetalTensor::dtype(self) != DType::F32 {
+            return Err(BackendError::TypeMismatch(format!("argmax_impl supports F32, got {:?}", MetalTensor::dtype(self))));
+        }
+        let (outer, axis_size, inner, _, new_shape) = decompose_axis(MetalTensor::shape(self), axis)?;
         dispatch_reduce(self, get_reduce_argmax_pipeline(), outer, axis_size, inner, &new_shape)
     }
 
     /// argmin（軸指定）(Metal GPU 実装)
-    pub fn argmin_impl(&self, axis: i32) -> MetalTensor {
-        assert_eq!(MetalTensor::dtype(self), DType::F32, "argmin only supports F32");
-        let (outer, axis_size, inner, _, new_shape) = decompose_axis(MetalTensor::shape(self), axis);
+    pub fn argmin_impl(&self, axis: i32) -> BackendResult<MetalTensor> {
+        if MetalTensor::dtype(self) != DType::F32 {
+            return Err(BackendError::TypeMismatch(format!("argmin_impl supports F32, got {:?}", MetalTensor::dtype(self))));
+        }
+        let (outer, axis_size, inner, _, new_shape) = decompose_axis(MetalTensor::shape(self), axis)?;
         dispatch_reduce(self, get_reduce_argmin_pipeline(), outer, axis_size, inner, &new_shape)
     }
 
     /// mean（軸指定）— sum / axis_size で GPU 演算を活用
-    pub fn mean_impl(&self, axis: i32) -> MetalTensor {
-        let sum = self.sum_impl(axis);
+    pub fn mean_impl(&self, axis: i32) -> BackendResult<MetalTensor> {
+        let sum = self.sum_impl(axis)?;
         let shape = MetalTensor::shape(self);
         let ndim = shape.len();
         let a = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
+        // Avoid unwrap on shape access if possible, but here we know index is valid if sum_impl succeeded?
+        // Actually sum_impl checks index.
         let axis_size = shape[a] as f32;
         sum.div_scalar_impl(axis_size)
     }

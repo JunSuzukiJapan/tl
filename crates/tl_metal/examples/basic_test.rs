@@ -17,10 +17,10 @@ fn main() {
     println!("b = {:?}", b.to_vec::<f32>());
 
     // 演算
-    let c = a.add(&b);
+    let c = a.add(&b).unwrap();
     println!("a + b = {:?}", c.to_vec::<f32>());
 
-    let d = a.mul(&b);
+    let d = a.mul(&b).unwrap();
     println!("a * b = {:?}", d.to_vec::<f32>());
 
     // プール統計を確認

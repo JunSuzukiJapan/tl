@@ -25,7 +25,7 @@ fn assert_tensor_approx_eq(a: &MetalTensor, b: &[f32], eps: f32) {
 fn test_broadcast_to_simple() {
     // [3] → [2, 3]
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
-    let b = a.broadcast_to(&[2, 3]);
+    let b = a.broadcast_to(&[2, 3]).unwrap();
     assert_eq!(b.shape(), &[2, 3]);
     assert_tensor_approx_eq(&b, &[1.0, 2.0, 3.0, 1.0, 2.0, 3.0], 1e-5);
 }
@@ -35,7 +35,7 @@ fn test_broadcast_to_simple() {
 fn test_broadcast_to_expand_dim() {
     // [1, 3] → [2, 3]
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[1, 3], DType::F32);
-    let b = a.broadcast_to(&[2, 3]);
+    let b = a.broadcast_to(&[2, 3]).unwrap();
     assert_eq!(b.shape(), &[2, 3]);
     assert_tensor_approx_eq(&b, &[1.0, 2.0, 3.0, 1.0, 2.0, 3.0], 1e-5);
 }
@@ -43,13 +43,13 @@ fn test_broadcast_to_expand_dim() {
 #[test]
 #[serial]
 fn test_broadcast_shape() {
-    let shape = MetalTensor::broadcast_shape(&[3], &[2, 3]);
+    let shape = MetalTensor::broadcast_shape(&[3], &[2, 3]).unwrap();
     assert_eq!(shape, vec![2, 3]);
 
-    let shape2 = MetalTensor::broadcast_shape(&[1, 3], &[3, 1]);
+    let shape2 = MetalTensor::broadcast_shape(&[1, 3], &[3, 1]).unwrap();
     assert_eq!(shape2, vec![3, 3]);
 
-    let shape3 = MetalTensor::broadcast_shape(&[1], &[5, 4, 3]);
+    let shape3 = MetalTensor::broadcast_shape(&[1], &[5, 4, 3]).unwrap();
     assert_eq!(shape3, vec![5, 4, 3]);
 }
 
@@ -58,7 +58,7 @@ fn test_broadcast_shape() {
 fn test_cat_axis0() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
     let b = MetalTensor::from_slice(&[4.0f32, 5.0, 6.0], &[3], DType::F32);
-    let c = MetalTensor::cat(&[&a, &b], 0);
+    let c = MetalTensor::cat(&[&a, &b], 0).unwrap();
     assert_eq!(c.shape(), &[6]);
     assert_tensor_approx_eq(&c, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 1e-5);
 }
@@ -68,7 +68,7 @@ fn test_cat_axis0() {
 fn test_cat_axis1() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0], &[2, 2], DType::F32);
     let b = MetalTensor::from_slice(&[5.0f32, 6.0, 7.0, 8.0], &[2, 2], DType::F32);
-    let c = MetalTensor::cat(&[&a, &b], 1);
+    let c = MetalTensor::cat(&[&a, &b], 1).unwrap();
     assert_eq!(c.shape(), &[2, 4]);
 }
 
@@ -76,7 +76,7 @@ fn test_cat_axis1() {
 #[serial]
 fn test_narrow() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0, 5.0], &[5], DType::F32);
-    let b = a.narrow(0, 1, 3);
+    let b = a.narrow(0, 1, 3).unwrap();
     assert_eq!(b.shape(), &[3]);
     assert_tensor_approx_eq(&b, &[2.0, 3.0, 4.0], 1e-5);
 }
@@ -84,7 +84,7 @@ fn test_narrow() {
 #[test]
 #[serial]
 fn test_arange() {
-    let t = MetalTensor::arange(0, 5, DType::F32);
+    let t = MetalTensor::arange(0, 5, DType::F32).unwrap();
     assert_eq!(t.shape(), &[5]);
     assert_tensor_approx_eq(&t, &[0.0, 1.0, 2.0, 3.0, 4.0], 1e-5);
 }
@@ -93,7 +93,7 @@ fn test_arange() {
 #[serial]
 fn test_contiguous() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
-    let b = a.contiguous();
+    let b = a.contiguous().unwrap();
     assert_eq!(b.shape(), &[3]);
     assert_tensor_approx_eq(&b, &[1.0, 2.0, 3.0], 1e-5);
 }
@@ -106,7 +106,7 @@ fn test_where_cond() {
     let cond = MetalTensor::from_slice(&[1.0f32, 0.0, 1.0], &[3], DType::F32);
     let x = MetalTensor::from_slice(&[10.0f32, 20.0, 30.0], &[3], DType::F32);
     let y = MetalTensor::from_slice(&[100.0f32, 200.0, 300.0], &[3], DType::F32);
-    let result = MetalTensor::where_cond_impl(&cond, &x, &y);
+    let result = MetalTensor::where_cond_impl(&cond, &x, &y).unwrap();
     assert_tensor_approx_eq(&result, &[10.0, 200.0, 30.0], 1e-5);
 }
 
@@ -114,7 +114,7 @@ fn test_where_cond() {
 #[serial]
 fn test_repeat_interleave() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
-    let b = a.repeat_interleave_impl(2, 0);
+    let b = a.repeat_interleave_impl(2, 0).unwrap();
     assert_eq!(b.shape(), &[6]);
     assert_tensor_approx_eq(&b, &[1.0, 1.0, 2.0, 2.0, 3.0, 3.0], 1e-5);
 }
@@ -124,7 +124,7 @@ fn test_repeat_interleave() {
 fn test_index_select() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0, 5.0], &[5], DType::F32);
     let indices = MetalTensor::from_slice(&[0.0f32, 2.0, 4.0], &[3], DType::F32);
-    let b = a.index_select_impl(0, &indices);
+    let b = a.index_select_impl(0, &indices).unwrap();
     assert_eq!(b.shape(), &[3]);
     assert_tensor_approx_eq(&b, &[1.0, 3.0, 5.0], 1e-5);
 }
@@ -135,7 +135,7 @@ fn test_cross_entropy() {
     // softmax 後の prediction と target
     let pred = MetalTensor::from_slice(&[0.7f32, 0.2, 0.1], &[3], DType::F32);
     let target = MetalTensor::from_slice(&[1.0f32, 0.0, 0.0], &[3], DType::F32);
-    let loss = pred.cross_entropy_impl(&target);
+    let loss = pred.cross_entropy_impl(&target).unwrap();
     assert_eq!(loss.shape(), &[1]);
     // -1.0 * ln(0.7) ≈ 0.357
     let loss_val = loss.to_vec::<f32>()[0];
@@ -146,7 +146,7 @@ fn test_cross_entropy() {
 #[serial]
 fn test_to_dtype() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
-    let b = a.to_dtype(DType::F32);
+    let b = a.to_dtype(DType::F32).unwrap();
     assert_eq!(b.shape(), &[3]);
     assert_tensor_approx_eq(&b, &[1.0, 2.0, 3.0], 1e-5);
 }
@@ -157,7 +157,7 @@ fn test_to_dtype() {
 #[serial]
 fn test_slice() {
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3], DType::F32);
-    let b = a.slice(1, 1, 2);
+    let b = a.slice(1, 1, 2).unwrap();
     assert_eq!(b.shape(), &[2, 2]);
     assert_tensor_approx_eq(&b, &[2.0, 3.0, 5.0, 6.0], 1e-5);
 }
@@ -176,7 +176,7 @@ fn test_embedding() {
     // インデックス [3]
     let indices = MetalTensor::from_slice(&[0.0f32, 2.0, 1.0], &[3], DType::F32);
     
-    let result = emb.embedding_impl(&indices);
+    let result = emb.embedding_impl(&indices).unwrap();
     assert_eq!(result.shape(), &[3, 3]);
     assert_tensor_approx_eq(&result, &[
         0.1, 0.2, 0.3,
@@ -201,7 +201,7 @@ fn test_batch_norm() {
     let mean = MetalTensor::from_slice(&[2.5f32, 6.5], &[2], DType::F32);
     let var = MetalTensor::from_slice(&[1.25f32, 1.25], &[2], DType::F32);
     
-    let output = input.batch_norm( &gamma, &beta, &mean, &var, 1e-5);
+    let output = input.batch_norm( &gamma, &beta, &mean, &var, 1e-5).unwrap();
     assert_eq!(output.shape(), &[1, 2, 2, 2]);
     
     let result = output.to_vec::<f32>();
@@ -222,7 +222,7 @@ fn test_max_pool2d() {
         13.0, 14.0, 15.0, 16.0,
     ], &[1, 1, 4, 4], DType::F32);
     
-    let output = input.max_pool2d((2, 2), (2, 2));
+    let output = input.max_pool2d((2, 2), (2, 2)).unwrap();
     assert_eq!(output.shape(), &[1, 1, 2, 2]);
     // max: max(1,2,5,6)=6, max(3,4,7,8)=8, max(9,10,13,14)=14, max(11,12,15,16)=16
     assert_tensor_approx_eq(&output, &[6.0, 8.0, 14.0, 16.0], 1e-5);
@@ -239,7 +239,7 @@ fn test_avg_pool2d() {
         13.0, 14.0, 15.0, 16.0,
     ], &[1, 1, 4, 4], DType::F32);
     
-    let output = input.avg_pool2d((2, 2), (2, 2));
+    let output = input.avg_pool2d((2, 2), (2, 2)).unwrap();
     assert_eq!(output.shape(), &[1, 1, 2, 2]);
     // 平均: (1+2+5+6)/4=3.5, (3+4+7+8)/4=5.5, etc.
     assert_tensor_approx_eq(&output, &[3.5, 5.5, 11.5, 13.5], 1e-5);
@@ -257,7 +257,7 @@ fn test_layer_norm() {
     let gamma = MetalTensor::from_slice(&[1.0f32, 1.0, 1.0, 1.0], &[4], DType::F32);
     let beta = MetalTensor::from_slice(&[0.0f32, 0.0, 0.0, 0.0], &[4], DType::F32);
     
-    let output = input.layer_norm( &gamma, &beta, 1e-5);
+    let output = input.layer_norm( &gamma, &beta, 1e-5).unwrap();
     assert_eq!(output.shape(), &[2, 4]);
     
     let result = output.to_vec::<f32>();
@@ -275,7 +275,7 @@ fn test_dropout() {
     let input = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0], &[4], DType::F32);
     
     // training=false の場合、入力がそのまま返る
-    let output = input.dropout(0.5, false);
+    let output = input.dropout(0.5, false).unwrap();
     assert_eq!(output.shape(), &[4]);
     assert_tensor_approx_eq(&output, &[1.0, 2.0, 3.0, 4.0], 1e-5);
 }
@@ -287,7 +287,7 @@ fn test_dropout_training() {
     let data: Vec<f32> = (0..1000).map(|i| i as f32).collect();
     let input = MetalTensor::from_slice(&data, &[1000], DType::F32);
     
-    let output = input.dropout(0.5, true);
+    let output = input.dropout(0.5, true).unwrap();
     assert_eq!(output.shape(), &[1000]);
     
     let result = output.to_vec::<f32>();
@@ -315,8 +315,8 @@ fn test_broadcast_add() {
     let b = MetalTensor::from_slice(&[10.0f32, 20.0, 30.0], &[3], DType::F32);
     
     // b を [2, 3] にブロードキャスト
-    let b_broadcast = b.broadcast_to(&[2, 3]);
-    let c = a.add(&b_broadcast);
+    let b_broadcast = b.broadcast_to(&[2, 3]).unwrap();
+    let c = a.add(&b_broadcast).unwrap();
     assert_tensor_approx_eq(&c, &[11.0, 22.0, 33.0, 14.0, 25.0, 36.0], 1e-5);
 }
 
@@ -326,9 +326,9 @@ fn test_slice_and_cat() {
     // スライスして再結合
     let a = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], &[6], DType::F32);
     
-    let left = a.slice(0, 0, 3);
-    let right = a.slice(0, 3, 3);
+    let left = a.slice(0, 0, 3).unwrap();
+    let right = a.slice(0, 3, 3).unwrap();
     
-    let reconstructed = MetalTensor::cat(&[&left, &right], 0);
+    let reconstructed = MetalTensor::cat(&[&left, &right], 0).unwrap();
     assert_tensor_approx_eq(&reconstructed, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 1e-5);
 }

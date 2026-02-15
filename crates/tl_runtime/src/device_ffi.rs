@@ -3,7 +3,7 @@
 //! IDevice トレイトを通じて、CPU/GPU の切替を一元管理する。
 //! `builtins.rs` からはこのモジュールの `tl_device_*` 関数をマッピングすればよい。
 
-use tl_backend::IDevice;
+use tl_backend::{IDevice, BackendResult};
 use tl_cpu::device_impl::CpuDevice;
 use tl_metal::device_impl::MetalDeviceImpl;
 use std::ffi::c_void;
@@ -18,16 +18,41 @@ fn is_cpu() -> bool {
     })
 }
 
-/// 汎用ディスパッチ: CPU/GPU を切り替えてクロージャを実行
+/// FFI 境界でエラー時に返す安全な値を定義するトレイト
+pub trait FFISafeReturn {
+    fn error_value() -> Self;
+}
+
+impl FFISafeReturn for *mut c_void { #[inline(always)] fn error_value() -> Self { std::ptr::null_mut() } }
+impl FFISafeReturn for *const f32 { #[inline(always)] fn error_value() -> Self { std::ptr::null() } }
+impl FFISafeReturn for () { #[inline(always)] fn error_value() -> Self { () } }
+impl FFISafeReturn for f32 { #[inline(always)] fn error_value() -> Self { f32::NAN } }
+impl FFISafeReturn for f64 { #[inline(always)] fn error_value() -> Self { f64::NAN } }
+impl FFISafeReturn for i64 { #[inline(always)] fn error_value() -> Self { -1 } }
+impl FFISafeReturn for i32 { #[inline(always)] fn error_value() -> Self { -1 } }
+impl FFISafeReturn for usize { #[inline(always)] fn error_value() -> Self { usize::MAX } }
+impl FFISafeReturn for bool { #[inline(always)] fn error_value() -> Self { false } }
+
+/// 汎用ディスパッチ: CPU/GPU を切り替えてクロージャを実行し、エラーをハンドリングする
 #[inline]
 fn dispatch<F, R>(f: F) -> R
 where
-    F: FnOnce(&dyn IDevice) -> R,
+    F: FnOnce(&dyn IDevice) -> BackendResult<R>,
+    R: FFISafeReturn,
 {
-    if is_cpu() {
-        f(&CpuDevice)
+    let device: &dyn IDevice = if is_cpu() {
+        &CpuDevice
     } else {
-        f(&MetalDeviceImpl)
+        &MetalDeviceImpl
+    };
+
+    match f(device) {
+        Ok(val) => val,
+        Err(e) => {
+            // エラーを TLS に設定
+            crate::error::set_backend_error(e);
+            R::error_value()
+        }
     }
 }
 
