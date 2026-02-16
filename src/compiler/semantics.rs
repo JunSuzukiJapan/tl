@@ -314,6 +314,15 @@ impl SemanticAnalyzer {
         let result_data = crate::compiler::codegen::builtin_types::generic::result::load_result_data();
         self.register_builtin_data(result_data);
 
+        let vec_data = crate::compiler::codegen::builtin_types::vec::load_vec_data();
+        self.register_builtin_data(vec_data);
+
+        let hashmap_data = crate::compiler::codegen::builtin_types::hashmap::load_hashmap_data();
+        self.register_builtin_data(hashmap_data);
+
+        let entry_data = crate::compiler::codegen::builtin_types::hashmap::load_entry_data();
+        self.register_builtin_data(entry_data);
+
 
     }
 

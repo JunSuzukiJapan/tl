@@ -1483,14 +1483,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.mark_temp_no_cleanup(val_ir);
                 
                 // RefCount Logic: Clone on Copy
-                let mut moved = false;
                 let mut cleanup_mode = super::CLEANUP_FULL;
                 
                 if let Some(temps) = self.temporaries.last_mut() {
                     if let Some(idx) = temps.iter().position(|(v, _, _)| *v == val_ir) {
                         let (_, _, mode) = temps.remove(idx);
                         cleanup_mode = mode;
-                        moved = true;
                     }
                 }
                 
