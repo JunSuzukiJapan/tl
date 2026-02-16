@@ -1479,7 +1479,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
 
                 // Keep ownership in the variable (if val_ir was a temporary)
-                // self.mark_temp_no_cleanup(val_ir);
+                // FIX: Move Semantics. We take ownership from the temporary.
+                self.mark_temp_no_cleanup(val_ir);
                 
                 // RefCount Logic: Clone on Copy
                 let mut moved = false;
@@ -1493,52 +1494,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 }
                 
-                if !moved {
-                     // L-Value copy -> IncRef
-                     match val_ty {
-                        Type::Tensor(_, _)
-                        | Type::Enum(_, _) => {
-                            let inc_fn = self.module.get_function("tl_ptr_inc_ref")
-                                .or_else(|| {
-                                    let void_ty = self.context.void_type();
-                                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                                    let ft = void_ty.fn_type(&[ptr_ty.into()], false);
-                                    Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
-                                })
-                                .expect("tl_ptr_inc_ref decl failed");
-
-                            let ptr = val_ir.into_pointer_value();
-                            let void_ptr = self.builder.build_pointer_cast(
-                                ptr,
-                                self.context.ptr_type(inkwell::AddressSpace::default()),
-                                "void_cast_inc_let"
-                            ).unwrap();
-                            self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
-                        }
-                        Type::Struct(ref name, _) if name != "String" && name != "File" && name != "Path" && name != "Map" && name != "Tokenizer" && name != "KVCache" => {
-                            // Only inc_ref if it's a pointer (skip ZSTs)
-                            if val_ir.is_pointer_value() {
-                                let inc_fn = self.module.get_function("tl_ptr_inc_ref")
-                                    .or_else(|| {
-                                        let void_ty = self.context.void_type();
-                                        let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                                        let ft = void_ty.fn_type(&[ptr_ty.into()], false);
-                                        Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
-                                    })
-                                    .expect("tl_ptr_inc_ref decl failed");
-
-                                let ptr = val_ir.into_pointer_value();
-                                let void_ptr = self.builder.build_pointer_cast(
-                                    ptr,
-                                    self.context.ptr_type(inkwell::AddressSpace::default()),
-                                    "void_cast_inc_let_st"
-                                ).unwrap();
-                                self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
-                            }
-                        }
-                        _ => {}
-                     }
-                }
+                // FIX: Removed inc_ref logic here.
+                // compile_expr returns +1 ref (Owned).
+                // Let takes that +1 ref and binds it to the variable.
+                // We do NOT need to increment again.
+                // Previous logic "Double Ownership" (Temp + Var) caused leak.
 
                 self.variables
                     .last_mut()
@@ -1746,16 +1706,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 }
                             }
                             
-                            // IncRef
-                             match val_ty {
+                            // FIX: Removed IncRef logic.
+                            // Compile Expr returns +1 ref.
+                            // Assignment takes that +1 ref.
+                            // We do NOT need to increment again.
+                            
+                            match val_ty {
                                 Type::Tensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) => {
-                                     let inc_fn = self.module.get_function("tl_ptr_inc_ref").expect("inc_ref missing");
-                                     if val_ir.is_pointer_value() {
-                                         let ptr = val_ir.into_pointer_value();
-                                         let void_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "").unwrap();
-                                         self.builder.build_call(inc_fn, &[void_ptr.into()], "").unwrap();
-                                     }
-                                     
                                      // Move semantics: RHS 変数の alloca を NULL にクリアして
                                      // exit_scope での二重解放を防止。
                                      // while ループ内で inner scope の変数を outer scope の

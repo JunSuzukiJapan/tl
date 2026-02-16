@@ -2822,6 +2822,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .build_load(llvm_ty, field_ptr, field)
                         .map_err(|e| e.to_string())?;
                     self.emit_retain(loaded, &field_ty)?; // FIX: Acquire ownership
+                    // FIX: Register as temporary
+                    self.add_temp(loaded, field_ty.clone());
                     Ok((loaded, field_ty.clone()))
                 } else if obj_val.is_struct_value() {
                     let struct_val = obj_val.into_struct_value();
@@ -2830,6 +2832,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .build_extract_value(struct_val, field_idx as u32, field)
                         .map_err(|e| e.to_string())?;
                     self.emit_retain(extracted, &field_ty)?; // FIX: Acquire ownership
+                    // FIX: Register as temporary
+                    self.add_temp(extracted, field_ty.clone());
                     Ok((extracted, field_ty.clone()))
                 } else {
                     Err("Cannot access field of non-pointer and non-struct value".into())
@@ -2855,9 +2859,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .map_err(|e| e.to_string())?;
 
                           self.emit_retain(loaded, &ty)?;
+                          // FIX: Register as temporary to ensure cleanup at end of statement
+                          // (Variable returns +1 ref, so it acts as a temporary copy)
+                          self.add_temp(loaded, ty.clone());
                           Ok((loaded, ty))
                      } else {
                           self.emit_retain(val, &ty)?;
+                          // FIX: Register as temporary
+                          self.add_temp(val, ty.clone());
                           Ok((val, ty))
                      }
                 } else {
@@ -4194,6 +4203,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             .builder
             .build_load(llvm_field_ty, field_ptr, "tuple_elem")
             .map_err(|e| e.to_string())?;
+
+        // FIX: Retain ownership (TupleAccess returns new reference)
+        self.emit_retain(val, &field_ty)?;
+        // FIX: Register as temporary
+        self.add_temp(val, field_ty.clone());
 
         Ok((val, field_ty))
     }
@@ -6339,9 +6353,13 @@ impl<'ctx> CodeGenerator<'ctx> {
             // ARGUMENT PASSING FIX: Retain ownership because Callee takes ownership (and releases at end)
             // If we don't retain, the Callee's release will free the memory while Caller still holds it (if var).
             // We skip String because it uses manual management not compatible with refcounts map yet.
+            // FIX (2026-02-16): Runtime functions (and TL functions) generally BORROW arguments.
+            // They do NOT release them at the end.
+            // Therefore, we should NOT retain here.
+            
             let should_retain = match &ty {
-                Type::Struct(n, _) if n != "String" => true,
-                Type::Enum(_, _) | Type::Tensor(_, _) | Type::Tuple(_) => true,
+                Type::Struct(n, _) if n == "String" => false, // String manual management
+                // Type::Struct(_, _) | Type::Enum(_, _) | Type::Tensor(_, _) | Type::Tuple(_) => true,
                 _ => false, 
             };
             

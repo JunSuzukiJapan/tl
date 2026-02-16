@@ -296,10 +296,21 @@ impl MetalTensor {
 
     pub(crate) fn accumulate_grad(&mut self, grad: MetalTensor) -> BackendResult<()> {
         if let Some(ref mut meta) = self.autograd {
+            // FIX (2026-02-16): Cycle Breaking.
+            // Storing execution history in .grad creates a reference cycle:
+            // Self -> .grad -> History -> Self
+            // We must detach the gradient before storing it.
+            // This prevents Double Backward support via .grad access, but fixes the 
+            // massive leak for standard training loops.
+            let detached_grad = grad.detach();
+            
             if let Some(ref mut g) = meta.grad {
-                *g = g.add_impl(&grad)?;
+                // Add in-place-ish (conceptually) but metal tensors are immutable structs.
+                // We ensure the result is also detached/no-history by using detached inputs.
+                // g (detached) + detached_grad (detached) -> Result (detached/no history).
+                *g = g.add_impl(&detached_grad)?;
             } else {
-                meta.grad = Some(grad.shallow_clone());
+                meta.grad = Some(detached_grad);
             }
         }
         Ok(())
