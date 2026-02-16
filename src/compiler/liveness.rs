@@ -276,6 +276,9 @@ impl LivenessAnalyzer {
                     self.visit_expr(arg);
                 }
             }
+            ExprKind::Try(inner) => {
+                self.visit_expr(inner);
+            }
 
         }
     }

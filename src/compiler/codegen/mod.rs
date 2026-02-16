@@ -58,6 +58,7 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) temporaries: Vec<Vec<(BasicValueEnum<'ctx>, Type, u8)>>,
     pub(crate) variable_liveness: Vec<HashMap<String, usize>>, // Parallel to variables: Last Use Time
     pub(crate) current_time: usize,
+    pub(crate) current_fn_return_type: Option<Type>,
     pub(crate) type_manager: type_manager::TypeManager,
     pub(crate) pending_functions: Vec<crate::compiler::ast::FunctionDef>,
     pub(crate) specialization_registry: specialization::SpecializationRegistry,
@@ -99,6 +100,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             temporaries: vec![Vec::new()],
             variable_liveness: vec![HashMap::new()],
             current_time: 0,
+            current_fn_return_type: None,
             type_manager: type_manager::TypeManager::new(),
             pending_functions: Vec::new(),
             specialization_registry: specialization::SpecializationRegistry::new(),
@@ -1562,6 +1564,9 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     pub(crate) fn compile_fn(&mut self, func: &FunctionDef, extra_stmts: &[Stmt]) -> Result<(), String> {
+        let old_ret_type = self.current_fn_return_type.clone();
+        self.current_fn_return_type = Some(func.return_type.clone());
+
         let function = self
             .module
             .get_function(&func.name)
@@ -1793,6 +1798,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .build_return(Some(&final_val))
                             .map_err(|e| e.to_string())?;
                     }
+                                self.current_fn_return_type = old_ret_type;
                     return Ok(()); // RETURN EARLY - Function is done
                 }
             }
@@ -1822,6 +1828,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Err(format!("Invalid generated function {}", func.name));
         }
 
+        self.current_fn_return_type = old_ret_type;
         Ok(())
     }
 

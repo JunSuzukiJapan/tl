@@ -296,6 +296,7 @@ pub enum ExprKind {
     // Ops
     BinOp(Box<Expr>, BinOp, Box<Expr>),
     UnOp(UnOp, Box<Expr>),
+    Try(Box<Expr>), // expr?
 
     // Calls
     FnCall(String, Vec<Expr>),

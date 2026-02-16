@@ -159,6 +159,8 @@ impl ShapeAnalyzer {
                 }
             }
 
+            ExprKind::Try(inner) => ShapeInfo::Unknown,
+
             _ => ShapeInfo::Unknown,
         }
     }
@@ -242,6 +244,7 @@ impl ShapeAnalyzer {
                         .map(|a| self.count_allocations(a))
                         .sum::<usize>()
             }
+            ExprKind::Try(inner) => self.count_allocations(inner),
             _ => 0,
         }
     }

@@ -2450,6 +2450,155 @@ impl<'ctx> CodeGenerator<'ctx> {
                     )),
                 }
             }
+            ExprKind::Try(inner) => {
+                let (val, ty) = self.compile_expr(inner)?;
+                
+                // We know it is Result<T, E> from semantics
+                let (ok_ty, err_ty) = if let Type::Enum(_, generics) = &ty {
+                    (generics[0].clone(), generics[1].clone())
+                } else {
+                    return Err("Try operator on non-Result type in codegen (should be caught by semantics)".to_string());
+                };
+                
+                let ptr = val.into_pointer_value();
+                
+                // Get Struct Type from Type::Enum
+                let struct_ty = if let Type::Enum(name, generics) = &ty {
+                     let mangled = if generics.is_empty() {
+                         name.clone()
+                     } else {
+                         self.mangle_type_name(name, generics)
+                     };
+                     
+                     if !self.enum_types.contains_key(&mangled) {
+                         // On-demand monomorphization
+                         if let Some(_) = self.enum_defs.get(name) {
+                             self.monomorphize_enum(name, generics).map_err(|e| e.to_string())?;
+                             // Identify the newly created enum def
+                             let specialized_def = self.enum_defs.get(&mangled).ok_or(format!("Monomorphization failed for {}", mangled))?.clone();
+                             self.compile_enum_defs(&[specialized_def])?;
+                         }
+                     }
+                     
+                     *self.enum_types.get(&mangled).ok_or(format!("Enum type {} not found", mangled))?
+                } else {
+                     return Err("Try on non-Enum type".to_string());
+                };
+                
+                let tag_ptr = self.builder.build_struct_gep(struct_ty, ptr, 0, "tag_ptr").map_err(|e| e.to_string())?;
+                let tag = self.builder.build_load(self.context.i32_type(), tag_ptr, "tag").unwrap().into_int_value();
+                
+                let current_block = self.builder.get_insert_block().unwrap();
+                let func = current_block.get_parent().unwrap();
+                let ok_block = self.context.append_basic_block(func, "try_ok");
+                let err_block = self.context.append_basic_block(func, "try_err");
+                
+                let zero = self.context.i32_type().const_zero();
+                let is_ok = self.builder.build_int_compare(inkwell::IntPredicate::EQ, tag, zero, "is_ok").unwrap();
+                self.builder.build_conditional_branch(is_ok, ok_block, err_block).unwrap();
+                
+                // === ERR BLOCK ===
+                self.builder.position_at_end(err_block);
+                
+                let payload_ptr_raw = self.builder.build_struct_gep(struct_ty, ptr, 1, "payload_ptr").map_err(|e| e.to_string())?;
+                let payload_ptr = self.builder.build_pointer_cast(payload_ptr_raw, self.context.ptr_type(inkwell::AddressSpace::default()), "payload_cast").unwrap();
+                
+                // Extract Err Value (E)
+                // If primitive, load. If pointer, use pointer.
+                let err_val = if matches!(err_ty, Type::I64 | Type::F64 | Type::I32 | Type::F32 | Type::Bool | Type::U8 | Type::Char(_)) {
+                    let field_llvm_ty = self.get_llvm_type(&err_ty)?;
+                    self.builder.build_load(field_llvm_ty, payload_ptr, "err_val").unwrap()
+                } else {
+                     // Structs/Enums are stored as pointers in payload?
+                     // Verify storage logic in EnumInit (struct variants use pointers, scalar types likely too?)
+                     // Enum payload is `[i8; size]`.
+                     // We cast it to `E*`.
+                     // If E is ByValue (primitive), we already loaded it above.
+                     // If E is ByRef/Pointer (Struct, Enum, String), the Payload IS the data? OR Payload contains the pointer?
+                     // In `EnumInit`:
+                     // `build_store(f_ptr, val)`.
+                     // If `val` is pointer (struct), we store the pointer.
+                     // So we just load the pointer from payload?
+                     // Wait, Payload is a struct `{ field_types... }`.
+                     // Since Result<T,E> has T or E in union.
+                     // We cast payload to `{ E }` (struct with 1 field).
+                     // Then access index 0.
+                     let err_variant_ty = self.context.struct_type(&[self.get_llvm_type(&err_ty)?], false);
+                     let err_variant_ptr = self.builder.build_pointer_cast(payload_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "err_variant_ptr").unwrap();
+                     let field_ptr = self.builder.build_struct_gep(err_variant_ty, err_variant_ptr, 0, "err_field_ptr").map_err(|e| e.to_string())?;
+                     self.builder.build_load(self.get_llvm_type(&err_ty)?, field_ptr, "err_val_loaded").unwrap()
+                };
+
+                // Construct Return Value: Result<RetOk, E>::Err(err_val)
+                let func_ret_ty = self.current_fn_return_type.clone().ok_or("Unknown function return type")?;
+                let func_ok_ty = if let Type::Enum(_, generics) = &func_ret_ty {
+                    generics[0].clone()
+                } else {
+                     return Err("Function return type mismatch (expected Result)".to_string());
+                };
+                
+                // We use compile_expr with EnumInit to construct the return value
+                // We need to inject `err_val` into scope to use it in ExprKind::Variable
+                let temp_name = "try_err_temp";
+                // Insert into CURRENT scope (inner-most)
+                self.variables.last_mut().unwrap().insert(temp_name.to_string(), (err_val, err_ty.clone(), crate::compiler::codegen::CLEANUP_NONE)); // CLEANUP_NONE because we consume/move it
+                
+                let span = expr.span.clone();
+                let enum_init_expr = Spanned::new(
+                    ExprKind::EnumInit {
+                        enum_name: "Result".to_string(),
+                        variant_name: "Err".to_string(),
+                        generics: vec![func_ok_ty, err_ty.clone()],
+                        payload: crate::compiler::ast::EnumVariantInit::Tuple(vec![
+                            Spanned::new(ExprKind::Variable(temp_name.to_string()), span.clone())
+                        ]),
+                    },
+                    span.clone()
+                );
+                
+                let (ret_val, ret_ty_compiled) = self.compile_expr(&enum_init_expr)?;
+                
+                // Cleanup and Return
+                if let Some(sret) = self.current_sret_dest {
+                    self.emit_struct_copy(sret, ret_val.into_pointer_value(), &ret_ty_compiled)?;
+                    self.emit_all_scopes_cleanup();
+                    if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
+                         self.builder.build_call(exit_fn, &[], "").unwrap();
+                    }
+                    self.builder.build_return(None).unwrap();
+                } else {
+                     // Direct return
+                     self.emit_all_scopes_cleanup();
+                     if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
+                          self.builder.build_call(exit_fn, &[], "").unwrap();
+                     }
+                     if let Some(rt) = func.get_type().get_return_type() {
+                         self.builder.build_return(Some(&ret_val)).unwrap();
+                     } else {
+                         self.builder.build_return(None).unwrap();
+                     }
+                }
+                
+                // === OK BLOCK ===
+                self.builder.position_at_end(ok_block);
+                
+                // Extract Ok Value (T) - Same logic as Err
+                let payload_ptr_raw_ok = self.builder.build_struct_gep(struct_ty, ptr, 1, "payload_ptr_ok").map_err(|e| e.to_string())?;
+                let payload_ptr_ok = self.builder.build_pointer_cast(payload_ptr_raw_ok, self.context.ptr_type(inkwell::AddressSpace::default()), "payload_cast_ok").unwrap();
+                
+                 let ok_val = if matches!(ok_ty, Type::I64 | Type::F64 | Type::I32 | Type::F32 | Type::Bool | Type::U8 | Type::Char(_)) {
+                    let field_llvm_ty = self.get_llvm_type(&ok_ty)?;
+                    self.builder.build_load(field_llvm_ty, payload_ptr_ok, "ok_val").unwrap()
+                } else {
+                     let ok_variant_ty = self.context.struct_type(&[self.get_llvm_type(&ok_ty)?], false);
+                     let ok_variant_ptr = self.builder.build_pointer_cast(payload_ptr_ok, self.context.ptr_type(inkwell::AddressSpace::default()), "ok_variant_ptr").unwrap();
+                     let field_ptr = self.builder.build_struct_gep(ok_variant_ty, ok_variant_ptr, 0, "ok_field_ptr").map_err(|e| e.to_string())?;
+                     self.builder.build_load(self.get_llvm_type(&ok_ty)?, field_ptr, "ok_val_loaded").unwrap()
+                };
+                
+                Ok((ok_val, ok_ty))
+            }
+
             ExprKind::FieldAccess(obj, field) => {
                 let (obj_val, obj_ty) = self.compile_expr(obj)?;
 

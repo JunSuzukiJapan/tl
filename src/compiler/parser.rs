@@ -647,6 +647,14 @@ fn parse_postfix(input: Input, allow_struct: bool) -> IResult<Input, Expr, Parse
             // Error if dot not followed by proper token
             return Err(nom::Err::Error(ParserError { input: rest, kind: ParseErrorKind::UnexpectedToken("Expected field or index".to_string())}));
         }
+
+        // Check for ? (Try)
+        if let Ok((rest, _)) = expect_token(Token::Question)(input) {
+            let span = crate::compiler::error::Span::default();
+            expr = Spanned::new(ExprKind::Try(Box::new(expr)), span);
+            input = rest;
+            continue;
+        }
         
         break;
     }

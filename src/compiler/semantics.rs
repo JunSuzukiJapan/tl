@@ -57,6 +57,12 @@ pub enum SemanticError {
     InvalidTensorElementType(Type),
     #[error("Generic error: {0}")]
     Generic(String),
+    #[error("The `?` operator can only be applied to Result types, found {0:?}")]
+    TryOperatorOnNonResult(Type),
+    #[error("The `?` operator can only be used in a function that returns `Result`")]
+    TryOperatorInNonResultFunction,
+    #[error("The `?` operator cannot be used outside of a function")]
+    TryOperatorOutsideFunction,
 }
 
 impl SemanticError {
@@ -112,6 +118,15 @@ impl SemanticError {
             }
             SemanticError::InvalidTensorElementType(ty) => {
                 SemanticErrorKind::InvalidTensorElementType(format!("{:?}", ty))
+            }
+            SemanticError::TryOperatorOnNonResult(ty) => {
+                SemanticErrorKind::TryOperatorOnNonResult(format!("{:?}", ty))
+            }
+            SemanticError::TryOperatorInNonResultFunction => {
+                SemanticErrorKind::TryOperatorInNonResultFunction
+            }
+            SemanticError::TryOperatorOutsideFunction => {
+                SemanticErrorKind::TryOperatorOutsideFunction
             }
             SemanticError::Generic(msg) => SemanticErrorKind::UnknownFunction(msg), // Fallback mostly
         };
@@ -295,6 +310,9 @@ impl SemanticAnalyzer {
         // Register Generic Builtins (Vec, Map, etc.) via AST Injection
         let option_data = crate::compiler::codegen::builtin_types::option::load_option_data();
         self.register_builtin_data(option_data);
+
+        let result_data = crate::compiler::codegen::builtin_types::generic::result::load_result_data();
+        self.register_builtin_data(result_data);
 
 
     }
@@ -2500,6 +2518,43 @@ impl SemanticAnalyzer {
                 } else {
                     self.err(SemanticError::NotATuple(ty), Some(expr.span.clone()))
                 }
+            }
+            ExprKind::Try(inner) => {
+                let ty = self.check_expr(inner)?;
+                
+                // Verify Result<T, E>
+                let (ok_ty, err_ty) = if let Type::Enum(name, generics) = &ty {
+                    if name == "Result" && generics.len() == 2 {
+                         (generics[0].clone(), generics[1].clone())
+                    } else {
+                         return self.err(SemanticError::TryOperatorOnNonResult(ty.clone()), Some(expr.span.clone()));
+                    }
+                } else {
+                     return self.err(SemanticError::TryOperatorOnNonResult(ty.clone()), Some(expr.span.clone()));
+                };
+                
+                // Verify Return Type compatibility
+                // Clone return type to avoid borrowing self
+                let current_ret_ty = self.current_return_type.clone();
+                if let Some(ret_ty) = &current_ret_ty {
+                     if let Type::Enum(ret_name, ret_generics) = ret_ty {
+                         if ret_name == "Result" && ret_generics.len() == 2 {
+                             let ret_err_ty = &ret_generics[1];
+                             // Simple unification for now
+                             if !self.unify(&err_ty, ret_err_ty) {
+                                 return self.err(SemanticError::TypeMismatch { expected: ret_err_ty.clone(), found: err_ty }, Some(expr.span.clone()));
+                             }
+                         } else {
+                             return self.err(SemanticError::TryOperatorInNonResultFunction, Some(expr.span.clone()));
+                         }
+                     } else {
+                         return self.err(SemanticError::TryOperatorInNonResultFunction, Some(expr.span.clone()));
+                     }
+                } else {
+                     return self.err(SemanticError::TryOperatorOutsideFunction, Some(expr.span.clone()));
+                }
+                
+                Ok(ok_ty)
             }
             ExprKind::StructInit(type_node, fields) => {
                 // First check if this is an enum variant pattern (e.g., Shape::Circle { ... })

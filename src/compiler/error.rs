@@ -285,6 +285,15 @@ pub enum SemanticErrorKind {
 
     #[error("invalid tensor element type: {0}. Only numeric primitives (f32, f64, i64, etc.) and bool are allowed")]
     InvalidTensorElementType(String),
+
+    #[error("the `?` operator can only be applied to Result types, found {0}")]
+    TryOperatorOnNonResult(String),
+
+    #[error("the `?` operator can only be used in a function that returns `Result`")]
+    TryOperatorInNonResultFunction,
+
+    #[error("the `?` operator cannot be used outside of a function")]
+    TryOperatorOutsideFunction,
 }
 
 /// コード生成エラーの種類
