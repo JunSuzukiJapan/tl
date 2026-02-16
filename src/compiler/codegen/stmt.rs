@@ -213,6 +213,43 @@ impl<'ctx> CodeGenerator<'ctx> {
                 
                 Err(format!("Type {} not found in struct_defs or enum_defs ({})", name, effective_mangled_name))
             }
+            Type::Enum(name, generics) => {
+                let mangled_name = if generics.is_empty() {
+                    name.clone()
+                } else {
+                    self.mangle_type_name(name, generics)
+                };
+                
+                let enum_llvm_ty = if let Some(ty) = self.enum_types.get(&mangled_name) {
+                     *ty
+                } else {
+                     return Err(format!("LLVM enum type {} not found for copy", mangled_name));
+                };
+
+                let size = enum_llvm_ty.size_of().unwrap();
+                let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                let dst_cast = self.builder.build_pointer_cast(dst, void_ptr_ty, "dst_cast").unwrap();
+                let src_cast = self.builder.build_pointer_cast(src, void_ptr_ty, "src_cast").unwrap();
+                
+                let memcpy = self.module.get_function("llvm.memcpy.p0.p0.i64")
+                    .or_else(|| {
+                        let void_ty = self.context.void_type();
+                        let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                        let i64_ty = self.context.i64_type();
+                        let i1_ty = self.context.bool_type();
+                        let ft = void_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into(), i1_ty.into()], false);
+                        Some(self.module.add_function("llvm.memcpy.p0.p0.i64", ft, None))
+                    }).unwrap();
+                
+                self.builder.build_call(memcpy, &[
+                    dst_cast.into(),
+                    src_cast.into(),
+                    size.into(),
+                    self.context.bool_type().const_zero().into() // isVolatile = false
+                ], "").unwrap();
+                
+                Ok(())
+            }
             _ => Err(format!(
                 "emit_struct_copy called on non-struct type: {:?}",
                 ty
@@ -277,6 +314,185 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.builder
                 .build_store(dst_field_ptr, store_val)
                 .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn emit_recursive_retain(
+        &mut self,
+        val: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<(), String> {
+        match ty {
+            Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
+                 let acquire_fn = self.module.get_function("tl_tensor_acquire")
+                    .ok_or("tl_tensor_acquire not found")?;
+                let ptr = val.into_pointer_value();
+                let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_acq").map_err(|e| e.to_string())?;
+                self.builder.build_call(acquire_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
+            }
+            Type::String(_) | Type::Path(_, _) => {
+                let inc_fn = self.module.get_function("tl_ptr_inc_ref")
+                    .or_else(|| {
+                         let void_ty = self.context.void_type();
+                         let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                         let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                         Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
+                    })
+                    .ok_or("tl_ptr_inc_ref decl failed")?;
+                let ptr = val.into_pointer_value();
+                let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_inc").map_err(|e| e.to_string())?;
+                self.builder.build_call(inc_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
+            }
+            Type::Enum(name, generics) => {
+                let mangled_name = if generics.is_empty() {
+                    name.clone()
+                } else {
+                    self.mangle_type_name(name, generics)
+                };
+
+                let mut enum_def = self
+                    .enum_defs
+                    .get(&mangled_name)
+                    .ok_or(format!("Enum def {} not found", mangled_name))?
+                    .clone();
+                
+                 if !enum_def.generics.is_empty() {
+                }
+
+                let enum_ty = *self.enum_types.get(&enum_def.name).unwrap(); 
+                
+                let current_block = self.builder.get_insert_block().unwrap();
+                let func = current_block.get_parent().unwrap();
+
+                let ptr = if val.is_pointer_value() {
+                    val.into_pointer_value()
+                } else {
+                    let alloca = self.create_entry_block_alloca(func, "retain_spill", ty)?;
+                    self.builder.build_store(alloca, val).map_err(|e| e.to_string())?;
+                    alloca
+                };
+
+                // switch on tag
+                let tag_ptr = self.builder.build_struct_gep(enum_ty, ptr, 0, "tag_ptr").map_err(|e| e.to_string())?;
+                let tag_val = self.builder.build_load(self.context.i32_type(), tag_ptr, "tag").map_err(|e| e.to_string())?.into_int_value();
+                
+                let after_switch = self.context.append_basic_block(func, "after_retain_enum_switch");
+                
+                let mut cases = vec![];
+                for (i, variant) in enum_def.variants.iter().enumerate() {
+                    let case_block = self.context.append_basic_block(func, &format!("retain_variant_{}", variant.name));
+                    cases.push((self.context.i32_type().const_int(i as u64, false), case_block));
+                }
+                
+                let cases_refs: Vec<(inkwell::values::IntValue, inkwell::basic_block::BasicBlock)> =
+                    cases.iter().map(|(i, b)| (*i, *b)).collect();
+                self.builder.build_switch(tag_val, after_switch, &cases_refs).map_err(|e| e.to_string())?;
+                
+                for (i, variant) in enum_def.variants.iter().enumerate() {
+                    let case_block = cases[i].1;
+                    self.builder.position_at_end(case_block);
+                    
+                    let field_types_list = match &variant.kind {
+                        crate::compiler::ast::VariantKind::Unit => vec![],
+                        crate::compiler::ast::VariantKind::Tuple(types) => types.clone(),
+                        crate::compiler::ast::VariantKind::Struct(fields) => fields.iter().map(|(_, t)| t.clone()).collect(),
+                    };
+                    
+                    if !field_types_list.is_empty() {
+                        let payload_ptr_raw = self.builder.build_struct_gep(enum_ty, ptr, 1, "payload_ptr_raw").map_err(|e| e.to_string())?;
+                        let mut field_types: Vec<inkwell::types::BasicTypeEnum> = vec![];
+                        for ty in &field_types_list {
+                             let llvm_ty = self.get_llvm_type(ty).expect("Failed to get type for retain");
+                             field_types.push(llvm_ty);
+                        }
+                        let variant_struct_ty = self.context.struct_type(&field_types, false);
+                        
+                        let payload_ptr = self.builder.build_pointer_cast(
+                                payload_ptr_raw,
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "payload_cast",
+                            ).unwrap();
+                            
+                         for (idx, f_ty) in field_types_list.iter().enumerate() {
+                             if matches!(f_ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::String(_) | Type::Tuple(_)) {
+                                  let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "field_ptr").map_err(|e| e.to_string())?;
+                                  let f_val = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "field_val").map_err(|e| e.to_string())?;
+                                  self.emit_recursive_retain(f_val, f_ty)?;
+                             }
+                         }
+                    }
+                    self.builder.build_unconditional_branch(after_switch).unwrap();
+                }
+                self.builder.position_at_end(after_switch);
+            }
+            Type::Struct(name, generics) => {
+                 let mangled_name = if generics.is_empty() { name.clone() } else { self.mangle_type_name(name, generics) };
+                 if let Some(struct_def) = self.struct_defs.get(&mangled_name).cloned() {
+                      let current_block = self.builder.get_insert_block().unwrap();
+                      let func = current_block.get_parent().unwrap();
+                      
+                      let ptr = if val.is_pointer_value() {
+                          val.into_pointer_value()
+                      } else {
+                          let alloca = self.create_entry_block_alloca(func, "retain_spill_struct", ty)?;
+                          self.builder.build_store(alloca, val).map_err(|e| e.to_string())?;
+                          alloca
+                      };
+
+                      let st_llvm_ty = *self.struct_types.get(&mangled_name).unwrap();
+                      
+                      for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
+                           if matches!(f_ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::String(_) | Type::Tuple(_)) {
+                                let f_ptr = self.builder.build_struct_gep(st_llvm_ty, ptr, i as u32, "field_ptr").map_err(|e| e.to_string())?;
+                                let f_val = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "field_val").map_err(|e| e.to_string())?;
+                                self.emit_recursive_retain(f_val, f_ty)?;
+                           }
+                      }
+                 } else {
+                      let inc_fn = self.module.get_function("tl_ptr_inc_ref")
+                        .or_else(|| {
+                             let void_ty = self.context.void_type();
+                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                             let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                             Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
+                        })
+                        .ok_or("tl_ptr_inc_ref decl failed")?;
+                        let ptr = val.into_pointer_value();
+                        let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                        let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_inc").map_err(|e| e.to_string())?;
+                        self.builder.build_call(inc_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
+                 }
+            }
+            Type::Tuple(elem_types) => {
+                let current_block = self.builder.get_insert_block().unwrap();
+                let func = current_block.get_parent().unwrap();
+                
+                let ptr = if val.is_pointer_value() {
+                    val.into_pointer_value()
+                } else {
+                    let alloca = self.create_entry_block_alloca(func, "retain_spill_tuple", ty)?;
+                    self.builder.build_store(alloca, val).map_err(|e| e.to_string())?;
+                    alloca
+                };
+
+                let mut field_types = vec![];
+                for ty in elem_types {
+                    field_types.push(self.get_llvm_type(ty).unwrap());
+                }
+                let tuple_ty = self.context.struct_type(&field_types, false);
+                
+                for (i, elem_ty) in elem_types.iter().enumerate() {
+                    if matches!(elem_ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::String(_) | Type::Tuple(_)) {
+                        let f_ptr = self.builder.build_struct_gep(tuple_ty, ptr, i as u32, "tuple_elem_ptr").map_err(|e| e.to_string())?;
+                        let f_val = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "elem_val").map_err(|e| e.to_string())?;
+                        self.emit_recursive_retain(f_val, elem_ty)?;
+                    }
+                }
+            }
+            _ => {}
         }
         Ok(())
     }

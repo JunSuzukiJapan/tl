@@ -1502,12 +1502,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.method_return_types.insert(func.name.clone(), func.return_type.clone());
 
 
-        // Check if this function returns a struct (requires sret)
-        // Check if this function returns a struct (requires sret)
-        // Check if this function        // matches!(func.return_type, Type::Struct(_, _) | Type::Struct(_, _))
-        // Let's assume Structs needs SRET, but Tensors do NOT.
+        // Check if this function returns a struct or enum (requires sret)
+        // Let's assume Structs/Enums need SRET, but Tensors do NOT.
         // String is a pointer, so exclusion is needed.
-        let uses_sret = matches!(&func.return_type, Type::Struct(name, _) if name != "Tensor");
+        let uses_sret = matches!(&func.return_type, Type::Struct(name, _) | Type::Enum(name, _) if name != "Tensor" && name != "String");
 
         let mut args_types = Vec::new();
 
@@ -1614,8 +1612,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.enter_scope(); // Function scope
 
 
-        // Check if this function uses sret
-        let uses_sret = matches!(&func.return_type, Type::Struct(name, _) if name != "Tensor");
+        // Check if this function returns a struct or enum (requires sret)
+        let uses_sret = matches!(&func.return_type, Type::Struct(name, _) | Type::Enum(name, _) if name != "Tensor" && name != "String");
         let param_offset = if uses_sret { 1 } else { 0 };
 
         if uses_sret {

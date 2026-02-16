@@ -1702,35 +1702,8 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
 
-    fn emit_retain(&self, val: BasicValueEnum<'ctx>, ty: &Type) -> Result<(), String> {
-        match ty {
-            Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
-                // V4.5 Fix: Use acquire to increment refcount (retain ownership)
-                // promote was a no-op which caused use-after-free
-                let acquire_fn = self.module.get_function("tl_tensor_acquire")
-                    .ok_or("tl_tensor_acquire not found")?;
-                let ptr = val.into_pointer_value();
-                let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_acq").map_err(|e| e.to_string())?;
-                self.builder.build_call(acquire_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
-            }
-
-            Type::Struct(_, _) | Type::String(_) | Type::Enum(_, _) | Type::Path(_, _) => {
-                let inc_fn = self.module.get_function("tl_ptr_inc_ref")
-                    .or_else(|| {
-                         let void_ty = self.context.void_type();
-                         let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                         let ft = void_ty.fn_type(&[ptr_ty.into()], false);
-                         Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
-                    })
-                    .ok_or("tl_ptr_inc_ref decl failed")?;
-                let ptr = val.into_pointer_value();
-                let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_inc").map_err(|e| e.to_string())?;
-                self.builder.build_call(inc_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
-            }
-            _ => {}
-        }
+    fn emit_retain(&mut self, val: BasicValueEnum<'ctx>, ty: &Type) -> Result<(), String> {
+        self.emit_recursive_retain(val, ty)?;
         Ok(())
     }
 
@@ -2529,6 +2502,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                      self.builder.build_load(self.get_llvm_type(&err_ty)?, field_ptr, "err_val_loaded").unwrap()
                 };
 
+                // FIX: Retain ownership of extracted error value because we are taking it out of Result
+                self.emit_retain(err_val, &err_ty)?;
+
                 // Construct Return Value: Result<RetOk, E>::Err(err_val)
                 let func_ret_ty = self.current_fn_return_type.clone().ok_or("Unknown function return type")?;
                 let func_ok_ty = if let Type::Enum(_, generics) = &func_ret_ty {
@@ -2559,8 +2535,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (ret_val, ret_ty_compiled) = self.compile_expr(&enum_init_expr)?;
                 
                 // Cleanup and Return
+                self.mark_temp_no_cleanup(ret_val);
+
                 if let Some(sret) = self.current_sret_dest {
-                    self.emit_struct_copy(sret, ret_val.into_pointer_value(), &ret_ty_compiled)?;
+                    let ret_ptr = ret_val.into_pointer_value();
+                    // Avoid self-copy if EnumInit already wrote to sret
+                    if ret_ptr != sret {
+                        self.emit_struct_copy(sret, ret_ptr, &ret_ty_compiled)?;
+                    }
                     self.emit_all_scopes_cleanup();
                     if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
                          self.builder.build_call(exit_fn, &[], "").unwrap();
@@ -2568,11 +2550,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.builder.build_return(None).unwrap();
                 } else {
                      // Direct return
+                     if matches!(ret_ty_compiled, Type::Struct(_, _) | Type::Enum(_, _)) {
+                        if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                            let ptr = ret_val.into_pointer_value();
+                            let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                            let cast_ptr = self.builder.build_pointer_cast(ptr, ptr_type, "cast_unreg_ret").unwrap();
+                            self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                        }
+                     }
+
                      self.emit_all_scopes_cleanup();
                      if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
                           self.builder.build_call(exit_fn, &[], "").unwrap();
                      }
-                     if let Some(rt) = func.get_type().get_return_type() {
+                     if let Some(_rt) = func.get_type().get_return_type() {
                          self.builder.build_return(Some(&ret_val)).unwrap();
                      } else {
                          self.builder.build_return(None).unwrap();
@@ -2595,6 +2586,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                      let field_ptr = self.builder.build_struct_gep(ok_variant_ty, ok_variant_ptr, 0, "ok_field_ptr").map_err(|e| e.to_string())?;
                      self.builder.build_load(self.get_llvm_type(&ok_ty)?, field_ptr, "ok_val_loaded").unwrap()
                 };
+                
+                // FIX: Retain ownership of extracted ok value
+                self.emit_retain(ok_val, &ok_ty)?;
                 
                 Ok((ok_val, ok_ty))
             }
@@ -2843,31 +2837,32 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
 
             ExprKind::Variable(name) => {
+                let mut found = None;
                 for scope in self.variables.iter().rev() {
                     if let Some((val, ty, _)) = scope.get(name) {
-                        if val.is_pointer_value() {
-                            let ptr = val.into_pointer_value();
+                         found = Some((*val, ty.clone()));
+                         break;
+                    }
+                }
 
-                            let llvm_ty = self.get_llvm_type(ty).map_err(|e| e.to_string())?;
-
-                            let loaded = self
+                if let Some((val, ty)) = found {
+                     if val.is_pointer_value() {
+                          let ptr = val.into_pointer_value();
+                          let llvm_ty = self.get_llvm_type(&ty).map_err(|e| e.to_string())?;
+                          let loaded = self
                                 .builder
                                 .build_load(llvm_ty, ptr, name)
                                 .map_err(|e| e.to_string())?;
 
-                            // FIX: Must retain ownership for the new variable reference
-                            // Otherwise `let v2 = v` creates a second owner without IncRef -> Double Free.
-                            self.emit_retain(loaded, ty)?;
-
-                            return Ok((loaded, ty.clone()));
-                        } else {
-                            // Regular Variable - Retain ownership for caller
-                            self.emit_retain(*val, ty)?; 
-                            return Ok((*val, ty.clone()));
-                        }
-                    }
+                          self.emit_retain(loaded, &ty)?;
+                          Ok((loaded, ty))
+                     } else {
+                          self.emit_retain(val, &ty)?;
+                          Ok((val, ty))
+                     }
+                } else {
+                     Err(format!("Variable {} not found in scopes", name))
                 }
-                Err(format!("Variable {} not found in scopes", name))
             }
             ExprKind::StructInit(ty, fields) => {
                  // Normalize Path types to Struct/Enum
@@ -7368,7 +7363,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Tensors are returned by pointer directly, so exclude them.
         let mut dest_val = None;
         let uses_sret = match ret_type {
-             Type::Struct(ref name, _) => name != "Tensor" && name != "String",
+             Type::Struct(ref name, _) | Type::Enum(ref name, _) => name != "Tensor" && name != "String",
              _ => false 
         };
         if uses_sret {
