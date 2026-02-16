@@ -1,6 +1,7 @@
 use crate::compiler::codegen::type_manager::{CodeGenType, TypeManager};
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
+use crate::compiler::builtin_loader::{BuiltinLoader, BuiltinTypeData};
 use inkwell::values::BasicValueEnum;
 
 
@@ -8,6 +9,12 @@ use inkwell::values::BasicValueEnum;
 
 
 pub const SOURCE: &str = include_str!("llm_types.tl");
+
+pub fn load_llm_data() -> BuiltinTypeData {
+    BuiltinLoader::load_module_data(SOURCE, "LLM")
+        .expect("Failed to load LLM type data")
+}
+
 
 pub fn register_llm_types(manager: &mut TypeManager) {
     let string_type = Type::String("String".to_string());
@@ -124,7 +131,9 @@ fn compile_kv_cache_update<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 3 { return Err("KVCache::update requires 3 arguments".into()); }
-    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
+    
+    // Convert instance (ptr) to ptr
+    if !instance_val.is_pointer_value() { return Err("Instance update requires pointer".into()); }
     
     let (layer_val, _) = args[0];
     let (k_val, k_ty) = &args[1];
@@ -154,8 +163,8 @@ fn compile_kv_cache_update<'ctx>(
     let k_ptr = get_tensor_ptr(*k_val, k_ty)?;
     let v_ptr = get_tensor_ptr(*v_val, v_ty)?;
 
-    let fn_val = codegen.module.get_function("tl_kv_cache_update").ok_or("tl_kv_cache_update not found")?;
-    codegen.builder.build_call(fn_val, &[handle.into(), layer_val.into(), k_ptr, v_ptr], "").map_err(|e| e.to_string())?;
+    let fn_val = codegen.module.get_function("tl_kvcache_update").ok_or("tl_kvcache_update not found")?;
+    codegen.builder.build_call(fn_val, &[instance_val.into(), layer_val.into(), k_ptr, v_ptr], "").map_err(|e| e.to_string())?;
     
     Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
 }
@@ -309,43 +318,23 @@ fn compile_kv_cache_new<'ctx>(
     }
     let layers_val = args[0].0;
 
-    let fn_val = codegen.module.get_function("tl_kv_cache_new").ok_or("tl_kv_cache_new not found")?;
-    let call = codegen.builder.build_call(fn_val, &[layers_val.into()], "kv_new").map_err(|e| e.to_string())?;
-    let handle = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from KVCache::new".into()),
-    };
+    let fn_val = codegen.module.get_function("tl_kvcache_new").ok_or("tl_kvcache_new not found")?;
+    
+    // Alloc stack slot for return value SRET
+    // CodeGenerator usually manages alloca in entry block but here we do it ad-hoc?
+    // Using simple alloca in current block is risky if inside loop?
+    // But `new` is usually top level.
+    // Better: use codegen.builder
+    
+    let i64_type = codegen.context.i64_type();
+    let struct_ty = codegen.context.struct_type(&[i64_type.into()], false);
+    
+    let alloca = codegen.builder.build_alloca(struct_ty, "kv_new_sret").unwrap();
+    
+    codegen.builder.build_call(fn_val, &[alloca.into(), layers_val.into()], "").map_err(|e| e.to_string())?;
 
-    let struct_type = *codegen.struct_types.get("KVCache").ok_or("Struct type KVCache not found")?;
-    let struct_def = codegen.struct_defs.get("KVCache").ok_or("Struct definition KVCache not found")?;
-    let size = struct_type.size_of().ok_or("Cannot determine size of KVCache")?;
-    
-    let size_int = size;
-    let size_i64 = if size_int.get_type() == codegen.context.i32_type() {
-        codegen.builder.build_int_z_extend(size_int, codegen.context.i64_type(), "size_i64").unwrap()
-    } else {
-        size_int
-    };
-
-    let malloc_fn = codegen.module.get_function("malloc").ok_or("malloc not found (declare in builtins)")?;
-    let call = codegen.builder.build_call(malloc_fn, &[size_i64.into()], "kvcache_malloc").map_err(|e| e.to_string())?;
-    let raw_ptr = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-        _ => return Err("malloc returned invalid value".into()),
-    };
-    
-    if let Some(register_fn) = codegen.module.get_function("tl_mem_register_struct") {
-        let cast_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap();
-        codegen.builder.build_call(register_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
-    }
-    
-    let struct_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "kvcache_ptr").map_err(|e| e.to_string())?;
-    
-    let field_idx = struct_def.fields.iter().position(|(n, _)| n == "handle").ok_or("Field handle not found in KVCache")?;
-    let field_ptr = codegen.builder.build_struct_gep(struct_type, struct_ptr, field_idx as u32, "kvcachehandle").map_err(|e| e.to_string())?;
-    codegen.builder.build_store(field_ptr, handle).map_err(|e| e.to_string())?;
-    
-    Ok((struct_ptr.into(), Type::Struct("KVCache".to_string(), vec![])))
+    // Return the POINTER to the struct (standard for Struct return types in TL Codegen)
+    Ok((alloca.into(), Type::Struct("KVCache".to_string(), vec![])))
 }
 
 // KVCache Instance Methods
@@ -355,11 +344,16 @@ fn compile_kv_cache_free<'ctx>(
     instance_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
-    let fn_val = codegen.module.get_function("tl_kv_cache_free").ok_or("tl_kv_cache_free not found")?;
-    codegen.builder.build_call(fn_val, &[handle.into()], "kv_free").map_err(|e| e.to_string())?;
+    // KVCache.free(self) -> self is ptr
+    // tl_kvcache_free(ptr)
+    if !instance_val.is_pointer_value() {
+         return Err("Instance not pointer in free".into());
+    }
+    let fn_val = codegen.module.get_function("tl_kvcache_free").ok_or("tl_kvcache_free not found")?;
+    codegen.builder.build_call(fn_val, &[instance_val.into()], "").map_err(|e| e.to_string())?;
     Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
 }
+
 
 fn compile_kv_cache_get_k<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
@@ -368,13 +362,15 @@ fn compile_kv_cache_get_k<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 { return Err("KVCache::get_k requires 1 argument".into()); }
-    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
     let (layer_val, _) = args[0];
-    let fn_val = codegen.module.get_function("tl_kv_cache_get_k").ok_or("tl_kv_cache_get_k not found")?;
-    let call = codegen.builder.build_call(fn_val, &[handle.into(), layer_val.into()], "kv_get_k").map_err(|e| e.to_string())?;
+    
+    // tl_kvcache_get_k(ptr, layer)
+    let fn_val = codegen.module.get_function("tl_kvcache_get_k").ok_or("tl_kvcache_get_k not found")?;
+    let call = codegen.builder.build_call(fn_val, &[instance_val.into(), layer_val.into()], "kv_get_k").map_err(|e| e.to_string())?;
     let res = codegen.check_tensor_result(call, "kv_get_k_error")?;
     Ok((res, Type::Tensor(Box::new(Type::F32), 2))) // Assuming 2D tensor
 }
+
 
 fn compile_kv_cache_get_v<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
@@ -383,10 +379,12 @@ fn compile_kv_cache_get_v<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 { return Err("KVCache::get_v requires 1 argument".into()); }
-    let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
     let (layer_val, _) = args[0];
-    let fn_val = codegen.module.get_function("tl_kv_cache_get_v").ok_or("tl_kv_cache_get_v not found")?;
-    let call = codegen.builder.build_call(fn_val, &[handle.into(), layer_val.into()], "kv_get_v").map_err(|e| e.to_string())?;
+    
+    // tl_kvcache_get_v(ptr, layer)
+    let fn_val = codegen.module.get_function("tl_kvcache_get_v").ok_or("tl_kvcache_get_v not found")?;
+    let call = codegen.builder.build_call(fn_val, &[instance_val.into(), layer_val.into()], "kv_get_v").map_err(|e| e.to_string())?;
     let res = codegen.check_tensor_result(call, "kv_get_v_error")?;
     Ok((res, Type::Tensor(Box::new(Type::F32), 2))) // Assuming 2D tensor
 }
+

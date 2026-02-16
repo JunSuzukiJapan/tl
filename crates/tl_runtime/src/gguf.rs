@@ -6,7 +6,6 @@ use crate::tensor_map::OpaqueTensorMap;
 use crate::quantized::{QTensor, GGMLType};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::ffi::CStr;
 use std::fs::File;
 use memmap2::Mmap;
 
@@ -36,8 +35,11 @@ pub extern "C" fn tl_gguf_load(path: *mut StringStruct) -> *mut OpaqueTensorMap 
         if path.is_null() || (*path).ptr.is_null() {
              return std::ptr::null_mut();
         }
-        let path_str = CStr::from_ptr((*path).ptr).to_string_lossy();
-        let expanded = crate::file_io::expand_path(&path_str);
+        let ptr = (*path).ptr as *const u8;
+        let len = (*path).len as usize;
+        let slice = std::slice::from_raw_parts(ptr, len);
+        let path_str = std::str::from_utf8(slice).unwrap_or_default();
+        let expanded = crate::file_io::expand_path(path_str);
 
         // Open file and memory map it
         let file = match File::open(&expanded) {

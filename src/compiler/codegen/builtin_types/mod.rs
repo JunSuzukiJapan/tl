@@ -65,6 +65,17 @@ pub fn load_all_builtins(codegen: &mut CodeGenerator) {
     non_generic::primitives::register_primitive_types(&mut codegen.type_manager);
     io::register_io_types(&mut codegen.type_manager);
     system::register_system_types(&mut codegen.type_manager);
+    // Register LLM Structs (from source)
+    let llm_data = llm::load_llm_data();
+    for def in llm_data.extra_structs {
+        codegen.struct_defs.insert(def.name.clone(), def);
+    }
+    // Also check struct_def (though current load_module_data returns None for it)
+    if let Some(def) = llm_data.struct_def {
+        codegen.struct_defs.insert(def.name.clone(), def);
+    }
+    
+    // Register methods
     llm::register_llm_types(&mut codegen.type_manager);
     tensor::register_tensor_types(&mut codegen.type_manager);
     param::register_param_types(&mut codegen.type_manager);

@@ -93,3 +93,41 @@ pub extern "C" fn tl_tensor_rms_norm_llm(t: *mut OpaqueTensor, eps: f64) -> *mut
 }
 
 // tl_gguf_load と tl_tokenizer_new_from_gguf は system.rs で定義
+
+// --- KVCache ABI Wrappers for Compiler Auto-Generation ---
+// Compiler generates calls using pointer to struct (ptr), while runtime expects i64 handle directly.
+// These wrappers bridge the gap.
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_kvcache_free(ptr: *const i64) {
+    if ptr.is_null() { return; }
+    let handle = unsafe { *ptr };
+    tl_kv_cache_free(handle);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_kvcache_new(sret: *mut i64, layers: i64) {
+    let handle = tl_kv_cache_new(layers);
+    unsafe { *sret = handle };
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_kvcache_get_k(ptr: *const i64, layer: i64) -> *mut OpaqueTensor {
+    if ptr.is_null() { return std::ptr::null_mut(); }
+    let handle = unsafe { *ptr };
+    tl_kv_cache_get_k(handle, layer)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_kvcache_get_v(ptr: *const i64, layer: i64) -> *mut OpaqueTensor {
+    if ptr.is_null() { return std::ptr::null_mut(); }
+    let handle = unsafe { *ptr };
+    tl_kv_cache_get_v(handle, layer)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_kvcache_update(ptr: *const i64, layer: i64, k: *mut OpaqueTensor, v: *mut OpaqueTensor) {
+    if ptr.is_null() { return; }
+    let handle = unsafe { *ptr };
+    tl_kv_cache_update(handle, layer, k, v);
+}

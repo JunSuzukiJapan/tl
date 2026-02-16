@@ -241,4 +241,19 @@ impl BuiltinLoader {
             destructor: None,
         })
     }
+
+    /// Load all definitions from a module source without filtering for specific type.
+    pub fn load_module_data(source: &str, module_name: &str) -> Result<BuiltinTypeData, TlError> {
+        let mut module = Self::load_from_source(source)?;
+        Self::analyze_builtin_module(&mut module);
+        
+        Ok(BuiltinTypeData {
+            name: module_name.to_string(),
+            struct_def: None, 
+            enum_def: None,
+            impl_blocks: module.impls, 
+            extra_structs: module.structs, 
+            destructor: None,
+        })
+    }
 }

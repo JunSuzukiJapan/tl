@@ -4,7 +4,6 @@
 use crate::string_ffi::StringStruct;
 use crate::OpaqueTensor;
 use std::collections::HashMap;
-use std::ffi::CStr;
 use std::sync::Arc;
 
 
@@ -92,7 +91,10 @@ pub extern "C" fn tl_tensor_map_insert(
             return;
         }
         let map_ref = &mut (*map).entries;
-        let key = CStr::from_ptr((*name).ptr).to_string_lossy().into_owned();
+        let ptr = (*name).ptr as *const u8;
+        let len = (*name).len as usize;
+        let slice = std::slice::from_raw_parts(ptr, len);
+        let key = std::str::from_utf8(slice).unwrap_or_default().to_string();
         if let Some((data, shape, dtype_tag)) = extract_tensor_data(tensor) {
             map_ref.insert(key, TensorEntry { data_f32: data, shape, dtype_tag });
         }
@@ -111,15 +113,19 @@ pub extern "C" fn tl_tensor_map_get(
             return std::ptr::null_mut();
         }
         let map_ref = &(*map);
-        let key = CStr::from_ptr((*name).ptr).to_string_lossy();
+        let ptr = (*name).ptr as *const u8;
+        let len = (*name).len as usize;
+        let slice = std::slice::from_raw_parts(ptr, len);
+        let key_str = std::str::from_utf8(slice).unwrap_or_default();
+        let key = key_str.to_string();
         
         // 1. entries (F32テンソル) を検索
-        if let Some(entry) = map_ref.entries.get(key.as_ref()) {
+        if let Some(entry) = map_ref.entries.get(key.as_str()) {
             return create_tensor_from_entry(entry);
         }
         
         // 2. qtensors (量子化テンソル) をフォールバック検索
-        if let Some(qtensor_arc) = map_ref.qtensors.get(key.as_ref()) {
+        if let Some(qtensor_arc) = map_ref.qtensors.get(key.as_str()) {
             match qtensor_arc.dequantize_to_tensor() {
                 Ok(tensor_ptr) => return tensor_ptr,
                 Err(e) => {
@@ -147,8 +153,11 @@ pub extern "C" fn tl_tensor_map_load(path: *mut StringStruct) -> *mut OpaqueTens
         if path.is_null() || (*path).ptr.is_null() {
             return std::ptr::null_mut();
         }
-        let path_str = CStr::from_ptr((*path).ptr).to_string_lossy();
-        let path_buf = crate::file_io::expand_path(&path_str);
+        let ptr = (*path).ptr as *const u8;
+        let len = (*path).len as usize;
+        let slice = std::slice::from_raw_parts(ptr, len);
+        let path_str = std::str::from_utf8(slice).unwrap_or_default();
+        let path_buf = crate::file_io::expand_path(path_str);
         
         // safetensors ファイルを読み込み
         match safetensors::SafeTensors::deserialize(&std::fs::read(&path_buf).unwrap_or_default()) {
@@ -199,8 +208,11 @@ pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *mut Strin
         if map.is_null() || path.is_null() || (*path).ptr.is_null() {
             return;
         }
-        let path_str = CStr::from_ptr((*path).ptr).to_string_lossy();
-        let path_buf = crate::file_io::expand_path(&path_str);
+        let ptr = (*path).ptr as *const u8;
+        let len = (*path).len as usize;
+        let slice = std::slice::from_raw_parts(ptr, len);
+        let path_str = std::str::from_utf8(slice).unwrap_or_default();
+        let path_buf = crate::file_io::expand_path(path_str);
         let entries = &(*map).entries;
 
         // 最初のテンソルをバイナリ形式で保存（tl_tensor_load 互換）
@@ -234,9 +246,12 @@ pub extern "C" fn tl_tensor_map_get_quantized(
             return std::ptr::null_mut();
         }
         let map_ref = &(*map);
-        let key = std::ffi::CStr::from_ptr((*name).ptr).to_string_lossy();
+        let ptr = (*name).ptr as *const u8;
+        let len = (*name).len as usize;
+        let slice = std::slice::from_raw_parts(ptr, len);
+        let key = std::str::from_utf8(slice).unwrap_or_default().to_string();
 
-        if let Some(qtensor_arc) = map_ref.qtensors.get(key.as_ref()) {
+        if let Some(qtensor_arc) = map_ref.qtensors.get(key.as_str()) {
             let arc_clone = Arc::clone(qtensor_arc);
             return Arc::into_raw(arc_clone) as *mut crate::quantized::QTensor;
         }

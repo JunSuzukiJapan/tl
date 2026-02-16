@@ -130,6 +130,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         );
 
         codegen.register_builtin_return_types();
+        
+        eprintln!("DEBUG: Has KVCache in struct_defs: {}", codegen.struct_defs.contains_key("KVCache"));
 
         codegen
     }
@@ -790,11 +792,12 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Pass 2: Body
         for s in structs {
+            if s.name == "KVCache" { eprintln!("DEBUG: Compiling body for KVCache"); }
             if !s.generics.is_empty() {
                 continue;
             }
 
-            let mut field_types = Vec::new();
+            let mut field_types = Vec::new(); // RESET
             for (_field_name, field_type) in &s.fields {
                 // println!("DEBUG: compile_struct_defs struct={} field={} type={:?}", s.name, field_name, field_type);
                 let llvm_type = match field_type {
