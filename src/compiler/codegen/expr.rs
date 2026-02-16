@@ -6264,7 +6264,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // SRET Check
         // String is a pointer (RefCounted), handled as value return, not SRET.
         let uses_sret = match &ret_ty {
-            Type::Struct(n, _) => n != "String" && n != "Tensor",
+            Type::Struct(n, _) | Type::Enum(n, _) => n != "String" && n != "Tensor",
             _ => false,
         };
         let mut sret_ptr = None;
@@ -6273,10 +6273,10 @@ impl<'ctx> CodeGenerator<'ctx> {
              // OLD: Stack Allocation (alloca) -> Causes Stack Corruption
              // NEW: Heap Allocation (malloc + register) -> Correct for RefCounted Structs/SRET
              
-             // 1. Get Struct Type and Size from CodeGen struct_types map
+             // 1. Get Struct/Enum Type and Size from CodeGen struct_types map
              let (struct_name, generics) = match &ret_ty {
-                 Type::Struct(n, g) => (n, g),
-                 _ => return Err("SRET used on non-struct type".into()),
+                 Type::Struct(n, g) | Type::Enum(n, g) => (n, g),
+                 _ => return Err("SRET used on non-aggregate type".into()),
              };
              
              let mangled_name = if generics.is_empty() {
@@ -6287,6 +6287,9 @@ impl<'ctx> CodeGenerator<'ctx> {
              
              // Simple name lookup (as done in compile_struct_init)
              let simple_lookup_name = mangled_name.clone();
+
+             // Ensure type is monomorphized and registered
+             let _ = self.get_or_monomorphize_type(&ret_ty).map_err(|e| e.to_string())?;
 
              let struct_type = self.struct_types.get(&simple_lookup_name)
                  .or_else(|| self.enum_types.get(&simple_lookup_name))

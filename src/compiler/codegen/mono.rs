@@ -555,9 +555,14 @@ impl<'ctx> CodeGenerator<'ctx> {
     /// This version takes &mut self and can create new struct definitions.
     pub fn get_or_monomorphize_type(&mut self, ty: &Type) -> Result<BasicTypeEnum<'ctx>, String> {
         match ty {
-            Type::Struct(name, args) | Type::Struct(name, args) if !args.is_empty() => {
+            Type::Struct(name, args) if !args.is_empty() => {
                 // Generic struct: monomorphize
                 let _ = self.monomorphize_struct(name, args)?;
+                Ok(self.context.ptr_type(AddressSpace::default()).into())
+            }
+            Type::Enum(name, args) if !args.is_empty() => {
+                // Generic enum: monomorphize
+                let _ = self.monomorphize_enum(name, args)?;
                 Ok(self.context.ptr_type(AddressSpace::default()).into())
             }
             _ => self.get_llvm_type(ty),
