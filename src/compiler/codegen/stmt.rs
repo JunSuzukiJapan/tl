@@ -353,7 +353,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.mangle_type_name(name, generics)
                 };
 
-                let mut enum_def = self
+                let enum_def = self
                     .enum_defs
                     .get(&mangled_name)
                     .ok_or(format!("Enum def {} not found", mangled_name))?

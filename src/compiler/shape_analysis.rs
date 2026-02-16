@@ -159,7 +159,7 @@ impl ShapeAnalyzer {
                 }
             }
 
-            ExprKind::Try(inner) => ShapeInfo::Unknown,
+            ExprKind::Try(_inner) => ShapeInfo::Unknown,
 
             _ => ShapeInfo::Unknown,
         }
