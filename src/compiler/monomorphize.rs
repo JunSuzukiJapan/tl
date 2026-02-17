@@ -165,10 +165,12 @@ impl Monomorphizer {
             }
         }
         
-        // 3. Scan global statements
+        // 3. Scan global statements (need a scope for variable tracking)
+        self.scopes.push(HashMap::new());
         for stmt in &mut module.tensor_decls {
             self.rewrite_stmt(&mut stmt.inner, &empty_subst, None);
         }
+        self.scopes.pop();
     }
 
 
@@ -235,7 +237,7 @@ impl Monomorphizer {
             }
             
             Type::Ptr(inner) => Type::Ptr(Box::new(self.resolve_type(inner))),
-
+            Type::Array(inner, size) => Type::Array(Box::new(self.resolve_type(inner)), *size),
 
             _ => ty.clone()
         }
@@ -1268,7 +1270,7 @@ impl Monomorphizer {
              },
              // ... other recursive cases
              Type::Path(segments, args) => {
-                 if segments.len() == 1 {
+                 if segments.len() == 1 && args.is_empty() {
                      if let Some(replacement) = subst.get(&segments[0]) {
                          return replacement.clone();
                      }
@@ -1277,9 +1279,11 @@ impl Monomorphizer {
                  Type::Path(segments.clone(), new_args)
              },
              Type::Ptr(inner) => {
-                 Type::Ptr(Box::new(self.substitute_type(inner, subst)))
-             },
-             // Type::Ref(inner) => Type::Ref(Box::new(self.substitute_type(inner, subst))), // REMOVED
+             Type::Ptr(Box::new(self.substitute_type(inner, subst)))
+         },
+         Type::Array(inner, size) => {
+             Type::Array(Box::new(self.substitute_type(inner, subst)), *size)
+         },
 
              _ => ty.clone()
         }
@@ -1337,6 +1341,7 @@ impl Monomorphizer {
                 }
             }
             Type::Ptr(inner) => format!("Ptr_{}", self.mangle_type(inner)),
+            Type::Array(inner, size) => format!("Array_{}_{}", self.mangle_type(inner), size),
             _ => {
                 "unknown".to_string()
             },
@@ -1408,11 +1413,14 @@ impl Monomorphizer {
                  // Handle nested args?
              }
             (Type::Tensor(inner_g, _), Type::Tensor(inner_c, _)) => {
-                self.unify_types(inner_g, inner_c, map);
-            }
-
-            _ => {}
+            self.unify_types(inner_g, inner_c, map);
         }
+        (Type::Array(inner_g, _), Type::Array(inner_c, _)) => {
+            self.unify_types(inner_g, inner_c, map);
+        }
+
+        _ => {}
+    }
     }
 
 

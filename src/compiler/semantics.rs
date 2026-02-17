@@ -459,6 +459,7 @@ impl SemanticAnalyzer {
                  r1 == r2 && self.unify(t1, t2)
             }
              (Type::Ptr(t1), Type::Ptr(t2)) => self.unify(t1, t2),
+             (Type::Array(t1, s1), Type::Array(t2, s2)) => s1 == s2 && self.unify(t1, t2),
              // Primitive equality or other types
              _ => expected_res == found_res
         }
@@ -482,6 +483,7 @@ impl SemanticAnalyzer {
             }
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.resolve_inferred_type(inner)), *rank),
              Type::Ptr(inner) => Type::Ptr(Box::new(self.resolve_inferred_type(inner))),
+            Type::Array(inner, size) => Type::Array(Box::new(self.resolve_inferred_type(inner)), *size),
             _ => ty.clone()
         }
     }
@@ -512,7 +514,8 @@ impl SemanticAnalyzer {
             Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.substitute_generics(t, subst)).collect()),
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.substitute_generics(inner, subst)), *rank),
             Type::TensorShaped(inner, dims) => Type::TensorShaped(Box::new(self.substitute_generics(inner, subst)), dims.clone()),
-            // Type::Ref(inner) => Type::Ref(Box::new(self.substitute_generics(inner, subst))), // REMOVED
+        Type::Array(inner, size) => Type::Array(Box::new(self.substitute_generics(inner, subst)), *size),
+        // Type::Ref(inner) => Type::Ref(Box::new(self.substitute_generics(inner, subst))), // REMOVED
             _ => ty.clone(),
         }
     }
@@ -2423,6 +2426,15 @@ impl SemanticAnalyzer {
                     for (p, a) in args1.iter().zip(args2.iter()) {
                         self.unify_types_for_inference(p, a, map);
                     }
+                }
+            },
+            (Type::Array(inner_p, s1), Type::Array(inner_a, s2)) if s1 == s2 => {
+                self.unify_types_for_inference(inner_p, inner_a, map);
+            },
+            (Type::Path(segments, args), _) if segments.len() == 1 && args.is_empty() => {
+                let name = &segments[0];
+                if !map.contains_key(name) {
+                    map.insert(name.clone(), arg_ty.clone());
                 }
             },
              _ => {}
@@ -4593,16 +4605,43 @@ impl SemanticAnalyzer {
                             let expected_type = &func.args[i].1;
 
                             if !func.generics.is_empty() {
+                                 // Helper to extract generic param name from a type
+                                 let extract_generic_name = |ty: &Type| -> Option<String> {
+                                     match ty {
+                                         Type::Struct(n, args) if args.is_empty() => Some(n.clone()),
+                                         Type::Path(segs, args) if segs.len() == 1 && args.is_empty() => Some(segs[0].clone()),
+                                         _ => None,
+                                     }
+                                 };
+
                                  let mut unify = |t1: &Type, t2: &Type| -> bool {
-                                    if let Type::Struct(n1, _) = t1 {
-                                        if func.generics.contains(n1) {
-                                            if let Some(existing) = inferred_generics.get(n1) {
+                                    // Direct generic param match
+                                    if let Some(name) = extract_generic_name(t1) {
+                                        if func.generics.contains(&name) {
+                                            if let Some(existing) = inferred_generics.get(&name) {
                                                 return self.are_types_compatible(existing, t2);
                                             } else {
-                                                inferred_generics.insert(n1.clone(), t2.clone());
+                                                inferred_generics.insert(name, t2.clone());
                                                 return true;
                                             }
                                         }
+                                    }
+                                    // Array: recursively check inner type for generics
+                                    if let (Type::Array(inner1, s1), Type::Array(inner2, s2)) = (t1, t2) {
+                                        if s1 == s2 {
+                                            if let Some(name) = extract_generic_name(inner1) {
+                                                if func.generics.contains(&name) {
+                                                    if let Some(existing) = inferred_generics.get(&name) {
+                                                        return self.are_types_compatible(existing, inner2);
+                                                    } else {
+                                                        inferred_generics.insert(name, *inner2.clone());
+                                                        return true;
+                                                    }
+                                                }
+                                            }
+                                            return self.are_types_compatible(inner1, inner2);
+                                        }
+                                        return false;
                                     }
                                     self.are_types_compatible(t1, t2)
                                  };
@@ -4644,6 +4683,14 @@ impl SemanticAnalyzer {
 
 
                                 Type::Tuple(ts) => Type::Tuple(ts.iter().map(|t| substitute(t, map)).collect()),
+                                Type::Array(inner, size) => Type::Array(Box::new(substitute(inner, map)), *size),
+                                Type::Path(segs, args) if segs.len() == 1 && args.is_empty() => {
+                                    if let Some(val) = map.get(&segs[0]) {
+                                        val.clone()
+                                    } else {
+                                        ty.clone()
+                                    }
+                                }
                                 _ => ty.clone() 
                             }
                         }
