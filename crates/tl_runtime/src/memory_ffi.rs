@@ -66,12 +66,12 @@ pub extern "C" fn tl_mem_get_buffer(_index: i64) -> *mut c_void {
 }
 
 /// @ffi_sig (Struct*) -> void
-/// 構造体メモリ解放。Box::from_raw でヒープメモリをデアロケートする。
+/// 構造体メモリ解放。codegen の malloc と対になる libc::free を使用。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_free(ptr: *mut c_void) {
     if !ptr.is_null() {
         unsafe {
-            let _ = Box::from_raw(ptr);
+            libc::free(ptr);
         }
     }
 }
@@ -98,17 +98,25 @@ pub extern "C" fn tl_mem_register_tensor(_ptr: *mut c_void) {
 }
 
 /// @ffi_sig (Struct*|String*) -> void
-/// 構造体登録（スタブ）。構造体だけでなく String にも使われる。
+/// 構造体登録。REF_COUNTS に RC=1 で初期化する。
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_mem_register_struct(_ptr: *mut c_void) {
-    // スタブ
+pub extern "C" fn tl_mem_register_struct(ptr: *mut c_void) {
+    if ptr.is_null() { return; }
+    let key = ptr as usize;
+    if let Ok(mut counts) = REF_COUNTS.lock() {
+        counts.insert(key, 1);
+    }
 }
 
 /// @ffi_sig (Struct*, i8*) -> void
-/// 名前付き構造体登録（スタブ）
+/// 名前付き構造体登録。REF_COUNTS に RC=1 で初期化する。
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_mem_register_struct_named(_ptr: *mut c_void, _name: *const std::os::raw::c_char) {
-    // スタブ
+pub extern "C" fn tl_mem_register_struct_named(ptr: *mut c_void, _name: *const std::os::raw::c_char) {
+    if ptr.is_null() { return; }
+    let key = ptr as usize;
+    if let Ok(mut counts) = REF_COUNTS.lock() {
+        counts.insert(key, 1);
+    }
 }
 
 /// @ffi_sig (void*) -> void
@@ -162,18 +170,26 @@ static REF_COUNTS: std::sync::LazyLock<Mutex<HashMap<usize, usize>>> =
 
 /// @ffi_sig (Struct*|String*) -> void
 /// 参照カウント増加。構造体・String どちらにも使われる。
+/// 安全ガード: REF_COUNTS に未登録のポインタ（alloca 等のスタックアドレス）は無視する。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_ptr_inc_ref(ptr: *mut c_void) {
     if ptr.is_null() { return; }
     let key = ptr as usize;
     if let Ok(mut counts) = REF_COUNTS.lock() {
-        *counts.entry(key).or_insert(1) += 1;
+        // REF_COUNTS に登録済みのポインタのみ RC 操作する。
+        // tl_mem_register_struct / tl_mem_register_struct_named で
+        // 正式に登録されたヒープポインタのみが対象。
+        // 未登録ポインタ（alloca スタックアドレス等）は安全に無視する。
+        if let Some(entry) = counts.get_mut(&key) {
+            *entry += 1;
+        }
     }
 }
 
 /// @ffi_sig (Struct*|String*) -> bool
 /// 参照カウント減少。構造体・String どちらにも使われる。
 /// 戻り値: カウントが0になった場合は true (解放すべき)
+/// 安全ガード: REF_COUNTS に未登録のポインタは false を返す（解放しない）。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_ptr_dec_ref(ptr: *mut c_void) -> bool {
     if ptr.is_null() { return false; }
@@ -188,6 +204,7 @@ pub extern "C" fn tl_ptr_dec_ref(ptr: *mut c_void) -> bool {
                 }
             }
         }
+        // 未登録ポインタは安全に無視（false を返す）
     }
     false
 }
