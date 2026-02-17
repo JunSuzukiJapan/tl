@@ -4095,7 +4095,7 @@ dependencies = [
 
 [[package]]
 name = "tl-lang"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "ariadne",
@@ -4159,7 +4159,7 @@ dependencies = [
 
 [[package]]
 name = "tl_runtime"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "byteorder",
  "cc",

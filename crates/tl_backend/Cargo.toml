@@ -2,6 +2,9 @@
 name = "tl_backend"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "GPU Backend Trait Definitions for TL"
+repository = "https://github.com/JunSuzukiJapan/tl"
+authors = ["Jun Suzuki"]
 
 [dependencies]

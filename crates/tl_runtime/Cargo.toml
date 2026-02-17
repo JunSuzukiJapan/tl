@@ -1,6 +1,6 @@
 [package]
 name = "tl_runtime"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 license = "MIT"
 description = "Runtime library for TL differentiable programming language"
@@ -14,9 +14,9 @@ crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 # Metal GPU Backend (required)
-tl_metal = { path = "../tl_metal" }
-tl_backend = { path = "../tl_backend" }
-tl_cpu = { path = "../tl_cpu" }
+tl_metal = { path = "../tl_metal", version = "0.1.0" }
+tl_backend = { path = "../tl_backend", version = "0.1.0" }
+tl_cpu = { path = "../tl_cpu", version = "0.1.0" }
 
 # Tokenizer (for LLM support)
 tokenizers = "0.19.1"

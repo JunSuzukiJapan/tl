@@ -668,7 +668,7 @@ def main():
     parser.add_argument("--safe-mode", dest="safe_mode", action="store_true", help="システム負荷を下げるために定期的に休憩を挟む")
     parser.add_argument("--no-safe-mode", dest="safe_mode", action="store_false", help="定期休憩を無効化")
     parser.set_defaults(safe_mode=True)
-    parser.add_argument("--max-cached-gib", type=float, default=12.0, help="cached files 上限GiB。超過時は次テスト開始前に待機 (デフォルト: 12)")
+    parser.add_argument("--max-cached-gib", type=float, default=22.0, help="cached files 上限GiB。超過時は次テスト開始前に待機 (デフォルト: 22)")
     parser.add_argument("--min-reclaimable-gib", type=float, default=8.0, help="reclaimable (free+speculative) の下限GiB。下回ると待機 (デフォルト: 8)")
     parser.add_argument("--memory-wait-timeout", type=int, default=300, help="メモリ待機の最大秒数。超過時は緊急停止 (デフォルト: 300)")
     parser.add_argument("--memory-poll", type=float, default=2.0, help="メモリ待機時の監視頻度秒 (デフォルト: 2.0)")
