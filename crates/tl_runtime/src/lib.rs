@@ -221,6 +221,7 @@ fn return_ptr_or_null(
 
 /// ランタイム初期化
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> void
 pub extern "C" fn tl_runtime_init() {
     println!("Runtime device initialized: Metal");
 }
@@ -234,6 +235,7 @@ pub extern "C" fn tl_runtime_shutdown() {
 /// エラーハンドリング
 #[unsafe(no_mangle)]
 #[allow(improper_ctypes_definitions)]
+/// @ffi_sig (u32, String, Option<String>, u32, u32) -> void
 pub extern "C" fn tl_amend_error_loc(
     code: u32,
     msg: String,
@@ -260,6 +262,7 @@ pub use gguf::tl_gguf_load;
 
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (Tensor*) -> void
 pub extern "C" fn tl_tensor_print(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
     crate::print_ffi::tl_tensor_print_1(t);

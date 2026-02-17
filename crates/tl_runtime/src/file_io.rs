@@ -7,6 +7,7 @@ use std::io::{Read, Write};
 
 /// ファイル存在確認
 #[unsafe(no_mangle)]
+/// @ffi_sig (i8*) -> bool
 pub extern "C" fn tl_file_exists(path: *const c_char) -> bool {
     if path.is_null() {
         return false;
@@ -21,6 +22,7 @@ pub extern "C" fn tl_file_exists(path: *const c_char) -> bool {
 
 /// ファイル存在確認（i64 版）
 #[unsafe(no_mangle)]
+/// @ffi_sig (i8*) -> i64
 pub extern "C" fn tl_file_exists_i64(path: *const c_char) -> i64 {
     if tl_file_exists(path) { 1 } else { 0 }
 }
@@ -50,6 +52,7 @@ pub extern "C" fn tl_read_file(path: *const c_char) -> *mut StringStruct {
 
 /// ファイル書き込み
 #[unsafe(no_mangle)]
+/// @ffi_sig (i8*, String*) -> bool
 pub extern "C" fn tl_write_file(path: *const c_char, content: *mut StringStruct) -> bool {
     unsafe {
         if path.is_null() || content.is_null() || (*content).ptr.is_null() {
@@ -68,6 +71,7 @@ pub extern "C" fn tl_write_file(path: *const c_char, content: *mut StringStruct)
 
 /// ファイルダウンロード
 #[unsafe(no_mangle)]
+/// @ffi_sig (i8*, i8*) -> i64
 pub extern "C" fn tl_download_file(url: *const c_char, path: *const c_char) -> i64 {
     let url_str = unsafe { CStr::from_ptr(url).to_string_lossy() };
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
@@ -114,6 +118,7 @@ pub extern "C" fn tl_download_file(url: *const c_char, path: *const c_char) -> i
 
 /// HTTP GET リクエスト
 #[unsafe(no_mangle)]
+/// @ffi_sig (i8*) -> String*
 pub extern "C" fn tl_http_get(url: *const c_char) -> *mut StringStruct {
     let url_str = unsafe { CStr::from_ptr(url).to_string_lossy() };
     
@@ -141,6 +146,7 @@ pub extern "C" fn tl_http_get(url: *const c_char) -> *mut StringStruct {
 
 /// HTTP ダウンロード
 #[unsafe(no_mangle)]
+/// @ffi_sig (i8*, i8*) -> i64
 pub extern "C" fn tl_http_download(url: *const c_char, path: *const c_char) -> i64 {
     tl_download_file(url, path)
 }
@@ -165,6 +171,7 @@ pub struct PathStruct {
 
 /// 新しいパスを作成
 #[unsafe(no_mangle)]
+/// @ffi_sig (i8*) -> *mut PathStruct
 pub extern "C" fn tl_path_new(s: *const c_char) -> *mut PathStruct {
     if s.is_null() {
         return std::ptr::null_mut();
@@ -183,6 +190,7 @@ pub extern "C" fn tl_path_new(s: *const c_char) -> *mut PathStruct {
 
 /// パスを解放
 #[unsafe(no_mangle)]
+/// @ffi_sig (*mut PathStruct) -> void
 pub extern "C" fn tl_path_free(p: *mut PathStruct) {
     if !p.is_null() {
         unsafe {
@@ -197,6 +205,7 @@ pub extern "C" fn tl_path_free(p: *mut PathStruct) {
 
 /// パスを文字列に変換
 #[unsafe(no_mangle)]
+/// @ffi_sig (*mut PathStruct) -> String*
 pub extern "C" fn tl_path_to_string(p: *mut PathStruct) -> *mut StringStruct {
     unsafe {
         if p.is_null() || (*p).ptr.is_null() {
@@ -208,6 +217,7 @@ pub extern "C" fn tl_path_to_string(p: *mut PathStruct) -> *mut StringStruct {
 
 /// パスを結合
 #[unsafe(no_mangle)]
+/// @ffi_sig (*mut PathStruct, i8*) -> *mut PathStruct
 pub extern "C" fn tl_path_join(a: *mut PathStruct, b: *const c_char) -> *mut PathStruct {
     unsafe {
         if a.is_null() || (*a).ptr.is_null() || b.is_null() {
@@ -228,6 +238,7 @@ pub extern "C" fn tl_path_join(a: *mut PathStruct, b: *const c_char) -> *mut Pat
 
 /// パスが存在するか
 #[unsafe(no_mangle)]
+/// @ffi_sig (*mut PathStruct) -> bool
 pub extern "C" fn tl_path_exists(p: *mut PathStruct) -> bool {
     unsafe {
         if p.is_null() || (*p).ptr.is_null() {
@@ -240,6 +251,7 @@ pub extern "C" fn tl_path_exists(p: *mut PathStruct) -> bool {
 
 /// パスがファイルか
 #[unsafe(no_mangle)]
+/// @ffi_sig (*mut PathStruct) -> bool
 pub extern "C" fn tl_path_is_file(p: *mut PathStruct) -> bool {
     unsafe {
         if p.is_null() || (*p).ptr.is_null() {
@@ -252,6 +264,7 @@ pub extern "C" fn tl_path_is_file(p: *mut PathStruct) -> bool {
 
 /// パスがディレクトリか
 #[unsafe(no_mangle)]
+/// @ffi_sig (*mut PathStruct) -> bool
 pub extern "C" fn tl_path_is_dir(p: *mut PathStruct) -> bool {
     unsafe {
         if p.is_null() || (*p).ptr.is_null() {
@@ -266,6 +279,7 @@ pub extern "C" fn tl_path_is_dir(p: *mut PathStruct) -> bool {
 
 /// ファイルオープン
 #[unsafe(no_mangle)]
+/// @ffi_sig (i8*, i8*) -> *mut std::ffi::c_void
 pub extern "C" fn tl_file_open(path: *const c_char, mode: *const c_char) -> *mut std::ffi::c_void {
     unsafe {
         if path.is_null() || mode.is_null() {
@@ -291,6 +305,7 @@ pub extern "C" fn tl_file_open(path: *const c_char, mode: *const c_char) -> *mut
 
 /// ファイルクローズ
 #[unsafe(no_mangle)]
+/// @ffi_sig (c_void) -> void
 pub extern "C" fn tl_file_close(f: *mut std::ffi::c_void) {
     if !f.is_null() {
         unsafe {
@@ -301,6 +316,7 @@ pub extern "C" fn tl_file_close(f: *mut std::ffi::c_void) {
 
 /// ファイルから文字列読み込み
 #[unsafe(no_mangle)]
+/// @ffi_sig (c_void) -> String*
 pub extern "C" fn tl_file_read_string(f: *mut std::ffi::c_void) -> *mut StringStruct {
     if f.is_null() {
         return std::ptr::null_mut();
@@ -326,6 +342,7 @@ pub extern "C" fn tl_file_read_string(f: *mut std::ffi::c_void) -> *mut StringSt
 
 /// ファイルに文字列書き込み
 #[unsafe(no_mangle)]
+/// @ffi_sig (c_void, String*) -> bool
 pub extern "C" fn tl_file_write_string(f: *mut std::ffi::c_void, s: *mut StringStruct) -> bool {
     unsafe {
         if f.is_null() || s.is_null() || (*s).ptr.is_null() {
@@ -339,6 +356,7 @@ pub extern "C" fn tl_file_write_string(f: *mut std::ffi::c_void, s: *mut StringS
 
 /// ファイルからバイナリ読み込み
 #[unsafe(no_mangle)]
+/// @ffi_sig (c_void, u8, usize) -> usize
 pub extern "C" fn tl_file_read_binary(f: *mut std::ffi::c_void, buf: *mut u8, len: usize) -> usize {
     if f.is_null() || buf.is_null() {
         return 0;
@@ -352,6 +370,7 @@ pub extern "C" fn tl_file_read_binary(f: *mut std::ffi::c_void, buf: *mut u8, le
 
 /// ファイルにバイナリ書き込み
 #[unsafe(no_mangle)]
+/// @ffi_sig (c_void, u8, usize) -> bool
 pub extern "C" fn tl_file_write_binary(f: *mut std::ffi::c_void, buf: *const u8, len: usize) -> bool {
     if f.is_null() || buf.is_null() {
         return false;
@@ -365,6 +384,7 @@ pub extern "C" fn tl_file_write_binary(f: *mut std::ffi::c_void, buf: *const u8,
 
 /// 環境変数取得
 #[unsafe(no_mangle)]
+/// @ffi_sig (i8*) -> String*
 pub extern "C" fn tl_env_get(name: *const c_char) -> *mut StringStruct {
     if name.is_null() {
         return std::ptr::null_mut();
@@ -389,6 +409,7 @@ pub extern "C" fn tl_env_get(name: *const c_char) -> *mut StringStruct {
 
 /// 環境変数設定
 #[unsafe(no_mangle)]
+/// @ffi_sig (i8*, i8*) -> void
 pub extern "C" fn tl_env_set(name: *const c_char, value: *const c_char) {
     if name.is_null() || value.is_null() {
         return;

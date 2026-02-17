@@ -7,6 +7,7 @@ use std::io::Write;
 
 /// スリープ（ミリ秒）
 #[unsafe(no_mangle)]
+/// @ffi_sig (i64) -> void
 pub extern "C" fn tl_system_sleep(ms: i64) {
     if ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(ms as u64));
@@ -26,6 +27,7 @@ pub extern "C" fn tl_system_time() -> i64 {
 /// 標準入力から行を読み込み (prompt があれば表示)
 /// 引数は StringStruct* (TLのString型)
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*) -> String*
 pub extern "C" fn tl_read_line(prompt: *mut StringStruct) -> *mut StringStruct {
     if !prompt.is_null() {
         unsafe {
@@ -64,6 +66,7 @@ pub extern "C" fn tl_read_line(prompt: *mut StringStruct) -> *mut StringStruct {
 /// プロンプト表示して入力を読み込み
 /// プロンプト表示して入力を読み込み (Legacy wrapper)
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*) -> String*
 pub extern "C" fn tl_prompt(prompt: *mut StringStruct) -> *mut StringStruct {
     // tl_read_line がプロンプトを処理するようになったのでそのまま移譲
     tl_read_line(prompt)
@@ -77,6 +80,7 @@ pub extern "C" fn tl_set_device(_device_id: i64) {
 
 /// VarBuilder 関連（スタブ）
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*) -> *mut crate::OpaqueTensor
 pub extern "C" fn tl_varbuilder_get(_name: *mut StringStruct) -> *mut crate::OpaqueTensor {
     eprintln!("Warning: VarBuilder not yet supported in Metal backend");
     std::ptr::null_mut()
@@ -89,6 +93,7 @@ pub extern "C" fn tl_varbuilder_get_from_tensor(_tensor: *mut crate::OpaqueTenso
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*) -> *mut crate::OpaqueTensor
 pub extern "C" fn tl_varbuilder_grad(_name: *mut StringStruct) -> *mut crate::OpaqueTensor {
     eprintln!("Warning: VarBuilder gradients not yet supported in Metal backend");
     std::ptr::null_mut()
@@ -101,6 +106,7 @@ pub extern "C" fn tl_add_parameter(_name: *mut StringStruct, _t: *mut crate::Opa
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (OpaqueTensor) -> *mut crate::OpaqueTensor
 pub extern "C" fn tl_register_parameter(_t: *mut crate::OpaqueTensor) -> *mut crate::OpaqueTensor {
     // スタブ - そのまま返す
     _t
@@ -112,6 +118,7 @@ pub extern "C" fn tl_save_all_params(_path: *mut StringStruct) {
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*) -> void
 pub extern "C" fn tl_load_all_params(_path: *mut StringStruct) {
     eprintln!("Warning: Parameter loading not yet supported in Metal backend");
 }
@@ -123,6 +130,7 @@ pub extern "C" fn tl_update_all_params(lr: f32) {
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> void
 pub extern "C" fn tl_clear_grads() {
     // REGISTRY 廃止: テンソルの勾配クリアはスコープ離脱時に自動
 }
@@ -145,6 +153,7 @@ pub extern "C" fn tl_qtensor_free(ptr: usize) {
 /// CPU: フォールバック (dequantize → F32 matmul)
 /// コンパイラシグネチャ: (void_ptr, void_ptr) -> void_ptr
 #[unsafe(no_mangle)]
+/// @ffi_sig (OpaqueTensor, QTensor) -> *mut crate::OpaqueTensor
 pub extern "C" fn tl_qtensor_matmul(
     input: *mut crate::OpaqueTensor,
     weight: *mut crate::quantized::QTensor,
@@ -295,6 +304,7 @@ impl Drop for OpaqueKVCache {
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (i64) -> i64
 pub extern "C" fn tl_kv_cache_new(num_layers: i64) -> i64 {
     let n = num_layers.max(1) as usize;
     let cache = Box::new(OpaqueKVCache {
@@ -314,6 +324,7 @@ pub extern "C" fn tl_kv_cache_free(cache_ptr: i64) {
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (i64, i64) -> *mut crate::OpaqueTensor
 pub extern "C" fn tl_kv_cache_get_k(cache_ptr: i64, layer: i64) -> *mut crate::OpaqueTensor {
     if cache_ptr == 0 {
         return std::ptr::null_mut();
@@ -328,6 +339,7 @@ pub extern "C" fn tl_kv_cache_get_k(cache_ptr: i64, layer: i64) -> *mut crate::O
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (i64, i64) -> *mut crate::OpaqueTensor
 pub extern "C" fn tl_kv_cache_get_v(cache_ptr: i64, layer: i64) -> *mut crate::OpaqueTensor {
     if cache_ptr == 0 {
         return std::ptr::null_mut();
@@ -342,6 +354,7 @@ pub extern "C" fn tl_kv_cache_get_v(cache_ptr: i64, layer: i64) -> *mut crate::O
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (i64, i64, OpaqueTensor, OpaqueTensor) -> void
 pub extern "C" fn tl_kv_cache_update(
     cache_ptr: i64,
     layer: i64,
@@ -389,6 +402,7 @@ pub extern "C" fn tl_kv_cache_update(
 
 /// Metal 同期 — プロセス終了前に GPU 処理の完了を保証
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> void
 pub extern "C" fn tl_metal_sync() {
     // デバイスが既に初期化されている場合のみ同期
     // get_device() を呼ぶと未初期化でもデバイスが作られるため、
@@ -404,6 +418,7 @@ pub extern "C" fn tl_metal_sync() {
 
 /// ランタイムエラー報告
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*) -> void
 pub extern "C" fn tl_report_runtime_error(msg: *mut StringStruct) {
     if !msg.is_null() {
         unsafe {
@@ -417,6 +432,7 @@ pub extern "C" fn tl_report_runtime_error(msg: *mut StringStruct) {
 
 /// ランタイムエラーハンドル
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*) -> void
 pub extern "C" fn tl_handle_runtime_error(msg: *mut StringStruct) {
     tl_report_runtime_error(msg);
 }

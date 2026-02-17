@@ -6,6 +6,7 @@ use std::ffi::c_void;
 
 /// スコープ深度を取得（スタブ）
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> i64
 pub extern "C" fn tl_get_scope_depth() -> i64 {
     0
 }
@@ -18,6 +19,7 @@ pub extern "C" fn tl_get_pool_count() -> i64 {
 
 /// 参照カウント数を取得（スタブ）
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> i64
 pub extern "C" fn tl_get_refcount_count() -> i64 {
     0
 }
@@ -30,6 +32,7 @@ pub extern "C" fn tl_mem_function_enter() {
 
 /// 関数スコープ終了（スタブ）
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> void
 pub extern "C" fn tl_mem_function_exit() {
     // スタブ - 何もしない
 }

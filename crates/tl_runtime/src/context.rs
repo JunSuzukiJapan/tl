@@ -89,6 +89,7 @@ impl Default for TensorContext {
 
 /// コンテキスト作成（スタブ）
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> *mut ExecutionContext
 pub extern "C" fn tl_context_new() -> *mut ExecutionContext {
     Box::into_raw(Box::new(ExecutionContext {}))
 }

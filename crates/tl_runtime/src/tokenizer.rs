@@ -9,6 +9,7 @@ pub struct OpaqueTokenizer {
     pub inner: Arc<tokenizers::Tokenizer>,
 }
 
+/// @ffi_sig (i8*) -> i64
 /// 新しい Tokenizer を作成
 /// codegen ABI: (path: *const c_char) -> i64 (handle)
 #[unsafe(no_mangle)]
@@ -36,6 +37,7 @@ pub extern "C" fn tl_tokenizer_new(path: *const c_char) -> i64 {
     }
 }
 
+/// @ffi_sig (i64, i8*) -> Tensor*
 /// テキストをエンコード
 /// codegen ABI: (tok_handle: i64, text: *const c_char) -> *mut OpaqueTensor
 #[unsafe(no_mangle)]
@@ -70,6 +72,7 @@ pub extern "C" fn tl_tokenizer_encode(
     }
 }
 
+/// @ffi_sig (i64, Tensor*) -> i8*
 /// トークン ID をデコード
 /// codegen ABI: (tok_handle: i64, ids: *mut OpaqueTensor) -> *const c_char
 #[unsafe(no_mangle)]
@@ -131,12 +134,8 @@ pub extern "C" fn tl_tokenizer_decode(
     }
 }
 
+/// @ffi_sig (i64, i8*) -> Tensor*
 /// Llama 3 チャットテンプレートに準拠したトークン列を生成
-/// llama.cpp の LLM_CHAT_TEMPLATE_LLAMA_3 と同じフォーマット:
-///   <|begin_of_text|>
-///   <|start_header_id|>system<|end_header_id|>\n\n{system_msg}<|eot_id|>
-///   <|start_header_id|>user<|end_header_id|>\n\n{user_msg}<|eot_id|>
-///   <|start_header_id|>assistant<|end_header_id|>\n\n
 ///
 /// codegen ABI: (tok_handle: i64, user_text: *const c_char) -> *mut OpaqueTensor
 #[unsafe(no_mangle)]

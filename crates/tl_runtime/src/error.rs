@@ -182,6 +182,7 @@ pub fn set_backend_error(e: tl_backend::BackendError) {
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> CTensorResult
 pub extern "C" fn tl_get_last_error() -> CTensorResult {
     LAST_ERROR.with(|e| {
         if let Some(err) = e.borrow().as_ref() {
@@ -203,6 +204,7 @@ pub extern "C" fn tl_get_last_error() -> CTensorResult {
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (i8*, i32, i32) -> void
 pub extern "C" fn tl_report_runtime_error_loc(
     file: *const c_char,
     line: i32,

@@ -7,6 +7,7 @@ use std::io::Write;
 
 /// 文字列を出力（改行なし）
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*) -> void
 pub extern "C" fn tl_display_string(s: *mut StringStruct) {
     unsafe {
         if !s.is_null() && !(*s).ptr.is_null() {
@@ -19,6 +20,7 @@ pub extern "C" fn tl_display_string(s: *mut StringStruct) {
 
 /// 文字列を出力（改行付き）
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*) -> void
 pub extern "C" fn tl_print_string(s: *mut StringStruct) {
     unsafe {
         if !s.is_null() && !(*s).ptr.is_null() {
@@ -30,6 +32,7 @@ pub extern "C" fn tl_print_string(s: *mut StringStruct) {
 
 /// tl_string_print は tl_print_string のエイリアス
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*) -> void
 pub extern "C" fn tl_string_print(s: *mut StringStruct) {
     tl_print_string(s);
 }
@@ -42,6 +45,7 @@ pub extern "C" fn tl_print_i64(i: i64) {
 
 /// 浮動小数点数を出力（改行付き）
 #[unsafe(no_mangle)]
+/// @ffi_sig (f64) -> void
 pub extern "C" fn tl_print_f64(f: f64) {
     println!("{}", f);
 }
@@ -54,6 +58,7 @@ pub extern "C" fn tl_print_bool(b: bool) {
 
 /// 整数を出力（改行なし）
 #[unsafe(no_mangle)]
+/// @ffi_sig (i64) -> void
 pub extern "C" fn tl_display_i64(i: i64) {
     print!("{}", i);
     let _ = std::io::stdout().flush();
@@ -68,6 +73,7 @@ pub extern "C" fn tl_display_f64(f: f64) {
 
 /// ブール値を出力（改行なし）
 #[unsafe(no_mangle)]
+/// @ffi_sig (bool) -> void
 pub extern "C" fn tl_display_bool(b: bool) {
     print!("{}", b);
     let _ = std::io::stdout().flush();
@@ -81,6 +87,7 @@ pub extern "C" fn tl_print_ptr(p: *mut std::ffi::c_void) {
 
 /// テンソルを出力
 #[unsafe(no_mangle)]
+/// @ffi_sig (Tensor*) -> void
 pub extern "C" fn tl_tensor_display(t: *mut OpaqueTensor) {
     if t.is_null() {
         print!("Tensor[null]");
@@ -106,6 +113,7 @@ pub extern "C" fn tl_tensor_display(t: *mut OpaqueTensor) {
 
 /// 文字を出力（改行付き）- i32 として受け取り char として表示
 #[unsafe(no_mangle)]
+/// @ffi_sig (i32) -> void
 pub extern "C" fn tl_print_char(c: i32) {
     if let Some(ch) = char::from_u32(c as u32) {
         println!("{}", ch);
@@ -116,6 +124,7 @@ pub extern "C" fn tl_print_char(c: i32) {
 
 /// 文字を出力（改行なし）- i32 として受け取り char として表示
 #[unsafe(no_mangle)]
+/// @ffi_sig (i32) -> void
 pub extern "C" fn tl_display_char(c: i32) {
     if let Some(ch) = char::from_u32(c as u32) {
         print!("{}", ch);
@@ -127,6 +136,7 @@ pub extern "C" fn tl_display_char(c: i32) {
 
 /// i32 を出力（改行付き）
 #[unsafe(no_mangle)]
+/// @ffi_sig (i32) -> void
 pub extern "C" fn tl_print_i32(i: i32) {
     println!("{}", i);
 }
@@ -139,6 +149,7 @@ pub extern "C" fn tl_print_f32(f: f32) {
 
 /// i32 を出力（改行なし）
 #[unsafe(no_mangle)]
+/// @ffi_sig (i32) -> void
 pub extern "C" fn tl_display_i32(i: i32) {
     print!("{}", i);
     let _ = std::io::stdout().flush();
@@ -155,6 +166,7 @@ pub extern "C" fn tl_display_f32(f: f32) {
 
 /// テンソルを出力（1引数版）- 名前とテンソル
 #[unsafe(no_mangle)]
+/// @ffi_sig (Tensor*) -> void
 pub extern "C" fn tl_tensor_print_1(t: *mut OpaqueTensor) {
     if t.is_null() {
         println!("Tensor: [null]");
@@ -168,6 +180,7 @@ pub extern "C" fn tl_tensor_print_1(t: *mut OpaqueTensor) {
 
 /// テンソルを出力（2引数版）
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*, Tensor*) -> void
 pub extern "C" fn tl_tensor_print_2(name: *mut StringStruct, t: *mut OpaqueTensor) {
     unsafe {
         let name_str = if name.is_null() || (*name).ptr.is_null() {
@@ -188,6 +201,7 @@ pub extern "C" fn tl_tensor_print_2(name: *mut StringStruct, t: *mut OpaqueTenso
 
 /// テンソルを出力（3引数版）
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*, Tensor*, i64) -> void
 pub extern "C" fn tl_tensor_print_3(name: *mut StringStruct, t: *mut OpaqueTensor, max_items: i64) {
     unsafe {
         let name_str = if name.is_null() || (*name).ptr.is_null() {

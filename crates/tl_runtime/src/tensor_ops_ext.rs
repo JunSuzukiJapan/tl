@@ -20,6 +20,7 @@ fn create_fallback_tensor(is_cpu: bool) -> *mut OpaqueTensor {
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (StringStruct, Tensor*) -> void
 pub extern "C" fn tl_tensor_save(path: *mut super::StringStruct, t: *mut OpaqueTensor) {
     if t.is_null() || path.is_null() {
         return;
@@ -54,6 +55,7 @@ pub extern "C" fn tl_tensor_save(path: *mut super::StringStruct, t: *mut OpaqueT
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (StringStruct) -> Tensor*
 pub extern "C" fn tl_tensor_load(path: *mut super::StringStruct) -> *mut OpaqueTensor {
     let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
     unsafe {
@@ -111,6 +113,7 @@ pub extern "C" fn tl_tensor_load(path: *mut super::StringStruct) -> *mut OpaqueT
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> i64
 pub extern "C" fn tl_get_memory_bytes() -> i64 {
     let mut usage = std::mem::MaybeUninit::uninit();
     unsafe {
@@ -129,6 +132,7 @@ pub extern "C" fn tl_get_memory_bytes() -> i64 {
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> f64
 pub extern "C" fn tl_get_memory_mb() -> f64 {
     tl_get_memory_bytes() as f64 / 1024.0 / 1024.0
 }
@@ -144,6 +148,7 @@ pub extern "C" fn tl_image_load_grayscale(_path: *const i8) -> *mut OpaqueTensor
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (Tensor*) -> i64
 pub extern "C" fn tl_image_width(_t: *mut OpaqueTensor) -> i64 {
     0
 }

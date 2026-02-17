@@ -18,6 +18,7 @@ pub fn init_args(args: Vec<String>) {
 
 /// 引数の数を返す
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> i64
 pub extern "C" fn tl_args_count() -> i64 {
     ARGS.read().map(|a| a.len() as i64).unwrap_or(0)
 }

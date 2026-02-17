@@ -250,6 +250,7 @@ pub fn pool_register_new(ptr: *mut OpaqueTensor, num_elements: usize, dtype_id: 
 
 /// プールからテンソルを取得 (C API)
 #[unsafe(no_mangle)]
+/// @ffi_sig (usize, u8, u8) -> Tensor*
 pub extern "C" fn tl_pool_acquire(num_elements: usize, dtype_id: u8, device_id: u8) -> *mut OpaqueTensor {
     pool_acquire(num_elements, dtype_id, device_id).unwrap_or(std::ptr::null_mut())
 }
@@ -264,6 +265,7 @@ pub extern "C" fn tl_pool_release(ptr: *mut OpaqueTensor, num_elements: usize, d
 
 /// 確保済み総バイト数を取得
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> i64
 pub extern "C" fn tl_get_gpu_total_allocated_bytes() -> i64 {
     PERSISTENT_GPU_POOL
         .lock()
@@ -282,6 +284,7 @@ pub extern "C" fn tl_get_gpu_free_count() -> i64 {
 
 /// フリーリスト内のバイト数
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> i64
 pub extern "C" fn tl_get_gpu_free_bytes() -> i64 {
     PERSISTENT_GPU_POOL
         .lock()
@@ -300,6 +303,7 @@ pub extern "C" fn tl_get_gpu_pool_hit_rate() -> f64 {
 
 /// 統計のダンプ
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> void
 pub extern "C" fn tl_dump_gpu_pool_stats() {
     if let Ok(pool) = PERSISTENT_GPU_POOL.lock() {
         pool.dump_stats();
@@ -311,6 +315,7 @@ pub extern "C" fn tl_dump_gpu_pool_stats() {
 
 /// 旧API: 要素数のみでプールを取得（dtype/device はデフォルト）
 #[unsafe(no_mangle)]
+/// @ffi_sig (usize) -> Tensor*
 pub extern "C" fn tl_pool_acquire_compat(element_count: usize) -> *mut OpaqueTensor {
     // デフォルト: F32 (0), 現在のデバイス (0)
     tl_pool_acquire(element_count, 0, 0)

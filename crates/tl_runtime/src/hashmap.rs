@@ -10,6 +10,7 @@ pub struct TLHashMap {
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> u64
 pub extern "C" fn tl_hashmap_new() -> u64 {
     let map = TLHashMap {
         inner: HashMap::new(),
@@ -30,6 +31,7 @@ extern "C" fn hashmap_dtor_shim(ptr: *mut c_void) {
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (u64, StringStruct, u64) -> void
 pub extern "C" fn tl_hashmap_insert(map_handle: u64, key: *mut crate::StringStruct, value: u64) {
 // println!("DEBUG: Insert handle: {}, key: {:p}, val: {}", map_handle, key, value);
     let map = map_handle as *mut TLHashMap;
@@ -58,6 +60,7 @@ pub extern "C" fn tl_hashmap_insert(map_handle: u64, key: *mut crate::StringStru
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (u64, StringStruct) -> u64
 pub extern "C" fn tl_hashmap_get(map_handle: u64, key: *mut crate::StringStruct) -> u64 {
     let map = map_handle as *mut TLHashMap;
     if map.is_null() || key.is_null() {
@@ -75,6 +78,7 @@ pub extern "C" fn tl_hashmap_get(map_handle: u64, key: *mut crate::StringStruct)
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (u64, StringStruct) -> u64
 pub extern "C" fn tl_hashmap_remove(map_handle: u64, key: *mut crate::StringStruct) -> u64 {
     let map = map_handle as *mut TLHashMap;
     if map.is_null() || key.is_null() {
@@ -92,6 +96,7 @@ pub extern "C" fn tl_hashmap_remove(map_handle: u64, key: *mut crate::StringStru
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (u64, StringStruct) -> bool
 pub extern "C" fn tl_hashmap_contains_key(map_handle: u64, key: *mut crate::StringStruct) -> bool {
     let map = map_handle as *mut TLHashMap;
     if map.is_null() || key.is_null() {
@@ -106,6 +111,7 @@ pub extern "C" fn tl_hashmap_contains_key(map_handle: u64, key: *mut crate::Stri
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (u64) -> i64
 pub extern "C" fn tl_hashmap_len(map_handle: u64) -> i64 {
     let map = map_handle as *mut TLHashMap;
     if map.is_null() {
@@ -117,6 +123,7 @@ pub extern "C" fn tl_hashmap_len(map_handle: u64) -> i64 {
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (u64) -> void
 pub extern "C" fn tl_hashmap_clear(map_handle: u64) {
     let map = map_handle as *mut TLHashMap;
     if map.is_null() {
@@ -128,6 +135,7 @@ pub extern "C" fn tl_hashmap_clear(map_handle: u64) {
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (u64) -> void
 pub extern "C" fn tl_hashmap_free(map_handle: u64) {
     let map = map_handle as *mut TLHashMap;
     if map.is_null() {

@@ -71,6 +71,7 @@ impl Drop for Arena {
 
 /// Initialize arena with specified capacity in bytes
 #[unsafe(no_mangle)]
+/// @ffi_sig (i64) -> void
 pub extern "C" fn tl_arena_init(capacity: i64) {
     if capacity <= 0 {
         crate::error::set_last_error(format!("Arena capacity must be positive, got {}", capacity), crate::error::RuntimeErrorCode::ArgumentError);
@@ -90,6 +91,7 @@ pub extern "C" fn tl_arena_init(capacity: i64) {
 /// Allocate memory from arena for OpaqueTensor (testing purpose)
 /// Returns address as i64 logic
 #[unsafe(no_mangle)]
+/// @ffi_sig (i64) -> i64
 pub extern "C" fn tl_arena_alloc(size: i64) -> i64 {
     tl_arena_malloc(size) as i64
 }
@@ -120,6 +122,7 @@ pub extern "C" fn tl_arena_malloc(size: i64) -> *mut c_void {
 
 /// Free arena (deallocate entire buffer)
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> void
 pub extern "C" fn tl_arena_free() {
     ARENA.with(|arena| {
         *arena.borrow_mut() = None;
@@ -135,6 +138,7 @@ pub extern "C" fn tl_arena_is_active() -> bool {
 /// Reset arena (keep buffer, reset offset to 0)
 /// Useful for reusing arena across multiple function calls
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> void
 pub extern "C" fn tl_arena_reset() {
     ARENA.with(|arena| {
         if let Some(ref mut a) = *arena.borrow_mut() {
@@ -145,6 +149,7 @@ pub extern "C" fn tl_arena_reset() {
 
 /// Check if a pointer belongs to the arena
 #[unsafe(no_mangle)]
+/// @ffi_sig (void*) -> bool
 pub extern "C" fn tl_arena_contains(ptr: *mut c_void) -> bool {
     ARENA.with(|arena| {
         if let Some(ref a) = *arena.borrow() {
@@ -156,6 +161,7 @@ pub extern "C" fn tl_arena_contains(ptr: *mut c_void) -> bool {
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> usize
 pub extern "C" fn tl_arena_get_offset() -> usize {
     ARENA.with(|arena| {
         if let Some(ref a) = *arena.borrow() {
@@ -167,6 +173,7 @@ pub extern "C" fn tl_arena_get_offset() -> usize {
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> usize
 pub extern "C" fn tl_arena_get_capacity() -> usize {
     ARENA.with(|arena| {
         if let Some(ref a) = *arena.borrow() {
@@ -178,6 +185,7 @@ pub extern "C" fn tl_arena_get_capacity() -> usize {
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (usize) -> void
 pub extern "C" fn tl_arena_set_offset(offset: usize) {
     ARENA.with(|arena| {
         if let Some(ref mut a) = *arena.borrow_mut() {

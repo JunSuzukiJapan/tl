@@ -10,6 +10,7 @@ pub struct StringStruct {
     pub len: i64,
 }
 
+/// @ffi_sig (i8*) -> String*
 /// 新しい StringStruct を作成
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_new(s: *const c_char) -> *mut StringStruct {
@@ -31,6 +32,7 @@ pub extern "C" fn tl_string_new(s: *const c_char) -> *mut StringStruct {
     }
 }
 
+/// @ffi_sig (String*) -> void
 /// StringStruct を解放
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_free(s: *mut StringStruct) {
@@ -45,6 +47,7 @@ pub extern "C" fn tl_string_free(s: *mut StringStruct) {
     }
 }
 
+/// @ffi_sig (String*) -> i64
 /// StringStruct の長さを取得
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_len(s: *mut StringStruct) -> i64 {
@@ -54,6 +57,7 @@ pub extern "C" fn tl_string_len(s: *mut StringStruct) -> i64 {
     unsafe { (*s).len }
 }
 
+/// @ffi_sig (String*, String*) -> String*
 /// 2つの StringStruct を連結
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_concat(a: *mut StringStruct, b: *mut StringStruct) -> *mut StringStruct {
@@ -76,6 +80,7 @@ pub extern "C" fn tl_string_concat(a: *mut StringStruct, b: *mut StringStruct) -
     }
 }
 
+/// @ffi_sig (String*) -> String*
 /// StringStruct を deep clone
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_clone(s: *mut StringStruct) -> *mut StringStruct {
@@ -102,6 +107,7 @@ pub extern "C" fn tl_string_clone(s: *mut StringStruct) -> *mut StringStruct {
     }
 }
 
+/// @ffi_sig (String*, String*) -> bool
 /// 文字列比較
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_eq(a: *mut StringStruct, b: *mut StringStruct) -> bool {
@@ -118,6 +124,7 @@ pub extern "C" fn tl_string_eq(a: *mut StringStruct, b: *mut StringStruct) -> bo
     }
 }
 
+/// @ffi_sig (String*, String*) -> bool
 /// 部分文字列を含むか
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_contains(s: *mut StringStruct, sub: *mut StringStruct) -> bool {
@@ -131,6 +138,7 @@ pub extern "C" fn tl_string_contains(s: *mut StringStruct, sub: *mut StringStruc
     }
 }
 
+/// @ffi_sig (String*) -> i64
 /// 文字列から整数へ変換
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_to_i64(s: *mut StringStruct) -> i64 {
@@ -143,6 +151,7 @@ pub extern "C" fn tl_string_to_i64(s: *mut StringStruct) -> i64 {
     }
 }
 
+/// @ffi_sig (i64) -> String*
 /// 整数から文字列へ変換
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_from_int(i: i64) -> *mut StringStruct {
@@ -159,6 +168,7 @@ pub extern "C" fn tl_string_from_int(i: i64) -> *mut StringStruct {
     }
 }
 
+/// @ffi_sig (i64) -> String*
 /// 文字から文字列へ変換
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_from_char(c: i64) -> *mut StringStruct {
@@ -176,6 +186,7 @@ pub extern "C" fn tl_string_from_char(c: i64) -> *mut StringStruct {
     }
 }
 
+/// @ffi_sig (String*, i64) -> i64
 /// 文字列のi番目の文字を取得
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_char_at(s: *mut StringStruct, i: i64) -> i64 {
@@ -188,6 +199,7 @@ pub extern "C" fn tl_string_char_at(s: *mut StringStruct, i: i64) -> i64 {
     }
 }
 
+/// @ffi_sig (String*) -> i64
 /// 文字列のハッシュを取得
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_hash_string(s: *mut StringStruct) -> i64 {

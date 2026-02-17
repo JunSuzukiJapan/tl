@@ -42,6 +42,7 @@ pub struct ScopeManager;
 
 /// メモリマネージャ初期化（スタブ）
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> void
 pub extern "C" fn tl_mem_manager_init() {
     // スタブ
 }
@@ -54,6 +55,7 @@ pub extern "C" fn tl_mem_manager_shutdown() {
 
 /// メモリ割り当て（スタブ）
 #[unsafe(no_mangle)]
+/// @ffi_sig (usize) -> void*
 pub extern "C" fn tl_mem_alloc(size: usize) -> *mut c_void {
     if size == 0 {
         return std::ptr::null_mut();
@@ -71,6 +73,7 @@ pub extern "C" fn tl_mem_dealloc(ptr: *mut c_void) {
 
 /// メモリ統計取得（スタブ）
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> i64
 pub extern "C" fn tl_mem_stats_get_allocated() -> i64 {
     0
 }

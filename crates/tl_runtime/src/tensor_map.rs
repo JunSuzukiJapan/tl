@@ -60,6 +60,7 @@ fn create_tensor_from_entry(entry: &TensorEntry) -> *mut OpaqueTensor {
     }
 }
 
+/// @ffi_sig () -> TensorMap*
 /// 新しい TensorMap を作成
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_new() -> *mut OpaqueTensorMap {
@@ -69,6 +70,7 @@ pub extern "C" fn tl_tensor_map_new() -> *mut OpaqueTensorMap {
     }))
 }
 
+/// @ffi_sig (TensorMap*) -> void
 /// TensorMap を解放
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_free(map: *mut OpaqueTensorMap) {
@@ -79,6 +81,7 @@ pub extern "C" fn tl_tensor_map_free(map: *mut OpaqueTensorMap) {
     }
 }
 
+/// @ffi_sig (TensorMap*, String*, Tensor*) -> void
 /// TensorMap にテンソルを挿入
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_insert(
@@ -101,6 +104,7 @@ pub extern "C" fn tl_tensor_map_insert(
     }
 }
 
+/// @ffi_sig (TensorMap*, String*) -> Tensor*
 /// TensorMap からテンソルを取得
 /// entries (F32) を先に検索し、なければ qtensors (量子化) をデクォンタイズして返す
 #[unsafe(no_mangle)]
@@ -146,6 +150,7 @@ pub extern "C" fn tl_tensor_map_get(
     }
 }
 
+/// @ffi_sig (String*) -> TensorMap*
 /// TensorMap を safetensors からロード
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_load(path: *mut StringStruct) -> *mut OpaqueTensorMap {
@@ -200,6 +205,7 @@ pub extern "C" fn tl_tensor_map_load(path: *mut StringStruct) -> *mut OpaqueTens
     }
 }
 
+/// @ffi_sig (TensorMap*, String*) -> void
 /// TensorMap をバイナリ形式で保存
 /// tl_tensor_load と互換性のあるフォーマット: [rank: u64][shape: u64 * rank][data: f32 * numel]
 #[unsafe(no_mangle)]
@@ -234,6 +240,7 @@ pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *mut Strin
     }
 }
 
+/// @ffi_sig (TensorMap*, String*) -> QTensor*
 /// Quantized テンソルを取得
 /// コンパイラシグネチャ: (void_ptr, i8_ptr) -> void_ptr
 #[unsafe(no_mangle)]

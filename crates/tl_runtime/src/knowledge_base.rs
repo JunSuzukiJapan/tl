@@ -579,6 +579,7 @@ static KB: Lazy<Mutex<KBStore>> = Lazy::new(|| Mutex::new(KBStore::new()));
 /// ルール開始
 /// コンパイラシグネチャ: tl_kb_rule_start(head_rel: *const i8)
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*) -> void
 pub extern "C" fn tl_kb_rule_start(pred_name: *mut StringStruct) {
     let name = unsafe { extract_string(pred_name as *const i8) };
     let mut store = KB.lock().unwrap();
@@ -593,6 +594,7 @@ pub extern "C" fn tl_kb_rule_start(pred_name: *mut StringStruct) {
 
 /// ルール終了
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> void
 pub extern "C" fn tl_kb_rule_finish() {
     let mut store = KB.lock().unwrap();
     if let Some(mut builder) = store.rule_builder.take() {
@@ -617,6 +619,7 @@ pub extern "C" fn tl_kb_rule_finish() {
 /// ルールヘッドに変数引数を追加
 /// コンパイラシグネチャ: tl_kb_rule_add_head_arg_var(index: i64)
 #[unsafe(no_mangle)]
+/// @ffi_sig (i64) -> void
 pub extern "C" fn tl_kb_rule_add_head_arg_var(idx: i64) {
     let mut store = KB.lock().unwrap();
     if let Some(ref mut builder) = store.rule_builder {
@@ -635,6 +638,7 @@ pub extern "C" fn tl_kb_rule_add_head_arg_const_int(val: i64) {
 
 /// ルールヘッドに浮動小数点定数を追加
 #[unsafe(no_mangle)]
+/// @ffi_sig (f64) -> void
 pub extern "C" fn tl_kb_rule_add_head_arg_const_float(val: f64) {
     let mut store = KB.lock().unwrap();
     if let Some(ref mut builder) = store.rule_builder {
@@ -654,6 +658,7 @@ pub extern "C" fn tl_kb_rule_add_head_arg_const_entity(entity_id: i64) {
 /// ルールボディにアトムを追加
 /// コンパイラシグネチャ: tl_kb_rule_add_body_atom(rel: *const i8)
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*) -> void
 pub extern "C" fn tl_kb_rule_add_body_atom(pred_name: *mut StringStruct) {
     let name = unsafe { extract_string(pred_name as *const i8) };
     let mut store = KB.lock().unwrap();
@@ -672,6 +677,7 @@ pub extern "C" fn tl_kb_rule_add_body_atom(pred_name: *mut StringStruct) {
 
 /// ルールボディに否定アトムを追加
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*) -> void
 pub extern "C" fn tl_kb_rule_add_body_atom_neg(pred_name: *mut StringStruct) {
     let name = unsafe { extract_string(pred_name as *const i8) };
     let mut store = KB.lock().unwrap();
@@ -691,6 +697,7 @@ pub extern "C" fn tl_kb_rule_add_body_atom_neg(pred_name: *mut StringStruct) {
 /// ルールボディに変数引数を追加
 /// コンパイラシグネチャ: tl_kb_rule_add_body_arg_var(index: i64)
 #[unsafe(no_mangle)]
+/// @ffi_sig (i64) -> void
 pub extern "C" fn tl_kb_rule_add_body_arg_var(idx: i64) {
     let mut store = KB.lock().unwrap();
     if let Some(ref mut builder) = store.rule_builder {
@@ -702,6 +709,7 @@ pub extern "C" fn tl_kb_rule_add_body_arg_var(idx: i64) {
 
 /// ルールボディに整数定数を追加
 #[unsafe(no_mangle)]
+/// @ffi_sig (i64) -> void
 pub extern "C" fn tl_kb_rule_add_body_arg_const_int(val: i64) {
     let mut store = KB.lock().unwrap();
     if let Some(ref mut builder) = store.rule_builder {
@@ -713,6 +721,7 @@ pub extern "C" fn tl_kb_rule_add_body_arg_const_int(val: i64) {
 
 /// ルールボディに浮動小数点定数を追加
 #[unsafe(no_mangle)]
+/// @ffi_sig (f64) -> void
 pub extern "C" fn tl_kb_rule_add_body_arg_const_float(val: f64) {
     let mut store = KB.lock().unwrap();
     if let Some(ref mut builder) = store.rule_builder {
@@ -724,6 +733,7 @@ pub extern "C" fn tl_kb_rule_add_body_arg_const_float(val: f64) {
 
 /// ルールボディにエンティティ定数を追加
 #[unsafe(no_mangle)]
+/// @ffi_sig (i64) -> void
 pub extern "C" fn tl_kb_rule_add_body_arg_const_entity(entity_id: i64) {
     let mut store = KB.lock().unwrap();
     if let Some(ref mut builder) = store.rule_builder {
@@ -737,6 +747,7 @@ pub extern "C" fn tl_kb_rule_add_body_arg_const_entity(entity_id: i64) {
 
 /// ファクト引数の追加（旧 API — 未使用だが互換性のため残す）
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*) -> void
 pub extern "C" fn tl_kb_add_fact(_pred_name: *mut StringStruct) {
     // 旧 API — tl_kb_add_fact_serialized を使用
 }
@@ -755,6 +766,7 @@ pub extern "C" fn tl_kb_add_fact_serialized(rel_name: *const i8) {
 /// エンティティ追加
 /// コンパイラシグネチャ: tl_kb_add_entity(name: *const i8) -> i64
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*) -> i64
 pub extern "C" fn tl_kb_add_entity(name: *mut StringStruct) -> i64 {
     let name_str = unsafe { extract_string(name as *const i8) };
     let mut store = KB.lock().unwrap();
@@ -770,6 +782,7 @@ pub extern "C" fn tl_kb_fact_args_clear() {
 
 /// ファクト引数に整数を追加
 #[unsafe(no_mangle)]
+/// @ffi_sig (i64) -> void
 pub extern "C" fn tl_kb_fact_args_add_int(val: i64) {
     let mut store = KB.lock().unwrap();
     store.fact_args_buffer.push(Value::Int(val));
@@ -784,6 +797,7 @@ pub extern "C" fn tl_kb_fact_args_add_float(val: f64) {
 
 /// ファクト引数に文字列を追加
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*) -> void
 pub extern "C" fn tl_kb_fact_args_add_string(s: *mut StringStruct) {
     let name = unsafe { extract_string(s as *const i8) };
     let mut store = KB.lock().unwrap();
@@ -799,6 +813,7 @@ pub extern "C" fn tl_kb_fact_args_add_bool(val: bool) {
 
 /// ファクト引数にエンティティを追加
 #[unsafe(no_mangle)]
+/// @ffi_sig (i64) -> void
 pub extern "C" fn tl_kb_fact_args_add_entity(entity_id: i64) {
     let mut store = KB.lock().unwrap();
     store.fact_args_buffer.push(Value::Entity(entity_id));
@@ -809,6 +824,7 @@ pub extern "C" fn tl_kb_fact_args_add_entity(entity_id: i64) {
 /// 推論実行
 /// コンパイラシグネチャ: tl_kb_infer() -> void
 #[unsafe(no_mangle)]
+/// @ffi_sig () -> void
 pub extern "C" fn tl_kb_infer() {
     let mut store = KB.lock().unwrap();
     store.infer();
@@ -819,6 +835,7 @@ pub extern "C" fn tl_kb_infer() {
 /// クエリ実行
 /// コンパイラシグネチャ: tl_query(name: *i8, mask: i64, args: *Tensor, tags: *u8) -> *Tensor
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*, i64, Tensor*, u8) -> Tensor*
 pub extern "C" fn tl_query(
     name: *mut StringStruct,
     mask: i64,

@@ -4,6 +4,7 @@
 
 /// チェックポイント保存（スタブ）
 #[unsafe(no_mangle)]
+/// @ffi_sig (StringStruct) -> void
 pub extern "C" fn tl_checkpoint_save(_path: *mut crate::string_ffi::StringStruct) {
     eprintln!("Warning: Checkpoint save not yet supported in Metal backend");
 }
@@ -16,6 +17,7 @@ pub extern "C" fn tl_checkpoint_load(_path: *mut crate::string_ffi::StringStruct
 
 /// チェックポイント（save のエイリアス）
 #[unsafe(no_mangle)]
+/// @ffi_sig (StringStruct) -> void
 pub extern "C" fn tl_checkpoint(path: *mut crate::string_ffi::StringStruct) {
     tl_checkpoint_save(path);
 }

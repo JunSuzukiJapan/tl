@@ -18,6 +18,7 @@ use candle_core::cuda_backend::cudarc::driver::sys::CUstream;
 /// Returns new OpaqueTensor
 #[unsafe(no_mangle)]
 #[allow(unused_variables)]
+/// @ffi_sig (Tensor*) -> Tensor*
 pub extern "C" fn tl_cuda_sigmoid(t: *const OpaqueTensor) -> *mut OpaqueTensor {
     #[cfg(feature = "cuda")]
     unsafe {

@@ -30,6 +30,7 @@ impl<R: Read> Read for ByteCounter<R> {
 
 /// GGUF Load Function
 #[unsafe(no_mangle)]
+/// @ffi_sig (String*) -> Tensor*
 pub extern "C" fn tl_gguf_load(path: *mut StringStruct) -> *mut OpaqueTensorMap {
     unsafe {
         if path.is_null() || (*path).ptr.is_null() {
