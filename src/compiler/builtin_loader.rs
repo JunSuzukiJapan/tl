@@ -161,6 +161,7 @@ impl BuiltinLoader {
                             VariantKind::Unit => EnumVariantInit::Unit,
                             VariantKind::Tuple(_) => EnumVariantInit::Tuple(std::mem::take(args)),
                             VariantKind::Struct(_) => EnumVariantInit::Unit, // TODO: struct variant
+                            VariantKind::Array(_, _) => EnumVariantInit::Tuple(std::mem::take(args)),
                         };
                         
                         // Replace with EnumInit

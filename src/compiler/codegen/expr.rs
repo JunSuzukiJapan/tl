@@ -3253,18 +3253,55 @@ impl<'ctx> CodeGenerator<'ctx> {
                                  "ptr_val"
                              ).map_err(|e| e.to_string())?;
                              
-                             // If it's a struct/string, should we retain/clone?
-                             // Usually reading from array is borrowing or copying.
-                             // Rust: Copy type -> Copy. non-Copy -> Move.
-                             // Here we implement Move (like *ptr).
-                             // We do NOT emit retain/clone automatically on access?
-                             // If the result is assigned to variable, assignment logic calls retain if needed?
-                             // No, assignment logic calls deep clone if safe_to_free.
-                             
                              Ok((val, *inner.clone()))
                          }
                     }
-                    _ => Err("Index access only on Tensor or Ptr".into()),
+                    Type::Array(inner, size) => {
+                         if indices.len() != 1 {
+                             return Err("Array indexing must be 1D".into());
+                         }
+                         let (idx_val, _) = self.compile_expr(&indices[0])?;
+                         let idx_int = idx_val.into_int_value();
+
+                         // Get LLVM array type for GEP
+                         let llvm_arr_ty = self.get_llvm_type(&Type::Array(inner.clone(), size))?;
+                         let llvm_elem_ty = self.get_llvm_type(&inner)?;
+
+                         // The array value is on the stack as an alloca.
+                         // We need to get the alloca pointer from the value.
+                         // If val was loaded from an alloca, we need the alloca ptr.
+                         // Actually, for stack arrays we should have the pointer.
+                         // If val is a basic value (loaded), we need to store it to a temp alloca first.
+                         let arr_ptr = if val.is_pointer_value() {
+                             val.into_pointer_value()
+                         } else {
+                             // Store to temp alloca
+                             let alloca = self.builder.build_alloca(llvm_arr_ty, "tmp_arr")
+                                 .map_err(|e| e.to_string())?;
+                             self.builder.build_store(alloca, val)
+                                 .map_err(|e| e.to_string())?;
+                             alloca
+                         };
+                         
+                         let i64_type = self.context.i64_type();
+                         let elem_ptr = unsafe {
+                             self.builder.build_gep(
+                                 llvm_arr_ty,
+                                 arr_ptr,
+                                 &[i64_type.const_int(0, false), idx_int],
+                                 "arr_elem_ptr"
+                             ).map_err(|e| e.to_string())?
+                         };
+                         
+                         let elem_val = self.builder.build_load(
+                             llvm_elem_ty,
+                             elem_ptr,
+                             "arr_elem"
+                         ).map_err(|e| e.to_string())?;
+                         
+                         Ok((elem_val, *inner))
+                    }
+                    _ => Err("Index access only on Tensor, Ptr, or Array".into()),
                 }
             }
             ExprKind::UnOp(op, expr) => {
@@ -5540,6 +5577,14 @@ impl<'ctx> CodeGenerator<'ctx> {
             },
             crate::compiler::ast::VariantKind::Struct(fields) => {
                 for (_, ty) in fields {
+                    let concrete_ty = self.substitute_type_simple_bind(ty, &subst);
+                    if concrete_ty != Type::Void {
+                        field_types.push(concrete_ty);
+                    }
+                }
+            }
+            crate::compiler::ast::VariantKind::Array(ty, size) => {
+                for _ in 0..*size {
                     let concrete_ty = self.substitute_type_simple_bind(ty, &subst);
                     if concrete_ty != Type::Void {
                         field_types.push(concrete_ty);
@@ -9603,6 +9648,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             VariantKind::Unit => 0,
             VariantKind::Tuple(t) => t.len(),
             VariantKind::Struct(f) => f.len(),
+            VariantKind::Array(_, size) => *size,
         };
         if args.len() != field_count {
             return Err(format!("Enum variant {}::{} expects {} args, got {}", enum_name, variant_name, field_count, args.len()));

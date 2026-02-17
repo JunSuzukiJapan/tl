@@ -399,6 +399,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         crate::compiler::ast::VariantKind::Unit => vec![],
                         crate::compiler::ast::VariantKind::Tuple(types) => types.clone(),
                         crate::compiler::ast::VariantKind::Struct(fields) => fields.iter().map(|(_, t)| t.clone()).collect(),
+                        crate::compiler::ast::VariantKind::Array(ty, size) => vec![ty.clone(); *size],
                     };
                     
                     if !field_types_list.is_empty() {
@@ -625,6 +626,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         crate::compiler::ast::VariantKind::Unit => vec![],
                         crate::compiler::ast::VariantKind::Tuple(types) => types.clone(),
                         crate::compiler::ast::VariantKind::Struct(fields) => fields.iter().map(|(_, t)| t.clone()).collect(),
+                        crate::compiler::ast::VariantKind::Array(ty, size) => vec![ty.clone(); *size],
                     };
 
                     if !field_types_list.is_empty() {
@@ -1314,11 +1316,62 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             StmtKind::Let {
                 name,
-                type_annotation: _, // TODO: Use this
+                type_annotation,
                 value,
-                mutable: _, // TODO: Use this
+                mutable: _,
             } => {
                 let def_time = self.current_time;
+
+                // Special path: Array type annotation with TensorLiteral initializer
+                // Compile as LLVM array instead of tensor runtime call
+                if let Some(Type::Array(inner_ty, size)) = type_annotation {
+                    if let ExprKind::TensorLiteral(elements) | ExprKind::TensorConstLiteral(elements) = &value.inner {
+                        if elements.len() == *size {
+                            let llvm_arr_ty = self.get_llvm_type(&Type::Array(inner_ty.clone(), *size))?;
+                            let llvm_elem_ty = self.get_llvm_type(inner_ty)?;
+                            let arr_ty = Type::Array(inner_ty.clone(), *size);
+                            
+                            let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                            let alloca = self.create_entry_block_alloca(current_function, name, &arr_ty)?;
+                            
+                            let i64_type = self.context.i64_type();
+                            for (i, elem_expr) in elements.iter().enumerate() {
+                                let (elem_val, _) = self.compile_expr(elem_expr)?;
+                                let elem_ptr = unsafe {
+                                    self.builder.build_gep(
+                                        llvm_arr_ty,
+                                        alloca,
+                                        &[i64_type.const_int(0, false), i64_type.const_int(i as u64, false)],
+                                        &format!("arr_init_{}", i)
+                                    ).map_err(|e| e.to_string())?
+                                };
+                                // Cast if needed (e.g., int literal to correct size)
+                                let store_val = if elem_val.get_type() != llvm_elem_ty {
+                                    if elem_val.is_int_value() && llvm_elem_ty.is_int_type() {
+                                        self.builder.build_int_cast(
+                                            elem_val.into_int_value(),
+                                            llvm_elem_ty.into_int_type(),
+                                            "arr_cast"
+                                        ).map_err(|e| e.to_string())?.into()
+                                    } else {
+                                        elem_val
+                                    }
+                                } else {
+                                    elem_val
+                                };
+                                self.builder.build_store(elem_ptr, store_val).map_err(|e| e.to_string())?;
+                            }
+                            
+                            // Register variable (stack-allocated, no cleanup needed)
+                            let cleanup_mode = super::CLEANUP_NONE;
+                            self.variables.last_mut().unwrap().insert(
+                                name.clone(),
+                                (alloca.into(), arr_ty, cleanup_mode),
+                            );
+                            return Ok(());
+                        }
+                    }
+                }
 
                 // 1. Analyze value for Free Indices (Implicit Tensor Equation)
                 // 1. Analyze value for Free and Reduction Indices (Implicit Tensor Equation)
@@ -3259,6 +3312,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 crate::compiler::ast::VariantKind::Unit => vec![],
                 crate::compiler::ast::VariantKind::Tuple(types) => types.clone(),
                 crate::compiler::ast::VariantKind::Struct(fields) => fields.iter().map(|(_, t)| t.clone()).collect(),
+                crate::compiler::ast::VariantKind::Array(ty, size) => vec![ty.clone(); *size],
             };
 
             if !field_types_list.is_empty() {
@@ -3424,6 +3478,24 @@ impl<'ctx> CodeGenerator<'ctx> {
                          ).map_err(|e| e.to_string())?;
                          Ok((Some(elem_ptr), *elem_ty.clone(), super::CLEANUP_NONE, base_name))
                      }
+                 } else if let Type::Array(ref elem_ty, size) = base_ty {
+                     // Array indexing - addressable LValue
+                     let base_ptr = base_ptr_opt.unwrap();
+                     if indices.len() != 1 { return Err("Array index must be 1D".into()); }
+                     let (idx_val, _) = self.compile_expr(&indices[0])?;
+                     
+                     let llvm_arr_ty = self.get_llvm_type(&Type::Array(elem_ty.clone(), size))?;
+                     let i64_type = self.context.i64_type();
+                     
+                     let elem_ptr = unsafe {
+                         self.builder.build_gep(
+                             llvm_arr_ty,
+                             base_ptr,
+                             &[i64_type.const_int(0, false), idx_val.into_int_value()],
+                             "arr_elem_ptr"
+                         ).map_err(|e| e.to_string())?
+                     };
+                     Ok((Some(elem_ptr), *elem_ty.clone(), super::CLEANUP_NONE, base_name))
                  } else {
                      // Tensor or Struct indexing -> Not an addressable LValue in the LLVM sense (requires set call)
                      // Return None to signal caller to handle emit_tensor_set/struct_set

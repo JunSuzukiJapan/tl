@@ -868,6 +868,9 @@ impl SemanticAnalyzer {
                         }
                     }
                     crate::compiler::ast::VariantKind::Unit => {}
+                    crate::compiler::ast::VariantKind::Array(ty, _size) => {
+                        *ty = self.resolve_user_type(ty);
+                    }
                 }
             }
             self.enums.insert(enum_def.name.clone(), enum_def.clone());
@@ -2372,6 +2375,7 @@ impl SemanticAnalyzer {
                              "Struct {} does not support index assignment (no generic element type)", name
                          )), None)
                      }
+                     Type::Array(e, _size) => (e.clone(), 1),
                      _ => return self.err(SemanticError::Generic("Indexing non-tensor/ptr in assignment".into()), None)
                  };
                  
@@ -2476,6 +2480,7 @@ impl SemanticAnalyzer {
                                    VariantKind::Unit => EnumVariantInit::Unit,
                                    VariantKind::Tuple(_) => EnumVariantInit::Tuple(args),
                                    VariantKind::Struct(_) => EnumVariantInit::Unit, // TODO: Struct variant support
+                                   VariantKind::Array(_, _) => EnumVariantInit::Tuple(args),
                                };
 
                                expr.inner = ExprKind::EnumInit {
@@ -2809,6 +2814,15 @@ impl SemanticAnalyzer {
                                    return self.err(SemanticError::ArgumentCountMismatch { name: variant_def.name.clone(), expected: 0, found: fields_owned.len() }, Some(expr.span.clone()));
                               }
                               crate::compiler::ast::EnumVariantInit::Unit
+                         }
+                         crate::compiler::ast::VariantKind::Array(_, _) => {
+                              return self.err(
+                                  SemanticError::TypeMismatch {
+                                      expected: Type::Struct("Struct Variant".into(), vec![]),
+                                      found: Type::Struct("Array Variant".into(), vec![]),
+                                  },
+                                  Some(expr.span.clone())
+                              );
                          }
                     };
 
@@ -4912,6 +4926,23 @@ impl SemanticAnalyzer {
                               self.err(SemanticError::MethodNotFound { type_name: t_name, method_name: "get".into() }, Some(target.span.clone()))
                          }
                     }
+                    Type::Array(inner, _size) => {
+                        // Array indexing returns element type
+                        // Check indices (should be exactly 1 integer)
+                        for idx in indices.iter_mut() {
+                            let idx_ty = self.check_expr(idx)?;
+                            if !matches!(idx_ty, Type::I64 | Type::I32 | Type::Usize) {
+                                return self.err(
+                                    SemanticError::TypeMismatch {
+                                        expected: Type::I64,
+                                        found: idx_ty,
+                                    },
+                                    Some(idx.span.clone()),
+                                );
+                            }
+                        }
+                        Ok(*inner)
+                    }
                     _ => self.err(
                         SemanticError::TypeMismatch {
                             expected: Type::Tensor(Box::new(Type::Void), 0),
@@ -5742,7 +5773,16 @@ impl SemanticAnalyzer {
             (Type::Tensor(inner, rank), Type::Struct(name, args)) 
                 if name == "Vec" && *rank == 1 && args.len() == 1 && self.are_types_compatible(inner, &args[0]) => true,
 
-            
+            // Array literal compatibility: [T; N] annotation with Tensor(T, 1) literal
+            // This allows `let arr: [i64; 3] = [10, 20, 30]` where RHS is parsed as TensorLiteral
+            (Type::Array(inner_arr, _), Type::Tensor(inner_tensor, rank)) 
+                if *rank == 1 && self.are_types_compatible(inner_arr, inner_tensor) => true,
+
+            // Array-Array compatibility
+            (Type::Array(i1, s1), Type::Array(i2, s2)) => {
+                s1 == s2 && self.are_types_compatible(i1, i2)
+            }
+
             _ => false,
         }
     }

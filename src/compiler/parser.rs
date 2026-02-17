@@ -180,11 +180,28 @@ fn parse_ptr_type(input: Input) -> IResult<Input, Type, ParserError> {
     Ok((input, Type::Ptr(Box::new(inner))))
 }
 
+fn parse_array_type(input: Input) -> IResult<Input, Type, ParserError> {
+    // [Type; Size]
+    let (input, _) = expect_token(Token::LBracket)(input)?;
+    let (input, inner) = parse_type(input)?;
+    let (input, _) = expect_token(Token::SemiColon)(input)?;
+    let (input, size) = match input.first() {
+        Some(tok) => match tok.token {
+            Token::IntLiteral(n) => Ok((&input[1..], n as usize)),
+            _ => Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Expected array size (integer)".to_string()) })),
+        },
+        None => Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("EOF".to_string()) })),
+    }?;
+    let (input, _) = expect_token(Token::RBracket)(input)?;
+    Ok((input, Type::Array(Box::new(inner), size)))
+}
+
 pub fn parse_type(input: Input) -> IResult<Input, Type, ParserError> {
     alt((
         parse_primitive_type,
         parse_tensor_type,
         parse_ptr_type,
+        parse_array_type,
         // Reference type: &Type - REMOVED (not in spec)
         // map(
         //     preceded(expect_token(Token::Ampersand), parse_type),
@@ -1456,6 +1473,19 @@ fn parse_enum_def(input: Input) -> IResult<Input, crate::compiler::ast::EnumDef,
                     )(rest)?;
                     let (rest, _) = expect_token(Token::RBrace)(rest)?;
                     Ok((rest, crate::compiler::ast::VariantDef { name: v_name, kind: crate::compiler::ast::VariantKind::Struct(fields) }))
+                } else if let Ok((rest, _)) = expect_token(Token::LBracket)(input) {
+                    // Array Variant: Variant [Type; Size]
+                    let (rest, inner_ty) = parse_type(rest)?;
+                    let (rest, _) = expect_token(Token::SemiColon)(rest)?;
+                    let (rest, size) = match rest.first() {
+                        Some(tok) => match tok.token {
+                            Token::IntLiteral(n) => Ok((&rest[1..], n as usize)),
+                            _ => Err(nom::Err::Error(ParserError { input: rest, kind: ParseErrorKind::UnexpectedToken("Expected array size".to_string()) })),
+                        },
+                        None => Err(nom::Err::Error(ParserError { input: rest, kind: ParseErrorKind::UnexpectedToken("EOF".to_string()) })),
+                    }?;
+                    let (rest, _) = expect_token(Token::RBracket)(rest)?;
+                    Ok((rest, crate::compiler::ast::VariantDef { name: v_name, kind: crate::compiler::ast::VariantKind::Array(inner_ty, size) }))
                 } else {
                      Ok((input, crate::compiler::ast::VariantDef { name: v_name, kind: crate::compiler::ast::VariantKind::Unit }))
                 }

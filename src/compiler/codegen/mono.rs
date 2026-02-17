@@ -277,6 +277,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                      }
                      eprintln!("[DEBUG] monomorphize_enum: {} variant {} = {:?}", mangled_name, variant.name, fields);
                  }
+                 crate::compiler::ast::VariantKind::Array(ty, _size) => {
+                     *ty = substitutor.substitute_type(ty);
+                 }
 
              }
         }
@@ -348,6 +351,10 @@ impl<'ctx> CodeGenerator<'ctx> {
              (Type::Tensor(e, r), Type::Tensor(a, ar)) => {
                  if r != ar { return Err("Rank mismatch".into()); }
                  self.unify_types(e, a, map)?;
+             }
+             (Type::Array(e_inner, e_size), Type::Array(a_inner, a_size)) => {
+                 if e_size != a_size { return Err(format!("Array size mismatch: expected {}, got {}", e_size, a_size)); }
+                 self.unify_types(e_inner, a_inner, map)?;
              }
              // Add other structural recursions as needed
              _ => {
@@ -440,6 +447,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             Type::Undefined(id) => format!("undefined_{}", id),
             Type::Ptr(inner) => format!("ptr_{}", self.type_to_suffix(inner)),
+            Type::Array(inner, size) => format!("Array_{}_{}", self.type_to_suffix(inner), size),
             Type::Entity => "entity".to_string(),
             _ => "unknown".to_string(),
         }
@@ -529,6 +537,20 @@ impl<'ctx> CodeGenerator<'ctx> {
             
             Type::Enum(_name, _args) => {
                 Ok(self.context.ptr_type(AddressSpace::default()).into())
+            }
+
+            Type::Array(inner, size) => {
+                let elem_ty = self.get_llvm_type(inner)?;
+                // Build LLVM array type from element type
+                match elem_ty {
+                    BasicTypeEnum::IntType(t) => Ok(t.array_type(*size as u32).into()),
+                    BasicTypeEnum::FloatType(t) => Ok(t.array_type(*size as u32).into()),
+                    BasicTypeEnum::PointerType(t) => Ok(t.array_type(*size as u32).into()),
+                    BasicTypeEnum::StructType(t) => Ok(t.array_type(*size as u32).into()),
+                    BasicTypeEnum::ArrayType(t) => Ok(t.array_type(*size as u32).into()),
+                    BasicTypeEnum::VectorType(t) => Ok(t.array_type(*size as u32).into()),
+                    _ => Err(format!("Unsupported array element type: {:?}", elem_ty)),
+                }
             }
             
             Type::Tuple(_) => {
@@ -681,6 +703,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  Type::Path(segments.clone(), new_args)
             },
             Type::Ptr(inner) => Type::Ptr(Box::new(self.substitute_type(inner, subst))),
+            Type::Array(inner, size) => Type::Array(Box::new(self.substitute_type(inner, subst)), *size),
             _ => ty.clone(),
         }
     }
@@ -726,6 +749,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.normalize_type(inner)), *rank),
             Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.normalize_type(t)).collect()),
             Type::Ptr(inner) => Type::Ptr(Box::new(self.normalize_type(inner))),
+            Type::Array(inner, size) => Type::Array(Box::new(self.normalize_type(inner)), *size),
             _ => ty.clone(),
         }
     }
@@ -857,6 +881,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             VariantKind::Unit => EnumVariantInit::Unit,
                             VariantKind::Tuple(_) => EnumVariantInit::Tuple(std::mem::take(args)),
                             VariantKind::Struct(_) => EnumVariantInit::Unit, // TODO: struct variant
+                            VariantKind::Array(_, _) => EnumVariantInit::Tuple(std::mem::take(args)),
                         };
                         
                         // Extract generics from type

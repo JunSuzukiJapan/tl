@@ -109,6 +109,9 @@ pub enum Type {
     // Path type: Unresolved user type reference (Mod::Struct<T>)
     Path(Vec<String>, Vec<Type>),
 
+    // Fixed-size array type: [T; N]
+    Array(Box<Type>, usize),
+
     Void, // For functions returning nothing
     Never, // For diverging expressions (panic!, unreachable, etc.)
     Undefined(u64), // For unresolved generics (unique ID)
@@ -148,6 +151,7 @@ impl Type {
             Type::TypeVar(_) => "TypeVar".to_string(),
             // Type::Ref(inner) => inner.get_base_name(), // REMOVED
             Type::Ptr(_inner) => "Ptr".to_string(),
+            Type::Array(inner, _) => format!("Array_{}", inner.get_base_name()),
         }
     }
 }
@@ -187,6 +191,7 @@ pub enum VariantKind {
     Unit,
     Tuple(Vec<Type>),
     Struct(Vec<(String, Type)>),
+    Array(Type, usize),  // [T; N] — fixed-size array variant
 }
 
 #[derive(Debug, Clone, PartialEq)]

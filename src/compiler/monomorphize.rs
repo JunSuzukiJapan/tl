@@ -709,6 +709,15 @@ impl Monomorphizer {
                                              // Positional args to struct definitions? 
                                              // For now assume matching order or skip inference for struct variants called as methods
                                         }
+                                        crate::compiler::ast::VariantKind::Array(ty, size) => {
+                                             for (i, arg_expr) in args.iter().enumerate() {
+                                                 if i < *size {
+                                                     if let Some(val_ty) = self.infer_expr_type(&arg_expr.inner) {
+                                                         self.unify_types(ty, &val_ty, &mut inference_map);
+                                                     }
+                                                 }
+                                             }
+                                        }
                                    }
 
                                    
@@ -782,6 +791,9 @@ impl Monomorphizer {
                                                 // Fallback to Tuple? No, syntax error.
                                                 // For arbitrary Tuple variants, this is fine.
                                                 EnumVariantInit::Unit // Placeholder/Error
+                                            }
+                                            crate::compiler::ast::VariantKind::Array(_, _) => {
+                                                EnumVariantInit::Tuple(args.clone())
                                             }
                                        };
                                        
@@ -1140,6 +1152,10 @@ impl Monomorphizer {
                             *ty = self.substitute_type(ty, &subst);
                             *ty = self.resolve_type(ty);
                         }
+                    },
+                    crate::compiler::ast::VariantKind::Array(ty, _size) => {
+                        *ty = self.substitute_type(ty, &subst);
+                        *ty = self.resolve_type(ty);
                     }
                 }
             }

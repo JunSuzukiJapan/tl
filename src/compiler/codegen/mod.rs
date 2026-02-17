@@ -897,10 +897,15 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             for v in &e.variants {
                 let mut field_types: Vec<inkwell::types::BasicTypeEnum> = Vec::new();
+                let array_types_storage: Vec<Type>;
                 let fields_iter: Box<dyn Iterator<Item = &Type>> = match &v.kind {
                      VariantKind::Unit => Box::new(std::iter::empty()),
                      VariantKind::Tuple(types) => Box::new(types.iter()),
                      VariantKind::Struct(fields) => Box::new(fields.iter().map(|(_, t)| t)),
+                     VariantKind::Array(ty, size) => {
+                         array_types_storage = vec![ty.clone(); *size];
+                         Box::new(array_types_storage.iter())
+                     }
                 };
 
                 for ty in fields_iter {
