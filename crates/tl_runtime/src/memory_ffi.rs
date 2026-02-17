@@ -103,9 +103,18 @@ pub extern "C" fn tl_mem_unregister(_ptr: *mut c_void) {
     // スタブ
 }
 
-/// テンソル取得（RC 操作なし — テンソルは所有権ベースで管理）
+/// テンソル取得（Arc RC +1）
+/// FieldAccess 等で構造体フィールドのテンソルを参照する際に呼ばれる。
+/// tl_tensor_release_safe と対になり、retain/release の対称性を保証する。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::OpaqueTensor {
+    if !t.is_null() {
+        unsafe {
+            std::sync::Arc::increment_strong_count(
+                t as *const std::cell::UnsafeCell<crate::OpaqueTensor>
+            );
+        }
+    }
     t
 }
 
@@ -116,8 +125,10 @@ pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_release_safe(t: *mut crate::OpaqueTensor) {
     if t.is_null() { return; }
-    // Arc<UnsafeCell<T>> として from_raw → drop → RC-1
-    unsafe { let _ = std::sync::Arc::from_raw(t as *const std::cell::UnsafeCell<crate::OpaqueTensor>); }
+    unsafe {
+        let arc = std::sync::Arc::from_raw(t as *const std::cell::UnsafeCell<crate::OpaqueTensor>);
+        drop(arc);
+    }
 }
 
 /// テンソルファイナライズ（No-op: exit_scope で一括処理）

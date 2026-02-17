@@ -442,6 +442,24 @@ impl<'ctx> CodeGenerator<'ctx> {
                           alloca
                       };
 
+                      // FIX: 構造体ポインタ自体の参照カウントも増加する。
+                      // emit_recursive_free の tl_ptr_dec_ref と対称にする。
+                      // これがないと FieldAccess → let → CLEANUP_FULL のパスで
+                      // RC が 0 になり Use-After-Free が発生する。
+                      {
+                          let inc_fn = self.module.get_function("tl_ptr_inc_ref")
+                              .or_else(|| {
+                                   let void_ty = self.context.void_type();
+                                   let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                                   let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                                   Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
+                              })
+                              .ok_or("tl_ptr_inc_ref decl failed")?;
+                          let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                          let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_inc_struct").map_err(|e| e.to_string())?;
+                          self.builder.build_call(inc_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
+                      }
+
                       let st_llvm_ty = *self.struct_types.get(&mangled_name).unwrap();
                       
                       for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
