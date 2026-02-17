@@ -127,7 +127,7 @@ pub fn register_llm_types(manager: &mut TypeManager) {
 fn compile_kv_cache_update<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     instance_val: BasicValueEnum<'ctx>,
-    instance_ty: Type,
+    _instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 3 { return Err("KVCache::update requires 3 arguments".into()); }
@@ -341,7 +341,7 @@ fn compile_kv_cache_new<'ctx>(
 fn compile_kv_cache_free<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     instance_val: BasicValueEnum<'ctx>,
-    instance_ty: Type,
+    _instance_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     // KVCache.free(self) -> self is ptr
@@ -358,7 +358,7 @@ fn compile_kv_cache_free<'ctx>(
 fn compile_kv_cache_get_k<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     instance_val: BasicValueEnum<'ctx>,
-    instance_ty: Type,
+    _instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 { return Err("KVCache::get_k requires 1 argument".into()); }
@@ -375,7 +375,7 @@ fn compile_kv_cache_get_k<'ctx>(
 fn compile_kv_cache_get_v<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     instance_val: BasicValueEnum<'ctx>,
-    instance_ty: Type,
+    _instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 { return Err("KVCache::get_v requires 1 argument".into()); }
