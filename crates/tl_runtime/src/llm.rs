@@ -23,13 +23,15 @@ pub use crate::tokenizer::{
 
 // tensor_cat は lib.rs で定義済み - llm モジュールからは呼び出しラッパー
 
-/// tensor_cat2 - 2 テンソル連結（dim=0）
+/// @ffi_sig (Tensor*, Tensor*) -> Tensor*
+/// 2 テンソル連結（dim=0）
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_cat2(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     tl_metal_cat(a, b, 0)
 }
 
-/// tensor_cat_4d - 4D テンソル連結
+/// @ffi_sig (Tensor*, Tensor*, i64) -> Tensor*
+/// 4D テンソル連結
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_cat_4d(a: *mut OpaqueTensor, b: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
     tl_metal_cat(a, b, dim)
@@ -38,7 +40,7 @@ pub extern "C" fn tl_tensor_cat_4d(a: *mut OpaqueTensor, b: *mut OpaqueTensor, d
 
 
 
-
+/// @ffi_sig (i64, i64, f64) -> Tensor*
 /// RoPE cos キャッシュ作成
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_rope_cos_cache_new(
@@ -58,6 +60,7 @@ pub extern "C" fn tl_rope_cos_cache_new(
     crate::make_metal_tensor(result)
 }
 
+/// @ffi_sig (i64, i64, f64) -> Tensor*
 /// RoPE sin キャッシュ作成
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_rope_sin_cache_new(
@@ -77,6 +80,7 @@ pub extern "C" fn tl_rope_sin_cache_new(
     crate::make_metal_tensor(result)
 }
 
+/// @ffi_sig (Tensor*, f64) -> Tensor*
 /// RMS Norm
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_rms_norm_llm(t: *mut OpaqueTensor, eps: f64) -> *mut OpaqueTensor {
@@ -98,6 +102,8 @@ pub extern "C" fn tl_tensor_rms_norm_llm(t: *mut OpaqueTensor, eps: f64) -> *mut
 // Compiler generates calls using pointer to struct (ptr), while runtime expects i64 handle directly.
 // These wrappers bridge the gap.
 
+/// @ffi_sig (KVCache*) -> void
+/// KVCache 解放。ptr は i64 ハンドルへのポインタ。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_kvcache_free(ptr: *const i64) {
     if ptr.is_null() { return; }
@@ -105,12 +111,16 @@ pub extern "C" fn tl_kvcache_free(ptr: *const i64) {
     tl_kv_cache_free(handle);
 }
 
+/// @ffi_sig (KVCache*, i64) -> void
+/// KVCache 作成。sret に i64 ハンドルを書き込む。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_kvcache_new(sret: *mut i64, layers: i64) {
     let handle = tl_kv_cache_new(layers);
     unsafe { *sret = handle };
 }
 
+/// @ffi_sig (KVCache*, i64) -> Tensor*
+/// KVCache から k テンソルを取得
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_kvcache_get_k(ptr: *const i64, layer: i64) -> *mut OpaqueTensor {
     if ptr.is_null() { return std::ptr::null_mut(); }
@@ -118,6 +128,8 @@ pub extern "C" fn tl_kvcache_get_k(ptr: *const i64, layer: i64) -> *mut OpaqueTe
     tl_kv_cache_get_k(handle, layer)
 }
 
+/// @ffi_sig (KVCache*, i64) -> Tensor*
+/// KVCache から v テンソルを取得
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_kvcache_get_v(ptr: *const i64, layer: i64) -> *mut OpaqueTensor {
     if ptr.is_null() { return std::ptr::null_mut(); }
@@ -125,6 +137,8 @@ pub extern "C" fn tl_kvcache_get_v(ptr: *const i64, layer: i64) -> *mut OpaqueTe
     tl_kv_cache_get_v(handle, layer)
 }
 
+/// @ffi_sig (KVCache*, i64, Tensor*, Tensor*) -> void
+/// KVCache 更新
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_kvcache_update(ptr: *const i64, layer: i64, k: *mut OpaqueTensor, v: *mut OpaqueTensor) {
     if ptr.is_null() { return; }
