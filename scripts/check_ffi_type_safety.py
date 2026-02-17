@@ -48,6 +48,25 @@ TYPE_COMPAT = {
     "u32":     {"u32"},
 }
 
+# コンテキスト推論の限界による偽陽性ホワイトリスト
+# key: (関数名, コンテキスト型)
+# スクリプトは「呼び出し元の match ty コンテキスト = 第1引数の型」と仮定するが、
+# 変換関数やユーティリティ関数ではこの仮定が成り立たないケースがある。
+FALSE_POSITIVE_WHITELIST: dict[tuple[str, str], str] = {
+    # 文字コード(i64) → String 変換関数。第1引数は i64 で正しい。
+    ("tl_string_from_char", "String"): "i64 の文字コードを受け取って String* を返す変換関数",
+
+    # arena のサイズ(i64)を指定する初期化関数。Enum コンテキストとは無関係。
+    ("tl_arena_init", "Enum"): "arena サイズ(i64)の初期化。Enum ブロック内で呼ばれるが引数は Enum と無関係",
+
+    # Tuple 内の String 要素を表示する関数。第1引数は String* で正しい。
+    ("tl_display_string", "Tuple"): "Tuple 要素の表示処理内で呼ばれる。第1引数は Tuple ではなく String*",
+    ("tl_print_string", "Tuple"): "Tuple 要素の表示処理内で呼ばれる。第1引数は Tuple ではなく String*",
+
+    # Tensor→String 変換パス内で C文字列(i8*)から StringStruct を生成。
+    ("tl_string_new", "Tensor"): "Tensor の文字列表現を生成するパスで呼ばれる。第1引数は i8* (C文字列)",
+}
+
 
 # ============================================================
 # データ型
@@ -249,6 +268,10 @@ def check_type_compat(ffi_sig: FfiSig, call: CallSite) -> Optional[str]:
     ctx = call.context_type
     if ctx == "unknown":
         return None  # コンテキスト不明はスキップ
+
+    # ホワイトリストに該当する場合はスキップ
+    if (call.fn_name, ctx) in FALSE_POSITIVE_WHITELIST:
+        return None
 
     # 第1引数の型チェック (最も重要)
     first_param = ffi_sig.params[0]
