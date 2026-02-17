@@ -967,9 +967,6 @@ pub fn tl_metal_transpose(t: *mut OpaqueTensor, dim0: usize, dim1: usize) -> *mu
 pub fn tl_metal_matmul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
     let (ta, tb) = unsafe { (&*a, &*b) };
-    eprintln!("[MATMUL DEBUG] a={:p} dtype={:?} shape={:?}, b={:p} dtype={:?} shape={:?}", 
-        a, ta.dtype(), MetalTensor::shape(ta),
-        b, tb.dtype(), MetalTensor::shape(tb));
     match ta.matmul_impl(tb) {
         Ok(res) => {
             let ptr = make_tensor(res);
