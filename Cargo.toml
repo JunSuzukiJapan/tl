@@ -1,6 +1,6 @@
 [package]
 name = "tl-lang"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2024"
 license = "MIT"
 description = "A differentiable programming language with tensor support for machine learning"
@@ -17,7 +17,7 @@ path = "src/main.rs"
 members = ["crates/tl_runtime", "crates/tl_metal", "crates/tl_backend", "crates/tl_cpu"]
 
 [dependencies]
-tl_runtime = { path = "crates/tl_runtime", version = "0.3.2" }
+tl_runtime = { path = "crates/tl_runtime", version = "0.3.3" }
 tl_cpu = { path = "crates/tl_cpu", version = "0.1.0" }
 
 # CLI & Error Handling
