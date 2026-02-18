@@ -132,9 +132,7 @@ pub extern "C" fn tl_update_all_params(lr: f32) {
 #[unsafe(no_mangle)]
 /// @ffi_sig () -> void
 pub extern "C" fn tl_clear_grads() {
-    // デバッグ: イテレーションごとのテンソル作成/解放バランスを出力
-    unsafe extern "C" { fn tl_metal_debug_reset_counters(); }
-    unsafe { tl_metal_debug_reset_counters(); }
+    // No-op: デバッグカウンタは削除済み
 }
 
 /// QTensor 解放
