@@ -1,7 +1,7 @@
 //! Reduce 演算
 
 use crate::device::get_device;
-use crate::shaders::{self, SHADER_SUMALL_F32, SHADER_ARGMAX_F32, SHADER_ARGMIN_F32};
+use crate::shaders::{SHADER_SUMALL_F32, SHADER_ARGMAX_F32, SHADER_ARGMIN_F32};
 use crate::tensor::MetalTensor;
 use crate::DType;
 use metal::{MTLResourceOptions, MTLSize};
