@@ -43,18 +43,18 @@ impl IDevice for MetalDeviceImpl {
     #[inline] fn tensor_clone(&self, a: *mut c_void) -> BackendResult<*mut c_void> { v(ffi::tl_metal_clone(t(a))) }
     #[inline] fn tensor_shallow_clone(&self, a: *mut c_void) -> BackendResult<*mut c_void> { v(ffi::tl_metal_shallow_clone(t(a))) }
     #[inline] fn tensor_free(&self, a: *mut c_void) -> BackendResult<()> { ffi_ops::tl_metal_free(t(a)); Ok(()) }
-    #[inline] fn tensor_release(&self, a: *mut c_void) -> BackendResult<()> { ffi::tl_metal_release(t(a)); Ok(()) }
-    #[inline] fn tensor_acquire(&self, a: *mut c_void) -> BackendResult<*mut c_void> {
-        // Metal V4.0: Persistent GPU Pool Strategy
-        // 参照カウントを使用せず、意図的にリーク（またはプール管理）するため、
-        // 何もせずポインタをそのまま返す。
-        Ok(a)
+    #[inline] fn tensor_release(&self, a: *mut c_void) -> BackendResult<()> {
+        // V6.0: Arc RC-1 (直接 Arc::from_raw → drop)
+        crate::ffi_ops::release_if_live(t(a)); Ok(())
     }
-    #[inline] fn tensor_release_safe(&self, _a: *mut c_void) -> BackendResult<()> {
-        // Metal V4.0: Persistent GPU Pool Strategy
-        // スコープ終了時の自動解放（RC-1）を無効化。
-        // 何もしない (No-op)。
-        Ok(())
+    #[inline] fn tensor_acquire(&self, a: *mut c_void) -> BackendResult<*mut c_void> {
+        // V6.0: Arc RC+1 (同一ポインタの参照カウントを増やす)
+        crate::ffi_ops::acquire_tensor(t(a));
+        Ok(a) // 同じポインタを返す
+    }
+    #[inline] fn tensor_release_safe(&self, a: *mut c_void) -> BackendResult<()> {
+        // V6.0: Arc RC-1 (直接 Arc::from_raw → drop)
+        crate::ffi_ops::release_if_live(t(a)); Ok(())
     }
     #[inline] fn tensor_promote(&self, _a: *mut c_void) -> BackendResult<()> { /* Metal: pool-based — runtime 側で処理 */ Ok(()) }
     #[inline] fn tensor_register(&self, _a: *mut c_void) -> BackendResult<()> { /* Metal: noop */ Ok(()) }

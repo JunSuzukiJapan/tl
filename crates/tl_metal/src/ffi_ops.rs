@@ -14,11 +14,32 @@ type OpaqueTensor = MetalTensor;
 
 // use 不要: MetalTensor の演算メソッドは inherent impl で定義
 
-/// 内部ヘルパー: MetalTensor を Arc で包んでポインタを返す（V5.0 メモリ管理）
-/// CPU バックエンドの make_tensor と同じパターン。
+/// 内部ヘルパー: MetalTensor を Arc で包んでポインタを返す（V6.0 メモリ管理）
+/// 新しいテンソルを Arc(RC=1) で包み、raw pointer に変換して返す。
 pub fn make_tensor(t: MetalTensor) -> *mut OpaqueTensor {
     let arc = Arc::new(UnsafeCell::new(t));
-    Arc::into_raw(arc) as *mut OpaqueTensor
+    let ptr = Arc::into_raw(arc) as *mut OpaqueTensor;
+    ptr
+}
+
+/// Arc RC-1: raw pointer から Arc を復元し、drop で RC を減らす。
+/// RC が 0 になった場合、MetalTensor の Drop が実行される。
+/// acquire / clone / make_tensor で RC+1 された分を相殺する。
+pub fn release_if_live(t: *mut OpaqueTensor) {
+    if t.is_null() { return; }
+    unsafe { let _ = Arc::from_raw(t as *const UnsafeCell<MetalTensor>); }
+}
+
+/// Arc RC+1: raw pointer の参照カウントを 1 増やす (同一ポインタ、新規ポインタなし)。
+/// tensor_acquire から呼ばれる。対の tensor_release_safe が RC-1 する。
+pub fn acquire_tensor(t: *mut OpaqueTensor) {
+    if t.is_null() { return; }
+    unsafe {
+        let arc = Arc::from_raw(t as *const UnsafeCell<MetalTensor>);
+        let cloned = arc.clone(); // RC+1
+        let _ = Arc::into_raw(arc); // 元のポインタを維持
+        std::mem::forget(cloned); // RC+1 を維持（drop しない）
+    }
 }
 
 /// Helper to handle BackendResult and return safe pointer or null on error

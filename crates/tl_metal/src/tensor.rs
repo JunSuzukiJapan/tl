@@ -329,14 +329,17 @@ impl MetalTensor {
 
         // ワークリスト: (テンソル生ポインタ, 出力勾配)
         let mut worklist: Vec<(*mut MetalTensor, MetalTensor)> = vec![(self_ptr, ones)];
+        // 訪問済みノードを記録（backward後にgrad_fnをクリアするため）
+        let mut visited: Vec<*mut MetalTensor> = Vec::new();
 
         while let Some((tensor_ptr, grad_output)) = worklist.pop() {
             let tensor = unsafe { &mut *tensor_ptr };
+            visited.push(tensor_ptr);
 
             // grad_fn から入力勾配を計算してワークリストに追加
             let propagation = if let Some(meta) = tensor.autograd.as_ref() {
                 if let Some(gf) = meta.grad_fn.as_ref() {
-                    let grads = gf.backward(&grad_output)?; // GradFn::backward now returns BackendResult
+                    let grads = gf.backward(&grad_output)?;
                     let inputs = gf.inputs();
                     Some((grads, inputs))
                 } else {
@@ -357,6 +360,16 @@ impl MetalTensor {
                         worklist.push((input_ptr, grad));
                     }
                 }
+            }
+        }
+
+        // === 計算グラフ解放（V5.0 メモリ管理） ===
+        // 全訪問ノードの grad_fn = None により、GradFn 内の TensorRef (Arc) が drop。
+        // 中間テンソルの Arc RC が下がり、GPU バッファがプールに返される。
+        for &ptr in &visited {
+            let tensor = unsafe { &mut *ptr };
+            if let Some(ref mut meta) = tensor.autograd {
+                meta.grad_fn = None;
             }
         }
         Ok(())
