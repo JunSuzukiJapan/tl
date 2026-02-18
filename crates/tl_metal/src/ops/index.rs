@@ -102,32 +102,34 @@ impl MetalTensor {
         let command_queue = device.command_queue();
         let pipeline = get_embedding_pipeline();
 
-        let dim_buf = device.device().new_buffer_with_data(
-            &(dim as u32) as *const u32 as *const _,
-            4,
-            metal::MTLResourceOptions::StorageModeShared,
-        );
+        objc::rc::autoreleasepool(|| {
+            let dim_buf = device.device().new_buffer_with_data(
+                &(dim as u32) as *const u32 as *const _,
+                4,
+                metal::MTLResourceOptions::StorageModeShared,
+            );
 
-        let command_buffer = command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
+            let command_buffer = command_queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
 
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(weights.buffer()), 0);
-        encoder.set_buffer(1, Some(flat_indices.buffer()), 0);
-        encoder.set_buffer(2, Some(result.buffer()), 0);
-        encoder.set_buffer(3, Some(&dim_buf), 0);
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_buffer(0, Some(weights.buffer()), 0);
+            encoder.set_buffer(1, Some(flat_indices.buffer()), 0);
+            encoder.set_buffer(2, Some(result.buffer()), 0);
+            encoder.set_buffer(3, Some(&dim_buf), 0);
 
-        let tpg = MTLSize::new(dim.min(256) as u64, total_tokens.min(4) as u64, 1);
-        let grid = MTLSize::new(
-            ((dim + tpg.width as usize - 1) / tpg.width as usize) as u64,
-            ((total_tokens + tpg.height as usize - 1) / tpg.height as usize) as u64,
-            1,
-        );
-        encoder.dispatch_thread_groups(grid, tpg);
-        encoder.end_encoding();
+            let tpg = MTLSize::new(dim.min(256) as u64, total_tokens.min(4) as u64, 1);
+            let grid = MTLSize::new(
+                ((dim + tpg.width as usize - 1) / tpg.width as usize) as u64,
+                ((total_tokens + tpg.height as usize - 1) / tpg.height as usize) as u64,
+                1,
+            );
+            encoder.dispatch_thread_groups(grid, tpg);
+            encoder.end_encoding();
 
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
 
         // 2D indices の場合: [T, D] → [B, S, D] に reshape
         if indices_shape.len() == 2 {

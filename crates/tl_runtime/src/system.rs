@@ -132,7 +132,9 @@ pub extern "C" fn tl_update_all_params(lr: f32) {
 #[unsafe(no_mangle)]
 /// @ffi_sig () -> void
 pub extern "C" fn tl_clear_grads() {
-    // REGISTRY 廃止: テンソルの勾配クリアはスコープ離脱時に自動
+    // デバッグ: イテレーションごとのテンソル作成/解放バランスを出力
+    unsafe extern "C" { fn tl_metal_debug_reset_counters(); }
+    unsafe { tl_metal_debug_reset_counters(); }
 }
 
 /// QTensor 解放

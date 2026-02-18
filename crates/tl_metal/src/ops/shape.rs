@@ -198,29 +198,31 @@ impl MetalTensor {
             let command_queue = device.command_queue();
             let pipeline = get_transpose_pipeline();
 
-            let rows_buf = make_u32_buf(rows as u32);
-            let cols_buf = make_u32_buf(cols as u32);
+            objc::rc::autoreleasepool(|| {
+                let rows_buf = make_u32_buf(rows as u32);
+                let cols_buf = make_u32_buf(cols as u32);
 
-            let command_buffer = command_queue.new_command_buffer();
-            let encoder = command_buffer.new_compute_command_encoder();
+                let command_buffer = command_queue.new_command_buffer();
+                let encoder = command_buffer.new_compute_command_encoder();
 
-            encoder.set_compute_pipeline_state(pipeline);
-            encoder.set_buffer(0, Some(self.buffer()), 0);
-            encoder.set_buffer(1, Some(result.buffer()), 0);
-            encoder.set_buffer(2, Some(&rows_buf), 0);
-            encoder.set_buffer(3, Some(&cols_buf), 0);
+                encoder.set_compute_pipeline_state(pipeline);
+                encoder.set_buffer(0, Some(self.buffer()), 0);
+                encoder.set_buffer(1, Some(result.buffer()), 0);
+                encoder.set_buffer(2, Some(&rows_buf), 0);
+                encoder.set_buffer(3, Some(&cols_buf), 0);
 
-            let tpg = MTLSize::new(cols.min(16) as u64, rows.min(16) as u64, 1);
-            let grid = MTLSize::new(
-                ((cols + tpg.width as usize - 1) / tpg.width as usize) as u64,
-                ((rows + tpg.height as usize - 1) / tpg.height as usize) as u64,
-                1,
-            );
-            encoder.dispatch_thread_groups(grid, tpg);
-            encoder.end_encoding();
+                let tpg = MTLSize::new(cols.min(16) as u64, rows.min(16) as u64, 1);
+                let grid = MTLSize::new(
+                    ((cols + tpg.width as usize - 1) / tpg.width as usize) as u64,
+                    ((rows + tpg.height as usize - 1) / tpg.height as usize) as u64,
+                    1,
+                );
+                encoder.dispatch_thread_groups(grid, tpg);
+                encoder.end_encoding();
 
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
+                command_buffer.commit();
+                command_buffer.wait_until_completed();
+            });
 
             return Ok(result);
         }
@@ -309,34 +311,36 @@ impl MetalTensor {
         let command_queue = device.command_queue();
         let pipeline = get_broadcast_pipeline();
 
-        let ndim_buf = make_u32_buf(dst_ndim as u32);
-        let dst_size_buf = make_u32_buf(dst_size as u32);
-        let dst_shape_buf = make_u32_array_buf(&shape.iter().map(|&s| s as u32).collect::<Vec<_>>());
-        let strides_buf = make_u32_array_buf(&src_strides);
+        objc::rc::autoreleasepool(|| {
+            let ndim_buf = make_u32_buf(dst_ndim as u32);
+            let dst_size_buf = make_u32_buf(dst_size as u32);
+            let dst_shape_buf = make_u32_array_buf(&shape.iter().map(|&s| s as u32).collect::<Vec<_>>());
+            let strides_buf = make_u32_array_buf(&src_strides);
 
-        let command_buffer = command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
+            let command_buffer = command_queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
 
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(self.buffer()), 0);
-        encoder.set_buffer(1, Some(result.buffer()), 0);
-        encoder.set_buffer(2, Some(&ndim_buf), 0);
-        encoder.set_buffer(3, Some(&dst_size_buf), 0);
-        encoder.set_buffer(4, Some(&dst_shape_buf), 0);
-        encoder.set_buffer(5, Some(&strides_buf), 0);
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_buffer(0, Some(self.buffer()), 0);
+            encoder.set_buffer(1, Some(result.buffer()), 0);
+            encoder.set_buffer(2, Some(&ndim_buf), 0);
+            encoder.set_buffer(3, Some(&dst_size_buf), 0);
+            encoder.set_buffer(4, Some(&dst_shape_buf), 0);
+            encoder.set_buffer(5, Some(&strides_buf), 0);
 
-        let max_threads = pipeline.max_total_threads_per_threadgroup() as usize;
-        let thread_count = dst_size.min(max_threads);
-        let tpg = MTLSize::new(thread_count as u64, 1, 1);
-        let grid = MTLSize::new(
-            ((dst_size + thread_count - 1) / thread_count) as u64,
-            1, 1,
-        );
-        encoder.dispatch_thread_groups(grid, tpg);
-        encoder.end_encoding();
+            let max_threads = pipeline.max_total_threads_per_threadgroup() as usize;
+            let thread_count = dst_size.min(max_threads);
+            let tpg = MTLSize::new(thread_count as u64, 1, 1);
+            let grid = MTLSize::new(
+                ((dst_size + thread_count - 1) / thread_count) as u64,
+                1, 1,
+            );
+            encoder.dispatch_thread_groups(grid, tpg);
+            encoder.end_encoding();
 
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
 
         Ok(result)
     }
@@ -370,36 +374,38 @@ impl MetalTensor {
         let command_queue = device.command_queue();
         let pipeline = get_slice_pipeline();
 
-        let outer_buf = make_u32_buf(outer_size as u32);
-        let src_axis_buf = make_u32_buf(src_axis_size as u32);
-        let inner_buf = make_u32_buf(inner_size as u32);
-        let start_buf = make_u32_buf(start as u32);
-        let len_buf = make_u32_buf(len as u32);
+        objc::rc::autoreleasepool(|| {
+            let outer_buf = make_u32_buf(outer_size as u32);
+            let src_axis_buf = make_u32_buf(src_axis_size as u32);
+            let inner_buf = make_u32_buf(inner_size as u32);
+            let start_buf = make_u32_buf(start as u32);
+            let len_buf = make_u32_buf(len as u32);
 
-        let command_buffer = command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
+            let command_buffer = command_queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
 
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(self.buffer()), 0);
-        encoder.set_buffer(1, Some(result.buffer()), 0);
-        encoder.set_buffer(2, Some(&outer_buf), 0);
-        encoder.set_buffer(3, Some(&src_axis_buf), 0);
-        encoder.set_buffer(4, Some(&inner_buf), 0);
-        encoder.set_buffer(5, Some(&start_buf), 0);
-        encoder.set_buffer(6, Some(&len_buf), 0);
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_buffer(0, Some(self.buffer()), 0);
+            encoder.set_buffer(1, Some(result.buffer()), 0);
+            encoder.set_buffer(2, Some(&outer_buf), 0);
+            encoder.set_buffer(3, Some(&src_axis_buf), 0);
+            encoder.set_buffer(4, Some(&inner_buf), 0);
+            encoder.set_buffer(5, Some(&start_buf), 0);
+            encoder.set_buffer(6, Some(&len_buf), 0);
 
-        let flat_size = len * inner_size;
-        let tpg = MTLSize::new(flat_size.min(256) as u64, outer_size.min(4) as u64, 1);
-        let grid = MTLSize::new(
-            ((flat_size + tpg.width as usize - 1) / tpg.width as usize) as u64,
-            ((outer_size + tpg.height as usize - 1) / tpg.height as usize) as u64,
-            1,
-        );
-        encoder.dispatch_thread_groups(grid, tpg);
-        encoder.end_encoding();
+            let flat_size = len * inner_size;
+            let tpg = MTLSize::new(flat_size.min(256) as u64, outer_size.min(4) as u64, 1);
+            let grid = MTLSize::new(
+                ((flat_size + tpg.width as usize - 1) / tpg.width as usize) as u64,
+                ((outer_size + tpg.height as usize - 1) / tpg.height as usize) as u64,
+                1,
+            );
+            encoder.dispatch_thread_groups(grid, tpg);
+            encoder.end_encoding();
 
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
 
         Ok(result)
     }
@@ -440,23 +446,25 @@ impl MetalTensor {
 
         if axis == 0 {
             // axis=0: GPU blit でバッファを連結コピー
-            let command_buffer = command_queue.new_command_buffer();
-            let blit_encoder = command_buffer.new_blit_command_encoder();
-            
-            let mut offset: u64 = 0;
-            for t in tensors {
-                let size = (t.elem_count() * 4) as u64; // f32 = 4 bytes
-                blit_encoder.copy_from_buffer(
-                    t.buffer(), 0,
-                    result.buffer(), offset,
-                    size,
-                );
-                offset += size;
-            }
-            
-            blit_encoder.end_encoding();
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
+            objc::rc::autoreleasepool(|| {
+                let command_buffer = command_queue.new_command_buffer();
+                let blit_encoder = command_buffer.new_blit_command_encoder();
+                
+                let mut offset: u64 = 0;
+                for t in tensors {
+                    let size = (t.elem_count() * 4) as u64; // f32 = 4 bytes
+                    blit_encoder.copy_from_buffer(
+                        t.buffer(), 0,
+                        result.buffer(), offset,
+                        size,
+                    );
+                    offset += size;
+                }
+                
+                blit_encoder.end_encoding();
+                command_buffer.commit();
+                command_buffer.wait_until_completed();
+            });
         } else {
             // 一般ケース: 各テンソルをスライスとして結果バッファにコピー
             let outer_size: usize = first_shape[..axis].iter().product::<usize>().max(1);
@@ -464,30 +472,32 @@ impl MetalTensor {
                 first_shape[axis + 1..].iter().product()
             } else { 1 };
 
-            let command_buffer = command_queue.new_command_buffer();
-            let blit_encoder = command_buffer.new_blit_command_encoder();
-            
-            for outer in 0..outer_size {
-                let mut dst_axis_offset = 0usize;
-                for t in tensors {
-                    let t_axis = MetalTensor::shape(*t)[axis];
-                    let chunk_size = (t_axis * inner_size * 4) as u64;
-                    let src_off = (outer * t_axis * inner_size * 4) as u64;
-                    let dst_off = (outer * total_axis_size * inner_size * 4
-                        + dst_axis_offset * inner_size * 4) as u64;
-                    
-                    blit_encoder.copy_from_buffer(
-                        t.buffer(), src_off,
-                        result.buffer(), dst_off,
-                        chunk_size,
-                    );
-                    dst_axis_offset += t_axis;
+            objc::rc::autoreleasepool(|| {
+                let command_buffer = command_queue.new_command_buffer();
+                let blit_encoder = command_buffer.new_blit_command_encoder();
+                
+                for outer in 0..outer_size {
+                    let mut dst_axis_offset = 0usize;
+                    for t in tensors {
+                        let t_axis = MetalTensor::shape(*t)[axis];
+                        let chunk_size = (t_axis * inner_size * 4) as u64;
+                        let src_off = (outer * t_axis * inner_size * 4) as u64;
+                        let dst_off = (outer * total_axis_size * inner_size * 4
+                            + dst_axis_offset * inner_size * 4) as u64;
+                        
+                        blit_encoder.copy_from_buffer(
+                            t.buffer(), src_off,
+                            result.buffer(), dst_off,
+                            chunk_size,
+                        );
+                        dst_axis_offset += t_axis;
+                    }
                 }
-            }
-            
-            blit_encoder.end_encoding();
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
+                
+                blit_encoder.end_encoding();
+                command_buffer.commit();
+                command_buffer.wait_until_completed();
+            });
         }
 
         Ok(result)

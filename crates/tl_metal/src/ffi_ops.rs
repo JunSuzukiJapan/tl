@@ -7,18 +7,40 @@ use crate::tensor::{MetalTensor, tensor_ref_from_ptr};
 use crate::DType;
 use std::cell::UnsafeCell;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tl_backend::BackendResult;
 
 // OpaqueTensor は MetalTensor のエイリアス
 type OpaqueTensor = MetalTensor;
+
+// === デバッグカウンタ ===
+static MAKE_COUNT: AtomicUsize = AtomicUsize::new(0);
+static RELEASE_COUNT: AtomicUsize = AtomicUsize::new(0);
+static ACQUIRE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// デバッグ: カウンタをリセットし現在の値を出力
+#[no_mangle]
+pub extern "C" fn tl_metal_debug_reset_counters() {
+    let m = MAKE_COUNT.swap(0, Ordering::SeqCst);
+    let r = RELEASE_COUNT.swap(0, Ordering::SeqCst);
+    let a = ACQUIRE_COUNT.swap(0, Ordering::SeqCst);
+    eprintln!("[COUNTER] make={} release={} acquire={} delta={}", m, r, a, (m + a) as i64 - r as i64);
+}
 
 // use 不要: MetalTensor の演算メソッドは inherent impl で定義
 
 /// 内部ヘルパー: MetalTensor を Arc で包んでポインタを返す（V6.0 メモリ管理）
 /// 新しいテンソルを Arc(RC=1) で包み、raw pointer に変換して返す。
 pub fn make_tensor(t: MetalTensor) -> *mut OpaqueTensor {
+    let m = MAKE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     let arc = Arc::new(UnsafeCell::new(t));
     let ptr = Arc::into_raw(arc) as *mut OpaqueTensor;
+    // 1000テンソルごとにカウンタ出力
+    if m % 1000 == 0 {
+        let r = RELEASE_COUNT.load(Ordering::Relaxed);
+        let a = ACQUIRE_COUNT.load(Ordering::Relaxed);
+        eprintln!("[COUNTER@{}] make={} release={} acquire={} live={}", m, m, r, a, (m + a) as i64 - r as i64);
+    }
     ptr
 }
 
@@ -27,6 +49,7 @@ pub fn make_tensor(t: MetalTensor) -> *mut OpaqueTensor {
 /// acquire / clone / make_tensor で RC+1 された分を相殺する。
 pub fn release_if_live(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
+    RELEASE_COUNT.fetch_add(1, Ordering::Relaxed);
     unsafe { let _ = Arc::from_raw(t as *const UnsafeCell<MetalTensor>); }
 }
 
@@ -34,6 +57,7 @@ pub fn release_if_live(t: *mut OpaqueTensor) {
 /// tensor_acquire から呼ばれる。対の tensor_release_safe が RC-1 する。
 pub fn acquire_tensor(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
+    ACQUIRE_COUNT.fetch_add(1, Ordering::Relaxed);
     unsafe {
         let arc = Arc::from_raw(t as *const UnsafeCell<MetalTensor>);
         let cloned = arc.clone(); // RC+1

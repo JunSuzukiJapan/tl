@@ -8,6 +8,10 @@ use crate::tensor::MetalTensor;
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static CLONE_COUNT: AtomicUsize = AtomicUsize::new(0);
+static SHALLOW_CLONE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 // OpaqueTensor は MetalTensor のエイリアスとして扱う
 pub type OpaqueTensor = MetalTensor;
@@ -20,9 +24,12 @@ pub type OpaqueTensor = MetalTensor;
 
 #[no_mangle]
 pub extern "C" fn tl_metal_clone(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    // TL言語の変数は参照として振る舞うべきなので、複製ではなく参照カウントを増やす。
-    // Autograd 情報を共有するためにはこれが必須。
     if t.is_null() { return std::ptr::null_mut(); }
+    let c = CLONE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    if c % 1000 == 0 {
+        let sc = SHALLOW_CLONE_COUNT.load(Ordering::Relaxed);
+        eprintln!("[CLONE@{}] clone={} shallow_clone={}", c, c, sc);
+    }
     unsafe {
         let arc = Arc::from_raw(t as *const UnsafeCell<MetalTensor>);
         let cloned = arc.clone();

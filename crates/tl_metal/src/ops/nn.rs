@@ -420,38 +420,40 @@ impl MetalTensor {
         let command_queue = device.command_queue();
         let pipeline = get_conv2d_pipeline();
         
-        let bufs = [
-            make_u32_buf(n as u32), make_u32_buf(c_in as u32),
-            make_u32_buf(h_in as u32), make_u32_buf(w_in as u32),
-            make_u32_buf(c_out as u32), make_u32_buf(kh as u32),
-            make_u32_buf(kw as u32), make_u32_buf(h_out as u32),
-            make_u32_buf(w_out as u32), make_u32_buf(stride_h as u32),
-            make_u32_buf(stride_w as u32), make_u32_buf(pad_h as u32),
-            make_u32_buf(pad_w as u32),
-        ];
-        
-        let command_buffer = command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
-        
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(self.buffer()), 0);
-        encoder.set_buffer(1, Some(weight.buffer()), 0);
-        encoder.set_buffer(2, Some(result.buffer()), 0);
-        for (i, buf) in bufs.iter().enumerate() {
-            encoder.set_buffer((3 + i) as u64, Some(buf), 0);
-        }
-        
-        let threads_per_group = MTLSize::new(8, 8, 4);
-        let grid_size = MTLSize::new(
-            ((w_out + 7) / 8) as u64,
-            ((h_out + 7) / 8) as u64,
-            ((n * c_out + 3) / 4) as u64,
-        );
-        encoder.dispatch_thread_groups(grid_size, threads_per_group);
-        encoder.end_encoding();
-        
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+        objc::rc::autoreleasepool(|| {
+            let bufs = [
+                make_u32_buf(n as u32), make_u32_buf(c_in as u32),
+                make_u32_buf(h_in as u32), make_u32_buf(w_in as u32),
+                make_u32_buf(c_out as u32), make_u32_buf(kh as u32),
+                make_u32_buf(kw as u32), make_u32_buf(h_out as u32),
+                make_u32_buf(w_out as u32), make_u32_buf(stride_h as u32),
+                make_u32_buf(stride_w as u32), make_u32_buf(pad_h as u32),
+                make_u32_buf(pad_w as u32),
+            ];
+            
+            let command_buffer = command_queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
+            
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_buffer(0, Some(self.buffer()), 0);
+            encoder.set_buffer(1, Some(weight.buffer()), 0);
+            encoder.set_buffer(2, Some(result.buffer()), 0);
+            for (i, buf) in bufs.iter().enumerate() {
+                encoder.set_buffer((3 + i) as u64, Some(buf), 0);
+            }
+            
+            let threads_per_group = MTLSize::new(8, 8, 4);
+            let grid_size = MTLSize::new(
+                ((w_out + 7) / 8) as u64,
+                ((h_out + 7) / 8) as u64,
+                ((n * c_out + 3) / 4) as u64,
+            );
+            encoder.dispatch_thread_groups(grid_size, threads_per_group);
+            encoder.end_encoding();
+            
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
         
         Ok(result)
     }
@@ -480,42 +482,44 @@ impl MetalTensor {
         let command_queue = device.command_queue();
         let pipeline = get_batch_norm_pipeline();
         
-        let n_buf = make_u32_buf(n as u32);
-        let c_buf = make_u32_buf(c as u32);
-        let spatial_buf = make_u32_buf(spatial as u32);
-        let eps_buf = make_f32_buf(eps);
-        
-        let command_buffer = command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
-        
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(self.buffer()), 0);
-        encoder.set_buffer(1, Some(gamma.buffer()), 0);
-        encoder.set_buffer(2, Some(beta.buffer()), 0);
-        encoder.set_buffer(3, Some(running_mean.buffer()), 0);
-        encoder.set_buffer(4, Some(running_var.buffer()), 0);
-        encoder.set_buffer(5, Some(result.buffer()), 0);
-        encoder.set_buffer(6, Some(&n_buf), 0);
-        encoder.set_buffer(7, Some(&c_buf), 0);
-        encoder.set_buffer(8, Some(&spatial_buf), 0);
-        encoder.set_buffer(9, Some(&eps_buf), 0);
-        
-        // 3D グリッド: [spatial, C, N]
-        let tpg = MTLSize::new(
-            spatial.min(256) as u64,
-            c.min(16) as u64,
-            n.min(4) as u64,
-        );
-        let grid = MTLSize::new(
-            ((spatial + tpg.width as usize - 1) / tpg.width as usize) as u64,
-            ((c + tpg.height as usize - 1) / tpg.height as usize) as u64,
-            ((n + tpg.depth as usize - 1) / tpg.depth as usize) as u64,
-        );
-        encoder.dispatch_thread_groups(grid, tpg);
-        encoder.end_encoding();
-        
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+        objc::rc::autoreleasepool(|| {
+            let n_buf = make_u32_buf(n as u32);
+            let c_buf = make_u32_buf(c as u32);
+            let spatial_buf = make_u32_buf(spatial as u32);
+            let eps_buf = make_f32_buf(eps);
+            
+            let command_buffer = command_queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
+            
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_buffer(0, Some(self.buffer()), 0);
+            encoder.set_buffer(1, Some(gamma.buffer()), 0);
+            encoder.set_buffer(2, Some(beta.buffer()), 0);
+            encoder.set_buffer(3, Some(running_mean.buffer()), 0);
+            encoder.set_buffer(4, Some(running_var.buffer()), 0);
+            encoder.set_buffer(5, Some(result.buffer()), 0);
+            encoder.set_buffer(6, Some(&n_buf), 0);
+            encoder.set_buffer(7, Some(&c_buf), 0);
+            encoder.set_buffer(8, Some(&spatial_buf), 0);
+            encoder.set_buffer(9, Some(&eps_buf), 0);
+            
+            // 3D グリッド: [spatial, C, N]
+            let tpg = MTLSize::new(
+                spatial.min(256) as u64,
+                c.min(16) as u64,
+                n.min(4) as u64,
+            );
+            let grid = MTLSize::new(
+                ((spatial + tpg.width as usize - 1) / tpg.width as usize) as u64,
+                ((c + tpg.height as usize - 1) / tpg.height as usize) as u64,
+                ((n + tpg.depth as usize - 1) / tpg.depth as usize) as u64,
+            );
+            encoder.dispatch_thread_groups(grid, tpg);
+            encoder.end_encoding();
+            
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
         
         Ok(result)
     }
@@ -545,7 +549,7 @@ impl MetalTensor {
         let eps_buf = make_f32_buf(eps);
         
         // パス1: mean, var を計算
-        {
+        objc::rc::autoreleasepool(|| {
             let pipeline = get_ln_stats_pipeline();
             let command_buffer = command_queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
@@ -567,10 +571,10 @@ impl MetalTensor {
             
             command_buffer.commit();
             command_buffer.wait_until_completed();
-        }
+        });
         
         // パス2: 正規化
-        {
+        objc::rc::autoreleasepool(|| {
             let pipeline = get_ln_norm_pipeline();
             let command_buffer = command_queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
@@ -599,7 +603,7 @@ impl MetalTensor {
             
             command_buffer.commit();
             command_buffer.wait_until_completed();
-        }
+        });
         
         Ok(result)
     }
@@ -626,36 +630,38 @@ impl MetalTensor {
         let command_queue = device.command_queue();
         let pipeline = get_max_pool2d_pipeline();
         
-        let bufs = [
-            make_u32_buf(n as u32), make_u32_buf(c as u32),
-            make_u32_buf(h_in as u32), make_u32_buf(w_in as u32),
-            make_u32_buf(kh as u32), make_u32_buf(kw as u32),
-            make_u32_buf(h_out as u32), make_u32_buf(w_out as u32),
-            make_u32_buf(stride_h as u32), make_u32_buf(stride_w as u32),
-        ];
-        
-        let command_buffer = command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
-        
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(self.buffer()), 0);
-        encoder.set_buffer(1, Some(result.buffer()), 0);
-        for (i, buf) in bufs.iter().enumerate() {
-            encoder.set_buffer((2 + i) as u64, Some(buf), 0);
-        }
-        
-        // 3D グリッド: [W_out, H_out, N*C]
-        let tpg = MTLSize::new(8, 8, 4);
-        let grid = MTLSize::new(
-            ((w_out + 7) / 8) as u64,
-            ((h_out + 7) / 8) as u64,
-            ((n * c + 3) / 4) as u64,
-        );
-        encoder.dispatch_thread_groups(grid, tpg);
-        encoder.end_encoding();
-        
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+        objc::rc::autoreleasepool(|| {
+            let bufs = [
+                make_u32_buf(n as u32), make_u32_buf(c as u32),
+                make_u32_buf(h_in as u32), make_u32_buf(w_in as u32),
+                make_u32_buf(kh as u32), make_u32_buf(kw as u32),
+                make_u32_buf(h_out as u32), make_u32_buf(w_out as u32),
+                make_u32_buf(stride_h as u32), make_u32_buf(stride_w as u32),
+            ];
+            
+            let command_buffer = command_queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
+            
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_buffer(0, Some(self.buffer()), 0);
+            encoder.set_buffer(1, Some(result.buffer()), 0);
+            for (i, buf) in bufs.iter().enumerate() {
+                encoder.set_buffer((2 + i) as u64, Some(buf), 0);
+            }
+            
+            // 3D グリッド: [W_out, H_out, N*C]
+            let tpg = MTLSize::new(8, 8, 4);
+            let grid = MTLSize::new(
+                ((w_out + 7) / 8) as u64,
+                ((h_out + 7) / 8) as u64,
+                ((n * c + 3) / 4) as u64,
+            );
+            encoder.dispatch_thread_groups(grid, tpg);
+            encoder.end_encoding();
+            
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
         
         Ok(result)
     }
@@ -683,35 +689,37 @@ impl MetalTensor {
         let command_queue = device.command_queue();
         let pipeline = get_avg_pool2d_pipeline();
         
-        let bufs = [
-            make_u32_buf(n as u32), make_u32_buf(c as u32),
-            make_u32_buf(h_in as u32), make_u32_buf(w_in as u32),
-            make_u32_buf(kh as u32), make_u32_buf(kw as u32),
-            make_u32_buf(h_out as u32), make_u32_buf(w_out as u32),
-            make_u32_buf(stride_h as u32), make_u32_buf(stride_w as u32),
-        ];
-        
-        let command_buffer = command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
-        
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(self.buffer()), 0);
-        encoder.set_buffer(1, Some(result.buffer()), 0);
-        for (i, buf) in bufs.iter().enumerate() {
-            encoder.set_buffer((2 + i) as u64, Some(buf), 0);
-        }
-        
-        let tpg = MTLSize::new(8, 8, 4);
-        let grid = MTLSize::new(
-            ((w_out + 7) / 8) as u64,
-            ((h_out + 7) / 8) as u64,
-            ((n * c + 3) / 4) as u64,
-        );
-        encoder.dispatch_thread_groups(grid, tpg);
-        encoder.end_encoding();
-        
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+        objc::rc::autoreleasepool(|| {
+            let bufs = [
+                make_u32_buf(n as u32), make_u32_buf(c as u32),
+                make_u32_buf(h_in as u32), make_u32_buf(w_in as u32),
+                make_u32_buf(kh as u32), make_u32_buf(kw as u32),
+                make_u32_buf(h_out as u32), make_u32_buf(w_out as u32),
+                make_u32_buf(stride_h as u32), make_u32_buf(stride_w as u32),
+            ];
+            
+            let command_buffer = command_queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
+            
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_buffer(0, Some(self.buffer()), 0);
+            encoder.set_buffer(1, Some(result.buffer()), 0);
+            for (i, buf) in bufs.iter().enumerate() {
+                encoder.set_buffer((2 + i) as u64, Some(buf), 0);
+            }
+            
+            let tpg = MTLSize::new(8, 8, 4);
+            let grid = MTLSize::new(
+                ((w_out + 7) / 8) as u64,
+                ((h_out + 7) / 8) as u64,
+                ((n * c + 3) / 4) as u64,
+            );
+            encoder.dispatch_thread_groups(grid, tpg);
+            encoder.end_encoding();
+            
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
         
         Ok(result)
     }
@@ -740,31 +748,33 @@ impl MetalTensor {
             (t ^ (t >> 32)) as u32
         };
         
-        let count_buf = make_u32_buf(count as u32);
-        let p_buf = make_f32_buf(p);
-        let scale_buf = make_f32_buf(scale);
-        let seed_buf = make_u32_buf(seed);
-        
-        let command_buffer = command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
-        
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(self.buffer()), 0);
-        encoder.set_buffer(1, Some(result.buffer()), 0);
-        encoder.set_buffer(2, Some(&count_buf), 0);
-        encoder.set_buffer(3, Some(&p_buf), 0);
-        encoder.set_buffer(4, Some(&scale_buf), 0);
-        encoder.set_buffer(5, Some(&seed_buf), 0);
-        
-        let thread_width = pipeline.thread_execution_width() as usize;
-        let tpg = MTLSize::new(thread_width as u64, 1, 1);
-        let num_groups = (count + thread_width - 1) / thread_width;
-        let grid = MTLSize::new(num_groups as u64, 1, 1);
-        encoder.dispatch_thread_groups(grid, tpg);
-        encoder.end_encoding();
-        
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+        objc::rc::autoreleasepool(|| {
+            let count_buf = make_u32_buf(count as u32);
+            let p_buf = make_f32_buf(p);
+            let scale_buf = make_f32_buf(scale);
+            let seed_buf = make_u32_buf(seed);
+            
+            let command_buffer = command_queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
+            
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_buffer(0, Some(self.buffer()), 0);
+            encoder.set_buffer(1, Some(result.buffer()), 0);
+            encoder.set_buffer(2, Some(&count_buf), 0);
+            encoder.set_buffer(3, Some(&p_buf), 0);
+            encoder.set_buffer(4, Some(&scale_buf), 0);
+            encoder.set_buffer(5, Some(&seed_buf), 0);
+            
+            let thread_width = pipeline.thread_execution_width() as usize;
+            let tpg = MTLSize::new(thread_width as u64, 1, 1);
+            let num_groups = (count + thread_width - 1) / thread_width;
+            let grid = MTLSize::new(num_groups as u64, 1, 1);
+            encoder.dispatch_thread_groups(grid, tpg);
+            encoder.end_encoding();
+            
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
         
         Ok(result)
     }

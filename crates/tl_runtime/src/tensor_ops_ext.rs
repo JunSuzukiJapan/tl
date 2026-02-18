@@ -115,19 +115,60 @@ pub extern "C" fn tl_tensor_load(path: *mut super::StringStruct) -> *mut OpaqueT
 #[unsafe(no_mangle)]
 /// @ffi_sig () -> i64
 pub extern "C" fn tl_get_memory_bytes() -> i64 {
-    let mut usage = std::mem::MaybeUninit::uninit();
-    unsafe {
-        if libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) == 0 {
-            let usage = usage.assume_init();
-            // macOS: ru_maxrss はバイト単位
-            // Linux: ru_maxrss は KB 単位 → バイトに変換
-            #[cfg(target_os = "macos")]
-            { usage.ru_maxrss as i64 }
-            #[cfg(not(target_os = "macos"))]
-            { usage.ru_maxrss as i64 * 1024 }
-        } else {
-            0
+    // macOS: mach_task_basic_info で現在の RSS を取得
+    // 注意: ru_maxrss はピーク RSS で単調増加するため使用不可
+    #[cfg(target_os = "macos")]
+    {
+        use std::mem;
+        // time_value_t = { integer_t seconds; integer_t microseconds; } = 2 x i32 = 8 bytes
+        // struct mach_task_basic_info 全体 = 48 bytes (MACH_TASK_BASIC_INFO_COUNT = 12)
+        #[repr(C)]
+        struct MachTaskBasicInfo {
+            virtual_size: u64,       // mach_vm_size_t (8 bytes)
+            resident_size: u64,      // mach_vm_size_t (8 bytes)
+            resident_size_max: u64,  // mach_vm_size_t (8 bytes)
+            user_time: [i32; 2],     // time_value_t (8 bytes)
+            system_time: [i32; 2],   // time_value_t (8 bytes)
+            policy: i32,             // policy_t (4 bytes)
+            suspend_count: i32,      // integer_t (4 bytes)
         }
+        const MACH_TASK_BASIC_INFO: u32 = 20;
+        unsafe extern "C" {
+            fn mach_task_self() -> u32;
+            fn task_info(
+                target_task: u32,
+                flavor: u32,
+                task_info_out: *mut MachTaskBasicInfo,
+                task_info_out_cnt: *mut u32,
+            ) -> i32;
+        }
+        unsafe {
+            let mut info: MachTaskBasicInfo = mem::zeroed();
+            let mut count = (mem::size_of::<MachTaskBasicInfo>() / mem::size_of::<u32>()) as u32;
+            let kr = task_info(
+                mach_task_self(),
+                MACH_TASK_BASIC_INFO,
+                &mut info as *mut _,
+                &mut count,
+            );
+            if kr == 0 {
+                return info.resident_size as i64;
+            }
+        }
+        0
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Linux: /proc/self/statm から RSS を取得
+        if let Ok(statm) = std::fs::read_to_string("/proc/self/statm") {
+            let parts: Vec<&str> = statm.split_whitespace().collect();
+            if parts.len() >= 2 {
+                if let Ok(rss_pages) = parts[1].parse::<i64>() {
+                    return rss_pages * 4096; // ページサイズ 4KB
+                }
+            }
+        }
+        0
     }
 }
 

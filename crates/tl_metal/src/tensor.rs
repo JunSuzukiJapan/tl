@@ -232,21 +232,24 @@ impl MetalTensor {
         let result = MetalTensor::uninit(self.shape(), self.dtype());
         let device = get_device();
         let command_queue = device.command_queue();
-        let command_buffer = command_queue.new_command_buffer();
-        let blit_encoder = command_buffer.new_blit_command_encoder();
         
-        let size = shape_to_bytes(self.shape(), self.dtype());
-        blit_encoder.copy_from_buffer(
-            self.buffer(),
-            0,
-            result.buffer(),
-            0,
-            size as u64,
-        );
-        blit_encoder.end_encoding();
-        
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+        objc::rc::autoreleasepool(|| {
+            let command_buffer = command_queue.new_command_buffer();
+            let blit_encoder = command_buffer.new_blit_command_encoder();
+            
+            let size = shape_to_bytes(self.shape(), self.dtype());
+            blit_encoder.copy_from_buffer(
+                self.buffer(),
+                0,
+                result.buffer(),
+                0,
+                size as u64,
+            );
+            blit_encoder.end_encoding();
+            
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
         
         Ok(result)
     }
@@ -381,10 +384,20 @@ impl MetalTensor {
     }
 }
 
+// === デバッグカウンタ ===
+static DROP_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static DROP_POOL_RELEASE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 impl Drop for MetalTensor {
     fn drop(&mut self) {
+        let d = DROP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         if Arc::strong_count(&self.buffer) == 1 {
+            DROP_POOL_RELEASE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             pool_release(self.buffer.clone());
+        }
+        if d % 1000 == 0 {
+            let pr = DROP_POOL_RELEASE_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+            eprintln!("[DROP@{}] total_drops={} pool_releases={} skipped={}", d, d, pr, d - pr);
         }
     }
 }

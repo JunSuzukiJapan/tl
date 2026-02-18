@@ -112,36 +112,38 @@ impl MetalTensor {
         let command_queue = device.command_queue();
         let pipeline = get_softmax_pipeline();
 
-        let outer_buf = make_u32_buf(outer_size as u32);
-        let axis_buf = make_u32_buf(axis_size as u32);
-        let inner_buf = make_u32_buf(inner_size as u32);
+        objc::rc::autoreleasepool(|| {
+            let outer_buf = make_u32_buf(outer_size as u32);
+            let axis_buf = make_u32_buf(axis_size as u32);
+            let inner_buf = make_u32_buf(inner_size as u32);
 
-        let command_buffer = command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
+            let command_buffer = command_queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
 
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(self.buffer()), 0);
-        encoder.set_buffer(1, Some(result.buffer()), 0);
-        encoder.set_buffer(2, Some(&outer_buf), 0);
-        encoder.set_buffer(3, Some(&axis_buf), 0);
-        encoder.set_buffer(4, Some(&inner_buf), 0);
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_buffer(0, Some(self.buffer()), 0);
+            encoder.set_buffer(1, Some(result.buffer()), 0);
+            encoder.set_buffer(2, Some(&outer_buf), 0);
+            encoder.set_buffer(3, Some(&axis_buf), 0);
+            encoder.set_buffer(4, Some(&inner_buf), 0);
 
-        // 2D グリッド: [inner_size, outer_size]
-        let tpg = MTLSize::new(
-            inner_size.min(256) as u64,
-            outer_size.min(4) as u64,
-            1,
-        );
-        let grid = MTLSize::new(
-            ((inner_size + tpg.width as usize - 1) / tpg.width as usize) as u64,
-            ((outer_size + tpg.height as usize - 1) / tpg.height as usize) as u64,
-            1,
-        );
-        encoder.dispatch_thread_groups(grid, tpg);
-        encoder.end_encoding();
+            // 2D グリッド: [inner_size, outer_size]
+            let tpg = MTLSize::new(
+                inner_size.min(256) as u64,
+                outer_size.min(4) as u64,
+                1,
+            );
+            let grid = MTLSize::new(
+                ((inner_size + tpg.width as usize - 1) / tpg.width as usize) as u64,
+                ((outer_size + tpg.height as usize - 1) / tpg.height as usize) as u64,
+                1,
+            );
+            encoder.dispatch_thread_groups(grid, tpg);
+            encoder.end_encoding();
 
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
 
         Ok(result)
     }

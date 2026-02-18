@@ -31,24 +31,26 @@ impl MetalTensor {
         let mut shaders = get_shaders().lock().unwrap();
         let pipeline = shaders.get_pipeline(device.device(), SHADER_DEQUANTIZE_Q4_K).map_err(BackendError::InternalError)?;
         
-        let command_buffer = command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
-        
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(self.buffer()), 0);
-        encoder.set_buffer(1, Some(result.buffer()), 0);
-        
-        let num_blocks_u32 = num_blocks as u32;
-        encoder.set_bytes(2, std::mem::size_of::<u32>() as u64, &num_blocks_u32 as *const u32 as *const std::ffi::c_void);
-        
-        // Dispatch: 1 thread per block
-        // num_blocks threads
-        let (grid_size, threads_per_group) = compute_thread_groups(num_blocks, pipeline);
-        encoder.dispatch_thread_groups(grid_size, threads_per_group);
-        encoder.end_encoding();
-        
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+        objc::rc::autoreleasepool(|| {
+            let command_buffer = command_queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
+            
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_buffer(0, Some(self.buffer()), 0);
+            encoder.set_buffer(1, Some(result.buffer()), 0);
+            
+            let num_blocks_u32 = num_blocks as u32;
+            encoder.set_bytes(2, std::mem::size_of::<u32>() as u64, &num_blocks_u32 as *const u32 as *const std::ffi::c_void);
+            
+            // Dispatch: 1 thread per block
+            // num_blocks threads
+            let (grid_size, threads_per_group) = compute_thread_groups(num_blocks, pipeline);
+            encoder.dispatch_thread_groups(grid_size, threads_per_group);
+            encoder.end_encoding();
+            
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
         
         Ok(result)
     }

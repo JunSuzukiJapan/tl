@@ -112,20 +112,22 @@ impl MetalTensor {
             .get_pipeline(device.device(), shader_name)
             .map_err(|e| BackendError::InternalError(format!("Failed to get shader pipeline ({}): {}", shader_name, e)))?;
 
-        let command_buffer = command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
+        objc::rc::autoreleasepool(|| {
+            let command_buffer = command_queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
 
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(self.buffer()), 0);
-        encoder.set_buffer(1, Some(other.buffer()), 0);
-        encoder.set_buffer(2, Some(result.buffer()), 0);
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_buffer(0, Some(self.buffer()), 0);
+            encoder.set_buffer(1, Some(other.buffer()), 0);
+            encoder.set_buffer(2, Some(result.buffer()), 0);
 
-        let (grid_size, threads_per_group) = shaders::compute_thread_groups(self.elem_count(), pipeline);
-        encoder.dispatch_thread_groups(grid_size, threads_per_group);
-        encoder.end_encoding();
+            let (grid_size, threads_per_group) = shaders::compute_thread_groups(self.elem_count(), pipeline);
+            encoder.dispatch_thread_groups(grid_size, threads_per_group);
+            encoder.end_encoding();
 
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
 
         Ok(result)
     }

@@ -198,7 +198,7 @@ impl MetalTensor {
         let eps_buf = make_f32_buf(eps);
         
         // Pass 1: mean(x²)
-        {
+        objc::rc::autoreleasepool(|| {
             let pipeline = get_rms_mean_sq_pipeline();
             let cb = command_queue.new_command_buffer();
             let enc = cb.new_compute_command_encoder();
@@ -215,10 +215,10 @@ impl MetalTensor {
             enc.end_encoding();
             cb.commit();
             cb.wait_until_completed();
-        }
+        });
         
         // Pass 2: normalize
-        {
+        objc::rc::autoreleasepool(|| {
             let pipeline = get_rms_normalize_pipeline();
             let cb = command_queue.new_command_buffer();
             let enc = cb.new_compute_command_encoder();
@@ -239,7 +239,7 @@ impl MetalTensor {
             enc.end_encoding();
             cb.commit();
             cb.wait_until_completed();
-        }
+        });
         
         Ok(result)
     }
@@ -258,25 +258,27 @@ impl MetalTensor {
         let base_buf = make_f32_buf(base);
         let head_dim_buf = make_u32_buf(head_dim as u32);
         
-        let cb = device.command_queue().new_command_buffer();
-        let enc = cb.new_compute_command_encoder();
-        enc.set_compute_pipeline_state(pipeline);
-        enc.set_buffer(0, Some(cos_tensor.buffer()), 0);
-        enc.set_buffer(1, Some(sin_tensor.buffer()), 0);
-        enc.set_buffer(2, Some(&half_dim_buf), 0);
-        enc.set_buffer(3, Some(&base_buf), 0);
-        enc.set_buffer(4, Some(&head_dim_buf), 0);
-        
-        let tpg = MTLSize::new(half_dim.min(256) as u64, seq_len.min(4) as u64, 1);
-        let grid = MTLSize::new(
-            ((half_dim + tpg.width as usize - 1) / tpg.width as usize) as u64,
-            ((seq_len + tpg.height as usize - 1) / tpg.height as usize) as u64,
-            1,
-        );
-        enc.dispatch_thread_groups(grid, tpg);
-        enc.end_encoding();
-        cb.commit();
-        cb.wait_until_completed();
+        objc::rc::autoreleasepool(|| {
+            let cb = device.command_queue().new_command_buffer();
+            let enc = cb.new_compute_command_encoder();
+            enc.set_compute_pipeline_state(pipeline);
+            enc.set_buffer(0, Some(cos_tensor.buffer()), 0);
+            enc.set_buffer(1, Some(sin_tensor.buffer()), 0);
+            enc.set_buffer(2, Some(&half_dim_buf), 0);
+            enc.set_buffer(3, Some(&base_buf), 0);
+            enc.set_buffer(4, Some(&head_dim_buf), 0);
+            
+            let tpg = MTLSize::new(half_dim.min(256) as u64, seq_len.min(4) as u64, 1);
+            let grid = MTLSize::new(
+                ((half_dim + tpg.width as usize - 1) / tpg.width as usize) as u64,
+                ((seq_len + tpg.height as usize - 1) / tpg.height as usize) as u64,
+                1,
+            );
+            enc.dispatch_thread_groups(grid, tpg);
+            enc.end_encoding();
+            cb.commit();
+            cb.wait_until_completed();
+        });
         
         Ok((cos_tensor, sin_tensor))
     }
@@ -316,28 +318,30 @@ impl MetalTensor {
         let seq_len_buf = make_u32_buf(seq_len as u32);
         let n_heads_buf = make_u32_buf(n_heads as u32);
         
-        let cb = device.command_queue().new_command_buffer();
-        let enc = cb.new_compute_command_encoder();
-        enc.set_compute_pipeline_state(pipeline);
-        enc.set_buffer(0, Some(self.buffer()), 0);
-        enc.set_buffer(1, Some(result.buffer()), 0);
-        enc.set_buffer(2, Some(cos_table.buffer()), 0);
-        enc.set_buffer(3, Some(sin_table.buffer()), 0);
-        enc.set_buffer(4, Some(&half_dim_buf), 0);
-        enc.set_buffer(5, Some(&head_dim_buf), 0);
-        enc.set_buffer(6, Some(&seq_len_buf), 0);
-        enc.set_buffer(7, Some(&n_heads_buf), 0);
-        
-        let tpg = MTLSize::new(half_dim.min(256) as u64, total_outer.min(4) as u64, 1);
-        let grid = MTLSize::new(
-            ((half_dim + tpg.width as usize - 1) / tpg.width as usize) as u64,
-            ((total_outer + tpg.height as usize - 1) / tpg.height as usize) as u64,
-            1,
-        );
-        enc.dispatch_thread_groups(grid, tpg);
-        enc.end_encoding();
-        cb.commit();
-        cb.wait_until_completed();
+        objc::rc::autoreleasepool(|| {
+            let cb = device.command_queue().new_command_buffer();
+            let enc = cb.new_compute_command_encoder();
+            enc.set_compute_pipeline_state(pipeline);
+            enc.set_buffer(0, Some(self.buffer()), 0);
+            enc.set_buffer(1, Some(result.buffer()), 0);
+            enc.set_buffer(2, Some(cos_table.buffer()), 0);
+            enc.set_buffer(3, Some(sin_table.buffer()), 0);
+            enc.set_buffer(4, Some(&half_dim_buf), 0);
+            enc.set_buffer(5, Some(&head_dim_buf), 0);
+            enc.set_buffer(6, Some(&seq_len_buf), 0);
+            enc.set_buffer(7, Some(&n_heads_buf), 0);
+            
+            let tpg = MTLSize::new(half_dim.min(256) as u64, total_outer.min(4) as u64, 1);
+            let grid = MTLSize::new(
+                ((half_dim + tpg.width as usize - 1) / tpg.width as usize) as u64,
+                ((total_outer + tpg.height as usize - 1) / tpg.height as usize) as u64,
+                1,
+            );
+            enc.dispatch_thread_groups(grid, tpg);
+            enc.end_encoding();
+            cb.commit();
+            cb.wait_until_completed();
+        });
         
         Ok(result)
     }
@@ -350,22 +354,24 @@ impl MetalTensor {
         
         let n_buf = make_u32_buf(n as u32);
         
-        let cb = device.command_queue().new_command_buffer();
-        let enc = cb.new_compute_command_encoder();
-        enc.set_compute_pipeline_state(pipeline);
-        enc.set_buffer(0, Some(result.buffer()), 0);
-        enc.set_buffer(1, Some(&n_buf), 0);
-        
-        let tpg = MTLSize::new(n.min(16) as u64, n.min(16) as u64, 1);
-        let grid = MTLSize::new(
-            ((n + tpg.width as usize - 1) / tpg.width as usize) as u64,
-            ((n + tpg.height as usize - 1) / tpg.height as usize) as u64,
-            1,
-        );
-        enc.dispatch_thread_groups(grid, tpg);
-        enc.end_encoding();
-        cb.commit();
-        cb.wait_until_completed();
+        objc::rc::autoreleasepool(|| {
+            let cb = device.command_queue().new_command_buffer();
+            let enc = cb.new_compute_command_encoder();
+            enc.set_compute_pipeline_state(pipeline);
+            enc.set_buffer(0, Some(result.buffer()), 0);
+            enc.set_buffer(1, Some(&n_buf), 0);
+            
+            let tpg = MTLSize::new(n.min(16) as u64, n.min(16) as u64, 1);
+            let grid = MTLSize::new(
+                ((n + tpg.width as usize - 1) / tpg.width as usize) as u64,
+                ((n + tpg.height as usize - 1) / tpg.height as usize) as u64,
+                1,
+            );
+            enc.dispatch_thread_groups(grid, tpg);
+            enc.end_encoding();
+            cb.commit();
+            cb.wait_until_completed();
+        });
         
         Ok(result)
     }

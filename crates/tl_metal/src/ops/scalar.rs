@@ -18,26 +18,28 @@ impl MetalTensor {
             .get_pipeline(device.device(), SHADER_ADD_SCALAR_F32)
             .map_err(BackendError::InternalError)?;
 
-        let scalar_buf = device.device().new_buffer_with_data(
-            &scalar as *const f32 as *const _,
-            4,
-            MTLResourceOptions::StorageModeShared,
-        );
+        objc::rc::autoreleasepool(|| {
+            let scalar_buf = device.device().new_buffer_with_data(
+                &scalar as *const f32 as *const _,
+                4,
+                MTLResourceOptions::StorageModeShared,
+            );
 
-        let command_buffer = command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
+            let command_buffer = command_queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
 
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(self.buffer()), 0);
-        encoder.set_buffer(1, Some(&scalar_buf), 0);
-        encoder.set_buffer(2, Some(result.buffer()), 0);
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_buffer(0, Some(self.buffer()), 0);
+            encoder.set_buffer(1, Some(&scalar_buf), 0);
+            encoder.set_buffer(2, Some(result.buffer()), 0);
 
-        let (grid_size, threads_per_group) = shaders::compute_thread_groups(self.elem_count(), pipeline);
-        encoder.dispatch_thread_groups(grid_size, threads_per_group);
-        encoder.end_encoding();
+            let (grid_size, threads_per_group) = shaders::compute_thread_groups(self.elem_count(), pipeline);
+            encoder.dispatch_thread_groups(grid_size, threads_per_group);
+            encoder.end_encoding();
 
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
 
         Ok(result)
     }
@@ -52,26 +54,28 @@ impl MetalTensor {
             .get_pipeline(device.device(), SHADER_MUL_SCALAR_F32)
             .map_err(BackendError::InternalError)?;
 
-        let scalar_buf = device.device().new_buffer_with_data(
-            &scalar as *const f32 as *const _,
-            4,
-            MTLResourceOptions::StorageModeShared,
-        );
+        objc::rc::autoreleasepool(|| {
+            let scalar_buf = device.device().new_buffer_with_data(
+                &scalar as *const f32 as *const _,
+                4,
+                MTLResourceOptions::StorageModeShared,
+            );
 
-        let command_buffer = command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
+            let command_buffer = command_queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
 
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(self.buffer()), 0);
-        encoder.set_buffer(1, Some(&scalar_buf), 0);
-        encoder.set_buffer(2, Some(result.buffer()), 0);
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_buffer(0, Some(self.buffer()), 0);
+            encoder.set_buffer(1, Some(&scalar_buf), 0);
+            encoder.set_buffer(2, Some(result.buffer()), 0);
 
-        let (grid_size, threads_per_group) = shaders::compute_thread_groups(self.elem_count(), pipeline);
-        encoder.dispatch_thread_groups(grid_size, threads_per_group);
-        encoder.end_encoding();
+            let (grid_size, threads_per_group) = shaders::compute_thread_groups(self.elem_count(), pipeline);
+            encoder.dispatch_thread_groups(grid_size, threads_per_group);
+            encoder.end_encoding();
 
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
 
         Ok(result)
     }
@@ -94,32 +98,34 @@ impl MetalTensor {
             .get_pipeline(device.device(), SHADER_CLAMP_F32)
             .map_err(BackendError::InternalError)?;
 
-        let min_buf = device.device().new_buffer_with_data(
-            &min_val as *const f32 as *const _,
-            4,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let max_buf = device.device().new_buffer_with_data(
-            &max_val as *const f32 as *const _,
-            4,
-            MTLResourceOptions::StorageModeShared,
-        );
+        objc::rc::autoreleasepool(|| {
+            let min_buf = device.device().new_buffer_with_data(
+                &min_val as *const f32 as *const _,
+                4,
+                MTLResourceOptions::StorageModeShared,
+            );
+            let max_buf = device.device().new_buffer_with_data(
+                &max_val as *const f32 as *const _,
+                4,
+                MTLResourceOptions::StorageModeShared,
+            );
 
-        let command_buffer = command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
+            let command_buffer = command_queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
 
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(self.buffer()), 0);
-        encoder.set_buffer(1, Some(&min_buf), 0);
-        encoder.set_buffer(2, Some(&max_buf), 0);
-        encoder.set_buffer(3, Some(result.buffer()), 0);
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_buffer(0, Some(self.buffer()), 0);
+            encoder.set_buffer(1, Some(&min_buf), 0);
+            encoder.set_buffer(2, Some(&max_buf), 0);
+            encoder.set_buffer(3, Some(result.buffer()), 0);
 
-        let (grid_size, threads_per_group) = shaders::compute_thread_groups(self.elem_count(), pipeline);
-        encoder.dispatch_thread_groups(grid_size, threads_per_group);
-        encoder.end_encoding();
+            let (grid_size, threads_per_group) = shaders::compute_thread_groups(self.elem_count(), pipeline);
+            encoder.dispatch_thread_groups(grid_size, threads_per_group);
+            encoder.end_encoding();
 
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
 
         Ok(result)
     }
@@ -132,7 +138,6 @@ impl MetalTensor {
         self.scalar_op_1(SHADER_FMOD_SCALAR_F32, s)
     }
 
-    /// 1 パラメータスカラー演算共通ヘルパー
     fn scalar_op_1(&self, shader_name: &str, scalar: f32) -> BackendResult<MetalTensor> {
         let result = MetalTensor::uninit(MetalTensor::shape(self), MetalTensor::dtype(self));
         let device = get_device();
@@ -143,26 +148,28 @@ impl MetalTensor {
             .get_pipeline(device.device(), shader_name)
             .map_err(|e| BackendError::InternalError(format!("Failed to get shader pipeline ({}): {}", shader_name, e)))?;
 
-        let scalar_buf = device.device().new_buffer_with_data(
-            &scalar as *const f32 as *const _,
-            4,
-            MTLResourceOptions::StorageModeShared,
-        );
+        objc::rc::autoreleasepool(|| {
+            let scalar_buf = device.device().new_buffer_with_data(
+                &scalar as *const f32 as *const _,
+                4,
+                MTLResourceOptions::StorageModeShared,
+            );
 
-        let command_buffer = command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
+            let command_buffer = command_queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
 
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(self.buffer()), 0);
-        encoder.set_buffer(1, Some(&scalar_buf), 0);
-        encoder.set_buffer(2, Some(result.buffer()), 0);
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_buffer(0, Some(self.buffer()), 0);
+            encoder.set_buffer(1, Some(&scalar_buf), 0);
+            encoder.set_buffer(2, Some(result.buffer()), 0);
 
-        let (grid_size, threads_per_group) = shaders::compute_thread_groups(self.elem_count(), pipeline);
-        encoder.dispatch_thread_groups(grid_size, threads_per_group);
-        encoder.end_encoding();
+            let (grid_size, threads_per_group) = shaders::compute_thread_groups(self.elem_count(), pipeline);
+            encoder.dispatch_thread_groups(grid_size, threads_per_group);
+            encoder.end_encoding();
 
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
 
         Ok(result)
     }
