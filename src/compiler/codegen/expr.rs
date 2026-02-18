@@ -1138,8 +1138,34 @@ impl<'ctx> CodeGenerator<'ctx> {
                             Type::Struct(s.to_string(), vec![])
                         }
                     } else {
-                        // Unknown type - return as struct with no args
-                        Type::Struct(s.to_string(), vec![])
+                        // Unknown type - try to infer arity from monomorphized keys in struct_types/enum_types.
+                        // When the semantics phase monomorphizes Pair<T> -> Pair_i64, the template Pair
+                        // is NOT preserved in struct_defs. We detect generic structs by checking if
+                        // combining the name with subsequent parts yields a key in struct_types.
+                        // e.g., parts=["Pair", "i64"] -> check if "Pair_i64" exists in struct_types.
+                        let mut found_arity = 0;
+                        for arity_guess in 1..=(parts.len() - i - 1) {
+                            let candidate = std::iter::once(s)
+                                .chain(parts[i + 1..i + 1 + arity_guess].iter().copied())
+                                .collect::<Vec<_>>()
+                                .join("_");
+                            if self.struct_types.contains_key(&candidate) || self.enum_types.contains_key(&candidate) {
+                                found_arity = arity_guess;
+                                break;
+                            }
+                        }
+                        if found_arity > 0 {
+                            let nested_args = self.parse_mangled_type_args(&parts[i + 1..i + 1 + found_arity]);
+                            i += found_arity;
+                            // Check if it's an enum or struct based on enum_types
+                            if self.enum_types.contains_key(&format!("{}_{}", s, parts[i - found_arity + 1..=i].join("_"))) {
+                                Type::Enum(s.to_string(), nested_args)
+                            } else {
+                                Type::Struct(s.to_string(), nested_args)
+                            }
+                        } else {
+                            Type::Struct(s.to_string(), vec![])
+                        }
                     }
                 }
             };
@@ -4588,10 +4614,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                  .or_else(|| self.enum_types.get(&simple_lookup_name)) {
                  *st
              } else {
-                 // Try on-demand monomorphization
-                 if !generics.is_empty() {
-                     self.monomorphize_struct(struct_name, generics)?;
-                 }
+                 // Try on-demand monomorphization (handles both struct and enum generics)
+                 let _ = self.get_or_monomorphize_type(&ret_ty)?;
                  *self.struct_types.get(&simple_lookup_name)
                      .or_else(|| self.enum_types.get(&simple_lookup_name))
                      .ok_or_else(|| format!("Struct type {} not found for SRET allocation", simple_lookup_name))?
@@ -6347,12 +6371,12 @@ impl<'ctx> CodeGenerator<'ctx> {
              // Simple name lookup (as done in compile_struct_init)
              let simple_lookup_name = mangled_name.clone();
 
-             // Ensure type is monomorphized and registered
+             // Ensure type is monomorphized and registered (handles both struct and enum generics)
              let _ = self.get_or_monomorphize_type(&ret_ty).map_err(|e| e.to_string())?;
 
              let struct_type = self.struct_types.get(&simple_lookup_name)
                  .or_else(|| self.enum_types.get(&simple_lookup_name))
-                 .ok_or_else(|| format!("Struct type {} not found for SRET allocation", simple_lookup_name))?;
+                 .ok_or_else(|| format!("Struct type {} not found for SRET allocation (tried {})", simple_lookup_name, simple_lookup_name))?;
              
              let size = struct_type.size_of().ok_or("Cannot determine size for SRET struct")?;
              

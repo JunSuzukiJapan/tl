@@ -269,13 +269,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                      for t in types.iter_mut() {
                          *t = substitutor.substitute_type(t);
                      }
-                     eprintln!("[DEBUG] monomorphize_enum: {} variant {} = {:?}", mangled_name, variant.name, types);
                  }
                  crate::compiler::ast::VariantKind::Struct(fields) => {
                      for (_, t) in fields.iter_mut() {
                          *t = substitutor.substitute_type(t);
                      }
-                     eprintln!("[DEBUG] monomorphize_enum: {} variant {} = {:?}", mangled_name, variant.name, fields);
                  }
                  crate::compiler::ast::VariantKind::Array(ty, _size) => {
                      *ty = substitutor.substitute_type(ty);
@@ -285,7 +283,21 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
 
-        // 6. Compile/Register
+        // 6. Pre-monomorphize nested generic types in variant payloads
+        // e.g., for Option<Pair<i64>>, ensure Pair_i64 is monomorphized before compiling the enum
+        for variant in &new_def.variants {
+            let types_to_check: Vec<&Type> = match &variant.kind {
+                crate::compiler::ast::VariantKind::Unit => vec![],
+                crate::compiler::ast::VariantKind::Tuple(types) => types.iter().collect(),
+                crate::compiler::ast::VariantKind::Struct(fields) => fields.iter().map(|(_, t)| t).collect(),
+                crate::compiler::ast::VariantKind::Array(ty, size) => vec![ty; *size],
+            };
+            for ty in types_to_check {
+                let _ = self.get_or_monomorphize_type(ty)?;
+            }
+        }
+
+        // 7. Compile/Register
         // We can reuse compile_enum_defs. It handles LLVM struct creation and map insertion.
         self.compile_enum_defs(&[new_def.clone()])
             .map_err(|e| e.to_string())?;

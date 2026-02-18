@@ -763,10 +763,13 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     fn compile_struct_defs(&mut self, structs: &[StructDef]) -> Result<(), String> {
-        // println!("DEBUG: compile_struct_defs total={}", structs.len());
         // Pass 1: Opaque
         for s in structs {
             if !s.generics.is_empty() {
+                // Register generic struct template definition for later monomorphization
+                // and for parse_mangled_type_args to recognize the struct arity.
+                // (skip LLVM type generation — that happens during monomorphize_struct)
+                self.struct_defs.insert(s.name.clone(), s.clone());
                 continue;
             }
 
@@ -876,6 +879,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Pass 1: Opaque
         for e in enums {
             if !e.generics.is_empty() {
+                // Register generic enum template definition for later monomorphization
+                // (skip LLVM type generation — that happens during monomorphize_enum)
+                self.enum_defs.insert(e.name.clone(), e.clone());
                 continue;
             }
 
