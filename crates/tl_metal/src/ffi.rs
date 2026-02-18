@@ -8,10 +8,6 @@ use crate::tensor::MetalTensor;
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-static CLONE_COUNT: AtomicUsize = AtomicUsize::new(0);
-static SHALLOW_CLONE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 // OpaqueTensor は MetalTensor のエイリアスとして扱う
 pub type OpaqueTensor = MetalTensor;
@@ -25,11 +21,6 @@ pub type OpaqueTensor = MetalTensor;
 #[no_mangle]
 pub extern "C" fn tl_metal_clone(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
-    let c = CLONE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-    if c % 1000 == 0 {
-        let sc = SHALLOW_CLONE_COUNT.load(Ordering::Relaxed);
-        eprintln!("[CLONE@{}] clone={} shallow_clone={}", c, c, sc);
-    }
     unsafe {
         let arc = Arc::from_raw(t as *const UnsafeCell<MetalTensor>);
         let cloned = arc.clone();
@@ -68,14 +59,18 @@ pub extern "C" fn tl_metal_data(t: *mut OpaqueTensor) -> *mut c_void {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
     
-    // WARNING: MetalTensor は GPU 上にあるため、データポインタを直接返すことはできない。
-    // ここではデバッグ/互換性のため、GPU -> CPU コピーを行い、そのリークしたポインタを返す。
-    // これはメモリリークを引き起こすため、頻繁に呼ぶべきではない。
-    // 本来は tl_metal_to_cpu 等を使うべき。
+    // GPU -> CPU コピーを行い、スレッドローカルキャッシュに保持。
+    // 前回のバッファは自動解放されるため、mem::forget によるリークを回避。
+    thread_local! {
+        static LAST_DATA_BUFFER: std::cell::RefCell<Option<Box<[f32]>>> = 
+            std::cell::RefCell::new(None);
+    }
     
-    let vec: Vec<f32> = tensor.to_vec(); // GPU -> CPU sync copy, explicit f32
-    let mut boxed_slice = vec.into_boxed_slice();
-    let ptr = boxed_slice.as_mut_ptr();
-    std::mem::forget(boxed_slice); // Leak memory to keep pointer valid
-    ptr as *mut c_void
+    let vec: Vec<f32> = tensor.to_vec();
+    let boxed_slice = vec.into_boxed_slice();
+    let ptr = boxed_slice.as_ptr() as *mut c_void;
+    LAST_DATA_BUFFER.with(|cell| {
+        *cell.borrow_mut() = Some(boxed_slice);
+    });
+    ptr
 }

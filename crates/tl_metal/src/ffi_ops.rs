@@ -18,13 +18,12 @@ static MAKE_COUNT: AtomicUsize = AtomicUsize::new(0);
 static RELEASE_COUNT: AtomicUsize = AtomicUsize::new(0);
 static ACQUIRE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-/// デバッグ: カウンタをリセットし現在の値を出力
+/// デバッグ: カウンタをリセット
 #[no_mangle]
 pub extern "C" fn tl_metal_debug_reset_counters() {
-    let m = MAKE_COUNT.swap(0, Ordering::SeqCst);
-    let r = RELEASE_COUNT.swap(0, Ordering::SeqCst);
-    let a = ACQUIRE_COUNT.swap(0, Ordering::SeqCst);
-    eprintln!("[COUNTER] make={} release={} acquire={} delta={}", m, r, a, (m + a) as i64 - r as i64);
+    MAKE_COUNT.swap(0, Ordering::SeqCst);
+    RELEASE_COUNT.swap(0, Ordering::SeqCst);
+    ACQUIRE_COUNT.swap(0, Ordering::SeqCst);
 }
 
 // use 不要: MetalTensor の演算メソッドは inherent impl で定義
@@ -32,16 +31,9 @@ pub extern "C" fn tl_metal_debug_reset_counters() {
 /// 内部ヘルパー: MetalTensor を Arc で包んでポインタを返す（V6.0 メモリ管理）
 /// 新しいテンソルを Arc(RC=1) で包み、raw pointer に変換して返す。
 pub fn make_tensor(t: MetalTensor) -> *mut OpaqueTensor {
-    let m = MAKE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    MAKE_COUNT.fetch_add(1, Ordering::Relaxed);
     let arc = Arc::new(UnsafeCell::new(t));
-    let ptr = Arc::into_raw(arc) as *mut OpaqueTensor;
-    // 1000テンソルごとにカウンタ出力
-    if m % 1000 == 0 {
-        let r = RELEASE_COUNT.load(Ordering::Relaxed);
-        let a = ACQUIRE_COUNT.load(Ordering::Relaxed);
-        eprintln!("[COUNTER@{}] make={} release={} acquire={} live={}", m, m, r, a, (m + a) as i64 - r as i64);
-    }
-    ptr
+    Arc::into_raw(arc) as *mut OpaqueTensor
 }
 
 /// Arc RC-1: raw pointer から Arc を復元し、drop で RC を減らす。

@@ -384,20 +384,11 @@ impl MetalTensor {
     }
 }
 
-// === デバッグカウンタ ===
-static DROP_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static DROP_POOL_RELEASE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 impl Drop for MetalTensor {
     fn drop(&mut self) {
-        let d = DROP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        // バッファの唯一の所有者なら、プールに返却して再利用
         if Arc::strong_count(&self.buffer) == 1 {
-            DROP_POOL_RELEASE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             pool_release(self.buffer.clone());
-        }
-        if d % 1000 == 0 {
-            let pr = DROP_POOL_RELEASE_COUNT.load(std::sync::atomic::Ordering::Relaxed);
-            eprintln!("[DROP@{}] total_drops={} pool_releases={} skipped={}", d, d, pr, d - pr);
         }
     }
 }

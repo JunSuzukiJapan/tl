@@ -84,15 +84,7 @@ pub static BUFFER_POOL: LazyLock<Mutex<MetalBufferPool>> =
 
 /// プールからバッファを取得
 pub fn pool_acquire(size: usize, options: MTLResourceOptions) -> Option<Arc<Buffer>> {
-    let result = BUFFER_POOL.lock().ok()?.acquire(size, options);
-    static ACQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let a = ACQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-    if a % 1000 == 0 {
-        if let Ok(pool) = BUFFER_POOL.lock() {
-            eprintln!("[POOL@{}] acquire_calls={} hits={} misses={} free_in_pool={}", a, a, pool.hits, pool.misses, pool.free_count());
-        }
-    }
-    result
+    BUFFER_POOL.lock().ok()?.acquire(size, options)
 }
 
 /// バッファをプールに返却
