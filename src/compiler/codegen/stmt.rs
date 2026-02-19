@@ -3401,18 +3401,26 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let base_ptr = base_ptr_opt.ok_or("Cannot field access on non-addressable lvalue")?;
                 
                 if let Type::Struct(name, generics) = &base_ty {
-                    // Use base name for struct_defs lookup
-                    let struct_def = self.struct_defs.get(name)
-                        .ok_or_else(|| format!("Struct def not found: {}", name))?;
+                    // Resolve the type triple for proper field type substitution
+                    let triple = self.resolve_type_triple(&base_ty);
+                    let (resolved_base, resolved_args) = match &triple {
+                        Some((base, args, _)) if !args.is_empty() => (base.as_str(), args.as_slice()),
+                        _ => (name.as_str(), generics.as_slice()),
+                    };
+                    
+                    // Lookup struct def: prefer resolved base name, fallback to original name
+                    let struct_def = self.struct_defs.get(resolved_base)
+                        .or_else(|| self.struct_defs.get(name))
+                        .ok_or_else(|| format!("Struct def not found: {} (base: {})", name, resolved_base))?;
                     let idx = struct_def.fields.iter().position(|(n, _)| n == field).ok_or("Field not found")?;
                     let (_, field_ty) = &struct_def.fields[idx];
                     
                     // Apply type substitution if struct has generics
-                    let field_ty = if !generics.is_empty() && !struct_def.generics.is_empty() {
+                    let field_ty = if !resolved_args.is_empty() && !struct_def.generics.is_empty() {
                         let mut subst = std::collections::HashMap::new();
                         for (i, param) in struct_def.generics.iter().enumerate() {
-                            if i < generics.len() {
-                                subst.insert(param.clone(), generics[i].clone());
+                            if i < resolved_args.len() {
+                                subst.insert(param.clone(), resolved_args[i].clone());
                             }
                         }
                         self.substitute_type(field_ty, &subst)
@@ -3423,10 +3431,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // For LLVM types: try base name first, then mangled name if not found
                     // (monomorphized types are registered with mangled names)
                     let llvm_ty_opt = self.struct_types.get(name).or_else(|| {
-                        if generics.is_empty() {
+                        if resolved_args.is_empty() {
                             None
                         } else {
-                            let mangled = self.mangle_type_name(name, generics);
+                            let mangled = self.mangle_type_name(resolved_base, resolved_args);
                             self.struct_types.get(&mangled)
                         }
                     });
@@ -3574,35 +3582,39 @@ impl<'ctx> CodeGenerator<'ctx> {
          if indices.len() != 1 { return Err("Struct set supports 1 index".into()); }
          let (idx_val, _) = self.compile_expr(&indices[0])?;
          
-         // Find the 'set' method for this struct type
-         // Method name format: {struct_name}_set or just "set" instance method
-         let mangled_name = if generics.is_empty() {
-             struct_name.to_string()
+         // Resolve the type triple: (base_name, type_args, mangled_name)
+         let ty = if generics.is_empty() {
+             Type::Struct(struct_name.to_string(), vec![])
          } else {
-             self.mangle_type_name(struct_name, generics)
+             Type::Struct(struct_name.to_string(), generics.to_vec())
          };
+         let (base_name, type_args, mangled_name) = self.resolve_type_triple(&ty)
+             .unwrap_or_else(|| (struct_name.to_string(), generics.to_vec(), struct_name.to_string()));
+         
+         // On-demand monomorphize 'set' method if this is a generic type
+         if !type_args.is_empty() {
+             let _ = self.monomorphize_method(&base_name, "set", &type_args);
+         }
          
          // Look for instance method 'set' on this type
          // The runtime function name follows pattern: tl_{TypeName}_set
          let fn_name = format!("tl_{}_set", mangled_name);
          
          if let Some(set_fn) = self.module.get_function(&fn_name) {
-             // Call set(self, index, item)
-             self.builder.build_call(set_fn, &[struct_val.into(), idx_val.into(), val.into()], "")
-                 .map_err(|e| e.to_string())?;
-             return Ok(());
+              // Call set(self, index, item)
+              self.builder.build_call(set_fn, &[struct_val.into(), idx_val.into(), val.into()], "")
+                  .map_err(|e| e.to_string())?;
+              return Ok(());
          }
          
          // Fallback: try to find method via TypeManager
          if let Some(type_info) = self.type_manager.get_type(&mangled_name) {
-             if type_info.has_instance_method("set") {
-                 // Instance method found - need to compile method call
-                 // For now, return error with better message
-                 return Err(format!("Struct set method found but instance method call not yet implemented for {}", mangled_name));
-             }
+              if type_info.has_instance_method("set") {
+                  return Err(format!("Struct set method found but instance method call not yet implemented for {}", mangled_name));
+              }
          }
          
-         Err(format!("Struct set method not found for type '{}' (looked for fn '{}')", mangled_name, fn_name))
+         Err(format!("Struct set method not found for type '{}' (looked for fn '{}', base='{}', type_args={:?})", mangled_name, fn_name, base_name, type_args))
     }
 
     fn build_float_cast_val(&self, val: inkwell::values::BasicValueEnum<'ctx>, from: &Type, to: inkwell::types::FloatType<'ctx>) -> Result<inkwell::values::FloatValue<'ctx>, String> {

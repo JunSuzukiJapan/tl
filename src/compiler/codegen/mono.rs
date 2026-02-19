@@ -396,6 +396,13 @@ impl<'ctx> CodeGenerator<'ctx> {
     /// Register a mangled type name with its original base name and generic args.
     /// This enables reverse lookup from mangled name to original type information.
     pub fn register_mangled_type(&mut self, mangled_name: &str, base_name: &str, type_args: &[Type]) {
+        // Skip registration if type_args contain unresolved generic parameters (K, V, T, etc.)
+        // This prevents polluting reified_types with partially-specialized types like
+        // Vec_Entry_K_V → (Vec, [Entry<K,V>]) which would cause resolve_type_triple to return
+        // an unusable result.
+        if Self::contains_unresolved_generics(type_args) {
+            return;
+        }
         self.reified_types.register_from_parts(mangled_name, base_name, type_args);
     }
     
@@ -409,6 +416,36 @@ impl<'ctx> CodeGenerator<'ctx> {
     /// Lookup a reified type by mangled name (full info)
     pub fn lookup_reified_type(&self, mangled_name: &str) -> Option<&super::reified_type::ReifiedType> {
         self.reified_types.lookup(mangled_name)
+    }
+
+    /// Resolve the "type triple" from a Type: (base_name, type_args, mangled_name).
+    ///
+    /// This is the single source of truth for recovering generic type information
+    /// from any Type representation, whether it carries generics inline or has
+    /// already been mangled into a flat name.
+    ///
+    /// Examples:
+    ///   - Struct("Vec", [I64])          → ("Vec", [I64], "Vec_i64")
+    ///   - Struct("Vec_i64", [])         → ("Vec", [I64], "Vec_i64")  (via ReifiedTypeRegistry)
+    ///   - Struct("HashMap", [I64, I64]) → ("HashMap", [I64, I64], "HashMap_i64_i64")
+    ///   - Struct("File", [])            → ("File", [], "File")       (non-generic)
+    pub fn resolve_type_triple(&self, ty: &Type) -> Option<(String, Vec<Type>, String)> {
+        match ty {
+            Type::Struct(name, args) | Type::Enum(name, args) => {
+                if !args.is_empty() {
+                    // Case 1: generics are present inline → canonical path
+                    let mangled = self.mangle_type_name(name, args);
+                    Some((name.clone(), args.clone(), mangled))
+                } else if let Some(reified) = self.reified_types.lookup(name) {
+                    // Case 2: name is already mangled → recover from registry
+                    Some((reified.base_name.clone(), reified.type_args.clone(), name.clone()))
+                } else {
+                    // Case 3: non-generic type
+                    Some((name.clone(), vec![], name.clone()))
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Convert a Type to a string representation for mangling/display.
@@ -623,6 +660,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         
         // Register this specialization
         self.specialization_registry.register(base_name, type_args);
+        // Register in reified_types for reverse lookup (mangled → base + args)
+        self.register_mangled_type(&mangled_name, base_name, type_args);
         
         // Build type parameter substitution map
         let mut subst: HashMap<String, Type> = HashMap::new();
@@ -668,9 +707,51 @@ impl<'ctx> CodeGenerator<'ctx> {
             };
             (name.clone(), corrected)
         }).collect();
+        
+        // Register nested generic types in reified_types for reverse lookup.
+        // e.g., HashMap<i64,i64> has field `entries: Vec<Entry<i64,i64>>`.
+        // We register Vec_Entry_i64_i64 → (Vec, [Entry<i64,i64>]) so that
+        // resolve_type_triple can recover the original type info.
+        // Skip if type_args contain unresolved generic parameters (e.g., K, V).
+        for (_, field_ty) in &specialized_def.fields {
+            match field_ty {
+                Type::Struct(s_name, s_args) | Type::Enum(s_name, s_args) if !s_args.is_empty() => {
+                    if !Self::contains_unresolved_generics(s_args) {
+                        let nested_mangled = self.mangle_type_name(s_name, s_args);
+                        self.register_mangled_type(&nested_mangled, s_name, s_args);
+                    }
+                }
+                _ => {}
+            }
+        }
+        
         self.struct_defs.insert(mangled_name.clone(), specialized_def);
         
         Ok(opaque_struct)
+    }
+    
+    /// Check if a list of type arguments contains unresolved generic parameters.
+    /// Generic parameters appear as Struct("K", []) or Struct("V", []) etc.
+    fn contains_unresolved_generics(args: &[Type]) -> bool {
+        args.iter().any(|arg| Self::is_unresolved_generic(arg))
+    }
+    
+    /// Check if a single type is (or contains) an unresolved generic parameter.
+    fn is_unresolved_generic(ty: &Type) -> bool {
+        match ty {
+            Type::Struct(name, inner_args) => {
+                // A generic parameter is typically a short uppercase name with no args
+                // e.g., Struct("K", []), Struct("V", []), Struct("T", [])
+                if inner_args.is_empty() && name.len() <= 2 && name.chars().all(|c| c.is_ascii_uppercase()) {
+                    return true;
+                }
+                // Check nested args recursively
+                inner_args.iter().any(|a| Self::is_unresolved_generic(a))
+            }
+            Type::Enum(_, inner_args) => inner_args.iter().any(|a| Self::is_unresolved_generic(a)),
+            Type::Undefined(_) => true,
+            _ => false,
+        }
     }
     
     /// Substitute type parameters in a type using the given substitution map.
@@ -693,6 +774,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
 
+            Type::Enum(name, args) => {
+                // Check if this is a type parameter (e.g. Enum("K", []))
+                if args.is_empty() {
+                    if let Some(replacement) = subst.get(name) {
+                        return replacement.clone();
+                    }
+                }
+                let new_args: Vec<Type> = args.iter().map(|a| self.substitute_type(a, subst)).collect();
+                Type::Enum(name.clone(), new_args)
+            }
 
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.substitute_type(inner, subst)), *rank),
             Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.substitute_type(t, subst)).collect()),
