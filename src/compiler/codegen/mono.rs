@@ -371,6 +371,9 @@ impl<'ctx> CodeGenerator<'ctx> {
     pub fn mangle_type_name(&self, base_name: &str, type_args: &[Type]) -> String {
         if type_args.is_empty() {
             base_name.to_string()
+        } else if mangle_has_args(base_name) {
+            // Already mangled: don't double-mangle
+            base_name.to_string()
         } else {
             let args_str: Vec<String> = type_args.iter().map(|t| self.type_to_suffix(t)).collect();
             mangle_wrap_args(base_name, &args_str)
@@ -391,18 +394,22 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::String(_) => "String".to_string(),
             Type::Char(_) => "Char".to_string(),
             Type::Struct(name, args) => {
-                if args.is_empty() {
+                if args.is_empty() || mangle_has_args(name) {
+                    // Already mangled or no args: use name directly
                     name.clone()
                 } else {
                     self.mangle_type_name(name, args)
                 }
             }
             Type::Enum(name, args) => {
-                if args.is_empty() {
+                if args.is_empty() || mangle_has_args(name) {
                     name.clone()
                 } else {
                     self.mangle_type_name(name, args)
                 }
+            }
+            Type::UnifiedType { mangled_name, .. } => {
+                mangled_name.clone()
             }
 
             Type::Tensor(inner, rank) => {
