@@ -112,6 +112,17 @@ pub enum Type {
     // Fixed-size array type: [T; N]
     Array(Box<Type>, usize),
 
+    /// Monomorphized generic type with complete type information.
+    /// Created during monomorphization, used exclusively in codegen.
+    /// Carries the triple (base_name, type_args, mangled_name) inline,
+    /// eliminating the need for registry lookups.
+    UnifiedType {
+        base_name: String,      // Original generic type name (e.g. "Vec")
+        type_args: Vec<Type>,   // Concrete type arguments (e.g. [I64])
+        mangled_name: String,   // Mangled name for LLVM IR (e.g. "Vec_i64")
+        is_enum: bool,          // true if enum, false if struct
+    },
+
     Void, // For functions returning nothing
     Never, // For diverging expressions (panic!, unreachable, etc.)
     Undefined(u64), // For unresolved generics (unique ID)
@@ -141,6 +152,7 @@ impl Type {
             Type::TensorShaped(_, _) => "Tensor".to_string(),
             Type::Struct(n, _) => n.clone(),
             Type::Enum(n, _) => n.clone(),
+            Type::UnifiedType { base_name, .. } => base_name.clone(),
             Type::Path(p, _) => p.last().cloned().unwrap_or_default(),
 
             Type::Tuple(_) => "Tuple".to_string(), // Or handle specially? TypeRegistry didn't support Tuple generic methods usually.

@@ -261,22 +261,25 @@ impl<'ctx> CodeGenerator<'ctx> {
         new_def.name = mangled_name.clone();
         new_def.generics = vec![];
 
-        // Substitute variants
+        // Substitute variants and convert generic types to UnifiedType
         for variant in &mut new_def.variants {
              match &mut variant.kind {
                  crate::compiler::ast::VariantKind::Unit => {},
                  crate::compiler::ast::VariantKind::Tuple(types) => {
                      for t in types.iter_mut() {
                          *t = substitutor.substitute_type(t);
+                         *t = self.to_unified_type_if_generic(t.clone());
                      }
                  }
                  crate::compiler::ast::VariantKind::Struct(fields) => {
                      for (_, t) in fields.iter_mut() {
                          *t = substitutor.substitute_type(t);
+                         *t = self.to_unified_type_if_generic(t.clone());
                      }
                  }
                  crate::compiler::ast::VariantKind::Array(ty, _size) => {
                      *ty = substitutor.substitute_type(ty);
+                     *ty = self.to_unified_type_if_generic(ty.clone());
                  }
 
              }
@@ -690,31 +693,22 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut specialized_def = struct_def.clone();
         specialized_def.name = mangled_name.clone();
         specialized_def.generics = vec![]; // No longer generic
-        // Substitute field types
+        // Substitute field types and convert generic types to UnifiedType
         specialized_def.fields = struct_def.fields.iter().map(|(name, ty)| {
             let substituted = self.substitute_type(ty, &subst);
-            // Fix: Convert Struct to Enum if it exists in enum_defs
-            // Check only exact name match (not base_name) to avoid false positives like Vec_u8 -> Vec
-            let corrected = if let Type::Struct(s_name, s_args) = &substituted {
-                // Only convert if exact name exists in enum_defs
-                if self.enum_defs.contains_key(s_name) {
-                    Type::Enum(s_name.clone(), s_args.clone())
-                } else {
-                    substituted
-                }
-            } else {
-                substituted
-            };
-            (name.clone(), corrected)
+            let unified = self.to_unified_type_if_generic(substituted);
+            (name.clone(), unified)
         }).collect();
         
         // Register nested generic types in reified_types for reverse lookup.
-        // e.g., HashMap<i64,i64> has field `entries: Vec<Entry<i64,i64>>`.
-        // We register Vec_Entry_i64_i64 → (Vec, [Entry<i64,i64>]) so that
-        // resolve_type_triple can recover the original type info.
-        // Skip if type_args contain unresolved generic parameters (e.g., K, V).
+        // (Backward compatibility until ReifiedTypeRegistry is fully removed)
         for (_, field_ty) in &specialized_def.fields {
             match field_ty {
+                Type::UnifiedType { base_name, type_args, mangled_name, .. } if !type_args.is_empty() => {
+                    if !Self::contains_unresolved_generics(type_args) {
+                        self.register_mangled_type(mangled_name, base_name, type_args);
+                    }
+                }
                 Type::Struct(s_name, s_args) | Type::Enum(s_name, s_args) if !s_args.is_empty() => {
                     if !Self::contains_unresolved_generics(s_args) {
                         let nested_mangled = self.mangle_type_name(s_name, s_args);
@@ -749,8 +743,52 @@ impl<'ctx> CodeGenerator<'ctx> {
                 inner_args.iter().any(|a| Self::is_unresolved_generic(a))
             }
             Type::Enum(_, inner_args) => inner_args.iter().any(|a| Self::is_unresolved_generic(a)),
+            Type::UnifiedType { type_args, .. } => type_args.iter().any(|a| Self::is_unresolved_generic(a)),
             Type::Undefined(_) => true,
             _ => false,
+        }
+    }
+
+    /// Convert a Type to UnifiedType if it has generic arguments.
+    /// Also corrects Struct→Enum misclassification using enum_defs.
+    /// Non-generic types (e.g. I64, Struct("File", [])) are returned as-is.
+    pub fn to_unified_type_if_generic(&self, ty: Type) -> Type {
+        match &ty {
+            Type::Struct(name, args) if !args.is_empty() => {
+                let is_enum = self.enum_defs.contains_key(name);
+                let mangled = self.mangle_type_name(name, args);
+                // Recursively convert inner type_args too
+                let unified_args: Vec<Type> = args.iter()
+                    .map(|a| self.to_unified_type_if_generic(a.clone()))
+                    .collect();
+                Type::UnifiedType {
+                    base_name: name.clone(),
+                    type_args: unified_args,
+                    mangled_name: mangled,
+                    is_enum,
+                }
+            }
+            Type::Struct(name, args) if args.is_empty() => {
+                // Correct Struct→Enum for non-generic types
+                if self.enum_defs.contains_key(name) {
+                    Type::Enum(name.clone(), vec![])
+                } else {
+                    ty
+                }
+            }
+            Type::Enum(name, args) if !args.is_empty() => {
+                let mangled = self.mangle_type_name(name, args);
+                let unified_args: Vec<Type> = args.iter()
+                    .map(|a| self.to_unified_type_if_generic(a.clone()))
+                    .collect();
+                Type::UnifiedType {
+                    base_name: name.clone(),
+                    type_args: unified_args,
+                    mangled_name: mangled,
+                    is_enum: true,
+                }
+            }
+            _ => ty,
         }
     }
     
@@ -807,6 +845,15 @@ impl<'ctx> CodeGenerator<'ctx> {
             },
             Type::Ptr(inner) => Type::Ptr(Box::new(self.substitute_type(inner, subst))),
             Type::Array(inner, size) => Type::Array(Box::new(self.substitute_type(inner, subst)), *size),
+            Type::UnifiedType { base_name, type_args, mangled_name, is_enum } => {
+                let new_args: Vec<Type> = type_args.iter().map(|a| self.substitute_type(a, subst)).collect();
+                Type::UnifiedType {
+                    base_name: base_name.clone(),
+                    type_args: new_args,
+                    mangled_name: mangled_name.clone(),
+                    is_enum: *is_enum,
+                }
+            }
             _ => ty.clone(),
         }
     }
