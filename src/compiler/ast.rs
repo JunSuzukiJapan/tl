@@ -64,6 +64,37 @@ pub fn mangle_extract_args(mangled: &str) -> Vec<&str> {
     args
 }
 
+/// マングル型文字列を Type にパース（再帰対応）
+/// "i64" → Type::I64, "Pair[i64][i64]" → Type::Struct("Pair[i64][i64]", [I64, I64])
+pub fn parse_mangled_type_str(s: &str) -> Type {
+    match s.to_lowercase().as_str() {
+        "i64" => Type::I64,
+        "i32" => Type::I32,
+        "f32" => Type::F32,
+        "f64" => Type::F64,
+        "bool" => Type::Bool,
+        "u8" => Type::U8,
+        "usize" => Type::Usize,
+        "string" => Type::String("String".to_string()),
+        "void" => Type::Void,
+        _ => {
+            if mangle_has_args(s) {
+                let _base = mangle_base_name(s).to_string();
+                let inner_strs = mangle_extract_args(s);
+                let inner_types: Vec<Type> = inner_strs.iter().map(|t| parse_mangled_type_str(t)).collect();
+                Type::Struct(s.to_string(), inner_types)
+            } else {
+                Type::Struct(s.to_string(), vec![])
+            }
+        }
+    }
+}
+
+/// マングル型文字列のスライスを Vec<Type> にパース
+pub fn parse_mangled_type_strs(strs: &[&str]) -> Vec<Type> {
+    strs.iter().map(|s| parse_mangled_type_str(s)).collect()
+}
+
 /// Spanを持つラッパー型
 /// ASTノードに位置情報を付加するために使用
 /// Spanを持つラッパー型

@@ -250,6 +250,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                 
                 Ok(())
             }
+            Type::UnifiedType { base_name: _, type_args, mangled_name, is_enum } => {
+                // Flatten UnifiedType to Struct/Enum and re-dispatch
+                let flat_ty = if *is_enum {
+                    Type::Enum(mangled_name.clone(), type_args.clone())
+                } else {
+                    Type::Struct(mangled_name.clone(), type_args.clone())
+                };
+                self.emit_struct_copy(dst, src, &flat_ty)
+            }
             _ => Err(format!(
                 "emit_struct_copy called on non-struct type: {:?}",
                 ty
@@ -356,13 +365,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let enum_def = self
                     .enum_defs
                     .get(&mangled_name)
+                    .or_else(|| self.enum_defs.get(name))
+                    .or_else(|| self.enum_defs.get(mangle_base_name(name)))
                     .ok_or(format!("Enum def {} not found", mangled_name))?
                     .clone();
                 
-                 if !enum_def.generics.is_empty() {
+                // On-demand monomorphize if enum_types doesn't have this specialization
+                if self.enum_types.get(&mangled_name).is_none() && !generics.is_empty() {
+                    let base = mangle_base_name(name);
+                    self.monomorphize_enum(base, generics).map_err(|e| e.to_string())?;
                 }
 
-                let enum_ty = *self.enum_types.get(&enum_def.name).unwrap(); 
+                let enum_ty = self.enum_types.get(&mangled_name)
+                    .or_else(|| self.enum_types.get(&enum_def.name))
+                    .copied()
+                    .ok_or(format!("Enum LLVM type {} not found", mangled_name))?; 
                 
                 let current_block = self.builder.get_insert_block().unwrap();
                 let func = current_block.get_parent().unwrap();
@@ -538,6 +555,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let mut enum_def = self
                     .enum_defs
                     .get(&mangled_name)
+                    .or_else(|| self.enum_defs.get(name))
+                    .or_else(|| self.enum_defs.get(mangle_base_name(name)))
                     .ok_or(format!("Enum def {} not found ({})", name, mangled_name))?
                     .clone();
                 

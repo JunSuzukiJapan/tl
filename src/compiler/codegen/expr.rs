@@ -5203,6 +5203,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let (subject_val, subject_ty) = self.compile_expr(subject_expr)?;
         let (enum_name, raw_generic_args) = match &subject_ty {
             Type::Enum(n, args) | Type::Struct(n, args) => (n, args.clone()),
+            Type::UnifiedType { mangled_name, type_args, .. } => (mangled_name, type_args.clone()),
             Type::Path(segments, args) => {
                 if let Some(n) = segments.last() {
                     (n, args.clone())
@@ -5247,8 +5248,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         let enum_def = self.enum_defs.get(&mangled_name)
             .or_else(|| self.enum_defs.get(enum_name))
+            .or_else(|| self.enum_defs.get(mangle_base_name(enum_name)))
             .cloned()
-            .ok_or(format!("Enum def not found (tried {} and {})", mangled_name, enum_name))?;
+            .ok_or(format!("Enum def not found (tried {}, {}, {})", mangled_name, enum_name, mangle_base_name(enum_name)))?;
 
 
         let ptr = subject_val.into_pointer_value();

@@ -1,5 +1,5 @@
 use super::CodeGenerator;
-use crate::compiler::ast::{Type, MANGLE_OPEN, MANGLE_CLOSE, mangle_wrap_args, mangle_base_name, mangle_has_args, mangle_extract_args};
+use crate::compiler::ast::{Type, MANGLE_OPEN, MANGLE_CLOSE, mangle_wrap_args, mangle_base_name, mangle_has_args, mangle_extract_args, parse_mangled_type_strs};
 use crate::compiler::ast_subst::TypeSubstitutor;
 use inkwell::types::{BasicTypeEnum, StructType};
 use inkwell::AddressSpace;
@@ -197,20 +197,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // This is already monomorphized with a different naming scheme
                     // Extract type args from bracket notation
                     let arg_strs = mangle_extract_args(enum_name);
-                    let inferred_generics: Vec<Type> = arg_strs.iter()
-                        .filter_map(|s| {
-                            match s.to_lowercase().as_str() {
-                                "i64" => Some(Type::I64),
-                                "i32" => Some(Type::I32),
-                                "f32" => Some(Type::F32),
-                                "f64" => Some(Type::F64),
-                                "bool" => Some(Type::Bool),
-                                "u8" => Some(Type::U8),
-                                "" => None,
-                                _ => Some(Type::Struct(s.to_string(), vec![])),
-                            }
-                        })
-                        .collect();
+                    let inferred_generics = parse_mangled_type_strs(&arg_strs);
                     // Try to find or create the angle-bracket version
                     let angle_name = self.mangle_type_name(base_name, &inferred_generics);
                     if let Some(_existing) = self.enum_types.get(&angle_name) {
@@ -680,14 +667,20 @@ impl<'ctx> CodeGenerator<'ctx> {
     pub fn to_unified_type_if_generic(&self, ty: Type) -> Type {
         match &ty {
             Type::Struct(name, args) if !args.is_empty() => {
-                let is_enum = self.enum_defs.contains_key(name);
-                let mangled = self.mangle_type_name(name, args);
+                let is_enum = self.enum_defs.contains_key(name)
+                    || self.enum_defs.contains_key(mangle_base_name(name));
+                // Avoid double-mangling: if name already contains brackets, use it directly
+                let (base, mangled) = if mangle_has_args(name) {
+                    (mangle_base_name(name).to_string(), name.clone())
+                } else {
+                    (name.clone(), self.mangle_type_name(name, args))
+                };
                 // Recursively convert inner type_args too
                 let unified_args: Vec<Type> = args.iter()
                     .map(|a| self.to_unified_type_if_generic(a.clone()))
                     .collect();
                 Type::UnifiedType {
-                    base_name: name.clone(),
+                    base_name: base,
                     type_args: unified_args,
                     mangled_name: mangled,
                     is_enum,
@@ -702,12 +695,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
             Type::Enum(name, args) if !args.is_empty() => {
-                let mangled = self.mangle_type_name(name, args);
+                // Avoid double-mangling
+                let (base, mangled) = if mangle_has_args(name) {
+                    (mangle_base_name(name).to_string(), name.clone())
+                } else {
+                    (name.clone(), self.mangle_type_name(name, args))
+                };
                 let unified_args: Vec<Type> = args.iter()
                     .map(|a| self.to_unified_type_if_generic(a.clone()))
                     .collect();
                 Type::UnifiedType {
-                    base_name: name.clone(),
+                    base_name: base,
                     type_args: unified_args,
                     mangled_name: mangled,
                     is_enum: true,

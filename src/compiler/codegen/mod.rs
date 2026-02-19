@@ -975,6 +975,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .ptr_type(inkwell::AddressSpace::default())
                                 .into()
                         }
+                        Type::UnifiedType { .. } => {
+                            // UnifiedType (generic struct/enum) are objects, use pointer
+                            self.context
+                                .ptr_type(inkwell::AddressSpace::default())
+                                .into()
+                        }
                         _ => {
                             return Err(format!(
                                 "Unsupported type in enum variant {}: {:?}",
