@@ -2677,13 +2677,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Retrieve field type and substitute if necessary
                 let (_, field_ty_raw) = &struct_def.fields[field_idx];
                 
-                // If generic_args is empty but we have a mangled name, extract generics from it
+                // If generic_args is empty but we have a mangled name, recover generics
                 let effective_generic_args = if generic_args.is_empty() && base_name.contains('_') {
-                    let parts: Vec<&str> = base_name.split('_').collect();
-                    if parts.len() > 1 {
-                        self.parse_mangled_type_args(&parts[1..])
+                    // Prefer reified_types lookup (accurate)
+                    if let Some(reified) = self.reified_types.lookup(base_name.as_str()) {
+                        reified.type_args.clone()
                     } else {
-                        generic_args.clone()
+                        // Fallback: parse mangled name
+                        let parts: Vec<&str> = base_name.split('_').collect();
+                        if parts.len() > 1 {
+                            self.parse_mangled_type_args(&parts[1..])
+                        } else {
+                            generic_args.clone()
+                        }
                     }
                 } else {
                     generic_args.clone()
@@ -5236,8 +5242,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             // Try to lookup from registered mangled types (accurate method)
             if let Some((_, args)) = self.lookup_mangled_type(enum_name) {
                 args
+            } else if let Some(reified) = self.reified_types.lookup(enum_name) {
+                reified.type_args.clone()
             } else {
-                // Fallback to parsing mangled name (less accurate)
+                // Fallback to parsing mangled name (least accurate)
                 let parts: Vec<&str> = enum_name.split('_').collect();
                 if parts.len() > 1 {
                     self.parse_mangled_type_args(&parts[1..])
@@ -6226,13 +6234,19 @@ impl<'ctx> CodeGenerator<'ctx> {
         } else if type_name.contains('_') {
             // Try underscore format: "Result_i32_i32" -> ("Result", [I32, I32])
             // Also handle nested generics like "Vec_Entry_i64_i64" -> ("Vec", [Entry<i64, i64>])
-            let parts: Vec<&str> = type_name.split('_').collect();
-            if !parts.is_empty() {
-                let base = parts[0].to_string();
-                let parsed_generics = self.parse_mangled_type_args(&parts[1..]);
-                (base, parsed_generics)
+            // Prefer reified_types lookup (accurate)
+            if let Some(reified) = self.reified_types.lookup(&type_name) {
+                (reified.base_name.clone(), reified.type_args.clone())
             } else {
-                (type_name.clone(), vec![])
+                // Fallback: parse mangled name
+                let parts: Vec<&str> = type_name.split('_').collect();
+                if !parts.is_empty() {
+                    let base = parts[0].to_string();
+                    let parsed_generics = self.parse_mangled_type_args(&parts[1..]);
+                    (base, parsed_generics)
+                } else {
+                    (type_name.clone(), vec![])
+                }
             }
         } else {
             (type_name.clone(), vec![])
