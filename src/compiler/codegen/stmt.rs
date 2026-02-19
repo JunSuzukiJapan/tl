@@ -3404,26 +3404,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let base_ptr = base_ptr_opt.ok_or("Cannot field access on non-addressable lvalue")?;
                 
                 if let Type::Struct(name, generics) = &base_ty {
-                    // Resolve the type triple for proper field type substitution
-                    let triple = self.resolve_type_triple(&base_ty);
-                    let (resolved_base, resolved_args) = match &triple {
-                        Some((base, args, _)) if !args.is_empty() => (base.as_str(), args.as_slice()),
-                        _ => (name.as_str(), generics.as_slice()),
-                    };
-                    
-                    // Lookup struct def: prefer resolved base name, fallback to original name
-                    let struct_def = self.struct_defs.get(resolved_base)
-                        .or_else(|| self.struct_defs.get(name))
-                        .ok_or_else(|| format!("Struct def not found: {} (base: {})", name, resolved_base))?;
+                    // Lookup struct def by name (which may be a mangled name e.g. Vec_i64)
+                    let struct_def = self.struct_defs.get(name.as_str())
+                        .ok_or_else(|| format!("Struct def not found: {}", name))?;
                     let idx = struct_def.fields.iter().position(|(n, _)| n == field).ok_or("Field not found")?;
                     let (_, field_ty) = &struct_def.fields[idx];
                     
                     // Apply type substitution if struct has generics
-                    let field_ty = if !resolved_args.is_empty() && !struct_def.generics.is_empty() {
+                    let field_ty = if !generics.is_empty() && !struct_def.generics.is_empty() {
                         let mut subst = std::collections::HashMap::new();
                         for (i, param) in struct_def.generics.iter().enumerate() {
-                            if i < resolved_args.len() {
-                                subst.insert(param.clone(), resolved_args[i].clone());
+                            if i < generics.len() {
+                                subst.insert(param.clone(), generics[i].clone());
                             }
                         }
                         self.substitute_type(field_ty, &subst)
@@ -3434,10 +3426,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // For LLVM types: try base name first, then mangled name if not found
                     // (monomorphized types are registered with mangled names)
                     let llvm_ty_opt = self.struct_types.get(name).or_else(|| {
-                        if resolved_args.is_empty() {
+                        if generics.is_empty() {
                             None
                         } else {
-                            let mangled = self.mangle_type_name(resolved_base, resolved_args);
+                            let mangled = self.mangle_type_name(name, generics);
                             self.struct_types.get(&mangled)
                         }
                     });
@@ -3585,14 +3577,14 @@ impl<'ctx> CodeGenerator<'ctx> {
          if indices.len() != 1 { return Err("Struct set supports 1 index".into()); }
          let (idx_val, _) = self.compile_expr(&indices[0])?;
          
-         // Resolve the type triple: (base_name, type_args, mangled_name)
-         let ty = if generics.is_empty() {
-             Type::Struct(struct_name.to_string(), vec![])
+         // Determine (base_name, type_args, mangled_name) for method lookup
+         let (base_name, type_args, mangled_name) = if generics.is_empty() {
+             (struct_name.to_string(), vec![], struct_name.to_string())
          } else {
-             Type::Struct(struct_name.to_string(), generics.to_vec())
+             // Use mangle_type_name to derive the mangled name
+             let mangled = self.mangle_type_name(struct_name, generics);
+             (struct_name.to_string(), generics.to_vec(), mangled)
          };
-         let (base_name, type_args, mangled_name) = self.resolve_type_triple(&ty)
-             .unwrap_or_else(|| (struct_name.to_string(), generics.to_vec(), struct_name.to_string()));
          
          // On-demand monomorphize 'set' method if this is a generic type
          if !type_args.is_empty() {

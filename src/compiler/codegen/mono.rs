@@ -238,9 +238,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         // 3. Mangle
         let mangled_name = self.mangle_type_name(enum_name, generic_args);
         
-        // Register reverse lookup for mangled name -> (base_name, generic_args)
-        self.register_mangled_type(&mangled_name, enum_name, generic_args);
-        
         // 4. Check if already instantiated
         if self.enum_types.contains_key(&mangled_name) {
              return Ok(mangled_name);
@@ -396,61 +393,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
     
-    /// Register a mangled type name with its original base name and generic args.
-    /// This enables reverse lookup from mangled name to original type information.
-    pub fn register_mangled_type(&mut self, mangled_name: &str, base_name: &str, type_args: &[Type]) {
-        // Skip registration if type_args contain unresolved generic parameters (K, V, T, etc.)
-        // This prevents polluting reified_types with partially-specialized types like
-        // Vec_Entry_K_V → (Vec, [Entry<K,V>]) which would cause resolve_type_triple to return
-        // an unusable result.
-        if Self::contains_unresolved_generics(type_args) {
-            return;
-        }
-        self.reified_types.register_from_parts(mangled_name, base_name, type_args);
-    }
-    
-    /// Lookup original type information from a mangled name.
-    /// Returns (base_name, generic_args) if found.
-    pub fn lookup_mangled_type(&self, mangled_name: &str) -> Option<(String, Vec<Type>)> {
-        self.reified_types.lookup(mangled_name)
-            .map(|r| (r.base_name.clone(), r.type_args.clone()))
-    }
-    
-    /// Lookup a reified type by mangled name (full info)
-    pub fn lookup_reified_type(&self, mangled_name: &str) -> Option<&super::reified_type::ReifiedType> {
-        self.reified_types.lookup(mangled_name)
-    }
-
-    /// Resolve the "type triple" from a Type: (base_name, type_args, mangled_name).
-    ///
-    /// This is the single source of truth for recovering generic type information
-    /// from any Type representation, whether it carries generics inline or has
-    /// already been mangled into a flat name.
-    ///
-    /// Examples:
-    ///   - Struct("Vec", [I64])          → ("Vec", [I64], "Vec_i64")
-    ///   - Struct("Vec_i64", [])         → ("Vec", [I64], "Vec_i64")  (via ReifiedTypeRegistry)
-    ///   - Struct("HashMap", [I64, I64]) → ("HashMap", [I64, I64], "HashMap_i64_i64")
-    ///   - Struct("File", [])            → ("File", [], "File")       (non-generic)
-    pub fn resolve_type_triple(&self, ty: &Type) -> Option<(String, Vec<Type>, String)> {
-        match ty {
-            Type::Struct(name, args) | Type::Enum(name, args) => {
-                if !args.is_empty() {
-                    // Case 1: generics are present inline → canonical path
-                    let mangled = self.mangle_type_name(name, args);
-                    Some((name.clone(), args.clone(), mangled))
-                } else if let Some(reified) = self.reified_types.lookup(name) {
-                    // Case 2: name is already mangled → recover from registry
-                    Some((reified.base_name.clone(), reified.type_args.clone(), name.clone()))
-                } else {
-                    // Case 3: non-generic type
-                    Some((name.clone(), vec![], name.clone()))
-                }
-            }
-            _ => None,
-        }
-    }
-
     /// Convert a Type to a string representation for mangling/display.
     pub fn type_to_suffix(&self, ty: &Type) -> String {
         match ty {
@@ -663,8 +605,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         
         // Register this specialization
         self.specialization_registry.register(base_name, type_args);
-        // Register in reified_types for reverse lookup (mangled → base + args)
-        self.register_mangled_type(&mangled_name, base_name, type_args);
         
         // Build type parameter substitution map
         let mut subst: HashMap<String, Type> = HashMap::new();
@@ -699,25 +639,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             let unified = self.to_unified_type_if_generic(substituted);
             (name.clone(), unified)
         }).collect();
-        
-        // Register nested generic types in reified_types for reverse lookup.
-        // (Backward compatibility until ReifiedTypeRegistry is fully removed)
-        for (_, field_ty) in &specialized_def.fields {
-            match field_ty {
-                Type::UnifiedType { base_name, type_args, mangled_name, .. } if !type_args.is_empty() => {
-                    if !Self::contains_unresolved_generics(type_args) {
-                        self.register_mangled_type(mangled_name, base_name, type_args);
-                    }
-                }
-                Type::Struct(s_name, s_args) | Type::Enum(s_name, s_args) if !s_args.is_empty() => {
-                    if !Self::contains_unresolved_generics(s_args) {
-                        let nested_mangled = self.mangle_type_name(s_name, s_args);
-                        self.register_mangled_type(&nested_mangled, s_name, s_args);
-                    }
-                }
-                _ => {}
-            }
-        }
         
         self.struct_defs.insert(mangled_name.clone(), specialized_def);
         

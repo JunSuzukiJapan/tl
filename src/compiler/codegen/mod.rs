@@ -22,7 +22,6 @@ pub mod builtins;
 pub mod expr;
 pub mod kb;
 pub mod mono;
-pub mod reified_type;
 pub mod specialization;
 pub mod stmt;
 pub mod tensor;
@@ -62,8 +61,6 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) type_manager: type_manager::TypeManager,
     pub(crate) pending_functions: Vec<crate::compiler::ast::FunctionDef>,
     pub(crate) specialization_registry: specialization::SpecializationRegistry,
-    /// Registry for looking up complete type information by mangled name
-    pub(crate) reified_types: reified_type::ReifiedTypeRegistry,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -104,7 +101,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             type_manager: type_manager::TypeManager::new(),
             pending_functions: Vec::new(),
             specialization_registry: specialization::SpecializationRegistry::new(),
-            reified_types: reified_type::ReifiedTypeRegistry::new(),
         };
 
         // Register all methods (instance and static)
