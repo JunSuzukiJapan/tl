@@ -4142,6 +4142,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tl_cuda"
+version = "0.3.7"
+dependencies = [
+ "rand 0.8.5",
+ "serial_test",
+ "tl_backend",
+]
+
+[[package]]
 name = "tl_metal"
 version = "0.3.7"
 dependencies = [

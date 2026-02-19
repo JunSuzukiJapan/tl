@@ -14,7 +14,7 @@ name = "tl"
 path = "src/main.rs"
 
 [workspace]
-members = ["crates/tl_runtime", "crates/tl_metal", "crates/tl_backend", "crates/tl_cpu"]
+members = ["crates/tl_runtime", "crates/tl_metal", "crates/tl_backend", "crates/tl_cpu", "crates/tl_cuda"]
 
 [dependencies]
 tl_runtime = { path = "crates/tl_runtime", version = "0.3.7" }
