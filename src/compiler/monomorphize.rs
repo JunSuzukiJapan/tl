@@ -97,10 +97,12 @@ impl Monomorphizer {
         module.enums.extend(self.concrete_enums.drain(..));
         module.impls.extend(self.concrete_impls.drain(..));
         
-        // 5. Remove original generic definitions to avoid codegen errors
-        module.structs.retain(|s| s.generics.is_empty());
-        module.functions.retain(|f| f.generics.is_empty()); 
-        module.enums.retain(|e| e.generics.is_empty());
+        // NOTE: ジェネリックテンプレートは module に残す。
+        // codegen 側の各コンパイル関数にスキップガードがあるため安全:
+        //   - compile_struct_defs: generics.is_empty() チェックで LLVM型生成をスキップし struct_defs に登録
+        //   - compile_enum_defs: 同上で enum_defs に登録
+        //   - compile_module (functions): generic_fn_defs に登録してスキップ
+        // テンプレートを残すことで parse_mangled_type_args が arity 情報を取得できる。
         
         log::info!("Monomorphization done. Structs: {} -> {}", initial_structs, module.structs.len());
         Ok(())
