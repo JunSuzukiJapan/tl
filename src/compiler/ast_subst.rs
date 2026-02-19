@@ -98,7 +98,7 @@ impl TypeSubstitutor {
                     name.clone()
                 } else {
                     let args_str: Vec<String> = args.iter().map(|t| self.type_to_suffix(t)).collect();
-                    format!("{}_{}", name, args_str.join("_"))
+                    mangle_wrap_args(name, &args_str)
                 }
             }
             Type::Enum(name, args) => {
@@ -106,13 +106,16 @@ impl TypeSubstitutor {
                     name.clone()
                 } else {
                     let args_str: Vec<String> = args.iter().map(|t| self.type_to_suffix(t)).collect();
-                    format!("{}_{}", name, args_str.join("_"))
+                    mangle_wrap_args(name, &args_str)
                 }
             }
-            Type::Tensor(inner, rank) => format!("Tensor_{}_{}", self.type_to_suffix(inner), rank),
+            Type::Tensor(inner, rank) => {
+                let args = vec![self.type_to_suffix(inner), rank.to_string()];
+                mangle_wrap_args("Tensor", &args)
+            }
             Type::Tuple(types) => {
                 let parts: Vec<String> = types.iter().map(|t| self.type_to_suffix(t)).collect();
-                format!("Tuple_{}", parts.join("_"))
+                mangle_wrap_args("Tuple", &parts)
             }
             Type::Path(segments, _) => segments.join("_"),
             _ => "unknown".to_string(),
@@ -195,8 +198,8 @@ impl TypeSubstitutor {
                 
                 // Mangle enum name with concrete generics
                 let new_enum_name = if !new_generics.is_empty() {
-                    let suffix = new_generics.iter().map(|t| self.type_to_suffix(t)).collect::<Vec<_>>().join("_");
-                    format!("{}_{}", enum_name, suffix)
+                    let suffix: Vec<String> = new_generics.iter().map(|t| self.type_to_suffix(t)).collect();
+                    mangle_wrap_args(enum_name, &suffix)
                 } else {
                     enum_name.clone()
                 };

@@ -2,7 +2,7 @@
 //!
 //! ジェネリック型の特殊化を追跡し、必要なメソッドを生成するためのレジストリ。
 
-use crate::compiler::ast::Type;
+use crate::compiler::ast::{Type, MANGLE_OPEN, MANGLE_CLOSE, mangle_wrap_args};
 use std::collections::HashSet;
 
 /// 特殊化された型を追跡するレジストリ
@@ -89,10 +89,13 @@ pub fn type_to_suffix(ty: &Type) -> String {
                 mangle_type_name(name, args)
             }
         }
-        Type::Tensor(inner, rank) => format!("Tensor_{}_{}", type_to_suffix(inner), rank),
+        Type::Tensor(inner, rank) => {
+            let args = vec![type_to_suffix(inner), rank.to_string()];
+            mangle_wrap_args("Tensor", &args)
+        }
         Type::Tuple(types) => {
-            let parts: Vec<String> = types.iter().map(type_to_suffix).collect();
-            format!("Tuple_{}", parts.join("_"))
+            let args: Vec<String> = types.iter().map(type_to_suffix).collect();
+            mangle_wrap_args("Tuple", &args)
         }
         Type::Path(segments, args) => {
             let base = segments.join("_");
@@ -100,8 +103,12 @@ pub fn type_to_suffix(ty: &Type) -> String {
                 base
             } else {
                 let args_str: Vec<String> = args.iter().map(type_to_suffix).collect();
-                format!("{}_{}", base, args_str.join("_"))
+                mangle_wrap_args(&base, &args_str)
             }
+        }
+        Type::Array(inner, size) => {
+            let args = vec![type_to_suffix(inner), size.to_string()];
+            mangle_wrap_args("Array", &args)
         }
         _ => "unknown".to_string(),
     }
@@ -113,7 +120,7 @@ pub fn mangle_type_name(base_name: &str, type_args: &[Type]) -> String {
         base_name.to_string()
     } else {
         let args_str: Vec<String> = type_args.iter().map(type_to_suffix).collect();
-        format!("{}_{}", base_name, args_str.join("_"))
+        mangle_wrap_args(base_name, &args_str)
     }
 }
 
@@ -138,8 +145,8 @@ mod tests {
 
     #[test]
     fn test_mangle_type_name() {
-        assert_eq!(mangle_type_name("Vec", &[Type::I64]), "Vec_i64");
-        assert_eq!(mangle_type_name("HashMap", &[Type::I64, Type::I64]), "HashMap_i64_i64");
+        assert_eq!(mangle_type_name("Vec", &[Type::I64]), "Vec[i64]");
+        assert_eq!(mangle_type_name("HashMap", &[Type::I64, Type::I64]), "HashMap[i64][i64]");
         assert_eq!(mangle_type_name("Option", &[]), "Option");
     }
 }

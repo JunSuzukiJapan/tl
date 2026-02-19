@@ -164,7 +164,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         *t
                     } else {
                         // Fallback: try base type name (e.g., "Vec" for "Vec_Entry_i64_i64")
-                        let base_name = effective_mangled_name.split('_').next().unwrap_or(&effective_mangled_name);
+                        let base_name = mangle_base_name(&effective_mangled_name);
                         if let Some(t) = self.struct_types.get(base_name) {
                             *t
                         } else if !generics.is_empty() {

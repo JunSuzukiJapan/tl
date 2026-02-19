@@ -3,6 +3,67 @@
 use crate::compiler::error::Span;
 use std::collections::HashMap;
 
+/// マングル名の開始デリミタ。型引数を [arg] で囲むことで境界を明確にする。
+/// 例: Vec[i64], HashMap[i64][String], Vec[Entry[i64][String]]
+pub const MANGLE_OPEN: &str = "[";
+pub const MANGLE_CLOSE: &str = "]";
+
+/// 型引数を角括弧で囲んでマングル名を生成
+/// mangle_wrap_args("Vec", &["i64"]) → "Vec[i64]"
+/// mangle_wrap_args("HashMap", &["i64", "String"]) → "HashMap[i64][String]"
+pub fn mangle_wrap_args(base: &str, args: &[String]) -> String {
+    if args.is_empty() {
+        return base.to_string();
+    }
+    let suffix: String = args.iter()
+        .map(|a| format!("{}{}{}", MANGLE_OPEN, a, MANGLE_CLOSE))
+        .collect();
+    format!("{}{}", base, suffix)
+}
+
+/// マングル名からベース名を抽出
+/// mangle_base_name("Vec[i64]") → "Vec"
+/// mangle_base_name("HashMap[i64][String]") → "HashMap"
+/// mangle_base_name("plain") → "plain"
+pub fn mangle_base_name(mangled: &str) -> &str {
+    mangled.split(MANGLE_OPEN).next().unwrap_or(mangled)
+}
+
+/// マングル名が型引数を含むか判定
+pub fn mangle_has_args(mangled: &str) -> bool {
+    mangled.contains(MANGLE_OPEN)
+}
+
+/// マングル名からトップレベルの型引数文字列を抽出（ネスト対応）
+/// mangle_extract_args("Vec[i64]") → vec!["i64"]
+/// mangle_extract_args("HashMap[i64][String]") → vec!["i64", "String"]
+/// mangle_extract_args("Vec[Entry[i64][String]]") → vec!["Entry[i64][String]"]
+pub fn mangle_extract_args(mangled: &str) -> Vec<&str> {
+    let mut args = Vec::new();
+    let base_end = match mangled.find(MANGLE_OPEN) {
+        Some(pos) => pos,
+        None => return args,
+    };
+    let rest = &mangled[base_end..];
+    let bytes = rest.as_bytes();
+    let mut depth = 0;
+    let mut start = 0;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'[' {
+            if depth == 0 {
+                start = i + 1;
+            }
+            depth += 1;
+        } else if b == b']' {
+            depth -= 1;
+            if depth == 0 {
+                args.push(&rest[start..i]);
+            }
+        }
+    }
+    args
+}
+
 /// Spanを持つラッパー型
 /// ASTノードに位置情報を付加するために使用
 /// Spanを持つラッパー型

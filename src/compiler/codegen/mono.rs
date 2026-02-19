@@ -1,5 +1,5 @@
 use super::CodeGenerator;
-use crate::compiler::ast::Type;
+use crate::compiler::ast::{Type, MANGLE_OPEN, MANGLE_CLOSE, mangle_wrap_args, mangle_base_name, mangle_has_args, mangle_extract_args};
 use crate::compiler::ast_subst::TypeSubstitutor;
 use inkwell::types::{BasicTypeEnum, StructType};
 use inkwell::AddressSpace;
@@ -147,8 +147,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         // 4. Mangle name based on concrete types
         // Create a list of type args in the order of declaration
         let type_args: Vec<Type> = func_def.generics.iter().map(|g| subst_map[g].clone()).collect();
-        let mangled_name = format!("{}_{}", func_name, 
-             type_args.iter().map(|t| self.type_to_suffix(t)).collect::<Vec<_>>().join("_"));
+        let args_str: Vec<String> = type_args.iter().map(|t| self.type_to_suffix(t)).collect();
+        let mangled_name = mangle_wrap_args(func_name, &args_str);
              
         if self.module.get_function(&mangled_name).is_some() {
             return Ok(mangled_name);
@@ -188,17 +188,16 @@ impl<'ctx> CodeGenerator<'ctx> {
         // First, try direct lookup
         let enum_def = if let Some(def) = self.enum_defs.get(enum_name) {
             def.clone()
-        } else if enum_name.contains('_') && !enum_name.contains('<') {
-            // Try extracting base name from underscore-mangled name (e.g., "Option_i64" -> "Option")
-            let base_name = enum_name.split('_').next().unwrap_or(enum_name);
+        } else if mangle_has_args(enum_name) && !enum_name.contains('<') {
+            // Try extracting base name from mangled name (e.g., "Option[i64]" -> "Option")
+            let base_name = mangle_base_name(enum_name);
             if let Some(def) = self.enum_defs.get(base_name) {
                 // If generic_args is empty but the def needs generics, try to parse from name
                 if generic_args.is_empty() && !def.generics.is_empty() {
                     // This is already monomorphized with a different naming scheme
-                    // Try to find the angle-bracket version
-                    let suffix = enum_name.strip_prefix(base_name).unwrap_or("");
-                    let suffix_clean = suffix.trim_start_matches('_');
-                    let inferred_generics: Vec<Type> = suffix_clean.split('_')
+                    // Extract type args from bracket notation
+                    let arg_strs = mangle_extract_args(enum_name);
+                    let inferred_generics: Vec<Type> = arg_strs.iter()
                         .filter_map(|s| {
                             match s.to_lowercase().as_str() {
                                 "i64" => Some(Type::I64),
@@ -381,15 +380,13 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     /// Generate a mangled name for a monomorphized type.
-    /// Example: `Vec` + `[i64]` -> `Vec<i64>`
-    /// Note: Call register_mangled_type separately when the mangled name is used for type registration.
+    /// Example: `Vec` + `[i64]` -> `Vec[i64]`
     pub fn mangle_type_name(&self, base_name: &str, type_args: &[Type]) -> String {
         if type_args.is_empty() {
             base_name.to_string()
         } else {
-            // Use underscore notation for consistency with frontend monomorphizer
             let args_str: Vec<String> = type_args.iter().map(|t| self.type_to_suffix(t)).collect();
-            format!("{}_{}", base_name, args_str.join("_"))
+            mangle_wrap_args(base_name, &args_str)
         }
     }
     
@@ -421,10 +418,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
 
-            Type::Tensor(inner, rank) => format!("Tensor_{}_{}", self.type_to_suffix(inner), rank),
+            Type::Tensor(inner, rank) => {
+                let args = vec![self.type_to_suffix(inner), rank.to_string()];
+                mangle_wrap_args("Tensor", &args)
+            }
             Type::Tuple(types) => {
                 let parts: Vec<String> = types.iter().map(|t| self.type_to_suffix(t)).collect();
-                format!("Tuple_{}", parts.join("_"))
+                mangle_wrap_args("Tuple", &parts)
             }
             Type::Path(path, args) => {
                 // Path types represent generic parameters or type references
@@ -439,9 +439,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                     "unknown_path".to_string()
                 }
             }
-            Type::Undefined(id) => format!("undefined_{}", id),
-            Type::Ptr(inner) => format!("ptr_{}", self.type_to_suffix(inner)),
-            Type::Array(inner, size) => format!("Array_{}_{}", self.type_to_suffix(inner), size),
+            Type::Undefined(id) => format!("undefined{}{}{}", MANGLE_OPEN, id, MANGLE_CLOSE),
+            Type::Ptr(inner) => format!("ptr{}{}{}", MANGLE_OPEN, self.type_to_suffix(inner), MANGLE_CLOSE),
+            Type::Array(inner, size) => {
+                let args = vec![self.type_to_suffix(inner), size.to_string()];
+                mangle_wrap_args("Array", &args)
+            }
             Type::Entity => "entity".to_string(),
             _ => "unknown".to_string(),
         }
@@ -458,10 +461,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         let suffix = if type_args.is_empty() {
             String::new()
         } else {
-            format!("_{}", type_args.iter()
-                .map(|t| self.type_to_suffix(t).to_lowercase())
-                .collect::<Vec<_>>()
-                .join("_"))
+            type_args.iter()
+                .map(|t| format!("{}{}{}", MANGLE_OPEN, self.type_to_suffix(t).to_lowercase(), MANGLE_CLOSE))
+                .collect::<String>()
         };
         format!("tl_{}{}_{}", base_type.to_lowercase(), suffix, method)
     }

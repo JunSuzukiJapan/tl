@@ -1095,15 +1095,17 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
-    /// Parse type arguments from underscore-separated parts (e.g., ["Entry", "i64", "i64"])
-    /// Handles nested generics by checking if a part is a known generic type
-    fn parse_mangled_type_args(&self, parts: &[&str]) -> Vec<Type> {
+    /// Parse type arguments from bracket-extracted strings (e.g., ["i64", "Entry[i64][i64]"])
+    /// Each argument string may itself contain brackets for nested generics,
+    /// but mangle_extract_args already handles nested extraction at the top level.
+    fn parse_mangled_type_args_from_strs(&self, arg_strs: &[&str]) -> Vec<Type> {
         let mut result = Vec::new();
-        let mut i = 0;
-        while i < parts.len() {
-            let s = parts[i];
-            // Try primitive types first
-            let ty = match s.to_lowercase().as_str() {
+        for s in arg_strs {
+            let s = s.trim();
+            if s.is_empty() { continue; }
+            // Check if this arg itself has brackets (nested generic)
+            let base = mangle_base_name(s);
+            let ty = match base.to_lowercase().as_str() {
                 "i64" => Type::I64,
                 "i32" => Type::I32,
                 "f32" => Type::F32,
@@ -1114,44 +1116,24 @@ impl<'ctx> CodeGenerator<'ctx> {
                 "u32" => Type::U32,
                 "usize" => Type::Usize,
                 "string" => Type::String("String".to_string()),
-                "" => { i += 1; continue; }
                 _ => {
-                    // Check if this is a known generic enum (like Entry)
-                    if let Some(enum_def) = self.enum_defs.get(s) {
-                        let arity = enum_def.generics.len();
-                        if arity > 0 && i + arity < parts.len() {
-                            // Consume next 'arity' parts as type arguments
-                            let nested_args = self.parse_mangled_type_args(&parts[i + 1..i + 1 + arity]);
-                            i += arity;
-                            Type::Enum(s.to_string(), nested_args)
+                    // For nested generics: parse inner args recursively
+                    if mangle_has_args(s) {
+                        let inner_args = mangle_extract_args(s);
+                        let nested = self.parse_mangled_type_args_from_strs(&inner_args);
+                        if let Some(_) = self.enum_defs.get(base) {
+                            Type::Enum(s.to_string(), nested)
                         } else {
-                            Type::Enum(s.to_string(), vec![])
+                            Type::Struct(s.to_string(), nested)
                         }
-                    // Check if this is a known generic struct
-                    } else if let Some(struct_def) = self.struct_defs.get(s) {
-                        let arity = struct_def.generics.len();
-                        if arity > 0 && i + arity < parts.len() {
-                            let nested_args = self.parse_mangled_type_args(&parts[i + 1..i + 1 + arity]);
-                            i += arity;
-                            Type::Struct(s.to_string(), nested_args)
-                        } else {
-                            Type::Struct(s.to_string(), vec![])
-                        }
+                    } else if let Some(_) = self.enum_defs.get(s) {
+                        Type::Enum(s.to_string(), vec![])
                     } else {
-                        // This path should be unreachable after the monomorphize.rs fix
-                        // that preserves generic templates in the module.
-                        // If we reach here, it indicates an unregistered generic template.
-                        eprintln!(
-                            "[SYSTEM ERROR] parse_mangled_type_args: type '{}' not found in struct_defs or enum_defs. \
-                             This is a compiler bug — all generic templates should be registered during compile_struct_defs/compile_enum_defs.",
-                            s
-                        );
                         Type::Struct(s.to_string(), vec![])
                     }
                 }
             };
             result.push(ty);
-            i += 1;
         }
         result
     }
@@ -1819,12 +1801,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // 0. specialized name handling
                 // Extract base name from mangled name (e.g., "Option_i64" -> "Option")
                 // and parse generics from mangled suffix if generics is empty
-                let (base_name, inferred_generics) = if generics.is_empty() && enum_name.contains('_') {
-                    let parts: Vec<&str> = enum_name.splitn(2, '_').collect();
-                    if parts.len() == 2 {
-                        let base = parts[0].to_string();
-                        // Parse ALL type suffixes (e.g., "i64_i64" -> [I64, I64])
-                        let type_parts: Vec<&str> = parts[1].split('_').collect();
+                let (base_name, inferred_generics) = if generics.is_empty() && mangle_has_args(enum_name) {
+                    let base = mangle_base_name(enum_name).to_string();
+                    let type_parts = mangle_extract_args(enum_name);
+                    if !type_parts.is_empty() {
+                        // Parse ALL type suffixes (e.g., ["i64", "i64"] -> [I64, I64])
                         let inferred_types: Vec<Type> = type_parts.iter()
                             .filter_map(|type_part| {
                                 match type_part.to_lowercase().as_str() {
@@ -2654,7 +2635,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     (def, true)
                 } else {
                     // Try extracting base name from underscore-mangled name (e.g., "Vec_u8" -> "Vec")
-                    let underscore_base = base_name.split('_').next().unwrap_or(&base_name).to_string();
+                    let underscore_base = mangle_base_name(&base_name).to_string();
                     if let Some(def) = self.struct_defs.get(&underscore_base) {
                         (def, true)
                     } else {
@@ -2678,11 +2659,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (_, field_ty_raw) = &struct_def.fields[field_idx];
                 
                 // If generic_args is empty but we have a mangled name, recover generics
-                let effective_generic_args = if generic_args.is_empty() && base_name.contains('_') {
+                let effective_generic_args = if generic_args.is_empty() && mangle_has_args(&base_name) {
                     // Parse mangled name to recover generics
-                    let parts: Vec<&str> = base_name.split('_').collect();
-                    if parts.len() > 1 {
-                        self.parse_mangled_type_args(&parts[1..])
+                    let extracted = mangle_extract_args(&base_name);
+                    if !extracted.is_empty() {
+                        self.parse_mangled_type_args_from_strs(&extracted)
                     } else {
                         generic_args.clone()
                     }
@@ -2722,7 +2703,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 } else {
                     // Try underscore-based base name (e.g., "Vec_u8" -> "Vec")
                     // and monomorphize on-demand if generics can be inferred
-                    let underscore_base = base_name.split('_').next().unwrap_or(&base_name).to_string();
+                    let underscore_base = mangle_base_name(&base_name).to_string();
                     if let Some(t) = self.struct_types.get(&underscore_base) {
                         *t
                     } else if !generic_args.is_empty() {
@@ -2735,9 +2716,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                             }
                             Err(_) => {
                                 // Last resort: try to infer generics from underscore suffix
-                                let parts: Vec<&str> = base_name.split('_').collect();
-                                if parts.len() >= 2 {
-                                    let inferred_ty = match parts[1].to_lowercase().as_str() {
+                                let extracted = mangle_extract_args(&base_name);
+                                if !extracted.is_empty() {
+                                    let inferred_ty = match extracted[0].to_lowercase().as_str() {
                                         "u8" => Type::U8,
                                         "i64" => Type::I64,
                                         "f32" => Type::F32,
@@ -2766,9 +2747,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                             }
                         } else {
                             // Try to infer generics from underscore suffix (e.g., "Vec_u8" -> Vec<u8>)
-                            let parts: Vec<&str> = base_name.split('_').collect();
-                            if parts.len() >= 2 {
-                                let inferred_ty = match parts[1].to_lowercase().as_str() {
+                            let extracted = mangle_extract_args(&base_name);
+                            if !extracted.is_empty() {
+                                let inferred_ty = match extracted[0].to_lowercase().as_str() {
                                     "u8" => Type::U8,
                                     "i64" => Type::I64,
                                     "f32" => Type::F32,
@@ -3824,7 +3805,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         // Early detection: If `name` is already a mangled name that exists in struct_types,
         // use it directly and ignore generics (avoids double-mangling)
-        if !generics.is_empty() && name.contains('_') {
+        if !generics.is_empty() && mangle_has_args(name) {
             if let Some(&existing_type) = self.struct_types.get(name) {
                 let struct_def = self.struct_defs.get(name)
                     .ok_or_else(|| format!("Struct definition {} not found", name))?
@@ -3868,7 +3849,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                              *t
                          } else {
                              // Try with base name mangled
-                             let base = name.split('_').next().unwrap_or(name);
+                             let base = mangle_base_name(name);
                              let base_mangled = self.mangle_type_name(base, generics);
                              *self.struct_types.get(&base_mangled)
                                  .ok_or(format!("Struct type {} not found (tried {} and {})", name, mangled_name, base_mangled))?
@@ -3882,7 +3863,7 @@ impl<'ctx> CodeGenerator<'ctx> {
              let struct_def = self.struct_defs.get(&mangled_name)
                  .or_else(|| {
                      // Try base name mangled
-                     let base = name.split('_').next().unwrap_or(name);
+                     let base = mangle_base_name(name);
                      let base_mangled = self.mangle_type_name(base, generics);
                      self.struct_defs.get(&base_mangled)
                  })
@@ -5233,10 +5214,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
         
         // If generic_args is empty but enum_name is mangled, parse the mangled name
-        let generic_args: Vec<Type> = if raw_generic_args.is_empty() && enum_name.contains('_') {
-            let parts: Vec<&str> = enum_name.split('_').collect();
-            if parts.len() > 1 {
-                self.parse_mangled_type_args(&parts[1..])
+        let generic_args: Vec<Type> = if raw_generic_args.is_empty() && mangle_has_args(enum_name) {
+            let extracted = mangle_extract_args(enum_name);
+            if !extracted.is_empty() {
+                self.parse_mangled_type_args_from_strs(&extracted)
             } else {
                 raw_generic_args
             }
@@ -5310,8 +5291,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     def
                 } else {
                     // Try to convert underscore format to angle-bracket format
-                    let base_name = if enum_name.contains('_') && !enum_name.contains('<') {
-                        enum_name.split('_').next().unwrap_or(enum_name)
+                    let base_name = if mangle_has_args(enum_name) && !enum_name.contains('<') {
+                        mangle_base_name(enum_name)
                     } else {
                         enum_name
                     };
@@ -5540,7 +5521,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         
         if enum_def.generics.is_empty() && !generic_args.is_empty() {
             // Try to find the original generic enum definition
-            let base_name = enum_def.name.split('_').next().unwrap_or(&enum_def.name);
+            let base_name = mangle_base_name(&enum_def.name);
             if let Some(generic_def) = self.enum_defs.get(base_name) {
                 for (i, param_name) in generic_def.generics.iter().enumerate() {
                     if let Some(arg) = generic_args.get(i) {
@@ -6218,16 +6199,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 })
                 .collect();
             (base, parsed_generics)
-        } else if type_name.contains('_') {
-            // Try underscore format: "Result_i32_i32" -> ("Result", [I32, I32])
-            let parts: Vec<&str> = type_name.split('_').collect();
-            if !parts.is_empty() {
-                let base = parts[0].to_string();
-                let parsed_generics = self.parse_mangled_type_args(&parts[1..]);
-                (base, parsed_generics)
-            } else {
-                (type_name.clone(), vec![])
-            }
+        } else if mangle_has_args(&type_name) {
+            let base = mangle_base_name(&type_name).to_string();
+            let extracted = mangle_extract_args(&type_name);
+            let parsed_generics = self.parse_mangled_type_args_from_strs(&extracted);
+            (base, parsed_generics)
         } else {
             (type_name.clone(), vec![])
         };

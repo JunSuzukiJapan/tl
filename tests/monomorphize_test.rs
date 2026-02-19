@@ -58,8 +58,8 @@ fn test_basic_function_instantiation() {
 
     mono.run(&mut module).expect("Monomorphization failed");
 
-    let concrete = module.functions.iter().find(|f| f.name == "id_i64");
-    assert!(concrete.is_some(), "id_i64 should be generated");
+    let concrete = module.functions.iter().find(|f| f.name == "id[i64]");
+    assert!(concrete.is_some(), "id[i64] should be generated");
     let concrete = concrete.unwrap();
     assert_eq!(concrete.args[0].1, Type::I64);
     assert_eq!(concrete.return_type, Type::I64);
@@ -94,6 +94,6 @@ fn test_deduplication() {
 
     mono.run(&mut module).expect("Monomorphization failed");
     
-    let count = module.functions.iter().filter(|f| f.name == "id_i64").count();
-    assert_eq!(count, 1, "Should only have one instance of id_i64");
+    let count = module.functions.iter().filter(|f| f.name == "id[i64]").count();
+    assert_eq!(count, 1, "Should only have one instance of id[i64]");
 }

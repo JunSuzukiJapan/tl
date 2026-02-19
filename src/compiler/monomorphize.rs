@@ -207,8 +207,8 @@ impl Monomorphizer {
                  if is_enum {
                      Type::Enum(name.clone(), new_args)
                  } else {
-                     // Check if base name (before _) is a known enum (e.g., Entry_i64_i64 -> Entry)
-                     let base_name = name.split('_').next().unwrap_or(name);
+                     // Check if base name is a known enum (e.g., Entry[i64][i64] -> Entry)
+                     let base_name = mangle_base_name(name);
                      if self.generic_enums.contains_key(base_name) {
                          Type::Enum(name.clone(), new_args)
                      } else {
@@ -524,7 +524,7 @@ impl Monomorphizer {
                                 // Case 1: Expected type matches our enum and has generics
                                 *generics = expected_args.clone();
 
-                            } else if expected_name.starts_with(&format!("{}_", enum_name)) && expected_args.is_empty() {
+                            } else if expected_name.starts_with(&format!("{}{}", enum_name, MANGLE_OPEN)) && expected_args.is_empty() {
                                 // Case 2: Expected type is already mangled (e.g. Option_i64 or Entry_i64_i64)
                                 // Use the mangled name directly
                                 *enum_name = expected_name.clone();
@@ -743,7 +743,7 @@ impl Monomorphizer {
                                                // Case 2: Already mangled name (e.g. Option_Entry_i64_i64 with args=[])
                                                // In this case, we use the mangled name directly and don't need to infer generics
                                                // since codegen will look up the type by mangled name
-                                               else if n.starts_with(&format!("{}_", type_name_str)) && args.is_empty() {
+                                               else if n.starts_with(&format!("{}{}", type_name_str, MANGLE_OPEN)) && args.is_empty() {
                                                    // Signal that we should use the mangled name directly
                                                    // Mark "skip" by using a special sentinel (we'll handle this below)
                                                    inferred_from_expected = Some(Type::Void);
@@ -772,7 +772,7 @@ impl Monomorphizer {
                                        concrete_name = self.request_enum_instantiation(&type_name_str, type_args);
                                    } else if let Some(Type::Enum(n, args)) | Some(Type::Struct(n, args)) = expected_type {
                                        // Fallback 1: If expected type is already concrete (e.g. Option_Entry_i64_i64) matching this generic
-                                       if n.starts_with(&format!("{}_", type_name_str)) {
+                                       if n.starts_with(&format!("{}{}", type_name_str, MANGLE_OPEN)) {
                                             resolved_generics = args.clone();
                                             concrete_name = n.clone();
                                        }
@@ -951,7 +951,7 @@ impl Monomorphizer {
                               }
                               // Build new mangled enum name
                               if !substituted_args.is_empty() {
-                                  let new_name = format!("{}_{}", base, substituted_args.join("_"));
+                                  let new_name = mangle_wrap_args(&base, &substituted_args);
                                   *enum_name = new_name;
                               }
                           }
@@ -968,7 +968,7 @@ impl Monomorphizer {
          let concrete_struct_name = if let Some(mangled) = self.struct_instances.get(&(name.to_string(), args.to_vec())) {
              mangled.clone()
          } else {
-             format!("{}_{}", name, self.mangle_types(args))
+             mangle_wrap_args(name, &self.mangle_types_vec(args))
          };
 
          let mut new_impls = Vec::new();
@@ -1042,7 +1042,7 @@ impl Monomorphizer {
             return mangled.clone();
         }
         
-        let mangled = format!("{}_{}", name, self.mangle_types(&args));
+        let mangled = mangle_wrap_args(name, &self.mangle_types_vec(&args));
         self.struct_instances.insert(key, mangled.clone());
         self.reverse_struct_instances.insert(mangled.clone(), (name.to_string(), args.clone()));
         self.pending_queue.push_back((name.to_string(), args, true));
@@ -1061,7 +1061,7 @@ impl Monomorphizer {
         if let Some(mangled) = self.struct_instances.get(&key) {
             return mangled.clone();
         }
-        let mangled = format!("{}_{}", name, self.mangle_types(&args));
+        let mangled = mangle_wrap_args(name, &self.mangle_types_vec(&args));
         self.struct_instances.insert(key, mangled.clone());
          // We need to know it IS an enum to set `is_struct=false`? No `is_struct` param in queue is binary.
          // We need `is_enum`?
@@ -1078,7 +1078,7 @@ impl Monomorphizer {
          if let Some(mangled) = self.function_instances.get(&key) {
              return mangled.clone();
          }
-         let mangled = format!("{}_{}", name, self.mangle_types(&args));
+         let mangled = mangle_wrap_args(name, &self.mangle_types_vec(&args));
          self.function_instances.insert(key, mangled.clone());
          self.pending_queue.push_back((name.to_string(), args, false));
          mangled
@@ -1291,8 +1291,8 @@ impl Monomorphizer {
         }
     }
 
-    fn mangle_types(&self, types: &[Type]) -> String {
-        types.iter().map(|t| self.mangle_type(t)).collect::<Vec<_>>().join("_")
+    fn mangle_types_vec(&self, types: &[Type]) -> Vec<String> {
+        types.iter().map(|t| self.mangle_type(t)).collect()
     }
 
     fn mangle_type(&self, ty: &Type) -> String {
@@ -1316,15 +1316,18 @@ impl Monomorphizer {
                  if args.is_empty() {
                      name.clone()
                  } else {
-                     format!("{}_{}", name, self.mangle_types(args))
+                     mangle_wrap_args(name, &self.mangle_types_vec(args))
                  }
             }
-            Type::Tensor(inner, _) => format!("Tensor_{}", self.mangle_type(inner)),
+            Type::Tensor(inner, _) => {
+                let args = vec![self.mangle_type(inner)];
+                mangle_wrap_args("Tensor", &args)
+            }
             Type::Enum(name, args) => {
                 if args.is_empty() {
                     name.clone()
                 } else {
-                    format!("{}_{}", name, self.mangle_types(args))
+                    mangle_wrap_args(name, &self.mangle_types_vec(args))
                 }
             }
             Type::Path(segments, args) => {
@@ -1332,18 +1335,21 @@ impl Monomorphizer {
                 if args.is_empty() {
                     base
                 } else {
-                    format!("{}_{}", base, self.mangle_types(args))
+                    mangle_wrap_args(&base, &self.mangle_types_vec(args))
                 }
             }
             Type::Tuple(types) => {
                 if types.is_empty() {
-                    "unit".to_string() // Empty tuple is unit type
+                    "unit".to_string()
                 } else {
-                    format!("Tuple_{}", self.mangle_types(types))
+                    mangle_wrap_args("Tuple", &self.mangle_types_vec(types))
                 }
             }
-            Type::Ptr(inner) => format!("Ptr_{}", self.mangle_type(inner)),
-            Type::Array(inner, size) => format!("Array_{}_{}", self.mangle_type(inner), size),
+            Type::Ptr(inner) => format!("Ptr{}{}{}", MANGLE_OPEN, self.mangle_type(inner), MANGLE_CLOSE),
+            Type::Array(inner, size) => {
+                let args = vec![self.mangle_type(inner), size.to_string()];
+                mangle_wrap_args("Array", &args)
+            }
             _ => {
                 "unknown".to_string()
             },
@@ -1426,50 +1432,48 @@ impl Monomorphizer {
     }
 
 
-    /// Build a substitution map from a mangled type name like "HashMap_i64_i64"
-    /// by extracting the type arguments from the suffix and mapping them to the
+    /// Build a substitution map from a mangled type name like "HashMap[i64][i64]"
+    /// by extracting the type arguments from the brackets and mapping them to the
     /// original generic parameters (K, V) from the generic struct/enum definition.
     fn build_subst_from_mangled_name(&self, mangled_name: &str) -> HashMap<String, Type> {
         let mut subst = HashMap::new();
+        let base = mangle_base_name(mangled_name);
+        if !mangle_has_args(mangled_name) {
+            return subst;
+        }
+        let arg_strs = mangle_extract_args(mangled_name);
         
-        // Try to find the base generic struct/enum name
-        for (base_name, def) in &self.generic_structs {
-            if mangled_name.starts_with(&format!("{}_", base_name)) {
-                let suffix = &mangled_name[base_name.len() + 1..]; // +1 for underscore
-                let type_args = self.parse_mangled_type_args(suffix);
-                
-                if type_args.len() == def.generics.len() {
-                    for (param, arg) in def.generics.iter().zip(type_args.iter()) {
-                        subst.insert(param.clone(), arg.clone());
-                    }
-                    return subst;
+        // Try generic structs
+        if let Some(def) = self.generic_structs.get(base) {
+            let type_args = self.parse_mangled_type_args_from_strs(&arg_strs);
+            if type_args.len() == def.generics.len() {
+                for (param, arg) in def.generics.iter().zip(type_args.iter()) {
+                    subst.insert(param.clone(), arg.clone());
                 }
+                return subst;
             }
         }
         
-        // Also check generic enums
-        for (base_name, def) in &self.generic_enums {
-            if mangled_name.starts_with(&format!("{}_", base_name)) {
-                let suffix = &mangled_name[base_name.len() + 1..];
-                let type_args = self.parse_mangled_type_args(suffix);
-                
-                if type_args.len() == def.generics.len() {
-                    for (param, arg) in def.generics.iter().zip(type_args.iter()) {
-                        subst.insert(param.clone(), arg.clone());
-                    }
-                    return subst;
+        // Try generic enums
+        if let Some(def) = self.generic_enums.get(base) {
+            let type_args = self.parse_mangled_type_args_from_strs(&arg_strs);
+            if type_args.len() == def.generics.len() {
+                for (param, arg) in def.generics.iter().zip(type_args.iter()) {
+                    subst.insert(param.clone(), arg.clone());
                 }
+                return subst;
             }
         }
         
         subst
     }
     
-    /// Parse mangled type arguments from a suffix like "i64_i64" -> [I64, I64]
-    fn parse_mangled_type_args(&self, suffix: &str) -> Vec<Type> {
+    /// Parse mangled type arguments from extracted bracket strings
+    /// e.g. ["i64", "String"] -> [I64, String]
+    fn parse_mangled_type_args_from_strs(&self, arg_strs: &[&str]) -> Vec<Type> {
         let mut args = Vec::new();
-        for part in suffix.split('_') {
-            let ty = match part {
+        for part in arg_strs {
+            let ty = match *part {
                 "i64" => Type::I64,
                 "f32" => Type::F32,
                 "f64" => Type::F64,
@@ -1477,13 +1481,13 @@ impl Monomorphizer {
                 "string" => Type::String("String".to_string()),
                 "char" => Type::Char("Char".to_string()),
                 other => {
-                    // Check if it's a known struct/enum
-                    if self.generic_structs.contains_key(other) {
+                    // Check if it's a known struct/enum (may itself be mangled)
+                    let base = mangle_base_name(other);
+                    if self.generic_structs.contains_key(base) {
                         Type::Struct(other.to_string(), vec![])
-                    } else if self.generic_enums.contains_key(other) {
+                    } else if self.generic_enums.contains_key(base) {
                         Type::Enum(other.to_string(), vec![])
                     } else {
-                        // Default to Struct for unknown types
                         Type::Struct(other.to_string(), vec![])
                     }
                 }
