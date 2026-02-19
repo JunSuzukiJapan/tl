@@ -184,6 +184,19 @@ impl<'ctx> CodeGenerator<'ctx> {
         enum_name: &str,
         generic_args: &[Type],
     ) -> Result<String, String> {
+        // Early return: if enum_name is already a mangled name that exists in enum_types, done.
+        if self.enum_types.contains_key(enum_name) {
+            return Ok(enum_name.to_string());
+        }
+        // Also check if we can mangle from base + args and find it
+        if !generic_args.is_empty() {
+            let base = mangle_base_name(enum_name);
+            let candidate = self.mangle_type_name(base, generic_args);
+            if self.enum_types.contains_key(&candidate) {
+                return Ok(candidate);
+            }
+        }
+
         // 1. Check if the enum exists in generic registry
         // First, try direct lookup
         let enum_def = if let Some(def) = self.enum_defs.get(enum_name) {
@@ -221,8 +234,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                  enum_name, enum_def.generics.len(), generic_args.len()));
         }
 
-        // 3. Mangle
-        let mangled_name = self.mangle_type_name(enum_name, generic_args);
+        // 3. Mangle - use base name to avoid double-mangling (e.g. Entry[i64][i64] -> Entry[i64][i64][i64][i64])
+        let base = mangle_base_name(enum_name);
+        let mangled_name = self.mangle_type_name(base, generic_args);
         
         // 4. Check if already instantiated
         if self.enum_types.contains_key(&mangled_name) {
@@ -370,9 +384,6 @@ impl<'ctx> CodeGenerator<'ctx> {
     /// Example: `Vec` + `[i64]` -> `Vec[i64]`
     pub fn mangle_type_name(&self, base_name: &str, type_args: &[Type]) -> String {
         if type_args.is_empty() {
-            base_name.to_string()
-        } else if mangle_has_args(base_name) {
-            // Already mangled: don't double-mangle
             base_name.to_string()
         } else {
             let args_str: Vec<String> = type_args.iter().map(|t| self.type_to_suffix(t)).collect();

@@ -6318,7 +6318,9 @@ impl<'ctx> CodeGenerator<'ctx> {
              let mangled_name = if generics.is_empty() {
                  struct_name.to_string()
              } else {
-                 self.mangle_type_name(struct_name, generics)
+                 // Use base name to avoid double-mangling (e.g. Entry[i64][i64] -> Entry[i64][i64][i64][i64])
+                 let base = mangle_base_name(struct_name);
+                 self.mangle_type_name(base, generics)
              };
              
              // Simple name lookup (as done in compile_struct_init)
