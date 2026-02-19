@@ -1,6 +1,6 @@
 [package]
 name = "tl_cpu"
-version = "0.1.0"
+version = "0.3.6"
 edition = "2021"
 license = "MIT"
 description = "CPU tensor backend for TL"
@@ -8,5 +8,5 @@ repository = "https://github.com/JunSuzukiJapan/tl"
 authors = ["Jun Suzuki"]
 
 [dependencies]
-tl_backend = { path = "../tl_backend", version = "0.1.0" }
+tl_backend = { path = "../tl_backend", version = "0.3.6" }
 rand = "0.8"

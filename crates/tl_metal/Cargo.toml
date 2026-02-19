@@ -1,6 +1,6 @@
 [package]
 name = "tl_metal"
-version = "0.1.0"
+version = "0.3.6"
 edition = "2021"
 description = "Metal GPU tensor library for TL"
 license = "MIT"
@@ -12,7 +12,7 @@ metal = "0.29"
 objc = "0.2"
 block = "0.1"
 rand = "0.8"
-tl_backend = { path = "../tl_backend", version = "0.1.0" }
+tl_backend = { path = "../tl_backend", version = "0.3.6" }
 
 # MPS (Metal Performance Shaders) support
 objc2 = "0.5"
