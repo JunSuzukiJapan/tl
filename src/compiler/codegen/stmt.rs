@@ -1831,11 +1831,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                           let inner_ty = self.normalize_type(&inner_ty);
                           if let Type::Tensor(_, _) = inner_ty {
                                return self.emit_tensor_set(inner_val, indices, val_ir, val_ty);
-                          } else if let Type::Struct(name, generics) = &inner_ty {
-                               // Assuming 'set' method
-                               return self.emit_struct_set(inner_val, name, &generics, indices, val_ir);
-                          } else {
-                               return Err(format!("Invalid assignment target inner type: {:?}", inner_ty));
+                           } else if let Type::Struct(name, generics) = &inner_ty {
+                                // Assuming 'set' method
+                                return self.emit_struct_set(inner_val, name, &generics, indices, val_ir);
+                           } else if let Type::UnifiedType { base_name, type_args, mangled_name, .. } = &inner_ty {
+                                // UnifiedType: use mangled_name for method lookup, base_name + type_args for monomorphize
+                                return self.emit_struct_set(inner_val, &mangled_name, &type_args, indices, val_ir);
+                           } else {
+                                return Err(format!("Invalid assignment target inner type: {:?}", inner_ty));
                           }
                      }
                      return Err(format!("Invalid assignment target (not IndexAccess): {:?}", lhs));

@@ -896,6 +896,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let normalized_args: Vec<Type> = args.iter().map(|a| self.normalize_type(a)).collect();
                 Type::Enum(name.clone(), normalized_args)
             }
+            Type::UnifiedType { base_name, type_args, mangled_name, is_enum } => {
+                // Flatten UnifiedType to Struct/Enum for legacy pattern matching compatibility.
+                // Use mangled_name as the name and preserve type_args.
+                let normalized_args: Vec<Type> = type_args.iter().map(|a| self.normalize_type(a)).collect();
+                if *is_enum {
+                    Type::Enum(mangled_name.clone(), normalized_args)
+                } else {
+                    Type::Struct(mangled_name.clone(), normalized_args)
+                }
+            }
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.normalize_type(inner)), *rank),
             Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.normalize_type(t)).collect()),
             Type::Ptr(inner) => Type::Ptr(Box::new(self.normalize_type(inner))),

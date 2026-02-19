@@ -166,6 +166,69 @@ impl Type {
             Type::Array(inner, _) => format!("Array_{}", inner.get_base_name()),
         }
     }
+
+    /// Returns (name, args) for struct-like types (Struct or UnifiedType with is_enum=false).
+    /// In codegen, prefer this over direct pattern matching to handle both representations.
+    pub fn as_struct_like(&self) -> Option<(&str, &[Type])> {
+        match self {
+            Type::Struct(name, args) => Some((name, args)),
+            Type::UnifiedType { base_name, type_args, is_enum: false, .. } => Some((base_name, type_args)),
+            _ => None,
+        }
+    }
+
+    /// Returns (name, args) for enum-like types (Enum or UnifiedType with is_enum=true).
+    pub fn as_enum_like(&self) -> Option<(&str, &[Type])> {
+        match self {
+            Type::Enum(name, args) => Some((name, args)),
+            Type::UnifiedType { base_name, type_args, is_enum: true, .. } => Some((base_name, type_args)),
+            _ => None,
+        }
+    }
+
+    /// Returns (name, args) for any named type (Struct, Enum, or UnifiedType).
+    pub fn as_named_type(&self) -> Option<(&str, &[Type])> {
+        match self {
+            Type::Struct(name, args) | Type::Enum(name, args) => Some((name, args)),
+            Type::UnifiedType { base_name, type_args, .. } => Some((base_name, type_args)),
+            _ => None,
+        }
+    }
+
+    /// Returns the mangled name for codegen use.
+    /// For UnifiedType, returns the stored mangled_name.
+    /// For Struct/Enum, returns the name as-is (which may be a mangled name or base name).
+    pub fn mangled_name_or_name(&self) -> Option<&str> {
+        match self {
+            Type::Struct(name, _) | Type::Enum(name, _) => Some(name),
+            Type::UnifiedType { mangled_name, .. } => Some(mangled_name),
+            _ => None,
+        }
+    }
+
+    /// Returns the effective name for codegen (mangled for UnifiedType, as-is for Struct/Enum).
+    /// This is the name used for LLVM IR symbol generation and struct_defs lookup.
+    pub fn codegen_name(&self) -> Option<String> {
+        match self {
+            Type::Struct(name, args) if !args.is_empty() => {
+                // If has args, the codegen name would need mangling (caller should handle)
+                Some(name.clone())
+            }
+            Type::Struct(name, _) | Type::Enum(name, _) => Some(name.clone()),
+            Type::UnifiedType { mangled_name, .. } => Some(mangled_name.clone()),
+            _ => None,
+        }
+    }
+
+    /// Check if this type is an enum (either Type::Enum or Type::UnifiedType with is_enum=true).
+    pub fn is_enum_type(&self) -> bool {
+        matches!(self, Type::Enum(_, _) | Type::UnifiedType { is_enum: true, .. })
+    }
+
+    /// Check if this type is a struct (either Type::Struct or Type::UnifiedType with is_enum=false).
+    pub fn is_struct_type(&self) -> bool {
+        matches!(self, Type::Struct(_, _) | Type::UnifiedType { is_enum: false, .. })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
