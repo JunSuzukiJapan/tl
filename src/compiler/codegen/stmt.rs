@@ -1834,7 +1834,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                            } else if let Type::Struct(name, generics) = &inner_ty {
                                 // Assuming 'set' method
                                 return self.emit_struct_set(inner_val, name, &generics, indices, val_ir);
-                           } else if let Type::UnifiedType { base_name, type_args, mangled_name, .. } = &inner_ty {
+                           } else if let Type::UnifiedType { base_name: _, type_args, mangled_name, .. } = &inner_ty {
                                 // UnifiedType: use mangled_name for method lookup, base_name + type_args for monomorphize
                                 return self.emit_struct_set(inner_val, &mangled_name, &type_args, indices, val_ir);
                            } else {

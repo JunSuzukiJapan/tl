@@ -649,11 +649,13 @@ impl<'ctx> CodeGenerator<'ctx> {
     
     /// Check if a list of type arguments contains unresolved generic parameters.
     /// Generic parameters appear as Struct("K", []) or Struct("V", []) etc.
+    #[allow(dead_code)]
     fn contains_unresolved_generics(args: &[Type]) -> bool {
         args.iter().any(|arg| Self::is_unresolved_generic(arg))
     }
     
     /// Check if a single type is (or contains) an unresolved generic parameter.
+    #[allow(dead_code)]
     fn is_unresolved_generic(ty: &Type) -> bool {
         match ty {
             Type::Struct(name, inner_args) => {
@@ -819,7 +821,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let normalized_args: Vec<Type> = args.iter().map(|a| self.normalize_type(a)).collect();
                 Type::Enum(name.clone(), normalized_args)
             }
-            Type::UnifiedType { base_name, type_args, mangled_name, is_enum } => {
+            Type::UnifiedType { base_name: _, type_args, mangled_name, is_enum } => {
                 // Flatten UnifiedType to Struct/Enum for legacy pattern matching compatibility.
                 // Use mangled_name as the name and preserve type_args.
                 let normalized_args: Vec<Type> = type_args.iter().map(|a| self.normalize_type(a)).collect();

@@ -2,7 +2,7 @@
 //!
 //! ジェネリック型の特殊化を追跡し、必要なメソッドを生成するためのレジストリ。
 
-use crate::compiler::ast::{Type, MANGLE_OPEN, MANGLE_CLOSE, mangle_wrap_args};
+use crate::compiler::ast::{Type, mangle_wrap_args};
 use std::collections::HashSet;
 
 /// 特殊化された型を追跡するレジストリ
