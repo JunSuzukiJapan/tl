@@ -5,7 +5,6 @@
 //! および互換性のためのスタブを残す。
 
 use crate::OpaqueTensor;
-use tl_metal::{MetalTensor, DType};
 
 // ========== IO / System ==========
 
@@ -14,8 +13,7 @@ fn create_fallback_tensor(is_cpu: bool) -> *mut OpaqueTensor {
         let t = tl_cpu::CpuTensor::from_slice(&[0.0f32], &[1], tl_cpu::DType::F32);
         Box::into_raw(Box::new(t)) as *mut OpaqueTensor
     } else {
-        let t = tl_metal::MetalTensor::zeros(&[1], tl_metal::DType::F32);
-        crate::make_metal_tensor(t)
+        crate::device_ffi::create_runtime_zeros(&[1]) as *mut OpaqueTensor
     }
 }
 
@@ -36,7 +34,7 @@ pub extern "C" fn tl_tensor_save(path: *mut super::StringStruct, t: *mut OpaqueT
             (tensor.data_f32().to_vec(), tensor.shape().to_vec())
         } else {
             let tensor = &*t; // OpaqueTensor = MetalTensor
-            (tensor.to_vec(), MetalTensor::shape(tensor).to_vec())
+            (tensor.to_vec(), tensor.shape().to_vec())
         };
 
         let mut bytes = Vec::new();
@@ -106,8 +104,7 @@ pub extern "C" fn tl_tensor_load(path: *mut super::StringStruct) -> *mut OpaqueT
             let t = tl_cpu::CpuTensor::from_slice(&data, &shape, tl_cpu::DType::F32);
             Box::into_raw(Box::new(t)) as *mut OpaqueTensor
         } else {
-            let t = tl_metal::MetalTensor::from_slice(&data, &shape, tl_metal::DType::F32);
-            crate::make_metal_tensor(t)
+            crate::device_ffi::create_runtime_tensor_f32(&data, &shape) as *mut OpaqueTensor
         }
     }
 }
@@ -184,8 +181,7 @@ pub extern "C" fn tl_get_memory_mb() -> f64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_image_load_grayscale(_path: *const i8) -> *mut OpaqueTensor {
     // Stub
-    let t = tl_metal::MetalTensor::zeros(&[1, 1], DType::F32);
-    crate::make_metal_tensor(t)
+    crate::device_ffi::create_runtime_zeros(&[1, 1]) as *mut OpaqueTensor
 }
 
 #[unsafe(no_mangle)]

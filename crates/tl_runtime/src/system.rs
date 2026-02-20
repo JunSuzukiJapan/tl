@@ -237,46 +237,77 @@ pub extern "C" fn tl_qtensor_matmul(
         }
 
         // ========== 融合カーネルパス (Q4_K / Q6_K) ==========
-        // GPU raw buffer キャッシュチェック
-        let gpu_raw_ptr = {
-            let cache_guard = qtensor.gpu_raw_cache.lock().unwrap();
-            *cache_guard
-        };
+        // Metal 固有: mul_mv_q4_k / mul_mv_q6_k カーネル
+        #[cfg(feature = "metal")]
+        {
+            // GPU raw buffer キャッシュチェック
+            let gpu_raw_ptr = {
+                let cache_guard = qtensor.gpu_raw_cache.lock().unwrap();
+                *cache_guard
+            };
 
-        let w_raw_ptr = if let Some(ptr_val) = gpu_raw_ptr {
-            ptr_val as *const tl_metal::MetalTensor
-        } else {
-            let raw_bytes = &qtensor.data;
-            let raw_shape = &[raw_bytes.len()];
-            let gpu_tensor = tl_metal::MetalTensor::from_slice(
-                raw_bytes, raw_shape, tl_metal::DType::U8
-            );
-            let ptr = Box::into_raw(Box::new(gpu_tensor));
+            let w_raw_ptr = if let Some(ptr_val) = gpu_raw_ptr {
+                ptr_val as *const tl_metal::MetalTensor
+            } else {
+                // device_ffi ヘルパーで U8 テンソルを GPU にアップロード
+                let raw_bytes = &qtensor.data;
+                let raw_shape = &[raw_bytes.len()];
+                let ptr = crate::device_ffi::create_runtime_tensor_u8(raw_bytes, raw_shape);
+                {
+                    let mut cache_guard = qtensor.gpu_raw_cache.lock().unwrap();
+                    *cache_guard = Some(ptr as usize);
+                }
+                ptr as *const tl_metal::MetalTensor
+            };
+
+            let input_mt = &*(input as *const tl_metal::MetalTensor);
+            let w_raw_mt = &*w_raw_ptr;
+
+            let result = match qtensor.ggml_type {
+                crate::quantized::GGMLType::Q4_K => input_mt.mul_mv_q4_k(w_raw_mt, n, k),
+                crate::quantized::GGMLType::Q6_K => input_mt.mul_mv_q6_k(w_raw_mt, n, k),
+                _ => unreachable!(),
+            };
+            
+            let result_tensor = match result {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("Error: tl_qtensor_matmul failed: {}", e);
+                    return std::ptr::null_mut();
+                }
+            };
+            
+            return crate::make_tensor(result_tensor);
+        }
+
+        // CUDA / その他: 融合カーネル未実装 → dequantize フォールバック
+        #[cfg(not(feature = "metal"))]
+        {
+            let weight_ptr = match qtensor.dequantize_to_tensor() {
+                Ok(t) => t as *mut std::ffi::c_void,
+                Err(e) => {
+                    eprintln!("Error: tl_qtensor_matmul dequantize failed: {}", e);
+                    return std::ptr::null_mut();
+                }
+            };
             {
-                let mut cache_guard = qtensor.gpu_raw_cache.lock().unwrap();
-                *cache_guard = Some(ptr as usize);
+                let cache_guard = qtensor.cache_transposed.lock().unwrap();
+                if let Some(ptr_val) = *cache_guard {
+                    let transposed = ptr_val as *mut std::ffi::c_void;
+                    return crate::device_ffi::tl_device_tensor_matmul(
+                        input as *mut std::ffi::c_void, transposed
+                    ) as *mut crate::OpaqueTensor;
+                }
             }
-            ptr as *const tl_metal::MetalTensor
-        };
-
-        let input_mt = &*(input as *const tl_metal::MetalTensor);
-        let w_raw_mt = &*w_raw_ptr;
-
-        let result = match qtensor.ggml_type {
-            crate::quantized::GGMLType::Q4_K => input_mt.mul_mv_q4_k(w_raw_mt, n, k),
-            crate::quantized::GGMLType::Q6_K => input_mt.mul_mv_q6_k(w_raw_mt, n, k),
-            _ => unreachable!(),
-        };
-        
-        let result_tensor = match result {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("Error: tl_qtensor_matmul failed: {}", e);
-                return std::ptr::null_mut();
+            let transposed = crate::device_ffi::tl_device_tensor_transpose_2d(weight_ptr);
+            {
+                let mut cache_guard = qtensor.cache_transposed.lock().unwrap();
+                *cache_guard = Some(transposed as usize);
             }
-        };
-        
-        crate::make_metal_tensor(result_tensor)
+            return crate::device_ffi::tl_device_tensor_matmul(
+                input as *mut std::ffi::c_void, transposed
+            ) as *mut crate::OpaqueTensor;
+        }
     }
 }
 
@@ -404,14 +435,7 @@ pub extern "C" fn tl_kv_cache_update(
 #[unsafe(no_mangle)]
 /// @ffi_sig () -> void
 pub extern "C" fn tl_metal_sync() {
-    // デバイスが既に初期化されている場合のみ同期
-    // get_device() を呼ぶと未初期化でもデバイスが作られるため、
-    // try_get_device() で確認してから同期する
-    if let Some(device) = tl_metal::device::try_get_device() {
-        let cmd = device.command_queue().new_command_buffer();
-        cmd.commit();
-        cmd.wait_until_completed();
-    }
+    crate::device_ffi::runtime_gpu_sync();
 }
 
 // tl_register_tensor は memory_ffi.rs で定義済み

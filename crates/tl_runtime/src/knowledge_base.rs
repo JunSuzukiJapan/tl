@@ -8,7 +8,7 @@ use crate::OpaqueTensor;
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::sync::Mutex;
-use tl_metal::{DType, MetalTensor};
+// Metal 直接参照を排除: 必要な場合は device_ffi ヘルパーを使用
 
 // ========== データ型 ==========
 
@@ -874,8 +874,7 @@ pub extern "C" fn tl_query(
             let t = tl_cpu::CpuTensor::from_slice(data, shape, tl_cpu::DType::F32);
             Box::into_raw(Box::new(t)) as *mut OpaqueTensor
         } else {
-            let t = MetalTensor::from_slice(data, shape, DType::F32);
-            crate::make_metal_tensor(t)
+            crate::device_ffi::create_runtime_tensor_f32(data, shape) as *mut OpaqueTensor
         }
     };
 

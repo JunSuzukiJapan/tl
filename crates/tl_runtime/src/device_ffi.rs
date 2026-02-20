@@ -5,7 +5,10 @@
 
 use tl_backend::{IDevice, BackendResult};
 use tl_cpu::device_impl::CpuDevice;
+#[cfg(feature = "metal")]
 use tl_metal::device_impl::MetalDeviceImpl;
+#[cfg(feature = "cuda")]
+use tl_cuda::device_impl::CudaDeviceImpl;
 use std::ffi::c_void;
 use std::sync::OnceLock;
 
@@ -43,7 +46,12 @@ where
     let device: &dyn IDevice = if is_cpu() {
         &CpuDevice
     } else {
-        &MetalDeviceImpl
+        #[cfg(feature = "metal")]
+        { &MetalDeviceImpl }
+        #[cfg(feature = "cuda")]
+        { &CudaDeviceImpl }
+        #[cfg(not(any(feature = "metal", feature = "cuda")))]
+        { &CpuDevice }
     };
 
     match f(device) {
@@ -416,4 +424,103 @@ pub extern "C" fn tl_device_tensor_shape_vec(a: *mut c_void) -> *mut c_void {
 
     let boxed = Box::new(jit_vec);
     Box::into_raw(boxed) as *mut c_void
+}
+
+// ========== ランタイムヘルパー（GPU 直接参照を集約） ==========
+
+/// テンソル作成ヘルパー: CPU/GPU 両対応
+/// 各モジュールがバックエンドを直接呼ぶ代わりにこの関数を使う
+pub fn create_runtime_tensor_f32(data: &[f32], shape: &[usize]) -> *mut c_void {
+    if is_cpu() {
+        tl_cpu::ffi::tl_cpu_tensor_new(data.as_ptr(), shape.len(), shape.as_ptr()) as *mut c_void
+    } else {
+        #[cfg(feature = "metal")]
+        { tl_metal::ffi_ops::tl_metal_new(data.as_ptr(), shape.len(), shape.as_ptr()) as *mut c_void }
+        #[cfg(feature = "cuda")]
+        { tl_cuda::ffi_ops::tl_cuda_new(data.as_ptr(), shape.len(), shape.as_ptr()) as *mut c_void }
+        #[cfg(not(any(feature = "metal", feature = "cuda")))]
+        { tl_cpu::ffi::tl_cpu_tensor_new(data.as_ptr(), shape.len(), shape.as_ptr()) as *mut c_void }
+    }
+}
+
+/// U8 テンソル作成ヘルパー
+pub fn create_runtime_tensor_u8(data: &[u8], shape: &[usize]) -> *mut c_void {
+    if is_cpu() {
+        // CPU: u8 データを f32 に変換して作成
+        let f32_data: Vec<f32> = data.iter().map(|&b| b as f32).collect();
+        tl_cpu::ffi::tl_cpu_tensor_new(f32_data.as_ptr(), shape.len(), shape.as_ptr()) as *mut c_void
+    } else {
+        #[cfg(feature = "metal")]
+        {
+            let tensor = tl_metal::MetalTensor::from_slice(data, shape, tl_metal::DType::U8);
+            crate::make_tensor(tensor) as *mut c_void
+        }
+        #[cfg(feature = "cuda")]
+        {
+            let tensor = tl_cuda::CudaTensor::from_slice(data, shape, tl_cuda::DType::U8);
+            crate::make_tensor(tensor) as *mut c_void
+        }
+        #[cfg(not(any(feature = "metal", feature = "cuda")))]
+        {
+            let f32_data: Vec<f32> = data.iter().map(|&b| b as f32).collect();
+            tl_cpu::ffi::tl_cpu_tensor_new(f32_data.as_ptr(), shape.len(), shape.as_ptr()) as *mut c_void
+        }
+    }
+}
+
+/// ゼロテンソル作成ヘルパー
+pub fn create_runtime_zeros(shape: &[usize]) -> *mut c_void {
+    if is_cpu() {
+        let data = vec![0.0f32; shape.iter().product()];
+        tl_cpu::ffi::tl_cpu_tensor_new(data.as_ptr(), shape.len(), shape.as_ptr()) as *mut c_void
+    } else {
+        #[cfg(feature = "metal")]
+        {
+            let tensor = tl_metal::MetalTensor::zeros(shape, tl_metal::DType::F32);
+            crate::make_tensor(tensor) as *mut c_void
+        }
+        #[cfg(feature = "cuda")]
+        {
+            let tensor = tl_cuda::CudaTensor::zeros(shape, tl_cuda::DType::F32);
+            crate::make_tensor(tensor) as *mut c_void
+        }
+        #[cfg(not(any(feature = "metal", feature = "cuda")))]
+        {
+            let data = vec![0.0f32; shape.iter().product()];
+            tl_cpu::ffi::tl_cpu_tensor_new(data.as_ptr(), shape.len(), shape.as_ptr()) as *mut c_void
+        }
+    }
+}
+
+/// テンソル解放ヘルパー: CPU/GPU 両対応
+pub fn release_runtime_tensor(ptr: *mut c_void) {
+    if ptr.is_null() { return; }
+    if is_cpu() {
+        unsafe { let _ = Box::from_raw(ptr as *mut tl_cpu::CpuTensor); }
+    } else {
+        #[cfg(feature = "metal")]
+        { tl_metal::ffi::tl_metal_release(ptr as *mut tl_metal::MetalTensor); }
+        #[cfg(feature = "cuda")]
+        { tl_cuda::ffi::tl_cuda_release(ptr as *mut tl_cuda::CudaTensor); }
+        #[cfg(not(any(feature = "metal", feature = "cuda")))]
+        { unsafe { let _ = Box::from_raw(ptr as *mut tl_cpu::CpuTensor); } }
+    }
+}
+
+/// GPU Sync ヘルパー
+pub fn runtime_gpu_sync() {
+    if !is_cpu() {
+        #[cfg(feature = "metal")]
+        {
+            if let Some(device) = tl_metal::device::try_get_device() {
+                let cmd = device.command_queue().new_command_buffer();
+                cmd.commit();
+                cmd.wait_until_completed();
+            }
+        }
+        #[cfg(feature = "cuda")]
+        {
+            // TODO: CUDA 同期 (cudaDeviceSynchronize)
+        }
+    }
 }

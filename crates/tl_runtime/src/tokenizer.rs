@@ -57,12 +57,7 @@ pub extern "C" fn tl_tokenizer_encode(
             Ok(encoding) => {
                 let ids: Vec<f32> = encoding.get_ids().iter().map(|&id| id as f32).collect();
                 let shape = vec![ids.len()];
-                let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
-                if is_cpu {
-                    tl_cpu::ffi::tl_cpu_tensor_new(ids.as_ptr(), shape.len(), shape.as_ptr()) as *mut crate::OpaqueTensor
-                } else {
-                    tl_metal::ffi_ops::tl_metal_new(ids.as_ptr(), shape.len(), shape.as_ptr())
-                }
+                crate::device_ffi::create_runtime_tensor_f32(&ids, &shape) as *mut crate::OpaqueTensor
             }
             Err(e) => {
                 eprintln!("Tokenizer encode error: {}", e);
@@ -204,11 +199,6 @@ pub extern "C" fn tl_tokenizer_encode_chat(
         // f32 テンソルとして返す
         let f32_ids: Vec<f32> = ids.iter().map(|&id| id as f32).collect();
         let shape = vec![f32_ids.len()];
-        let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
-        if is_cpu {
-            tl_cpu::ffi::tl_cpu_tensor_new(f32_ids.as_ptr(), shape.len(), shape.as_ptr()) as *mut crate::OpaqueTensor
-        } else {
-            tl_metal::ffi_ops::tl_metal_new(f32_ids.as_ptr(), shape.len(), shape.as_ptr())
-        }
+        crate::device_ffi::create_runtime_tensor_f32(&f32_ids, &shape) as *mut crate::OpaqueTensor
     }
 }

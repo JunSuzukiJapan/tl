@@ -42,7 +42,7 @@ unsafe fn extract_tensor_data(tensor: *mut OpaqueTensor) -> Option<(Vec<f32>, Ve
         unsafe {
             let metal = &*tensor;
             let data: Vec<f32> = metal.to_vec();
-            let shape = tl_metal::MetalTensor::shape(metal).to_vec();
+            let shape = metal.shape().to_vec();
             Some((data, shape, 0)) // F32
         }
     }
@@ -55,8 +55,7 @@ fn create_tensor_from_entry(entry: &TensorEntry) -> *mut OpaqueTensor {
         let cpu = tl_cpu::CpuTensor::from_slice(&entry.data_f32, &entry.shape, dtype);
         Box::into_raw(Box::new(cpu)) as *mut OpaqueTensor
     } else {
-        let metal = tl_metal::MetalTensor::from_slice(&entry.data_f32, &entry.shape, tl_metal::DType::F32);
-        crate::make_metal_tensor(metal)
+        crate::device_ffi::create_runtime_tensor_f32(&entry.data_f32, &entry.shape) as *mut OpaqueTensor
     }
 }
 

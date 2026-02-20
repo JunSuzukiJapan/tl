@@ -3,10 +3,8 @@
 //! tensor_ops_ext と system からの re-export でコンパイラの互換性を維持。
 
 use crate::OpaqueTensor;
-use tl_metal::{MetalTensor, DType};
 
-// tl_metal::ffi_ops から直接使用
-use tl_metal::ffi_ops::tl_metal_cat;
+// device_ffi 経由で CPU/GPU 両対応
 
 // system からの kv_cache 関数を re-export
 pub use crate::system::{
@@ -27,14 +25,18 @@ pub use crate::tokenizer::{
 /// 2 テンソル連結（dim=0）
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_cat2(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    tl_metal_cat(a, b, 0)
+    crate::device_ffi::tl_device_tensor_cat(
+        a as *mut std::ffi::c_void, b as *mut std::ffi::c_void, 0
+    ) as *mut OpaqueTensor
 }
 
 /// @ffi_sig (Tensor*, Tensor*, i64) -> Tensor*
 /// 4D テンソル連結
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_cat_4d(a: *mut OpaqueTensor, b: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
-    tl_metal_cat(a, b, dim)
+    crate::device_ffi::tl_device_tensor_cat(
+        a as *mut std::ffi::c_void, b as *mut std::ffi::c_void, dim
+    ) as *mut OpaqueTensor
 }
 
 
@@ -56,8 +58,7 @@ pub extern "C" fn tl_rope_cos_cache_new(
         }
     }
     let shape = vec![seq_len as usize, (head_dim / 2) as usize];
-    let result = MetalTensor::from_slice(&cos_data, &shape, DType::F32);
-    crate::make_metal_tensor(result)
+    crate::device_ffi::create_runtime_tensor_f32(&cos_data, &shape) as *mut OpaqueTensor
 }
 
 /// @ffi_sig (i64, i64, f64) -> Tensor*
@@ -76,8 +77,7 @@ pub extern "C" fn tl_rope_sin_cache_new(
         }
     }
     let shape = vec![seq_len as usize, (head_dim / 2) as usize];
-    let result = MetalTensor::from_slice(&sin_data, &shape, DType::F32);
-    crate::make_metal_tensor(result)
+    crate::device_ffi::create_runtime_tensor_f32(&sin_data, &shape) as *mut OpaqueTensor
 }
 
 /// @ffi_sig (Tensor*, f64) -> Tensor*
@@ -92,8 +92,7 @@ pub extern "C" fn tl_tensor_rms_norm_llm(t: *mut OpaqueTensor, eps: f64) -> *mut
     let mean_sq: f32 = data.iter().map(|&x| x * x).sum::<f32>() / data.len() as f32;
     let rms = (mean_sq + eps as f32).sqrt();
     let result_data: Vec<f32> = data.iter().map(|&x| x / rms).collect();
-    let result = MetalTensor::from_slice(&result_data, tensor.shape(), DType::F32);
-    crate::make_metal_tensor(result)
+    crate::device_ffi::create_runtime_tensor_f32(&result_data, tensor.shape()) as *mut OpaqueTensor
 }
 
 // tl_gguf_load と tl_tokenizer_new_from_gguf は system.rs で定義

@@ -4184,6 +4184,7 @@ dependencies = [
  "safetensors",
  "tl_backend",
  "tl_cpu",
+ "tl_cuda",
  "tl_metal",
  "tokenizers 0.19.1",
  "tokio",

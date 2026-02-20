@@ -51,10 +51,18 @@ pub use memory_ffi::{
     tl_tensor_promote, tl_tensor_register,
 };
 
-// Metal FFI: ffi_ops の関数は device_impl.rs 経由で IDevice から呼ばれる
-// 直接 re-export は不要
+// GPU FFI: device_ffi 経由で呼び出すため、直接 re-export は最小限に留める
+// 互換性のため残すが、新コードでは device_ffi ヘルパーを使うこと
+#[cfg(feature = "metal")]
 pub use tl_metal::ffi::{
     tl_metal_clone, tl_metal_data, tl_metal_numel, tl_metal_release,
+};
+#[cfg(feature = "cuda")]
+pub use tl_cuda::ffi::{
+    tl_cuda_clone as tl_metal_clone,
+    tl_cuda_data as tl_metal_data,
+    tl_cuda_numel as tl_metal_numel,
+    tl_cuda_release as tl_metal_release,
 };
 
 // ========== TensorMap Exports ==========
@@ -168,11 +176,18 @@ pub fn force_link() {
 // use std::ffi::c_void;
 use std::sync::OnceLock;
 
-// Metal バックエンド
+// ========== バックエンド切替: cfg feature ==========
+
+#[cfg(feature = "metal")]
 use tl_metal::MetalTensor;
 
-/// OpaqueTensor は MetalTensor のエイリアス
-pub type OpaqueTensor = MetalTensor;
+/// OpaqueTensor はバックエンドのテンソル型のエイリアス
+#[cfg(feature = "metal")]
+pub type OpaqueTensor = tl_metal::MetalTensor;
+#[cfg(feature = "cuda")]
+pub type OpaqueTensor = tl_cuda::CudaTensor;
+#[cfg(not(any(feature = "metal", feature = "cuda")))]
+pub type OpaqueTensor = tl_cpu::CpuTensor;
 
 // ========== ユーティリティ ==========
 
@@ -187,13 +202,32 @@ fn mem_trace_enabled() -> bool {
     *MEM_TRACE_ENABLED.get_or_init(|| std::env::var("TL_MEM_TRACE").is_ok())
 }
 
-/// MetalTensor を Arc<UnsafeCell> でポインタに変換するヘルパー
-/// tl_metal_release (Arc::from_raw) と対をなす。
-/// 重要: Box::into_raw(Box::new(MetalTensor)) を直接使ってはいけない。
+/// テンソルを Arc<UnsafeCell> でポインタに変換する汎用ヘルパー
+/// release (Arc::from_raw) と対をなす。
+/// 重要: Box::into_raw(Box::new(Tensor)) を直接使ってはいけない。
 /// Box と Arc はメモリレイアウトが異なるため、ヒープ破損を引き起こす。
-pub fn make_metal_tensor(t: MetalTensor) -> *mut OpaqueTensor {
+#[cfg(feature = "metal")]
+pub fn make_tensor(t: MetalTensor) -> *mut OpaqueTensor {
     let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(t));
     std::sync::Arc::into_raw(arc) as *mut OpaqueTensor
+}
+
+#[cfg(feature = "cuda")]
+pub fn make_tensor(t: tl_cuda::CudaTensor) -> *mut OpaqueTensor {
+    // CUDA: Box::into_raw で OpaqueTensor ポインタに変換
+    Box::into_raw(Box::new(t))
+}
+
+#[cfg(not(any(feature = "metal", feature = "cuda")))]
+pub fn make_tensor(t: tl_cpu::CpuTensor) -> *mut OpaqueTensor {
+    Box::into_raw(Box::new(t))
+}
+
+/// 互換性のためのエイリアス
+#[cfg(feature = "metal")]
+#[inline(always)]
+pub fn make_metal_tensor(t: MetalTensor) -> *mut OpaqueTensor {
+    make_tensor(t)
 }
 
 
@@ -223,13 +257,18 @@ fn return_ptr_or_null(
 #[unsafe(no_mangle)]
 /// @ffi_sig () -> void
 pub extern "C" fn tl_runtime_init() {
+    #[cfg(feature = "metal")]
     println!("Runtime device initialized: Metal");
+    #[cfg(feature = "cuda")]
+    println!("Runtime device initialized: CUDA");
+    #[cfg(not(any(feature = "metal", feature = "cuda")))]
+    println!("Runtime device initialized: CPU-only");
 }
 
 /// ランタイムシャットダウン
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_runtime_shutdown() {
-    // Metal リソースのクリーンアップ
+    // GPU リソースのクリーンアップ
 }
 
 /// エラーハンドリング

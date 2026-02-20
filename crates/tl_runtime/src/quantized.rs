@@ -51,19 +51,19 @@ impl Drop for QTensor {
                             if is_cpu {
                                 let _ = Box::from_raw(ptr_val as *mut tl_cpu::CpuTensor);
                             } else {
-                                tl_metal::ffi::tl_metal_release(ptr_val as *mut tl_metal::MetalTensor);
+                                crate::device_ffi::release_runtime_tensor(ptr_val as *mut std::ffi::c_void);
                             }
                         }
                     }
                 }
             }
         }
-        // Free GPU raw buffer cache (MetalTensor holding u8 data)
+        // Free GPU raw buffer cache
         if !is_cpu {
             if let Ok(mut cache_guard) = self.gpu_raw_cache.lock() {
                 if let Some(ptr_val) = cache_guard.take() {
                     if ptr_val != 0 {
-                        tl_metal::ffi::tl_metal_release(ptr_val as *mut tl_metal::MetalTensor);
+                        crate::device_ffi::release_runtime_tensor(ptr_val as *mut std::ffi::c_void);
                     }
                 }
             }
@@ -153,8 +153,7 @@ impl QTensor {
         
         // キャッシュミス: CPU dequantize → GPU 転送 → キャッシュ
         let f32_data = self.dequantize_to_f32()?;
-        let out_tensor = tl_metal::MetalTensor::from_slice(&f32_data, &self.shape, tl_metal::DType::F32);
-        let ptr = crate::make_metal_tensor(out_tensor);
+        let ptr = crate::device_ffi::create_runtime_tensor_f32(&f32_data, &self.shape);
         *cache_guard = Some(ptr as usize);
         Ok(ptr as *mut _)
     }
