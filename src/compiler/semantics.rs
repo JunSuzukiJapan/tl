@@ -2370,14 +2370,58 @@ impl SemanticAnalyzer {
                      Type::Ptr(e) => (e.clone(), 1), 
                      // Allow Struct types (like Vec<T>) to use index assignment
                      // The element type is the first generic parameter
-                     Type::Struct(_, generics) if !generics.is_empty() => {
-                         (Box::new(generics[0].clone()), 1)
-                     }
-                     Type::Struct(name, _) => {
-                         return self.err(SemanticError::Generic(format!(
-                             "Struct {} does not support index assignment (no generic element type)", name
-                         )), None)
-                     }
+                      Type::Struct(_, generics) if !generics.is_empty() => {
+                          // index_mut / set / index メソッドの返り値型から要素型を推定
+                          let t_name = inner_type.get_base_name();
+                          let elem_ty = if let Some(methods) = self.methods.get(&t_name) {
+                              if let Some(m) = methods.get("index_mut")
+                                  .or_else(|| methods.get("set"))
+                                  .or_else(|| methods.get("index")) {
+                                  // set は Void を返すことが多いので、その場合はジェネリクス第1引数を使う
+                                  if m.return_type == Type::Void {
+                                      Box::new(generics[0].clone())
+                                  } else {
+                                      Box::new(m.return_type.clone())
+                                  }
+                              } else {
+                                  Box::new(generics[0].clone())
+                              }
+                          } else {
+                              Box::new(generics[0].clone())
+                          };
+                          (elem_ty, 1)
+                      }
+                      Type::Struct(name, _) => {
+                          // 非ジェネリック構造体でも index/set/index_mut メソッドがあればOK
+                          let t_name = inner_type.get_base_name();
+                          let elem_ty = if let Some(methods) = self.methods.get(&t_name) {
+                              if let Some(m) = methods.get("index_mut")
+                                  .or_else(|| methods.get("index"))
+                                  .or_else(|| methods.get("set")) {
+                                  if m.return_type == Type::Void {
+                                      // set は Void を返すため、引数の最後の型を要素型として使う
+                                      if m.args.len() >= 2 {
+                                          Box::new(m.args.last().unwrap().1.clone())
+                                      } else {
+                                          return self.err(SemanticError::Generic(format!(
+                                              "Struct {} does not support index assignment (no element type)", name
+                                          )), None)
+                                      }
+                                  } else {
+                                      Box::new(m.return_type.clone())
+                                  }
+                              } else {
+                                  return self.err(SemanticError::Generic(format!(
+                                      "Struct {} does not support index assignment (no index/set method)", name
+                                  )), None)
+                              }
+                          } else {
+                              return self.err(SemanticError::Generic(format!(
+                                  "Struct {} does not support index assignment (no methods found)", name
+                              )), None)
+                          };
+                          (elem_ty, 1)
+                      }
                      Type::Array(e, _size) => (e.clone(), 1),
                      _ => return self.err(SemanticError::Generic("Indexing non-tensor/ptr in assignment".into()), None)
                  };
@@ -4884,22 +4928,24 @@ impl SemanticAnalyzer {
                          // Let's check `get` signature.
                          // Resolving method...
                          let t_name = target_type.get_base_name();
+                         // index メソッドを優先し、なければ get メソッドにフォールバック
                          let method_sig = if let Some(methods) = self.methods.get(&t_name) {
-                             methods.get("get")
+                             methods.get("index").or_else(|| methods.get("get"))
                          } else {
                              None
                          };
                          
                          if let Some(m) = method_sig {
-                              // Verify args
-                              // Expected: get(self, index...)
-                              // m.args should match indices + self(implicit)
-                              // We need to match indices types.
-                              
-                              // Simplified check for now (assuming 1 index usually)
-                              if m.args.len() != indices.len() {
-                                   return self.err(SemanticError::ArgumentCountMismatch { expected: m.args.len(), found: indices.len(), name: format!("{}::get", t_name) }, Some(target.span.clone()));
-                              }
+                               // Verify args
+                               // Expected: index/get(self, index...) - self はカウントに含まない
+                               // m.args のうち "self" を除外した数 == indices の数
+                               let non_self_args = m.args.iter().filter(|(name, _)| name != "self").count();
+                               
+                               // Simplified check for now (assuming 1 index usually)
+                               if non_self_args != indices.len() {
+                                    let method_name = if self.methods.get(&t_name).and_then(|ms| ms.get("index")).is_some() { "index" } else { "get" };
+                                    return self.err(SemanticError::ArgumentCountMismatch { expected: non_self_args, found: indices.len(), name: format!("{}::{}", t_name, method_name) }, Some(target.span.clone()));
+                               }
                               
                               // Check index types
                               // Needs to resolve generic types of `get`?

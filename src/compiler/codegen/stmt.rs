@@ -3592,7 +3592,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     fn emit_struct_set(&mut self, struct_val: inkwell::values::BasicValueEnum<'ctx>, struct_name: &str, generics: &[Type], indices: &[Expr], val: inkwell::values::BasicValueEnum<'ctx>) -> Result<(), String> {
-         // Struct 'set' method support
+         // Struct index assignment: index_mut を優先し、なければ set にフォールバック
          if indices.len() != 1 { return Err("Struct set supports 1 index".into()); }
          let (idx_val, _) = self.compile_expr(&indices[0])?;
          
@@ -3605,20 +3605,41 @@ impl<'ctx> CodeGenerator<'ctx> {
              (struct_name.to_string(), generics.to_vec(), mangled)
          };
          
-         // On-demand monomorphize 'set' method if this is a generic type
+         // resolve_index_mut_method で適切なメソッド名を決定
+         let struct_ty = if generics.is_empty() {
+             Type::Struct(struct_name.to_string(), vec![])
+         } else {
+             Type::Struct(struct_name.to_string(), generics.to_vec())
+         };
+         let method_name = self.resolve_index_mut_method(&struct_ty);
+         
+         // On-demand monomorphize the resolved method if this is a generic type
          if !type_args.is_empty() {
-             let _ = self.monomorphize_method(&base_name, "set", &type_args);
+             let _ = self.monomorphize_method(&base_name, &method_name, &type_args);
          }
          
-         // Look for instance method 'set' on this type
-         // The runtime function name follows pattern: tl_{TypeName}_set
-         let fn_name = format!("tl_{}_set", mangled_name);
+         // Look for instance method on this type
+         // The runtime function name follows pattern: tl_{TypeName}_{method}
+         let fn_name = format!("tl_{}_{}", mangled_name, method_name);
          
          if let Some(set_fn) = self.module.get_function(&fn_name) {
-              // Call set(self, index, item)
+              // Call method(self, index, item)
               self.builder.build_call(set_fn, &[struct_val.into(), idx_val.into(), val.into()], "")
                   .map_err(|e| e.to_string())?;
               return Ok(());
+         }
+         
+         // Fallback: try 'set' method explicitly if we tried index_mut first
+         if method_name != "set" {
+              let set_fn_name = format!("tl_{}_set", mangled_name);
+              if !type_args.is_empty() {
+                  let _ = self.monomorphize_method(&base_name, "set", &type_args);
+              }
+              if let Some(set_fn) = self.module.get_function(&set_fn_name) {
+                   self.builder.build_call(set_fn, &[struct_val.into(), idx_val.into(), val.into()], "")
+                       .map_err(|e| e.to_string())?;
+                   return Ok(());
+              }
          }
          
          // Fallback: try to find method via TypeManager
@@ -3628,7 +3649,7 @@ impl<'ctx> CodeGenerator<'ctx> {
               }
          }
          
-         Err(format!("Struct set method not found for type '{}' (looked for fn '{}', base='{}', type_args={:?})", mangled_name, fn_name, base_name, type_args))
+         Err(format!("Struct set/index_mut method not found for type '{}' (looked for fn '{}', base='{}', type_args={:?})", mangled_name, fn_name, base_name, type_args))
     }
 
     fn build_float_cast_val(&self, val: inkwell::values::BasicValueEnum<'ctx>, from: &Type, to: inkwell::types::FloatType<'ctx>) -> Result<inkwell::values::FloatValue<'ctx>, String> {

@@ -3102,8 +3102,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Ok((res, Type::F32))
                     }
                     Type::Struct(_, _) => {
-                         // Generic Struct Indexing -> Desugar to .get() method call
-                         self.emit_method_call(target, val, val_type, "get", indices)
+                         // Generic Struct Indexing -> index() を優先、なければ get() にフォールバック
+                         let method = self.resolve_index_method(&val_type);
+                         self.emit_method_call(target, val, val_type, &method, indices)
                     }
                     Type::Tensor(inner, _) => {
                         // Prepare indices array
@@ -5961,6 +5962,64 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         let (obj_val, obj_ty) = self.compile_expr(obj)?;
         self.emit_method_call(obj, obj_val, obj_ty, method, args)
+    }
+
+    /// IndexAccess で使うメソッド名を解決する。
+    /// ユーザー定義の `index` メソッドがあれば "index"、なければ "get" を返す。
+    pub(crate) fn resolve_index_method(&self, ty: &Type) -> String {
+        let type_name = ty.get_base_name();
+        let base_name = mangle_base_name(&type_name).to_string();
+
+        // 1. generic_impls にある impl ブロックから index メソッドを探す
+        if let Some(impls) = self.generic_impls.get(&base_name) {
+            for impl_block in impls {
+                for method in &impl_block.methods {
+                    if method.name == "index" {
+                        return "index".to_string();
+                    }
+                }
+            }
+        }
+
+        // 2. 既にモノモーフ化された関数名で探す（tl_{Type}_index）
+        let mangled_fn = format!("tl_{}_index", type_name);
+        if self.module.get_function(&mangled_fn).is_some() {
+            return "index".to_string();
+        }
+        let mangled_fn_lower = format!("tl_{}_index", type_name.to_lowercase());
+        if self.module.get_function(&mangled_fn_lower).is_some() {
+            return "index".to_string();
+        }
+
+        // 3. フォールバック: get メソッド
+        "get".to_string()
+    }
+
+    /// IndexMut の代入 (expr[i] = v) で使うメソッド名を解決する。
+    /// ユーザー定義の `index_mut` メソッドがあれば "index_mut"、なければ "set" を返す。
+    pub(crate) fn resolve_index_mut_method(&self, ty: &Type) -> String {
+        let type_name = ty.get_base_name();
+        let base_name = mangle_base_name(&type_name).to_string();
+
+        // 1. generic_impls から index_mut メソッドを探す
+        if let Some(impls) = self.generic_impls.get(&base_name) {
+            for impl_block in impls {
+                for method in &impl_block.methods {
+                    if method.name == "index_mut" {
+                        return "index_mut".to_string();
+                    }
+                }
+            }
+        }
+
+        // 2. 既にモノモーフ化された関数名で探す
+        let mangled_fn = format!("tl_{}_index_mut", type_name);
+        if self.module.get_function(&mangled_fn).is_some() {
+            return "index_mut".to_string();
+        }
+
+        // 3. フォールバック: set メソッド
+        "set".to_string()
     }
 
     fn emit_method_call(
