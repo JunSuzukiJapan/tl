@@ -524,7 +524,7 @@ impl Monomorphizer {
                                 // Case 1: Expected type matches our enum and has generics
                                 *generics = expected_args.clone();
 
-                            } else if expected_name.starts_with(&format!("{}{}", enum_name, MANGLE_OPEN)) && expected_args.is_empty() {
+                            } else if MANGLER.starts_with_mangled(expected_name, enum_name) && expected_args.is_empty() {
                                 // Case 2: Expected type is already mangled (e.g. Option_i64 or Entry_i64_i64)
                                 // Use the mangled name directly
                                 *enum_name = expected_name.clone();
@@ -743,7 +743,7 @@ impl Monomorphizer {
                                                // Case 2: Already mangled name (e.g. Option_Entry_i64_i64 with args=[])
                                                // In this case, we use the mangled name directly and don't need to infer generics
                                                // since codegen will look up the type by mangled name
-                                               else if n.starts_with(&format!("{}{}", type_name_str, MANGLE_OPEN)) && args.is_empty() {
+                                               else if MANGLER.starts_with_mangled(n, &type_name_str) && args.is_empty() {
                                                    // Signal that we should use the mangled name directly
                                                    // Mark "skip" by using a special sentinel (we'll handle this below)
                                                    inferred_from_expected = Some(Type::Void);
@@ -772,7 +772,7 @@ impl Monomorphizer {
                                        concrete_name = self.request_enum_instantiation(&type_name_str, type_args);
                                    } else if let Some(Type::Enum(n, args)) | Some(Type::Struct(n, args)) = expected_type {
                                        // Fallback 1: If expected type is already concrete (e.g. Option_Entry_i64_i64) matching this generic
-                                       if n.starts_with(&format!("{}{}", type_name_str, MANGLE_OPEN)) {
+                                       if MANGLER.starts_with_mangled(n, &type_name_str) {
                                             resolved_generics = args.clone();
                                             concrete_name = n.clone();
                                        }
@@ -1345,7 +1345,7 @@ impl Monomorphizer {
                     mangle_wrap_args("Tuple", &self.mangle_types_vec(types))
                 }
             }
-            Type::Ptr(inner) => format!("Ptr{}{}{}", MANGLE_OPEN, self.mangle_type(inner), MANGLE_CLOSE),
+            Type::Ptr(inner) => format!("Ptr{}", MANGLER.wrap_single(&self.mangle_type(inner))),
             Type::Array(inner, size) => {
                 let args = vec![self.mangle_type(inner), size.to_string()];
                 mangle_wrap_args("Array", &args)

@@ -16,3 +16,4 @@ pub mod semantics;
 pub mod builtin_loader;
 pub mod shape_analysis; // Phase 2: Static size analysis for Arena
 pub mod lexer;
+pub mod mangler;

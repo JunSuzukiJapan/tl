@@ -1,5 +1,6 @@
 use super::CodeGenerator;
-use crate::compiler::ast::{Type, MANGLE_OPEN, MANGLE_CLOSE, mangle_wrap_args, mangle_base_name, mangle_has_args, mangle_extract_args, parse_mangled_type_strs};
+use crate::compiler::ast::{Type, mangle_wrap_args, mangle_base_name, mangle_has_args, mangle_extract_args, parse_mangled_type_strs};
+use crate::compiler::mangler::MANGLER;
 use crate::compiler::ast_subst::TypeSubstitutor;
 use inkwell::types::{BasicTypeEnum, StructType};
 use inkwell::AddressSpace;
@@ -444,8 +445,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     "unknown_path".to_string()
                 }
             }
-            Type::Undefined(id) => format!("undefined{}{}{}", MANGLE_OPEN, id, MANGLE_CLOSE),
-            Type::Ptr(inner) => format!("ptr{}{}{}", MANGLE_OPEN, self.type_to_suffix(inner), MANGLE_CLOSE),
+            Type::Undefined(id) => format!("undefined{}", MANGLER.wrap_single(&id.to_string())),
+            Type::Ptr(inner) => format!("ptr{}", MANGLER.wrap_single(&self.type_to_suffix(inner))),
             Type::Array(inner, size) => {
                 let args = vec![self.type_to_suffix(inner), size.to_string()];
                 mangle_wrap_args("Array", &args)
@@ -467,7 +468,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             String::new()
         } else {
             type_args.iter()
-                .map(|t| format!("{}{}{}", MANGLE_OPEN, self.type_to_suffix(t).to_lowercase(), MANGLE_CLOSE))
+                .map(|t| MANGLER.wrap_single(&self.type_to_suffix(t).to_lowercase()))
                 .collect::<String>()
         };
         format!("tl_{}{}_{}", base_type.to_lowercase(), suffix, method)

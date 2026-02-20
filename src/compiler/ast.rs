@@ -3,96 +3,39 @@
 use crate::compiler::error::Span;
 use std::collections::HashMap;
 
-/// マングル名の開始デリミタ。型引数を [arg] で囲むことで境界を明確にする。
-/// 例: Vec[i64], HashMap[i64][String], Vec[Entry[i64][String]]
-pub const MANGLE_OPEN: &str = "[";
-pub const MANGLE_CLOSE: &str = "]";
+/// マングル名の開始デリミタ（後方互換用。新コードでは `MANGLER` を直接使用すること）
+pub use crate::compiler::mangler::MANGLER;
 
-/// 型引数を角括弧で囲んでマングル名を生成
-/// mangle_wrap_args("Vec", &["i64"]) → "Vec[i64]"
-/// mangle_wrap_args("HashMap", &["i64", "String"]) → "HashMap[i64][String]"
+// ── 後方互換ラッパー（既存の呼び出し元が壊れないように残す） ──
+
+/// 型引数を角括弧で囲んでマングル名を生成（後方互換ラッパー）
 pub fn mangle_wrap_args(base: &str, args: &[String]) -> String {
-    if args.is_empty() {
-        return base.to_string();
-    }
-    let suffix: String = args.iter()
-        .map(|a| format!("{}{}{}", MANGLE_OPEN, a, MANGLE_CLOSE))
-        .collect();
-    format!("{}{}", base, suffix)
+    MANGLER.wrap_args(base, args)
 }
 
-/// マングル名からベース名を抽出
-/// mangle_base_name("Vec[i64]") → "Vec"
-/// mangle_base_name("HashMap[i64][String]") → "HashMap"
-/// mangle_base_name("plain") → "plain"
+/// マングル名からベース名を抽出（後方互換ラッパー）
 pub fn mangle_base_name(mangled: &str) -> &str {
-    mangled.split(MANGLE_OPEN).next().unwrap_or(mangled)
+    MANGLER.base_name(mangled)
 }
 
-/// マングル名が型引数を含むか判定
+/// マングル名が型引数を含むか判定（後方互換ラッパー）
 pub fn mangle_has_args(mangled: &str) -> bool {
-    mangled.contains(MANGLE_OPEN)
+    MANGLER.has_args(mangled)
 }
 
-/// マングル名からトップレベルの型引数文字列を抽出（ネスト対応）
-/// mangle_extract_args("Vec[i64]") → vec!["i64"]
-/// mangle_extract_args("HashMap[i64][String]") → vec!["i64", "String"]
-/// mangle_extract_args("Vec[Entry[i64][String]]") → vec!["Entry[i64][String]"]
+/// マングル名からトップレベルの型引数文字列を抽出（後方互換ラッパー）
 pub fn mangle_extract_args(mangled: &str) -> Vec<&str> {
-    let mut args = Vec::new();
-    let base_end = match mangled.find(MANGLE_OPEN) {
-        Some(pos) => pos,
-        None => return args,
-    };
-    let rest = &mangled[base_end..];
-    let bytes = rest.as_bytes();
-    let mut depth = 0;
-    let mut start = 0;
-    for (i, &b) in bytes.iter().enumerate() {
-        if b == b'[' {
-            if depth == 0 {
-                start = i + 1;
-            }
-            depth += 1;
-        } else if b == b']' {
-            depth -= 1;
-            if depth == 0 {
-                args.push(&rest[start..i]);
-            }
-        }
-    }
-    args
+    MANGLER.extract_args(mangled)
 }
 
-/// マングル型文字列を Type にパース（再帰対応）
-/// "i64" → Type::I64, "Pair[i64][i64]" → Type::Struct("Pair[i64][i64]", [I64, I64])
+/// マングル型文字列を Type にパース（後方互換ラッパー）
 pub fn parse_mangled_type_str(s: &str) -> Type {
-    match s.to_lowercase().as_str() {
-        "i64" => Type::I64,
-        "i32" => Type::I32,
-        "f32" => Type::F32,
-        "f64" => Type::F64,
-        "bool" => Type::Bool,
-        "u8" => Type::U8,
-        "usize" => Type::Usize,
-        "string" => Type::String("String".to_string()),
-        "void" => Type::Void,
-        _ => {
-            if mangle_has_args(s) {
-                let _base = mangle_base_name(s).to_string();
-                let inner_strs = mangle_extract_args(s);
-                let inner_types: Vec<Type> = inner_strs.iter().map(|t| parse_mangled_type_str(t)).collect();
-                Type::Struct(s.to_string(), inner_types)
-            } else {
-                Type::Struct(s.to_string(), vec![])
-            }
-        }
-    }
+    MANGLER.parse_type_str(s)
 }
 
-/// マングル型文字列のスライスを Vec<Type> にパース
+/// マングル型文字列のスライスを Vec<Type> にパース（後方互換ラッパー）
 pub fn parse_mangled_type_strs(strs: &[&str]) -> Vec<Type> {
-    strs.iter().map(|s| parse_mangled_type_str(s)).collect()
+    MANGLER.parse_type_strs(strs)
 }
 
 /// Spanを持つラッパー型
