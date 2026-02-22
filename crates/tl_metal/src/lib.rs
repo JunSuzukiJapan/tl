@@ -26,6 +26,7 @@ pub mod ops {
     pub mod fused;
 }
 pub mod shaders;
+pub mod fusion;
 pub mod autograd;
 pub mod backend_impl;
 pub mod optim;

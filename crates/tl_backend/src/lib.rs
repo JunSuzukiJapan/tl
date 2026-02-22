@@ -11,6 +11,7 @@ pub mod device;
 pub mod graph;
 pub mod fused_ops;
 pub mod stream;
+pub mod fusion;
 
 pub use dtype::DType;
 pub use tensor::GpuTensor;
