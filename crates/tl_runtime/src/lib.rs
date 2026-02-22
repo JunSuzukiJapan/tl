@@ -306,3 +306,11 @@ pub extern "C" fn tl_tensor_print(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
     crate::print_ffi::tl_tensor_print_1(t);
 }
+
+/// デバッグ: Metal バックエンドの make/release カウンタをダンプ
+pub fn debug_dump_metal_counters(label: &str) {
+    #[cfg(feature = "metal")]
+    tl_metal::ffi_ops::debug_dump_counters(label);
+    #[cfg(not(feature = "metal"))]
+    eprintln!("[DEBUG] debug_dump_metal_counters: not a metal build (label={})", label);
+}

@@ -12,7 +12,7 @@ type PoolKey = (usize, MTLResourceOptions);
 /// Metal バッファプール
 pub struct MetalBufferPool {
     /// フリーリスト: 再利用可能なバッファ
-    free_buffers: HashMap<PoolKey, Vec<Arc<Buffer>>>,
+    pub free_buffers: HashMap<PoolKey, Vec<Arc<Buffer>>>,
     /// 統計: 取得成功数
     pub hits: u64,
     /// 統計: 新規確保数
@@ -42,13 +42,24 @@ impl MetalBufferPool {
     }
 
     /// バッファをプールに返却
+    /// 各サイズバケットの最大保持数を超えた場合、バッファは drop されて
+    /// OS にメモリが返される（GPU メモリリーク防止）。
     pub fn release(&mut self, buffer: Arc<Buffer>) {
+        // 各サイズバケットの最大保持バッファ数
+        // autograd ループでは同サイズの中間テンソルが毎 iteration 生成されるため、
+        // 少数のバッファを保持するだけで十分な再利用率が得られる。
+        const MAX_BUFFERS_PER_SIZE: usize = 4;
+
         let size = buffer.length() as usize;
         // Note: MTLResourceOptions は Buffer から直接取得できないため、
         // 現時点では StorageModeShared を仮定
         let options = MTLResourceOptions::StorageModeShared;
         let key = (size, options);
-        self.free_buffers.entry(key).or_default().push(buffer);
+        let list = self.free_buffers.entry(key).or_default();
+        if list.len() < MAX_BUFFERS_PER_SIZE {
+            list.push(buffer);
+        }
+        // else: buffer は Arc<Buffer> のまま drop → Metal バッファが OS に返される
     }
 
     /// プール内のバッファ数

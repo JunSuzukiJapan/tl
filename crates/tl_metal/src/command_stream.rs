@@ -77,16 +77,18 @@ impl CommandStream {
     where
         F: FnOnce(&ComputeCommandEncoderRef),
     {
-        let cb = self.ensure_buffer();
-        let encoder = cb.new_compute_command_encoder();
-        encode_fn(encoder);
-        encoder.end_encoding();
-        self.batch_count += 1;
+        objc::rc::autoreleasepool(|| {
+            let cb = self.ensure_buffer();
+            let encoder = cb.new_compute_command_encoder();
+            encode_fn(encoder);
+            encoder.end_encoding();
+            self.batch_count += 1;
 
-        // バッチサイズに達したら自動コミット
-        if self.batch_count >= MAX_BATCH_SIZE {
-            self.commit_current();
-        }
+            // バッチサイズに達したら自動コミット
+            if self.batch_count >= MAX_BATCH_SIZE {
+                self.commit_current();
+            }
+        });
     }
 
     /// キャプチャ対応カーネルエンコード
@@ -97,16 +99,18 @@ impl CommandStream {
     where
         F: Fn(&ComputeCommandEncoderRef) + 'static,
     {
-        // 実行
-        let cb = self.ensure_buffer();
-        let encoder = cb.new_compute_command_encoder();
-        encode_fn(encoder);
-        encoder.end_encoding();
-        self.batch_count += 1;
+        objc::rc::autoreleasepool(|| {
+            // 実行
+            let cb = self.ensure_buffer();
+            let encoder = cb.new_compute_command_encoder();
+            encode_fn(encoder);
+            encoder.end_encoding();
+            self.batch_count += 1;
 
-        if self.batch_count >= MAX_BATCH_SIZE {
-            self.commit_current();
-        }
+            if self.batch_count >= MAX_BATCH_SIZE {
+                self.commit_current();
+            }
+        });
 
         // キャプチャモード中なら記録
         if let Some(ref mut captured) = self.capturing {
@@ -119,8 +123,10 @@ impl CommandStream {
     /// コミット後は確実にGPU完了を保証する。
     fn commit_current(&mut self) {
         if let Some(cb) = self.current_buffer.take() {
-            cb.commit();
-            cb.wait_until_completed();
+            objc::rc::autoreleasepool(|| {
+                cb.commit();
+                cb.wait_until_completed();
+            });
             self.batch_count = 0;
         }
     }

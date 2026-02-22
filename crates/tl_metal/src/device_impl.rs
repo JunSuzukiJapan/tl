@@ -175,7 +175,12 @@ impl IDevice for MetalDeviceImpl {
     #[inline] fn tensor_grad(&self, a: *mut c_void) -> BackendResult<*mut c_void> { v(ffi_ops::tl_metal_grad(t(a))) }
     #[inline] fn tensor_detach(&self, a: *mut c_void, _req_grad: bool) -> BackendResult<*mut c_void> { v(ffi_ops::tl_metal_detach(t(a))) }
     #[inline] fn tensor_enable_grad(&self, a: *mut c_void) -> BackendResult<()> { ffi_ops::tl_metal_enable_grad(t(a)); Ok(()) }
-    #[inline] fn clear_grads(&self) -> BackendResult<()> { /* Metal: handled by runtime */ Ok(()) }
+    #[inline] fn clear_grads(&self) -> BackendResult<()> {
+        // 各 for iteration 終了時にコマンドストリームを同期し、
+        // Metal ドライバにメモリ回収の機会を与える。
+        crate::command_stream::sync_stream();
+        Ok(())
+    }
 
     // ========== 形状操作 ==========
     #[inline] fn tensor_reshape_new(&self, a: *mut c_void, s: *mut c_void) -> BackendResult<*mut c_void> {

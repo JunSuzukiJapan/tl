@@ -97,7 +97,9 @@ where
 /// @ffi_sig (Tensor*) -> Tensor*
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_acquire(a: *mut c_void) -> *mut c_void { dispatch(|d| d.tensor_acquire(a)) }
 /// @ffi_sig (Tensor*) -> void
-#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_release_safe(a: *mut c_void) { dispatch(|d| d.tensor_release_safe(a)) }
+#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_release_safe(a: *mut c_void) { 
+    dispatch(|d| d.tensor_release_safe(a)) 
+}
 /// @ffi_sig (Tensor*) -> void
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_promote(a: *mut c_void) { dispatch(|d| d.tensor_promote(a)) }
 /// @ffi_sig (Tensor*) -> void
@@ -192,10 +194,7 @@ where
 /// @ffi_sig (Tensor*, Tensor*) -> void
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_add_assign(a: *mut c_void, b: *mut c_void) { dispatch(|d| d.tensor_add_assign(a, b)) }
 /// @ffi_sig (Tensor*, Tensor*) -> void
-#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_sub_assign(a: *mut c_void, b: *mut c_void) { 
-    eprintln!("[DEBUG device_ffi] tl_device_tensor_sub_assign a={:?} b={:?}", a, b);
-    dispatch(|d| d.tensor_sub_assign(a, b)) 
-}
+#[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_sub_assign(a: *mut c_void, b: *mut c_void) { dispatch(|d| d.tensor_sub_assign(a, b)) }
 /// @ffi_sig (Tensor*, Tensor*) -> void
 #[unsafe(no_mangle)] pub extern "C" fn tl_device_tensor_mul_assign(a: *mut c_void, b: *mut c_void) { dispatch(|d| d.tensor_mul_assign(a, b)) }
 /// @ffi_sig (Tensor*, Tensor*) -> void

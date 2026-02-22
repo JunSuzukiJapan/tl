@@ -14,9 +14,9 @@ use tl_backend::BackendResult;
 type OpaqueTensor = MetalTensor;
 
 // === デバッグカウンタ ===
-static MAKE_COUNT: AtomicUsize = AtomicUsize::new(0);
-static RELEASE_COUNT: AtomicUsize = AtomicUsize::new(0);
-static ACQUIRE_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub static MAKE_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub static RELEASE_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub static ACQUIRE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// デバッグ: カウンタをリセット
 #[no_mangle]
@@ -24,6 +24,24 @@ pub extern "C" fn tl_metal_debug_reset_counters() {
     MAKE_COUNT.swap(0, Ordering::SeqCst);
     RELEASE_COUNT.swap(0, Ordering::SeqCst);
     ACQUIRE_COUNT.swap(0, Ordering::SeqCst);
+}
+
+/// デバッグ: カウンタをダンプ
+pub fn debug_dump_counters(label: &str) {
+    let m = MAKE_COUNT.load(Ordering::SeqCst);
+    let r = RELEASE_COUNT.load(Ordering::SeqCst);
+    let a = ACQUIRE_COUNT.load(Ordering::SeqCst);
+    let pool_info = if let Ok(pool) = crate::buffer_pool::BUFFER_POOL.lock() {
+        let count = pool.free_count();
+        let total_bytes: usize = pool.free_buffers.values()
+            .flat_map(|v| v.iter())
+            .map(|b| b.length() as usize)
+            .sum();
+        format!("pool_bufs={}, pool_mb={}", count, total_bytes / 1024 / 1024)
+    } else {
+        "pool=locked".to_string()
+    };
+    eprintln!("[METAL_DBG:{}] make={}, release={}, acquire={}, live={}, {}", label, m, r, a, m + a - r, pool_info);
 }
 
 // use 不要: MetalTensor の演算メソッドは inherent impl で定義
