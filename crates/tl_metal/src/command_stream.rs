@@ -8,8 +8,13 @@
 //! - `commit()` は呼ぶが `wait_until_completed()` は呼ばない
 //! - `synchronize()` は `to_vec()`, `item()` など CPU 読み取り時にのみ呼ぶ
 //! - 同一 CommandBuffer 内で複数エンコーダを順次利用（エンコーダ間にバリア自動挿入）
+//!
+//! ## キャプチャ・リプレイ
+//! `begin_capture()` ～ `end_capture()` でカーネルシーケンスを記録し、
+//! `MetalGraph::replay()` で高速再実行できる。
 
 use crate::device::get_device;
+use crate::graph::{CapturedKernel, MetalGraph};
 use metal::{CommandBuffer, CommandBufferRef, ComputeCommandEncoderRef};
 use std::sync::{LazyLock, Mutex, MutexGuard};
 
@@ -24,6 +29,8 @@ pub struct CommandStream {
     current_buffer: Option<CommandBuffer>,
     /// 現在のバッチ内のカーネル数
     batch_count: usize,
+    /// キャプチャモード: Some の場合、カーネルを記録する
+    capturing: Option<Vec<CapturedKernel>>,
 }
 
 impl CommandStream {
@@ -32,6 +39,7 @@ impl CommandStream {
             pending_buffers: Vec::new(),
             current_buffer: None,
             batch_count: 0,
+            capturing: None,
         }
     }
 
@@ -45,7 +53,20 @@ impl CommandStream {
         self.current_buffer.as_ref().unwrap()
     }
 
-    /// カーネルをエンコードする
+    /// 外部（graph.rs）から呼び出し可能な ensure_buffer
+    pub fn ensure_buffer_pub(&mut self) -> &CommandBufferRef {
+        self.ensure_buffer()
+    }
+
+    /// バッチカウントをインクリメントし、必要に応じてコミット
+    pub fn inc_batch(&mut self) {
+        self.batch_count += 1;
+        if self.batch_count >= MAX_BATCH_SIZE {
+            self.commit_current();
+        }
+    }
+
+    /// カーネルをエンコードする（非キャプチャ対応版）
     ///
     /// `encode_fn` にはエンコーダが渡される。
     /// エンコーダのライフタイム管理（set_pipeline, dispatch, end_encoding）は
@@ -62,9 +83,34 @@ impl CommandStream {
         encoder.end_encoding();
         self.batch_count += 1;
 
-        // バッチサイズに達したら自動コミット（wait はしない）
+        // バッチサイズに達したら自動コミット
         if self.batch_count >= MAX_BATCH_SIZE {
             self.commit_current();
+        }
+    }
+
+    /// キャプチャ対応カーネルエンコード
+    ///
+    /// キャプチャモード中は実行しつつ記録する。
+    /// 非キャプチャモード中は通常の `encode` と同じ動作。
+    pub fn encode_capturable<F>(&mut self, encode_fn: F)
+    where
+        F: Fn(&ComputeCommandEncoderRef) + 'static,
+    {
+        // 実行
+        let cb = self.ensure_buffer();
+        let encoder = cb.new_compute_command_encoder();
+        encode_fn(encoder);
+        encoder.end_encoding();
+        self.batch_count += 1;
+
+        if self.batch_count >= MAX_BATCH_SIZE {
+            self.commit_current();
+        }
+
+        // キャプチャモード中なら記録
+        if let Some(ref mut captured) = self.capturing {
+            captured.push(CapturedKernel::new(encode_fn));
         }
     }
 
@@ -93,6 +139,34 @@ impl CommandStream {
     /// 未同期のコマンドがあるかどうか
     pub fn needs_sync(&self) -> bool {
         self.current_buffer.is_some() || !self.pending_buffers.is_empty()
+    }
+
+    // ============================================================
+    // キャプチャ・リプレイ
+    // ============================================================
+
+    /// キャプチャ開始
+    ///
+    /// 以後の `encode_capturable()` で実行されるカーネルを記録する。
+    /// 先行コマンドは同期される。
+    pub fn begin_capture(&mut self) {
+        self.synchronize();
+        self.capturing = Some(Vec::new());
+    }
+
+    /// キャプチャ終了 → MetalGraph を返す
+    ///
+    /// 記録を停止し、蓄積されたカーネルシーケンスを `MetalGraph` として返す。
+    pub fn end_capture(&mut self) -> MetalGraph {
+        let kernels = self.capturing.take()
+            .expect("end_capture called without begin_capture");
+        self.synchronize();
+        MetalGraph::new(kernels)
+    }
+
+    /// キャプチャ中かどうか
+    pub fn is_capturing(&self) -> bool {
+        self.capturing.is_some()
     }
 }
 

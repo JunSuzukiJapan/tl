@@ -22,6 +22,7 @@ pub mod ops {
     pub mod nn;
     pub mod quantized;
 }
+pub mod graph;
 pub mod autograd;
 pub mod backend_impl;
 pub mod optim;

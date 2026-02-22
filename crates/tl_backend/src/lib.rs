@@ -8,6 +8,7 @@ pub mod ops;
 pub mod autograd;
 pub mod error;
 pub mod device;
+pub mod graph;
 
 pub use dtype::DType;
 pub use tensor::GpuTensor;

@@ -5,6 +5,7 @@
 
 pub mod buffer_pool;
 pub mod command_stream;
+pub mod graph;
 pub mod device;
 pub mod tensor;
 pub mod ops {
