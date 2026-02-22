@@ -7,6 +7,9 @@ pub mod backend_impl;
 pub mod ffi;
 pub mod memory;
 pub mod device_impl;
+pub mod graph;
+pub mod stream;
+pub mod fused_ops;
 
 pub use tensor::CpuTensor;
 pub use tl_backend::DType;
