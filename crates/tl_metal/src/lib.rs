@@ -23,6 +23,7 @@ pub mod ops {
     pub mod llm;
     pub mod nn;
     pub mod quantized;
+    pub mod fused;
 }
 pub mod shaders;
 pub mod autograd;

@@ -53,6 +53,14 @@ pub const SHADER_CAST_F32_TO_F16: &str = "cast_f32_to_f16";
 /// Shader 関数名 - Quantize
 pub const SHADER_DEQUANTIZE_Q4_K: &str = "dequantize_q4_k";
 
+/// Shader 関数名 - 融合カーネル
+pub const SHADER_FUSED_SILU_MUL_F32: &str = "fused_silu_mul_f32";
+pub const SHADER_FUSED_ADD_RELU_F32: &str = "fused_add_relu_f32";
+pub const SHADER_FUSED_BIAS_GELU_F32: &str = "fused_bias_gelu_f32";
+pub const SHADER_FUSED_RMS_NORM_F32: &str = "fused_rms_norm_f32";
+pub const SHADER_FUSED_ADD_RMS_NORM_F32: &str = "fused_add_rms_norm_f32";
+pub const SHADER_FUSED_ROTARY_EMB_F32: &str = "fused_rotary_emb_f32";
+
 /// Metal Shader ソースコード
 const SHADER_SOURCE: &str = r#"
 #include <metal_stdlib>
@@ -531,6 +539,127 @@ kernel void dequantize_q4_k(
             y_ptr[32 + l] = d2 * val - min2;
         }
     }
+}
+
+// ========== 融合カーネル ==========
+
+// fused_silu_mul: silu(gate) * up を1カーネルで (LLaMA SwiGLU FFN)
+kernel void fused_silu_mul_f32(
+    device const float* gate [[buffer(0)]],
+    device const float* up   [[buffer(1)]],
+    device float* out        [[buffer(2)]],
+    constant uint& count     [[buffer(3)]],
+    uint id [[thread_position_in_grid]]
+) {
+    if (id < count) {
+        float x = gate[id];
+        out[id] = (x / (1.0f + exp(-x))) * up[id];
+    }
+}
+
+// fused_add_relu: relu(a + b) を1カーネルで (CNN 標準)
+kernel void fused_add_relu_f32(
+    device const float* a [[buffer(0)]],
+    device const float* b [[buffer(1)]],
+    device float* out     [[buffer(2)]],
+    constant uint& count  [[buffer(3)]],
+    uint id [[thread_position_in_grid]]
+) {
+    if (id < count) {
+        out[id] = max(a[id] + b[id], 0.0f);
+    }
+}
+
+// fused_bias_gelu: gelu(x + bias) を1カーネルで (Transformer FFN)
+kernel void fused_bias_gelu_f32(
+    device const float* x    [[buffer(0)]],
+    device const float* bias [[buffer(1)]],
+    device float* out        [[buffer(2)]],
+    constant uint& count     [[buffer(3)]],
+    constant uint& bias_len  [[buffer(4)]],
+    uint id [[thread_position_in_grid]]
+) {
+    if (id < count) {
+        float v = x[id] + bias[id % bias_len];
+        float cdf = 0.5f * (1.0f + tanh(0.7978845608f * (v + 0.044715f * v * v * v)));
+        out[id] = v * cdf;
+    }
+}
+
+// fused_rms_norm: RMSNorm 1パス (2パスの統合)
+// 各スレッドグループが1行を処理
+kernel void fused_rms_norm_f32(
+    device const float* input  [[buffer(0)]],
+    device const float* weight [[buffer(1)]],
+    device float* output       [[buffer(2)]],
+    constant uint& N           [[buffer(3)]],
+    constant uint& D           [[buffer(4)]],
+    constant float& eps        [[buffer(5)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint row = gid.y;
+    uint col = gid.x;
+    if (row >= N || col >= D) return;
+    
+    // 行ごとの二乗平均を計算
+    float sum_sq = 0.0f;
+    for (uint i = 0; i < D; i++) {
+        float v = input[row * D + i];
+        sum_sq += v * v;
+    }
+    float rms = rsqrt(sum_sq / float(D) + eps);
+    output[row * D + col] = input[row * D + col] * rms * weight[col];
+}
+
+// fused_add_rms_norm: residual加算 + RMSNorm を1パスで
+kernel void fused_add_rms_norm_f32(
+    device const float* input    [[buffer(0)]],
+    device const float* residual [[buffer(1)]],
+    device const float* weight   [[buffer(2)]],
+    device float* output         [[buffer(3)]],
+    constant uint& N             [[buffer(4)]],
+    constant uint& D             [[buffer(5)]],
+    constant float& eps          [[buffer(6)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint row = gid.y;
+    uint col = gid.x;
+    if (row >= N || col >= D) return;
+    
+    // residual 加算 + 二乗平均
+    float sum_sq = 0.0f;
+    for (uint i = 0; i < D; i++) {
+        float v = input[row * D + i] + residual[row * D + i];
+        sum_sq += v * v;
+    }
+    float rms = rsqrt(sum_sq / float(D) + eps);
+    float added = input[row * D + col] + residual[row * D + col];
+    output[row * D + col] = added * rms * weight[col];
+}
+
+// fused_rotary_emb: cos/sin 計算 + RoPE 適用を1パスで
+kernel void fused_rotary_emb_f32(
+    device const float* input  [[buffer(0)]],
+    device const float* freqs  [[buffer(1)]],
+    device float* output       [[buffer(2)]],
+    constant uint& count       [[buffer(3)]],
+    constant uint& head_dim    [[buffer(4)]],
+    uint id [[thread_position_in_grid]]
+) {
+    if (id >= count) return;
+    uint half_dim = head_dim / 2;
+    uint pair_idx = id % half_dim;
+    uint base = id - pair_idx;
+    
+    float freq = freqs[pair_idx];
+    float cos_val = cos(freq);
+    float sin_val = sin(freq);
+    
+    float x0 = input[base + pair_idx];
+    float x1 = input[base + pair_idx + half_dim];
+    
+    output[base + pair_idx] = x0 * cos_val - x1 * sin_val;
+    output[base + pair_idx + half_dim] = x0 * sin_val + x1 * cos_val;
 }
 "#;
 
