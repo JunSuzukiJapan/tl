@@ -203,23 +203,26 @@ fn dispatch_reduce(
     new_shape: &[usize],
 ) -> BackendResult<MetalTensor> {
     let result = MetalTensor::uninit(new_shape, DType::F32);
-    let device = get_device();
-    let command_queue = device.command_queue();
 
-    objc::rc::autoreleasepool(|| {
-        let outer_buf = make_u32_buf(outer_size as u32);
-        let axis_buf = make_u32_buf(axis_size as u32);
-        let inner_buf = make_u32_buf(inner_size as u32);
+    let outer_buf = make_u32_buf(outer_size as u32);
+    let axis_buf = make_u32_buf(axis_size as u32);
+    let inner_buf = make_u32_buf(inner_size as u32);
 
-        let command_buffer = command_queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
+    let input_buf = input.buffer() as *const metal::Buffer;
+    let result_buf = result.buffer() as *const metal::Buffer;
+    let outer_buf_ptr = &outer_buf as *const metal::Buffer;
+    let axis_buf_ptr = &axis_buf as *const metal::Buffer;
+    let inner_buf_ptr = &inner_buf as *const metal::Buffer;
 
+    crate::command_stream::stream_encode(|encoder| {
         encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_buffer(0, Some(input.buffer()), 0);
-        encoder.set_buffer(1, Some(result.buffer()), 0);
-        encoder.set_buffer(2, Some(&outer_buf), 0);
-        encoder.set_buffer(3, Some(&axis_buf), 0);
-        encoder.set_buffer(4, Some(&inner_buf), 0);
+        unsafe {
+            encoder.set_buffer(0, Some(&*input_buf), 0);
+            encoder.set_buffer(1, Some(&*result_buf), 0);
+            encoder.set_buffer(2, Some(&*outer_buf_ptr), 0);
+            encoder.set_buffer(3, Some(&*axis_buf_ptr), 0);
+            encoder.set_buffer(4, Some(&*inner_buf_ptr), 0);
+        }
 
         // 2D グリッド: [inner_size, outer_size]
         let tpg = MTLSize::new(
@@ -233,10 +236,6 @@ fn dispatch_reduce(
             1,
         );
         encoder.dispatch_thread_groups(grid, tpg);
-        encoder.end_encoding();
-
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
     });
 
     Ok(result)

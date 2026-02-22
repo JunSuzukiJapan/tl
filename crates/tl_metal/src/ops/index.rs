@@ -99,24 +99,27 @@ impl MetalTensor {
         // GPU embedding lookup: flat_indices [T] → result [T, D]
         let result = MetalTensor::uninit(&[total_tokens, dim], weights.dtype());
         let device = get_device();
-        let command_queue = device.command_queue();
         let pipeline = get_embedding_pipeline();
 
-        objc::rc::autoreleasepool(|| {
-            let dim_buf = device.device().new_buffer_with_data(
-                &(dim as u32) as *const u32 as *const _,
-                4,
-                metal::MTLResourceOptions::StorageModeShared,
-            );
+        let dim_buf = device.device().new_buffer_with_data(
+            &(dim as u32) as *const u32 as *const _,
+            4,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
 
-            let command_buffer = command_queue.new_command_buffer();
-            let encoder = command_buffer.new_compute_command_encoder();
+        let weights_buf = weights.buffer() as *const metal::Buffer;
+        let indices_buf = flat_indices.buffer() as *const metal::Buffer;
+        let result_buf = result.buffer() as *const metal::Buffer;
+        let dim_buf_ptr = &dim_buf as *const metal::Buffer;
 
+        crate::command_stream::stream_encode(|encoder| {
             encoder.set_compute_pipeline_state(pipeline);
-            encoder.set_buffer(0, Some(weights.buffer()), 0);
-            encoder.set_buffer(1, Some(flat_indices.buffer()), 0);
-            encoder.set_buffer(2, Some(result.buffer()), 0);
-            encoder.set_buffer(3, Some(&dim_buf), 0);
+            unsafe {
+                encoder.set_buffer(0, Some(&*weights_buf), 0);
+                encoder.set_buffer(1, Some(&*indices_buf), 0);
+                encoder.set_buffer(2, Some(&*result_buf), 0);
+                encoder.set_buffer(3, Some(&*dim_buf_ptr), 0);
+            }
 
             let tpg = MTLSize::new(dim.min(256) as u64, total_tokens.min(4) as u64, 1);
             let grid = MTLSize::new(
@@ -125,10 +128,6 @@ impl MetalTensor {
                 1,
             );
             encoder.dispatch_thread_groups(grid, tpg);
-            encoder.end_encoding();
-
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
         });
 
         // 2D indices の場合: [T, D] → [B, S, D] に reshape

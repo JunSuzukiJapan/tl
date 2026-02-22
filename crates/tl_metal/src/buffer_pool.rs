@@ -83,7 +83,14 @@ pub static BUFFER_POOL: LazyLock<Mutex<MetalBufferPool>> =
     LazyLock::new(|| Mutex::new(MetalBufferPool::new()));
 
 /// プールからバッファを取得
+/// バッファプールからの再利用前にGPUストリームを同期し、
+/// 前の操作が完了していないバッファの再利用を防ぐ。
 pub fn pool_acquire(size: usize, options: MTLResourceOptions) -> Option<Arc<Buffer>> {
+    // 再利用するバッファが前のGPU操作で使われていた可能性があるので、
+    // ストリームに未コミットのコマンドがあれば同期する
+    if crate::command_stream::get_stream().needs_sync() {
+        crate::command_stream::sync_stream();
+    }
     BUFFER_POOL.lock().ok()?.acquire(size, options)
 }
 

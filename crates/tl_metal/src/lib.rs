@@ -4,6 +4,7 @@
 //! GPU バッファの真の再利用を実現し、メモリ増加問題を根本解決する。
 
 pub mod buffer_pool;
+pub mod command_stream;
 pub mod device;
 pub mod tensor;
 pub mod ops {

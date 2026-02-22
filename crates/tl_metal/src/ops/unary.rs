@@ -31,30 +31,29 @@ impl MetalTensor {
         }
     }
 
+    /// 単項演算の GPU 実行 — 非同期ディスパッチ
     fn unary_op_gpu(&self, shader_name: &str) -> BackendResult<MetalTensor> {
         let result = MetalTensor::uninit(MetalTensor::shape(self), MetalTensor::dtype(self));
         let device = get_device();
-        let command_queue = device.command_queue();
 
         let mut shaders = shaders::get_shaders().lock().unwrap();
         let pipeline = shaders
             .get_pipeline(device.device(), shader_name)
             .map_err(|e| BackendError::InternalError(format!("Failed to get shader pipeline ({}): {}", shader_name, e)))?;
 
-        objc::rc::autoreleasepool(|| {
-            let command_buffer = command_queue.new_command_buffer();
-            let encoder = command_buffer.new_compute_command_encoder();
+        let self_buf = self.buffer() as *const metal::Buffer;
+        let result_buf = result.buffer() as *const metal::Buffer;
+        let elem_count = self.elem_count();
 
+        crate::command_stream::stream_encode(|encoder| {
             encoder.set_compute_pipeline_state(pipeline);
-            encoder.set_buffer(0, Some(self.buffer()), 0);
-            encoder.set_buffer(1, Some(result.buffer()), 0);
+            unsafe {
+                encoder.set_buffer(0, Some(&*self_buf), 0);
+                encoder.set_buffer(1, Some(&*result_buf), 0);
+            }
 
-            let (grid_size, threads_per_group) = shaders::compute_thread_groups(self.elem_count(), pipeline);
+            let (grid_size, threads_per_group) = shaders::compute_thread_groups(elem_count, pipeline);
             encoder.dispatch_thread_groups(grid_size, threads_per_group);
-            encoder.end_encoding();
-
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
         });
 
         Ok(result)

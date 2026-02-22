@@ -15,7 +15,6 @@ impl MetalTensor {
         }
         
         let device = get_device();
-        let command_queue = device.command_queue();
         let count = self.elem_count();
         if count == 0 {
             return Ok(0.0);
@@ -33,32 +32,31 @@ impl MetalTensor {
 
         // カウントバッファ
         let count_u32 = count as u32;
-        objc::rc::autoreleasepool(|| {
-            let mut shaders = crate::shaders::get_shaders().lock().unwrap();
-            let pipeline = shaders.get_pipeline(device.device(), SHADER_SUMALL_F32)
-                .expect("sumall pipeline");
+        let count_buf = device.device().new_buffer_with_data(
+            &count_u32 as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
 
-            let count_buf = device.device().new_buffer_with_data(
-                &count_u32 as *const u32 as *const _,
-                4,
-                MTLResourceOptions::StorageModeShared,
-            );
+        let self_buf = self.buffer() as *const metal::Buffer;
+        let partial_buf_ptr = &partial_sums as *const metal::Buffer;
+        let count_buf_ptr = &count_buf as *const metal::Buffer;
 
-            let command_buffer = command_queue.new_command_buffer();
-            let encoder = command_buffer.new_compute_command_encoder();
+        let mut shaders = crate::shaders::get_shaders().lock().unwrap();
+        let pipeline = shaders.get_pipeline(device.device(), SHADER_SUMALL_F32)
+            .expect("sumall pipeline");
 
+        crate::command_stream::stream_encode_sync(|encoder| {
             encoder.set_compute_pipeline_state(pipeline);
-            encoder.set_buffer(0, Some(self.buffer()), 0);
-            encoder.set_buffer(1, Some(&partial_sums), 0);
-            encoder.set_buffer(2, Some(&count_buf), 0);
+            unsafe {
+                encoder.set_buffer(0, Some(&*self_buf), 0);
+                encoder.set_buffer(1, Some(&*partial_buf_ptr), 0);
+                encoder.set_buffer(2, Some(&*count_buf_ptr), 0);
+            }
 
             let grid_size = MTLSize::new(num_groups as u64, 1, 1);
             let threads_per_group = MTLSize::new(tg_size as u64, 1, 1);
             encoder.dispatch_thread_groups(grid_size, threads_per_group);
-            encoder.end_encoding();
-
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
         });
 
         // CPU で部分和を合計
@@ -95,49 +93,41 @@ impl MetalTensor {
         }
 
         let device = get_device();
-        let command_queue = device.command_queue();
 
         let tg_size: usize = 256;
         let num_groups = (count + tg_size - 1) / tg_size;
 
-        // 部分結果バッファ
-        let partial_max = device.allocate_buffer(
-            num_groups * 4,  // f32
-            MTLResourceOptions::StorageModeShared,
-        );
-        let partial_idx = device.allocate_buffer(
-            num_groups * 4,  // u32
-            MTLResourceOptions::StorageModeShared,
-        );
+        let partial_max = device.allocate_buffer(num_groups * 4, MTLResourceOptions::StorageModeShared);
+        let partial_idx = device.allocate_buffer(num_groups * 4, MTLResourceOptions::StorageModeShared);
 
         let count_u32 = count as u32;
-        objc::rc::autoreleasepool(|| {
-            let mut shaders = crate::shaders::get_shaders().lock().unwrap();
-            let pipeline = shaders.get_pipeline(device.device(), SHADER_ARGMAX_F32)
-                .expect("argmax pipeline");
+        let count_buf = device.device().new_buffer_with_data(
+            &count_u32 as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
 
-            let count_buf = device.device().new_buffer_with_data(
-                &count_u32 as *const u32 as *const _,
-                4,
-                MTLResourceOptions::StorageModeShared,
-            );
+        let self_buf = self.buffer() as *const metal::Buffer;
+        let partial_max_ptr = &partial_max as *const metal::Buffer;
+        let partial_idx_ptr = &partial_idx as *const metal::Buffer;
+        let count_buf_ptr = &count_buf as *const metal::Buffer;
 
-            let command_buffer = command_queue.new_command_buffer();
-            let encoder = command_buffer.new_compute_command_encoder();
+        let mut shaders = crate::shaders::get_shaders().lock().unwrap();
+        let pipeline = shaders.get_pipeline(device.device(), SHADER_ARGMAX_F32)
+            .expect("argmax pipeline");
 
+        crate::command_stream::stream_encode_sync(|encoder| {
             encoder.set_compute_pipeline_state(pipeline);
-            encoder.set_buffer(0, Some(self.buffer()), 0);
-            encoder.set_buffer(1, Some(&partial_max), 0);
-            encoder.set_buffer(2, Some(&partial_idx), 0);
-            encoder.set_buffer(3, Some(&count_buf), 0);
+            unsafe {
+                encoder.set_buffer(0, Some(&*self_buf), 0);
+                encoder.set_buffer(1, Some(&*partial_max_ptr), 0);
+                encoder.set_buffer(2, Some(&*partial_idx_ptr), 0);
+                encoder.set_buffer(3, Some(&*count_buf_ptr), 0);
+            }
 
             let grid_size = MTLSize::new(num_groups as u64, 1, 1);
             let threads_per_group = MTLSize::new(tg_size as u64, 1, 1);
             encoder.dispatch_thread_groups(grid_size, threads_per_group);
-            encoder.end_encoding();
-
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
         });
 
         // CPU で部分結果を集約
@@ -171,49 +161,41 @@ impl MetalTensor {
         }
 
         let device = get_device();
-        let command_queue = device.command_queue();
 
         let tg_size: usize = 256;
         let num_groups = (count + tg_size - 1) / tg_size;
 
-        // 部分結果バッファ
-        let partial_min = device.allocate_buffer(
-            num_groups * 4,  // f32
-            MTLResourceOptions::StorageModeShared,
-        );
-        let partial_idx = device.allocate_buffer(
-            num_groups * 4,  // u32
-            MTLResourceOptions::StorageModeShared,
-        );
+        let partial_min = device.allocate_buffer(num_groups * 4, MTLResourceOptions::StorageModeShared);
+        let partial_idx = device.allocate_buffer(num_groups * 4, MTLResourceOptions::StorageModeShared);
 
         let count_u32 = count as u32;
-        objc::rc::autoreleasepool(|| {
-            let mut shaders = crate::shaders::get_shaders().lock().unwrap();
-            let pipeline = shaders.get_pipeline(device.device(), SHADER_ARGMIN_F32)
-                .expect("argmin pipeline");
+        let count_buf = device.device().new_buffer_with_data(
+            &count_u32 as *const u32 as *const _,
+            4,
+            MTLResourceOptions::StorageModeShared,
+        );
 
-            let count_buf = device.device().new_buffer_with_data(
-                &count_u32 as *const u32 as *const _,
-                4,
-                MTLResourceOptions::StorageModeShared,
-            );
+        let self_buf = self.buffer() as *const metal::Buffer;
+        let partial_min_ptr = &partial_min as *const metal::Buffer;
+        let partial_idx_ptr = &partial_idx as *const metal::Buffer;
+        let count_buf_ptr = &count_buf as *const metal::Buffer;
 
-            let command_buffer = command_queue.new_command_buffer();
-            let encoder = command_buffer.new_compute_command_encoder();
+        let mut shaders = crate::shaders::get_shaders().lock().unwrap();
+        let pipeline = shaders.get_pipeline(device.device(), SHADER_ARGMIN_F32)
+            .expect("argmin pipeline");
 
+        crate::command_stream::stream_encode_sync(|encoder| {
             encoder.set_compute_pipeline_state(pipeline);
-            encoder.set_buffer(0, Some(self.buffer()), 0);
-            encoder.set_buffer(1, Some(&partial_min), 0);
-            encoder.set_buffer(2, Some(&partial_idx), 0);
-            encoder.set_buffer(3, Some(&count_buf), 0);
+            unsafe {
+                encoder.set_buffer(0, Some(&*self_buf), 0);
+                encoder.set_buffer(1, Some(&*partial_min_ptr), 0);
+                encoder.set_buffer(2, Some(&*partial_idx_ptr), 0);
+                encoder.set_buffer(3, Some(&*count_buf_ptr), 0);
+            }
 
             let grid_size = MTLSize::new(num_groups as u64, 1, 1);
             let threads_per_group = MTLSize::new(tg_size as u64, 1, 1);
             encoder.dispatch_thread_groups(grid_size, threads_per_group);
-            encoder.end_encoding();
-
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
         });
 
         // CPU で部分結果を集約

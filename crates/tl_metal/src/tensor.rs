@@ -210,7 +210,11 @@ impl MetalTensor {
     }
 
     /// データを CPU にコピー
+    /// GPU 上の未完了コマンドを暗黙的に同期してからコピーする。
     pub fn to_vec<T: Copy + Default>(&self) -> Vec<T> {
+        // GPU 演算の完了を保証
+        crate::command_stream::sync_stream();
+
         let count = self.elem_count();
         if count == 0 {
             return Vec::new();
@@ -229,6 +233,9 @@ impl MetalTensor {
 
     /// データを GPU 上で完全にコピー（Blit）
     pub fn clone_data(&self) -> BackendResult<MetalTensor> {
+        // 先行する GPU 演算を同期（ソースバッファが最新であることを保証）
+        crate::command_stream::sync_stream();
+
         let result = MetalTensor::uninit(self.shape(), self.dtype());
         let device = get_device();
         let command_queue = device.command_queue();

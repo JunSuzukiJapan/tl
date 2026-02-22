@@ -262,38 +262,42 @@ impl MetalTensor {
 
             let result = MetalTensor::uninit(&[batch, m, n], DType::F32);
             let device = get_device();
-            let command_queue = device.command_queue();
             let pipeline = get_matmul_pipeline();
 
-            objc::rc::autoreleasepool(|| {
-                let m_buf = device.device().new_buffer_with_data(
-                    &(m as u32) as *const u32 as *const _, 4,
-                    metal::MTLResourceOptions::StorageModeShared,
-                );
-                let n_buf = device.device().new_buffer_with_data(
-                    &(n as u32) as *const u32 as *const _, 4,
-                    metal::MTLResourceOptions::StorageModeShared,
-                );
-                let k_buf = device.device().new_buffer_with_data(
-                    &(k as u32) as *const u32 as *const _, 4,
-                    metal::MTLResourceOptions::StorageModeShared,
-                );
+            let m_buf = device.device().new_buffer_with_data(
+                &(m as u32) as *const u32 as *const _, 4,
+                metal::MTLResourceOptions::StorageModeShared,
+            );
+            let n_buf = device.device().new_buffer_with_data(
+                &(n as u32) as *const u32 as *const _, 4,
+                metal::MTLResourceOptions::StorageModeShared,
+            );
+            let k_buf = device.device().new_buffer_with_data(
+                &(k as u32) as *const u32 as *const _, 4,
+                metal::MTLResourceOptions::StorageModeShared,
+            );
 
-                let command_buffer = command_queue.new_command_buffer();
+            let self_buf = self.buffer() as *const metal::Buffer;
+            let other_buf = other.buffer() as *const metal::Buffer;
+            let result_buf = result.buffer() as *const metal::Buffer;
+            let m_buf_ptr = &m_buf as *const metal::Buffer;
+            let n_buf_ptr = &n_buf as *const metal::Buffer;
+            let k_buf_ptr = &k_buf as *const metal::Buffer;
 
-                for b in 0..batch {
-                    let self_offset = (b * m * k * 4) as u64;
-                    let result_offset = (b * m * n * 4) as u64;
+            for b in 0..batch {
+                let self_offset = (b * m * k * 4) as u64;
+                let result_offset = (b * m * n * 4) as u64;
 
-                    let encoder = command_buffer.new_compute_command_encoder();
-
+                crate::command_stream::stream_encode(|encoder| {
                     encoder.set_compute_pipeline_state(pipeline);
-                    encoder.set_buffer(0, Some(self.buffer()), self_offset);
-                    encoder.set_buffer(1, Some(other.buffer()), 0);
-                    encoder.set_buffer(2, Some(result.buffer()), result_offset);
-                    encoder.set_buffer(3, Some(&m_buf), 0);
-                    encoder.set_buffer(4, Some(&n_buf), 0);
-                    encoder.set_buffer(5, Some(&k_buf), 0);
+                    unsafe {
+                        encoder.set_buffer(0, Some(&*self_buf), self_offset);
+                        encoder.set_buffer(1, Some(&*other_buf), 0);
+                        encoder.set_buffer(2, Some(&*result_buf), result_offset);
+                        encoder.set_buffer(3, Some(&*m_buf_ptr), 0);
+                        encoder.set_buffer(4, Some(&*n_buf_ptr), 0);
+                        encoder.set_buffer(5, Some(&*k_buf_ptr), 0);
+                    }
 
                     let threads_per_group = MTLSize::new(16, 16, 1);
                     let grid_size = MTLSize::new(
@@ -302,12 +306,8 @@ impl MetalTensor {
                         1,
                     );
                     encoder.dispatch_thread_groups(grid_size, threads_per_group);
-                    encoder.end_encoding();
-                }
-
-                command_buffer.commit();
-                command_buffer.wait_until_completed();
-            });
+                });
+            }
 
             return Ok(result);
         }
@@ -338,42 +338,46 @@ impl MetalTensor {
 
             let result = MetalTensor::uninit(&[out_batch, m, n], DType::F32);
             let device = get_device();
-            let command_queue = device.command_queue();
             let pipeline = get_matmul_pipeline();
 
-            objc::rc::autoreleasepool(|| {
-                let m_buf = device.device().new_buffer_with_data(
-                    &(m as u32) as *const u32 as *const _, 4,
-                    metal::MTLResourceOptions::StorageModeShared,
-                );
-                let n_buf = device.device().new_buffer_with_data(
-                    &(n as u32) as *const u32 as *const _, 4,
-                    metal::MTLResourceOptions::StorageModeShared,
-                );
-                let k_buf = device.device().new_buffer_with_data(
-                    &(k as u32) as *const u32 as *const _, 4,
-                    metal::MTLResourceOptions::StorageModeShared,
-                );
+            let m_buf = device.device().new_buffer_with_data(
+                &(m as u32) as *const u32 as *const _, 4,
+                metal::MTLResourceOptions::StorageModeShared,
+            );
+            let n_buf = device.device().new_buffer_with_data(
+                &(n as u32) as *const u32 as *const _, 4,
+                metal::MTLResourceOptions::StorageModeShared,
+            );
+            let k_buf = device.device().new_buffer_with_data(
+                &(k as u32) as *const u32 as *const _, 4,
+                metal::MTLResourceOptions::StorageModeShared,
+            );
 
-                let command_buffer = command_queue.new_command_buffer();
+            let self_buf = self.buffer() as *const metal::Buffer;
+            let other_buf = other.buffer() as *const metal::Buffer;
+            let result_buf = result.buffer() as *const metal::Buffer;
+            let m_buf_ptr = &m_buf as *const metal::Buffer;
+            let n_buf_ptr = &n_buf as *const metal::Buffer;
+            let k_buf_ptr = &k_buf as *const metal::Buffer;
 
-                for b in 0..out_batch {
-                    let self_b = if batch == 1 { 0 } else { b };
-                    let other_b = if other_batch == 1 { 0 } else { b };
-                    
-                    let self_offset = (self_b * m * k * 4) as u64;
-                    let other_offset = (other_b * k * n * 4) as u64;
-                    let result_offset = (b * m * n * 4) as u64;
+            for b in 0..out_batch {
+                let self_b = if batch == 1 { 0 } else { b };
+                let other_b = if other_batch == 1 { 0 } else { b };
+                
+                let self_offset = (self_b * m * k * 4) as u64;
+                let other_offset = (other_b * k * n * 4) as u64;
+                let result_offset = (b * m * n * 4) as u64;
 
-                    let encoder = command_buffer.new_compute_command_encoder();
-
+                crate::command_stream::stream_encode(|encoder| {
                     encoder.set_compute_pipeline_state(pipeline);
-                    encoder.set_buffer(0, Some(self.buffer()), self_offset);
-                    encoder.set_buffer(1, Some(other.buffer()), other_offset);
-                    encoder.set_buffer(2, Some(result.buffer()), result_offset);
-                    encoder.set_buffer(3, Some(&m_buf), 0);
-                    encoder.set_buffer(4, Some(&n_buf), 0);
-                    encoder.set_buffer(5, Some(&k_buf), 0);
+                    unsafe {
+                        encoder.set_buffer(0, Some(&*self_buf), self_offset);
+                        encoder.set_buffer(1, Some(&*other_buf), other_offset);
+                        encoder.set_buffer(2, Some(&*result_buf), result_offset);
+                        encoder.set_buffer(3, Some(&*m_buf_ptr), 0);
+                        encoder.set_buffer(4, Some(&*n_buf_ptr), 0);
+                        encoder.set_buffer(5, Some(&*k_buf_ptr), 0);
+                    }
 
                     let threads_per_group = MTLSize::new(16, 16, 1);
                     let grid_size = MTLSize::new(
@@ -382,12 +386,8 @@ impl MetalTensor {
                         1,
                     );
                     encoder.dispatch_thread_groups(grid_size, threads_per_group);
-                    encoder.end_encoding();
-                }
-
-                command_buffer.commit();
-                command_buffer.wait_until_completed();
-            });
+                });
+            }
 
             return Ok(result);
         }
@@ -446,33 +446,38 @@ impl MetalTensor {
 
         let result = MetalTensor::uninit(&[m, n], DType::F32);
         let device = get_device();
-        let command_queue = device.command_queue();
         let pipeline = get_matmul_pipeline();
 
-        objc::rc::autoreleasepool(|| {
-            let m_buf = device.device().new_buffer_with_data(
-                &(m as u32) as *const u32 as *const _, 4,
-                metal::MTLResourceOptions::StorageModeShared,
-            );
-            let n_buf = device.device().new_buffer_with_data(
-                &(n as u32) as *const u32 as *const _, 4,
-                metal::MTLResourceOptions::StorageModeShared,
-            );
-            let k_buf = device.device().new_buffer_with_data(
-                &(k1 as u32) as *const u32 as *const _, 4,
-                metal::MTLResourceOptions::StorageModeShared,
-            );
+        let m_buf = device.device().new_buffer_with_data(
+            &(m as u32) as *const u32 as *const _, 4,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+        let n_buf = device.device().new_buffer_with_data(
+            &(n as u32) as *const u32 as *const _, 4,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+        let k_buf = device.device().new_buffer_with_data(
+            &(k1 as u32) as *const u32 as *const _, 4,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
 
-            let command_buffer = command_queue.new_command_buffer();
-            let encoder = command_buffer.new_compute_command_encoder();
+        let self_buf = self.buffer() as *const metal::Buffer;
+        let other_buf = other.buffer() as *const metal::Buffer;
+        let result_buf = result.buffer() as *const metal::Buffer;
+        let m_buf_ptr = &m_buf as *const metal::Buffer;
+        let n_buf_ptr = &n_buf as *const metal::Buffer;
+        let k_buf_ptr = &k_buf as *const metal::Buffer;
 
+        crate::command_stream::stream_encode(|encoder| {
             encoder.set_compute_pipeline_state(pipeline);
-            encoder.set_buffer(0, Some(self.buffer()), 0);
-            encoder.set_buffer(1, Some(other.buffer()), 0);
-            encoder.set_buffer(2, Some(result.buffer()), 0);
-            encoder.set_buffer(3, Some(&m_buf), 0);
-            encoder.set_buffer(4, Some(&n_buf), 0);
-            encoder.set_buffer(5, Some(&k_buf), 0);
+            unsafe {
+                encoder.set_buffer(0, Some(&*self_buf), 0);
+                encoder.set_buffer(1, Some(&*other_buf), 0);
+                encoder.set_buffer(2, Some(&*result_buf), 0);
+                encoder.set_buffer(3, Some(&*m_buf_ptr), 0);
+                encoder.set_buffer(4, Some(&*n_buf_ptr), 0);
+                encoder.set_buffer(5, Some(&*k_buf_ptr), 0);
+            }
 
             let threads_per_group = MTLSize::new(16, 16, 1);
             let grid_size = MTLSize::new(
@@ -481,10 +486,6 @@ impl MetalTensor {
                 1,
             );
             encoder.dispatch_thread_groups(grid_size, threads_per_group);
-            encoder.end_encoding();
-
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
         });
 
         Ok(result)
@@ -514,22 +515,23 @@ impl MetalTensor {
         let n_rows_per_tg: usize = 4; // MSL 側の N_ROWS_PER_TG と一致
 
         let result = MetalTensor::uninit(&[m, n], DType::F32);
-        let device = get_device();
-        let command_queue = device.command_queue();
         let pipeline = get_mul_mv_q4k_pipeline();
 
         let m_u32 = m as u32;
         let n_u32 = n as u32;
         let k_u32 = k as u32;
 
-        objc::rc::autoreleasepool(|| {
-            let command_buffer = command_queue.new_command_buffer();
-            let encoder = command_buffer.new_compute_command_encoder();
+        let self_buf = self.buffer() as *const metal::Buffer;
+        let w_raw_buf = w_raw.buffer() as *const metal::Buffer;
+        let result_buf = result.buffer() as *const metal::Buffer;
 
+        crate::command_stream::stream_encode(|encoder| {
             encoder.set_compute_pipeline_state(pipeline);
-            encoder.set_buffer(0, Some(self.buffer()), 0);
-            encoder.set_buffer(1, Some(w_raw.buffer()), 0);
-            encoder.set_buffer(2, Some(result.buffer()), 0);
+            unsafe {
+                encoder.set_buffer(0, Some(&*self_buf), 0);
+                encoder.set_buffer(1, Some(&*w_raw_buf), 0);
+                encoder.set_buffer(2, Some(&*result_buf), 0);
+            }
             encoder.set_bytes(3, 4, &m_u32 as *const u32 as *const std::ffi::c_void);
             encoder.set_bytes(4, 4, &n_u32 as *const u32 as *const std::ffi::c_void);
             encoder.set_bytes(5, 4, &k_u32 as *const u32 as *const std::ffi::c_void);
@@ -541,10 +543,6 @@ impl MetalTensor {
                 1,
             );
             encoder.dispatch_thread_groups(grid_size, threads_per_group);
-            encoder.end_encoding();
-
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
         });
 
         Ok(result)
@@ -573,22 +571,23 @@ impl MetalTensor {
         let n_rows_per_tg: usize = 4;
 
         let result = MetalTensor::uninit(&[m, n], DType::F32);
-        let device = get_device();
-        let command_queue = device.command_queue();
         let pipeline = get_mul_mv_q6k_pipeline();
 
         let m_u32 = m as u32;
         let n_u32 = n as u32;
         let k_u32 = k as u32;
 
-        objc::rc::autoreleasepool(|| {
-            let command_buffer = command_queue.new_command_buffer();
-            let encoder = command_buffer.new_compute_command_encoder();
+        let self_buf = self.buffer() as *const metal::Buffer;
+        let w_raw_buf = w_raw.buffer() as *const metal::Buffer;
+        let result_buf = result.buffer() as *const metal::Buffer;
 
+        crate::command_stream::stream_encode(|encoder| {
             encoder.set_compute_pipeline_state(pipeline);
-            encoder.set_buffer(0, Some(self.buffer()), 0);
-            encoder.set_buffer(1, Some(w_raw.buffer()), 0);
-            encoder.set_buffer(2, Some(result.buffer()), 0);
+            unsafe {
+                encoder.set_buffer(0, Some(&*self_buf), 0);
+                encoder.set_buffer(1, Some(&*w_raw_buf), 0);
+                encoder.set_buffer(2, Some(&*result_buf), 0);
+            }
             encoder.set_bytes(3, 4, &m_u32 as *const u32 as *const std::ffi::c_void);
             encoder.set_bytes(4, 4, &n_u32 as *const u32 as *const std::ffi::c_void);
             encoder.set_bytes(5, 4, &k_u32 as *const u32 as *const std::ffi::c_void);
@@ -600,10 +599,6 @@ impl MetalTensor {
                 1,
             );
             encoder.dispatch_thread_groups(grid_size, threads_per_group);
-            encoder.end_encoding();
-
-            command_buffer.commit();
-            command_buffer.wait_until_completed();
         });
 
         Ok(result)
