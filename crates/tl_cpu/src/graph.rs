@@ -24,9 +24,9 @@ impl CpuGraph {
         CpuGraph { ops: Vec::new() }
     }
 
-    pub(crate) fn push<F: Fn() + Send + 'static>(&mut self, f: F) {
-        self.ops.push(CapturedOp { func: Box::new(f) });
-    }
+    // pub(crate) fn push<F: Fn() + Send + 'static>(&mut self, f: F) {
+    //     self.ops.push(CapturedOp { func: Box::new(f) });
+    // }
 }
 
 impl GpuGraph for CpuGraph {
