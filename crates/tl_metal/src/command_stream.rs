@@ -170,6 +170,30 @@ impl CommandStream {
     }
 }
 
+impl tl_backend::stream::GpuStream for CommandStream {
+    type Graph = MetalGraph;
+
+    fn synchronize(&mut self) {
+        self.synchronize();
+    }
+
+    fn needs_sync(&self) -> bool {
+        self.needs_sync()
+    }
+
+    fn begin_capture(&mut self) {
+        self.begin_capture();
+    }
+
+    fn end_capture(&mut self) -> MetalGraph {
+        self.end_capture()
+    }
+
+    fn is_capturing(&self) -> bool {
+        self.is_capturing()
+    }
+}
+
 impl Drop for CommandStream {
     fn drop(&mut self) {
         self.synchronize();
