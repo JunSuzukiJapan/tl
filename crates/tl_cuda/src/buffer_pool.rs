@@ -1,6 +1,5 @@
 //! GPU バッファプール (CUDA)
 
-use std::collections::HashMap;
 use std::sync::{Mutex, LazyLock};
 
 /// CUDA バッファプール

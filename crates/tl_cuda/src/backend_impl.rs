@@ -4,7 +4,7 @@ use tl_backend::tensor::GpuTensor;
 use tl_backend::DType as BackendDType;
 use crate::tensor::CudaTensor;
 use crate::DType;
-use tl_backend::{BackendResult, BackendError};
+use tl_backend::BackendResult;
 
 /// DType 変換
 pub fn to_backend_dtype(dtype: DType) -> BackendDType {

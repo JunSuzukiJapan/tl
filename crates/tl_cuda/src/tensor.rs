@@ -3,7 +3,6 @@
 use crate::DType;
 use crate::autograd::GradFn;
 use tl_backend::BackendResult;
-use std::sync::Arc;
 
 /// CUDA GPU テンソル
 #[derive(Debug)]

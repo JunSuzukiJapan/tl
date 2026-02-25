@@ -3,9 +3,6 @@
 //! tl_metal/src/ffi_ops.rs と同等のスタブ実装。
 
 use crate::tensor::CudaTensor;
-use crate::DType;
-use std::sync::Arc;
-use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 type OpaqueTensor = CudaTensor;

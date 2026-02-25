@@ -2,6 +2,7 @@
 //!
 //! Metal バックエンド (tl_metal) と同じ API を CUDA で実装する。
 //! 現時点ではすべてスタブ (unimplemented!) 実装。
+#![allow(unused)]
 
 pub mod buffer_pool;
 pub mod device;
