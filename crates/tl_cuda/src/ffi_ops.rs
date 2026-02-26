@@ -830,7 +830,12 @@ pub fn tl_cuda_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe {
         match get(t).get_grad() {
             Some(g) => make_tensor(g),
-            None => std::ptr::null_mut(),
+            None => {
+                // 勾配なし → 入力と同じ shape のゼロテンソルを返す（CPU 版と同じ挙動）
+                let shape = get(t).shape().to_vec();
+                let zeros = crate::tensor::CudaTensor::zeros(&shape, crate::DType::F32);
+                make_tensor(zeros)
+            }
         }
     }
 }

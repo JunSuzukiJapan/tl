@@ -398,9 +398,21 @@ impl IDevice for CudaDeviceImpl {
         new_shape: *mut c_void,
     ) -> BackendResult<*mut c_void> {
         unsafe {
-            let shape_tensor = &*(new_shape as *const crate::tensor::CudaTensor);
-            let shape_data = shape_tensor.to_vec::<f32>();
-            let dims: Vec<i64> = shape_data.iter().map(|&x| x as i64).collect();
+            let shape_tensor =
+                &*(p(new_shape) as *const std::cell::UnsafeCell<crate::tensor::CudaTensor>);
+            let st = &*shape_tensor.get();
+
+            // shape テンソルの dtype に応じて正しい型で読み出す
+            // [2, 2] のような整数リテラルは I64 テンソルとして
+            // 作成されるため、f32 として読むとゴミ値になる
+            let dims: Vec<i64> = match st.dtype() {
+                crate::DType::I64 => st.to_vec::<i64>(),
+                _ => {
+                    let shape_data = st.to_vec::<f32>();
+                    shape_data.iter().map(|&x| x as i64).collect()
+                }
+            };
+
             Ok(v(ffi_ops::tl_cuda_reshape(p(t), dims.as_ptr(), dims.len())))
         }
     }
@@ -542,6 +554,10 @@ impl IDevice for CudaDeviceImpl {
 
     // ========== IO / Print ==========
     fn tensor_print(&self, t: *mut c_void) -> BackendResult<()> {
+        if t.is_null() {
+            println!("Tensor[null]");
+            return Ok(());
+        }
         unsafe {
             let tensor = &*(p(t) as *const std::cell::UnsafeCell<crate::tensor::CudaTensor>);
             let data = (*tensor.get()).to_vec::<f32>();
