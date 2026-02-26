@@ -89,52 +89,7 @@ impl CudaTensor {
         unimplemented!("to_dtype")
     }
 
-    // === Activation _impl (Step 4 で実装) ===
-    pub fn exp_impl(&self) -> BackendResult<Self> {
-        unimplemented!("exp_impl")
-    }
-    pub fn log_impl(&self) -> BackendResult<Self> {
-        unimplemented!("log_impl")
-    }
-    pub fn sqrt_impl(&self) -> BackendResult<Self> {
-        unimplemented!("sqrt_impl")
-    }
-    pub fn sin_impl(&self) -> BackendResult<Self> {
-        unimplemented!("sin_impl")
-    }
-    pub fn cos_impl(&self) -> BackendResult<Self> {
-        unimplemented!("cos_impl")
-    }
-    pub fn tan_impl(&self) -> BackendResult<Self> {
-        unimplemented!("tan_impl")
-    }
-    pub fn tanh_impl(&self) -> BackendResult<Self> {
-        unimplemented!("tanh_impl")
-    }
-    pub fn sigmoid_impl(&self) -> BackendResult<Self> {
-        unimplemented!("sigmoid_impl")
-    }
-    pub fn relu_impl(&self) -> BackendResult<Self> {
-        unimplemented!("relu_impl")
-    }
-    pub fn gelu_impl(&self) -> BackendResult<Self> {
-        unimplemented!("gelu_impl")
-    }
-    pub fn silu_impl(&self) -> BackendResult<Self> {
-        unimplemented!("silu_impl")
-    }
-    pub fn floor_impl(&self) -> BackendResult<Self> {
-        unimplemented!("floor_impl")
-    }
-    pub fn ceil_impl(&self) -> BackendResult<Self> {
-        unimplemented!("ceil_impl")
-    }
-    pub fn round_impl(&self) -> BackendResult<Self> {
-        unimplemented!("round_impl")
-    }
-    pub fn fmod_scalar_impl(&self, _s: f32) -> BackendResult<Self> {
-        unimplemented!("fmod_scalar_impl")
-    }
+    // === Activation → ops/activation.rs に移動済み ===
 
     // === Matmul (Step 7 で実装) ===
     pub fn matmul_impl(&self, _other: &Self) -> BackendResult<Self> {
