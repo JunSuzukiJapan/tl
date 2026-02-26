@@ -97,42 +97,9 @@ impl CudaTensor {
     // === Shape → ops/shape.rs に移動済み ===
     // === Special → ops/special.rs に移動済み ===
 
-    // === NN (Step 10 で実装) ===
-    pub fn conv2d_impl(
-        &self,
-        _w: &Self,
-        _stride: (usize, usize),
-        _pad: (usize, usize),
-    ) -> BackendResult<Self> {
-        unimplemented!("conv2d_impl")
-    }
-    pub fn batch_norm_impl(
-        &self,
-        _g: &Self,
-        _b: &Self,
-        _m: &Self,
-        _v: &Self,
-        _eps: f32,
-    ) -> BackendResult<Self> {
-        unimplemented!("batch_norm_impl")
-    }
-    pub fn layer_norm_impl(&self, _g: &Self, _b: &Self, _eps: f32) -> BackendResult<Self> {
-        unimplemented!("layer_norm_impl")
-    }
-    pub fn max_pool2d_impl(&self, _k: (usize, usize), _s: (usize, usize)) -> BackendResult<Self> {
-        unimplemented!("max_pool2d_impl")
-    }
-    pub fn avg_pool2d_impl(&self, _k: (usize, usize), _s: (usize, usize)) -> BackendResult<Self> {
-        unimplemented!("avg_pool2d_impl")
-    }
-    pub fn dropout_impl(&self, _p: f32, _training: bool) -> BackendResult<Self> {
-        unimplemented!("dropout_impl")
-    }
+    // === NN → ops/nn.rs に移動済み ===
 
-    // === LLM ===
-    pub fn rms_norm_impl(&self, _eps: f32) -> BackendResult<Self> {
-        unimplemented!("rms_norm_impl")
-    }
+    // === LLM → ops/llm.rs に移動済み ===
 
     // === 量子化 ===
     pub fn dequantize_q4_k(&self, _target_shape: &[usize]) -> BackendResult<Self> {
