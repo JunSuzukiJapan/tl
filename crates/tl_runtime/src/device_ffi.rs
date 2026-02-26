@@ -1071,6 +1071,36 @@ pub fn read_runtime_tensor_to_f32_vec(t: *mut c_void) -> Vec<f32> {
     }
 }
 
+/// テンソル読み取りヘルパー (i64): CPU/GPU 両対応
+/// テンソルポインタから i64 データを Vec<i64> として読み出す
+pub fn read_runtime_tensor_to_i64_vec(t: *mut c_void) -> Vec<i64> {
+    if t.is_null() {
+        return Vec::new();
+    }
+    if is_cpu() {
+        let tensor = unsafe { &*(t as *mut tl_cpu::CpuTensor) };
+        // CPU テンソルは f32 で格納されるため、f32 → i64 変換
+        tensor.data_f32().iter().map(|&v| v as i64).collect()
+    } else {
+        #[cfg(feature = "metal")]
+        {
+            let tensor = unsafe { &*(t as *const std::cell::UnsafeCell<tl_metal::MetalTensor>) };
+            unsafe { (*tensor.get()).to_vec::<i64>() }
+        }
+        #[cfg(feature = "cuda")]
+        {
+            let tensor =
+                unsafe { &*(t as *const std::cell::UnsafeCell<tl_cuda::tensor::CudaTensor>) };
+            unsafe { (*tensor.get()).to_vec::<i64>() }
+        }
+        #[cfg(not(any(feature = "metal", feature = "cuda")))]
+        {
+            let tensor = unsafe { &*(t as *mut tl_cpu::CpuTensor) };
+            tensor.data_f32().iter().map(|&v| v as i64).collect()
+        }
+    }
+}
+
 /// U8 テンソル作成ヘルパー
 pub fn create_runtime_tensor_u8(data: &[u8], shape: &[usize]) -> *mut c_void {
     if is_cpu() {

@@ -6946,8 +6946,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         for (i, arg) in args.iter().skip(start_index).enumerate() {
             match &arg.inner {
                 ExprKind::LogicVar(_) => {
-                    // Variable argument -> Set mask bit
-                    mask |= 1 << i;
+                    // Free variable — mask bit NOT set (0 = unbound)
                     // Pass 0 placeholder
                     compiled_args.push(i64_type.const_int(0, false).into());
                     tags.push(3); // Default to Entity
@@ -6963,7 +6962,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
 
                     if found {
-                        // Treat as Variable lookup
+                        // Bound variable — set mask bit (1 = bound)
+                        mask |= 1 << i;
                         let var_expr = Expr {
                             inner: ExprKind::Variable(sym_name.clone()),
                             span: arg.span.clone(),
@@ -6998,6 +6998,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                             inkwell::values::ValueKind::Basic(v) => v,
                             _ => return Err("Invalid return from add_entity".into()),
                         };
+                        // Bound constant entity — set mask bit
+                        mask |= 1 << i;
                         compiled_args.push(val);
                         tags.push(3); // ConstantTag::Entity
                     }
@@ -7020,6 +7022,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         inkwell::values::ValueKind::Basic(v) => v,
                         _ => return Err("Invalid return from add_entity".into()),
                     };
+                    // Bound string constant — set mask bit
+                    mask |= 1 << i;
                     compiled_args.push(val);
                     tags.push(4); // ConstantTag::String
                 }
@@ -7039,6 +7043,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                              val // Cannot cast pointer to int easily here without ptrtoint
                          }
                     };
+                    // Bound expression — set mask bit
+                    mask |= 1 << i;
                     compiled_args.push(val_i64);
                     let tag = match ty {
                         Type::I64 | Type::I32 | Type::I8 | Type::U8 | Type::U16 | Type::U32 | Type::Usize => 0, // Int

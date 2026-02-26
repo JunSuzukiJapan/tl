@@ -846,11 +846,11 @@ pub extern "C" fn tl_query(
 
     let store = KB.lock().unwrap();
 
-    // args_tensor から引数の i64 配列を取得 (CPU/GPU 両対応)
+    // args_tensor は tl_tensor_from_i64_array で i64 として作成される
     let args_slice: Option<Vec<i64>> = if !args_tensor.is_null() {
-        let data =
-            crate::device_ffi::read_runtime_tensor_to_f32_vec(args_tensor as *mut std::ffi::c_void);
-        Some(data.iter().map(|&v| v as i64).collect())
+        Some(crate::device_ffi::read_runtime_tensor_to_i64_vec(
+            args_tensor as *mut std::ffi::c_void,
+        ))
     } else {
         None
     };
