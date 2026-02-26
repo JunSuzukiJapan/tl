@@ -1,175 +1,680 @@
-//! IDevice トレイトの CUDA 実装 (スタブ)
+//! IDevice トレイトの CUDA 実装
 //!
-//! tl_backend::IDevice の全メソッドを unimplemented!() で実装。
+//! 全メソッドを ffi_ops.rs 経由で実装。
 
-use tl_backend::device::{IDevice, BackendResult};
+use crate::ffi_ops;
 use std::ffi::c_void;
+use tl_backend::device::{BackendResult, IDevice};
 
 pub struct CudaDeviceImpl;
 
+/// c_void ポインタを OpaqueTensor ポインタにキャスト
+fn p(t: *mut c_void) -> *mut crate::tensor::CudaTensor {
+    t as *mut crate::tensor::CudaTensor
+}
+
+/// OpaqueTensor ポインタを c_void にキャスト
+fn v(t: *mut crate::tensor::CudaTensor) -> *mut c_void {
+    t as *mut c_void
+}
+
 impl IDevice for CudaDeviceImpl {
     // ========== テンソル作成 ==========
-    fn tensor_new(&self, _data: *const f32, _rank: usize, _shape: *const usize) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_new_i64(&self, _data: *const i64, _rank: usize, _shape: *const usize) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_from_i64_array(&self, _data: *const i64, _len: i64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_zeros(&self, _rank: usize, _shape: *const usize, _req_grad: bool) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_ones(&self, _rank: usize, _shape: *const usize, _req_grad: bool) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_randn_debug(&self, _rank: usize, _shape: *const usize, _seed: u64, _req_grad: bool) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_new_causal_mask(&self, _size: usize) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_from_vec_u8(&self, _data: *mut c_void, _len: i64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_from_u8_labels(&self, _data: *const u8, _len: i64) -> BackendResult<*mut c_void> { unimplemented!() }
+    fn tensor_new(
+        &self,
+        data: *const f32,
+        rank: usize,
+        shape: *const usize,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_new(data, rank, shape)))
+    }
+    fn tensor_new_i64(
+        &self,
+        data: *const i64,
+        rank: usize,
+        shape: *const usize,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_new_i64(data, rank, shape)))
+    }
+    fn tensor_from_i64_array(&self, data: *const i64, len: i64) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_from_i64_array(data, len)))
+    }
+    fn tensor_zeros(
+        &self,
+        rank: usize,
+        shape: *const usize,
+        req_grad: bool,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_zeros(rank, shape, req_grad)))
+    }
+    fn tensor_ones(
+        &self,
+        rank: usize,
+        shape: *const usize,
+        req_grad: bool,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_ones(rank, shape, req_grad)))
+    }
+    fn tensor_randn_debug(
+        &self,
+        rank: usize,
+        shape: *const usize,
+        seed: u64,
+        req_grad: bool,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_randn_debug(rank, shape, seed, req_grad)))
+    }
+    fn tensor_new_causal_mask(&self, size: usize) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_new_causal_mask(size)))
+    }
+    fn tensor_from_vec_u8(&self, data: *mut c_void, len: i64) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_from_vec_u8(data, len)))
+    }
+    fn tensor_from_u8_labels(&self, data: *const u8, len: i64) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_from_u8_labels(data, len)))
+    }
 
     // ========== メモリ管理 ==========
-    fn tensor_clone(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_shallow_clone(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_free(&self, _t: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn tensor_release(&self, _t: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn tensor_acquire(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_release_safe(&self, _t: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn tensor_promote(&self, _t: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn tensor_register(&self, _t: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn tensor_prepare_return(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
+    fn tensor_clone(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(crate::ffi::tl_cuda_clone(p(t))))
+    }
+    fn tensor_shallow_clone(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(crate::ffi::tl_cuda_shallow_clone(p(t))))
+    }
+    fn tensor_free(&self, t: *mut c_void) -> BackendResult<()> {
+        ffi_ops::tl_cuda_free(p(t));
+        Ok(())
+    }
+    fn tensor_release(&self, t: *mut c_void) -> BackendResult<()> {
+        ffi_ops::release_if_live(p(t));
+        Ok(())
+    }
+    fn tensor_acquire(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        ffi_ops::acquire_tensor(p(t));
+        Ok(t)
+    }
+    fn tensor_release_safe(&self, t: *mut c_void) -> BackendResult<()> {
+        ffi_ops::release_if_live(p(t));
+        Ok(())
+    }
+    fn tensor_promote(&self, _t: *mut c_void) -> BackendResult<()> {
+        Ok(())
+    }
+    fn tensor_register(&self, _t: *mut c_void) -> BackendResult<()> {
+        Ok(())
+    }
+    fn tensor_prepare_return(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        ffi_ops::acquire_tensor(p(t));
+        Ok(t)
+    }
 
     // ========== テンソル情報 ==========
-    fn tensor_len(&self, _t: *mut c_void) -> BackendResult<usize> { unimplemented!() }
-    fn tensor_dim(&self, _t: *mut c_void, _dim: usize) -> BackendResult<usize> { unimplemented!() }
-    fn tensor_numel(&self, _t: *mut c_void) -> BackendResult<i64> { unimplemented!() }
-    fn tensor_data(&self, _t: *mut c_void) -> BackendResult<*const f32> { unimplemented!() }
-    fn tensor_device_id(&self, _t: *mut c_void) -> BackendResult<i32> { unimplemented!() }
-    fn tensor_get_shape(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
+    fn tensor_len(&self, t: *mut c_void) -> BackendResult<usize> {
+        Ok(ffi_ops::tl_cuda_len(p(t)))
+    }
+    fn tensor_dim(&self, t: *mut c_void, dim: usize) -> BackendResult<usize> {
+        Ok(ffi_ops::tl_cuda_dim(p(t), dim))
+    }
+    fn tensor_numel(&self, t: *mut c_void) -> BackendResult<i64> {
+        Ok(crate::ffi::tl_cuda_numel(p(t)))
+    }
+    fn tensor_data(&self, t: *mut c_void) -> BackendResult<*const f32> {
+        Ok(crate::ffi::tl_cuda_data(p(t)) as *const f32)
+    }
+    fn tensor_device_id(&self, _t: *mut c_void) -> BackendResult<i32> {
+        Ok(0)
+    }
+    fn tensor_get_shape(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_get_shape(p(t))))
+    }
 
     // ========== 要素アクセス ==========
-    fn tensor_get(&self, _t: *mut c_void, _idx: i64) -> BackendResult<f32> { unimplemented!() }
-    fn tensor_get_f32_md(&self, _t: *mut c_void, _indices: *const i64, _rank: i64) -> BackendResult<f32> { unimplemented!() }
-    fn tensor_get_i64_md(&self, _t: *mut c_void, _indices: *const i64, _rank: i64) -> BackendResult<i64> { unimplemented!() }
-    fn tensor_set_f32_md(&self, _t: *mut c_void, _indices: *const i64, _rank: usize, _value: f32) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_item(&self, _t: *mut c_void) -> BackendResult<f32> { unimplemented!() }
-    fn tensor_item_i64(&self, _t: *mut c_void) -> BackendResult<i64> { unimplemented!() }
+    fn tensor_get(&self, t: *mut c_void, idx: i64) -> BackendResult<f32> {
+        Ok(ffi_ops::tl_cuda_get(p(t), idx))
+    }
+    fn tensor_get_f32_md(
+        &self,
+        t: *mut c_void,
+        indices: *const i64,
+        rank: i64,
+    ) -> BackendResult<f32> {
+        if rank == 2 {
+            let idx = unsafe { std::slice::from_raw_parts(indices, 2) };
+            Ok(ffi_ops::tl_cuda_get_f32_md(p(t), idx[0], idx[1]))
+        } else {
+            Ok(ffi_ops::tl_cuda_get(p(t), unsafe { *indices }))
+        }
+    }
+    fn tensor_get_i64_md(
+        &self,
+        t: *mut c_void,
+        indices: *const i64,
+        rank: i64,
+    ) -> BackendResult<i64> {
+        if rank == 2 {
+            let idx = unsafe { std::slice::from_raw_parts(indices, 2) };
+            Ok(ffi_ops::tl_cuda_get_i64_md(p(t), idx[0], idx[1]))
+        } else {
+            Ok(ffi_ops::tl_cuda_get_i64(p(t), unsafe { *indices } as usize))
+        }
+    }
+    fn tensor_set_f32_md(
+        &self,
+        t: *mut c_void,
+        indices: *const i64,
+        rank: usize,
+        value: f32,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_set_f32_md(p(t), indices, rank, value)))
+    }
+    fn tensor_item(&self, t: *mut c_void) -> BackendResult<f32> {
+        Ok(ffi_ops::tl_cuda_item(p(t)))
+    }
+    fn tensor_item_i64(&self, t: *mut c_void) -> BackendResult<i64> {
+        Ok(ffi_ops::tl_cuda_item_i64(p(t)))
+    }
 
     // ========== 二項演算 ==========
-    fn tensor_add(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_sub(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_mul(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_div(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_rem(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_matmul(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_pow(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_cross_entropy(&self, _logits: *mut c_void, _labels: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
+    fn tensor_add(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_add(p(a), p(b))))
+    }
+    fn tensor_sub(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_sub(p(a), p(b))))
+    }
+    fn tensor_mul(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_mul(p(a), p(b))))
+    }
+    fn tensor_div(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_div(p(a), p(b))))
+    }
+    fn tensor_rem(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_rem(p(a), p(b))))
+    }
+    fn tensor_matmul(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_matmul(p(a), p(b))))
+    }
+    fn tensor_pow(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_pow(p(a), p(b))))
+    }
+    fn tensor_cross_entropy(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_cross_entropy(p(a), p(b))))
+    }
 
     // ========== 単項演算 ==========
-    fn tensor_neg(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_abs(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_contiguous(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
+    fn tensor_neg(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_neg(p(t))))
+    }
+    fn tensor_abs(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_abs(p(t))))
+    }
+    fn tensor_contiguous(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_contiguous(p(t))))
+    }
 
     // ========== 比較演算 ==========
-    fn tensor_eq(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_neq(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_gt(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_lt(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_ge(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_le(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
+    fn tensor_eq(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_eq(p(a), p(b))))
+    }
+    fn tensor_neq(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_neq(p(a), p(b))))
+    }
+    fn tensor_gt(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_gt(p(a), p(b))))
+    }
+    fn tensor_lt(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_lt(p(a), p(b))))
+    }
+    fn tensor_ge(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_ge(p(a), p(b))))
+    }
+    fn tensor_le(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_le(p(a), p(b))))
+    }
 
     // ========== スカラー演算 ==========
-    fn tensor_add_scalar(&self, _t: *mut c_void, _s: f64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_sub_scalar(&self, _t: *mut c_void, _s: f64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_mul_scalar(&self, _t: *mut c_void, _s: f64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_div_scalar(&self, _t: *mut c_void, _s: f64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_pow_scalar(&self, _t: *mut c_void, _exp: f32) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_scale(&self, _t: *mut c_void, _s: f32) -> BackendResult<*mut c_void> { unimplemented!() }
+    fn tensor_add_scalar(&self, t: *mut c_void, s: f64) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_add_scalar(p(t), s)))
+    }
+    fn tensor_sub_scalar(&self, t: *mut c_void, s: f64) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_sub_scalar(p(t), s)))
+    }
+    fn tensor_mul_scalar(&self, t: *mut c_void, s: f64) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_mul_scalar(p(t), s)))
+    }
+    fn tensor_div_scalar(&self, t: *mut c_void, s: f64) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_div_scalar(p(t), s)))
+    }
+    fn tensor_pow_scalar(&self, t: *mut c_void, exp: f32) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_pow_scalar(p(t), exp as f64)))
+    }
+    fn tensor_scale(&self, t: *mut c_void, s: f32) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_scale(p(t), s)))
+    }
 
     // ========== インプレース演算 ==========
-    fn tensor_add_assign(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn tensor_sub_assign(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn tensor_mul_assign(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn tensor_div_assign(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn tensor_mod_assign(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn tensor_add_assign_scalar_f32(&self, _t: *mut c_void, _s: f32) -> BackendResult<()> { unimplemented!() }
-    fn tensor_sub_assign_scalar_f32(&self, _t: *mut c_void, _s: f32) -> BackendResult<()> { unimplemented!() }
-    fn tensor_mul_assign_scalar_f32(&self, _t: *mut c_void, _s: f32) -> BackendResult<()> { unimplemented!() }
-    fn tensor_div_assign_scalar_f32(&self, _t: *mut c_void, _s: f32) -> BackendResult<()> { unimplemented!() }
-    fn tensor_mod_assign_scalar_f32(&self, _t: *mut c_void, _s: f32) -> BackendResult<()> { unimplemented!() }
+    fn tensor_add_assign(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<()> {
+        ffi_ops::tl_cuda_add_assign(p(a), p(b));
+        Ok(())
+    }
+    fn tensor_sub_assign(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<()> {
+        ffi_ops::tl_cuda_sub_assign(p(a), p(b));
+        Ok(())
+    }
+    fn tensor_mul_assign(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<()> {
+        ffi_ops::tl_cuda_mul_assign(p(a), p(b));
+        Ok(())
+    }
+    fn tensor_div_assign(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<()> {
+        ffi_ops::tl_cuda_div_assign(p(a), p(b));
+        Ok(())
+    }
+    fn tensor_mod_assign(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<()> {
+        ffi_ops::tl_cuda_mod_assign(p(a), p(b));
+        Ok(())
+    }
+    fn tensor_add_assign_scalar_f32(&self, t: *mut c_void, s: f32) -> BackendResult<()> {
+        ffi_ops::tl_cuda_add_assign_scalar_f32(p(t), s);
+        Ok(())
+    }
+    fn tensor_sub_assign_scalar_f32(&self, t: *mut c_void, s: f32) -> BackendResult<()> {
+        ffi_ops::tl_cuda_sub_assign_scalar_f32(p(t), s);
+        Ok(())
+    }
+    fn tensor_mul_assign_scalar_f32(&self, t: *mut c_void, s: f32) -> BackendResult<()> {
+        ffi_ops::tl_cuda_mul_assign_scalar_f32(p(t), s);
+        Ok(())
+    }
+    fn tensor_div_assign_scalar_f32(&self, t: *mut c_void, s: f32) -> BackendResult<()> {
+        ffi_ops::tl_cuda_div_assign_scalar_f32(p(t), s);
+        Ok(())
+    }
+    fn tensor_mod_assign_scalar_f32(&self, t: *mut c_void, s: f32) -> BackendResult<()> {
+        ffi_ops::tl_cuda_mod_assign_scalar_f32(p(t), s);
+        Ok(())
+    }
 
     // ========== 数学・活性化関数 ==========
-    fn tensor_exp(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_log(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_sqrt(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_sin(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_cos(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_tan(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_tanh(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_sigmoid(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_relu(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_gelu(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_silu(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
+    fn tensor_exp(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_exp(p(t))))
+    }
+    fn tensor_log(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_log(p(t))))
+    }
+    fn tensor_sqrt(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_sqrt(p(t))))
+    }
+    fn tensor_sin(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_sin(p(t))))
+    }
+    fn tensor_cos(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_cos(p(t))))
+    }
+    fn tensor_tan(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_tan(p(t))))
+    }
+    fn tensor_tanh(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_tanh(p(t))))
+    }
+    fn tensor_sigmoid(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_sigmoid(p(t))))
+    }
+    fn tensor_relu(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_relu(p(t))))
+    }
+    fn tensor_gelu(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_gelu(p(t))))
+    }
+    fn tensor_silu(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_silu(p(t))))
+    }
 
     // ========== Reduction ==========
-    fn tensor_sum(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_mean(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_max(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_min(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_softmax(&self, _t: *mut c_void, _dim: i64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_max_dim(&self, _t: *mut c_void, _dim: usize, _keep_dim: bool) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_min_dim(&self, _t: *mut c_void, _dim: usize, _keep_dim: bool) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_mean_dim(&self, _t: *mut c_void, _dim: usize, _keep_dim: bool) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_sum_dim(&self, _t: *mut c_void, _dim: usize, _keep_dim: bool) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_argmax(&self, _t: *mut c_void, _dim: i64, _keep_dim: bool) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_argmin(&self, _t: *mut c_void, _dim: i64, _keep_dim: bool) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_tril(&self, _t: *mut c_void, _diagonal: i64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_clamp(&self, _t: *mut c_void, _min: f64, _max: f64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_sample(&self, _t: *mut c_void, _temp: f32, _top_p: f32) -> BackendResult<*mut c_void> { unimplemented!() }
+    fn tensor_sum(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_sum(p(t))))
+    }
+    fn tensor_mean(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_mean(p(t))))
+    }
+    fn tensor_max(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_max(p(t))))
+    }
+    fn tensor_min(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_min(p(t))))
+    }
+    fn tensor_softmax(&self, t: *mut c_void, dim: i64) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_softmax(p(t), dim)))
+    }
+    fn tensor_max_dim(&self, t: *mut c_void, dim: usize, kd: bool) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_max_dim(p(t), dim, kd)))
+    }
+    fn tensor_min_dim(&self, t: *mut c_void, dim: usize, kd: bool) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_min_dim(p(t), dim, kd)))
+    }
+    fn tensor_mean_dim(&self, t: *mut c_void, dim: usize, kd: bool) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_mean_dim(p(t), dim, kd)))
+    }
+    fn tensor_sum_dim(&self, t: *mut c_void, dim: usize, kd: bool) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_sum_dim(p(t), dim, kd)))
+    }
+    fn tensor_argmax(&self, t: *mut c_void, dim: i64, kd: bool) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_argmax(p(t), dim, kd)))
+    }
+    fn tensor_argmin(&self, t: *mut c_void, dim: i64, kd: bool) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_argmin(p(t), dim, kd)))
+    }
+    fn tensor_tril(&self, t: *mut c_void, d: i64) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_tril(p(t), d)))
+    }
+    fn tensor_clamp(&self, t: *mut c_void, min: f64, max: f64) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_clamp(p(t), min, max)))
+    }
+    fn tensor_sample(&self, t: *mut c_void, temp: f32, top_p: f32) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_sample(p(t), temp, top_p)))
+    }
 
     // ========== Autograd ==========
-    fn tensor_backward(&self, _t: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn tensor_grad(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_detach(&self, _t: *mut c_void, _req_grad: bool) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_enable_grad(&self, _t: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn clear_grads(&self) -> BackendResult<()> { unimplemented!() }
+    fn tensor_backward(&self, t: *mut c_void) -> BackendResult<()> {
+        ffi_ops::tl_cuda_backward(p(t));
+        Ok(())
+    }
+    fn tensor_grad(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_grad(p(t))))
+    }
+    fn tensor_detach(&self, t: *mut c_void, _req_grad: bool) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_detach(p(t))))
+    }
+    fn tensor_enable_grad(&self, t: *mut c_void) -> BackendResult<()> {
+        ffi_ops::tl_cuda_enable_grad(p(t));
+        Ok(())
+    }
+    fn clear_grads(&self) -> BackendResult<()> {
+        Ok(())
+    }
 
     // ========== 形状操作 ==========
-    fn tensor_reshape_new(&self, _t: *mut c_void, _new_shape: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_reshape_dims(&self, _t: *mut c_void, _d1: i64, _d2: i64, _d3: i64, _d4: i64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_transpose(&self, _t: *mut c_void, _dim0: usize, _dim1: usize) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_slice(&self, _t: *mut c_void, _dim: i64, _start: i64, _len: i64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_narrow(&self, _t: *mut c_void, _dim: usize, _start: usize, _len: usize) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_cat(&self, _a: *mut c_void, _b: *mut c_void, _dim: i64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_cat_i64(&self, _a: *mut c_void, _b: *mut c_void, _dim: i64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_cat2(&self, _a: *mut c_void, _b: *mut c_void, _dim: i64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_cat_4d(&self, _a: *mut c_void, _b: *mut c_void, _dim: i64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_replace_data(&self, _dst: *mut c_void, _src: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn tensor_repeat_interleave(&self, _t: *mut c_void, _repeats: usize, _dim: usize) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_to_device(&self, _t: *mut c_void, _device_id: i32) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_to_f32(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_to_i64(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_embedding(&self, _weight: *mut c_void, _indices: *mut c_void, _padding_idx: i64, _scale_grad: bool, _sparse: bool) -> BackendResult<*mut c_void> { unimplemented!() }
+    fn tensor_reshape_new(
+        &self,
+        t: *mut c_void,
+        new_shape: *mut c_void,
+    ) -> BackendResult<*mut c_void> {
+        unsafe {
+            let shape_tensor = &*(new_shape as *const crate::tensor::CudaTensor);
+            let shape_data = shape_tensor.to_vec::<f32>();
+            let dims: Vec<i64> = shape_data.iter().map(|&x| x as i64).collect();
+            Ok(v(ffi_ops::tl_cuda_reshape(p(t), dims.as_ptr(), dims.len())))
+        }
+    }
+    fn tensor_reshape_dims(
+        &self,
+        t: *mut c_void,
+        d1: i64,
+        d2: i64,
+        d3: i64,
+        d4: i64,
+    ) -> BackendResult<*mut c_void> {
+        let mut dims = Vec::new();
+        for &d in &[d1, d2, d3, d4] {
+            if d != 0 {
+                dims.push(d);
+            }
+        }
+        Ok(v(ffi_ops::tl_cuda_reshape(p(t), dims.as_ptr(), dims.len())))
+    }
+    fn tensor_transpose(&self, t: *mut c_void, d0: usize, d1: usize) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_transpose(p(t), d0, d1)))
+    }
+    fn tensor_slice(
+        &self,
+        t: *mut c_void,
+        dim: i64,
+        start: i64,
+        len: i64,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_slice(
+            p(t),
+            dim as usize,
+            start as usize,
+            len as usize,
+        )))
+    }
+    fn tensor_narrow(
+        &self,
+        t: *mut c_void,
+        dim: usize,
+        start: usize,
+        len: usize,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_narrow(p(t), dim, start, len)))
+    }
+    fn tensor_cat(&self, a: *mut c_void, b: *mut c_void, dim: i64) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_cat(p(a), p(b), dim)))
+    }
+    fn tensor_cat_i64(
+        &self,
+        a: *mut c_void,
+        b: *mut c_void,
+        dim: i64,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_cat_i64(p(a), p(b), dim)))
+    }
+    fn tensor_cat2(&self, a: *mut c_void, b: *mut c_void, dim: i64) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_cat(p(a), p(b), dim)))
+    }
+    fn tensor_cat_4d(
+        &self,
+        a: *mut c_void,
+        b: *mut c_void,
+        dim: i64,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_cat(p(a), p(b), dim)))
+    }
+    fn tensor_replace_data(&self, dst: *mut c_void, src: *mut c_void) -> BackendResult<()> {
+        ffi_ops::tl_cuda_replace_data(p(dst), p(src));
+        Ok(())
+    }
+    fn tensor_repeat_interleave(
+        &self,
+        t: *mut c_void,
+        repeats: usize,
+        dim: usize,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_repeat_interleave(p(t), repeats, dim)))
+    }
+    fn tensor_to_device(&self, t: *mut c_void, device_id: i32) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_to_device(p(t), device_id)))
+    }
+    fn tensor_to_f32(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_to_f32(p(t))))
+    }
+    fn tensor_to_i64(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_to_i64(p(t))))
+    }
+    fn tensor_embedding(
+        &self,
+        w: *mut c_void,
+        idx: *mut c_void,
+        p_idx: i64,
+        sg: bool,
+        sp: bool,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_embedding(p(w), p(idx), p_idx, sg, sp)))
+    }
 
     // ========== LLM ==========
-    fn tensor_rms_norm(&self, _input: *mut c_void, _weight: *mut c_void, _eps: f32) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_rope_new_cos(&self, _dim: usize, _seq_len: usize, _base: f32) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_rope_new_sin(&self, _dim: usize, _seq_len: usize, _base: f32) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_apply_rope(&self, _t: *mut c_void, _cos: *mut c_void, _sin: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
+    fn tensor_rms_norm(
+        &self,
+        input: *mut c_void,
+        weight: *mut c_void,
+        eps: f32,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_rms_norm(p(input), p(weight), eps)))
+    }
+    fn tensor_rope_new_cos(
+        &self,
+        dim: usize,
+        seq_len: usize,
+        base: f32,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_rope_new_cos(dim, seq_len, base)))
+    }
+    fn tensor_rope_new_sin(
+        &self,
+        dim: usize,
+        seq_len: usize,
+        base: f32,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_rope_new_sin(dim, seq_len, base)))
+    }
+    fn tensor_apply_rope(
+        &self,
+        t: *mut c_void,
+        cos: *mut c_void,
+        sin: *mut c_void,
+    ) -> BackendResult<*mut c_void> {
+        unsafe {
+            let tensor = &*(p(t) as *const std::cell::UnsafeCell<crate::tensor::CudaTensor>);
+            let cos_t = &*(p(cos) as *const std::cell::UnsafeCell<crate::tensor::CudaTensor>);
+            let sin_t = &*(p(sin) as *const std::cell::UnsafeCell<crate::tensor::CudaTensor>);
+            let result = (*tensor.get()).apply_rope_impl(&*cos_t.get(), &*sin_t.get(), 0)?;
+            Ok(v(ffi_ops::make_tensor(result)))
+        }
+    }
 
     // ========== IO / Print ==========
-    fn tensor_print(&self, _t: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn tensor_display(&self, _t: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn tensor_print_1(&self, _t: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn tensor_print_2(&self, _t: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn tensor_print_3(&self, _t: *mut c_void) -> BackendResult<()> { unimplemented!() }
-    fn tensor_save(&self, _t: *mut c_void, _path: *const i8) -> BackendResult<()> { unimplemented!() }
-    fn tensor_load(&self, _path: *const i8) -> BackendResult<*mut c_void> { unimplemented!() }
+    fn tensor_print(&self, t: *mut c_void) -> BackendResult<()> {
+        unsafe {
+            let tensor = &*(p(t) as *const std::cell::UnsafeCell<crate::tensor::CudaTensor>);
+            let data = (*tensor.get()).to_vec::<f32>();
+            println!(
+                "CudaTensor shape={:?} data={:?}",
+                (*tensor.get()).shape(),
+                &data[..data.len().min(20)]
+            );
+        }
+        Ok(())
+    }
+    fn tensor_display(&self, t: *mut c_void) -> BackendResult<()> {
+        self.tensor_print(t)
+    }
+    fn tensor_print_1(&self, t: *mut c_void) -> BackendResult<()> {
+        self.tensor_print(t)
+    }
+    fn tensor_print_2(&self, t: *mut c_void) -> BackendResult<()> {
+        self.tensor_print(t)
+    }
+    fn tensor_print_3(&self, t: *mut c_void) -> BackendResult<()> {
+        self.tensor_print(t)
+    }
+    fn tensor_save(&self, _t: *mut c_void, _path: *const i8) -> BackendResult<()> {
+        unimplemented!("tensor_save")
+    }
+    fn tensor_load(&self, _path: *const i8) -> BackendResult<*mut c_void> {
+        unimplemented!("tensor_load")
+    }
 
     // ========== NN ==========
-    fn tensor_conv2d(&self, _input: *mut c_void, _weight: *mut c_void, _bias: *mut c_void, _stride: usize, _padding: usize, _dilation: usize, _groups: usize) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_batch_norm(&self, _input: *mut c_void, _running_mean: *mut c_void, _running_var: *mut c_void, _weight: *mut c_void, _bias: *mut c_void, _training: bool, _momentum: f64, _eps: f64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_layer_norm(&self, _input: *mut c_void, _weight: *mut c_void, _bias: *mut c_void, _eps: f64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_dropout(&self, _input: *mut c_void, _p: f64, _training: bool) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_max_pool2d(&self, _input: *mut c_void, _kernel_size: usize, _stride: usize, _padding: usize) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_avg_pool2d(&self, _input: *mut c_void, _kernel_size: usize, _stride: usize, _padding: usize) -> BackendResult<*mut c_void> { unimplemented!() }
+    fn tensor_conv2d(
+        &self,
+        input: *mut c_void,
+        weight: *mut c_void,
+        bias: *mut c_void,
+        stride: usize,
+        padding: usize,
+        dilation: usize,
+        groups: usize,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_conv2d(
+            p(input),
+            p(weight),
+            p(bias),
+            stride,
+            padding,
+            dilation,
+            groups,
+        )))
+    }
+    fn tensor_batch_norm(
+        &self,
+        input: *mut c_void,
+        rm: *mut c_void,
+        rv: *mut c_void,
+        w: *mut c_void,
+        b: *mut c_void,
+        training: bool,
+        momentum: f64,
+        eps: f64,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_batch_norm(
+            p(input),
+            p(rm),
+            p(rv),
+            p(w),
+            p(b),
+            training,
+            momentum,
+            eps,
+        )))
+    }
+    fn tensor_layer_norm(
+        &self,
+        input: *mut c_void,
+        w: *mut c_void,
+        b: *mut c_void,
+        eps: f64,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_layer_norm(p(input), p(w), p(b), eps)))
+    }
+    fn tensor_dropout(
+        &self,
+        input: *mut c_void,
+        p_val: f64,
+        training: bool,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_dropout(p(input), p_val, training)))
+    }
+    fn tensor_max_pool2d(
+        &self,
+        input: *mut c_void,
+        ks: usize,
+        s: usize,
+        pad: usize,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_max_pool2d(p(input), ks, s, pad)))
+    }
+    fn tensor_avg_pool2d(
+        &self,
+        input: *mut c_void,
+        ks: usize,
+        s: usize,
+        pad: usize,
+    ) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_avg_pool2d(p(input), ks, s, pad)))
+    }
 
     // ========== 次元特化メソッド ==========
-    fn tensor_transpose_2d(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_reshape_2d(&self, _t: *mut c_void, _d0: i64, _d1: i64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_reshape_3d_to_2d(&self, _t: *mut c_void, _d0: i64, _d1: i64) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_matmul_4d(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_add_4d(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
-    fn tensor_silu_4d(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!() }
+    fn tensor_transpose_2d(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_transpose(p(t), 0, 1)))
+    }
+    fn tensor_reshape_2d(&self, t: *mut c_void, d0: i64, d1: i64) -> BackendResult<*mut c_void> {
+        let dims = [d0, d1];
+        Ok(v(ffi_ops::tl_cuda_reshape(p(t), dims.as_ptr(), 2)))
+    }
+    fn tensor_reshape_3d_to_2d(
+        &self,
+        t: *mut c_void,
+        d0: i64,
+        d1: i64,
+    ) -> BackendResult<*mut c_void> {
+        let dims = [d0, d1];
+        Ok(v(ffi_ops::tl_cuda_reshape(p(t), dims.as_ptr(), 2)))
+    }
+    fn tensor_matmul_4d(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_matmul(p(a), p(b))))
+    }
+    fn tensor_add_4d(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_add(p(a), p(b))))
+    }
+    fn tensor_silu_4d(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_silu(p(t))))
+    }
 }
