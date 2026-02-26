@@ -1,8 +1,9 @@
+#![cfg(feature = "metal")]
 use serial_test::serial;
-use tl_runtime::error::CTensorResult;
-use tl_runtime::*;
-use tl_runtime::error::tl_get_last_error;
 use tl_metal::ffi_ops::*;
+use tl_runtime::error::CTensorResult;
+use tl_runtime::error::tl_get_last_error;
+use tl_runtime::*;
 
 // Helper to check if a tensor is not null
 fn assert_tensor_valid(t: *mut OpaqueTensor) {
@@ -32,7 +33,9 @@ fn unwrap_tensor(ptr: *mut OpaqueTensor) -> *mut OpaqueTensor {
                 res.error_code, file, res.line, res.col, err_msg
             );
         } else {
-            panic!("Runtime error occurred (null pointer returned) but no error message in LAST_ERROR.");
+            panic!(
+                "Runtime error occurred (null pointer returned) but no error message in LAST_ERROR."
+            );
         }
     }
     ptr

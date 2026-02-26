@@ -4082,7 +4082,6 @@ dependencies = [
  "serial_test",
  "thiserror 1.0.69",
  "tl_cpu",
- "tl_metal",
  "tl_runtime",
  "tokenizers 0.19.1",
  "tokio",
