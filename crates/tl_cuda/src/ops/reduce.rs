@@ -52,8 +52,8 @@ impl CudaTensor {
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .map(|(i, _)| i)
-            .unwrap_or(0) as i64;
-        Ok(CudaTensor::from_slice(&[idx], &[1], DType::I64))
+            .unwrap_or(0) as f32;
+        Ok(CudaTensor::from_slice(&[idx], &[1], DType::F32))
     }
 
     /// 全要素の argmin（テンソル返却）
@@ -64,7 +64,7 @@ impl CudaTensor {
             .enumerate()
             .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .map(|(i, _)| i)
-            .unwrap_or(0) as i64;
-        Ok(CudaTensor::from_slice(&[idx], &[1], DType::I64))
+            .unwrap_or(0) as f32;
+        Ok(CudaTensor::from_slice(&[idx], &[1], DType::F32))
     }
 }

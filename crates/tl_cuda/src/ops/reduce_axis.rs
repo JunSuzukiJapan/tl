@@ -59,7 +59,7 @@ impl CudaTensor {
         }
         let out_count: usize = out_shape.iter().product();
 
-        let mut result = vec![0i64; out_count];
+        let mut result = vec![0.0f32; out_count];
         for out_idx in 0..out_count {
             let mut best_i = 0usize;
             let mut best_v = f32::NEG_INFINITY;
@@ -70,10 +70,10 @@ impl CudaTensor {
                     best_i = k;
                 }
             }
-            result[out_idx] = best_i as i64;
+            result[out_idx] = best_i as f32;
         }
 
-        Ok(CudaTensor::from_slice(&result, &out_shape, DType::I64))
+        Ok(CudaTensor::from_slice(&result, &out_shape, DType::F32))
     }
 
     /// 軸に沿った argmin
@@ -102,7 +102,7 @@ impl CudaTensor {
         }
         let out_count: usize = out_shape.iter().product();
 
-        let mut result = vec![0i64; out_count];
+        let mut result = vec![0.0f32; out_count];
         for out_idx in 0..out_count {
             let mut best_i = 0usize;
             let mut best_v = f32::INFINITY;
@@ -113,10 +113,10 @@ impl CudaTensor {
                     best_i = k;
                 }
             }
-            result[out_idx] = best_i as i64;
+            result[out_idx] = best_i as f32;
         }
 
-        Ok(CudaTensor::from_slice(&result, &out_shape, DType::I64))
+        Ok(CudaTensor::from_slice(&result, &out_shape, DType::F32))
     }
 
     /// 軸リダクションの共通実装

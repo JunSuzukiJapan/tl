@@ -35,8 +35,8 @@ impl CudaTensor {
         freq_base: f32,
     ) -> BackendResult<(CudaTensor, CudaTensor)> {
         let half_dim = dim / 2;
-        let mut cos_data = vec![0.0f32; seq_len * dim];
-        let mut sin_data = vec![0.0f32; seq_len * dim];
+        let mut cos_data = vec![0.0f32; seq_len * half_dim];
+        let mut sin_data = vec![0.0f32; seq_len * half_dim];
 
         for pos in 0..seq_len {
             for i in 0..half_dim {
@@ -45,15 +45,13 @@ impl CudaTensor {
                 let c = angle.cos();
                 let s = angle.sin();
 
-                cos_data[pos * dim + i] = c;
-                cos_data[pos * dim + half_dim + i] = c;
-                sin_data[pos * dim + i] = s;
-                sin_data[pos * dim + half_dim + i] = s;
+                cos_data[pos * half_dim + i] = c;
+                sin_data[pos * half_dim + i] = s;
             }
         }
 
-        let cos = CudaTensor::from_slice(&cos_data, &[seq_len, dim], DType::F32);
-        let sin = CudaTensor::from_slice(&sin_data, &[seq_len, dim], DType::F32);
+        let cos = CudaTensor::from_slice(&cos_data, &[seq_len, half_dim], DType::F32);
+        let sin = CudaTensor::from_slice(&sin_data, &[seq_len, half_dim], DType::F32);
         Ok((cos, sin))
     }
 

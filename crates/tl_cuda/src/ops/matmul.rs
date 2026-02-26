@@ -39,6 +39,8 @@ impl CudaTensor {
             1
         };
 
+        let b_batched = b_shape.len() > 2;
+
         let a_mat_size = m * k;
         let b_mat_size = k * n;
         let c_mat_size = m * n;
@@ -47,7 +49,7 @@ impl CudaTensor {
 
         for batch in 0..batch_size {
             let a_off = batch * a_mat_size;
-            let b_off = batch * b_mat_size;
+            let b_off = if b_batched { batch * b_mat_size } else { 0 };
             let c_off = batch * c_mat_size;
 
             for i in 0..m {

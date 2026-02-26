@@ -72,8 +72,8 @@ fn test_argmax_axis() {
     let t = CudaTensor::from_slice(&[1.0f32, 5.0, 3.0, 4.0, 2.0, 6.0], &[2, 3], DType::F32);
     let r = t.argmax_impl(1).unwrap();
     assert_eq!(r.shape(), &[2]);
-    let result: Vec<i64> = r.to_vec();
-    assert_eq!(result, vec![1, 2]); // idx of 5.0 and 6.0
+    let result: Vec<f32> = r.to_vec();
+    approx_eq(&result, &[1.0, 2.0], 1e-5); // idx of 5.0 and 6.0
 }
 
 // ========== 形状操作 ==========

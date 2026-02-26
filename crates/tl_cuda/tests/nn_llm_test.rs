@@ -152,12 +152,12 @@ fn test_causal_mask() {
 #[serial]
 fn test_rope_cos_sin() {
     let (cos, sin) = CudaTensor::rope_cos_sin_impl(4, 8, 10000.0).unwrap();
-    assert_eq!(cos.shape(), &[4, 8]);
-    assert_eq!(sin.shape(), &[4, 8]);
+    assert_eq!(cos.shape(), &[4, 4]);
+    assert_eq!(sin.shape(), &[4, 4]);
     // pos=0 → all cos=1, sin=0
     let cos_data = cos.to_vec::<f32>();
     let sin_data = sin.to_vec::<f32>();
-    for i in 0..8 {
+    for i in 0..4 {
         assert!(
             (cos_data[i] - 1.0).abs() < 1e-5,
             "cos[0,{}]={}",
