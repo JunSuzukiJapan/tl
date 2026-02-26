@@ -1042,6 +1042,35 @@ pub fn create_runtime_tensor_f32(data: &[f32], shape: &[usize]) -> *mut c_void {
     }
 }
 
+/// テンソル読み取りヘルパー: CPU/GPU 両対応
+/// テンソルポインタから f32 データを Vec<f32> として読み出す
+pub fn read_runtime_tensor_to_f32_vec(t: *mut c_void) -> Vec<f32> {
+    if t.is_null() {
+        return Vec::new();
+    }
+    if is_cpu() {
+        let tensor = unsafe { &*(t as *mut tl_cpu::CpuTensor) };
+        tensor.data_f32().to_vec()
+    } else {
+        #[cfg(feature = "metal")]
+        {
+            let tensor = unsafe { &*(t as *const std::cell::UnsafeCell<tl_metal::MetalTensor>) };
+            unsafe { (*tensor.get()).to_vec::<f32>() }
+        }
+        #[cfg(feature = "cuda")]
+        {
+            let tensor =
+                unsafe { &*(t as *const std::cell::UnsafeCell<tl_cuda::tensor::CudaTensor>) };
+            unsafe { (*tensor.get()).to_vec::<f32>() }
+        }
+        #[cfg(not(any(feature = "metal", feature = "cuda")))]
+        {
+            let tensor = unsafe { &*(t as *mut tl_cpu::CpuTensor) };
+            tensor.data_f32().to_vec()
+        }
+    }
+}
+
 /// U8 テンソル作成ヘルパー
 pub fn create_runtime_tensor_u8(data: &[u8], shape: &[usize]) -> *mut c_void {
     if is_cpu() {

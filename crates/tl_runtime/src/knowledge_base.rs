@@ -843,19 +843,13 @@ pub extern "C" fn tl_query(
     tags: *const u8,
 ) -> *mut OpaqueTensor {
     let pred_name = unsafe { extract_string(name as *const i8) };
-    let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
 
     let store = KB.lock().unwrap();
 
     // args_tensor から引数の i64 配列を取得 (CPU/GPU 両対応)
     let args_slice: Option<Vec<i64>> = if !args_tensor.is_null() {
-        let data: Vec<f32> = if is_cpu {
-            let tensor = unsafe { &*(args_tensor as *mut tl_cpu::CpuTensor) };
-            tensor.data_f32().to_vec()
-        } else {
-            let tensor = unsafe { &*args_tensor };
-            tensor.to_vec()
-        };
+        let data =
+            crate::device_ffi::read_runtime_tensor_to_f32_vec(args_tensor as *mut std::ffi::c_void);
         Some(data.iter().map(|&v| v as i64).collect())
     } else {
         None
