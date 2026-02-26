@@ -39,7 +39,7 @@ memmap2 = "0.9.9"
 half = "2.7.1"
 
 [features]
-default = ["metal"]
+default = []
 metal = ["dep:tl_metal"]
 cuda = ["dep:tl_cuda"]
 

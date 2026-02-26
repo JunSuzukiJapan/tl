@@ -17,7 +17,7 @@ path = "src/main.rs"
 members = ["crates/tl_runtime", "crates/tl_metal", "crates/tl_backend", "crates/tl_cpu", "crates/tl_cuda"]
 
 [dependencies]
-tl_runtime = { path = "crates/tl_runtime", version = "0.3.9" }
+tl_runtime = { path = "crates/tl_runtime", version = "0.3.9", default-features = false }
 tl_cpu = { path = "crates/tl_cpu", version = "0.3.9" }
 
 # CLI & Error Handling
@@ -35,8 +35,7 @@ nom = "7.1.3"
 inkwell = { version = "0.7.0", features = ["llvm18-1"] }
 
 # Tensor Runtime (Candle)
-# Tensor Runtime (Candle)
-candle-core = { version = "0.9.1", features = ["metal", "accelerate"] }
+candle-core = { version = "0.9.1" }
 
 # Logging
 log = "0.4"
@@ -59,10 +58,10 @@ logos = "0.16.0"
 
 
 [features]
-default = ["accelerate", "metal"]
+default = []
 accelerate = ["candle-core/accelerate"]
-metal = ["candle-core/metal"]
-cuda = ["candle-core/cuda"]
+metal = ["candle-core/metal", "tl_runtime/metal"]
+cuda = ["candle-core/cuda", "tl_runtime/cuda"]
 coreml = ["dep:candle-coreml"]
 
 [profile.release]
