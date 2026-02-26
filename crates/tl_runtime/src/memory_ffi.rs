@@ -1,7 +1,7 @@
 //! Memory 関連の FFI 関数
 
-use std::ffi::c_void;
 use std::collections::HashMap;
+use std::ffi::c_void;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -79,7 +79,12 @@ pub extern "C" fn tl_mem_free(ptr: *mut c_void) {
 /// @ffi_sig (void*, i64, i8*, u32) -> void
 /// ログアロケーション（スタブ）
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_log_alloc(_ptr: *const c_void, _size: i64, _file: *const std::os::raw::c_char, _line: u32) {
+pub extern "C" fn tl_log_alloc(
+    _ptr: *const c_void,
+    _size: i64,
+    _file: *const std::os::raw::c_char,
+    _line: u32,
+) {
     // スタブ
 }
 
@@ -101,7 +106,9 @@ pub extern "C" fn tl_mem_register_tensor(_ptr: *mut c_void) {
 /// 構造体登録。REF_COUNTS に RC=1 で初期化する。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_register_struct(ptr: *mut c_void) {
-    if ptr.is_null() { return; }
+    if ptr.is_null() {
+        return;
+    }
     let key = ptr as usize;
     if let Ok(mut counts) = REF_COUNTS.lock() {
         counts.insert(key, 1);
@@ -111,8 +118,13 @@ pub extern "C" fn tl_mem_register_struct(ptr: *mut c_void) {
 /// @ffi_sig (Struct*, i8*) -> void
 /// 名前付き構造体登録。REF_COUNTS に RC=1 で初期化する。
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_mem_register_struct_named(ptr: *mut c_void, _name: *const std::os::raw::c_char) {
-    if ptr.is_null() { return; }
+pub extern "C" fn tl_mem_register_struct_named(
+    ptr: *mut c_void,
+    _name: *const std::os::raw::c_char,
+) {
+    if ptr.is_null() {
+        return;
+    }
     let key = ptr as usize;
     if let Ok(mut counts) = REF_COUNTS.lock() {
         counts.insert(key, 1);
@@ -135,7 +147,7 @@ pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::
     if !t.is_null() {
         unsafe {
             std::sync::Arc::increment_strong_count(
-                t as *const std::cell::UnsafeCell<crate::OpaqueTensor>
+                t as *const std::cell::UnsafeCell<crate::OpaqueTensor>,
             );
         }
     }
@@ -149,7 +161,9 @@ pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::
 /// CPU/Metal 共通: Arc::from_raw で復元し drop で RC-1。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_release_safe(t: *mut crate::OpaqueTensor) {
-    if t.is_null() { return; }
+    if t.is_null() {
+        return;
+    }
     unsafe {
         let arc = std::sync::Arc::from_raw(t as *const std::cell::UnsafeCell<crate::OpaqueTensor>);
         drop(arc);
@@ -163,9 +177,8 @@ pub extern "C" fn tl_tensor_finalize(_t: *mut crate::OpaqueTensor) {
     // No-op
 }
 
-
 /// グローバル参照カウントマップ（構造体用）
-static REF_COUNTS: std::sync::LazyLock<Mutex<HashMap<usize, usize>>> = 
+static REF_COUNTS: std::sync::LazyLock<Mutex<HashMap<usize, usize>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// @ffi_sig (Struct*|String*) -> void
@@ -173,26 +186,26 @@ static REF_COUNTS: std::sync::LazyLock<Mutex<HashMap<usize, usize>>> =
 /// 安全ガード: REF_COUNTS に未登録のポインタ（alloca 等のスタックアドレス）は無視する。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_ptr_inc_ref(ptr: *mut c_void) {
-    if ptr.is_null() { return; }
+    if ptr.is_null() {
+        return;
+    }
     let key = ptr as usize;
     if let Ok(mut counts) = REF_COUNTS.lock() {
-        // REF_COUNTS に登録済みのポインタのみ RC 操作する。
-        // tl_mem_register_struct / tl_mem_register_struct_named で
-        // 正式に登録されたヒープポインタのみが対象。
-        // 未登録ポインタ（alloca スタックアドレス等）は安全に無視する。
         if let Some(entry) = counts.get_mut(&key) {
             *entry += 1;
         }
     }
 }
 
-/// @ffi_sig (Struct*|String*) -> bool
+/// @ffi_sig (Struct*|String*) -> i32
 /// 参照カウント減少。構造体・String どちらにも使われる。
-/// 戻り値: カウントが0になった場合は true (解放すべき)
-/// 安全ガード: REF_COUNTS に未登録のポインタは false を返す（解放しない）。
+/// 戻り値: カウントが0になった場合は 1 (解放すべき), それ以外は 0
+/// 安全ガード: REF_COUNTS に未登録のポインタは 0 を返す（解放しない）。
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_ptr_dec_ref(ptr: *mut c_void) -> bool {
-    if ptr.is_null() { return false; }
+pub extern "C" fn tl_ptr_dec_ref(ptr: *mut c_void) -> i32 {
+    if ptr.is_null() {
+        return 0;
+    }
     let key = ptr as usize;
     if let Ok(mut counts) = REF_COUNTS.lock() {
         if let Some(count) = counts.get_mut(&key) {
@@ -200,20 +213,21 @@ pub extern "C" fn tl_ptr_dec_ref(ptr: *mut c_void) -> bool {
                 *count -= 1;
                 if *count == 0 {
                     counts.remove(&key);
-                    return true; // should free
+                    return 1; // should free
                 }
             }
         }
-        // 未登録ポインタは安全に無視（false を返す）
     }
-    false
+    0
 }
 
 /// @ffi_sig (Struct*|String*) -> Struct*|String*
 /// ポインタ取得（参照カウント増加）。構造体・String どちらにも使われる。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_ptr_acquire(ptr: *mut c_void) -> *mut c_void {
-    if ptr.is_null() { return ptr; }
+    if ptr.is_null() {
+        return ptr;
+    }
     tl_ptr_inc_ref(ptr);
     ptr
 }
@@ -222,12 +236,15 @@ pub extern "C" fn tl_ptr_acquire(ptr: *mut c_void) -> *mut c_void {
 /// ポインタ解放（参照カウント減少、0になったら解放）。構造体・String どちらにも使われる。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_ptr_release(ptr: *mut c_void) {
-    if ptr.is_null() { return; }
-    if tl_ptr_dec_ref(ptr) {
-        unsafe { libc::free(ptr); }
+    if ptr.is_null() {
+        return;
+    }
+    if tl_ptr_dec_ref(ptr) != 0 {
+        unsafe {
+            libc::free(ptr);
+        }
     }
 }
-
 
 /// @ffi_sig (i64) -> void*
 /// 一時バッファ割り当て
@@ -244,7 +261,9 @@ pub extern "C" fn tl_alloc_tmp(size: i64) -> *mut c_void {
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_free_tmp(ptr: *mut c_void) {
     if !ptr.is_null() {
-        unsafe { libc::free(ptr); }
+        unsafe {
+            libc::free(ptr);
+        }
     }
 }
 
@@ -282,7 +301,9 @@ pub extern "C" fn tl_get_metal_pool_bytes() -> i64 {
 /// @ffi_sig (Tensor*) -> Tensor*
 /// テンソル返却準備（スタブ）
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_tensor_prepare_return(t: *mut crate::OpaqueTensor) -> *mut crate::OpaqueTensor {
+pub extern "C" fn tl_tensor_prepare_return(
+    t: *mut crate::OpaqueTensor,
+) -> *mut crate::OpaqueTensor {
     t // そのまま返す
 }
 
