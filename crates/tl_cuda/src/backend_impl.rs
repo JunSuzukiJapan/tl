@@ -91,36 +91,11 @@ impl CudaTensor {
 
     // === Activation → ops/activation.rs に移動済み ===
 
-    // === Matmul (Step 7 で実装) ===
-    pub fn matmul_impl(&self, _other: &Self) -> BackendResult<Self> {
-        unimplemented!("matmul_impl")
-    }
+    // === Matmul → ops/matmul.rs に移動済み ===
 
     // === Reduce → ops/reduce.rs, ops/reduce_axis.rs に移動済み ===
     // === Shape → ops/shape.rs に移動済み ===
-
-    // === Special (Step 10 で実装) ===
-    pub fn softmax_impl(&self, _axis: i32) -> BackendResult<Self> {
-        unimplemented!("softmax_impl")
-    }
-    pub fn embedding_impl(&self, _indices: &Self) -> BackendResult<Self> {
-        unimplemented!("embedding_impl")
-    }
-    pub fn cross_entropy_impl(&self, _target: &Self) -> BackendResult<Self> {
-        unimplemented!("cross_entropy_impl")
-    }
-    pub fn tril_impl(&self, _diagonal: i32) -> BackendResult<Self> {
-        unimplemented!("tril_impl")
-    }
-    pub fn index_select_impl(&self, _axis: usize, _indices: &Self) -> BackendResult<Self> {
-        unimplemented!("index_select_impl")
-    }
-    pub fn where_cond_impl(_cond: &Self, _x: &Self, _y: &Self) -> BackendResult<Self> {
-        unimplemented!("where_cond_impl")
-    }
-    pub fn repeat_interleave_impl(&self, _repeats: usize, _axis: usize) -> BackendResult<Self> {
-        unimplemented!("repeat_interleave_impl")
-    }
+    // === Special → ops/special.rs に移動済み ===
 
     // === NN (Step 10 で実装) ===
     pub fn conv2d_impl(
