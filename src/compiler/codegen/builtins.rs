@@ -257,13 +257,13 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_report_runtime_error_loc", report_err_loc_type);
 
     if let Some(f) = module.get_function("tl_handle_runtime_error") {
-        execution_engine.add_global_mapping(&f, runtime::tl_handle_runtime_error as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_handle_runtime_error as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_amend_error_loc") {
-        execution_engine.add_global_mapping(&f, runtime::tl_amend_error_loc as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_amend_error_loc as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_report_runtime_error_loc") {
-        execution_engine.add_global_mapping(&f, runtime::tl_report_runtime_error_loc as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_report_runtime_error_loc as *const () as usize);
     }
 
     // tl_get_last_error() -> CTensorResult
@@ -524,60 +524,60 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_get_f32_md", get_md_type);
 
     // [IDevice] tl_clear_grads → device_ffi
-    if let Some(f) = module.get_function("tl_clear_grads") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_clear_grads as usize); }
+    if let Some(f) = module.get_function("tl_clear_grads") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_clear_grads as *const () as usize); }
     if let Some(f) = module.get_function("tl_file_exists") {
-        execution_engine.add_global_mapping(&f, runtime::tl_file_exists as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_file_exists as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_file_exists_i64") {
-        execution_engine.add_global_mapping(&f, runtime::tl_file_exists_i64 as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_file_exists_i64 as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_download_file") {
-        execution_engine.add_global_mapping(&f, runtime::tl_download_file as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_download_file as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_read_file") {
-        execution_engine.add_global_mapping(&f, runtime::tl_read_file as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_read_file as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_write_file") {
-        execution_engine.add_global_mapping(&f, runtime::tl_write_file as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_write_file as *const () as usize);
     }
 
     // String mappings
     if let Some(f) = module.get_function("tl_string_new") {
-        execution_engine.add_global_mapping(&f, runtime::tl_string_new as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_string_new as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_print_string") {
-        execution_engine.add_global_mapping(&f, runtime::tl_print_string as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_print_string as *const () as usize);
     }
     // Add mapping for legacy/extern default name
     if let Some(f) = module.get_function("tl_string_print") {
-        execution_engine.add_global_mapping(&f, runtime::tl_string_print as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_string_print as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_display_string") {
-        execution_engine.add_global_mapping(&f, runtime::tl_display_string as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_display_string as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_string_concat") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_concat as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_concat as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_string_len") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_len as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_len as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_string_from_char") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_char as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_char as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_string_to_i64") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_to_i64 as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_to_i64 as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_string_contains") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_contains as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_contains as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_string_char_at") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_char_at as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_char_at as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_string_eq") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_eq as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_eq as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_string_free") {
-        execution_engine.add_global_mapping(&f, runtime::string_ffi::tl_string_free as usize);
+        execution_engine.add_global_mapping(&f, runtime::string_ffi::tl_string_free as *const () as usize);
     }
     
     // tl_hash_string(s: *mut StringStruct) -> i64
@@ -585,7 +585,7 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_hash_string", hash_string_type);
     
     if let Some(f) = module.get_function("tl_hash_string") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_hash_string as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_hash_string as *const () as usize);
     }
 
     // tl_checkpoint(ctx: *mut, func: *mut, input: *mut) -> *mut
@@ -594,29 +594,29 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_checkpoint", checkpoint_type);
 
     if let Some(f) = module.get_function("tl_checkpoint") {
-        execution_engine.add_global_mapping(&f, runtime::checkpoint::tl_checkpoint as usize);
+        execution_engine.add_global_mapping(&f, runtime::checkpoint::tl_checkpoint as *const () as usize);
     }
 
     if let Some(f) = module.get_function("tl_set_device") {
-        execution_engine.add_global_mapping(&f, runtime::tl_set_device as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_set_device as *const () as usize);
     }
 
     // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_to_device") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_device as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_device as *const () as usize);
     }
 
     if let Some(f) = module.get_function("tl_report_runtime_error") {
-        execution_engine.add_global_mapping(&f, runtime::tl_report_runtime_error as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_report_runtime_error as *const () as usize);
     }
 
     if let Some(f) = module.get_function("tl_tensor_acquire") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_acquire as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_acquire as *const () as usize);
     }
 
     // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_replace_data") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_replace_data as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_replace_data as *const () as usize);
     }
 
     // tl_tensor_sum_dim(t: *mut Tensor, dim: usize, keep: bool) -> *mut OpaqueTensor
@@ -932,17 +932,17 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_trace_mem", trace_mem_type);
 
     if let Some(f) = module.get_function("tl_log_alloc") {
-        execution_engine.add_global_mapping(&f, runtime::tl_log_alloc as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_log_alloc as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_log_free") {
-        execution_engine.add_global_mapping(&f, runtime::tl_log_free as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_log_free as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_trace_mem") {
-        execution_engine.add_global_mapping(&f, runtime::tl_trace_mem as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_trace_mem as *const () as usize);
     }
     
     if let Some(f) = module.get_function("tl_mem_get_buffer") {
-        execution_engine.add_global_mapping(&f, runtime::tl_mem_get_buffer as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_mem_get_buffer as *const () as usize);
     }
 
     // Function Frames
@@ -952,10 +952,10 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_mem_function_exit", fn_exit_type);
 
     if let Some(f) = module.get_function("tl_mem_function_enter") {
-        execution_engine.add_global_mapping(&f, runtime::tl_mem_function_enter as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_mem_function_enter as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_mem_function_exit") {
-        execution_engine.add_global_mapping(&f, runtime::tl_mem_function_exit as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_mem_function_exit as *const () as usize);
     }
     
     let path_to_str_type = i8_ptr.fn_type(&[void_ptr.into()], false);
@@ -963,14 +963,14 @@ pub fn declare_runtime_functions<'ctx>(
 
     // DEBUG: Explicitly map tl_print_string
     if let Some(f) = module.get_function("tl_print_string") {
-        execution_engine.add_global_mapping(&f, runtime::tl_print_string as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_print_string as *const () as usize);
     }
     
     // Explicitly map tl_mem_function_exit
     let exit_fn_type = void_type.fn_type(&[], false);
     add_fn("tl_mem_function_exit", exit_fn_type);
     if let Some(f) = module.get_function("tl_mem_function_exit") {
-        execution_engine.add_global_mapping(&f, runtime::memory_manager::tl_mem_function_exit as usize);
+        execution_engine.add_global_mapping(&f, runtime::memory_manager::tl_mem_function_exit as *const () as usize);
     }
 
     // Explicitly map tl_arena_init
@@ -1436,631 +1436,631 @@ pub fn declare_runtime_functions<'ctx>(
     }
     // ========== テンソル作成/メモリ/情報: CPU/GPU 切替 ==========
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_new") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_new as usize); }
+    if let Some(f) = module.get_function("tl_tensor_new") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_new as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_new_i64") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_new_i64 as usize); }
+    if let Some(f) = module.get_function("tl_tensor_new_i64") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_new_i64 as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_from_i64_array") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_from_i64_array as usize); }
+    if let Some(f) = module.get_function("tl_tensor_from_i64_array") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_from_i64_array as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_matmul") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_matmul as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_matmul as *const () as usize);
     }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_contiguous") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_contiguous as usize); }
+    if let Some(f) = module.get_function("tl_tensor_contiguous") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_contiguous as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_print") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_print as usize); }
+    if let Some(f) = module.get_function("tl_tensor_print") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_print as *const () as usize); }
     // display も print と同じ関数にマッピング
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_display") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_display as usize); }
+    if let Some(f) = module.get_function("tl_tensor_display") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_display as *const () as usize); }
     if !is_cpu {
         if let Some(f) = module.get_function("tl_tensor_print_1") {
-            execution_engine.add_global_mapping(&f, runtime::tl_tensor_print_1 as usize);
+            execution_engine.add_global_mapping(&f, runtime::tl_tensor_print_1 as *const () as usize);
         }
         if let Some(f) = module.get_function("tl_tensor_print_2") {
-            execution_engine.add_global_mapping(&f, runtime::tl_tensor_print_2 as usize);
+            execution_engine.add_global_mapping(&f, runtime::tl_tensor_print_2 as *const () as usize);
         }
         if let Some(f) = module.get_function("tl_tensor_print_3") {
-            execution_engine.add_global_mapping(&f, runtime::tl_tensor_print_3 as usize);
+            execution_engine.add_global_mapping(&f, runtime::tl_tensor_print_3 as *const () as usize);
         }
         // [IDevice] device_ffi 統一マッピング
         if let Some(f) = module.get_function("tl_tensor_device_id") {
-            execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_device_id as usize);
+            execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_device_id as *const () as usize);
         }
         if let Some(f) = module.get_function("tl_tensor_prepare_return") {
             execution_engine.add_global_mapping(
                 &f,
-                runtime::tl_tensor_prepare_return as usize,
+                runtime::tl_tensor_prepare_return as *const () as usize,
             );
         }
     }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_acquire") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_acquire as usize); }
+    if let Some(f) = module.get_function("tl_tensor_acquire") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_acquire as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_release_safe") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_release_safe as usize); }
+    if let Some(f) = module.get_function("tl_tensor_release_safe") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_release_safe as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_add_scalar") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_add_scalar as usize); }
+    if let Some(f) = module.get_function("tl_tensor_add_scalar") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_add_scalar as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_sub_scalar") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub_scalar as usize); }
+    if let Some(f) = module.get_function("tl_tensor_sub_scalar") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub_scalar as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_mul_scalar") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mul_scalar as usize); }
+    if let Some(f) = module.get_function("tl_tensor_mul_scalar") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mul_scalar as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_div_scalar") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_div_scalar as usize); }
+    if let Some(f) = module.get_function("tl_tensor_div_scalar") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_div_scalar as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_len") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_len as usize); }
+    if let Some(f) = module.get_function("tl_tensor_len") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_len as *const () as usize); }
 
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_dim") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_dim as usize); }
+    if let Some(f) = module.get_function("tl_tensor_dim") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_dim as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_get_f32_md") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_get_f32_md as usize); }
+    if let Some(f) = module.get_function("tl_tensor_get_f32_md") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_get_f32_md as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_get_i64_md") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_get_i64_md as usize); }
+    if let Some(f) = module.get_function("tl_tensor_get_i64_md") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_get_i64_md as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_neg") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_neg as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_neg as *const () as usize);
     }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_transpose") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_transpose as usize); }
+    if let Some(f) = module.get_function("tl_tensor_transpose") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_transpose as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_reshape_new") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_reshape_new as usize); }
+    if let Some(f) = module.get_function("tl_tensor_reshape_new") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_reshape_new as *const () as usize); }
 
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_get") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_get as usize); }
+    if let Some(f) = module.get_function("tl_tensor_get") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_get as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_slice") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_slice as usize); }
+    if let Some(f) = module.get_function("tl_tensor_slice") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_slice as *const () as usize); }
     if let Some(f) = module.get_function("tl_register_tensor") {
-        execution_engine.add_global_mapping(&f, runtime::registry::tl_register_tensor as usize);
+        execution_engine.add_global_mapping(&f, runtime::registry::tl_register_tensor as *const () as usize);
     }
     // Additional mappings from previous list...
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_randn_debug") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_randn_debug as usize); }
+    if let Some(f) = module.get_function("tl_tensor_randn_debug") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_randn_debug as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_zeros") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_zeros as usize); }
+    if let Some(f) = module.get_function("tl_tensor_zeros") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_zeros as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_backward") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_backward as usize); }
+    if let Some(f) = module.get_function("tl_tensor_backward") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_backward as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_grad") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_grad as usize); }
+    if let Some(f) = module.get_function("tl_tensor_grad") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_grad as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_detach") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_detach as usize); }
+    if let Some(f) = module.get_function("tl_tensor_detach") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_detach as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_promote") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_promote as usize); }
+    if let Some(f) = module.get_function("tl_tensor_promote") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_promote as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_register") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_register as usize); }
+    if let Some(f) = module.get_function("tl_tensor_register") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_register as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_enable_grad") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_enable_grad as usize); }
+    if let Some(f) = module.get_function("tl_tensor_enable_grad") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_enable_grad as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_softmax") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_softmax as usize); }
+    if let Some(f) = module.get_function("tl_tensor_softmax") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_softmax as *const () as usize); }
     // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_cross_entropy") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cross_entropy as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cross_entropy as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_conv2d") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_conv2d as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_conv2d as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_clamp") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_clamp as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_clamp as *const () as usize);
     }
     // ========== テンソル演算: CPU/GPU 切替 (map_tensor_fn! マクロ使用) ==========
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_ones") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_ones as usize); }
+    if let Some(f) = module.get_function("tl_tensor_ones") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_ones as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_sub_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub_assign as usize); }
+    if let Some(f) = module.get_function("tl_tensor_sub_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub_assign as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_sum") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sum as usize); }
+    if let Some(f) = module.get_function("tl_tensor_sum") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sum as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_add") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_add as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_add as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_sub") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_mul") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mul as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mul as *const () as usize);
     }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_div") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_div as usize); }
+    if let Some(f) = module.get_function("tl_tensor_div") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_div as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_rem") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rem as usize); }
+    if let Some(f) = module.get_function("tl_tensor_rem") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rem as *const () as usize); }
     // Comparisons
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_eq") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_eq as usize); }
+    if let Some(f) = module.get_function("tl_tensor_eq") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_eq as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_neq") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_neq as usize); }
+    if let Some(f) = module.get_function("tl_tensor_neq") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_neq as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_gt") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_gt as usize); }
+    if let Some(f) = module.get_function("tl_tensor_gt") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_gt as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_lt") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_lt as usize); }
+    if let Some(f) = module.get_function("tl_tensor_lt") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_lt as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_ge") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_ge as usize); }
+    if let Some(f) = module.get_function("tl_tensor_ge") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_ge as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_le") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_le as usize); }
+    if let Some(f) = module.get_function("tl_tensor_le") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_le as *const () as usize); }
 
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_pow") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_pow as usize); }
+    if let Some(f) = module.get_function("tl_tensor_pow") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_pow as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_pow_scalar") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_pow_scalar as usize); }
+    if let Some(f) = module.get_function("tl_tensor_pow_scalar") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_pow_scalar as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_add_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_add_assign as usize); }
+    if let Some(f) = module.get_function("tl_tensor_add_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_add_assign as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_set_f32_md") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_set_f32_md as usize); }
+    if let Some(f) = module.get_function("tl_tensor_set_f32_md") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_set_f32_md as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_mul_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mul_assign as usize); }
+    if let Some(f) = module.get_function("tl_tensor_mul_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mul_assign as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_div_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_div_assign as usize); }
+    if let Some(f) = module.get_function("tl_tensor_div_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_div_assign as *const () as usize); }
     // Scalar assign variants
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_mul_assign_scalar_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mul_assign_scalar_f32 as usize); }
+    if let Some(f) = module.get_function("tl_tensor_mul_assign_scalar_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mul_assign_scalar_f32 as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_div_assign_scalar_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_div_assign_scalar_f32 as usize); }
+    if let Some(f) = module.get_function("tl_tensor_div_assign_scalar_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_div_assign_scalar_f32 as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_mod_assign_scalar_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mod_assign_scalar_f32 as usize); }
+    if let Some(f) = module.get_function("tl_tensor_mod_assign_scalar_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mod_assign_scalar_f32 as *const () as usize); }
 
     // ========== Phase 1: 既存実装のマッピング追加 ==========
     // Note: abs, tanh, tan は add_fn が L1988-2006 にあるのでそちらで map_tensor_fn!
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_reshape_dims") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_reshape_dims as usize); }
+    if let Some(f) = module.get_function("tl_tensor_reshape_dims") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_reshape_dims as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_cat") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat as usize); }
+    if let Some(f) = module.get_function("tl_tensor_cat") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_cat_i64") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat_i64 as usize); }
+    if let Some(f) = module.get_function("tl_tensor_cat_i64") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat_i64 as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_narrow") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_narrow as usize); }
+    if let Some(f) = module.get_function("tl_tensor_narrow") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_narrow as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_replace_data") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_replace_data as usize); }
+    if let Some(f) = module.get_function("tl_tensor_replace_data") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_replace_data as *const () as usize); }
 
     // ========== Phase 2: テスト影響の大きい新規実装のマッピング ==========
     // Note: sigmoid, max_dim, min_dim, mean_dim は add_fn が L1994-2030 にあるのでそちらで map_tensor_fn!
     // Note: to_f32, to_i64 は add_fn が L2322-2323 にあるのでそちらで map_tensor_fn!
     // Note: sample は add_fn が L2871 にあるのでそちらで map_tensor_fn!
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_scale") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_scale as usize); }
+    if let Some(f) = module.get_function("tl_tensor_scale") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_scale as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_silu") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_silu as usize); }
+    if let Some(f) = module.get_function("tl_tensor_silu") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_silu as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_cross_entropy") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cross_entropy as usize); }
+    if let Some(f) = module.get_function("tl_tensor_cross_entropy") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cross_entropy as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_device_id") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_device_id as usize); }
+    if let Some(f) = module.get_function("tl_tensor_device_id") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_device_id as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_to_device") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_device as usize); }
+    if let Some(f) = module.get_function("tl_tensor_to_device") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_device as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_repeat_interleave") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_repeat_interleave as usize); }
+    if let Some(f) = module.get_function("tl_tensor_repeat_interleave") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_repeat_interleave as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_new_causal_mask") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_new_causal_mask as usize); }
+    if let Some(f) = module.get_function("tl_tensor_new_causal_mask") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_new_causal_mask as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_cat2") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat2 as usize); }
+    if let Some(f) = module.get_function("tl_tensor_cat2") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat2 as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_cat_4d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat_4d as usize); }
+    if let Some(f) = module.get_function("tl_tensor_cat_4d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat_4d as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_rms_norm") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rms_norm as usize); }
+    if let Some(f) = module.get_function("tl_tensor_rms_norm") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rms_norm as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_print_1") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_print_1 as usize); }
+    if let Some(f) = module.get_function("tl_tensor_print_1") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_print_1 as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_print_2") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_print_2 as usize); }
+    if let Some(f) = module.get_function("tl_tensor_print_2") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_print_2 as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_print_3") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_print_3 as usize); }
+    if let Some(f) = module.get_function("tl_tensor_print_3") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_print_3 as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_save") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_save as usize); }
+    if let Some(f) = module.get_function("tl_tensor_save") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_save as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_load") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_load as usize); }
+    if let Some(f) = module.get_function("tl_tensor_load") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_load as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_rope_new_cos") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rope_new_cos as usize); }
+    if let Some(f) = module.get_function("tl_tensor_rope_new_cos") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rope_new_cos as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_rope_new_sin") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rope_new_sin as usize); }
+    if let Some(f) = module.get_function("tl_tensor_rope_new_sin") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rope_new_sin as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_apply_rope") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_apply_rope as usize); }
+    if let Some(f) = module.get_function("tl_tensor_apply_rope") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_apply_rope as *const () as usize); }
 
     // 新規実装関数: CPU/GPU 両対応
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_clone") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_clone as usize); }
+    if let Some(f) = module.get_function("tl_tensor_clone") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_clone as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_free") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_free as usize); } // free も共通化
+    if let Some(f) = module.get_function("tl_tensor_free") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_free as *const () as usize); } // free も共通化
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_release") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_release as usize); }
+    if let Some(f) = module.get_function("tl_tensor_release") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_release as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_numel") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_numel as usize); }
+    if let Some(f) = module.get_function("tl_tensor_numel") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_numel as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_data") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_data as usize); }
+    if let Some(f) = module.get_function("tl_tensor_data") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_data as *const () as usize); }
 
     // ========== CPU 専用マッピング (runtime に対応関数がないもの) ==========
     // GPU 時は既存の if let Some ブロック (上記) で runtime 関数にマッピング済み
     if is_cpu {
         if let Some(f) = module.get_function("tl_tensor_transpose_2d") {
-            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_transpose_2d as usize);
+            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_transpose_2d as *const () as usize);
         }
         if let Some(f) = module.get_function("tl_tensor_prepare_return") {
-            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_prepare_return as usize);
+            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_prepare_return as *const () as usize);
         }
         if let Some(f) = module.get_function("tl_tensor_reshape_2d") {
-            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_reshape_2d as usize);
+            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_reshape_2d as *const () as usize);
         }
         if let Some(f) = module.get_function("tl_tensor_reshape_3d_to_2d") {
-            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_reshape_3d_to_2d as usize);
+            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_reshape_3d_to_2d as *const () as usize);
         }
         if let Some(f) = module.get_function("tl_tensor_matmul_4d") {
-            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_matmul_4d as usize);
+            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_matmul_4d as *const () as usize);
         }
         if let Some(f) = module.get_function("tl_tensor_add_4d") {
-            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_add_4d as usize);
+            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_add_4d as *const () as usize);
         }
         if let Some(f) = module.get_function("tl_tensor_silu_4d") {
-            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_silu_4d as usize);
+            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_tensor_silu_4d as *const () as usize);
         }
     }
 
     if let Some(f) = module.get_function("tl_kb_add_entity") {
-        execution_engine.add_global_mapping(&f, runtime::knowledge_base::tl_kb_add_entity as usize);
+        execution_engine.add_global_mapping(&f, runtime::knowledge_base::tl_kb_add_entity as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_kb_add_fact") {
-        execution_engine.add_global_mapping(&f, runtime::knowledge_base::tl_kb_add_fact as usize);
+        execution_engine.add_global_mapping(&f, runtime::knowledge_base::tl_kb_add_fact as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_kb_infer") {
-        execution_engine.add_global_mapping(&f, runtime::knowledge_base::tl_kb_infer as usize);
+        execution_engine.add_global_mapping(&f, runtime::knowledge_base::tl_kb_infer as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_kb_rule_start") {
-        execution_engine.add_global_mapping(&f, runtime::knowledge_base::tl_kb_rule_start as usize);
+        execution_engine.add_global_mapping(&f, runtime::knowledge_base::tl_kb_rule_start as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_kb_rule_add_head_arg_var") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_rule_add_head_arg_var as usize,
+            runtime::knowledge_base::tl_kb_rule_add_head_arg_var as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_add_fact_serialized") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_add_fact_serialized as usize,
+            runtime::knowledge_base::tl_kb_add_fact_serialized as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_fact_args_clear") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_fact_args_clear as usize,
+            runtime::knowledge_base::tl_kb_fact_args_clear as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_fact_args_add_int") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_fact_args_add_int as usize,
+            runtime::knowledge_base::tl_kb_fact_args_add_int as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_fact_args_add_float") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_fact_args_add_float as usize,
+            runtime::knowledge_base::tl_kb_fact_args_add_float as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_fact_args_add_bool") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_fact_args_add_bool as usize,
+            runtime::knowledge_base::tl_kb_fact_args_add_bool as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_fact_args_add_entity") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_fact_args_add_entity as usize,
+            runtime::knowledge_base::tl_kb_fact_args_add_entity as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_fact_args_add_string") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_fact_args_add_string as usize,
+            runtime::knowledge_base::tl_kb_fact_args_add_string as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_rule_add_head_arg_const_int") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_rule_add_head_arg_const_int as usize,
+            runtime::knowledge_base::tl_kb_rule_add_head_arg_const_int as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_rule_add_head_arg_const_float") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_rule_add_head_arg_const_float as usize,
+            runtime::knowledge_base::tl_kb_rule_add_head_arg_const_float as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_rule_add_head_arg_const_entity") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_rule_add_head_arg_const_entity as usize,
+            runtime::knowledge_base::tl_kb_rule_add_head_arg_const_entity as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_rule_add_body_atom") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_rule_add_body_atom as usize,
+            runtime::knowledge_base::tl_kb_rule_add_body_atom as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_rule_add_body_atom_neg") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_rule_add_body_atom_neg as usize,
+            runtime::knowledge_base::tl_kb_rule_add_body_atom_neg as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_rule_add_body_arg_var") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_rule_add_body_arg_var as usize,
+            runtime::knowledge_base::tl_kb_rule_add_body_arg_var as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_rule_add_body_arg_const_int") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_rule_add_body_arg_const_int as usize,
+            runtime::knowledge_base::tl_kb_rule_add_body_arg_const_int as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_rule_add_body_arg_const_float") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_rule_add_body_arg_const_float as usize,
+            runtime::knowledge_base::tl_kb_rule_add_body_arg_const_float as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_rule_add_body_arg_const_entity") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::knowledge_base::tl_kb_rule_add_body_arg_const_entity as usize,
+            runtime::knowledge_base::tl_kb_rule_add_body_arg_const_entity as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_kb_rule_finish") {
         execution_engine
-            .add_global_mapping(&f, runtime::knowledge_base::tl_kb_rule_finish as usize);
+            .add_global_mapping(&f, runtime::knowledge_base::tl_kb_rule_finish as *const () as usize);
     }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_add_assign_scalar_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_add_assign_scalar_f32 as usize); }
+    if let Some(f) = module.get_function("tl_tensor_add_assign_scalar_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_add_assign_scalar_f32 as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_sub_assign_scalar_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub_assign_scalar_f32 as usize); }
+    if let Some(f) = module.get_function("tl_tensor_sub_assign_scalar_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub_assign_scalar_f32 as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_mod_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mod_assign as usize); }
+    if let Some(f) = module.get_function("tl_tensor_mod_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mod_assign as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_mod_assign_scalar_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mod_assign_scalar_f32 as usize); }
+    if let Some(f) = module.get_function("tl_tensor_mod_assign_scalar_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mod_assign_scalar_f32 as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_exp") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_exp as usize); }
+    if let Some(f) = module.get_function("tl_tensor_exp") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_exp as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_log") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_log as usize); }
+    if let Some(f) = module.get_function("tl_tensor_log") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_log as *const () as usize); }
     // tl_tensor_sqrt はCPU版実装済み
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_sqrt") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sqrt as usize); }
+    if let Some(f) = module.get_function("tl_tensor_sqrt") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sqrt as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_sin") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sin as usize); }
+    if let Some(f) = module.get_function("tl_tensor_sin") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sin as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_cos") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cos as usize); }
+    if let Some(f) = module.get_function("tl_tensor_cos") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cos as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_relu") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_relu as usize); }
+    if let Some(f) = module.get_function("tl_tensor_relu") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_relu as *const () as usize); }
     // tl_tensor_gelu, tl_tensor_tril, tl_tensor_sum_dim, tl_tensor_embedding: CPU版実装済み
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_gelu") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_gelu as usize); }
+    if let Some(f) = module.get_function("tl_tensor_gelu") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_gelu as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_tril") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_tril as usize); }
+    if let Some(f) = module.get_function("tl_tensor_tril") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_tril as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_sum_dim") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sum_dim as usize); }
+    if let Some(f) = module.get_function("tl_tensor_sum_dim") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sum_dim as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_embedding") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_embedding as usize); }
+    if let Some(f) = module.get_function("tl_tensor_embedding") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_embedding as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_save") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_save as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_save as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_load") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_load as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_load as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_save_all_params") {
-        execution_engine.add_global_mapping(&f, runtime::tl_save_all_params as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_save_all_params as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_add_parameter") {
-        execution_engine.add_global_mapping(&f, runtime::tl_add_parameter as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_add_parameter as *const () as usize);
     }
     // TensorMap: runtime 側で CPU/GPU 抽象化済みなので共通マッピング
     if let Some(f) = module.get_function("tl_tensor_map_new") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_new as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_new as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_map_insert") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_insert as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_insert as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_map_get") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_map_free") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_free as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_free as *const () as usize);
     }
     // tl_tensor_set_f32_md はL1478で既にマッピング済み
     if let Some(f) = module.get_function("tl_mem_unregister") {
         execution_engine
-            .add_global_mapping(&f, runtime::memory_manager::tl_mem_unregister as usize);
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_unregister as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_load_all_params") {
-        execution_engine.add_global_mapping(&f, runtime::tl_load_all_params as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_load_all_params as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_register_parameter") {
-        execution_engine.add_global_mapping(&f, runtime::tl_register_parameter as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_register_parameter as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_string_new") {
-        execution_engine.add_global_mapping(&f, runtime::tl_string_new as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_string_new as *const () as usize);
     }
 
     // VarBuilder-based parameter management
     if let Some(f) = module.get_function("tl_varbuilder_get") {
-        execution_engine.add_global_mapping(&f, runtime::tl_varbuilder_get as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_varbuilder_get as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_varbuilder_get_from_tensor") {
-        execution_engine.add_global_mapping(&f, runtime::tl_varbuilder_get_from_tensor as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_varbuilder_get_from_tensor as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_varbuilder_grad") {
-        execution_engine.add_global_mapping(&f, runtime::tl_varbuilder_grad as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_varbuilder_grad as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_update_all_params") {
-        execution_engine.add_global_mapping(&f, runtime::tl_update_all_params as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_update_all_params as *const () as usize);
     }
 
     if let Some(f) = module.get_function("tl_get_memory_mb") {
-        execution_engine.add_global_mapping(&f, runtime::tl_get_memory_mb as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_get_memory_mb as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_get_memory_bytes") {
-        execution_engine.add_global_mapping(&f, runtime::tl_get_memory_bytes as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_get_memory_bytes as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_get_metal_pool_bytes") {
         if is_cpu {
-            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_get_pool_bytes as usize);
+            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_get_pool_bytes as *const () as usize);
         } else {
-            execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_bytes as usize);
+            execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_bytes as *const () as usize);
         }
     }
     if let Some(f) = module.get_function("tl_get_metal_pool_mb") {
         if is_cpu {
-            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_get_pool_mb as usize);
+            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_get_pool_mb as *const () as usize);
         } else {
-            execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_mb as usize);
+            execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_mb as *const () as usize);
         }
     }
     if let Some(f) = module.get_function("tl_get_metal_pool_count") {
         if is_cpu {
-            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_get_pool_count as usize);
+            execution_engine.add_global_mapping(&f, cpu_ffi::tl_cpu_get_pool_count as *const () as usize);
         } else {
-            execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_count as usize);
+            execution_engine.add_global_mapping(&f, runtime::tl_get_metal_pool_count as *const () as usize);
         }
     }
     if let Some(f) = module.get_function("tl_metal_sync") {
-        execution_engine.add_global_mapping(&f, runtime::tl_metal_sync as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_metal_sync as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_trace_mem") {
-        execution_engine.add_global_mapping(&f, runtime::tl_trace_mem as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_trace_mem as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_get_pool_count") {
-        execution_engine.add_global_mapping(&f, runtime::tl_get_pool_count as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_get_pool_count as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_get_refcount_count") {
-        execution_engine.add_global_mapping(&f, runtime::tl_get_refcount_count as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_get_refcount_count as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_get_scope_depth") {
-        execution_engine.add_global_mapping(&f, runtime::tl_get_scope_depth as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_get_scope_depth as *const () as usize);
     }
 
     // Args (command line arguments)
     if let Some(f) = module.get_function("tl_args_count") {
-        execution_engine.add_global_mapping(&f, runtime::args::tl_args_count as usize);
+        execution_engine.add_global_mapping(&f, runtime::args::tl_args_count as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_args_get") {
-        execution_engine.add_global_mapping(&f, runtime::args::tl_args_get as usize);
+        execution_engine.add_global_mapping(&f, runtime::args::tl_args_get as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_string_to_i64") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_to_i64 as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_to_i64 as *const () as usize);
     }
 
     // String utilities
     if let Some(f) = module.get_function("tl_string_char_at") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_char_at as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_char_at as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_string_len") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_len as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_len as *const () as usize);
     }
 
     // Memory manager mappings
     if let Some(f) = module.get_function("tl_mem_enter_scope") {
         execution_engine
-            .add_global_mapping(&f, runtime::memory_manager::tl_mem_enter_scope as usize);
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_enter_scope as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_mem_exit_scope") {
         execution_engine
-            .add_global_mapping(&f, runtime::memory_manager::tl_mem_exit_scope as usize);
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_exit_scope as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_mem_register_struct") {
         execution_engine
-            .add_global_mapping(&f, runtime::memory_manager::tl_mem_register_struct as usize);
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_register_struct as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_mem_register_struct_named") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::memory_manager::tl_mem_register_struct_named as usize,
+            runtime::memory_manager::tl_mem_register_struct_named as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_mem_register_tensor") {
         execution_engine
-            .add_global_mapping(&f, runtime::memory_manager::tl_mem_register_tensor as usize);
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_register_tensor as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_mem_unregister") {
         execution_engine
-            .add_global_mapping(&f, runtime::memory_manager::tl_mem_unregister as usize);
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_unregister as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_ptr_dec_ref") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::memory_manager::tl_ptr_dec_ref as usize,
+            runtime::memory_manager::tl_ptr_dec_ref as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_ptr_inc_ref") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::memory_manager::tl_ptr_inc_ref as usize,
+            runtime::memory_manager::tl_ptr_inc_ref as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_ptr_acquire") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::memory_manager::tl_ptr_acquire as usize,
+            runtime::memory_manager::tl_ptr_acquire as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_ptr_release") {
         execution_engine.add_global_mapping(
             &f,
-            runtime::memory_manager::tl_ptr_release as usize,
+            runtime::memory_manager::tl_ptr_release as *const () as usize,
         );
     }
     if let Some(f) = module.get_function("tl_mem_free") {
-        execution_engine.add_global_mapping(&f, runtime::tl_mem_free as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_mem_free as *const () as usize);
     }
 
     // Arena Allocator mappings
     if let Some(f) = module.get_function("tl_arena_init") {
-        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_init as usize);
+        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_init as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_arena_alloc") {
-        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_alloc as usize);
+        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_alloc as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_arena_free") {
-        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_free as usize);
+        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_free as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_arena_is_active") {
-        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_is_active as usize);
+        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_is_active as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_arena_reset") {
-        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_reset as usize);
+        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_reset as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_arena_get_offset") {
-        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_get_offset as usize);
+        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_get_offset as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_arena_get_capacity") {
-        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_get_capacity as usize);
+        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_get_capacity as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_arena_malloc") {
-        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_malloc as usize);
+        execution_engine.add_global_mapping(&f, runtime::arena::tl_arena_malloc as *const () as usize);
     }
 
     if let Some(f) = module.get_function("tl_update_all_params") {
-        execution_engine.add_global_mapping(&f, runtime::tl_update_all_params as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_update_all_params as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_varbuilder_grad") {
-        execution_engine.add_global_mapping(&f, runtime::tl_varbuilder_grad as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_varbuilder_grad as *const () as usize);
     }
     // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_reshape_dims") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_reshape_dims as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_reshape_dims as *const () as usize);
     }
     // Map Support (runtime 側で CPU/GPU 抽象化済み)
     if let Some(f) = module.get_function("tl_tensor_map_save") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_save as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_save as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_map_load") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_load as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_load as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_alloc_tmp") {
-        execution_engine.add_global_mapping(&f, runtime::tl_alloc_tmp as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_alloc_tmp as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_free_tmp") {
-        execution_engine.add_global_mapping(&f, runtime::tl_free_tmp as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_free_tmp as *const () as usize);
     }
 
     // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_argmax") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_argmax as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_argmax as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_to_i64") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_i64 as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_i64 as *const () as usize);
     }
     // tl_tensor_item / tl_tensor_item_i64 のマッピングは
     // 宣言セクション (L2225/L2231) の直後で map_tensor_fn! により実施
@@ -2075,164 +2075,164 @@ pub fn declare_runtime_functions<'ctx>(
     // Added for Tensor Refactor
     add_fn("tl_tensor_tan", unary_type);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_tan") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_tan as usize); }
+    if let Some(f) = module.get_function("tl_tensor_tan") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_tan as *const () as usize); }
     add_fn("tl_tensor_abs", unary_type);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_abs") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_abs as usize); }
+    if let Some(f) = module.get_function("tl_tensor_abs") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_abs as *const () as usize); }
     add_fn("tl_tensor_sigmoid", unary_type);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_sigmoid") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sigmoid as usize); }
+    if let Some(f) = module.get_function("tl_tensor_sigmoid") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sigmoid as *const () as usize); }
     add_fn("tl_tensor_tanh", unary_type);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_tanh") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_tanh as usize); }
+    if let Some(f) = module.get_function("tl_tensor_tanh") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_tanh as *const () as usize); }
     add_fn("tl_tensor_max", unary_type);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_max") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_max as usize); }
+    if let Some(f) = module.get_function("tl_tensor_max") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_max as *const () as usize); }
     add_fn("tl_tensor_max_dim", sum_dim_type);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_max_dim") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_max_dim as usize); }
+    if let Some(f) = module.get_function("tl_tensor_max_dim") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_max_dim as *const () as usize); }
     add_fn("tl_tensor_min", unary_type);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_min") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_min as usize); }
+    if let Some(f) = module.get_function("tl_tensor_min") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_min as *const () as usize); }
     add_fn("tl_tensor_min_dim", sum_dim_type);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_min_dim") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_min_dim as usize); }
+    if let Some(f) = module.get_function("tl_tensor_min_dim") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_min_dim as *const () as usize); }
     add_fn("tl_tensor_mean", unary_type);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_mean") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mean as usize); }
+    if let Some(f) = module.get_function("tl_tensor_mean") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mean as *const () as usize); }
     add_fn("tl_tensor_mean_dim", sum_dim_type);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_mean_dim") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mean_dim as usize); }
+    if let Some(f) = module.get_function("tl_tensor_mean_dim") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mean_dim as *const () as usize); }
     add_fn("tl_tensor_argmin", sum_dim_type);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_argmin") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_argmin as usize); }
+    if let Some(f) = module.get_function("tl_tensor_argmin") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_argmin as *const () as usize); }
     add_fn("tl_tensor_argmax", unary_type);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_argmax") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_argmax as usize); }
+    if let Some(f) = module.get_function("tl_tensor_argmax") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_argmax as *const () as usize); }
 
 
     // --- LLM Mappings ---
     if let Some(f) = module.get_function("tl_tokenizer_new") {
-        execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_new as usize);
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_new as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tokenizer_encode") {
-        execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_encode as usize);
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_encode as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tokenizer_encode_chat") {
-        execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_encode_chat as usize);
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_encode_chat as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tokenizer_decode") {
-        execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_decode as usize);
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_tokenizer_decode as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_gguf_load") {
-        execution_engine.add_global_mapping(&f, runtime::tl_gguf_load as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_gguf_load as *const () as usize);
     }
     if !is_cpu {
         if let Some(f) = module.get_function("tl_tensor_map_get") {
-            execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get as usize);
+            execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get as *const () as usize);
         }
     }
     // [IDevice] device_ffi 統一マッピング — LLM 関連
     if let Some(f) = module.get_function("tl_tensor_cat") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_silu") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_silu as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_silu as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_apply_rope") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_apply_rope as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_apply_rope as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_rms_norm") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rms_norm as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rms_norm as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_cat2") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat2 as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat2 as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_cat_4d") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat_4d as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat_4d as *const () as usize);
     }
     // [IDevice] device_ffi 統一マッピング — Alias
     if let Some(f) = module.get_function("tl_tensor_transpose_2d") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_transpose_2d as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_transpose_2d as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_matmul_4d") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_matmul_4d as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_matmul_4d as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_add_4d") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_add_4d as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_add_4d as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_silu_4d") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_silu_4d as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_silu_4d as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_scale") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_scale as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_scale as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_rope_new_cos") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rope_new_cos as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rope_new_cos as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_rope_new_sin") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rope_new_sin as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rope_new_sin as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_new_causal_mask") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_new_causal_mask as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_new_causal_mask as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_cat_i64") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat_i64 as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat_i64 as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_narrow") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_narrow as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_narrow as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_repeat_interleave") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_repeat_interleave as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_repeat_interleave as *const () as usize);
     }
     // [IDevice] device_ffi 統一マッピング — 形状操作
     if let Some(f) = module.get_function("tl_tensor_get_shape") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_get_shape as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_get_shape as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_reshape_2d") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_reshape_2d as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_reshape_2d as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_reshape_3d_to_2d") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_reshape_3d_to_2d as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_reshape_3d_to_2d as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_map_get_1d") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get as *const () as usize);
     }
 
 
     // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_from_vec_u8") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_from_vec_u8 as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_from_vec_u8 as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_from_u8_labels") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_from_u8_labels as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_from_u8_labels as *const () as usize);
     }
 
 
     // Binary file I/O mappings
     if let Some(f) = module.get_function("tl_file_read_binary") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_read_binary as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_read_binary as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_file_write_binary") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_write_binary as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_write_binary as *const () as usize);
     }
 
     // Image loading mappings
     if let Some(f) = module.get_function("tl_image_load_grayscale") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_image_load_grayscale as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_image_load_grayscale as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_image_width") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_image_width as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_image_width as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_image_height") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_image_height as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_image_height as *const () as usize);
     }
     // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_to_f32") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_f32 as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_f32 as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_to_i64") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_i64 as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_i64 as *const () as usize);
     }
 
     // End of function
@@ -2400,10 +2400,10 @@ pub fn declare_runtime_functions<'ctx>(
     let cast_type = void_ptr.fn_type(&[void_ptr.into()], false);
     add_fn("tl_tensor_to_f32", cast_type);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_to_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_f32 as usize); }
+    if let Some(f) = module.get_function("tl_tensor_to_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_f32 as *const () as usize); }
     add_fn("tl_tensor_to_i64", cast_type);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_to_i64") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_i64 as usize); }
+    if let Some(f) = module.get_function("tl_tensor_to_i64") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_i64 as *const () as usize); }
 
     // tl_save_all_params(path: *const i8) -> void
     let save_all_type = void_type.fn_type(&[i8_ptr.into()], false);
@@ -2425,13 +2425,13 @@ pub fn declare_runtime_functions<'ctx>(
     module.add_function("tl_tensor_item", item_type, None);
     // CPU/GPU 切替マッピング（宣言直後に配置する必要がある）
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_item") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_item as usize); }
+    if let Some(f) = module.get_function("tl_tensor_item") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_item as *const () as usize); }
 
     // tl_tensor_item_i64(t: *mut) -> i64
     let item_i64_type = i64_type.fn_type(&[void_ptr.into()], false);
     module.add_function("tl_tensor_item_i64", item_i64_type, None);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_item_i64") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_item_i64 as usize); }
+    if let Some(f) = module.get_function("tl_tensor_item_i64") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_item_i64 as *const () as usize); }
 
     // tl_tensor_to_i64(t: *mut) -> *mut
     let to_i64_type = void_ptr.fn_type(&[void_ptr.into()], false);
@@ -2440,7 +2440,7 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_shape(t: *mut) -> *mut Vec
     let shape_type = void_ptr.fn_type(&[void_ptr.into()], false);
     module.add_function("tl_tensor_shape", shape_type, None);
-    if let Some(f) = module.get_function("tl_tensor_shape") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_shape_vec as usize); }
+    if let Some(f) = module.get_function("tl_tensor_shape") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_shape_vec as *const () as usize); }
 
     // tl_load_all_params(path: *const i8) -> void
     let load_all_type = void_type.fn_type(&[i8_ptr.into()], false);
@@ -2470,7 +2470,7 @@ pub fn declare_runtime_functions<'ctx>(
     );
     module.add_function("tl_tensor_conv2d", conv2d_type, None);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_conv2d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_conv2d as usize); }
+    if let Some(f) = module.get_function("tl_tensor_conv2d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_conv2d as *const () as usize); }
 
     // tl_tensor_batch_norm(input, running_mean, running_var, weight, bias, training, momentum, eps) -> *mut
     let batch_norm_type = void_ptr.fn_type(
@@ -2487,7 +2487,7 @@ pub fn declare_runtime_functions<'ctx>(
         false,
     );
     module.add_function("tl_tensor_batch_norm", batch_norm_type, None);
-    if let Some(f) = module.get_function("tl_tensor_batch_norm") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_batch_norm as usize); }
+    if let Some(f) = module.get_function("tl_tensor_batch_norm") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_batch_norm as *const () as usize); }
 
     // tl_tensor_layer_norm(input, weight, bias, eps) -> *mut
     let layer_norm_type = void_ptr.fn_type(
@@ -2495,7 +2495,7 @@ pub fn declare_runtime_functions<'ctx>(
         false,
     );
     module.add_function("tl_tensor_layer_norm", layer_norm_type, None);
-    if let Some(f) = module.get_function("tl_tensor_layer_norm") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_layer_norm as usize); }
+    if let Some(f) = module.get_function("tl_tensor_layer_norm") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_layer_norm as *const () as usize); }
 
     // tl_tensor_dropout(input, p, training) -> *mut
     let dropout_type = void_ptr.fn_type(
@@ -2503,7 +2503,7 @@ pub fn declare_runtime_functions<'ctx>(
         false,
     );
     module.add_function("tl_tensor_dropout", dropout_type, None);
-    if let Some(f) = module.get_function("tl_tensor_dropout") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_dropout as usize); }
+    if let Some(f) = module.get_function("tl_tensor_dropout") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_dropout as *const () as usize); }
 
     // tl_tensor_max_pool2d(input, kernel_size, stride, padding) -> *mut
     let pool2d_type = void_ptr.fn_type(
@@ -2511,17 +2511,17 @@ pub fn declare_runtime_functions<'ctx>(
         false,
     );
     module.add_function("tl_tensor_max_pool2d", pool2d_type, None);
-    if let Some(f) = module.get_function("tl_tensor_max_pool2d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_max_pool2d as usize); }
+    if let Some(f) = module.get_function("tl_tensor_max_pool2d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_max_pool2d as *const () as usize); }
 
     // tl_tensor_avg_pool2d(input, kernel_size, stride, padding) -> *mut
     module.add_function("tl_tensor_avg_pool2d", pool2d_type, None);
-    if let Some(f) = module.get_function("tl_tensor_avg_pool2d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_avg_pool2d as usize); }
+    if let Some(f) = module.get_function("tl_tensor_avg_pool2d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_avg_pool2d as *const () as usize); }
 
     // tl_tensor_clamp(t: *mut, min: f32, max: f32) -> *mut
     let clamp_type = void_ptr.fn_type(&[void_ptr.into(), f32_type.into(), f32_type.into()], false);
     module.add_function("tl_tensor_clamp", clamp_type, None);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_clamp") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_clamp as usize); }
+    if let Some(f) = module.get_function("tl_tensor_clamp") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_clamp as *const () as usize); }
 
     // tl_tensor_ones(rank: i64, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor
     let ones_type = void_ptr.fn_type(
@@ -2623,90 +2623,90 @@ pub fn declare_runtime_functions<'ctx>(
 
     // Mappings
     if let Some(f) = module.get_function("tl_string_concat") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_concat as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_concat as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_string_from_int") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_int as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_int as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_file_open") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_open as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_open as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_file_read_string") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_read_string as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_read_string as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_file_write_string") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_write_string as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_write_string as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_file_close") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_close as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_close as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_path_new") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_new as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_new as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_path_join") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_join as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_join as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_path_exists") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_exists as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_exists as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_path_is_dir") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_is_dir as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_is_dir as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_path_is_file") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_is_file as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_is_file as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_path_to_string") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_to_string as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_to_string as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_path_free") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_free as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_free as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_http_download") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_http_download as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_http_download as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_http_get") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_http_get as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_http_get as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_env_get") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_env_get as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_env_get as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_env_set") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_env_set as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_env_set as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_system_time") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_system_time as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_system_time as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_system_sleep") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_system_sleep as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_system_sleep as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_read_line") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_read_line as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_read_line as *const () as usize);
     }
 
     // Memory Manager mappings
     if let Some(f) = module.get_function("tl_mem_enter_scope") {
         execution_engine
-            .add_global_mapping(&f, runtime::memory_manager::tl_mem_enter_scope as usize);
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_enter_scope as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_mem_exit_scope") {
         execution_engine
-            .add_global_mapping(&f, runtime::memory_manager::tl_mem_exit_scope as usize);
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_exit_scope as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_mem_register_struct") {
         execution_engine
-            .add_global_mapping(&f, runtime::memory_manager::tl_mem_register_struct as usize);
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_register_struct as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_mem_register_tensor") {
         execution_engine
-            .add_global_mapping(&f, runtime::memory_manager::tl_mem_register_tensor as usize);
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_register_tensor as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_mem_unregister") {
         execution_engine
-            .add_global_mapping(&f, runtime::memory_manager::tl_mem_unregister as usize);
+            .add_global_mapping(&f, runtime::memory_manager::tl_mem_unregister as *const () as usize);
     }
 
     if let Some(f) = module.get_function("tl_query") {
-        execution_engine.add_global_mapping(&f, runtime::logic::tl_query as usize);
+        execution_engine.add_global_mapping(&f, runtime::logic::tl_query as *const () as usize);
     }
 
 
@@ -2791,7 +2791,7 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_kvcache_new", kv_new_type);
 
     if let Some(f) = module.get_function("tl_kvcache_new") {
-        execution_engine.add_global_mapping(&f, runtime::llm::tl_kvcache_new as usize);
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_kvcache_new as *const () as usize);
     }
 
     // tl_kvcache_free(ptr: ptr) -> void
@@ -2799,7 +2799,7 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_kvcache_free", kv_free_type);
 
     if let Some(f) = module.get_function("tl_kvcache_free") {
-        execution_engine.add_global_mapping(&f, runtime::llm::tl_kvcache_free as usize);
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_kvcache_free as *const () as usize);
     }
 
     // tl_kvcache_get_k(ptr: ptr, layer: i64) -> Tensor
@@ -2807,14 +2807,14 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_kvcache_get_k", kv_get_type);
 
     if let Some(f) = module.get_function("tl_kvcache_get_k") {
-        execution_engine.add_global_mapping(&f, runtime::llm::tl_kvcache_get_k as usize);
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_kvcache_get_k as *const () as usize);
     }
 
     // tl_kvcache_get_v(ptr: ptr, layer: i64) -> Tensor
     add_fn("tl_kvcache_get_v", kv_get_type);
 
     if let Some(f) = module.get_function("tl_kvcache_get_v") {
-        execution_engine.add_global_mapping(&f, runtime::llm::tl_kvcache_get_v as usize);
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_kvcache_get_v as *const () as usize);
     }
 
     // tl_kvcache_update(ptr, layer, k, v) -> void
@@ -2830,7 +2830,7 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_kvcache_update", kv_update_type);
 
     if let Some(f) = module.get_function("tl_kvcache_update") {
-        execution_engine.add_global_mapping(&f, runtime::llm::tl_kvcache_update as usize);
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_kvcache_update as *const () as usize);
     }
 
 
@@ -2884,21 +2884,21 @@ pub fn declare_runtime_functions<'ctx>(
     let qt_get_type = void_ptr.fn_type(&[void_ptr.into(), i8_ptr.into()], false);
     add_fn("tl_tensor_map_get_quantized", qt_get_type);
     if let Some(f) = module.get_function("tl_tensor_map_get_quantized") {
-        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get_quantized as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_tensor_map_get_quantized as *const () as usize);
     }
 
     // tl_qtensor_matmul -> ptr (handle) as 2nd arg
     let qmatmul_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_qtensor_matmul", qmatmul_type);
     if let Some(f) = module.get_function("tl_qtensor_matmul") {
-        execution_engine.add_global_mapping(&f, runtime::tl_qtensor_matmul as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_qtensor_matmul as *const () as usize);
     }
 
     // tl_qtensor_free
     let qfree_type = void_type.fn_type(&[i64_type.into()], false);
     add_fn("tl_qtensor_free", qfree_type);
     if let Some(f) = module.get_function("tl_qtensor_free") {
-        execution_engine.add_global_mapping(&f, runtime::tl_qtensor_free as usize);
+        execution_engine.add_global_mapping(&f, runtime::tl_qtensor_free as *const () as usize);
     }
 
     // tl_string_contains
@@ -2907,14 +2907,14 @@ pub fn declare_runtime_functions<'ctx>(
         .fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
     add_fn("tl_string_contains", str_contains_type);
     if let Some(f) = module.get_function("tl_string_contains") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_contains as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_contains as *const () as usize);
     }
 
     // tl_string_from_int
     let str_from_int_type = i8_ptr.fn_type(&[i64_type.into()], false);
     add_fn("tl_string_from_int", str_from_int_type);
     if let Some(f) = module.get_function("tl_string_from_int") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_int as usize);
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_int as *const () as usize);
     }
 
     // tl_tensor_argmax(t, dim, keepdim) -> CTensorResult
@@ -2925,7 +2925,7 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_argmax", argmax_type);
     // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_argmax") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_argmax as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_argmax as *const () as usize);
     }
 
     // tl_tensor_item_i64 — 宣言のみ (マッピングは L2233 の map_tensor_fn! で実施済み)
@@ -2935,7 +2935,7 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_cat_i64
     // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_cat_i64") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat_i64 as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cat_i64 as *const () as usize);
     }
     // Fix: register return type
 
@@ -2953,19 +2953,19 @@ pub fn declare_runtime_functions<'ctx>(
 
     // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_reshape") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_reshape_new as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_reshape_new as *const () as usize);
     }
 
     // tl_tensor_sample(t, temp, topp) -> tensor (llm.rs)
     let sample_type = void_ptr.fn_type(&[void_ptr.into(), f32_type.into(), f32_type.into()], false);
     add_fn("tl_tensor_sample", sample_type);
     // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_sample") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sample as usize); }
+    if let Some(f) = module.get_function("tl_tensor_sample") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sample as *const () as usize); }
 
     // tl_tensor_shallow_clone(t) -> t
     add_fn("tl_tensor_shallow_clone", clone_type);
     if let Some(f) = module.get_function("tl_tensor_shallow_clone") {
-        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_shallow_clone as usize);
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_shallow_clone as *const () as usize);
     }
     
     // Debug Print
@@ -2975,6 +2975,6 @@ pub fn declare_runtime_functions<'ctx>(
     module.add_function("tl_debug_print_ptr", debug_print_type, None);
     
     if let Some(f) = module.get_function("tl_debug_print_ptr") {
-        execution_engine.add_global_mapping(&f, tl_debug_print_ptr as usize);
+        execution_engine.add_global_mapping(&f, tl_debug_print_ptr as *const () as usize);
     }
 }
