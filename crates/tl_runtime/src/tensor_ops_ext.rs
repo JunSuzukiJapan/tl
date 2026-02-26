@@ -8,13 +8,8 @@ use crate::OpaqueTensor;
 
 // ========== IO / System ==========
 
-fn create_fallback_tensor(is_cpu: bool) -> *mut OpaqueTensor {
-    if is_cpu {
-        let t = tl_cpu::CpuTensor::from_slice(&[0.0f32], &[1], tl_cpu::DType::F32);
-        Box::into_raw(Box::new(t)) as *mut OpaqueTensor
-    } else {
-        crate::device_ffi::create_runtime_zeros(&[1]) as *mut OpaqueTensor
-    }
+fn create_fallback_tensor(_is_cpu: bool) -> *mut OpaqueTensor {
+    crate::device_ffi::create_runtime_zeros(&[1]) as *mut OpaqueTensor
 }
 
 #[unsafe(no_mangle)]
@@ -25,7 +20,9 @@ pub extern "C" fn tl_tensor_save(path: *mut super::StringStruct, t: *mut OpaqueT
     }
     let is_cpu = std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu");
     unsafe {
-        if (*path).ptr.is_null() { return; }
+        if (*path).ptr.is_null() {
+            return;
+        }
         let path_str = std::ffi::CStr::from_ptr((*path).ptr).to_string_lossy();
         let path_buf = crate::file_io::expand_path(&path_str);
 
@@ -73,7 +70,7 @@ pub extern "C" fn tl_tensor_load(path: *mut super::StringStruct) -> *mut OpaqueT
         }
 
         let mut offset = 0;
-        let rank = u64::from_le_bytes(bytes[offset..offset+8].try_into().unwrap()) as usize;
+        let rank = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap()) as usize;
         offset += 8;
 
         if bytes.len() < offset + rank * 8 {
@@ -82,7 +79,7 @@ pub extern "C" fn tl_tensor_load(path: *mut super::StringStruct) -> *mut OpaqueT
 
         let mut shape = Vec::with_capacity(rank);
         for _ in 0..rank {
-            let dim = u64::from_le_bytes(bytes[offset..offset+8].try_into().unwrap()) as usize;
+            let dim = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap()) as usize;
             shape.push(dim);
             offset += 8;
         }
@@ -95,17 +92,12 @@ pub extern "C" fn tl_tensor_load(path: *mut super::StringStruct) -> *mut OpaqueT
 
         let mut data = Vec::with_capacity(numel);
         for _ in 0..numel {
-            let val = f32::from_le_bytes(bytes[offset..offset+4].try_into().unwrap());
+            let val = f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
             data.push(val);
             offset += 4;
         }
 
-        if is_cpu {
-            let t = tl_cpu::CpuTensor::from_slice(&data, &shape, tl_cpu::DType::F32);
-            Box::into_raw(Box::new(t)) as *mut OpaqueTensor
-        } else {
-            crate::device_ffi::create_runtime_tensor_f32(&data, &shape) as *mut OpaqueTensor
-        }
+        crate::device_ffi::create_runtime_tensor_f32(&data, &shape) as *mut OpaqueTensor
     }
 }
 
@@ -121,13 +113,13 @@ pub extern "C" fn tl_get_memory_bytes() -> i64 {
         // struct mach_task_basic_info 全体 = 48 bytes (MACH_TASK_BASIC_INFO_COUNT = 12)
         #[repr(C)]
         struct MachTaskBasicInfo {
-            virtual_size: u64,       // mach_vm_size_t (8 bytes)
-            resident_size: u64,      // mach_vm_size_t (8 bytes)
-            resident_size_max: u64,  // mach_vm_size_t (8 bytes)
-            user_time: [i32; 2],     // time_value_t (8 bytes)
-            system_time: [i32; 2],   // time_value_t (8 bytes)
-            policy: i32,             // policy_t (4 bytes)
-            suspend_count: i32,      // integer_t (4 bytes)
+            virtual_size: u64,      // mach_vm_size_t (8 bytes)
+            resident_size: u64,     // mach_vm_size_t (8 bytes)
+            resident_size_max: u64, // mach_vm_size_t (8 bytes)
+            user_time: [i32; 2],    // time_value_t (8 bytes)
+            system_time: [i32; 2],  // time_value_t (8 bytes)
+            policy: i32,            // policy_t (4 bytes)
+            suspend_count: i32,     // integer_t (4 bytes)
         }
         const MACH_TASK_BASIC_INFO: u32 = 20;
         unsafe extern "C" {

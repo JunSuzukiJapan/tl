@@ -1,11 +1,10 @@
 //! TensorMap 関連の FFI 関数
 //! CPU/GPU 両方で動作するよう抽象化
 
-use crate::string_ffi::StringStruct;
 use crate::OpaqueTensor;
+use crate::string_ffi::StringStruct;
 use std::collections::HashMap;
 use std::sync::Arc;
-
 
 /// テンソルのデータを型非依存に保持するエントリ
 pub(crate) struct TensorEntry {
@@ -50,13 +49,7 @@ unsafe fn extract_tensor_data(tensor: *mut OpaqueTensor) -> Option<(Vec<f32>, Ve
 
 /// TensorEntry から OpaqueTensor を作成 (CPU/GPU 両対応)
 fn create_tensor_from_entry(entry: &TensorEntry) -> *mut OpaqueTensor {
-    if is_cpu_mode() {
-        let dtype = tl_cpu::DType::F32; // 現時点では F32 のみサポート
-        let cpu = tl_cpu::CpuTensor::from_slice(&entry.data_f32, &entry.shape, dtype);
-        Box::into_raw(Box::new(cpu)) as *mut OpaqueTensor
-    } else {
-        crate::device_ffi::create_runtime_tensor_f32(&entry.data_f32, &entry.shape) as *mut OpaqueTensor
-    }
+    crate::device_ffi::create_runtime_tensor_f32(&entry.data_f32, &entry.shape) as *mut OpaqueTensor
 }
 
 /// @ffi_sig () -> TensorMap*
@@ -98,7 +91,14 @@ pub extern "C" fn tl_tensor_map_insert(
         let slice = std::slice::from_raw_parts(ptr, len);
         let key = std::str::from_utf8(slice).unwrap_or_default().to_string();
         if let Some((data, shape, dtype_tag)) = extract_tensor_data(tensor) {
-            map_ref.insert(key, TensorEntry { data_f32: data, shape, dtype_tag });
+            map_ref.insert(
+                key,
+                TensorEntry {
+                    data_f32: data,
+                    shape,
+                    dtype_tag,
+                },
+            );
         }
     }
 }
@@ -121,12 +121,12 @@ pub extern "C" fn tl_tensor_map_get(
         let slice = std::slice::from_raw_parts(ptr, len);
         let key_str = std::str::from_utf8(slice).unwrap_or_default();
         let key = key_str.to_string();
-        
+
         // 1. entries (F32テンソル) を検索
         if let Some(entry) = map_ref.entries.get(key.as_str()) {
             return create_tensor_from_entry(entry);
         }
-        
+
         // 2. qtensors (量子化テンソル) をフォールバック検索
         if let Some(qtensor_arc) = map_ref.qtensors.get(key.as_str()) {
             match qtensor_arc.dequantize_to_tensor() {
@@ -140,7 +140,7 @@ pub extern "C" fn tl_tensor_map_get(
                 }
             }
         }
-        
+
         crate::error::set_last_error(
             format!("Weight '{}' not found in loaded file.", key),
             crate::error::RuntimeErrorCode::ArgumentError,
@@ -162,7 +162,7 @@ pub extern "C" fn tl_tensor_map_load(path: *mut StringStruct) -> *mut OpaqueTens
         let slice = std::slice::from_raw_parts(ptr, len);
         let path_str = std::str::from_utf8(slice).unwrap_or_default();
         let path_buf = crate::file_io::expand_path(path_str);
-        
+
         // safetensors ファイルを読み込み
         match safetensors::SafeTensors::deserialize(&std::fs::read(&path_buf).unwrap_or_default()) {
             Ok(tensors) => {
@@ -172,7 +172,8 @@ pub extern "C" fn tl_tensor_map_load(path: *mut StringStruct) -> *mut OpaqueTens
                     let data: Vec<f32> = match view.dtype() {
                         safetensors::Dtype::F32 => {
                             let bytes = view.data();
-                            bytes.chunks_exact(4)
+                            bytes
+                                .chunks_exact(4)
                                 .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
                                 .collect()
                         }
@@ -187,14 +188,20 @@ pub extern "C" fn tl_tensor_map_load(path: *mut StringStruct) -> *mut OpaqueTens
                         }
                     };
                     let shape: Vec<usize> = view.shape().to_vec();
-                    entries.insert(name.to_string(), TensorEntry {
-                        data_f32: data,
-                        shape,
-                        dtype_tag: 0, // F32
-                    });
+                    entries.insert(
+                        name.to_string(),
+                        TensorEntry {
+                            data_f32: data,
+                            shape,
+                            dtype_tag: 0, // F32
+                        },
+                    );
                 }
                 println!("Loaded {} tensors from {:?}", entries.len(), path_buf);
-                Box::into_raw(Box::new(OpaqueTensorMap { entries, qtensors: HashMap::new() }))
+                Box::into_raw(Box::new(OpaqueTensorMap {
+                    entries,
+                    qtensors: HashMap::new(),
+                }))
             }
             Err(e) => {
                 eprintln!("Failed to load safetensors: {}", e);
@@ -266,5 +273,3 @@ pub extern "C" fn tl_tensor_map_get_quantized(
         std::ptr::null_mut()
     }
 }
-
-
