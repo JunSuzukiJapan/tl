@@ -60,7 +60,7 @@ logos = "0.16.0"
 [features]
 default = []
 metal = ["candle-core/metal", "tl_runtime/metal"]
-cuda = ["candle-core/cuda", "tl_runtime/cuda"]
+cuda = ["tl_runtime/cuda"]
 coreml = ["dep:candle-coreml"]
 
 [profile.release]
