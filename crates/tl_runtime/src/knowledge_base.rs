@@ -3,8 +3,8 @@
 //! Datalog 風の推論エンジン。半ナイーブ評価（Semi-Naive Evaluation）で
 //! ファクトとルールから新しいファクトを導出し、クエリに応答する。
 
-use crate::string_ffi::StringStruct;
 use crate::OpaqueTensor;
+use crate::string_ffi::StringStruct;
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::sync::Mutex;
@@ -37,7 +37,7 @@ impl std::fmt::Display for Value {
 /// ルール引数の種類
 #[derive(Debug, Clone)]
 enum RuleArg {
-    Var(i64),       // 変数（インデックス）
+    Var(i64), // 変数（インデックス）
     ConstInt(i64),
     ConstFloat(f64),
     ConstEntity(i64),
@@ -543,7 +543,7 @@ impl KBStore {
 fn is_builtin_predicate(pred: &str) -> bool {
     matches!(
         pred,
-        ">"  | "<"
+        ">" | "<"
             | ">="
             | "<="
             | "=="
@@ -861,21 +861,14 @@ pub extern "C" fn tl_query(
         None
     };
 
-    let results = store.query(
-        &pred_name,
-        mask,
-        args_slice.as_deref(),
-        tags,
-    );
+    let results = store.query(&pred_name, mask, args_slice.as_deref(), tags);
 
     // CPU/GPU 両対応のテンソル作成ヘルパー
+    // 重要: Box::into_raw ではなく create_runtime_tensor_f32 を使う。
+    // CPU の release パスは Arc::from_raw を使うため、Arc::into_raw で
+    // 作成されたポインタでなければヒープ破損を起こす。
     let create_result_tensor = |data: &[f32], shape: &[usize]| -> *mut OpaqueTensor {
-        if is_cpu {
-            let t = tl_cpu::CpuTensor::from_slice(data, shape, tl_cpu::DType::F32);
-            Box::into_raw(Box::new(t)) as *mut OpaqueTensor
-        } else {
-            crate::device_ffi::create_runtime_tensor_f32(data, shape) as *mut OpaqueTensor
-        }
+        crate::device_ffi::create_runtime_tensor_f32(data, shape) as *mut OpaqueTensor
     };
 
     if results.is_empty() {
@@ -906,7 +899,13 @@ pub extern "C" fn tl_query(
                     Value::Int(v) => *v as f32,
                     Value::Float(v) => *v as f32,
                     Value::Entity(id) => *id as f32,
-                    Value::Bool(b) => if *b { 1.0 } else { 0.0 },
+                    Value::Bool(b) => {
+                        if *b {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
                     Value::Str(_) => 0.0,
                 })
                 .collect();
@@ -923,7 +922,13 @@ pub extern "C" fn tl_query(
                         Value::Int(v) => *v as f32,
                         Value::Float(v) => *v as f32,
                         Value::Entity(id) => *id as f32,
-                        Value::Bool(b) => if *b { 1.0 } else { 0.0 },
+                        Value::Bool(b) => {
+                            if *b {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        }
                         Value::Str(_) => 0.0,
                     });
                 }
