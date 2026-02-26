@@ -1,46 +1,48 @@
 //! tl_cuda - CUDA GPU Tensor Library
 //!
 //! Metal バックエンド (tl_metal) と同じ API を CUDA で実装する。
-//! 現時点ではすべてスタブ (unimplemented!) 実装。
 #![allow(unused)]
 
+#[macro_use]
+pub mod cuda_sys;
 pub mod buffer_pool;
 pub mod device;
+pub mod stream;
 pub mod tensor;
 pub mod ops {
-    pub mod binary;
-    pub mod unary;
     pub mod activation;
-    pub mod reduce;
-    pub mod reduce_axis;
-    pub mod matmul;
+    pub mod binary;
     pub mod broadcast;
+    pub mod fused;
     pub mod index;
-    pub mod shape;
-    pub mod special;
-    pub mod scalar;
     pub mod llm;
+    pub mod matmul;
     pub mod nn;
     pub mod quantized;
-    pub mod fused;
+    pub mod reduce;
+    pub mod reduce_axis;
+    pub mod scalar;
+    pub mod shape;
+    pub mod special;
+    pub mod unary;
 }
-pub mod graph;
 pub mod autograd;
 pub mod backend_impl;
-pub mod optim;
+pub mod device_impl;
 pub mod ffi;
 pub mod ffi_ops;
-pub mod device_impl;
+pub mod graph;
+pub mod optim;
 
+pub use autograd::GradFn;
 pub use buffer_pool::CudaBufferPool;
 pub use device::{get_device, CudaDevice};
+pub use optim::{clip_grad_norm, Adam, AdamW, SGD};
 pub use tensor::CudaTensor;
-pub use autograd::GradFn;
-pub use optim::{SGD, Adam, AdamW, clip_grad_norm};
 
 // Re-export tl_backend traits
-pub use tl_backend::GpuTensor;
 pub use ffi::OpaqueTensor;
+pub use tl_backend::GpuTensor;
 
 /// データ型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

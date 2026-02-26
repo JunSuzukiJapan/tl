@@ -1,21 +1,39 @@
 //! tl_cuda テンソルコア機能テスト
 //! テンソル情報取得、データアクセス、型変換、DType、BufferPool、GpuTensorトレイトを検証
 
-use tl_cuda::{CudaTensor, DType, CudaBufferPool, shape_to_bytes};
-use tl_cuda::buffer_pool::pool_release;
 use serial_test::serial;
+use tl_cuda::{shape_to_bytes, CudaBufferPool, CudaTensor, DType};
 
 // ========== ヘルパー関数 ==========
 
 fn assert_approx_eq(a: f32, b: f32, eps: f32) {
-    assert!((a - b).abs() < eps, "Expected {} ≈ {}, diff = {}", a, b, (a - b).abs());
+    assert!(
+        (a - b).abs() < eps,
+        "Expected {} ≈ {}, diff = {}",
+        a,
+        b,
+        (a - b).abs()
+    );
 }
 
 fn assert_tensor_approx_eq(t: &CudaTensor, expected: &[f32], eps: f32) {
     let data = t.to_vec::<f32>();
-    assert_eq!(data.len(), expected.len(), "Length mismatch: {} vs {}", data.len(), expected.len());
+    assert_eq!(
+        data.len(),
+        expected.len(),
+        "Length mismatch: {} vs {}",
+        data.len(),
+        expected.len()
+    );
     for (i, (&a, &b)) in data.iter().zip(expected.iter()).enumerate() {
-        assert!((a - b).abs() < eps, "At index {}: {} ≈ {}, diff = {}", i, a, b, (a - b).abs());
+        assert!(
+            (a - b).abs() < eps,
+            "At index {}: {} ≈ {}, diff = {}",
+            i,
+            a,
+            b,
+            (a - b).abs()
+        );
     }
 }
 
@@ -112,9 +130,9 @@ fn test_dtype_equality() {
 #[test]
 fn test_shape_to_bytes() {
     assert_eq!(shape_to_bytes(&[2, 3], DType::F32), 24); // 6 * 4
-    assert_eq!(shape_to_bytes(&[4], DType::F16), 8);     // 4 * 2
-    assert_eq!(shape_to_bytes(&[10], DType::I64), 80);   // 10 * 8
-    assert_eq!(shape_to_bytes(&[3, 3], DType::U8), 9);   // 9 * 1
+    assert_eq!(shape_to_bytes(&[4], DType::F16), 8); // 4 * 2
+    assert_eq!(shape_to_bytes(&[10], DType::I64), 80); // 10 * 8
+    assert_eq!(shape_to_bytes(&[3, 3], DType::U8), 9); // 9 * 1
 }
 
 #[test]
@@ -149,16 +167,13 @@ fn test_buffer_pool_acquire_release_cycle() {
     let t1 = CudaTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0], &[4], DType::F32);
     let t2 = CudaTensor::from_slice(&[5.0f32, 6.0, 7.0, 8.0], &[4], DType::F32);
 
-    // プールに返却
-    pool_release();
+    // テンソルを drop → バッファがプールに返却される
+    drop(t1);
+    drop(t2);
 
-    // テンソル作成が正常に動作することの確認
+    // テンソル作成が正常に動作することの確認（プールから再利用される可能性）
     let t3 = CudaTensor::from_slice(&[9.0f32, 10.0, 11.0, 12.0], &[4], DType::F32);
     assert_eq!(t3.shape(), &[4]);
-
-    // t1, t2 も正常
-    assert_eq!(t1.shape(), &[4]);
-    assert_eq!(t2.shape(), &[4]);
 }
 
 // =====================================================================
@@ -189,8 +204,8 @@ fn test_gpu_tensor_from_slice_i64() {
 #[test]
 #[serial]
 fn test_gpu_tensor_zeros() {
-    use tl_backend::GpuTensor;
     use tl_backend::DType as BackendDType;
+    use tl_backend::GpuTensor;
     let t = <CudaTensor as GpuTensor>::zeros(&[3, 3], BackendDType::F32).unwrap();
     let data = t.to_vec_f32();
     assert_eq!(data.len(), 9);
@@ -200,8 +215,8 @@ fn test_gpu_tensor_zeros() {
 #[test]
 #[serial]
 fn test_gpu_tensor_ones() {
-    use tl_backend::GpuTensor;
     use tl_backend::DType as BackendDType;
+    use tl_backend::GpuTensor;
     let t = <CudaTensor as GpuTensor>::ones(&[2, 2], BackendDType::F32).unwrap();
     let data = t.to_vec_f32();
     assert_eq!(data.len(), 4);
@@ -211,8 +226,8 @@ fn test_gpu_tensor_ones() {
 #[test]
 #[serial]
 fn test_gpu_tensor_randn() {
-    use tl_backend::GpuTensor;
     use tl_backend::DType as BackendDType;
+    use tl_backend::GpuTensor;
     let t = <CudaTensor as GpuTensor>::randn(&[100], BackendDType::F32).unwrap();
     let data = t.to_vec_f32();
     assert_eq!(data.len(), 100);
@@ -223,8 +238,8 @@ fn test_gpu_tensor_randn() {
 #[test]
 #[serial]
 fn test_gpu_tensor_arange() {
-    use tl_backend::GpuTensor;
     use tl_backend::DType as BackendDType;
+    use tl_backend::GpuTensor;
     let t = <CudaTensor as GpuTensor>::arange(0, 5, BackendDType::F32).unwrap();
     let data = t.to_vec_f32();
     assert_eq!(data.len(), 5);
@@ -246,8 +261,8 @@ fn test_gpu_tensor_clone_data() {
 #[test]
 #[serial]
 fn test_gpu_tensor_shape_dtype() {
-    use tl_backend::GpuTensor;
     use tl_backend::DType as BackendDType;
+    use tl_backend::GpuTensor;
     let t = CudaTensor::from_slice_f32(&[1.0, 2.0, 3.0, 4.0], &[2, 2]).unwrap();
     assert_eq!(GpuTensor::shape(&t), &[2, 2]);
     assert_eq!(GpuTensor::dtype(&t), BackendDType::F32);
@@ -315,5 +330,8 @@ fn test_zero_grad() {
     t.enable_grad();
     t.zero_grad();
     // zero_grad 後は勾配が None であること
-    assert!(t.get_grad().is_none(), "Grad should be None after zero_grad");
+    assert!(
+        t.get_grad().is_none(),
+        "Grad should be None after zero_grad"
+    );
 }
