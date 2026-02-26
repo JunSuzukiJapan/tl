@@ -554,10 +554,6 @@ impl IDevice for CudaDeviceImpl {
 
     // ========== IO / Print ==========
     fn tensor_print(&self, t: *mut c_void) -> BackendResult<()> {
-        if t.is_null() {
-            println!("Tensor[null]");
-            return Ok(());
-        }
         unsafe {
             let tensor = &*(p(t) as *const std::cell::UnsafeCell<crate::tensor::CudaTensor>);
             let data = (*tensor.get()).to_vec::<f32>();

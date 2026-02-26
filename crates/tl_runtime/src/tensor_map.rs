@@ -212,8 +212,7 @@ pub extern "C" fn tl_tensor_map_load(path: *mut StringStruct) -> *mut OpaqueTens
 }
 
 /// @ffi_sig (TensorMap*, String*) -> void
-/// TensorMap をバイナリ形式で保存
-/// tl_tensor_load と互換性のあるフォーマット: [rank: u64][shape: u64 * rank][data: f32 * numel]
+/// TensorMap を safetensors 形式で保存
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *mut StringStruct) {
     unsafe {
@@ -227,21 +226,39 @@ pub extern "C" fn tl_tensor_map_save(map: *mut OpaqueTensorMap, path: *mut Strin
         let path_buf = crate::file_io::expand_path(path_str);
         let entries = &(*map).entries;
 
-        // 最初のテンソルをバイナリ形式で保存（tl_tensor_load 互換）
-        if let Some((_name, entry)) = entries.iter().next() {
-            let mut bytes = Vec::new();
-            bytes.extend_from_slice(&(entry.shape.len() as u64).to_le_bytes());
-            for &dim in &entry.shape {
-                bytes.extend_from_slice(&(dim as u64).to_le_bytes());
-            }
-            for &val in &entry.data_f32 {
-                bytes.extend_from_slice(&val.to_le_bytes());
-            }
+        // safetensors 形式で保存（tl_tensor_map_load と互換）
+        // 1. まずバイトデータと名前・shape を収集
+        let names: Vec<&str> = entries.keys().map(|s| s.as_str()).collect();
+        let shapes: Vec<Vec<usize>> = entries.values().map(|e| e.shape.clone()).collect();
+        let data_bytes: Vec<Vec<u8>> = entries
+            .values()
+            .map(|e| e.data_f32.iter().flat_map(|v| v.to_le_bytes()).collect())
+            .collect();
 
-            match std::fs::write(&path_buf, &bytes) {
+        // 2. TensorView を作成（data_bytes は以後変更されないので参照が安定）
+        let tensors: Vec<(&str, safetensors::tensor::TensorView<'_>)> = names
+            .iter()
+            .zip(shapes.iter())
+            .zip(data_bytes.iter())
+            .map(|((name, shape), data)| {
+                (
+                    *name,
+                    safetensors::tensor::TensorView::new(
+                        safetensors::Dtype::F32,
+                        shape.clone(),
+                        data,
+                    )
+                    .expect("Failed to create TensorView"),
+                )
+            })
+            .collect();
+
+        match safetensors::serialize(tensors, &None) {
+            Ok(bytes) => match std::fs::write(&path_buf, &bytes) {
                 Ok(_) => println!("Saved {} tensors to {:?}", entries.len(), path_buf),
-                Err(e) => eprintln!("Failed to save tensor: {}", e),
-            }
+                Err(e) => eprintln!("Failed to write safetensors file: {}", e),
+            },
+            Err(e) => eprintln!("Failed to serialize safetensors: {}", e),
         }
     }
 }
