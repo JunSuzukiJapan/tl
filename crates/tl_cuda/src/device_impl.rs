@@ -138,11 +138,25 @@ impl IDevice for CudaDeviceImpl {
         indices: *const i64,
         rank: i64,
     ) -> BackendResult<f32> {
-        if rank == 2 {
-            let idx = unsafe { std::slice::from_raw_parts(indices, 2) };
-            Ok(ffi_ops::tl_cuda_get_f32_md(p(t), idx[0], idx[1]))
-        } else {
-            Ok(ffi_ops::tl_cuda_get(p(t), unsafe { *indices }))
+        unsafe {
+            let idx_slice = std::slice::from_raw_parts(indices, rank as usize);
+            let tensor = &*(p(t) as *const std::cell::UnsafeCell<crate::tensor::CudaTensor>);
+            let st = &*tensor.get();
+            let shape = st.shape();
+            // flat index を stride ベースで計算（任意次元対応）
+            let mut flat = 0usize;
+            let mut stride = 1usize;
+            for i in (0..shape.len()).rev() {
+                let dim_idx = if i < idx_slice.len() {
+                    idx_slice[i] as usize
+                } else {
+                    0
+                };
+                flat += dim_idx * stride;
+                stride *= shape[i];
+            }
+            let data = st.to_vec::<f32>();
+            Ok(data[flat])
         }
     }
     fn tensor_get_i64_md(
@@ -151,11 +165,25 @@ impl IDevice for CudaDeviceImpl {
         indices: *const i64,
         rank: i64,
     ) -> BackendResult<i64> {
-        if rank == 2 {
-            let idx = unsafe { std::slice::from_raw_parts(indices, 2) };
-            Ok(ffi_ops::tl_cuda_get_i64_md(p(t), idx[0], idx[1]))
-        } else {
-            Ok(ffi_ops::tl_cuda_get_i64(p(t), unsafe { *indices } as usize))
+        unsafe {
+            let idx_slice = std::slice::from_raw_parts(indices, rank as usize);
+            let tensor = &*(p(t) as *const std::cell::UnsafeCell<crate::tensor::CudaTensor>);
+            let st = &*tensor.get();
+            let shape = st.shape();
+            // flat index を stride ベースで計算（任意次元対応）
+            let mut flat = 0usize;
+            let mut stride = 1usize;
+            for i in (0..shape.len()).rev() {
+                let dim_idx = if i < idx_slice.len() {
+                    idx_slice[i] as usize
+                } else {
+                    0
+                };
+                flat += dim_idx * stride;
+                stride *= shape[i];
+            }
+            let data = st.to_vec::<i64>();
+            Ok(data[flat])
         }
     }
     fn tensor_set_f32_md(
