@@ -7,20 +7,39 @@
 //! 3. backward を呼び出し
 //! 4. 入力テンソルの勾配が数学的に正しいことを検証
 
-use tl_cuda::{CudaTensor, DType};
 use serial_test::serial;
+use tl_cuda::{CudaTensor, DType};
 
 // ========== ヘルパー関数 ==========
 
 fn assert_approx_eq(a: f32, b: f32, eps: f32) {
-    assert!((a - b).abs() < eps, "Expected {} ≈ {}, diff = {}", a, b, (a - b).abs());
+    assert!(
+        (a - b).abs() < eps,
+        "Expected {} ≈ {}, diff = {}",
+        a,
+        b,
+        (a - b).abs()
+    );
 }
 
 fn assert_tensor_approx_eq(t: &CudaTensor, expected: &[f32], eps: f32) {
     let data = t.to_vec::<f32>();
-    assert_eq!(data.len(), expected.len(), "Length mismatch: {} vs {}", data.len(), expected.len());
+    assert_eq!(
+        data.len(),
+        expected.len(),
+        "Length mismatch: {} vs {}",
+        data.len(),
+        expected.len()
+    );
     for (i, (&a, &b)) in data.iter().zip(expected.iter()).enumerate() {
-        assert!((a - b).abs() < eps, "At index {}: {} ≈ {}, diff = {}", i, a, b, (a - b).abs());
+        assert!(
+            (a - b).abs() < eps,
+            "At index {}: {} ≈ {}, diff = {}",
+            i,
+            a,
+            b,
+            (a - b).abs()
+        );
     }
 }
 
@@ -41,11 +60,12 @@ fn test_autograd_add() {
     // f(a, b) = a + b → df/da = 1, df/db = 1
     let a = grad_tensor(&[1.0, 2.0, 3.0], &[3]);
     let b = grad_tensor(&[4.0, 5.0, 6.0], &[3]);
-    let c = a.add(&b).unwrap();
+    let c = a.add_impl(&b).unwrap();
     assert_tensor_approx_eq(&c, &[5.0, 7.0, 9.0], 1e-5);
 
     // sum → backward
-    let sum_val = c.sumall().unwrap();
+    let sum_t = c.sum_all_tensor_impl().unwrap();
+    let sum_val = sum_t.to_vec::<f32>()[0];
     assert_approx_eq(sum_val, 21.0, 1e-5);
 }
 
@@ -55,7 +75,7 @@ fn test_autograd_sub() {
     // f(a, b) = a - b → df/da = 1, df/db = -1
     let a = grad_tensor(&[5.0, 6.0, 7.0], &[3]);
     let b = grad_tensor(&[1.0, 2.0, 3.0], &[3]);
-    let c = a.sub(&b).unwrap();
+    let c = a.sub_impl(&b).unwrap();
     assert_tensor_approx_eq(&c, &[4.0, 4.0, 4.0], 1e-5);
 }
 
@@ -65,7 +85,7 @@ fn test_autograd_mul() {
     // f(a, b) = a * b → df/da = b, df/db = a
     let a = grad_tensor(&[2.0, 3.0], &[2]);
     let b = grad_tensor(&[4.0, 5.0], &[2]);
-    let c = a.mul(&b).unwrap();
+    let c = a.mul_impl(&b).unwrap();
     assert_tensor_approx_eq(&c, &[8.0, 15.0], 1e-5);
 }
 
@@ -75,7 +95,7 @@ fn test_autograd_div() {
     // f(a, b) = a / b → df/da = 1/b, df/db = -a/b^2
     let a = grad_tensor(&[10.0, 20.0], &[2]);
     let b = grad_tensor(&[2.0, 4.0], &[2]);
-    let c = a.div(&b).unwrap();
+    let c = a.div_impl(&b).unwrap();
     assert_tensor_approx_eq(&c, &[5.0, 5.0], 1e-5);
 }
 
@@ -88,7 +108,7 @@ fn test_autograd_div() {
 fn test_autograd_neg() {
     // f(a) = -a → df/da = -1
     let a = grad_tensor(&[1.0, -2.0, 3.0], &[3]);
-    let c = a.neg().unwrap();
+    let c = a.neg_impl().unwrap();
     assert_tensor_approx_eq(&c, &[-1.0, 2.0, -3.0], 1e-5);
 }
 
@@ -97,7 +117,7 @@ fn test_autograd_neg() {
 fn test_autograd_abs() {
     // f(a) = |a| → df/da = sign(a)
     let a = grad_tensor(&[-1.0, 2.0, -3.0], &[3]);
-    let c = a.abs().unwrap();
+    let c = a.abs_impl().unwrap();
     assert_tensor_approx_eq(&c, &[1.0, 2.0, 3.0], 1e-5);
 }
 
@@ -106,7 +126,7 @@ fn test_autograd_abs() {
 fn test_autograd_exp() {
     // f(a) = exp(a) → df/da = exp(a)
     let a = grad_tensor(&[0.0, 1.0], &[2]);
-    let c = a.exp().unwrap();
+    let c = a.exp_impl().unwrap();
     let data = c.to_vec::<f32>();
     assert_approx_eq(data[0], 1.0, 1e-5);
     assert_approx_eq(data[1], std::f32::consts::E, 1e-4);
@@ -117,7 +137,7 @@ fn test_autograd_exp() {
 fn test_autograd_log() {
     // f(a) = log(a) → df/da = 1/a
     let a = grad_tensor(&[1.0, std::f32::consts::E], &[2]);
-    let c = a.log().unwrap();
+    let c = a.log_impl().unwrap();
     let data = c.to_vec::<f32>();
     assert_approx_eq(data[0], 0.0, 1e-5);
     assert_approx_eq(data[1], 1.0, 1e-4);
@@ -128,7 +148,7 @@ fn test_autograd_log() {
 fn test_autograd_sqrt() {
     // f(a) = sqrt(a) → df/da = 0.5 / sqrt(a)
     let a = grad_tensor(&[4.0, 9.0, 16.0], &[3]);
-    let c = a.sqrt().unwrap();
+    let c = a.sqrt_impl().unwrap();
     assert_tensor_approx_eq(&c, &[2.0, 3.0, 4.0], 1e-5);
 }
 
@@ -137,7 +157,7 @@ fn test_autograd_sqrt() {
 fn test_autograd_tanh() {
     // f(a) = tanh(a) → df/da = 1 - tanh(a)^2
     let a = grad_tensor(&[0.0, 1.0], &[2]);
-    let c = a.tanh().unwrap();
+    let c = a.tanh_impl().unwrap();
     let data = c.to_vec::<f32>();
     assert_approx_eq(data[0], 0.0, 1e-5);
     assert!(data[1] > 0.7 && data[1] < 0.8, "tanh(1) ≈ 0.7616");
@@ -148,7 +168,7 @@ fn test_autograd_tanh() {
 fn test_autograd_sigmoid() {
     // f(a) = sigmoid(a) → df/da = sigmoid(a) * (1 - sigmoid(a))
     let a = grad_tensor(&[0.0], &[1]);
-    let c = a.sigmoid().unwrap();
+    let c = a.sigmoid_impl().unwrap();
     assert_tensor_approx_eq(&c, &[0.5], 1e-5);
 }
 
@@ -157,7 +177,7 @@ fn test_autograd_sigmoid() {
 fn test_autograd_relu() {
     // f(a) = relu(a) → df/da = (a > 0) ? 1 : 0
     let a = grad_tensor(&[-2.0, -1.0, 0.0, 1.0, 2.0], &[5]);
-    let c = a.relu().unwrap();
+    let c = a.relu_impl().unwrap();
     assert_tensor_approx_eq(&c, &[0.0, 0.0, 0.0, 1.0, 2.0], 1e-5);
 }
 
@@ -166,12 +186,16 @@ fn test_autograd_relu() {
 fn test_autograd_gelu() {
     // GELU(x) ≈ 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x^3)))
     let a = grad_tensor(&[-1.0, 0.0, 1.0], &[3]);
-    let c = a.gelu().unwrap();
+    let c = a.gelu_impl().unwrap();
     let data = c.to_vec::<f32>();
     // GELU(0) = 0
     assert_approx_eq(data[1], 0.0, 1e-4);
     // GELU(1) ≈ 0.8413
-    assert!(data[2] > 0.8 && data[2] < 0.9, "GELU(1) ≈ 0.8413, got {}", data[2]);
+    assert!(
+        data[2] > 0.8 && data[2] < 0.9,
+        "GELU(1) ≈ 0.8413, got {}",
+        data[2]
+    );
 }
 
 #[test]
@@ -184,7 +208,11 @@ fn test_autograd_silu() {
     // SiLU(0) = 0
     assert_approx_eq(data[1], 0.0, 1e-4);
     // SiLU(1) = 1 * sigmoid(1) ≈ 0.7311
-    assert!(data[2] > 0.7 && data[2] < 0.8, "SiLU(1) ≈ 0.7311, got {}", data[2]);
+    assert!(
+        data[2] > 0.7 && data[2] < 0.8,
+        "SiLU(1) ≈ 0.7311, got {}",
+        data[2]
+    );
 }
 
 // =====================================================================
@@ -196,7 +224,7 @@ fn test_autograd_silu() {
 fn test_autograd_add_scalar() {
     // f(a) = a + s → df/da = 1
     let a = grad_tensor(&[1.0, 2.0, 3.0], &[3]);
-    let c = a.add_scalar(10.0).unwrap();
+    let c = a.add_scalar_impl(10.0).unwrap();
     assert_tensor_approx_eq(&c, &[11.0, 12.0, 13.0], 1e-5);
 }
 
@@ -205,7 +233,7 @@ fn test_autograd_add_scalar() {
 fn test_autograd_sub_scalar() {
     // f(a) = a - s → df/da = 1
     let a = grad_tensor(&[10.0, 20.0, 30.0], &[3]);
-    let c = a.sub_scalar(5.0).unwrap();
+    let c = a.add_scalar_impl(-5.0).unwrap();
     assert_tensor_approx_eq(&c, &[5.0, 15.0, 25.0], 1e-5);
 }
 
@@ -214,7 +242,7 @@ fn test_autograd_sub_scalar() {
 fn test_autograd_mul_scalar() {
     // f(a) = a * s → df/da = s
     let a = grad_tensor(&[1.0, 2.0, 3.0], &[3]);
-    let c = a.mul_scalar(3.0).unwrap();
+    let c = a.mul_scalar_impl(3.0).unwrap();
     assert_tensor_approx_eq(&c, &[3.0, 6.0, 9.0], 1e-5);
 }
 
@@ -223,7 +251,7 @@ fn test_autograd_mul_scalar() {
 fn test_autograd_div_scalar() {
     // f(a) = a / s → df/da = 1/s
     let a = grad_tensor(&[10.0, 20.0, 30.0], &[3]);
-    let c = a.div_scalar(10.0).unwrap();
+    let c = a.div_scalar_impl(10.0).unwrap();
     assert_tensor_approx_eq(&c, &[1.0, 2.0, 3.0], 1e-5);
 }
 
@@ -236,7 +264,8 @@ fn test_autograd_div_scalar() {
 fn test_autograd_sumall() {
     // f(a) = sum(a) → df/da = ones_like(a)
     let a = grad_tensor(&[1.0, 2.0, 3.0, 4.0], &[4]);
-    let sum_val = a.sumall().unwrap();
+    let sum_t = a.sum_all_tensor_impl().unwrap();
+    let sum_val = sum_t.to_vec::<f32>()[0];
     assert_approx_eq(sum_val, 10.0, 1e-5);
 }
 
@@ -245,7 +274,7 @@ fn test_autograd_sumall() {
 fn test_autograd_mean_all() {
     // f(a) = mean(a) → df/da = 1/N * ones_like(a)
     let a = grad_tensor(&[1.0, 2.0, 3.0, 4.0], &[4]);
-    let mean_val = a.mean_all().unwrap();
+    let mean_val = a.mean_all_impl().unwrap();
     assert_approx_eq(mean_val, 2.5, 1e-5);
 }
 
@@ -254,7 +283,7 @@ fn test_autograd_mean_all() {
 fn test_autograd_sum_axis() {
     // f(a) = sum(a, axis=1) for [2, 3]
     let a = grad_tensor(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
-    let s = a.sum(1).unwrap();
+    let s = a.sum_impl(1).unwrap();
     assert_eq!(s.shape(), &[2]);
     assert_tensor_approx_eq(&s, &[6.0, 15.0], 1e-5);
 }
@@ -264,7 +293,7 @@ fn test_autograd_sum_axis() {
 fn test_autograd_mean_axis() {
     // f(a) = mean(a, axis=1) for [2, 3]
     let a = grad_tensor(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
-    let m = a.mean(1).unwrap();
+    let m = a.mean_impl(1).unwrap();
     assert_eq!(m.shape(), &[2]);
     assert_tensor_approx_eq(&m, &[2.0, 5.0], 1e-5);
 }
@@ -278,7 +307,7 @@ fn test_autograd_mean_axis() {
 fn test_autograd_reshape() {
     // reshape は勾配を逆 reshape で伝播
     let a = grad_tensor(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
-    let b = a.reshape(&[3, 2]).unwrap();
+    let b = a.reshape_impl(&[3, 2]).unwrap();
     assert_eq!(b.shape(), &[3, 2]);
     assert_tensor_approx_eq(&b, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 1e-5);
 }
@@ -288,7 +317,7 @@ fn test_autograd_reshape() {
 fn test_autograd_transpose() {
     // transpose(dim0, dim1) の勾配は transpose(dim0, dim1) を逆に適用
     let a = grad_tensor(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
-    let b = a.transpose(0, 1).unwrap();
+    let b = a.transpose_impl(0, 1).unwrap();
     assert_eq!(b.shape(), &[3, 2]);
 }
 
@@ -300,7 +329,7 @@ fn test_autograd_matmul() {
     // df/dB = A^T @ grad_output
     let a = grad_tensor(&[1.0, 2.0, 3.0, 4.0], &[2, 2]);
     let b = grad_tensor(&[5.0, 6.0, 7.0, 8.0], &[2, 2]);
-    let c = a.matmul(&b).unwrap();
+    let c = a.matmul_impl(&b).unwrap();
     assert_eq!(c.shape(), &[2, 2]);
     // [1,2]*[5,7]+[1,2]*[6,8] = [19, 22, 43, 50]
     assert_tensor_approx_eq(&c, &[19.0, 22.0, 43.0, 50.0], 1e-5);
@@ -316,8 +345,8 @@ fn test_autograd_chain_add_mul() {
     // f(a, b) = (a + b) * a
     let a = grad_tensor(&[2.0, 3.0], &[2]);
     let b = grad_tensor(&[1.0, 1.0], &[2]);
-    let sum = a.add(&b).unwrap();
-    let product = sum.mul(&a).unwrap();
+    let sum = a.add_impl(&b).unwrap();
+    let product = sum.mul_impl(&a).unwrap();
     // (2+1)*2=6, (3+1)*3=12
     assert_tensor_approx_eq(&product, &[6.0, 12.0], 1e-5);
 }
@@ -328,8 +357,9 @@ fn test_autograd_chain_mul_sum() {
     // f(a, b) = sum(a * b)
     let a = grad_tensor(&[1.0, 2.0, 3.0], &[3]);
     let b = grad_tensor(&[4.0, 5.0, 6.0], &[3]);
-    let product = a.mul(&b).unwrap();
-    let sum_val = product.sumall().unwrap();
+    let product = a.mul_impl(&b).unwrap();
+    let sum_t = product.sum_all_tensor_impl().unwrap();
+    let sum_val = sum_t.to_vec::<f32>()[0];
     // 4 + 10 + 18 = 32
     assert_approx_eq(sum_val, 32.0, 1e-5);
 }
@@ -342,7 +372,7 @@ fn test_autograd_chain_mul_sum() {
 #[serial]
 fn test_autograd_softmax() {
     let a = grad_tensor(&[1.0, 2.0, 3.0], &[3]);
-    let s = a.softmax(0).unwrap();
+    let s = a.softmax_impl(0).unwrap();
     let data = s.to_vec::<f32>();
 
     // softmax の出力は合計 1
@@ -364,7 +394,7 @@ fn test_autograd_pow() {
     // f(a) = a^2 → df/da = 2a
     let a = grad_tensor(&[2.0, 3.0, 4.0], &[3]);
     let exp = grad_tensor(&[2.0, 2.0, 2.0], &[3]);
-    let c = a.pow(&exp).unwrap();
+    let c = a.pow_impl(&exp).unwrap();
     assert_tensor_approx_eq(&c, &[4.0, 9.0, 16.0], 1e-4);
 }
 
@@ -378,13 +408,13 @@ fn test_backward_simple_add() {
     // a + b → backward →両方の勾配が 1.0
     let a = grad_tensor(&[1.0, 2.0], &[2]);
     let b = grad_tensor(&[3.0, 4.0], &[2]);
-    let c = a.add(&b).unwrap();
+    let c = a.add_impl(&b).unwrap();
 
     // sumall で backward を呼べるスカラーを作成
-    let _sum = c.sumall().unwrap();
+    let _sum = c.sum_all_tensor_impl().unwrap();
 
     // backward は c に対して呼ぶ（c は grad_fn を持っている）
-    let mut c = a.add(&b).unwrap();
+    let mut c = a.add_impl(&b).unwrap();
     let _ = c.backward();
 
     // a の勾配を確認
@@ -405,6 +435,6 @@ fn test_backward_simple_add() {
 fn test_autograd_scale() {
     // scale(a, s) = a * s （mul_scalar と同等）
     let a = grad_tensor(&[1.0, 2.0, 3.0], &[3]);
-    let c = a.mul_scalar(0.5).unwrap();
+    let c = a.mul_scalar_impl(0.5).unwrap();
     assert_tensor_approx_eq(&c, &[0.5, 1.0, 1.5], 1e-5);
 }
