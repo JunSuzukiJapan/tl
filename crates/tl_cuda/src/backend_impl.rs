@@ -96,60 +96,8 @@ impl CudaTensor {
         unimplemented!("matmul_impl")
     }
 
-    // === Reduce (Step 5 で実装) ===
-    pub fn sumall_impl(&self) -> BackendResult<f32> {
-        unimplemented!("sumall_impl")
-    }
-    pub fn mean_all_impl(&self) -> BackendResult<f32> {
-        unimplemented!("mean_all_impl")
-    }
-    pub fn sum_impl(&self, _axis: i32) -> BackendResult<Self> {
-        unimplemented!("sum_impl")
-    }
-    pub fn mean_impl(&self, _axis: i32) -> BackendResult<Self> {
-        unimplemented!("mean_impl")
-    }
-    pub fn max_impl(&self, _axis: i32) -> BackendResult<Self> {
-        unimplemented!("max_impl")
-    }
-    pub fn min_impl(&self, _axis: i32) -> BackendResult<Self> {
-        unimplemented!("min_impl")
-    }
-    pub fn argmax_impl(&self, _axis: i32) -> BackendResult<Self> {
-        unimplemented!("argmax_impl")
-    }
-    pub fn argmin_impl(&self, _axis: i32) -> BackendResult<Self> {
-        unimplemented!("argmin_impl")
-    }
-
-    // === Shape (Step 6 で実装) ===
-    pub fn reshape_impl(&self, _shape: &[usize]) -> BackendResult<Self> {
-        unimplemented!("reshape_impl")
-    }
-    pub fn transpose_impl(&self, _dim0: usize, _dim1: usize) -> BackendResult<Self> {
-        unimplemented!("transpose_impl")
-    }
-    pub fn squeeze_impl(&self, _dim: usize) -> BackendResult<Self> {
-        unimplemented!("squeeze_impl")
-    }
-    pub fn unsqueeze_impl(&self, _dim: usize) -> BackendResult<Self> {
-        unimplemented!("unsqueeze_impl")
-    }
-    pub fn narrow_impl(&self, _dim: usize, _start: usize, _len: usize) -> BackendResult<Self> {
-        unimplemented!("narrow_impl")
-    }
-    pub fn cat_impl(&self, _other: &Self, _dim: usize) -> BackendResult<Self> {
-        unimplemented!("cat_impl")
-    }
-    pub fn contiguous_impl(&self) -> BackendResult<Self> {
-        unimplemented!("contiguous_impl")
-    }
-    pub fn broadcast_to_impl(&self, _shape: &[usize]) -> BackendResult<Self> {
-        unimplemented!("broadcast_to_impl")
-    }
-    pub fn slice_impl(&self, _dim: usize, _start: usize, _len: usize) -> BackendResult<Self> {
-        unimplemented!("slice_impl")
-    }
+    // === Reduce → ops/reduce.rs, ops/reduce_axis.rs に移動済み ===
+    // === Shape → ops/shape.rs に移動済み ===
 
     // === Special (Step 10 で実装) ===
     pub fn softmax_impl(&self, _axis: i32) -> BackendResult<Self> {
