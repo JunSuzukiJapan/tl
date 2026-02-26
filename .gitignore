@@ -20,3 +20,4 @@ test_output.txt
 *.o
 vec_string_test*
 temp_*.bin
+*.s

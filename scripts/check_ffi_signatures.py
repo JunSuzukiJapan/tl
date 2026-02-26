@@ -29,6 +29,7 @@ CRATE_DIRS = [
     PROJECT_ROOT / "crates" / "tl_runtime" / "src",
     PROJECT_ROOT / "crates" / "tl_cpu" / "src",
     PROJECT_ROOT / "crates" / "tl_metal" / "src",
+    PROJECT_ROOT / "crates" / "tl_cuda" / "src",
     PROJECT_ROOT / "crates" / "tl_backend" / "src",
 ]
 
@@ -41,11 +42,13 @@ MODULE_SEARCH_MAP = {
     "runtime::registry":   [PROJECT_ROOT / "crates" / "tl_runtime" / "src" / "registry.rs"],
     "runtime::arena":      [PROJECT_ROOT / "crates" / "tl_runtime" / "src" / "arena.rs"],
     "cpu_ffi":             [PROJECT_ROOT / "crates" / "tl_cpu" / "src" / "ffi.rs"],
-    # runtime::xxx — tl_runtime/src 全体 + re-export 元 (tl_metal, tl_cpu)
+    "cuda_ffi":            [PROJECT_ROOT / "crates" / "tl_cuda" / "src" / "ffi_ops.rs"],
+    # runtime::xxx — tl_runtime/src 全体 + re-export 元 (tl_metal, tl_cpu, tl_cuda)
     "runtime":             [
         PROJECT_ROOT / "crates" / "tl_runtime" / "src",
         PROJECT_ROOT / "crates" / "tl_metal" / "src",
         PROJECT_ROOT / "crates" / "tl_cpu" / "src",
+        PROJECT_ROOT / "crates" / "tl_cuda" / "src",
     ],
 }
 
@@ -317,6 +320,11 @@ def main():
     if cpu_ffi_path.exists():
         cpu_fns = parse_extern_fns(cpu_ffi_path)
 
+    cuda_fns = {}
+    cuda_ffi_path = PROJECT_ROOT / "crates" / "tl_cuda" / "src" / "ffi_ops.rs"
+    if cuda_ffi_path.exists():
+        cuda_fns.update(parse_extern_fns(cuda_ffi_path))
+
     # device_ffi → Metal/CPU の対応テーブル自動生成
     #
     # ── 許容リスト (allowlist) ──
@@ -361,7 +369,7 @@ def main():
     sig_mismatches: list[str] = []
     skipped_allowed: list[str] = []
     for df_name, df_sig in device_ffi_fns.items():
-        # tl_device_tensor_xxx → tl_metal_xxx / tl_cpu_tensor_xxx
+        # tl_device_tensor_xxx → tl_metal_xxx / tl_cpu_tensor_xxx / tl_cuda_xxx
         base = df_name.replace("tl_device_tensor_", "").replace("tl_device_", "")
 
         metal_candidates = [
@@ -371,6 +379,10 @@ def main():
         cpu_candidates = [
             f"tl_cpu_tensor_{base}",
             f"tl_cpu_{base}",
+        ]
+        cuda_candidates = [
+            f"tl_cuda_{base}",
+            f"tl_cuda_tensor_{base}",
         ]
 
         metal_sig = None
@@ -383,6 +395,12 @@ def main():
         for c in cpu_candidates:
             if c in cpu_fns:
                 cpu_sig = cpu_fns[c]
+                break
+
+        cuda_sig = None
+        for c in cuda_candidates:
+            if c in cuda_fns:
+                cuda_sig = cuda_fns[c]
                 break
 
         # 許容リストに含まれる場合はスキップ
@@ -407,6 +425,13 @@ def main():
                 f"❌ device_ffi ↔ CPU 引数数不一致: {df_name}\n"
                 f"   device_ffi: {df_sig.sig_str()}  ({df_sig.source_file}:{df_sig.line})\n"
                 f"   CPU:        {cpu_sig.name}{cpu_sig.sig_str()}  ({cpu_sig.source_file}:{cpu_sig.line})"
+            )
+
+        if cuda_sig and df_sig.arity != cuda_sig.arity:
+            sig_mismatches.append(
+                f"❌ device_ffi ↔ CUDA 引数数不一致: {df_name}\n"
+                f"   device_ffi: {df_sig.sig_str()}  ({df_sig.source_file}:{df_sig.line})\n"
+                f"   CUDA:       {cuda_sig.name}{cuda_sig.sig_str()}  ({cuda_sig.source_file}:{cuda_sig.line})"
             )
 
     # --- 5. 結果表示 ---
