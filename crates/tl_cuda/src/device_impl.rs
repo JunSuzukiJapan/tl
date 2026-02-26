@@ -565,11 +565,89 @@ impl IDevice for CudaDeviceImpl {
     fn tensor_print_3(&self, t: *mut c_void) -> BackendResult<()> {
         self.tensor_print(t)
     }
-    fn tensor_save(&self, _t: *mut c_void, _path: *const i8) -> BackendResult<()> {
-        unimplemented!("tensor_save")
+    fn tensor_save(&self, t: *mut c_void, path: *const i8) -> BackendResult<()> {
+        if t.is_null() || path.is_null() {
+            return Ok(());
+        }
+        unsafe {
+            let path_str = std::ffi::CStr::from_ptr(path).to_string_lossy();
+            let cell = &*(p(t) as *const std::cell::UnsafeCell<crate::tensor::CudaTensor>);
+            let tensor = &*cell.get();
+            let data = tensor.to_vec::<f32>();
+            let shape = tensor.shape().to_vec();
+
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&(shape.len() as u64).to_le_bytes());
+            for &dim in &shape {
+                bytes.extend_from_slice(&(dim as u64).to_le_bytes());
+            }
+            for &val in &data {
+                bytes.extend_from_slice(&val.to_le_bytes());
+            }
+            if let Err(e) = std::fs::write(path_str.as_ref(), &bytes) {
+                eprintln!("Failed to save tensor: {}", e);
+            }
+        }
+        Ok(())
     }
-    fn tensor_load(&self, _path: *const i8) -> BackendResult<*mut c_void> {
-        unimplemented!("tensor_load")
+    fn tensor_load(&self, path: *const i8) -> BackendResult<*mut c_void> {
+        if path.is_null() {
+            return Ok(v(ffi_ops::make_tensor(crate::tensor::CudaTensor::zeros(
+                &[1],
+                crate::DType::F32,
+            ))));
+        }
+        unsafe {
+            let path_str = std::ffi::CStr::from_ptr(path).to_string_lossy();
+            let bytes = match std::fs::read(path_str.as_ref()) {
+                Ok(b) => b,
+                Err(_) => {
+                    return Ok(v(ffi_ops::make_tensor(crate::tensor::CudaTensor::zeros(
+                        &[1],
+                        crate::DType::F32,
+                    ))))
+                }
+            };
+            if bytes.len() < 8 {
+                return Ok(v(ffi_ops::make_tensor(crate::tensor::CudaTensor::zeros(
+                    &[1],
+                    crate::DType::F32,
+                ))));
+            }
+            let mut offset = 0;
+            let rank = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap()) as usize;
+            offset += 8;
+            if bytes.len() < offset + rank * 8 {
+                return Ok(v(ffi_ops::make_tensor(crate::tensor::CudaTensor::zeros(
+                    &[1],
+                    crate::DType::F32,
+                ))));
+            }
+            let mut shape = Vec::with_capacity(rank);
+            for _ in 0..rank {
+                let dim =
+                    u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap()) as usize;
+                shape.push(dim);
+                offset += 8;
+            }
+            let numel: usize = shape.iter().product();
+            let expected = numel * 4;
+            if bytes.len() < offset + expected {
+                return Ok(v(ffi_ops::make_tensor(crate::tensor::CudaTensor::zeros(
+                    &[1],
+                    crate::DType::F32,
+                ))));
+            }
+            let mut data = Vec::with_capacity(numel);
+            for _ in 0..numel {
+                let val = f32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
+                data.push(val);
+                offset += 4;
+            }
+            Ok(v(ffi_ops::make_tensor(
+                crate::tensor::CudaTensor::from_slice(&data, &shape, crate::DType::F32),
+            )))
+        }
     }
 
     // ========== NN ==========
