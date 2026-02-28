@@ -66,63 +66,32 @@ fn get_ref(r: &TensorRef) -> &CudaTensor {
 }
 
 /// broadcast backward: grad shape を input shape に reduce する
-/// grad の shape が input の shape より大きい場合、broadcast 次元に沿って sum する
-/// 中間テンソルの GPU 操作を避けるため、to_vec ベースの CPU 計算で行う
+/// GPU 上で sum_impl + unsqueeze_impl を使い broadcast 次元を reduce
 fn reduce_grad_to_shape(grad: &CudaTensor, target_shape: &[usize]) -> BackendResult<CudaTensor> {
     let grad_shape = grad.shape();
     if grad_shape == target_shape {
         return Ok(grad.shallow_clone());
     }
 
-    let grad_data = grad.to_vec::<f32>();
-    let target_count: usize = target_shape.iter().product();
-    let mut result = vec![0.0f32; target_count];
+    let mut result = grad.shallow_clone();
+    let mut cur_shape = grad_shape.to_vec();
 
-    let grad_ndim = grad_shape.len();
-    let target_ndim = target_shape.len();
-
-    // grad の strides
-    let mut grad_strides = vec![1usize; grad_ndim];
-    for d in (0..grad_ndim.saturating_sub(1)).rev() {
-        grad_strides[d] = grad_strides[d + 1] * grad_shape[d + 1];
-    }
-    // target の strides
-    let mut target_strides = vec![1usize; target_ndim];
-    for d in (0..target_ndim.saturating_sub(1)).rev() {
-        target_strides[d] = target_strides[d + 1] * target_shape[d + 1];
+    // ランク差があれば先頭次元を sum して消す
+    while cur_shape.len() > target_shape.len() {
+        result = result.sum_impl(0)?;
+        cur_shape.remove(0);
     }
 
-    // grad の各要素を target のどの要素に加算するか計算
-    let grad_count: usize = grad_shape.iter().product();
-    let rank_diff = grad_ndim.saturating_sub(target_ndim);
-
-    for i in 0..grad_count {
-        let mut rem = i;
-        let mut target_idx = 0;
-
-        for d in 0..grad_ndim {
-            let coord = rem / grad_strides[d];
-            rem %= grad_strides[d];
-
-            // target に対応する dim
-            let td = d as isize - rank_diff as isize;
-            if td >= 0 {
-                let td = td as usize;
-                if td < target_ndim {
-                    // broadcast dim (size==1) → coord=0 に accumulate
-                    let target_coord = if target_shape[td] == 1 { 0 } else { coord };
-                    target_idx += target_coord * target_strides[td];
-                }
-            }
-            // td < 0 → ランク差の分の先頭次元 → 全て accumulate
-        }
-
-        if target_idx < target_count {
-            result[target_idx] += grad_data[i];
+    // 同ランクで broadcast された次元 (size==1) を sum + unsqueeze
+    for d in 0..target_shape.len() {
+        if target_shape[d] == 1 && cur_shape[d] > 1 {
+            result = result.sum_impl(d as i32)?;
+            result = result.unsqueeze_impl(d)?;
+            cur_shape[d] = 1;
         }
     }
 
-    Ok(CudaTensor::from_slice(&result, target_shape, DType::F32))
+    Ok(result)
 }
 
 // ========== 基本二項演算 ==========
@@ -326,21 +295,12 @@ impl AbsBackward {
 impl GradFn for AbsBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         let x = get_ref(&self.input);
-        let data = x.to_vec::<f32>();
-        let sign: Vec<f32> = data
-            .iter()
-            .map(|&v| {
-                if v > 0.0 {
-                    1.0
-                } else if v < 0.0 {
-                    -1.0
-                } else {
-                    0.0
-                }
-            })
-            .collect();
-        let sign_t = CudaTensor::from_slice(&sign, x.shape(), DType::F32);
-        Ok(vec![grad_output.mul_impl(&sign_t)?])
+        // sign(x) = gt(x,0) - lt(x,0)  → 1, 0, -1
+        let zeros = CudaTensor::zeros(x.shape(), DType::F32);
+        let pos = x.gt_impl(&zeros)?; // 1.0 where x > 0
+        let neg = x.lt_impl(&zeros)?; // 1.0 where x < 0
+        let sign = pos.sub_impl(&neg)?; // 1, 0, -1
+        Ok(vec![grad_output.mul_impl(&sign)?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.input.clone()]
@@ -441,13 +401,10 @@ impl ReluBackward {
 impl GradFn for ReluBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         let x = get_ref(&self.input);
-        let data = x.to_vec::<f32>();
-        let mask: Vec<f32> = data
-            .iter()
-            .map(|&v| if v > 0.0 { 1.0 } else { 0.0 })
-            .collect();
-        let mask_t = CudaTensor::from_slice(&mask, x.shape(), DType::F32);
-        Ok(vec![grad_output.mul_impl(&mask_t)?])
+        // mask = (x > 0) → 1.0 or 0.0
+        let zeros = CudaTensor::zeros(x.shape(), DType::F32);
+        let mask = x.gt_impl(&zeros)?;
+        Ok(vec![grad_output.mul_impl(&mask)?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.input.clone()]
@@ -466,20 +423,23 @@ impl GeluBackward {
 impl GradFn for GeluBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         let x = get_ref(&self.input);
-        let data = x.to_vec::<f32>();
         let k = (2.0f32 / std::f32::consts::PI).sqrt();
-        let grad_data: Vec<f32> = data
-            .iter()
-            .map(|&xi| {
-                let cdf = 0.5 * (1.0 + (k * (xi + 0.044715 * xi * xi * xi)).tanh());
-                let pdf = k
-                    * (1.0 - (k * (xi + 0.044715 * xi * xi * xi)).tanh().powi(2))
-                    * (1.0 + 3.0 * 0.044715 * xi * xi);
-                cdf + xi * 0.5 * pdf
-            })
-            .collect();
-        let gt = CudaTensor::from_slice(&grad_data, x.shape(), DType::F32);
-        Ok(vec![grad_output.mul_impl(&gt)?])
+        // inner = k * (x + 0.044715 * x^3)
+        let x3 = x.pow_scalar_impl(3.0)?;
+        let inner_arg = x.add_impl(&x3.mul_scalar_impl(0.044715)?)?;
+        let inner = inner_arg.mul_scalar_impl(k)?;
+        // cdf = 0.5 * (1 + tanh(inner))
+        let tanh_inner = inner.tanh_impl()?;
+        let cdf = tanh_inner.add_scalar_impl(1.0)?.mul_scalar_impl(0.5)?;
+        // pdf = k * (1 - tanh²(inner)) * (1 + 3*0.044715*x²)
+        let tanh_sq = tanh_inner.mul_impl(&tanh_inner)?;
+        let one_minus_tanh_sq = tanh_sq.neg_impl()?.add_scalar_impl(1.0)?;
+        let x2 = x.mul_impl(x)?;
+        let coeff = x2.mul_scalar_impl(3.0 * 0.044715)?.add_scalar_impl(1.0)?;
+        let pdf = one_minus_tanh_sq.mul_impl(&coeff)?.mul_scalar_impl(k)?;
+        // grad_gelu = cdf + x * 0.5 * pdf
+        let grad_gelu = cdf.add_impl(&x.mul_impl(&pdf)?.mul_scalar_impl(0.5)?)?;
+        Ok(vec![grad_output.mul_impl(&grad_gelu)?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.input.clone()]
@@ -498,16 +458,13 @@ impl SiluBackward {
 impl GradFn for SiluBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         let x = get_ref(&self.input);
-        let data = x.to_vec::<f32>();
-        let grad_data: Vec<f32> = data
-            .iter()
-            .map(|&xi| {
-                let sig = 1.0 / (1.0 + (-xi).exp());
-                sig * (1.0 + xi * (1.0 - sig))
-            })
-            .collect();
-        let gt = CudaTensor::from_slice(&grad_data, x.shape(), DType::F32);
-        Ok(vec![grad_output.mul_impl(&gt)?])
+        // silu'(x) = sigmoid(x) * (1 + x * (1 - sigmoid(x)))
+        let sig = x.sigmoid_impl()?;
+        let one_minus_sig = sig.neg_impl()?.add_scalar_impl(1.0)?;
+        let x_term = x.mul_impl(&one_minus_sig)?;
+        let bracket = x_term.add_scalar_impl(1.0)?;
+        let grad_silu = sig.mul_impl(&bracket)?;
+        Ok(vec![grad_output.mul_impl(&grad_silu)?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.input.clone()]
@@ -528,9 +485,9 @@ impl SumallBackward {
 impl GradFn for SumallBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         let x = get_ref(&self.input);
-        let g_val = grad_output.to_vec::<f32>()[0];
-        let data = vec![g_val; x.elem_count()];
-        Ok(vec![CudaTensor::from_slice(&data, x.shape(), DType::F32)])
+        // grad_output (scalar [1]) を input shape に broadcast
+        let ones = CudaTensor::ones(x.shape(), DType::F32);
+        Ok(vec![ones.mul_impl(grad_output)?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.input.clone()]
@@ -550,9 +507,10 @@ impl GradFn for MeanAllBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         let x = get_ref(&self.input);
         let n = x.elem_count() as f32;
-        let g_val = grad_output.to_vec::<f32>()[0] / n;
-        let data = vec![g_val; x.elem_count()];
-        Ok(vec![CudaTensor::from_slice(&data, x.shape(), DType::F32)])
+        // grad_output / n を input shape に broadcast
+        let ones = CudaTensor::ones(x.shape(), DType::F32);
+        let scaled = grad_output.mul_scalar_impl(1.0 / n)?;
+        Ok(vec![ones.mul_impl(&scaled)?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.input.clone()]
@@ -567,56 +525,10 @@ impl GradFn for SumDimBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         let x = get_ref(&self.input);
         let input_shape = x.shape();
-        let dim = self.dim;
         // grad_output は sum(dim) で dim 次元が消えている
-        // 元の shape に戻すため、dim 次元に沿って勾配を複製する
-        //
-        // 例: input=[3,4,5].sum(2) → grad=[3,4]
-        //   result[i,j,k] = grad[i,j]  (k は無関係)
-        let grad_data = grad_output.to_vec::<f32>();
-        let out_count: usize = input_shape.iter().product();
-        let mut result = vec![0.0f32; out_count];
-        let ndim = input_shape.len();
-
-        // input_shape の strides
-        let mut strides = vec![1usize; ndim];
-        for d in (0..ndim - 1).rev() {
-            strides[d] = strides[d + 1] * input_shape[d + 1];
-        }
-        // grad_shape の strides (dim 次元を除いた shape)
-        let grad_shape = grad_output.shape();
-        let grad_ndim = grad_shape.len();
-        let mut grad_strides = vec![1usize; grad_ndim];
-        for d in (0..grad_ndim.saturating_sub(1)).rev() {
-            grad_strides[d] = grad_strides[d + 1] * grad_shape[d + 1];
-        }
-
-        for i in 0..out_count {
-            let mut rem = i;
-            let mut grad_idx = 0;
-            let mut gd = 0; // grad dim のインデックス
-            for d in 0..ndim {
-                let coord = rem / strides[d];
-                rem %= strides[d];
-                if d == dim {
-                    // sum された dim → grad にはこの次元がない → スキップ
-                    continue;
-                }
-                if gd < grad_ndim {
-                    grad_idx += coord * grad_strides[gd];
-                    gd += 1;
-                }
-            }
-            if grad_idx < grad_data.len() {
-                result[i] = grad_data[grad_idx];
-            }
-        }
-
-        Ok(vec![CudaTensor::from_slice(
-            &result,
-            input_shape,
-            DType::F32,
-        )])
+        // unsqueeze(dim) → broadcast_to(input_shape) で元の shape に展開
+        let expanded = grad_output.unsqueeze_impl(self.dim)?;
+        Ok(vec![expanded.broadcast_to_impl(input_shape)?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.input.clone()]
