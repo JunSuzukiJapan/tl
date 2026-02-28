@@ -654,6 +654,7 @@ pub fn tl_cuda_softmax(t: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
             result.set_grad_fn(Box::new(SoftmaxBackward {
                 input: input_ref,
                 output: out_ref,
+                dim: dim as i32,
             }));
         }
         make_tensor(result)

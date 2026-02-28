@@ -629,16 +629,19 @@ impl GradFn for TransposeBackward {
 pub struct SoftmaxBackward {
     pub input: TensorRef,
     pub output: TensorRef,
+    pub dim: i32,
 }
 impl GradFn for SoftmaxBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
-        // softmax grad: s * (grad - sum(grad * s))
+        // softmax grad: s * (grad - sum(grad * s, dim=d))
+        // sum は softmax が適用された dim に沿って計算
         let s = get_ref(&self.output);
         let gs = grad_output.mul_impl(s)?;
-        let sum_gs = gs.sum_all_tensor_impl()?;
-        let sum_val = sum_gs.to_vec::<f32>()[0];
-        let sum_broad =
-            CudaTensor::from_slice(&vec![sum_val; s.elem_count()], s.shape(), DType::F32);
+
+        // dim に沿って sum → unsqueeze → broadcast
+        let sum_gs = gs.sum_impl(self.dim)?;
+        let sum_unsqueezed = sum_gs.unsqueeze_impl(self.dim as usize)?;
+        let sum_broad = sum_unsqueezed.broadcast_to_impl(s.shape())?;
         let diff = grad_output.sub_impl(&sum_broad)?;
         Ok(vec![s.mul_impl(&diff)?])
     }

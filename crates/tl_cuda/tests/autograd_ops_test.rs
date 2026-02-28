@@ -519,38 +519,32 @@ fn test_ffi_backward_scalar_ops_chain() {
     ffi_ops::tl_cuda_free(x_ptr);
 }
 
-/// FFI 経由の backward テスト: f(x) = sum(softmax(x)) = 1
-/// softmax は定数 → grad は 0
+/// FFI 経由の backward テスト: f(x) = sum(softmax(x, dim=1)) = rows
+/// softmax は各行の合計が常に1 → 全体の sum = 行数 → grad は 0
 #[test]
 #[serial]
 fn test_ffi_backward_softmax_sum() {
-    let data: Vec<f32> = vec![1.0, 2.0, 3.0];
-    let shape: Vec<usize> = vec![3];
-    let x_ptr = ffi_ops::tl_cuda_new(data.as_ptr(), 1, shape.as_ptr());
-    unsafe {
-        use std::cell::UnsafeCell;
-        let cell = &*(x_ptr as *const UnsafeCell<CudaTensor>);
-        (&mut *cell.get()).enable_grad();
-    }
+    let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let shape: Vec<usize> = vec![2, 3];
+    let x_ptr = ffi_ops::tl_cuda_new(data.as_ptr(), 2, shape.as_ptr());
+    assert!(!x_ptr.is_null());
+    ffi_ops::tl_cuda_enable_grad(x_ptr);
 
-    let softmax_ptr = ffi_ops::tl_cuda_softmax(x_ptr, 0);
+    let softmax_ptr = ffi_ops::tl_cuda_softmax(x_ptr, 1);
     let sum_ptr = ffi_ops::tl_cuda_sum(softmax_ptr);
 
-    // sum(softmax(x)) = 1.0
+    // sum(softmax(x, dim=1)) = 2.0 (2行)
     let sum_val = ffi_ops::tl_cuda_item(sum_ptr);
-    assert_approx_eq(sum_val, 1.0, 1e-4);
+    assert_approx_eq(sum_val, 2.0, 1e-4);
 
     ffi_ops::tl_cuda_backward(sum_ptr);
 
     let grad_ptr = ffi_ops::tl_cuda_grad(x_ptr);
-    let g0 = ffi_ops::tl_cuda_get_f32(grad_ptr, 0);
-    let g1 = ffi_ops::tl_cuda_get_f32(grad_ptr, 1);
-    let g2 = ffi_ops::tl_cuda_get_f32(grad_ptr, 2);
-
-    // d/dx[sum(softmax(x))] = 0 (softmax 出力の合計は常に 1)
-    assert_approx_eq(g0, 0.0, 0.05);
-    assert_approx_eq(g1, 0.0, 0.05);
-    assert_approx_eq(g2, 0.0, 0.05);
+    // d/dx[sum(softmax(x, dim=1))] = 0 (各行の softmax 合計は常に 1)
+    for i in 0..6 {
+        let g = ffi_ops::tl_cuda_get_f32(grad_ptr, i);
+        assert_approx_eq(g, 0.0, 0.05);
+    }
 
     ffi_ops::tl_cuda_free(grad_ptr);
     ffi_ops::tl_cuda_free(sum_ptr);
