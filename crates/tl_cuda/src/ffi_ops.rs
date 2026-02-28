@@ -598,7 +598,9 @@ pub fn tl_cuda_sum_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mu
                 return std::ptr::null_mut();
             }
         };
-        set_grad_unary(&mut result, t, |tr| Box::new(SumDimBackward { input: tr }));
+        set_grad_unary(&mut result, t, |tr| {
+            Box::new(SumDimBackward { input: tr, dim })
+        });
         make_tensor(result)
     }
 }

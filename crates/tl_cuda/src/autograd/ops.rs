@@ -496,30 +496,30 @@ impl GradFn for MeanAllBackward {
 
 pub struct SumDimBackward {
     pub input: TensorRef,
-}
-impl SumDimBackward {
-    pub fn new(t: &CudaTensor) -> Self {
-        Self { input: make_ref(t) }
-    }
+    pub dim: usize,
 }
 impl GradFn for SumDimBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         let x = get_ref(&self.input);
         let input_shape = x.shape();
-        // grad_output は sum で次元が消えている ([3,4,5].sum(2) → [3,4])
-        // 元の shape に戻すため手動で展開
+        let dim = self.dim;
+        // grad_output は sum(dim) で dim 次元が消えている
+        // 元の shape に戻すため、dim 次元に沿って勾配を複製する
+        //
+        // 例: input=[3,4,5].sum(2) → grad=[3,4]
+        //   result[i,j,k] = grad[i,j]  (k は無関係)
         let grad_data = grad_output.to_vec::<f32>();
         let out_count: usize = input_shape.iter().product();
         let mut result = vec![0.0f32; out_count];
         let ndim = input_shape.len();
-        let grad_shape = grad_output.shape();
 
         // input_shape の strides
         let mut strides = vec![1usize; ndim];
         for d in (0..ndim - 1).rev() {
             strides[d] = strides[d + 1] * input_shape[d + 1];
         }
-        // grad_shape の strides
+        // grad_shape の strides (dim 次元を除いた shape)
+        let grad_shape = grad_output.shape();
         let grad_ndim = grad_shape.len();
         let mut grad_strides = vec![1usize; grad_ndim];
         for d in (0..grad_ndim.saturating_sub(1)).rev() {
@@ -529,17 +529,17 @@ impl GradFn for SumDimBackward {
         for i in 0..out_count {
             let mut rem = i;
             let mut grad_idx = 0;
-            let mut gd = 0; // grad dim index
+            let mut gd = 0; // grad dim のインデックス
             for d in 0..ndim {
                 let coord = rem / strides[d];
                 rem %= strides[d];
-                // grad にこの次元が残っているか
-                if gd < grad_ndim && (ndim - d) <= grad_ndim {
-                    let gd_actual = grad_ndim - (ndim - d);
-                    if gd_actual < grad_ndim && coord < grad_shape[gd_actual] {
-                        grad_idx += coord * grad_strides[gd_actual];
-                    }
-                    // sum された次元 (grad_shape に含まれない) → coord を無視
+                if d == dim {
+                    // sum された dim → grad にはこの次元がない → スキップ
+                    continue;
+                }
+                if gd < grad_ndim {
+                    grad_idx += coord * grad_strides[gd];
+                    gd += 1;
                 }
             }
             if grad_idx < grad_data.len() {
