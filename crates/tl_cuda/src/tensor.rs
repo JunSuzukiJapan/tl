@@ -488,20 +488,10 @@ impl CudaTensor {
             let tensor = unsafe { &mut *tensor_ptr };
             visited.push((tensor_ptr, arc_ref));
 
-            eprintln!(
-                "[BACKWARD] step {}, shape={:?}, grad_shape={:?}",
-                visited.len(),
-                tensor.shape(),
-                grad_output.shape()
-            );
-
             let propagation = if let Some(meta) = tensor.autograd.as_ref() {
                 if let Some(gf) = meta.grad_fn.as_ref() {
-                    eprintln!("[BACKWARD]   calling grad_fn.backward...");
                     let grads = gf.backward(&grad_output)?;
-                    eprintln!("[BACKWARD]   grad_fn.backward done, {} grads", grads.len());
                     let inputs = gf.inputs();
-                    eprintln!("[BACKWARD]   inputs: {}", inputs.len());
                     Some((grads, inputs))
                 } else {
                     None
@@ -510,48 +500,27 @@ impl CudaTensor {
                 None
             };
 
-            eprintln!("[BACKWARD]   accumulate_grad...");
             tensor.accumulate_grad(grad_output)?;
-            eprintln!("[BACKWARD]   accumulate_grad done");
 
             if let Some((grads, inputs)) = propagation {
                 for (input_ref, grad) in inputs.into_iter().zip(grads.into_iter()) {
                     let input_ptr = input_ref.get() as *mut CudaTensor;
                     let input = unsafe { &*input_ptr };
                     if input.requires_grad() {
-                        eprintln!(
-                            "[BACKWARD]   push input shape={:?} grad_shape={:?}",
-                            input.shape(),
-                            grad.shape()
-                        );
-                        // input_ref (Arc) を worklist に保持してポインタを生かす
                         worklist.push((input_ptr, grad, Some(input_ref)));
                     }
                 }
             }
         }
 
-        eprintln!(
-            "[BACKWARD] loop done, {} steps. Cleaning up graph...",
-            visited.len()
-        );
-
         // 計算グラフ解放
         // visited の Arc 参照が全テンソルを生かしているため安全にアクセス可能
-        let visited_len = visited.len();
-        for (i, entry) in visited.iter_mut().enumerate() {
+        for entry in visited.iter_mut() {
             let tensor = unsafe { &mut *entry.0 };
             if let Some(ref mut meta) = tensor.autograd {
                 meta.grad_fn = None;
             }
-            if i % 10 == 0 {
-                eprintln!("[BACKWARD]   cleanup {}/{}", i, visited_len);
-            }
         }
-        eprintln!("[BACKWARD] cleanup done. Dropping visited & worklist...");
-        drop(visited);
-        drop(worklist);
-        eprintln!("[BACKWARD] backward() complete.");
         Ok(())
     }
 
