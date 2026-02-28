@@ -60,7 +60,7 @@ impl CudaTensor {
         &self,
         cos: &CudaTensor,
         sin: &CudaTensor,
-        pos: usize,
+        _pos: usize,
     ) -> BackendResult<CudaTensor> {
         let shape = self.shape().to_vec();
         let data = self.to_vec::<f32>();
@@ -69,25 +69,54 @@ impl CudaTensor {
 
         let dim = *shape.last().unwrap();
         let half_dim = dim / 2;
-        let outer = data.len() / dim;
 
         let cos_shape = cos.shape();
         let cos_dim = cos_shape[cos_shape.len() - 1];
+        let cos_seq_len = if cos_shape.len() >= 2 {
+            cos_shape[0]
+        } else {
+            1
+        };
+
+        // テンソル shape に基づいてトークン位置ごとに cos/sin を適用
+        // [batch, seq_len, num_heads, head_dim] or [seq_len, head_dim] etc.
+        let (num_tokens, heads_per_token) = if shape.len() == 4 {
+            (shape[1], shape[0] * shape[2])
+        } else if shape.len() == 3 {
+            (shape[0], shape[1])
+        } else if shape.len() == 2 {
+            (shape[0], 1usize)
+        } else {
+            (1, data.len() / dim)
+        };
 
         let mut result = data.clone();
 
-        for o in 0..outer {
-            let offset = o * dim;
-            let cos_offset = pos * cos_dim;
+        for token_pos in 0..num_tokens {
+            let cos_row = token_pos.min(cos_seq_len.saturating_sub(1));
+            let cos_offset = cos_row * cos_dim;
 
-            for i in 0..half_dim {
-                let x0 = data[offset + i];
-                let x1 = data[offset + half_dim + i];
-                let c = cos_data[cos_offset + i];
-                let s = sin_data[cos_offset + i];
+            for head in 0..heads_per_token {
+                let offset = (token_pos * heads_per_token + head) * dim;
 
-                result[offset + i] = x0 * c - x1 * s;
-                result[offset + half_dim + i] = x0 * s + x1 * c;
+                for i in 0..half_dim {
+                    let ci = if cos_offset + i < cos_data.len() {
+                        cos_data[cos_offset + i]
+                    } else {
+                        1.0
+                    };
+                    let si = if cos_offset + i < sin_data.len() {
+                        sin_data[cos_offset + i]
+                    } else {
+                        0.0
+                    };
+
+                    let x0 = data[offset + i];
+                    let x1 = data[offset + half_dim + i];
+
+                    result[offset + i] = x0 * ci - x1 * si;
+                    result[offset + half_dim + i] = x0 * si + x1 * ci;
+                }
             }
         }
 
