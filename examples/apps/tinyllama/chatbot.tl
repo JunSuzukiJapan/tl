@@ -177,6 +177,17 @@ fn main() {
     }
 
     let weights = Map::load(model_path);
+
+    if !File::exists(tokenizer_path) {
+        println("Tokenizer not found. Downloading...");
+        let tok_url = "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/main/tokenizer.json";
+        if !File::download(tok_url, tokenizer_path) {
+            println("Failed to download tokenizer.");
+            return;
+        }
+        println("Tokenizer downloaded.");
+    }
+
     let tok = Tokenizer::new(tokenizer_path);
     let cos = Tensor::rope_new_cos(64, 2048, 10000.0);
     let sin = Tensor::rope_new_sin(64, 2048, 10000.0);
