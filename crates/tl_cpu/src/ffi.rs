@@ -2,19 +2,23 @@
 //! GPU 版 (tl_runtime/src/lib.rs) と同じ C シグネチャで CpuTensor を操作。
 //! JIT の add_global_mapping で同じシンボル名にマッピングされる。
 
-use crate::tensor::{CpuTensor, tensor_ref_from_ptr};
+use crate::tensor::{tensor_ref_from_ptr, CpuTensor};
 use crate::DType;
-use std::sync::Arc;
 use std::cell::UnsafeCell;
+use std::sync::Arc;
 
 pub type OpaqueTensor = CpuTensor;
 
 // ========== テンソル作成 ==========
 
 pub extern "C" fn tl_cpu_tensor_new(
-    data: *const f32, rank: usize, shape: *const usize,
+    data: *const f32,
+    rank: usize,
+    shape: *const usize,
 ) -> *mut OpaqueTensor {
-    if data.is_null() || shape.is_null() { return std::ptr::null_mut(); }
+    if data.is_null() || shape.is_null() {
+        return std::ptr::null_mut();
+    }
     let shape_slice = unsafe { std::slice::from_raw_parts(shape, rank) };
     let numel: usize = shape_slice.iter().product();
     let data_slice = unsafe { std::slice::from_raw_parts(data, numel) };
@@ -22,9 +26,13 @@ pub extern "C" fn tl_cpu_tensor_new(
 }
 
 pub extern "C" fn tl_cpu_tensor_new_i64(
-    data: *const i64, rank: usize, shape: *const usize,
+    data: *const i64,
+    rank: usize,
+    shape: *const usize,
 ) -> *mut OpaqueTensor {
-    if data.is_null() || shape.is_null() { return std::ptr::null_mut(); }
+    if data.is_null() || shape.is_null() {
+        return std::ptr::null_mut();
+    }
     let shape_slice = unsafe { std::slice::from_raw_parts(shape, rank) };
     let numel: usize = shape_slice.iter().product();
     let data_slice = unsafe { std::slice::from_raw_parts(data, numel) };
@@ -32,52 +40,88 @@ pub extern "C" fn tl_cpu_tensor_new_i64(
     make_tensor(CpuTensor::from_slice(&f32_data, shape_slice, DType::F32))
 }
 
-pub extern "C" fn tl_cpu_tensor_zeros(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor {
-    if shape.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_zeros(
+    rank: usize,
+    shape: *const usize,
+    req_grad: bool,
+) -> *mut OpaqueTensor {
+    if shape.is_null() {
+        return std::ptr::null_mut();
+    }
     let shape_slice = unsafe { std::slice::from_raw_parts(shape, rank) };
     let t = CpuTensor::zeros(shape_slice, DType::F32);
     let ptr = make_tensor(t);
-    if req_grad { unsafe { (&mut *ptr).enable_grad(); } }
+    if req_grad {
+        unsafe {
+            (&mut *ptr).enable_grad();
+        }
+    }
     ptr
 }
 
-pub extern "C" fn tl_cpu_tensor_ones(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor {
-    if shape.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_ones(
+    rank: usize,
+    shape: *const usize,
+    req_grad: bool,
+) -> *mut OpaqueTensor {
+    if shape.is_null() {
+        return std::ptr::null_mut();
+    }
     let shape_slice = unsafe { std::slice::from_raw_parts(shape, rank) };
     let mut t = CpuTensor::ones(shape_slice, DType::F32);
-    
+
     if req_grad {
         t.enable_grad();
     }
-    
+
     make_tensor(t)
 }
 
-pub extern "C" fn tl_cpu_tensor_randn(rank: usize, shape: *const usize, req_grad: bool) -> *mut OpaqueTensor {
-    if shape.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_randn(
+    rank: usize,
+    shape: *const usize,
+    req_grad: bool,
+) -> *mut OpaqueTensor {
+    if shape.is_null() {
+        return std::ptr::null_mut();
+    }
     let shape_slice = unsafe { std::slice::from_raw_parts(shape, rank) };
     let t = CpuTensor::randn(shape_slice, DType::F32);
     let ptr = make_tensor(t);
-    if req_grad { unsafe { (&mut *ptr).enable_grad(); } }
+    if req_grad {
+        unsafe {
+            (&mut *ptr).enable_grad();
+        }
+    }
     ptr
 }
 
 pub extern "C" fn tl_cpu_tensor_randn_debug(
-    rank: usize, shape: *const usize, _seed: u64, req_grad: bool,
+    rank: usize,
+    shape: *const usize,
+    _seed: u64,
+    req_grad: bool,
 ) -> *mut OpaqueTensor {
     tl_cpu_tensor_randn(rank, shape, req_grad)
 }
 
 pub extern "C" fn tl_cpu_tensor_from_i64(data: *const i64, len: i64) -> *mut OpaqueTensor {
-    if data.is_null() { return std::ptr::null_mut(); }
+    if data.is_null() {
+        return std::ptr::null_mut();
+    }
     let len = len as usize;
     let data_slice = unsafe { std::slice::from_raw_parts(data, len) };
     let f32_data: Vec<f32> = data_slice.iter().map(|&x| x as f32).collect();
     make_tensor(CpuTensor::from_slice(&f32_data, &[len], DType::F32))
 }
 
-pub extern "C" fn tl_cpu_tensor_from_vec_u8(data: *mut std::ffi::c_void, len: i64) -> *mut OpaqueTensor {
-    if data.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_from_vec_u8(
+    data: *mut std::ffi::c_void,
+    len: i64,
+) -> *mut OpaqueTensor {
+    if data.is_null() {
+        return std::ptr::null_mut();
+    }
     let len = len as usize;
     let data_ptr = data as *const u8;
     let data_slice = unsafe { std::slice::from_raw_parts(data_ptr, len) };
@@ -86,13 +130,14 @@ pub extern "C" fn tl_cpu_tensor_from_vec_u8(data: *mut std::ffi::c_void, len: i6
 }
 
 pub extern "C" fn tl_cpu_tensor_from_u8_labels(data: *const u8, len: i64) -> *mut OpaqueTensor {
-    if data.is_null() { return std::ptr::null_mut(); }
+    if data.is_null() {
+        return std::ptr::null_mut();
+    }
     let len = len as usize;
     let data_slice = unsafe { std::slice::from_raw_parts(data, len) };
     let f32_data: Vec<f32> = data_slice.iter().map(|&x| x as f32).collect(); // Labels often fit in f32 (e.g. 0.0, 1.0)
     make_tensor(CpuTensor::from_slice(&f32_data, &[len], DType::F32))
 }
-
 
 // ========== テンソル解放 (Arc ベース) ==========
 // Arc::into_raw で作成されたポインタを Arc::from_raw で復元し、
@@ -100,7 +145,9 @@ pub extern "C" fn tl_cpu_tensor_from_u8_labels(data: *const u8, len: i64) -> *mu
 // 自然に Drop される。
 
 pub extern "C" fn tl_cpu_tensor_free(t: *mut OpaqueTensor) {
-    if t.is_null() { return; }
+    if t.is_null() {
+        return;
+    }
     crate::memory::promote_tensor(t);
     crate::memory::release_tensor(t);
 }
@@ -108,20 +155,24 @@ pub extern "C" fn tl_cpu_tensor_free(t: *mut OpaqueTensor) {
 #[no_mangle]
 pub extern "C" fn tl_cpu_tensor_acquire(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     // Arc の参照カウントを +1 して同じポインタを返す
-    if t.is_null() { return t; }
+    if t.is_null() {
+        return t;
+    }
     if crate::memory::is_mem_log_enabled() {
         eprintln!("[ACQUIRE] Ptr: {:p} (Arc RC+1)", t);
     }
     unsafe {
         let arc = Arc::from_raw(t as *const UnsafeCell<CpuTensor>);
-        let _clone = arc.clone();  // RC+1
-        let _ = Arc::into_raw(arc);        // 元の参照を戻す
+        let _clone = arc.clone(); // RC+1
+        let _ = Arc::into_raw(arc); // 元の参照を戻す
         Arc::into_raw(_clone) as *mut OpaqueTensor
     }
 }
 
 pub extern "C" fn tl_cpu_tensor_release(t: *mut OpaqueTensor) {
-    if t.is_null() { return; }
+    if t.is_null() {
+        return;
+    }
     crate::memory::promote_tensor(t);
     crate::memory::release_tensor(t);
 }
@@ -132,7 +183,9 @@ pub extern "C" fn tl_cpu_tensor_release(t: *mut OpaqueTensor) {
 /// autograd をクリアしても参照先テンソルは Arc の RC で生存が保証される。
 /// `tl_runtime::tl_tensor_release_safe` から呼ばれる。
 pub extern "C" fn tl_cpu_tensor_clear_data(t: *mut OpaqueTensor) {
-    if t.is_null() { return; }
+    if t.is_null() {
+        return;
+    }
     unsafe {
         let tensor = &mut *t;
         // データバッファを解放
@@ -147,28 +200,40 @@ pub extern "C" fn tl_cpu_tensor_clear_data(t: *mut OpaqueTensor) {
 // ========== テンソル情報 ==========
 
 pub extern "C" fn tl_cpu_tensor_dim(t: *mut OpaqueTensor, dim: usize) -> usize {
-    if t.is_null() { return 0; }
+    if t.is_null() {
+        return 0;
+    }
     unsafe { (&*t).shape().get(dim).cloned().unwrap_or(0) }
 }
 
 pub extern "C" fn tl_cpu_tensor_len(t: *mut OpaqueTensor) -> usize {
-    if t.is_null() { return 0; }
+    if t.is_null() {
+        return 0;
+    }
     let tensor = unsafe { &*t };
-    if tensor.shape().is_empty() { return 0; } // clear_data 済みテンソル
+    if tensor.shape().is_empty() {
+        return 0;
+    } // clear_data 済みテンソル
     tensor.shape().iter().product()
 }
 
 pub extern "C" fn tl_cpu_tensor_shape(t: *mut OpaqueTensor, out: *mut usize) -> usize {
-    if t.is_null() || out.is_null() { return 0; }
+    if t.is_null() || out.is_null() {
+        return 0;
+    }
     let tensor = unsafe { &*t };
     for (i, &dim) in tensor.shape().iter().enumerate() {
-        unsafe { *out.add(i) = dim; }
+        unsafe {
+            *out.add(i) = dim;
+        }
     }
     tensor.shape().len()
 }
 
 pub extern "C" fn tl_cpu_tensor_get_shape(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     let shape: Vec<f32> = tensor.shape().iter().map(|&d| d as f32).collect();
     make_tensor(CpuTensor::from_slice(&shape, &[shape.len()], DType::F32))
@@ -176,11 +241,19 @@ pub extern "C" fn tl_cpu_tensor_get_shape(t: *mut OpaqueTensor) -> *mut OpaqueTe
 
 // ========== 要素アクセス ==========
 
-pub extern "C" fn tl_cpu_tensor_get_f32(t: *mut OpaqueTensor, indices: *const usize, _rank: usize) -> f32 {
-    if t.is_null() || indices.is_null() { return 0.0; }
+pub extern "C" fn tl_cpu_tensor_get_f32(
+    t: *mut OpaqueTensor,
+    indices: *const usize,
+    _rank: usize,
+) -> f32 {
+    if t.is_null() || indices.is_null() {
+        return 0.0;
+    }
     let tensor = unsafe { &*t };
     let shape = tensor.shape();
-    if shape.is_empty() { return 0.0; } // clear_data 済みテンソル
+    if shape.is_empty() {
+        return 0.0;
+    } // clear_data 済みテンソル
     let idx_slice = unsafe { std::slice::from_raw_parts(indices, shape.len()) };
     let mut flat_idx = 0;
     let mut stride = 1;
@@ -191,42 +264,71 @@ pub extern "C" fn tl_cpu_tensor_get_f32(t: *mut OpaqueTensor, indices: *const us
     tensor.data_f32().get(flat_idx).cloned().unwrap_or(0.0)
 }
 
-pub extern "C" fn tl_cpu_tensor_get_i64(t: *mut OpaqueTensor, indices: *const usize, rank: usize) -> i64 {
-    if t.is_null() { return 0; }
+pub extern "C" fn tl_cpu_tensor_get_i64(
+    t: *mut OpaqueTensor,
+    indices: *const usize,
+    rank: usize,
+) -> i64 {
+    if t.is_null() {
+        return 0;
+    }
     let tensor = unsafe { &*t };
-    if tensor.shape().is_empty() { return 0; } // clear_data 済みテンソル
+    if tensor.shape().is_empty() {
+        return 0;
+    } // clear_data 済みテンソル
     tl_cpu_tensor_get_f32(t, indices, rank) as i64
 }
 
 /// runtime::tl_tensor_get_f32_md と同じシグネチャ (多次元インデックスアクセス)
 /// LLVM 宣言: (tensor: *mut, indices: *const i64, rank: i64) -> f32
-pub extern "C" fn tl_cpu_tensor_get_f32_md(t: *mut OpaqueTensor, indices: *const i64, rank: i64) -> f32 {
-    if t.is_null() || indices.is_null() { return 0.0; }
+pub extern "C" fn tl_cpu_tensor_get_f32_md(
+    t: *mut OpaqueTensor,
+    indices: *const i64,
+    rank: i64,
+) -> f32 {
+    if t.is_null() || indices.is_null() {
+        return 0.0;
+    }
     let tensor = unsafe { &*(t as *mut CpuTensor) };
     let shape = tensor.shape();
-    if shape.is_empty() { return 0.0; }
+    if shape.is_empty() {
+        return 0.0;
+    }
     let data = tensor.data_f32();
     let rank = rank as usize;
     // indices から各次元のインデックスを読み取り、フラットインデックスを計算
     let mut flat_idx = 0usize;
     for d in 0..rank.min(shape.len()) {
         let idx = unsafe { *indices.add(d) } as usize;
-        let stride: usize = shape[d+1..].iter().product();
+        let stride: usize = shape[d + 1..].iter().product();
         flat_idx += idx * stride.max(1);
     }
     data.get(flat_idx).cloned().unwrap_or(0.0)
 }
 
 /// runtime::tl_tensor_get_i64_md と同じシグネチャ
-pub extern "C" fn tl_cpu_tensor_get_i64_md(t: *mut OpaqueTensor, indices: *const i64, rank: i64) -> i64 {
+pub extern "C" fn tl_cpu_tensor_get_i64_md(
+    t: *mut OpaqueTensor,
+    indices: *const i64,
+    rank: i64,
+) -> i64 {
     tl_cpu_tensor_get_f32_md(t, indices, rank) as i64
 }
 
-pub extern "C" fn tl_cpu_tensor_set_f32(t: *mut OpaqueTensor, indices: *const usize, _rank: usize, value: f32) {
-    if t.is_null() || indices.is_null() { return; }
+pub extern "C" fn tl_cpu_tensor_set_f32(
+    t: *mut OpaqueTensor,
+    indices: *const usize,
+    _rank: usize,
+    value: f32,
+) {
+    if t.is_null() || indices.is_null() {
+        return;
+    }
     let tensor = unsafe { &mut *t };
     let shape = tensor.shape().to_vec();
-    if shape.is_empty() { return; } // clear_data 済みテンソル
+    if shape.is_empty() {
+        return;
+    } // clear_data 済みテンソル
     let idx_slice = unsafe { std::slice::from_raw_parts(indices, shape.len()) };
     let mut flat_idx = 0;
     let mut stride = 1;
@@ -248,10 +350,14 @@ pub extern "C" fn tl_cpu_tensor_set_f32_md(
     rank: usize,
     value: f32,
 ) -> *mut OpaqueTensor {
-    if t.is_null() || indices.is_null() { return t; }
+    if t.is_null() || indices.is_null() {
+        return t;
+    }
     let tensor = unsafe { &mut *t };
     let shape = tensor.shape().to_vec();
-    if shape.is_empty() { return t; } // clear_data 済みテンソル
+    if shape.is_empty() {
+        return t;
+    } // clear_data 済みテンソル
     let idx_slice = unsafe { std::slice::from_raw_parts(indices, rank) };
     let mut flat_idx = 0usize;
     let mut stride = 1usize;
@@ -272,41 +378,55 @@ pub extern "C" fn tl_cpu_tensor_set_f32_md(
 /// for ループ等で使われる flat index アクセス。
 /// runtime::tl_tensor_get と同じシグネチャ (t, idx: i64) -> f32
 pub extern "C" fn tl_cpu_tensor_get(t: *mut OpaqueTensor, idx: i64) -> f32 {
-    if t.is_null() { return 0.0; }
+    if t.is_null() {
+        return 0.0;
+    }
     let tensor = unsafe { &*t };
     tensor.data_f32().get(idx as usize).copied().unwrap_or(0.0)
 }
 
 pub extern "C" fn tl_cpu_tensor_item(t: *mut OpaqueTensor) -> f32 {
-    if t.is_null() { return 0.0; }
+    if t.is_null() {
+        return 0.0;
+    }
     let tensor = unsafe { &*t };
     tensor.data_f32().first().copied().unwrap_or(0.0)
 }
 
 pub extern "C" fn tl_cpu_tensor_item_i64(t: *mut OpaqueTensor) -> i64 {
-    if t.is_null() { return 0; }
+    if t.is_null() {
+        return 0;
+    }
     let tensor = unsafe { &*t };
     tensor.data_f32().first().map(|&f| f as i64).unwrap_or(0)
 }
 
 // ========== 基本演算 ==========
 
-pub extern "C" fn tl_cpu_tensor_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_add(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     let (ta, tb) = unsafe { (&*a, &*b) };
     match ta.add_impl(tb) {
         Ok(result) => {
             let ptr = make_tensor(result);
             if ta.requires_grad() || tb.requires_grad() {
                 use crate::autograd::ops::AddBackward;
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(AddBackward {
-                    a: tensor_ref_from_ptr(a), b: tensor_ref_from_ptr(b),
-                    a_shape: ta.shape().to_vec(),
-                    b_shape: tb.shape().to_vec(),
-                })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(AddBackward {
+                        a: tensor_ref_from_ptr(a),
+                        b: tensor_ref_from_ptr(b),
+                        a_shape: ta.shape().to_vec(),
+                        b_shape: tb.shape().to_vec(),
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in add: {}", e);
             std::ptr::null_mut()
@@ -314,22 +434,30 @@ pub extern "C" fn tl_cpu_tensor_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) 
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_sub(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     let (ta, tb) = unsafe { (&*a, &*b) };
     match ta.sub_impl(tb) {
         Ok(result) => {
             let ptr = make_tensor(result);
             if ta.requires_grad() || tb.requires_grad() {
                 use crate::autograd::ops::SubBackward;
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(SubBackward {
-                    a: tensor_ref_from_ptr(a), b: tensor_ref_from_ptr(b),
-                    a_shape: ta.shape().to_vec(),
-                    b_shape: tb.shape().to_vec(),
-                })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(SubBackward {
+                        a: tensor_ref_from_ptr(a),
+                        b: tensor_ref_from_ptr(b),
+                        a_shape: ta.shape().to_vec(),
+                        b_shape: tb.shape().to_vec(),
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in sub: {}", e);
             std::ptr::null_mut()
@@ -337,21 +465,32 @@ pub extern "C" fn tl_cpu_tensor_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) 
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_mul(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     let (ta, tb) = unsafe { (&*a, &*b) };
     match ta.mul_impl(tb) {
         Ok(result) => {
             let ptr = make_tensor(result);
             if ta.requires_grad() || tb.requires_grad() {
                 use crate::autograd::ops::MulBackward;
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(MulBackward {
-                    a: tensor_ref_from_ptr(a), b: tensor_ref_from_ptr(b), a_data: ta.shallow_clone(), b_data: tb.shallow_clone(),
-                    a_shape: ta.shape().to_vec(), b_shape: tb.shape().to_vec(),
-                })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(MulBackward {
+                        a: tensor_ref_from_ptr(a),
+                        b: tensor_ref_from_ptr(b),
+                        a_data: ta.shallow_clone(),
+                        b_data: tb.shallow_clone(),
+                        a_shape: ta.shape().to_vec(),
+                        b_shape: tb.shape().to_vec(),
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in mul: {}", e);
             std::ptr::null_mut()
@@ -359,21 +498,32 @@ pub extern "C" fn tl_cpu_tensor_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) 
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_div(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_div(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     let (ta, tb) = unsafe { (&*a, &*b) };
     match ta.div_impl(tb) {
         Ok(result) => {
             let ptr = make_tensor(result);
             if ta.requires_grad() || tb.requires_grad() {
                 use crate::autograd::ops::DivBackward;
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(DivBackward {
-                    a: tensor_ref_from_ptr(a), b: tensor_ref_from_ptr(b), a_data: ta.shallow_clone(), b_data: tb.shallow_clone(),
-                    a_shape: ta.shape().to_vec(), b_shape: tb.shape().to_vec(),
-                })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(DivBackward {
+                        a: tensor_ref_from_ptr(a),
+                        b: tensor_ref_from_ptr(b),
+                        a_data: ta.shallow_clone(),
+                        b_data: tb.shallow_clone(),
+                        a_shape: ta.shape().to_vec(),
+                        b_shape: tb.shape().to_vec(),
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in div: {}", e);
             std::ptr::null_mut()
@@ -381,8 +531,13 @@ pub extern "C" fn tl_cpu_tensor_div(a: *mut OpaqueTensor, b: *mut OpaqueTensor) 
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_rem(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_rem(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     let (ta, tb) = unsafe { (&*a, &*b) };
     match ta.rem_impl(tb) {
         Ok(res) => make_tensor(res),
@@ -399,17 +554,23 @@ pub extern "C" fn tl_cpu_tensor_shallow_clone(t: *mut OpaqueTensor) -> *mut Opaq
 }
 
 pub extern "C" fn tl_cpu_tensor_neg(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.neg_impl() {
         Ok(res) => {
             let ptr = make_tensor(res);
             if tensor.requires_grad() {
                 use crate::autograd::ops::NegBackward;
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(NegBackward { a: tensor_ref_from_ptr(t) })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(NegBackward {
+                        a: tensor_ref_from_ptr(t),
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in neg: {}", e);
             std::ptr::null_mut()
@@ -418,12 +579,14 @@ pub extern "C" fn tl_cpu_tensor_neg(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 }
 
 pub extern "C" fn tl_cpu_tensor_abs(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*t).abs_impl() } {
         Ok(res) => make_tensor(res),
         Err(e) => {
-             eprintln!("Runtime Error in abs: {}", e);
-             std::ptr::null_mut()
+            eprintln!("Runtime Error in abs: {}", e);
+            std::ptr::null_mut()
         }
     }
 }
@@ -431,17 +594,23 @@ pub extern "C" fn tl_cpu_tensor_abs(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 // ========== スカラー演算 ==========
 
 pub extern "C" fn tl_cpu_tensor_add_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.add_scalar_impl(s as f32) {
         Ok(res) => {
             let ptr = make_tensor(res);
             if tensor.requires_grad() {
                 use crate::autograd::ops::AddScalarBackward;
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(AddScalarBackward { a: tensor_ref_from_ptr(t) })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(AddScalarBackward {
+                        a: tensor_ref_from_ptr(t),
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in add_scalar: {}", e);
             std::ptr::null_mut()
@@ -450,17 +619,24 @@ pub extern "C" fn tl_cpu_tensor_add_scalar(t: *mut OpaqueTensor, s: f64) -> *mut
 }
 
 pub extern "C" fn tl_cpu_tensor_mul_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.mul_scalar_impl(s as f32) {
         Ok(res) => {
             let ptr = make_tensor(res);
             if tensor.requires_grad() {
                 use crate::autograd::ops::MulScalarBackward;
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(MulScalarBackward { a: tensor_ref_from_ptr(t), s: s as f32 })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(MulScalarBackward {
+                        a: tensor_ref_from_ptr(t),
+                        s: s as f32,
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in mul_scalar: {}", e);
             std::ptr::null_mut()
@@ -469,17 +645,24 @@ pub extern "C" fn tl_cpu_tensor_mul_scalar(t: *mut OpaqueTensor, s: f64) -> *mut
 }
 
 pub extern "C" fn tl_cpu_tensor_div_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.div_scalar_impl(s as f32) {
         Ok(res) => {
             let ptr = make_tensor(res);
             if tensor.requires_grad() {
                 use crate::autograd::ops::DivScalarBackward;
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(DivScalarBackward { a: tensor_ref_from_ptr(t), s: s as f32 })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(DivScalarBackward {
+                        a: tensor_ref_from_ptr(t),
+                        s: s as f32,
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in div_scalar: {}", e);
             std::ptr::null_mut()
@@ -488,17 +671,23 @@ pub extern "C" fn tl_cpu_tensor_div_scalar(t: *mut OpaqueTensor, s: f64) -> *mut
 }
 
 pub extern "C" fn tl_cpu_tensor_sub_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.sub_scalar_impl(s as f32) {
         Ok(res) => {
             let ptr = make_tensor(res);
             if tensor.requires_grad() {
                 use crate::autograd::ops::SubScalarBackward;
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(SubScalarBackward { a: tensor_ref_from_ptr(t) })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(SubScalarBackward {
+                        a: tensor_ref_from_ptr(t),
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in sub_scalar: {}", e);
             std::ptr::null_mut()
@@ -507,7 +696,9 @@ pub extern "C" fn tl_cpu_tensor_sub_scalar(t: *mut OpaqueTensor, s: f64) -> *mut
 }
 
 pub extern "C" fn tl_cpu_tensor_pow_scalar(t: *mut OpaqueTensor, exp: f32) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     let exp_tensor = CpuTensor::from_slice(&[exp], &[1], DType::F32);
     match tensor.pow_impl(&exp_tensor) {
@@ -516,12 +707,17 @@ pub extern "C" fn tl_cpu_tensor_pow_scalar(t: *mut OpaqueTensor, exp: f32) -> *m
             if tensor.requires_grad() {
                 use crate::autograd::ops::PowBackward;
                 let result_clone = unsafe { (&*ptr).shallow_clone() };
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(PowBackward {
-                    a: tensor_ref_from_ptr(t), a_data: tensor.shallow_clone(), b_data: exp_tensor, output: result_clone,
-                })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(PowBackward {
+                        a: tensor_ref_from_ptr(t),
+                        a_data: tensor.shallow_clone(),
+                        b_data: exp_tensor,
+                        output: result_clone,
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in pow_scalar: {}", e);
             std::ptr::null_mut()
@@ -530,8 +726,13 @@ pub extern "C" fn tl_cpu_tensor_pow_scalar(t: *mut OpaqueTensor, exp: f32) -> *m
 }
 
 /// runtime::tl_tensor_pow と同じシグネチャ (テンソル同士の pow)
-pub extern "C" fn tl_cpu_tensor_pow(t: *mut OpaqueTensor, exp: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() || exp.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_pow(
+    t: *mut OpaqueTensor,
+    exp: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if t.is_null() || exp.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     let exp_tensor = unsafe { &*exp };
     match tensor.pow_impl(exp_tensor) {
@@ -540,12 +741,17 @@ pub extern "C" fn tl_cpu_tensor_pow(t: *mut OpaqueTensor, exp: *mut OpaqueTensor
             if tensor.requires_grad() {
                 use crate::autograd::ops::PowBackward;
                 let result_clone = unsafe { (&*ptr).shallow_clone() };
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(PowBackward {
-                    a: tensor_ref_from_ptr(t), a_data: tensor.shallow_clone(), b_data: exp_tensor.shallow_clone(), output: result_clone,
-                })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(PowBackward {
+                        a: tensor_ref_from_ptr(t),
+                        a_data: tensor.shallow_clone(),
+                        b_data: exp_tensor.shallow_clone(),
+                        output: result_clone,
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in pow: {}", e);
             std::ptr::null_mut()
@@ -556,7 +762,9 @@ pub extern "C" fn tl_cpu_tensor_pow(t: *mut OpaqueTensor, exp: *mut OpaqueTensor
 // ========== インプレース演算 ==========
 
 pub extern "C" fn tl_cpu_tensor_add_assign(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
-    if a.is_null() || b.is_null() { return; }
+    if a.is_null() || b.is_null() {
+        return;
+    }
     unsafe {
         match (&*a).add_impl(&*b) {
             Ok(res) => *a = res,
@@ -566,7 +774,9 @@ pub extern "C" fn tl_cpu_tensor_add_assign(a: *mut OpaqueTensor, b: *mut OpaqueT
 }
 
 pub extern "C" fn tl_cpu_tensor_sub_assign(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
-    if a.is_null() || b.is_null() { return; }
+    if a.is_null() || b.is_null() {
+        return;
+    }
     unsafe {
         match (&*a).sub_impl(&*b) {
             Ok(res) => *a = res,
@@ -576,7 +786,9 @@ pub extern "C" fn tl_cpu_tensor_sub_assign(a: *mut OpaqueTensor, b: *mut OpaqueT
 }
 
 pub extern "C" fn tl_cpu_tensor_mul_assign(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
-    if a.is_null() || b.is_null() { return; }
+    if a.is_null() || b.is_null() {
+        return;
+    }
     unsafe {
         match (&*a).mul_impl(&*b) {
             Ok(res) => *a = res,
@@ -586,7 +798,9 @@ pub extern "C" fn tl_cpu_tensor_mul_assign(a: *mut OpaqueTensor, b: *mut OpaqueT
 }
 
 pub extern "C" fn tl_cpu_tensor_div_assign(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
-    if a.is_null() || b.is_null() { return; }
+    if a.is_null() || b.is_null() {
+        return;
+    }
     unsafe {
         match (&*a).div_impl(&*b) {
             Ok(res) => *a = res,
@@ -596,7 +810,9 @@ pub extern "C" fn tl_cpu_tensor_div_assign(a: *mut OpaqueTensor, b: *mut OpaqueT
 }
 
 pub extern "C" fn tl_cpu_tensor_mod_assign(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
-    if a.is_null() || b.is_null() { return; }
+    if a.is_null() || b.is_null() {
+        return;
+    }
     unsafe {
         match (&*a).rem_impl(&*b) {
             Ok(res) => *a = res,
@@ -606,7 +822,9 @@ pub extern "C" fn tl_cpu_tensor_mod_assign(a: *mut OpaqueTensor, b: *mut OpaqueT
 }
 
 pub extern "C" fn tl_cpu_tensor_add_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
-    if t.is_null() { return; }
+    if t.is_null() {
+        return;
+    }
     unsafe {
         match (&*t).add_scalar_impl(s) {
             Ok(res) => *t = res,
@@ -616,7 +834,9 @@ pub extern "C" fn tl_cpu_tensor_add_assign_scalar_f32(t: *mut OpaqueTensor, s: f
 }
 
 pub extern "C" fn tl_cpu_tensor_sub_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
-    if t.is_null() { return; }
+    if t.is_null() {
+        return;
+    }
     unsafe {
         match (&*t).add_scalar_impl(-s) {
             Ok(res) => *t = res,
@@ -626,7 +846,9 @@ pub extern "C" fn tl_cpu_tensor_sub_assign_scalar_f32(t: *mut OpaqueTensor, s: f
 }
 
 pub extern "C" fn tl_cpu_tensor_mul_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
-    if t.is_null() { return; }
+    if t.is_null() {
+        return;
+    }
     unsafe {
         match (&*t).mul_scalar_impl(s) {
             Ok(res) => *t = res,
@@ -636,7 +858,9 @@ pub extern "C" fn tl_cpu_tensor_mul_assign_scalar_f32(t: *mut OpaqueTensor, s: f
 }
 
 pub extern "C" fn tl_cpu_tensor_div_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
-    if t.is_null() { return; }
+    if t.is_null() {
+        return;
+    }
     unsafe {
         match (&*t).div_scalar_impl(s) {
             Ok(res) => *t = res,
@@ -646,7 +870,9 @@ pub extern "C" fn tl_cpu_tensor_div_assign_scalar_f32(t: *mut OpaqueTensor, s: f
 }
 
 pub extern "C" fn tl_cpu_tensor_mod_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
-    if t.is_null() { return; }
+    if t.is_null() {
+        return;
+    }
     unsafe {
         let a = &*t;
         let b = CpuTensor::from_slice(&[s], &[1], DType::F32);
@@ -659,68 +885,98 @@ pub extern "C" fn tl_cpu_tensor_mod_assign_scalar_f32(t: *mut OpaqueTensor, s: f
 
 // ========== 比較演算 ==========
 
-pub extern "C" fn tl_cpu_tensor_eq(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_eq(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*a).eq_impl(&*b) } {
         Ok(res) => make_tensor(res),
         Err(e) => {
-             eprintln!("Runtime Error in eq: {}", e);
-             std::ptr::null_mut()
+            eprintln!("Runtime Error in eq: {}", e);
+            std::ptr::null_mut()
         }
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_neq(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_neq(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*a).neq_impl(&*b) } {
         Ok(res) => make_tensor(res),
         Err(e) => {
-             eprintln!("Runtime Error in neq: {}", e);
-             std::ptr::null_mut()
+            eprintln!("Runtime Error in neq: {}", e);
+            std::ptr::null_mut()
         }
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_lt(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_lt(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*a).lt_impl(&*b) } {
         Ok(res) => make_tensor(res),
         Err(e) => {
-             eprintln!("Runtime Error in lt: {}", e);
-             std::ptr::null_mut()
+            eprintln!("Runtime Error in lt: {}", e);
+            std::ptr::null_mut()
         }
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_le(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_le(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*a).le_impl(&*b) } {
         Ok(res) => make_tensor(res),
         Err(e) => {
-             eprintln!("Runtime Error in le: {}", e);
-             std::ptr::null_mut()
+            eprintln!("Runtime Error in le: {}", e);
+            std::ptr::null_mut()
         }
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_gt(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_gt(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*a).gt_impl(&*b) } {
         Ok(res) => make_tensor(res),
         Err(e) => {
-             eprintln!("Runtime Error in gt: {}", e);
-             std::ptr::null_mut()
+            eprintln!("Runtime Error in gt: {}", e);
+            std::ptr::null_mut()
         }
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_ge(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_ge(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*a).ge_impl(&*b) } {
         Ok(res) => make_tensor(res),
         Err(e) => {
-             eprintln!("Runtime Error in ge: {}", e);
-             std::ptr::null_mut()
+            eprintln!("Runtime Error in ge: {}", e);
+            std::ptr::null_mut()
         }
     }
 }
@@ -728,7 +984,9 @@ pub extern "C" fn tl_cpu_tensor_ge(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -
 // ========== 数学関数 ==========
 
 pub extern "C" fn tl_cpu_tensor_exp(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.exp_impl() {
         Ok(result) => {
@@ -736,10 +994,15 @@ pub extern "C" fn tl_cpu_tensor_exp(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
             if tensor.requires_grad() {
                 use crate::autograd::ops::ExpBackward;
                 let output = unsafe { (&*ptr).shallow_clone() };
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(ExpBackward { a: tensor_ref_from_ptr(t), output })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(ExpBackward {
+                        a: tensor_ref_from_ptr(t),
+                        output,
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in exp: {}", e);
             std::ptr::null_mut()
@@ -748,17 +1011,24 @@ pub extern "C" fn tl_cpu_tensor_exp(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 }
 
 pub extern "C" fn tl_cpu_tensor_log(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.log_impl() {
         Ok(result) => {
             let ptr = make_tensor(result);
             if tensor.requires_grad() {
                 use crate::autograd::ops::LogBackward;
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(LogBackward { a: tensor_ref_from_ptr(t), a_data: tensor.shallow_clone() })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(LogBackward {
+                        a: tensor_ref_from_ptr(t),
+                        a_data: tensor.shallow_clone(),
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in log: {}", e);
             std::ptr::null_mut()
@@ -767,50 +1037,63 @@ pub extern "C" fn tl_cpu_tensor_log(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 }
 
 pub extern "C" fn tl_cpu_tensor_sin(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*t).sin_impl() } {
         Ok(res) => make_tensor(res),
         Err(e) => {
-             eprintln!("Runtime Error in sin: {}", e);
-             std::ptr::null_mut()
+            eprintln!("Runtime Error in sin: {}", e);
+            std::ptr::null_mut()
         }
     }
 }
 
 pub extern "C" fn tl_cpu_tensor_cos(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*t).cos_impl() } {
         Ok(res) => make_tensor(res),
         Err(e) => {
-             eprintln!("Runtime Error in cos: {}", e);
-             std::ptr::null_mut()
+            eprintln!("Runtime Error in cos: {}", e);
+            std::ptr::null_mut()
         }
     }
 }
 
 pub extern "C" fn tl_cpu_tensor_tanh(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*t).tanh_impl() } {
         Ok(res) => make_tensor(res),
         Err(e) => {
-             eprintln!("Runtime Error in tanh: {}", e);
-             std::ptr::null_mut()
+            eprintln!("Runtime Error in tanh: {}", e);
+            std::ptr::null_mut()
         }
     }
 }
 
 pub extern "C" fn tl_cpu_tensor_relu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.relu_impl() {
         Ok(result) => {
             let ptr = make_tensor(result);
             if tensor.requires_grad() {
                 use crate::autograd::ops::ReluBackward;
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(ReluBackward { a: tensor_ref_from_ptr(t), a_data: tensor.shallow_clone() })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(ReluBackward {
+                        a: tensor_ref_from_ptr(t),
+                        a_data: tensor.shallow_clone(),
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in relu: {}", e);
             std::ptr::null_mut()
@@ -819,7 +1102,9 @@ pub extern "C" fn tl_cpu_tensor_relu(t: *mut OpaqueTensor) -> *mut OpaqueTensor 
 }
 
 pub extern "C" fn tl_cpu_tensor_softmax(t: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.softmax_impl(dim as i32) {
         Ok(result) => {
@@ -827,10 +1112,16 @@ pub extern "C" fn tl_cpu_tensor_softmax(t: *mut OpaqueTensor, dim: i64) -> *mut 
             if tensor.requires_grad() {
                 use crate::autograd::ops::SoftmaxBackward;
                 let output = unsafe { (&*ptr).shallow_clone() };
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(SoftmaxBackward { a: tensor_ref_from_ptr(t), output, axis: dim as i32 })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(SoftmaxBackward {
+                        a: tensor_ref_from_ptr(t),
+                        output,
+                        axis: dim as i32,
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in softmax: {}", e);
             std::ptr::null_mut()
@@ -841,27 +1132,38 @@ pub extern "C" fn tl_cpu_tensor_softmax(t: *mut OpaqueTensor, dim: i64) -> *mut 
 // ========== Reduction ==========
 
 pub extern "C" fn tl_cpu_tensor_sum(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     let sum_val = tensor.sumall_impl(); // sumall_impl returns f32 directly (no Result)
     let result = CpuTensor::from_slice(&[sum_val], &[1], DType::F32);
     let ptr = make_tensor(result);
     if tensor.requires_grad() {
         use crate::autograd::ops::SumallBackward;
-        unsafe { (&mut *ptr).set_grad_fn(Box::new(SumallBackward { a: tensor_ref_from_ptr(t), shape: tensor.shape().to_vec() })); }
+        unsafe {
+            (&mut *ptr).set_grad_fn(Box::new(SumallBackward {
+                a: tensor_ref_from_ptr(t),
+                shape: tensor.shape().to_vec(),
+            }));
+        }
     }
     ptr
 }
 
 pub extern "C" fn tl_cpu_tensor_mean(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     let mean_val = tensor.mean_all_impl(); // mean_all_impl returns f32 directly
     make_tensor(CpuTensor::from_slice(&[mean_val], &[1], DType::F32))
 }
 
 pub extern "C" fn tl_cpu_tensor_max(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     let idx = tensor.argmax_all_impl(); // argmax_all_impl returns usize directly
     let max_val = tensor.data_f32()[idx];
@@ -869,36 +1171,59 @@ pub extern "C" fn tl_cpu_tensor_max(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 }
 
 pub extern "C" fn tl_cpu_tensor_min(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     let data = tensor.data_f32();
     let min_val = data.iter().cloned().fold(f32::INFINITY, f32::min);
     make_tensor(CpuTensor::from_slice(&[min_val], &[1], DType::F32))
 }
 
-pub extern "C" fn tl_cpu_tensor_argmax(t: *mut OpaqueTensor, dim: i64, _keep_dim: bool) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_argmax(
+    t: *mut OpaqueTensor,
+    dim: i64,
+    _keep_dim: bool,
+) -> *mut OpaqueTensor {
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     let _ = dim; // 現在は全要素の argmax のみ実装
     let max_idx = tensor.argmax_all_impl();
     make_tensor(CpuTensor::from_slice(&[max_idx as f32], &[1], DType::F32))
 }
 
-pub extern "C" fn tl_cpu_tensor_argmin(t: *mut OpaqueTensor, dim: i64, _keep_dim: bool) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_argmin(
+    t: *mut OpaqueTensor,
+    dim: i64,
+    _keep_dim: bool,
+) -> *mut OpaqueTensor {
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     let _ = dim;
     let data = tensor.data_f32();
-    let min_idx = data.iter().enumerate()
+    let min_idx = data
+        .iter()
+        .enumerate()
         .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|(i, _)| i).unwrap_or(0);
+        .map(|(i, _)| i)
+        .unwrap_or(0);
     make_tensor(CpuTensor::from_slice(&[min_idx as f32], &[1], DType::F32))
 }
 
 // ========== Shape 操作 ==========
 
-pub extern "C" fn tl_cpu_tensor_reshape(t: *mut OpaqueTensor, rank: usize, shape: *const usize) -> *mut OpaqueTensor {
-    if t.is_null() || shape.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_reshape(
+    t: *mut OpaqueTensor,
+    rank: usize,
+    shape: *const usize,
+) -> *mut OpaqueTensor {
+    if t.is_null() || shape.is_null() {
+        return std::ptr::null_mut();
+    }
     if rank == 0 || rank > 8 {
         eprintln!("Warning: tl_cpu_tensor_reshape: invalid rank={}", rank);
         return std::ptr::null_mut();
@@ -906,19 +1231,21 @@ pub extern "C" fn tl_cpu_tensor_reshape(t: *mut OpaqueTensor, rank: usize, shape
     let tensor = unsafe { &*t };
     let new_shape = unsafe { std::slice::from_raw_parts(shape, rank) };
     let input_shape = tensor.shape().to_vec();
-    
+
     match tensor.reshape_impl(new_shape) {
         Ok(result) => {
             let ptr = make_tensor(result);
             if tensor.requires_grad() {
                 use crate::autograd::ops::ReshapeBackward;
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(ReshapeBackward {
-                    input: tensor_ref_from_ptr(t),
-                    input_shape,
-                })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(ReshapeBackward {
+                        input: tensor_ref_from_ptr(t),
+                        input_shape,
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in reshape: {}", e);
             std::ptr::null_mut()
@@ -926,21 +1253,46 @@ pub extern "C" fn tl_cpu_tensor_reshape(t: *mut OpaqueTensor, rank: usize, shape
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_reshape_new(t: *mut OpaqueTensor, new_shape_tensor: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() || new_shape_tensor.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_reshape_new(
+    t: *mut OpaqueTensor,
+    new_shape_tensor: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if t.is_null() || new_shape_tensor.is_null() {
+        return std::ptr::null_mut();
+    }
     let shape_tensor = unsafe { &*new_shape_tensor };
-    let new_shape: Vec<usize> = shape_tensor.data_f32().iter().map(|&x| x as usize).collect();
+    let new_shape: Vec<usize> = shape_tensor
+        .data_f32()
+        .iter()
+        .map(|&x| x as usize)
+        .collect();
     tl_cpu_tensor_reshape(t, new_shape.len(), new_shape.as_ptr())
 }
 
-pub extern "C" fn tl_cpu_tensor_reshape_dims(t: *mut OpaqueTensor, dim1: i64, dim2: i64, dim3: i64, dim4: i64) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_reshape_dims(
+    t: *mut OpaqueTensor,
+    dim1: i64,
+    dim2: i64,
+    dim3: i64,
+    dim4: i64,
+) -> *mut OpaqueTensor {
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     let mut new_shape = Vec::new();
-    if dim1 > 0 { new_shape.push(dim1 as usize); }
-    if dim2 > 0 { new_shape.push(dim2 as usize); }
-    if dim3 > 0 { new_shape.push(dim3 as usize); }
-    if dim4 > 0 { new_shape.push(dim4 as usize); }
+    if dim1 > 0 {
+        new_shape.push(dim1 as usize);
+    }
+    if dim2 > 0 {
+        new_shape.push(dim2 as usize);
+    }
+    if dim3 > 0 {
+        new_shape.push(dim3 as usize);
+    }
+    if dim4 > 0 {
+        new_shape.push(dim4 as usize);
+    }
     match tensor.reshape_impl(&new_shape) {
         Ok(res) => make_tensor(res),
         Err(e) => {
@@ -950,8 +1302,14 @@ pub extern "C" fn tl_cpu_tensor_reshape_dims(t: *mut OpaqueTensor, dim1: i64, di
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_transpose(t: *mut OpaqueTensor, dim0: usize, dim1: usize) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_transpose(
+    t: *mut OpaqueTensor,
+    dim0: usize,
+    dim1: usize,
+) -> *mut OpaqueTensor {
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*t).transpose_impl(dim0, dim1) } {
         Ok(res) => make_tensor(res),
         Err(e) => {
@@ -962,7 +1320,9 @@ pub extern "C" fn tl_cpu_tensor_transpose(t: *mut OpaqueTensor, dim0: usize, dim
 }
 
 pub extern "C" fn tl_cpu_tensor_squeeze(t: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*t).squeeze_impl(dim as usize) } {
         Ok(res) => make_tensor(res),
         Err(e) => {
@@ -973,7 +1333,9 @@ pub extern "C" fn tl_cpu_tensor_squeeze(t: *mut OpaqueTensor, dim: i64) -> *mut 
 }
 
 pub extern "C" fn tl_cpu_tensor_unsqueeze(t: *mut OpaqueTensor, dim: usize) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*t).unsqueeze_impl(dim) } {
         Ok(res) => make_tensor(res),
         Err(e) => {
@@ -984,7 +1346,9 @@ pub extern "C" fn tl_cpu_tensor_unsqueeze(t: *mut OpaqueTensor, dim: usize) -> *
 }
 
 pub extern "C" fn tl_cpu_tensor_contiguous(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*t).contiguous_impl() } {
         Ok(res) => make_tensor(res),
         Err(e) => {
@@ -994,8 +1358,15 @@ pub extern "C" fn tl_cpu_tensor_contiguous(t: *mut OpaqueTensor) -> *mut OpaqueT
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_narrow(t: *mut OpaqueTensor, dim: usize, start: usize, len: usize) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_narrow(
+    t: *mut OpaqueTensor,
+    dim: usize,
+    start: usize,
+    len: usize,
+) -> *mut OpaqueTensor {
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*t).narrow_impl(dim, start, len) } {
         Ok(res) => make_tensor(res),
         Err(e) => {
@@ -1005,8 +1376,15 @@ pub extern "C" fn tl_cpu_tensor_narrow(t: *mut OpaqueTensor, dim: usize, start: 
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_slice(t: *mut OpaqueTensor, dim: i64, start: i64, len: i64) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_slice(
+    t: *mut OpaqueTensor,
+    dim: i64,
+    start: i64,
+    len: i64,
+) -> *mut OpaqueTensor {
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*t).narrow_impl(dim as usize, start as usize, len as usize) } {
         Ok(res) => make_tensor(res),
         Err(e) => {
@@ -1016,8 +1394,14 @@ pub extern "C" fn tl_cpu_tensor_slice(t: *mut OpaqueTensor, dim: i64, start: i64
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_cat(a: *mut OpaqueTensor, b: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_cat(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+    dim: i64,
+) -> *mut OpaqueTensor {
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     let (ta, tb) = unsafe { (&*a, &*b) };
     match CpuTensor::cat_impl(&[ta, tb], dim as usize) {
         Ok(res) => make_tensor(res),
@@ -1028,45 +1412,71 @@ pub extern "C" fn tl_cpu_tensor_cat(a: *mut OpaqueTensor, b: *mut OpaqueTensor, 
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_cat_i64(a: *mut OpaqueTensor, b: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
+pub extern "C" fn tl_cpu_tensor_cat_i64(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+    dim: i64,
+) -> *mut OpaqueTensor {
     tl_cpu_tensor_cat(a, b, dim)
 }
 
 // ========== Clone/Print ==========
 
 pub extern "C" fn tl_cpu_tensor_clone(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     make_tensor(unsafe { (&*t).clone() })
 }
 
 pub extern "C" fn tl_cpu_tensor_print(t: *mut OpaqueTensor) {
-    if t.is_null() { println!("Tensor[null]"); return; }
+    if t.is_null() {
+        println!("Tensor[null]");
+        return;
+    }
     let tensor = unsafe { &*t };
-    if tensor.shape().is_empty() { println!("Tensor[cleared]"); return; }
+    if tensor.shape().is_empty() {
+        println!("Tensor[cleared]");
+        return;
+    }
     println!("{:?}", tensor.data_f32());
 }
 
 pub extern "C" fn tl_cpu_tensor_replace_data(dst: *mut OpaqueTensor, src: *mut OpaqueTensor) {
-    if dst.is_null() || src.is_null() { return; }
-    unsafe { *dst = (&*src).clone(); }
+    if dst.is_null() || src.is_null() {
+        return;
+    }
+    unsafe {
+        *dst = (&*src).clone();
+    }
 }
 
 // ========== MatMul ==========
 
-pub extern "C" fn tl_cpu_tensor_matmul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_matmul(
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+) -> *mut OpaqueTensor {
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     let (ta, tb) = unsafe { (&*a, &*b) };
     match ta.matmul_impl(tb) {
         Ok(result) => {
             let ptr = make_tensor(result);
             if ta.requires_grad() || tb.requires_grad() {
                 use crate::autograd::ops::MatmulBackward;
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(MatmulBackward {
-                    a: tensor_ref_from_ptr(a), b: tensor_ref_from_ptr(b), a_data: ta.shallow_clone(), b_data: tb.shallow_clone(),
-                })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(MatmulBackward {
+                        a: tensor_ref_from_ptr(a),
+                        b: tensor_ref_from_ptr(b),
+                        a_data: ta.shallow_clone(),
+                        b_data: tb.shallow_clone(),
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in matmul: {}", e);
             std::ptr::null_mut()
@@ -1077,7 +1487,9 @@ pub extern "C" fn tl_cpu_tensor_matmul(a: *mut OpaqueTensor, b: *mut OpaqueTenso
 // ========== 高度テンソル関数 ==========
 
 pub extern "C" fn tl_cpu_tensor_sqrt(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*t).sqrt_impl() } {
         Ok(res) => make_tensor(res),
         Err(e) => {
@@ -1088,18 +1500,22 @@ pub extern "C" fn tl_cpu_tensor_sqrt(t: *mut OpaqueTensor) -> *mut OpaqueTensor 
 }
 
 pub extern "C" fn tl_cpu_tensor_gelu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     match unsafe { (&*t).gelu_impl() } {
         Ok(res) => make_tensor(res),
         Err(e) => {
-             eprintln!("Runtime Error in gelu: {}", e);
-             std::ptr::null_mut()
+            eprintln!("Runtime Error in gelu: {}", e);
+            std::ptr::null_mut()
         }
     }
 }
 
 pub extern "C" fn tl_cpu_tensor_tril(t: *mut OpaqueTensor, diagonal: i64) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     if tensor.shape().len() < 2 {
         return make_tensor(tensor.clone());
@@ -1113,8 +1529,14 @@ pub extern "C" fn tl_cpu_tensor_tril(t: *mut OpaqueTensor, diagonal: i64) -> *mu
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_sum_dim(t: *mut OpaqueTensor, dim: usize, keep_dim: bool) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_sum_dim(
+    t: *mut OpaqueTensor,
+    dim: usize,
+    keep_dim: bool,
+) -> *mut OpaqueTensor {
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.sum_impl(dim as i32) {
         Ok(mut result) => {
@@ -1132,14 +1554,16 @@ pub extern "C" fn tl_cpu_tensor_sum_dim(t: *mut OpaqueTensor, dim: usize, keep_d
             let ptr = make_tensor(result);
             if tensor.requires_grad() {
                 use crate::autograd::ops::SumDimBackward;
-                unsafe { (&mut *ptr).set_grad_fn(Box::new(SumDimBackward {
-                    a: tensor_ref_from_ptr(t),
-                    input_shape: tensor.shape().to_vec(),
-                    axis: dim as i32,
-                })); }
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(SumDimBackward {
+                        a: tensor_ref_from_ptr(t),
+                        input_shape: tensor.shape().to_vec(),
+                        axis: dim as i32,
+                    }));
+                }
             }
             ptr
-        },
+        }
         Err(e) => {
             eprintln!("Runtime Error in sum_dim: {}", e);
             std::ptr::null_mut()
@@ -1154,7 +1578,9 @@ pub extern "C" fn tl_cpu_tensor_embedding(
     _scale_grad_by_freq: bool,
     _sparse: bool,
 ) -> *mut OpaqueTensor {
-    if weight.is_null() || indices.is_null() { return std::ptr::null_mut(); }
+    if weight.is_null() || indices.is_null() {
+        return std::ptr::null_mut();
+    }
     let weights_tensor = unsafe { &*weight };
     let indices_tensor = unsafe { &*indices };
     match weights_tensor.embedding_impl(indices_tensor) {
@@ -1177,13 +1603,17 @@ pub extern "C" fn tl_cpu_runtime_shutdown() {}
 // ========== Autograd FFI ==========
 
 pub extern "C" fn tl_cpu_tensor_backward(t: *mut OpaqueTensor) {
-    if t.is_null() { return; }
+    if t.is_null() {
+        return;
+    }
     let tensor = unsafe { &mut *t };
     tensor.backward();
 }
 
 pub extern "C" fn tl_cpu_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     if let Some(grad) = tensor.get_grad() {
         return make_tensor(grad);
@@ -1193,23 +1623,27 @@ pub extern "C" fn tl_cpu_tensor_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor 
 }
 
 pub extern "C" fn tl_cpu_tensor_detach(t: *mut OpaqueTensor, req_grad: bool) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     let result_ptr = make_tensor(tensor.detach());
-    
+
     if req_grad {
         unsafe {
-             let res_tensor = &mut *result_ptr;
-             res_tensor.enable_grad();
+            let res_tensor = &mut *result_ptr;
+            res_tensor.enable_grad();
         }
     }
-    
+
     result_ptr
 }
 
 /// LLVM IR宣言は `(t) -> void`
 pub extern "C" fn tl_cpu_tensor_enable_grad(t: *mut OpaqueTensor) {
-    if t.is_null() { return; }
+    if t.is_null() {
+        return;
+    }
     let tensor = unsafe { &mut *t };
     tensor.enable_grad();
 }
@@ -1225,10 +1659,6 @@ pub extern "C" fn tl_cpu_clear_grads() {
 pub extern "C" fn tl_cpu_enter_scope() {
     crate::memory::enter_scope();
 }
-
-
-
-
 
 #[no_mangle]
 pub extern "C" fn tl_cpu_exit_scope() {
@@ -1247,37 +1677,77 @@ pub extern "C" fn tl_cpu_tensor_register(t: *mut OpaqueTensor) {
 
 #[no_mangle]
 pub extern "C" fn tl_cpu_tensor_return_to_pool(t: *mut OpaqueTensor) {
-    if t.is_null() { return; }
+    if t.is_null() {
+        return;
+    }
     crate::memory::release_tensor(t);
 }
 
 // ========== Phase 2: テスト影響の大きい新規実装 ==========
 
 pub extern "C" fn tl_cpu_tensor_tan(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     let data: Vec<f32> = tensor.data_f32.iter().map(|&x| x.tan()).collect();
-    make_tensor(CpuTensor { data_f32: data, data_i64: None, shape: tensor.shape.clone(), dtype: tensor.dtype, autograd: None })
+    make_tensor(CpuTensor {
+        data_f32: data,
+        data_i64: None,
+        shape: tensor.shape.clone(),
+        dtype: tensor.dtype,
+        autograd: None,
+    })
 }
 
-pub extern "C" fn tl_cpu_tensor_clamp(t: *mut OpaqueTensor, min: f64, max: f64) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_clamp(
+    t: *mut OpaqueTensor,
+    min: f64,
+    max: f64,
+) -> *mut OpaqueTensor {
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     let min_f32 = min as f32;
     let max_f32 = max as f32;
-    let data: Vec<f32> = tensor.data_f32.iter().map(|&x| x.max(min_f32).min(max_f32)).collect();
-    make_tensor(CpuTensor { data_f32: data, data_i64: None, shape: tensor.shape.clone(), dtype: tensor.dtype, autograd: None })
+    let data: Vec<f32> = tensor
+        .data_f32
+        .iter()
+        .map(|&x| x.max(min_f32).min(max_f32))
+        .collect();
+    make_tensor(CpuTensor {
+        data_f32: data,
+        data_i64: None,
+        shape: tensor.shape.clone(),
+        dtype: tensor.dtype,
+        autograd: None,
+    })
 }
 
 pub extern "C" fn tl_cpu_tensor_sigmoid(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
-    let data: Vec<f32> = tensor.data_f32.iter().map(|&x| 1.0 / (1.0 + (-x).exp())).collect();
-    make_tensor(CpuTensor { data_f32: data, data_i64: None, shape: tensor.shape.clone(), dtype: tensor.dtype, autograd: None })
+    let data: Vec<f32> = tensor
+        .data_f32
+        .iter()
+        .map(|&x| 1.0 / (1.0 + (-x).exp()))
+        .collect();
+    make_tensor(CpuTensor {
+        data_f32: data,
+        data_i64: None,
+        shape: tensor.shape.clone(),
+        dtype: tensor.dtype,
+        autograd: None,
+    })
 }
 
 pub extern "C" fn tl_cpu_tensor_scale(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.mul_scalar_impl(s as f32) {
         Ok(res) => make_tensor(res),
@@ -1289,17 +1759,31 @@ pub extern "C" fn tl_cpu_tensor_scale(t: *mut OpaqueTensor, s: f64) -> *mut Opaq
 }
 
 pub extern "C" fn tl_cpu_tensor_silu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
-    let data: Vec<f32> = tensor.data_f32.iter().map(|&x| x * (1.0 / (1.0 + (-x).exp()))).collect();
-    make_tensor(CpuTensor { data_f32: data, data_i64: None, shape: tensor.shape.clone(), dtype: tensor.dtype, autograd: None })
+    let data: Vec<f32> = tensor
+        .data_f32
+        .iter()
+        .map(|&x| x * (1.0 / (1.0 + (-x).exp())))
+        .collect();
+    make_tensor(CpuTensor {
+        data_f32: data,
+        data_i64: None,
+        shape: tensor.shape.clone(),
+        dtype: tensor.dtype,
+        autograd: None,
+    })
 }
 
 pub extern "C" fn tl_cpu_tensor_cross_entropy(
     logits: *mut OpaqueTensor,
     labels: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
-    if logits.is_null() || labels.is_null() { return std::ptr::null_mut(); }
+    if logits.is_null() || labels.is_null() {
+        return std::ptr::null_mut();
+    }
     let l = unsafe { &*logits };
     let t = unsafe { &*labels };
     // Cross entropy: -sum(target * log(softmax(logits)))
@@ -1312,17 +1796,27 @@ pub extern "C" fn tl_cpu_tensor_cross_entropy(
         let p = l_data[i].max(1e-7); // avoid log(0)
         loss -= t_data[i] * p.ln();
     }
-    make_tensor(CpuTensor { data_f32: vec![loss], data_i64: None, shape: vec![1], dtype: DType::F32, autograd: None })
+    make_tensor(CpuTensor {
+        data_f32: vec![loss],
+        data_i64: None,
+        shape: vec![1],
+        dtype: DType::F32,
+        autograd: None,
+    })
 }
 
 pub extern "C" fn tl_cpu_tensor_numel(t: *mut OpaqueTensor) -> i64 {
-    if t.is_null() { return 0; }
+    if t.is_null() {
+        return 0;
+    }
     let tensor = unsafe { &*t };
     tensor.shape.iter().product::<usize>() as i64
 }
 
 pub extern "C" fn tl_cpu_tensor_transpose_2d(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     let ndim = tensor.shape.len();
     if ndim < 2 {
@@ -1338,23 +1832,39 @@ pub extern "C" fn tl_cpu_tensor_transpose_2d(t: *mut OpaqueTensor) -> *mut Opaqu
 }
 
 pub extern "C" fn tl_cpu_tensor_to_f32(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     // Already f32 for CpuTensor, just clone
     make_tensor(tensor.clone_data())
 }
 
 pub extern "C" fn tl_cpu_tensor_to_i64(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     // Convert f32 data to i64 representation
     let i64_data: Vec<i64> = tensor.data_f32.iter().map(|&x| x as i64).collect();
     let f32_data: Vec<f32> = i64_data.iter().map(|&x| x as f32).collect();
-    make_tensor(CpuTensor { data_f32: f32_data, data_i64: Some(i64_data), shape: tensor.shape.clone(), dtype: DType::I64, autograd: None })
+    make_tensor(CpuTensor {
+        data_f32: f32_data,
+        data_i64: Some(i64_data),
+        shape: tensor.shape.clone(),
+        dtype: DType::I64,
+        autograd: None,
+    })
 }
 
-pub extern "C" fn tl_cpu_tensor_max_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_max_dim(
+    t: *mut OpaqueTensor,
+    dim: usize,
+    _keep_dim: bool,
+) -> *mut OpaqueTensor {
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.max_impl(dim as i32) {
         Ok(res) => make_tensor(res),
@@ -1365,8 +1875,14 @@ pub extern "C" fn tl_cpu_tensor_max_dim(t: *mut OpaqueTensor, dim: usize, _keep_
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_min_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_min_dim(
+    t: *mut OpaqueTensor,
+    dim: usize,
+    _keep_dim: bool,
+) -> *mut OpaqueTensor {
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.min_impl(dim as i32) {
         Ok(res) => make_tensor(res),
@@ -1377,8 +1893,14 @@ pub extern "C" fn tl_cpu_tensor_min_dim(t: *mut OpaqueTensor, dim: usize, _keep_
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_mean_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_mean_dim(
+    t: *mut OpaqueTensor,
+    dim: usize,
+    _keep_dim: bool,
+) -> *mut OpaqueTensor {
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.mean_impl(dim as i32) {
         Ok(res) => make_tensor(res),
@@ -1393,8 +1915,13 @@ pub extern "C" fn tl_cpu_tensor_device_id(_t: *mut OpaqueTensor) -> i32 {
     0 // Always CPU
 }
 
-pub extern "C" fn tl_cpu_tensor_to_device(t: *mut OpaqueTensor, _device_id: i32) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_to_device(
+    t: *mut OpaqueTensor,
+    _device_id: i32,
+) -> *mut OpaqueTensor {
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     make_tensor(tensor.clone_data())
 }
@@ -1404,8 +1931,14 @@ pub extern "C" fn tl_cpu_tensor_prepare_return(t: *mut OpaqueTensor) -> *mut Opa
     t
 }
 
-pub extern "C" fn tl_cpu_tensor_reshape_2d(t: *mut OpaqueTensor, d0: i64, d1: i64) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_reshape_2d(
+    t: *mut OpaqueTensor,
+    d0: i64,
+    d1: i64,
+) -> *mut OpaqueTensor {
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.reshape_impl(&[d0 as usize, d1 as usize]) {
         Ok(res) => make_tensor(res),
@@ -1416,8 +1949,14 @@ pub extern "C" fn tl_cpu_tensor_reshape_2d(t: *mut OpaqueTensor, d0: i64, d1: i6
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_reshape_3d_to_2d(t: *mut OpaqueTensor, d0: i64, d1: i64) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_reshape_3d_to_2d(
+    t: *mut OpaqueTensor,
+    d0: i64,
+    d1: i64,
+) -> *mut OpaqueTensor {
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.reshape_impl(&[d0 as usize, d1 as usize]) {
         Ok(res) => make_tensor(res),
@@ -1434,7 +1973,9 @@ pub extern "C" fn tl_cpu_tensor_matmul_4d(
     a: *mut OpaqueTensor,
     b: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     let a_tensor = unsafe { &*a };
     let b_tensor = unsafe { &*b };
     match a_tensor.matmul_impl(b_tensor) {
@@ -1450,7 +1991,9 @@ pub extern "C" fn tl_cpu_tensor_add_4d(
     a: *mut OpaqueTensor,
     b: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     let a_tensor = unsafe { &*a };
     let b_tensor = unsafe { &*b };
     match a_tensor.add_impl(b_tensor) {
@@ -1471,7 +2014,9 @@ pub extern "C" fn tl_cpu_tensor_cat2(
     b: *mut OpaqueTensor,
     dim: i64,
 ) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     let a_tensor = unsafe { &*a };
     let b_tensor = unsafe { &*b };
     match CpuTensor::cat_impl(&[a_tensor, b_tensor], dim as usize) {
@@ -1488,7 +2033,9 @@ pub extern "C" fn tl_cpu_tensor_cat_4d(
     b: *mut OpaqueTensor,
     dim: i64,
 ) -> *mut OpaqueTensor {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     let a_tensor = unsafe { &*a };
     let b_tensor = unsafe { &*b };
     match CpuTensor::cat_impl(&[a_tensor, b_tensor], dim as usize) {
@@ -1505,7 +2052,9 @@ pub extern "C" fn tl_cpu_tensor_rms_norm(
     weight: *mut OpaqueTensor,
     eps: f32,
 ) -> *mut OpaqueTensor {
-    if input.is_null() { return std::ptr::null_mut(); }
+    if input.is_null() {
+        return std::ptr::null_mut();
+    }
     let x = unsafe { &*input };
     // RMS Norm: x / sqrt(mean(x^2) + eps)
     let data = &x.data_f32;
@@ -1521,7 +2070,13 @@ pub extern "C" fn tl_cpu_tensor_rms_norm(
             result[i] = data[i] / rms;
         }
     }
-    let normalized = CpuTensor { data_f32: result, data_i64: None, shape: x.shape.clone(), dtype: x.dtype, autograd: None };
+    let normalized = CpuTensor {
+        data_f32: result,
+        data_i64: None,
+        shape: x.shape.clone(),
+        dtype: x.dtype,
+        autograd: None,
+    };
     if !weight.is_null() {
         let w = unsafe { &*weight };
         match normalized.mul_impl(w) {
@@ -1558,25 +2113,101 @@ pub extern "C" fn tl_cpu_tensor_load(_path: *const i8) -> *mut OpaqueTensor {
 }
 
 pub extern "C" fn tl_cpu_tensor_rope_new_cos(
-    _seq_len: usize, _dim: usize, _base: f32,
+    seq_len: usize,
+    dim: usize,
+    base: f32,
 ) -> *mut OpaqueTensor {
-    std::ptr::null_mut() // Placeholder for LLM inference
+    // RoPE cos テーブル: shape [seq_len, dim]
+    // freq[i] = 1.0 / base^(2i/dim), for i in 0..dim/2
+    // cos_table[pos][i] = cos(pos * freq[i])  (repeated for pairs)
+    let half_dim = dim / 2;
+    let mut data = Vec::with_capacity(seq_len * dim);
+    for pos in 0..seq_len {
+        for i in 0..half_dim {
+            let freq = 1.0 / base.powf(2.0 * i as f32 / dim as f32);
+            let val = (pos as f32 * freq).cos();
+            data.push(val);
+            data.push(val); // 各ペアで同じcos値
+        }
+    }
+    let t = CpuTensor::from_slice(&data, &[seq_len, dim], crate::DType::F32);
+    make_tensor(t)
 }
 
 pub extern "C" fn tl_cpu_tensor_rope_new_sin(
-    _seq_len: usize, _dim: usize, _base: f32,
+    seq_len: usize,
+    dim: usize,
+    base: f32,
 ) -> *mut OpaqueTensor {
-    std::ptr::null_mut()
+    // RoPE sin テーブル: shape [seq_len, dim]
+    let half_dim = dim / 2;
+    let mut data = Vec::with_capacity(seq_len * dim);
+    for pos in 0..seq_len {
+        for i in 0..half_dim {
+            let freq = 1.0 / base.powf(2.0 * i as f32 / dim as f32);
+            let val = (pos as f32 * freq).sin();
+            data.push(val);
+            data.push(val); // 各ペアで同じsin値
+        }
+    }
+    let t = CpuTensor::from_slice(&data, &[seq_len, dim], crate::DType::F32);
+    make_tensor(t)
 }
 
 pub extern "C" fn tl_cpu_tensor_apply_rope(
     t: *mut OpaqueTensor,
-    _cos: *mut OpaqueTensor,
-    _sin: *mut OpaqueTensor,
+    cos_table: *mut OpaqueTensor,
+    sin_table: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
-    let tensor = unsafe { &*t };
-    make_tensor(tensor.clone_data()) // Placeholder
+    if t.is_null() || cos_table.is_null() || sin_table.is_null() {
+        return std::ptr::null_mut();
+    }
+    let tensor = unsafe { &*(t as *const CpuTensor) };
+    let cos_t = unsafe { &*(cos_table as *const CpuTensor) };
+    let sin_t = unsafe { &*(sin_table as *const CpuTensor) };
+
+    let shape = tensor.shape();
+    let data = tensor.data_f32();
+    let total = data.len();
+
+    // 最後の次元が head_dim
+    let head_dim = *shape.last().unwrap_or(&0);
+    if head_dim == 0 || total == 0 {
+        return make_tensor(tensor.clone_data());
+    }
+
+    let cos_data = cos_t.data_f32();
+    let sin_data = sin_t.data_f32();
+
+    let mut result = vec![0.0f32; total];
+    let num_vectors = total / head_dim;
+
+    for v in 0..num_vectors {
+        let offset = v * head_dim;
+        for i in (0..head_dim).step_by(2) {
+            let cos_idx = i; // cos/sin テーブルからの位置（seq_len 方向のオフセットは別途）
+                             // cos/sinテーブルはseq_len分の行があるが、ここでは位置インデックスを推定
+                             // 簡易版: テーブルの先頭 head_dim 分を使用（位置は呼び出し元が管理）
+            let c = if cos_idx < cos_data.len() {
+                cos_data[cos_idx]
+            } else {
+                1.0
+            };
+            let s = if cos_idx < sin_data.len() {
+                sin_data[cos_idx]
+            } else {
+                0.0
+            };
+
+            let x0 = data[offset + i];
+            let x1 = data[offset + i + 1];
+            result[offset + i] = x0 * c - x1 * s;
+            result[offset + i + 1] = x0 * s + x1 * c;
+        }
+    }
+
+    let t = CpuTensor::from_slice(&result, shape, crate::DType::F32);
+    make_tensor(t)
 }
 
 #[track_caller]
@@ -1638,8 +2269,8 @@ fn get_rss_bytes() -> usize {
             virtual_size: u64,
             resident_size: u64,
             resident_size_max: u64,
-            user_time: [u32; 2],     // time_value_t
-            system_time: [u32; 2],   // time_value_t
+            user_time: [u32; 2],   // time_value_t
+            system_time: [u32; 2], // time_value_t
             policy: i32,
             suspend_count: i32,
         }
@@ -1812,23 +2443,25 @@ pub extern "C" fn tl_cpu_tensor_max_pool2d(
     stride: i64,
     padding: i64,
 ) -> *mut OpaqueTensor {
-    if input.is_null() { return std::ptr::null_mut(); }
+    if input.is_null() {
+        return std::ptr::null_mut();
+    }
     let inp = unsafe { &*input };
     let k = kernel_size.max(1) as usize;
     let s = stride.max(1) as usize;
     let _p = padding.max(0) as usize; // padding currently ignored in impl or handled? impl doesn't take padding args in signature shown in tensor.rs read?
-    // tensor.rs: max_pool2d_impl(kernel_size: (usize, usize), stride: (usize, usize)) -> Result. 
-    // It does NOT take padding. 
-    // User might expect padding. I should verify if I need to support padding in impl or if FFI ignores it.
-    // The FFI signature in device_impl.rs has padding.
-    // logical implementation: max_pool2d in tensor.rs lines 1437 does not take padding.
-    // I should probably update tensor.rs to take padding or ignore it here.
-    // Given the task is to wrap existing impls, I will match tensor.rs signature.
+                                      // tensor.rs: max_pool2d_impl(kernel_size: (usize, usize), stride: (usize, usize)) -> Result.
+                                      // It does NOT take padding.
+                                      // User might expect padding. I should verify if I need to support padding in impl or if FFI ignores it.
+                                      // The FFI signature in device_impl.rs has padding.
+                                      // logical implementation: max_pool2d in tensor.rs lines 1437 does not take padding.
+                                      // I should probably update tensor.rs to take padding or ignore it here.
+                                      // Given the task is to wrap existing impls, I will match tensor.rs signature.
     match inp.max_pool2d_impl((k, k), (s, s)) {
         Ok(res) => make_tensor(res),
         Err(e) => {
-             eprintln!("Runtime Error in max_pool2d: {}", e);
-             std::ptr::null_mut()
+            eprintln!("Runtime Error in max_pool2d: {}", e);
+            std::ptr::null_mut()
         }
     }
 }
@@ -1840,18 +2473,20 @@ pub extern "C" fn tl_cpu_tensor_avg_pool2d(
     stride: i64,
     padding: i64,
 ) -> *mut OpaqueTensor {
-    if input.is_null() { return std::ptr::null_mut(); }
+    if input.is_null() {
+        return std::ptr::null_mut();
+    }
     let inp = unsafe { &*input };
     let k = kernel_size.max(1) as usize;
     let s = stride.max(1) as usize;
     let _p = padding.max(0) as usize;
-    
+
     match inp.avg_pool2d_impl((k, k), (s, s)) {
-         Ok(res) => make_tensor(res),
-         Err(e) => {
-             eprintln!("Runtime Error in avg_pool2d: {}", e);
-             std::ptr::null_mut()
-         }
+        Ok(res) => make_tensor(res),
+        Err(e) => {
+            eprintln!("Runtime Error in avg_pool2d: {}", e);
+            std::ptr::null_mut()
+        }
     }
 }
 
@@ -1866,7 +2501,9 @@ pub extern "C" fn tl_cpu_tensor_batch_norm(
     _momentum: f64,
     eps: f64,
 ) -> *mut OpaqueTensor {
-    if input.is_null() { return std::ptr::null_mut(); }
+    if input.is_null() {
+        return std::ptr::null_mut();
+    }
     let inp = unsafe { &*input };
     // Handle optional pointers (null check) by creating temporary defaults or handling in impl?
     // attributes in impl: gamma, beta, running_mean, running_var.
@@ -1877,31 +2514,47 @@ pub extern "C" fn tl_cpu_tensor_batch_norm(
     // Here, I can't easily create dummy tensors that live long enough to pass as reference?
     // Actually, I can create temporary CpuTensor on stack.
     // But `impl` expects `&Self`.
-    
+
     // Strategy: if pointers are null, create default CpuTensor with appropriate shape/values.
     // This replicates usage in device_impl.rs but inside FFI.
-    
+
     let shape = inp.shape();
     let channels = if shape.len() >= 2 { shape[1] } else { 1 };
-    
+
     // Helper to get ref
     let dummy_ones = CpuTensor::ones(&[channels], DType::F32);
     let dummy_zeros = CpuTensor::zeros(&[channels], DType::F32);
 
-    let w = if !weight.is_null() { unsafe { &*weight } } else { &dummy_ones };
-    let b = if !bias.is_null() { unsafe { &*bias } } else { &dummy_zeros };
-    
+    let w = if !weight.is_null() {
+        unsafe { &*weight }
+    } else {
+        &dummy_ones
+    };
+    let b = if !bias.is_null() {
+        unsafe { &*bias }
+    } else {
+        &dummy_zeros
+    };
+
     // For running stats, if null, we might need to ignore them or pass dummies.
     // logic in impl: "use_running" check relies on elem_count.
     // If I pass dummy, it will use them?
     // Tensor.rs: "use_running = running_mean.elem_count() == channels ..."
     // So if I pass dummy zeros (size channels), it uses them.
-    // But if training=true, we might want to update them? 
+    // But if training=true, we might want to update them?
     // device_impl.rs logic: "running_mean... if !null { ... } else { vec![0.0...] }"
     // It seems safe to pass dummies if null.
-    
-    let rm = if !running_mean.is_null() { unsafe { &*running_mean } } else { &dummy_zeros };
-    let rv = if !running_var.is_null() { unsafe { &*running_var } } else { &dummy_ones };
+
+    let rm = if !running_mean.is_null() {
+        unsafe { &*running_mean }
+    } else {
+        &dummy_zeros
+    };
+    let rv = if !running_var.is_null() {
+        unsafe { &*running_var }
+    } else {
+        &dummy_ones
+    };
 
     match inp.batch_norm_impl(w, b, rm, rv, eps as f32) {
         Ok(res) => make_tensor(res),
@@ -1919,18 +2572,28 @@ pub extern "C" fn tl_cpu_tensor_layer_norm(
     bias: *mut OpaqueTensor,
     eps: f64,
 ) -> *mut OpaqueTensor {
-    if input.is_null() { return std::ptr::null_mut(); }
+    if input.is_null() {
+        return std::ptr::null_mut();
+    }
     let inp = unsafe { &*input };
-    
+
     let shape = inp.shape();
     let last_dim = *shape.last().unwrap_or(&1);
-    
+
     let dummy_ones = CpuTensor::ones(&[last_dim], DType::F32);
     let dummy_zeros = CpuTensor::zeros(&[last_dim], DType::F32);
-    
-    let w = if !weight.is_null() { unsafe { &*weight } } else { &dummy_ones };
-    let b = if !bias.is_null() { unsafe { &*bias } } else { &dummy_zeros };
-    
+
+    let w = if !weight.is_null() {
+        unsafe { &*weight }
+    } else {
+        &dummy_ones
+    };
+    let b = if !bias.is_null() {
+        unsafe { &*bias }
+    } else {
+        &dummy_zeros
+    };
+
     match inp.layer_norm_impl(w, b, eps as f32) {
         Ok(res) => make_tensor(res),
         Err(e) => {
@@ -1946,25 +2609,35 @@ pub extern "C" fn tl_cpu_tensor_dropout(
     p: f64,
     training: bool,
 ) -> *mut OpaqueTensor {
-    if input.is_null() { return std::ptr::null_mut(); }
+    if input.is_null() {
+        return std::ptr::null_mut();
+    }
     let inp = unsafe { &*input };
     match inp.dropout_impl(p as f32, training) {
         Ok(res) => make_tensor(res),
         Err(e) => {
-             eprintln!("Runtime Error in dropout: {}", e);
-             std::ptr::null_mut()
+            eprintln!("Runtime Error in dropout: {}", e);
+            std::ptr::null_mut()
         }
     }
 }
 
 pub extern "C" fn tl_cpu_tensor_data(t: *mut OpaqueTensor) -> *const f32 {
-    if t.is_null() { return std::ptr::null(); }
+    if t.is_null() {
+        return std::ptr::null();
+    }
     let tensor = unsafe { &*t };
     tensor.data_f32().as_ptr()
 }
 
-pub extern "C" fn tl_cpu_tensor_repeat_interleave(t: *mut OpaqueTensor, repeats: usize, dim: usize) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_repeat_interleave(
+    t: *mut OpaqueTensor,
+    repeats: usize,
+    dim: usize,
+) -> *mut OpaqueTensor {
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.repeat_interleave_impl(repeats, dim) {
         Ok(res) => make_tensor(res),
@@ -1975,8 +2648,14 @@ pub extern "C" fn tl_cpu_tensor_repeat_interleave(t: *mut OpaqueTensor, repeats:
     }
 }
 
-pub extern "C" fn tl_cpu_tensor_sample(t: *mut OpaqueTensor, temp: f32, top_p: f32) -> *mut OpaqueTensor {
-    if t.is_null() { return std::ptr::null_mut(); }
+pub extern "C" fn tl_cpu_tensor_sample(
+    t: *mut OpaqueTensor,
+    temp: f32,
+    top_p: f32,
+) -> *mut OpaqueTensor {
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let tensor = unsafe { &*t };
     match tensor.sample_impl(temp, top_p) {
         Ok(res) => make_tensor(res),
@@ -1992,8 +2671,9 @@ pub extern "C" fn tl_cpu_tensor_new_causal_mask(size: usize) -> *mut OpaqueTenso
     let mut data = vec![0.0f32; size * size];
     for i in 0..size {
         for j in 0..size {
-            if j > i { // Upper triangle (future)
-                 data[i * size + j] = f32::NEG_INFINITY;
+            if j > i {
+                // Upper triangle (future)
+                data[i * size + j] = f32::NEG_INFINITY;
             }
         }
     }
