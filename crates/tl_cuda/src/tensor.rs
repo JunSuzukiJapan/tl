@@ -528,13 +528,24 @@ impl CudaTensor {
             }
         }
 
+        eprintln!(
+            "[BACKWARD] loop done, {} steps. Cleaning up graph...",
+            visited.len()
+        );
+
         // 計算グラフ解放
-        for &ptr in &visited {
+        for (i, &ptr) in visited.iter().enumerate() {
             let tensor = unsafe { &mut *ptr };
             if let Some(ref mut meta) = tensor.autograd {
                 meta.grad_fn = None;
             }
+            if i % 10 == 0 {
+                eprintln!("[BACKWARD]   cleanup {}/{}", i, visited.len());
+            }
         }
+        eprintln!("[BACKWARD] cleanup done. Dropping worklist...");
+        drop(worklist);
+        eprintln!("[BACKWARD] backward() complete.");
         Ok(())
     }
 
