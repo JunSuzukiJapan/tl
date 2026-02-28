@@ -479,11 +479,14 @@ impl CudaTensor {
         // Arc を保持しないとポインタが dangling になる
         let mut worklist: Vec<(*mut CudaTensor, CudaTensor, Option<TensorRef>)> =
             vec![(self_ptr, ones, None)];
-        let mut visited: Vec<*mut CudaTensor> = Vec::new();
+        // visited: (ポインタ, Arc参照保持)
+        // cleanup 時に grad_fn を drop → TensorRef drop → CudaTensor 解放を防ぐため
+        // Arc 参照を cleanup 完了まで保持する
+        let mut visited: Vec<(*mut CudaTensor, Option<TensorRef>)> = Vec::new();
 
-        while let Some((tensor_ptr, grad_output, _arc_ref)) = worklist.pop() {
+        while let Some((tensor_ptr, grad_output, arc_ref)) = worklist.pop() {
             let tensor = unsafe { &mut *tensor_ptr };
-            visited.push(tensor_ptr);
+            visited.push((tensor_ptr, arc_ref));
 
             eprintln!(
                 "[BACKWARD] step {}, shape={:?}, grad_shape={:?}",
@@ -534,16 +537,19 @@ impl CudaTensor {
         );
 
         // 計算グラフ解放
-        for (i, &ptr) in visited.iter().enumerate() {
-            let tensor = unsafe { &mut *ptr };
+        // visited の Arc 参照が全テンソルを生かしているため安全にアクセス可能
+        let visited_len = visited.len();
+        for (i, entry) in visited.iter_mut().enumerate() {
+            let tensor = unsafe { &mut *entry.0 };
             if let Some(ref mut meta) = tensor.autograd {
                 meta.grad_fn = None;
             }
             if i % 10 == 0 {
-                eprintln!("[BACKWARD]   cleanup {}/{}", i, visited.len());
+                eprintln!("[BACKWARD]   cleanup {}/{}", i, visited_len);
             }
         }
-        eprintln!("[BACKWARD] cleanup done. Dropping worklist...");
+        eprintln!("[BACKWARD] cleanup done. Dropping visited & worklist...");
+        drop(visited);
         drop(worklist);
         eprintln!("[BACKWARD] backward() complete.");
         Ok(())
