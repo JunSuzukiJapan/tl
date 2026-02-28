@@ -4,7 +4,6 @@ use crate::string_ffi::StringStruct;
 use std::ffi::{CStr, CString};
 use std::io::Write;
 
-
 /// スリープ（ミリ秒）
 #[unsafe(no_mangle)]
 /// @ffi_sig (i64) -> void
@@ -87,7 +86,9 @@ pub extern "C" fn tl_varbuilder_get(_name: *mut StringStruct) -> *mut crate::Opa
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_varbuilder_get_from_tensor(_tensor: *mut crate::OpaqueTensor) -> *mut crate::OpaqueTensor {
+pub extern "C" fn tl_varbuilder_get_from_tensor(
+    _tensor: *mut crate::OpaqueTensor,
+) -> *mut crate::OpaqueTensor {
     eprintln!("Warning: VarBuilder not yet supported in Metal backend");
     std::ptr::null_mut()
 }
@@ -142,9 +143,7 @@ pub extern "C" fn tl_qtensor_free(ptr: usize) {
         return;
     }
     unsafe {
-        let _ = Box::from_raw(
-            ptr as *mut crate::quantized::QTensor,
-        );
+        let _ = Box::from_raw(ptr as *mut crate::quantized::QTensor);
     }
 }
 
@@ -182,7 +181,8 @@ pub extern "C" fn tl_qtensor_matmul(
                 if let Some(ptr_val) = *cache_guard {
                     let transposed = ptr_val as *mut std::ffi::c_void;
                     return crate::device_ffi::tl_device_tensor_matmul(
-                        input as *mut std::ffi::c_void, transposed
+                        input as *mut std::ffi::c_void,
+                        transposed,
                     ) as *mut crate::OpaqueTensor;
                 }
             }
@@ -192,15 +192,16 @@ pub extern "C" fn tl_qtensor_matmul(
                 *cache_guard = Some(transposed as usize);
             }
             return crate::device_ffi::tl_device_tensor_matmul(
-                input as *mut std::ffi::c_void, transposed
+                input as *mut std::ffi::c_void,
+                transposed,
             ) as *mut crate::OpaqueTensor;
         }
 
         // ========== GPU パス ==========
         let shape = &qtensor.shape;
         assert!(shape.len() == 2, "QTensor must be 2D, got {}D", shape.len());
-        let n = shape[0]; // output features
-        let k = shape[1]; // input features
+        let _n = shape[0]; // output features
+        let _k = shape[1]; // input features
 
         // 融合カーネル対応の量子化タイプかチェック
         let use_fused = matches!(
@@ -215,7 +216,8 @@ pub extern "C" fn tl_qtensor_matmul(
                 if let Some(ptr_val) = *cache_guard {
                     let transposed = ptr_val as *mut std::ffi::c_void;
                     return crate::device_ffi::tl_device_tensor_matmul(
-                        input as *mut std::ffi::c_void, transposed
+                        input as *mut std::ffi::c_void,
+                        transposed,
                     ) as *mut crate::OpaqueTensor;
                 }
             }
@@ -232,7 +234,8 @@ pub extern "C" fn tl_qtensor_matmul(
                 *cache_guard = Some(transposed as usize);
             }
             return crate::device_ffi::tl_device_tensor_matmul(
-                input as *mut std::ffi::c_void, transposed
+                input as *mut std::ffi::c_void,
+                transposed,
             ) as *mut crate::OpaqueTensor;
         }
 
@@ -264,11 +267,11 @@ pub extern "C" fn tl_qtensor_matmul(
             let w_raw_mt = &*w_raw_ptr;
 
             let result = match qtensor.ggml_type {
-                crate::quantized::GGMLType::Q4_K => input_mt.mul_mv_q4_k(w_raw_mt, n, k),
-                crate::quantized::GGMLType::Q6_K => input_mt.mul_mv_q6_k(w_raw_mt, n, k),
+                crate::quantized::GGMLType::Q4_K => input_mt.mul_mv_q4_k(w_raw_mt, _n, _k),
+                crate::quantized::GGMLType::Q6_K => input_mt.mul_mv_q6_k(w_raw_mt, _n, _k),
                 _ => unreachable!(),
             };
-            
+
             let result_tensor = match result {
                 Ok(t) => t,
                 Err(e) => {
@@ -276,7 +279,7 @@ pub extern "C" fn tl_qtensor_matmul(
                     return std::ptr::null_mut();
                 }
             };
-            
+
             return crate::make_tensor(result_tensor);
         }
 
@@ -295,7 +298,8 @@ pub extern "C" fn tl_qtensor_matmul(
                 if let Some(ptr_val) = *cache_guard {
                     let transposed = ptr_val as *mut std::ffi::c_void;
                     return crate::device_ffi::tl_device_tensor_matmul(
-                        input as *mut std::ffi::c_void, transposed
+                        input as *mut std::ffi::c_void,
+                        transposed,
                     ) as *mut crate::OpaqueTensor;
                 }
             }
@@ -305,20 +309,21 @@ pub extern "C" fn tl_qtensor_matmul(
                 *cache_guard = Some(transposed as usize);
             }
             return crate::device_ffi::tl_device_tensor_matmul(
-                input as *mut std::ffi::c_void, transposed
+                input as *mut std::ffi::c_void,
+                transposed,
             ) as *mut crate::OpaqueTensor;
         }
     }
 }
 
-
-
-
 /// KV Cache 関連 — layer ベース実装
 /// LLVM 宣言: new(layers: i64) → i64, get_k/get_v(ptr: i64, layer: i64) → Tensor,
 ///            update(ptr: i64, layer: i64, k: ptr, v: ptr), free(ptr: i64)
 pub struct OpaqueKVCache {
-    pub layers: Vec<(Option<*mut crate::OpaqueTensor>, Option<*mut crate::OpaqueTensor>)>,
+    pub layers: Vec<(
+        Option<*mut crate::OpaqueTensor>,
+        Option<*mut crate::OpaqueTensor>,
+    )>,
 }
 
 impl Drop for OpaqueKVCache {
@@ -404,22 +409,23 @@ pub extern "C" fn tl_kv_cache_update(
     // テンソルをcloneしてcacheが独立コピーを保持する
     // (JITの自動メモリ管理で元テンソルが解放されてもcache内は有効)
     let k_clone = if !k.is_null() {
-        Some(crate::device_ffi::tl_device_tensor_clone(
-            k as *mut std::ffi::c_void,
-        ) as *mut crate::OpaqueTensor)
+        Some(
+            crate::device_ffi::tl_device_tensor_clone(k as *mut std::ffi::c_void)
+                as *mut crate::OpaqueTensor,
+        )
     } else {
         None
     };
     let v_clone = if !v.is_null() {
-        Some(crate::device_ffi::tl_device_tensor_clone(
-            v as *mut std::ffi::c_void,
-        ) as *mut crate::OpaqueTensor)
+        Some(
+            crate::device_ffi::tl_device_tensor_clone(v as *mut std::ffi::c_void)
+                as *mut crate::OpaqueTensor,
+        )
     } else {
         None
     };
     cache.layers[idx] = (k_clone, v_clone);
 }
-
 
 // ========== 追加 System 関数 ==========
 

@@ -2,8 +2,8 @@
 
 use crate::string_ffi::StringStruct;
 use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
 use std::io::{Read, Write};
+use std::os::raw::c_char;
 
 /// ファイル存在確認
 #[unsafe(no_mangle)]
@@ -32,7 +32,7 @@ pub extern "C" fn tl_file_exists_i64(path: *const c_char) -> i64 {
 pub extern "C" fn tl_read_file(path: *const c_char) -> *mut StringStruct {
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
     let path_buf = expand_path(&path_str);
-    
+
     match std::fs::read_to_string(&path_buf) {
         Ok(content) => {
             let c_str = CString::new(content.trim()).unwrap_or_else(|_| CString::new("").unwrap());
@@ -52,16 +52,16 @@ pub extern "C" fn tl_read_file(path: *const c_char) -> *mut StringStruct {
 
 /// ファイル書き込み
 #[unsafe(no_mangle)]
-/// @ffi_sig (i8*, String*) -> bool
-pub extern "C" fn tl_write_file(path: *const c_char, content: *mut StringStruct) -> bool {
+/// @ffi_sig (i8*, i8*) -> bool
+pub extern "C" fn tl_write_file(path: *const c_char, content: *const c_char) -> bool {
     unsafe {
-        if path.is_null() || content.is_null() || (*content).ptr.is_null() {
+        if path.is_null() || content.is_null() {
             return false;
         }
         let path_str = CStr::from_ptr(path).to_string_lossy();
         let path_buf = expand_path(&path_str);
-        let content_str = CStr::from_ptr((*content).ptr).to_string_lossy();
-        
+        let content_str = CStr::from_ptr(content).to_string_lossy();
+
         match std::fs::write(&path_buf, content_str.as_bytes()) {
             Ok(_) => true,
             Err(_) => false,
@@ -76,24 +76,24 @@ pub extern "C" fn tl_download_file(url: *const c_char, path: *const c_char) -> i
     let url_str = unsafe { CStr::from_ptr(url).to_string_lossy() };
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
     let path_buf = expand_path(&path_str);
-    
+
     println!("Downloading from: {}", url_str);
     println!("Saving to: {:?}", path_buf);
-    
+
     match reqwest::blocking::get(url_str.as_ref()) {
         Ok(mut response) => {
             if !response.status().is_success() {
                 println!("Download failed: HTTP {}", response.status());
                 return 0;
             }
-            
+
             if let Some(parent) = path_buf.parent() {
                 if let Err(e) = std::fs::create_dir_all(parent) {
                     println!("Failed to create directories: {}", e);
                     return 0;
                 }
             }
-            
+
             match std::fs::File::create(&path_buf) {
                 Ok(mut file) => {
                     if let Err(e) = std::io::copy(&mut response, &mut file) {
@@ -121,25 +121,23 @@ pub extern "C" fn tl_download_file(url: *const c_char, path: *const c_char) -> i
 /// @ffi_sig (i8*) -> String*
 pub extern "C" fn tl_http_get(url: *const c_char) -> *mut StringStruct {
     let url_str = unsafe { CStr::from_ptr(url).to_string_lossy() };
-    
+
     match reqwest::blocking::get(url_str.as_ref()) {
-        Ok(response) => {
-            match response.text() {
-                Ok(text) => {
-                    let c_str = CString::new(text).unwrap_or_else(|_| CString::new("").unwrap());
-                    let ptr = c_str.into_raw();
-                    unsafe {
-                        let len = libc::strlen(ptr) as i64;
-                        let layout = std::alloc::Layout::new::<StringStruct>();
-                        let struct_ptr = std::alloc::alloc(layout) as *mut StringStruct;
-                        (*struct_ptr).ptr = ptr;
-                        (*struct_ptr).len = len;
-                        struct_ptr
-                    }
+        Ok(response) => match response.text() {
+            Ok(text) => {
+                let c_str = CString::new(text).unwrap_or_else(|_| CString::new("").unwrap());
+                let ptr = c_str.into_raw();
+                unsafe {
+                    let len = libc::strlen(ptr) as i64;
+                    let layout = std::alloc::Layout::new::<StringStruct>();
+                    let struct_ptr = std::alloc::alloc(layout) as *mut StringStruct;
+                    (*struct_ptr).ptr = ptr;
+                    (*struct_ptr).len = len;
+                    struct_ptr
                 }
-                Err(_) => std::ptr::null_mut(),
             }
-        }
+            Err(_) => std::ptr::null_mut(),
+        },
         Err(_) => std::ptr::null_mut(),
     }
 }
@@ -180,7 +178,7 @@ pub extern "C" fn tl_path_new(s: *const c_char) -> *mut PathStruct {
         let c_str = CStr::from_ptr(s);
         let new_c_str = CString::new(c_str.to_string_lossy().into_owned()).unwrap();
         let ptr = new_c_str.into_raw();
-        
+
         let layout = std::alloc::Layout::new::<PathStruct>();
         let struct_ptr = std::alloc::alloc(layout) as *mut PathStruct;
         (*struct_ptr).ptr = ptr;
@@ -228,7 +226,7 @@ pub extern "C" fn tl_path_join(a: *mut PathStruct, b: *const c_char) -> *mut Pat
         let joined = std::path::PathBuf::from(a_str.as_ref()).join(b_str.as_ref());
         let c_str = CString::new(joined.to_string_lossy().into_owned()).unwrap();
         let ptr = c_str.into_raw();
-        
+
         let layout = std::alloc::Layout::new::<PathStruct>();
         let struct_ptr = std::alloc::alloc(layout) as *mut PathStruct;
         (*struct_ptr).ptr = ptr;
@@ -288,14 +286,18 @@ pub extern "C" fn tl_file_open(path: *const c_char, mode: *const c_char) -> *mut
         let path_str = CStr::from_ptr(path).to_string_lossy();
         let mode_str = CStr::from_ptr(mode).to_string_lossy();
         let path_buf = expand_path(&path_str);
-        
+
         let file = match mode_str.as_ref() {
             "r" => std::fs::File::open(&path_buf).ok(),
             "w" => std::fs::File::create(&path_buf).ok(),
-            "a" => std::fs::OpenOptions::new().append(true).create(true).open(&path_buf).ok(),
+            "a" => std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&path_buf)
+                .ok(),
             _ => None,
         };
-        
+
         match file {
             Some(f) => Box::into_raw(Box::new(f)) as *mut std::ffi::c_void,
             None => std::ptr::null_mut(),
@@ -371,7 +373,11 @@ pub extern "C" fn tl_file_read_binary(f: *mut std::ffi::c_void, buf: *mut u8, le
 /// ファイルにバイナリ書き込み
 #[unsafe(no_mangle)]
 /// @ffi_sig (c_void, u8, usize) -> bool
-pub extern "C" fn tl_file_write_binary(f: *mut std::ffi::c_void, buf: *const u8, len: usize) -> bool {
+pub extern "C" fn tl_file_write_binary(
+    f: *mut std::ffi::c_void,
+    buf: *const u8,
+    len: usize,
+) -> bool {
     if f.is_null() || buf.is_null() {
         return false;
     }
@@ -416,5 +422,7 @@ pub extern "C" fn tl_env_set(name: *const c_char, value: *const c_char) {
     }
     let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
     let value_str = unsafe { CStr::from_ptr(value).to_string_lossy() };
-    unsafe { std::env::set_var(name_str.as_ref(), value_str.as_ref()); }
+    unsafe {
+        std::env::set_var(name_str.as_ref(), value_str.as_ref());
+    }
 }

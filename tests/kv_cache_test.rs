@@ -3,6 +3,7 @@ use tl_runtime::system::*;
 use tl_runtime::*;
 
 // Helper to check if a tensor is not null
+#[allow(dead_code)]
 fn assert_tensor_valid(t: *mut OpaqueTensor) {
     assert!(!t.is_null(), "Tensor pointer is null");
 }
