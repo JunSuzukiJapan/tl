@@ -670,3 +670,75 @@ fn test_backward_chain_through_softmax() {
     ffi_ops::tl_cuda_free(softmax_ptr);
     ffi_ops::tl_cuda_free(x_ptr);
 }
+
+// =====================================================================
+// 13. SumDimBackward 多次元テスト
+//     sum(dim) の backward が次元数の異なるテンソルで正しく動作するか検証。
+//     以前は broadcast_to_impl がランク違いテンソルでクラッシュしていた。
+// =====================================================================
+
+#[test]
+#[serial]
+fn test_backward_sum_dim_3d() {
+    // [2,3,4].sum(2) → [2,3] → pow(2) → sumall → backward → grad ≠ 0
+    let data: Vec<f32> = (0..24).map(|i| i as f32 * 0.1).collect();
+    let shape: Vec<usize> = vec![2, 3, 4];
+    let x_ptr = ffi_ops::tl_cuda_new(data.as_ptr(), 3, shape.as_ptr());
+    ffi_ops::tl_cuda_enable_grad(x_ptr);
+
+    let sum_ptr = ffi_ops::tl_cuda_sum_dim(x_ptr, 2, false);
+    let pow_ptr = ffi_ops::tl_cuda_pow_scalar(sum_ptr, 2.0);
+    let loss_ptr = ffi_ops::tl_cuda_sum(pow_ptr);
+    ffi_ops::tl_cuda_backward(loss_ptr);
+
+    let grad_ptr = ffi_ops::tl_cuda_grad(x_ptr);
+    let mut norm_sq: f32 = 0.0;
+    for i in 0..24 {
+        let g = ffi_ops::tl_cuda_get_f32(grad_ptr, i);
+        norm_sq += g * g;
+    }
+    assert!(
+        norm_sq.sqrt() > 1e-6,
+        "sum_dim(2) backward: grad is zero (crash or broken)!"
+    );
+
+    ffi_ops::tl_cuda_free(grad_ptr);
+    ffi_ops::tl_cuda_free(loss_ptr);
+    ffi_ops::tl_cuda_free(pow_ptr);
+    ffi_ops::tl_cuda_free(sum_ptr);
+    ffi_ops::tl_cuda_free(x_ptr);
+}
+
+#[test]
+#[serial]
+fn test_backward_chained_sum_dim() {
+    // [3,4,5].sum(2).sum(1) → [3] → pow(2) → sumall → backward
+    let data: Vec<f32> = (0..60).map(|i| i as f32 * 0.01).collect();
+    let shape: Vec<usize> = vec![3, 4, 5];
+    let x_ptr = ffi_ops::tl_cuda_new(data.as_ptr(), 3, shape.as_ptr());
+    ffi_ops::tl_cuda_enable_grad(x_ptr);
+
+    let s2 = ffi_ops::tl_cuda_sum_dim(x_ptr, 2, false);
+    let s1 = ffi_ops::tl_cuda_sum_dim(s2, 1, false);
+    let pow_ptr = ffi_ops::tl_cuda_pow_scalar(s1, 2.0);
+    let loss_ptr = ffi_ops::tl_cuda_sum(pow_ptr);
+    ffi_ops::tl_cuda_backward(loss_ptr);
+
+    let grad_ptr = ffi_ops::tl_cuda_grad(x_ptr);
+    let mut norm_sq: f32 = 0.0;
+    for i in 0..60 {
+        let g = ffi_ops::tl_cuda_get_f32(grad_ptr, i);
+        norm_sq += g * g;
+    }
+    assert!(
+        norm_sq.sqrt() > 1e-6,
+        "chained sum_dim backward: grad is zero!"
+    );
+
+    ffi_ops::tl_cuda_free(grad_ptr);
+    ffi_ops::tl_cuda_free(loss_ptr);
+    ffi_ops::tl_cuda_free(pow_ptr);
+    ffi_ops::tl_cuda_free(s1);
+    ffi_ops::tl_cuda_free(s2);
+    ffi_ops::tl_cuda_free(x_ptr);
+}
