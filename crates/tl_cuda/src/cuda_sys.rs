@@ -2,7 +2,7 @@
 //!
 //! 最小限の CUDA Runtime API を定義。
 
-#![allow(non_camel_case_types, dead_code)]
+#![allow(non_camel_case_types, non_snake_case, dead_code)]
 
 use std::ffi::c_void;
 
