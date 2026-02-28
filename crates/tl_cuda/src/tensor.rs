@@ -246,21 +246,109 @@ impl CudaTensor {
         if count == 0 {
             return Vec::new();
         }
-        let mut result = vec![T::default(); count];
-        let byte_size = count * std::mem::size_of::<T>();
-        let err = unsafe {
-            cuda_sys::cudaMemcpy(
-                result.as_mut_ptr() as *mut c_void,
-                self.buffer.ptr() as *const c_void,
-                byte_size,
-                cudaMemcpyKind::cudaMemcpyDeviceToHost,
-            )
+
+        let t_size = std::mem::size_of::<T>();
+        let dtype_size = match self.dtype {
+            DType::F32 => 4,
+            DType::I64 => 8,
+            DType::I32 => 4,
+            _ => t_size,
         };
-        if err != CUDA_SUCCESS {
-            eprintln!("cudaMemcpy DeviceToHost failed in to_vec(): {}", err);
-            return vec![T::default(); count];
+
+        if t_size == dtype_size {
+            // 直接コピー（型サイズが一致）
+            let byte_size = count * t_size;
+            let mut result = vec![T::default(); count];
+            let err = unsafe {
+                cuda_sys::cudaMemcpy(
+                    result.as_mut_ptr() as *mut c_void,
+                    self.buffer.ptr() as *const c_void,
+                    byte_size,
+                    cudaMemcpyKind::cudaMemcpyDeviceToHost,
+                )
+            };
+            if err != CUDA_SUCCESS {
+                eprintln!("cudaMemcpy DeviceToHost failed in to_vec(): {} (byte_size={}, buffer_size={}, shape={:?}, dtype={:?})",
+                    err, byte_size, self.buffer.size(), self.shape, self.dtype);
+                return vec![T::default(); count];
+            }
+            result
+        } else if dtype_size == 4 && t_size == 8 {
+            // F32/I32 → i64: まず f32 で読んでから変換
+            let byte_size = count * 4;
+            let mut f32_buf = vec![0.0f32; count];
+            let err = unsafe {
+                cuda_sys::cudaMemcpy(
+                    f32_buf.as_mut_ptr() as *mut c_void,
+                    self.buffer.ptr() as *const c_void,
+                    byte_size,
+                    cudaMemcpyKind::cudaMemcpyDeviceToHost,
+                )
+            };
+            if err != CUDA_SUCCESS {
+                eprintln!("cudaMemcpy DeviceToHost failed in to_vec() (f32→i64): {} (byte_size={}, buffer_size={}, shape={:?})",
+                    err, byte_size, self.buffer.size(), self.shape);
+                return vec![T::default(); count];
+            }
+            // f32 → i64 変換
+            let i64_buf: Vec<i64> = f32_buf.iter().map(|&x| x as i64).collect();
+            let mut result = vec![T::default(); count];
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    i64_buf.as_ptr() as *const T,
+                    result.as_mut_ptr(),
+                    count,
+                );
+            }
+            result
+        } else if dtype_size == 8 && t_size == 4 {
+            // I64 → f32: まず i64 で読んでから変換
+            let byte_size = count * 8;
+            let mut i64_buf = vec![0i64; count];
+            let err = unsafe {
+                cuda_sys::cudaMemcpy(
+                    i64_buf.as_mut_ptr() as *mut c_void,
+                    self.buffer.ptr() as *const c_void,
+                    byte_size,
+                    cudaMemcpyKind::cudaMemcpyDeviceToHost,
+                )
+            };
+            if err != CUDA_SUCCESS {
+                eprintln!("cudaMemcpy DeviceToHost failed in to_vec() (i64→f32): {} (byte_size={}, buffer_size={}, shape={:?})",
+                    err, byte_size, self.buffer.size(), self.shape);
+                return vec![T::default(); count];
+            }
+            // i64 → f32 変換
+            let f32_buf: Vec<f32> = i64_buf.iter().map(|&x| x as f32).collect();
+            let mut result = vec![T::default(); count];
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    f32_buf.as_ptr() as *const T,
+                    result.as_mut_ptr(),
+                    count,
+                );
+            }
+            result
+        } else {
+            // フォールバック: バッファサイズ分だけ読む
+            let copy_size = self.buffer.size().min(count * t_size);
+            let mut result = vec![T::default(); count];
+            let err = unsafe {
+                cuda_sys::cudaMemcpy(
+                    result.as_mut_ptr() as *mut c_void,
+                    self.buffer.ptr() as *const c_void,
+                    copy_size,
+                    cudaMemcpyKind::cudaMemcpyDeviceToHost,
+                )
+            };
+            if err != CUDA_SUCCESS {
+                eprintln!(
+                    "cudaMemcpy DeviceToHost failed in to_vec() (fallback): {}",
+                    err
+                );
+            }
+            result
         }
-        result
     }
 
     /// データを GPU 上で完全にコピー（DeviceToDevice）
