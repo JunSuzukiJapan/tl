@@ -1,5 +1,5 @@
 /// build.rs for tl_cuda
-/// CUDA Toolkit のパスを検出し、リンク設定を行う。
+/// CUDA Toolkit のパスを検出し、リンク設定とカーネルコンパイルを行う。
 
 fn main() {
     // CUDA Toolkit のパスを検出
@@ -31,6 +31,24 @@ fn main() {
 
     let lib_path = format!("{}/lib64", cuda_path);
 
+    // CUDA カーネルのコンパイル (nvcc が必要)
+    let nvcc_check = std::process::Command::new("nvcc").arg("--version").output();
+    if let Ok(output) = nvcc_check {
+        if output.status.success() {
+            cc::Build::new()
+                .cuda(true)
+                .cudart("shared")
+                .flag("-gencode")
+                .flag("arch=compute_75,code=sm_75")
+                .file("src/cuda_kernels/autograd.cu")
+                .compile("tl_cuda_autograd_kernels");
+        } else {
+            println!("cargo:warning=nvcc found but version check failed. CUDA kernels will not be compiled.");
+        }
+    } else {
+        println!("cargo:warning=nvcc not found. CUDA kernels will not be compiled. GPU backward may use CPU fallback.");
+    }
+
     // リンクパスを設定
     println!("cargo:rustc-link-search=native={}", lib_path);
     println!("cargo:rustc-link-lib=dylib=cudart");
@@ -39,4 +57,5 @@ fn main() {
     // 再ビルドトリガー
     println!("cargo:rerun-if-env-changed=CUDA_PATH");
     println!("cargo:rerun-if-env-changed=CUDA_HOME");
+    println!("cargo:rerun-if-changed=src/cuda_kernels/autograd.cu");
 }

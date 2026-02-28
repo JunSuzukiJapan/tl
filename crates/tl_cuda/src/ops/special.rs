@@ -236,4 +236,73 @@ impl CudaTensor {
 
         Ok(CudaTensor::from_slice(&result, &out_shape, self.dtype()))
     }
+
+    /// one_hot: i64 インデックステンソル → f32 one-hot テンソル
+    /// indices [batch] → output [batch, num_classes]
+    pub fn one_hot_impl(&self, num_classes: usize) -> BackendResult<CudaTensor> {
+        let batch = self.elem_count();
+        let out_shape = vec![batch, num_classes];
+        let output = CudaTensor::zeros(&out_shape, DType::F32);
+
+        // CUDA カーネルで GPU 上で完結
+        extern "C" {
+            fn launch_one_hot_kernel(
+                indices: *const i64,
+                output: *mut f32,
+                batch: i32,
+                classes: i32,
+                stream: crate::cuda_sys::cudaStream_t,
+            );
+        }
+        unsafe {
+            launch_one_hot_kernel(
+                self.buffer.ptr() as *const i64,
+                output.buffer.ptr() as *mut f32,
+                batch as i32,
+                num_classes as i32,
+                crate::stream::get_stream().raw(),
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(output)
+    }
+
+    /// scatter_add: grad[seq, dim] + indices[seq] → output[vocab, dim]
+    /// output[indices[i]] += grad[i] (行単位)
+    pub fn scatter_add_impl(
+        grad: &CudaTensor,
+        indices: &CudaTensor,
+        vocab_size: usize,
+        embed_dim: usize,
+    ) -> BackendResult<CudaTensor> {
+        let seq_len = indices.elem_count();
+        let out_shape = vec![vocab_size, embed_dim];
+        let output = CudaTensor::zeros(&out_shape, DType::F32);
+
+        // CUDA カーネルで GPU 上で完結
+        extern "C" {
+            fn launch_scatter_add_kernel(
+                grad: *const f32,
+                indices: *const i64,
+                output: *mut f32,
+                seq_len: i32,
+                dim: i32,
+                vocab: i32,
+                stream: crate::cuda_sys::cudaStream_t,
+            );
+        }
+        unsafe {
+            launch_scatter_add_kernel(
+                grad.buffer.ptr() as *const f32,
+                indices.buffer.ptr() as *const i64,
+                output.buffer.ptr() as *mut f32,
+                seq_len as i32,
+                embed_dim as i32,
+                vocab_size as i32,
+                crate::stream::get_stream().raw(),
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(output)
+    }
 }

@@ -86,7 +86,7 @@ pub struct AutogradMeta {
 /// CUDA GPU テンソル
 pub struct CudaTensor {
     /// GPU バッファ
-    buffer: Arc<CudaBuffer>,
+    pub(crate) buffer: Arc<CudaBuffer>,
     /// 形状
     pub shape: Vec<usize>,
     /// データ型

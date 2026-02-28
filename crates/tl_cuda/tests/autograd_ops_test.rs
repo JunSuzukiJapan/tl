@@ -869,3 +869,60 @@ fn test_embedding_backward() {
     ffi_ops::tl_cuda_free(idx_ptr);
     ffi_ops::tl_cuda_free(w_ptr);
 }
+
+// =====================================================================
+// 16. one_hot_impl テスト (GPU カーネル)
+//     indices [batch] → one_hot [batch, classes]
+// =====================================================================
+#[test]
+fn test_one_hot_impl() {
+    let idx_data: Vec<i64> = vec![0, 2, 1];
+    let idx = CudaTensor::from_slice(&idx_data, &[3], DType::I64);
+
+    let one_hot = idx.one_hot_impl(4).unwrap(); // 4 classes
+    assert_eq!(one_hot.shape(), &[3, 4]);
+
+    let data = one_hot.to_vec::<f32>();
+    // row 0: [1, 0, 0, 0]
+    assert_approx_eq(data[0], 1.0, 1e-6);
+    assert_approx_eq(data[1], 0.0, 1e-6);
+    assert_approx_eq(data[2], 0.0, 1e-6);
+    assert_approx_eq(data[3], 0.0, 1e-6);
+    // row 1: [0, 0, 1, 0]
+    assert_approx_eq(data[4], 0.0, 1e-6);
+    assert_approx_eq(data[5], 0.0, 1e-6);
+    assert_approx_eq(data[6], 1.0, 1e-6);
+    assert_approx_eq(data[7], 0.0, 1e-6);
+    // row 2: [0, 1, 0, 0]
+    assert_approx_eq(data[8], 0.0, 1e-6);
+    assert_approx_eq(data[9], 1.0, 1e-6);
+    assert_approx_eq(data[10], 0.0, 1e-6);
+    assert_approx_eq(data[11], 0.0, 1e-6);
+}
+
+// =====================================================================
+// 17. scatter_add_impl テスト (GPU カーネル)
+//     grad[seq, dim], indices[seq] → grad_w[vocab, dim]
+// =====================================================================
+#[test]
+fn test_scatter_add_impl() {
+    let grad_data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let grad = CudaTensor::from_slice(&grad_data, &[3, 2], DType::F32);
+
+    let idx_data: Vec<i64> = vec![1, 0, 1];
+    let idx = CudaTensor::from_slice(&idx_data, &[3], DType::I64);
+
+    let result = CudaTensor::scatter_add_impl(&grad, &idx, 3, 2).unwrap();
+    assert_eq!(result.shape(), &[3, 2]);
+
+    let data = result.to_vec::<f32>();
+    // vocab 0: [3.0, 4.0]
+    assert_approx_eq(data[0], 3.0, 1e-6);
+    assert_approx_eq(data[1], 4.0, 1e-6);
+    // vocab 1: [1+5, 2+6] = [6.0, 8.0]
+    assert_approx_eq(data[2], 6.0, 1e-6);
+    assert_approx_eq(data[3], 8.0, 1e-6);
+    // vocab 2: [0.0, 0.0]
+    assert_approx_eq(data[4], 0.0, 1e-6);
+    assert_approx_eq(data[5], 0.0, 1e-6);
+}
