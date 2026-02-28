@@ -557,3 +557,116 @@ fn test_ffi_backward_softmax_sum() {
     ffi_ops::tl_cuda_free(softmax_ptr);
     ffi_ops::tl_cuda_free(x_ptr);
 }
+
+// =====================================================================
+// 12. backward chain 切断検出テスト
+//     output ベース backward (softmax/sigmoid/tanh/exp/sqrt) が
+//     inputs() で入力テンソルを返すことを検証。
+//     chain: x → op → pow(2) → sumall → backward → grad(x) ≠ 0
+// =====================================================================
+
+/// backward chain 切断検出ヘルパー
+/// op を挟んだ chain の backward で勾配が非ゼロであることを検証
+fn assert_grad_nonzero_through_op(name: &str, op: fn(*mut CudaTensor) -> *mut CudaTensor) {
+    let data: Vec<f32> = vec![0.5, 0.8, 0.3];
+    let shape: Vec<usize> = vec![3];
+    let x_ptr = ffi_ops::tl_cuda_new(data.as_ptr(), 1, shape.as_ptr());
+    assert!(!x_ptr.is_null(), "{}: failed to create tensor", name);
+    ffi_ops::tl_cuda_enable_grad(x_ptr);
+
+    // x → op → pow(2) → sumall → backward
+    let op_ptr = op(x_ptr);
+    assert!(!op_ptr.is_null(), "{}: op returned null", name);
+    let pow_ptr = ffi_ops::tl_cuda_pow_scalar(op_ptr, 2.0);
+    let sum_ptr = ffi_ops::tl_cuda_sum(pow_ptr);
+    ffi_ops::tl_cuda_backward(sum_ptr);
+
+    let grad_ptr = ffi_ops::tl_cuda_grad(x_ptr);
+    let g0 = ffi_ops::tl_cuda_get_f32(grad_ptr, 0);
+    let g1 = ffi_ops::tl_cuda_get_f32(grad_ptr, 1);
+    let g2 = ffi_ops::tl_cuda_get_f32(grad_ptr, 2);
+
+    let grad_norm = (g0 * g0 + g1 * g1 + g2 * g2).sqrt();
+    assert!(
+        grad_norm > 1e-6,
+        "{}: grad is all zero (chain broken)! grad=[{}, {}, {}]",
+        name,
+        g0,
+        g1,
+        g2
+    );
+
+    ffi_ops::tl_cuda_free(grad_ptr);
+    ffi_ops::tl_cuda_free(sum_ptr);
+    ffi_ops::tl_cuda_free(pow_ptr);
+    ffi_ops::tl_cuda_free(op_ptr);
+    ffi_ops::tl_cuda_free(x_ptr);
+}
+
+#[test]
+#[serial]
+fn test_backward_chain_through_exp() {
+    // d/dx[sum(exp(x)^2)] = 2*exp(x)*exp(x) = 2*exp(2x)
+    assert_grad_nonzero_through_op("exp", ffi_ops::tl_cuda_exp);
+}
+
+#[test]
+#[serial]
+fn test_backward_chain_through_sigmoid() {
+    // d/dx[sum(sigmoid(x)^2)] = 2*sigmoid(x)*sigmoid'(x)
+    assert_grad_nonzero_through_op("sigmoid", ffi_ops::tl_cuda_sigmoid);
+}
+
+#[test]
+#[serial]
+fn test_backward_chain_through_tanh() {
+    // d/dx[sum(tanh(x)^2)] = 2*tanh(x)*(1-tanh²(x))
+    assert_grad_nonzero_through_op("tanh", ffi_ops::tl_cuda_tanh);
+}
+
+#[test]
+#[serial]
+fn test_backward_chain_through_sqrt() {
+    // d/dx[sum(sqrt(x)^2)] = d/dx[sum(x)] = 1  (x > 0)
+    assert_grad_nonzero_through_op("sqrt", ffi_ops::tl_cuda_sqrt);
+}
+
+#[test]
+#[serial]
+fn test_backward_chain_through_softmax() {
+    // softmax → sum_dim → pow → sumall → backward
+    // softmax の backward chain が切断されていると grad=0 になる
+    let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let shape: Vec<usize> = vec![2, 3];
+    let x_ptr = ffi_ops::tl_cuda_new(data.as_ptr(), 2, shape.as_ptr());
+    assert!(!x_ptr.is_null());
+    ffi_ops::tl_cuda_enable_grad(x_ptr);
+
+    // softmax(dim=1) → sum(dim=0) → sub_scalar(1.0) → pow(2) → sumall
+    let softmax_ptr = ffi_ops::tl_cuda_softmax(x_ptr, 1);
+    let sum_dim_ptr = ffi_ops::tl_cuda_sum_dim(softmax_ptr, 0, false);
+    let sub_ptr = ffi_ops::tl_cuda_sub_scalar(sum_dim_ptr, 1.0);
+    let pow_ptr = ffi_ops::tl_cuda_pow_scalar(sub_ptr, 2.0);
+    let sum_ptr = ffi_ops::tl_cuda_sum(pow_ptr);
+
+    ffi_ops::tl_cuda_backward(sum_ptr);
+
+    let grad_ptr = ffi_ops::tl_cuda_grad(x_ptr);
+    let mut grad_norm_sq: f32 = 0.0;
+    for i in 0..6 {
+        let g = ffi_ops::tl_cuda_get_f32(grad_ptr, i);
+        grad_norm_sq += g * g;
+    }
+    assert!(
+        grad_norm_sq.sqrt() > 1e-6,
+        "softmax chain: grad is all zero (chain broken)!"
+    );
+
+    ffi_ops::tl_cuda_free(grad_ptr);
+    ffi_ops::tl_cuda_free(sum_ptr);
+    ffi_ops::tl_cuda_free(pow_ptr);
+    ffi_ops::tl_cuda_free(sub_ptr);
+    ffi_ops::tl_cuda_free(sum_dim_ptr);
+    ffi_ops::tl_cuda_free(softmax_ptr);
+    ffi_ops::tl_cuda_free(x_ptr);
+}
