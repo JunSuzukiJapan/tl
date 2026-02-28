@@ -384,8 +384,10 @@ macro_rules! ffi_unary_op {
                     }
                 };
                 if get(t).requires_grad() {
+                    let input_ref = tensor_ref_from_ptr(t);
                     let out_ref = Arc::new(UnsafeCell::new(result.shallow_clone()));
                     result.set_grad_fn(Box::new($backward {
+                        input: input_ref,
                         output: out_ref.clone(),
                     }));
                 }
@@ -647,8 +649,12 @@ pub fn tl_cuda_softmax(t: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
             }
         };
         if get(t).requires_grad() {
+            let input_ref = tensor_ref_from_ptr(t);
             let out_ref = Arc::new(UnsafeCell::new(result.shallow_clone()));
-            result.set_grad_fn(Box::new(SoftmaxBackward { output: out_ref }));
+            result.set_grad_fn(Box::new(SoftmaxBackward {
+                input: input_ref,
+                output: out_ref,
+            }));
         }
         make_tensor(result)
     }

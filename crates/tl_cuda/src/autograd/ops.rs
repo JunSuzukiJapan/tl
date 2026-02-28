@@ -284,21 +284,15 @@ impl GradFn for AbsBackward {
 
 /// d(exp(x))/dx = exp(x)
 pub struct ExpBackward {
+    pub input: TensorRef,
     pub output: TensorRef,
-}
-impl ExpBackward {
-    pub fn new(output: &CudaTensor) -> Self {
-        Self {
-            output: make_ref(output),
-        }
-    }
 }
 impl GradFn for ExpBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         Ok(vec![grad_output.mul_impl(get_ref(&self.output))?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
-        vec![self.output.clone()]
+        vec![self.input.clone()]
     }
 }
 
@@ -322,14 +316,8 @@ impl GradFn for LogBackward {
 
 /// d(sqrt(x))/dx = 1/(2*sqrt(x))
 pub struct SqrtBackward {
+    pub input: TensorRef,
     pub output: TensorRef,
-}
-impl SqrtBackward {
-    pub fn new(output: &CudaTensor) -> Self {
-        Self {
-            output: make_ref(output),
-        }
-    }
 }
 impl GradFn for SqrtBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
@@ -337,20 +325,14 @@ impl GradFn for SqrtBackward {
         Ok(vec![grad_output.div_impl(&two_sqrt)?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
-        vec![self.output.clone()]
+        vec![self.input.clone()]
     }
 }
 
 /// d(tanh(x))/dx = 1 - tanh²(x)
 pub struct TanhBackward {
+    pub input: TensorRef,
     pub output: TensorRef,
-}
-impl TanhBackward {
-    pub fn new(output: &CudaTensor) -> Self {
-        Self {
-            output: make_ref(output),
-        }
-    }
 }
 impl GradFn for TanhBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
@@ -361,20 +343,14 @@ impl GradFn for TanhBackward {
         Ok(vec![grad_output.mul_impl(&factor)?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
-        vec![self.output.clone()]
+        vec![self.input.clone()]
     }
 }
 
 /// d(sigmoid(x))/dx = sigmoid(x) * (1 - sigmoid(x))
 pub struct SigmoidBackward {
+    pub input: TensorRef,
     pub output: TensorRef,
-}
-impl SigmoidBackward {
-    pub fn new(output: &CudaTensor) -> Self {
-        Self {
-            output: make_ref(output),
-        }
-    }
 }
 impl GradFn for SigmoidBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
@@ -384,7 +360,7 @@ impl GradFn for SigmoidBackward {
         Ok(vec![grad_output.mul_impl(&factor)?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
-        vec![self.output.clone()]
+        vec![self.input.clone()]
     }
 }
 
@@ -605,14 +581,8 @@ impl GradFn for TransposeBackward {
 // ========== 特殊 ==========
 
 pub struct SoftmaxBackward {
+    pub input: TensorRef,
     pub output: TensorRef,
-}
-impl SoftmaxBackward {
-    pub fn new(output: &CudaTensor) -> Self {
-        Self {
-            output: make_ref(output),
-        }
-    }
 }
 impl GradFn for SoftmaxBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
@@ -627,7 +597,7 @@ impl GradFn for SoftmaxBackward {
         Ok(vec![s.mul_impl(&diff)?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
-        vec![self.output.clone()]
+        vec![self.input.clone()]
     }
 }
 
