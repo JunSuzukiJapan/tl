@@ -643,10 +643,29 @@ pub fn tl_cuda_cross_entropy(
 #[no_mangle]
 pub fn tl_cuda_rms_norm(
     input: *mut OpaqueTensor,
-    _weight: *mut OpaqueTensor,
+    weight: *mut OpaqueTensor,
     eps: f32,
 ) -> *mut OpaqueTensor {
-    unsafe { make_result(get(input).rms_norm_impl(eps)) }
+    unsafe {
+        let normalized = match get(input).rms_norm_impl(eps) {
+            Ok(n) => n,
+            Err(e) => {
+                eprintln!("rms_norm_impl error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        if weight.is_null() {
+            return make_tensor(normalized);
+        }
+        // weight (scale) を element-wise 乗算
+        match normalized.mul_impl(get(weight)) {
+            Ok(res) => make_tensor(res),
+            Err(e) => {
+                eprintln!("rms_norm weight mul error: {}", e);
+                std::ptr::null_mut()
+            }
+        }
+    }
 }
 
 // ========== 比較演算 ==========
