@@ -49,6 +49,7 @@ unsafe_send_sync!(
     SubScalarBackward,
     MulScalarBackward,
     DivScalarBackward,
+    PowScalarBackward,
     ScaleBackward,
     Conv2dBackward,
     BatchNormBackward,
@@ -819,6 +820,32 @@ impl ScaleBackward {
 impl GradFn for ScaleBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         Ok(vec![grad_output.scale_impl(self.scalar)?])
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.input.clone()]
+    }
+}
+
+/// d(x^n)/dx = n * x^(n-1)
+pub struct PowScalarBackward {
+    pub input: TensorRef,
+    pub scalar: f32,
+}
+impl PowScalarBackward {
+    pub fn new(t: &CudaTensor, s: f32) -> Self {
+        Self {
+            input: make_ref(t),
+            scalar: s,
+        }
+    }
+}
+impl GradFn for PowScalarBackward {
+    fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
+        let x = get_ref(&self.input);
+        let n = self.scalar;
+        let x_pow = x.pow_scalar_impl(n - 1.0)?;
+        let coeff = x_pow.scale_impl(n)?;
+        Ok(vec![grad_output.mul_impl(&coeff)?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.input.clone()]

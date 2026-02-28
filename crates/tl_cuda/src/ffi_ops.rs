@@ -2,7 +2,8 @@
 //!
 //! tl_metal/src/ffi_ops.rs と同等の実装（V5.0 Arc ベースメモリ管理）。
 
-use crate::tensor::CudaTensor;
+use crate::autograd::ops::*;
+use crate::tensor::{CudaTensor, TensorRef};
 use crate::DType;
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -77,6 +78,40 @@ unsafe fn get<'a>(t: *mut OpaqueTensor) -> &'a CudaTensor {
 unsafe fn get_mut<'a>(t: *mut OpaqueTensor) -> &'a mut CudaTensor {
     let cell = &*(t as *const std::cell::UnsafeCell<CudaTensor>);
     &mut *cell.get()
+}
+
+/// raw ポインタから TensorRef (Arc<UnsafeCell<CudaTensor>>) を取得
+/// 元の Arc の参照カウントを増やして共有する
+unsafe fn tensor_ref_from_ptr(t: *mut OpaqueTensor) -> TensorRef {
+    let ptr = t as *const UnsafeCell<CudaTensor>;
+    Arc::increment_strong_count(ptr);
+    Arc::from_raw(ptr)
+}
+
+/// autograd: requires_grad チェック付き set_grad_fn ヘルパー (単項)
+unsafe fn set_grad_unary(
+    result: &mut CudaTensor,
+    input: *mut OpaqueTensor,
+    f: impl FnOnce(TensorRef) -> Box<dyn crate::autograd::GradFn>,
+) {
+    if get(input).requires_grad() {
+        let input_ref = tensor_ref_from_ptr(input);
+        result.set_grad_fn(f(input_ref));
+    }
+}
+
+/// autograd: requires_grad チェック付き set_grad_fn ヘルパー (二項)
+unsafe fn set_grad_binary(
+    result: &mut CudaTensor,
+    a: *mut OpaqueTensor,
+    b: *mut OpaqueTensor,
+    f: impl FnOnce(TensorRef, TensorRef) -> Box<dyn crate::autograd::GradFn>,
+) {
+    if get(a).requires_grad() || get(b).requires_grad() {
+        let a_ref = tensor_ref_from_ptr(a);
+        let b_ref = tensor_ref_from_ptr(b);
+        result.set_grad_fn(f(a_ref, b_ref));
+    }
 }
 
 // ========== テンソル作成 ==========
@@ -298,73 +333,91 @@ pub fn tl_cuda_set_f32_md(
     }
 }
 
-// ========== 基本演算 ==========
-#[no_mangle]
-pub fn tl_cuda_add(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(a).add_impl(get(b))) }
+// ========== 基本演算 (autograd 対応) ==========
+macro_rules! ffi_binary_op {
+    ($name:ident, $impl_fn:ident, $backward:ident) => {
+        #[no_mangle]
+        pub fn $name(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
+            unsafe {
+                let mut result = match get(a).$impl_fn(get(b)) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("CUDA FFI Error: {}", e);
+                        return std::ptr::null_mut();
+                    }
+                };
+                set_grad_binary(&mut result, a, b, |ar, br| {
+                    Box::new($backward { a: ar, b: br })
+                });
+                make_tensor(result)
+            }
+        }
+    };
 }
-#[no_mangle]
-pub fn tl_cuda_sub(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(a).sub_impl(get(b))) }
+
+macro_rules! ffi_unary_op {
+    ($name:ident, $impl_fn:ident, $backward:ident, input) => {
+        #[no_mangle]
+        pub fn $name(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+            unsafe {
+                let mut result = match get(t).$impl_fn() {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("CUDA FFI Error: {}", e);
+                        return std::ptr::null_mut();
+                    }
+                };
+                set_grad_unary(&mut result, t, |tr| Box::new($backward { input: tr }));
+                make_tensor(result)
+            }
+        }
+    };
+    ($name:ident, $impl_fn:ident, $backward:ident, output) => {
+        #[no_mangle]
+        pub fn $name(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
+            unsafe {
+                let mut result = match get(t).$impl_fn() {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("CUDA FFI Error: {}", e);
+                        return std::ptr::null_mut();
+                    }
+                };
+                if get(t).requires_grad() {
+                    let out_ref = Arc::new(UnsafeCell::new(result.shallow_clone()));
+                    result.set_grad_fn(Box::new($backward {
+                        output: out_ref.clone(),
+                    }));
+                }
+                make_tensor(result)
+            }
+        }
+    };
 }
-#[no_mangle]
-pub fn tl_cuda_mul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(a).mul_impl(get(b))) }
-}
-#[no_mangle]
-pub fn tl_cuda_div(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(a).div_impl(get(b))) }
-}
+
+ffi_binary_op!(tl_cuda_add, add_impl, AddBackward);
+ffi_binary_op!(tl_cuda_sub, sub_impl, SubBackward);
+ffi_binary_op!(tl_cuda_mul, mul_impl, MulBackward);
+ffi_binary_op!(tl_cuda_div, div_impl, DivBackward);
+ffi_binary_op!(tl_cuda_pow, pow_impl, PowBackward);
+ffi_binary_op!(tl_cuda_matmul, matmul_impl, MatmulBackward);
+
 #[no_mangle]
 pub fn tl_cuda_rem(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe { make_result(get(a).rem_impl(get(b))) }
 }
-#[no_mangle]
-pub fn tl_cuda_neg(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).neg_impl()) }
-}
-#[no_mangle]
-pub fn tl_cuda_abs(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).abs_impl()) }
-}
-#[no_mangle]
-pub fn tl_cuda_matmul(a: *mut OpaqueTensor, b: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(a).matmul_impl(get(b))) }
-}
-#[no_mangle]
-pub fn tl_cuda_pow(t: *mut OpaqueTensor, exp: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).pow_impl(get(exp))) }
-}
 
-// ========== 活性化関数 ==========
-#[no_mangle]
-pub fn tl_cuda_relu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).relu_impl()) }
-}
-#[no_mangle]
-pub fn tl_cuda_sigmoid(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).sigmoid_impl()) }
-}
-#[no_mangle]
-pub fn tl_cuda_tanh(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).tanh_impl()) }
-}
-#[no_mangle]
-pub fn tl_cuda_gelu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).gelu_impl()) }
-}
-#[no_mangle]
-pub fn tl_cuda_silu(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).silu_impl()) }
-}
-#[no_mangle]
-pub fn tl_cuda_exp(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).exp_impl()) }
-}
-#[no_mangle]
-pub fn tl_cuda_log(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).log_impl()) }
-}
+ffi_unary_op!(tl_cuda_neg, neg_impl, NegBackward, input);
+ffi_unary_op!(tl_cuda_abs, abs_impl, AbsBackward, input);
+
+// ========== 活性化関数 (autograd 対応) ==========
+ffi_unary_op!(tl_cuda_relu, relu_impl, ReluBackward, input);
+ffi_unary_op!(tl_cuda_sigmoid, sigmoid_impl, SigmoidBackward, output);
+ffi_unary_op!(tl_cuda_tanh, tanh_impl, TanhBackward, output);
+ffi_unary_op!(tl_cuda_gelu, gelu_impl, GeluBackward, input);
+ffi_unary_op!(tl_cuda_silu, silu_impl, SiluBackward, input);
+ffi_unary_op!(tl_cuda_exp, exp_impl, ExpBackward, output);
+ffi_unary_op!(tl_cuda_log, log_impl, LogBackward, input);
 #[no_mangle]
 pub fn tl_cuda_sin(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe { make_result(get(t).sin_impl()) }
@@ -377,49 +430,153 @@ pub fn tl_cuda_cos(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 pub fn tl_cuda_tan(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     unsafe { make_result(get(t).tan_impl()) }
 }
-#[no_mangle]
-pub fn tl_cuda_sqrt(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).sqrt_impl()) }
-}
+ffi_unary_op!(tl_cuda_sqrt, sqrt_impl, SqrtBackward, output);
 
-// ========== スカラー演算 ==========
+// ========== スカラー演算 (autograd 対応) ==========
 #[no_mangle]
 pub fn tl_cuda_add_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).add_scalar_impl(s as f32)) }
+    unsafe {
+        let mut result = match get(t).add_scalar_impl(s as f32) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("CUDA FFI Error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        set_grad_unary(&mut result, t, |tr| {
+            Box::new(AddScalarBackward { input: tr })
+        });
+        make_tensor(result)
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_mul_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).mul_scalar_impl(s as f32)) }
+    unsafe {
+        let s = s as f32;
+        let mut result = match get(t).mul_scalar_impl(s) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("CUDA FFI Error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        set_grad_unary(&mut result, t, |tr| {
+            Box::new(MulScalarBackward {
+                input: tr,
+                scalar: s,
+            })
+        });
+        make_tensor(result)
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_sub_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).add_scalar_impl(-(s as f32))) }
+    unsafe {
+        let mut result = match get(t).add_scalar_impl(-(s as f32)) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("CUDA FFI Error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        set_grad_unary(&mut result, t, |tr| {
+            Box::new(SubScalarBackward { input: tr })
+        });
+        make_tensor(result)
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_div_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).div_scalar_impl(s as f32)) }
+    unsafe {
+        let s = s as f32;
+        let mut result = match get(t).div_scalar_impl(s) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("CUDA FFI Error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        set_grad_unary(&mut result, t, |tr| {
+            Box::new(DivScalarBackward {
+                input: tr,
+                scalar: s,
+            })
+        });
+        make_tensor(result)
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_pow_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).pow_scalar_impl(s as f32)) }
+    unsafe {
+        let s = s as f32;
+        let mut result = match get(t).pow_scalar_impl(s) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("CUDA FFI Error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        set_grad_unary(&mut result, t, |tr| {
+            Box::new(PowScalarBackward {
+                input: tr,
+                scalar: s,
+            })
+        });
+        make_tensor(result)
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_scale(t: *mut OpaqueTensor, s: f32) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).scale_impl(s)) }
+    unsafe {
+        let mut result = match get(t).scale_impl(s) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("CUDA FFI Error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        set_grad_unary(&mut result, t, |tr| {
+            Box::new(ScaleBackward {
+                input: tr,
+                scalar: s,
+            })
+        });
+        make_tensor(result)
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_clamp(t: *mut OpaqueTensor, min: f64, max: f64) -> *mut OpaqueTensor {
     unsafe { make_result(get(t).clamp_impl(min as f32, max as f32)) }
 }
 
-// ========== リダクション ==========
+// ========== リダクション (autograd 対応) ==========
 #[no_mangle]
 pub fn tl_cuda_sum(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).sum_all_tensor_impl()) }
+    unsafe {
+        let mut result = match get(t).sum_all_tensor_impl() {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("CUDA FFI Error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        set_grad_unary(&mut result, t, |tr| Box::new(SumallBackward { input: tr }));
+        make_tensor(result)
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_mean(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).mean_all_tensor_impl()) }
+    unsafe {
+        let mut result = match get(t).mean_all_tensor_impl() {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("CUDA FFI Error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        set_grad_unary(&mut result, t, |tr| Box::new(MeanAllBackward { input: tr }));
+        make_tensor(result)
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_max(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
@@ -431,11 +588,37 @@ pub fn tl_cuda_min(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 }
 #[no_mangle]
 pub fn tl_cuda_sum_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).sum_impl(dim as i32)) }
+    unsafe {
+        let mut result = match get(t).sum_impl(dim as i32) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("CUDA FFI Error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        set_grad_unary(&mut result, t, |tr| Box::new(SumDimBackward { input: tr }));
+        make_tensor(result)
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_mean_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).mean_impl(dim as i32)) }
+    unsafe {
+        let dim_usize = dim;
+        let mut result = match get(t).mean_impl(dim as i32) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("CUDA FFI Error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        set_grad_unary(&mut result, t, |tr| {
+            Box::new(MeanDimBackward {
+                input: tr,
+                dim: dim_usize,
+            })
+        });
+        make_tensor(result)
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_max_dim(t: *mut OpaqueTensor, dim: usize, _keep_dim: bool) -> *mut OpaqueTensor {
@@ -455,7 +638,20 @@ pub fn tl_cuda_argmin(t: *mut OpaqueTensor, dim: i64, _keepdim: bool) -> *mut Op
 }
 #[no_mangle]
 pub fn tl_cuda_softmax(t: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).softmax_impl(dim as i32)) }
+    unsafe {
+        let mut result = match get(t).softmax_impl(dim as i32) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("CUDA FFI Error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        if get(t).requires_grad() {
+            let out_ref = Arc::new(UnsafeCell::new(result.shallow_clone()));
+            result.set_grad_fn(Box::new(SoftmaxBackward { output: out_ref }));
+        }
+        make_tensor(result)
+    }
 }
 
 // ========== 型変換 ==========
@@ -486,7 +682,17 @@ pub fn tl_cuda_reshape(
     num_dims: usize,
 ) -> *mut OpaqueTensor {
     let shape = parse_dims(dims, num_dims);
-    unsafe { make_result(get(t).reshape_impl(&shape)) }
+    unsafe {
+        let mut result = match get(t).reshape_impl(&shape) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("CUDA FFI Error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        set_grad_unary(&mut result, t, |tr| Box::new(ReshapeBackward { input: tr }));
+        make_tensor(result)
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_reshape_new(
@@ -506,7 +712,25 @@ pub fn tl_cuda_reshape_dims(
 }
 #[no_mangle]
 pub fn tl_cuda_transpose(t: *mut OpaqueTensor, dim0: usize, dim1: usize) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).transpose_impl(dim0, dim1)) }
+    unsafe {
+        let d0 = dim0;
+        let d1 = dim1;
+        let mut result = match get(t).transpose_impl(dim0, dim1) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("CUDA FFI Error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        set_grad_unary(&mut result, t, |tr| {
+            Box::new(TransposeBackward {
+                input: tr,
+                dim0: d0,
+                dim1: d1,
+            })
+        });
+        make_tensor(result)
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_contiguous(t: *mut OpaqueTensor) -> *mut OpaqueTensor {

@@ -438,3 +438,122 @@ fn test_autograd_scale() {
     let c = a.mul_scalar_impl(0.5).unwrap();
     assert_tensor_approx_eq(&c, &[0.5, 1.0, 1.5], 1e-5);
 }
+
+// =====================================================================
+// 11. FFI レベル backward E2E テスト
+//     ffi_ops 経由で set_grad_fn → backward → grad の完全チェーン検証
+// =====================================================================
+
+use tl_cuda::ffi_ops;
+
+/// FFI 経由の backward テスト: f(x) = sum(x^2)
+/// grad = 2x
+#[test]
+#[serial]
+fn test_ffi_backward_pow_scalar_sumall() {
+    let data: Vec<f32> = vec![2.0, 3.0];
+    let shape: Vec<usize> = vec![2];
+    let x_ptr = ffi_ops::tl_cuda_new(data.as_ptr(), 1, shape.as_ptr());
+    assert!(!x_ptr.is_null());
+    ffi_ops::tl_cuda_enable_grad(x_ptr);
+
+    // pow(x, 2)
+    let pow_ptr = ffi_ops::tl_cuda_pow_scalar(x_ptr, 2.0);
+    assert!(!pow_ptr.is_null());
+    // sum
+    let sum_ptr = ffi_ops::tl_cuda_sum(pow_ptr);
+    assert!(!sum_ptr.is_null());
+
+    // backward
+    ffi_ops::tl_cuda_backward(sum_ptr);
+
+    // grad
+    let grad_ptr = ffi_ops::tl_cuda_grad(x_ptr);
+    assert!(!grad_ptr.is_null());
+    let g0 = ffi_ops::tl_cuda_get_f32(grad_ptr, 0);
+    let g1 = ffi_ops::tl_cuda_get_f32(grad_ptr, 1);
+
+    // grad = 2x → [4.0, 6.0]
+    assert_approx_eq(g0, 4.0, 0.1);
+    assert_approx_eq(g1, 6.0, 0.1);
+
+    // cleanup
+    ffi_ops::tl_cuda_free(grad_ptr);
+    ffi_ops::tl_cuda_free(sum_ptr);
+    ffi_ops::tl_cuda_free(pow_ptr);
+    ffi_ops::tl_cuda_free(x_ptr);
+}
+
+/// FFI 経由の backward テスト: f(x) = sum((x - 1) * 3)
+/// grad = 3
+#[test]
+#[serial]
+fn test_ffi_backward_scalar_ops_chain() {
+    let shape: Vec<usize> = vec![3];
+    let x_ptr = ffi_ops::tl_cuda_ones(1, shape.as_ptr(), true);
+    assert!(!x_ptr.is_null());
+
+    // (x - 1.0) → [0, 0, 0]
+    let sub_ptr = ffi_ops::tl_cuda_sub_scalar(x_ptr, 1.0);
+    // * 3.0 → [0, 0, 0]
+    let mul_ptr = ffi_ops::tl_cuda_mul_scalar(sub_ptr, 3.0);
+    // sumall
+    let sum_ptr = ffi_ops::tl_cuda_sum(mul_ptr);
+
+    ffi_ops::tl_cuda_backward(sum_ptr);
+
+    let grad_ptr = ffi_ops::tl_cuda_grad(x_ptr);
+    let g0 = ffi_ops::tl_cuda_get_f32(grad_ptr, 0);
+    let g1 = ffi_ops::tl_cuda_get_f32(grad_ptr, 1);
+    let g2 = ffi_ops::tl_cuda_get_f32(grad_ptr, 2);
+
+    // d/dx[sum((x-1)*3)] = 3 for all elements
+    assert_approx_eq(g0, 3.0, 0.1);
+    assert_approx_eq(g1, 3.0, 0.1);
+    assert_approx_eq(g2, 3.0, 0.1);
+
+    ffi_ops::tl_cuda_free(grad_ptr);
+    ffi_ops::tl_cuda_free(sum_ptr);
+    ffi_ops::tl_cuda_free(mul_ptr);
+    ffi_ops::tl_cuda_free(sub_ptr);
+    ffi_ops::tl_cuda_free(x_ptr);
+}
+
+/// FFI 経由の backward テスト: f(x) = sum(softmax(x)) = 1
+/// softmax は定数 → grad は 0
+#[test]
+#[serial]
+fn test_ffi_backward_softmax_sum() {
+    let data: Vec<f32> = vec![1.0, 2.0, 3.0];
+    let shape: Vec<usize> = vec![3];
+    let x_ptr = ffi_ops::tl_cuda_new(data.as_ptr(), 1, shape.as_ptr());
+    unsafe {
+        use std::cell::UnsafeCell;
+        let cell = &*(x_ptr as *const UnsafeCell<CudaTensor>);
+        (&mut *cell.get()).enable_grad();
+    }
+
+    let softmax_ptr = ffi_ops::tl_cuda_softmax(x_ptr, 0);
+    let sum_ptr = ffi_ops::tl_cuda_sum(softmax_ptr);
+
+    // sum(softmax(x)) = 1.0
+    let sum_val = ffi_ops::tl_cuda_item(sum_ptr);
+    assert_approx_eq(sum_val, 1.0, 1e-4);
+
+    ffi_ops::tl_cuda_backward(sum_ptr);
+
+    let grad_ptr = ffi_ops::tl_cuda_grad(x_ptr);
+    let g0 = ffi_ops::tl_cuda_get_f32(grad_ptr, 0);
+    let g1 = ffi_ops::tl_cuda_get_f32(grad_ptr, 1);
+    let g2 = ffi_ops::tl_cuda_get_f32(grad_ptr, 2);
+
+    // d/dx[sum(softmax(x))] = 0 (softmax 出力の合計は常に 1)
+    assert_approx_eq(g0, 0.0, 0.05);
+    assert_approx_eq(g1, 0.0, 0.05);
+    assert_approx_eq(g2, 0.0, 0.05);
+
+    ffi_ops::tl_cuda_free(grad_ptr);
+    ffi_ops::tl_cuda_free(sum_ptr);
+    ffi_ops::tl_cuda_free(softmax_ptr);
+    ffi_ops::tl_cuda_free(x_ptr);
+}
