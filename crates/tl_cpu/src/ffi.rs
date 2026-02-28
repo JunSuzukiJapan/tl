@@ -2103,13 +2103,93 @@ pub extern "C" fn tl_cpu_tensor_print_3(t: *mut OpaqueTensor) {
     tl_cpu_tensor_print(t);
 }
 
-pub extern "C" fn tl_cpu_tensor_save(_t: *mut OpaqueTensor, _path: *const i8) {
-    // Placeholder: file I/O not yet implemented for CPU backend
+pub extern "C" fn tl_cpu_tensor_save(t: *mut OpaqueTensor, path: *const i8) {
+    if t.is_null() || path.is_null() {
+        return;
+    }
+    let tensor = unsafe { &*(t as *const CpuTensor) };
+    let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+
+    // バイナリ形式: [magic: 4bytes "TLTF"] [rank: u64] [shape: rank * u64] [dtype: u64] [data: f32 * numel]
+    let mut buf: Vec<u8> = Vec::new();
+    buf.extend_from_slice(b"TLTF"); // magic
+    let rank = tensor.shape.len() as u64;
+    buf.extend_from_slice(&rank.to_le_bytes());
+    for &dim in &tensor.shape {
+        buf.extend_from_slice(&(dim as u64).to_le_bytes());
+    }
+    let dtype_id: u64 = match tensor.dtype {
+        DType::F32 => 0,
+        DType::I64 => 1,
+        _ => 0,
+    };
+    buf.extend_from_slice(&dtype_id.to_le_bytes());
+    for &val in &tensor.data_f32 {
+        buf.extend_from_slice(&val.to_le_bytes());
+    }
+
+    if let Err(e) = std::fs::write(&*path_str, &buf) {
+        eprintln!("Error saving tensor to {}: {}", path_str, e);
+    }
 }
 
-pub extern "C" fn tl_cpu_tensor_load(_path: *const i8) -> *mut OpaqueTensor {
-    // Placeholder
-    std::ptr::null_mut()
+pub extern "C" fn tl_cpu_tensor_load(path: *const i8) -> *mut OpaqueTensor {
+    if path.is_null() {
+        return std::ptr::null_mut();
+    }
+    let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+
+    let buf = match std::fs::read(&*path_str) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("Error loading tensor from {}: {}", path_str, e);
+            return std::ptr::null_mut();
+        }
+    };
+
+    // magic check
+    if buf.len() < 12 || &buf[0..4] != b"TLTF" {
+        eprintln!("Invalid tensor file format: {}", path_str);
+        return std::ptr::null_mut();
+    }
+
+    let mut offset = 4;
+    let rank = u64::from_le_bytes(buf[offset..offset + 8].try_into().unwrap()) as usize;
+    offset += 8;
+
+    let mut shape = Vec::with_capacity(rank);
+    for _ in 0..rank {
+        let dim = u64::from_le_bytes(buf[offset..offset + 8].try_into().unwrap()) as usize;
+        shape.push(dim);
+        offset += 8;
+    }
+
+    let dtype_id = u64::from_le_bytes(buf[offset..offset + 8].try_into().unwrap());
+    offset += 8;
+    let dtype = if dtype_id == 1 {
+        DType::I64
+    } else {
+        DType::F32
+    };
+
+    let numel: usize = shape.iter().product();
+    let mut data = Vec::with_capacity(numel);
+    for _ in 0..numel {
+        if offset + 4 > buf.len() {
+            break;
+        }
+        let val = f32::from_le_bytes(buf[offset..offset + 4].try_into().unwrap());
+        data.push(val);
+        offset += 4;
+    }
+
+    make_tensor(CpuTensor {
+        data_f32: data,
+        data_i64: None,
+        shape,
+        dtype,
+        autograd: None,
+    })
 }
 
 pub extern "C" fn tl_cpu_tensor_rope_new_cos(
