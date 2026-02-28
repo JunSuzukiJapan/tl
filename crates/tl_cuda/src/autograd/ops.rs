@@ -67,33 +67,62 @@ fn get_ref(r: &TensorRef) -> &CudaTensor {
 
 /// broadcast backward: grad shape を input shape に reduce する
 /// grad の shape が input の shape より大きい場合、broadcast 次元に沿って sum する
+/// 中間テンソルの GPU 操作を避けるため、to_vec ベースの CPU 計算で行う
 fn reduce_grad_to_shape(grad: &CudaTensor, target_shape: &[usize]) -> BackendResult<CudaTensor> {
     let grad_shape = grad.shape();
     if grad_shape == target_shape {
         return Ok(grad.shallow_clone());
     }
 
-    // ランクの差分を処理: grad のランクが target より大きい場合、先頭から sum
-    let mut result = grad.shallow_clone();
-    let mut cur_shape = grad_shape.to_vec();
+    let grad_data = grad.to_vec::<f32>();
+    let target_count: usize = target_shape.iter().product();
+    let mut result = vec![0.0f32; target_count];
 
-    // ランク差があれば先頭次元を sum して消す
-    while cur_shape.len() > target_shape.len() {
-        result = result.sum_impl(0)?;
-        cur_shape.remove(0);
+    let grad_ndim = grad_shape.len();
+    let target_ndim = target_shape.len();
+
+    // grad の strides
+    let mut grad_strides = vec![1usize; grad_ndim];
+    for d in (0..grad_ndim.saturating_sub(1)).rev() {
+        grad_strides[d] = grad_strides[d + 1] * grad_shape[d + 1];
+    }
+    // target の strides
+    let mut target_strides = vec![1usize; target_ndim];
+    for d in (0..target_ndim.saturating_sub(1)).rev() {
+        target_strides[d] = target_strides[d + 1] * target_shape[d + 1];
     }
 
-    // 同ランクで broadcast された次元 (size==1) を sum
-    for d in 0..target_shape.len() {
-        if target_shape[d] == 1 && cur_shape[d] > 1 {
-            result = result.sum_impl(d as i32)?;
-            // sum_impl は次元を消すので unsqueeze で戻す
-            result = result.unsqueeze_impl(d)?;
-            cur_shape[d] = 1;
+    // grad の各要素を target のどの要素に加算するか計算
+    let grad_count: usize = grad_shape.iter().product();
+    let rank_diff = grad_ndim.saturating_sub(target_ndim);
+
+    for i in 0..grad_count {
+        let mut rem = i;
+        let mut target_idx = 0;
+
+        for d in 0..grad_ndim {
+            let coord = rem / grad_strides[d];
+            rem %= grad_strides[d];
+
+            // target に対応する dim
+            let td = d as isize - rank_diff as isize;
+            if td >= 0 {
+                let td = td as usize;
+                if td < target_ndim {
+                    // broadcast dim (size==1) → coord=0 に accumulate
+                    let target_coord = if target_shape[td] == 1 { 0 } else { coord };
+                    target_idx += target_coord * target_strides[td];
+                }
+            }
+            // td < 0 → ランク差の分の先頭次元 → 全て accumulate
+        }
+
+        if target_idx < target_count {
+            result[target_idx] += grad_data[i];
         }
     }
 
-    Ok(result)
+    Ok(CudaTensor::from_slice(&result, target_shape, DType::F32))
 }
 
 // ========== 基本二項演算 ==========
