@@ -475,10 +475,13 @@ impl CudaTensor {
         let ones = CudaTensor::ones(self.shape(), self.dtype());
         let self_ptr = self as *mut CudaTensor;
 
-        let mut worklist: Vec<(*mut CudaTensor, CudaTensor)> = vec![(self_ptr, ones)];
+        // worklist: (ポインタ, 勾配, Arc参照保持)
+        // Arc を保持しないとポインタが dangling になる
+        let mut worklist: Vec<(*mut CudaTensor, CudaTensor, Option<TensorRef>)> =
+            vec![(self_ptr, ones, None)];
         let mut visited: Vec<*mut CudaTensor> = Vec::new();
 
-        while let Some((tensor_ptr, grad_output)) = worklist.pop() {
+        while let Some((tensor_ptr, grad_output, _arc_ref)) = worklist.pop() {
             let tensor = unsafe { &mut *tensor_ptr };
             visited.push(tensor_ptr);
 
@@ -501,7 +504,8 @@ impl CudaTensor {
                     let input_ptr = input_ref.get() as *mut CudaTensor;
                     let input = unsafe { &*input_ptr };
                     if input.requires_grad() {
-                        worklist.push((input_ptr, grad));
+                        // input_ref (Arc) を worklist に保持してポインタを生かす
+                        worklist.push((input_ptr, grad, Some(input_ref)));
                     }
                 }
             }
