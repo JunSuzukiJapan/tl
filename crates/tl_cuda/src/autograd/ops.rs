@@ -643,25 +643,31 @@ impl GradFn for CrossEntropyBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         let logits = get_ref(&self.logits);
         let targets = get_ref(&self.targets);
-        // softmax(logits) - one_hot(targets)
+        let shape = logits.shape();
+        let batch = shape[0];
+        let classes = shape[1];
+
+        // softmax(logits) on GPU
         let probs = logits.softmax_impl(-1)?;
-        let mut grad_data = probs.to_vec::<f32>();
-        let target_data = targets.to_vec::<i64>();
-        let batch = target_data.len();
-        let classes = grad_data.len() / batch;
+
+        // one_hot テンソルを構築 (targets のインデックスだけ CPU で読む)
+        let target_indices = targets.to_vec::<i64>();
+        let mut one_hot_data = vec![0.0f32; batch * classes];
         for i in 0..batch {
-            let t = target_data[i] as usize;
+            let t = target_indices[i] as usize;
             if t < classes {
-                grad_data[i * classes + t] -= 1.0;
+                one_hot_data[i * classes + t] = 1.0;
             }
         }
-        let scale = grad_output.to_vec::<f32>()[0] / batch as f32;
-        let grad: Vec<f32> = grad_data.iter().map(|&x| x * scale).collect();
-        Ok(vec![CudaTensor::from_slice(
-            &grad,
-            logits.shape(),
-            DType::F32,
-        )])
+        let one_hot = CudaTensor::from_slice(&one_hot_data, shape, DType::F32);
+
+        // grad = (probs - one_hot) * (grad_output / batch) — 全て GPU 演算
+        let diff = probs.sub_impl(&one_hot)?;
+        let scale = grad_output.mul_scalar_impl(1.0 / batch as f32)?;
+        // scale は scalar [1]、diff は [batch, classes] → broadcast mul
+        let ones = CudaTensor::ones(shape, DType::F32);
+        let scale_broadcast = ones.mul_impl(&scale)?;
+        Ok(vec![diff.mul_impl(&scale_broadcast)?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.logits.clone()]
@@ -684,10 +690,16 @@ impl GradFn for EmbeddingBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         let w = get_ref(&self.weight);
         let idx = get_ref(&self.indices);
-        let mut grad_w = vec![0.0f32; w.elem_count()];
-        let grad_data = grad_output.to_vec::<f32>();
-        let idx_data = idx.to_vec::<i64>();
         let embed_dim = w.shape()[1];
+
+        // indices だけ CPU で読む (小さな i64 ベクタ)
+        let idx_data = idx.to_vec::<i64>();
+
+        // grad_output の data を GPU 上で取得
+        let grad_data = grad_output.to_vec::<f32>();
+
+        // scatter_add: indices[i] の行に grad_output[i] を加算
+        let mut grad_w = vec![0.0f32; w.elem_count()];
         for (i, &token) in idx_data.iter().enumerate() {
             let t = token as usize;
             for j in 0..embed_dim {

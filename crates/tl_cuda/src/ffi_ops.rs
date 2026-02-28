@@ -864,14 +864,40 @@ pub fn tl_cuda_embedding(
     _scale_grad_by_freq: bool,
     _sparse: bool,
 ) -> *mut OpaqueTensor {
-    unsafe { make_result(get(weight).embedding_impl(get(indices))) }
+    unsafe {
+        let result_ptr = make_result(get(weight).embedding_impl(get(indices)));
+        if !result_ptr.is_null() && get(weight).requires_grad() {
+            let w_ref = tensor_ref_from_ptr(weight);
+            let idx_ref = tensor_ref_from_ptr(indices);
+            let result = &mut *(result_ptr as *mut CudaTensor);
+            result.enable_grad();
+            result.set_grad_fn(Box::new(EmbeddingBackward {
+                weight: w_ref,
+                indices: idx_ref,
+            }));
+        }
+        result_ptr
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_cross_entropy(
     logits: *mut OpaqueTensor,
     labels: *mut OpaqueTensor,
 ) -> *mut OpaqueTensor {
-    unsafe { make_result(get(logits).cross_entropy_impl(get(labels))) }
+    unsafe {
+        let result_ptr = make_result(get(logits).cross_entropy_impl(get(labels)));
+        if !result_ptr.is_null() && get(logits).requires_grad() {
+            let logits_ref = tensor_ref_from_ptr(logits);
+            let targets_ref = tensor_ref_from_ptr(labels);
+            let result = &mut *(result_ptr as *mut CudaTensor);
+            result.enable_grad();
+            result.set_grad_fn(Box::new(CrossEntropyBackward {
+                logits: logits_ref,
+                targets: targets_ref,
+            }));
+        }
+        result_ptr
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_rms_norm(

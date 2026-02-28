@@ -736,3 +736,136 @@ fn test_backward_chained_sum_dim() {
     ffi_ops::tl_cuda_free(s2);
     ffi_ops::tl_cuda_free(x_ptr);
 }
+
+// =====================================================================
+// 14. CrossEntropyBackward テスト
+//     logits → cross_entropy(targets) → backward → grad(logits) ≠ 0
+//     grad = (softmax(logits) - one_hot(targets)) / batch
+// =====================================================================
+#[test]
+fn test_cross_entropy_backward() {
+    // logits: [2, 3] (batch=2, classes=3)
+    let logits_data: Vec<f32> = vec![
+        1.0, 2.0, 3.0, // batch 0
+        1.0, 0.0, -1.0, // batch 1
+    ];
+    let shape: Vec<usize> = vec![2, 3];
+    let logits_ptr = ffi_ops::tl_cuda_new(logits_data.as_ptr(), 2, shape.as_ptr());
+    assert!(!logits_ptr.is_null());
+    ffi_ops::tl_cuda_enable_grad(logits_ptr);
+
+    // targets: [2] (class indices)
+    let targets_data: Vec<i64> = vec![2, 0]; // batch0 → class2, batch1 → class0
+    let target_shape: Vec<usize> = vec![2];
+    let targets_ptr = ffi_ops::tl_cuda_new_i64(targets_data.as_ptr(), 1, target_shape.as_ptr());
+    assert!(!targets_ptr.is_null());
+
+    // cross_entropy
+    let loss_ptr = ffi_ops::tl_cuda_cross_entropy(logits_ptr, targets_ptr);
+    assert!(!loss_ptr.is_null());
+
+    // backward
+    unsafe {
+        let loss = &mut *(loss_ptr as *mut CudaTensor);
+        let result = loss.backward();
+        assert!(result.is_ok(), "backward failed: {:?}", result.err());
+    }
+
+    // grad(logits) should be non-zero
+    let grad_ptr = ffi_ops::tl_cuda_grad(logits_ptr);
+    let mut grad_norm_sq: f32 = 0.0;
+    for i in 0..6 {
+        let g = ffi_ops::tl_cuda_get_f32(grad_ptr, i);
+        grad_norm_sq += g * g;
+    }
+    assert!(
+        grad_norm_sq.sqrt() > 1e-6,
+        "cross_entropy backward: grad is zero!"
+    );
+
+    // Verify grad ≈ (softmax - one_hot) / batch
+    // For batch 0: logits=[1,2,3], target=2
+    // softmax = [e^1, e^2, e^3]/sum ≈ [0.0900, 0.2447, 0.6652]
+    // one_hot = [0, 0, 1]
+    // grad = (softmax - one_hot) / 2  ≈ [0.0450, 0.1224, -0.1674]
+    let g0 = ffi_ops::tl_cuda_get_f32(grad_ptr, 0);
+    let g1 = ffi_ops::tl_cuda_get_f32(grad_ptr, 1);
+    let g2 = ffi_ops::tl_cuda_get_f32(grad_ptr, 2);
+    assert_approx_eq(g0, 0.0450, 0.01);
+    assert_approx_eq(g1, 0.1224, 0.01);
+    assert_approx_eq(g2, -0.1674, 0.01);
+
+    ffi_ops::tl_cuda_free(grad_ptr);
+    ffi_ops::tl_cuda_free(loss_ptr);
+    ffi_ops::tl_cuda_free(targets_ptr);
+    ffi_ops::tl_cuda_free(logits_ptr);
+}
+
+// =====================================================================
+// 15. EmbeddingBackward テスト
+//     weight → embedding(indices) → sumall → backward → grad(weight) ≠ 0
+//     grad 行 = 出現回数 * upstream_grad
+// =====================================================================
+#[test]
+fn test_embedding_backward() {
+    // weight: [4, 3] (vocab=4, embed_dim=3)
+    let weight_data: Vec<f32> = vec![
+        1.0, 2.0, 3.0, // token 0
+        4.0, 5.0, 6.0, // token 1
+        7.0, 8.0, 9.0, // token 2
+        10.0, 11.0, 12.0, // token 3
+    ];
+    let w_shape: Vec<usize> = vec![4, 3];
+    let w_ptr = ffi_ops::tl_cuda_new(weight_data.as_ptr(), 2, w_shape.as_ptr());
+    assert!(!w_ptr.is_null());
+    ffi_ops::tl_cuda_enable_grad(w_ptr);
+
+    // indices: [3] → tokens [1, 2, 1]
+    let idx_data: Vec<i64> = vec![1, 2, 1];
+    let idx_shape: Vec<usize> = vec![3];
+    let idx_ptr = ffi_ops::tl_cuda_new_i64(idx_data.as_ptr(), 1, idx_shape.as_ptr());
+    assert!(!idx_ptr.is_null());
+
+    // embedding
+    let emb_ptr = ffi_ops::tl_cuda_embedding(w_ptr, idx_ptr, -1, false, false);
+    assert!(!emb_ptr.is_null());
+
+    // sumall
+    let loss_ptr = ffi_ops::tl_cuda_sum(emb_ptr);
+    assert!(!loss_ptr.is_null());
+
+    // backward
+    unsafe {
+        let loss = &mut *(loss_ptr as *mut CudaTensor);
+        let result = loss.backward();
+        assert!(result.is_ok(), "backward failed: {:?}", result.err());
+    }
+
+    // grad(weight): token 1 appears 2x, token 2 appears 1x
+    // upstream grad is all-ones (from sumall backward)
+    // grad[0] = [0,0,0] (token 0 not used)
+    // grad[1] = [2,2,2] (token 1 used 2 times)
+    // grad[2] = [1,1,1] (token 2 used 1 time)
+    // grad[3] = [0,0,0] (token 3 not used)
+    let grad_ptr = ffi_ops::tl_cuda_grad(w_ptr);
+    // token 0 - not used, grad should be 0
+    assert_approx_eq(ffi_ops::tl_cuda_get_f32(grad_ptr, 0), 0.0, 1e-5);
+    assert_approx_eq(ffi_ops::tl_cuda_get_f32(grad_ptr, 1), 0.0, 1e-5);
+    assert_approx_eq(ffi_ops::tl_cuda_get_f32(grad_ptr, 2), 0.0, 1e-5);
+    // token 1 - used 2x, grad should be 2.0
+    assert_approx_eq(ffi_ops::tl_cuda_get_f32(grad_ptr, 3), 2.0, 1e-5);
+    assert_approx_eq(ffi_ops::tl_cuda_get_f32(grad_ptr, 4), 2.0, 1e-5);
+    assert_approx_eq(ffi_ops::tl_cuda_get_f32(grad_ptr, 5), 2.0, 1e-5);
+    // token 2 - used 1x, grad should be 1.0
+    assert_approx_eq(ffi_ops::tl_cuda_get_f32(grad_ptr, 6), 1.0, 1e-5);
+    assert_approx_eq(ffi_ops::tl_cuda_get_f32(grad_ptr, 7), 1.0, 1e-5);
+    assert_approx_eq(ffi_ops::tl_cuda_get_f32(grad_ptr, 8), 1.0, 1e-5);
+    // token 3 - not used
+    assert_approx_eq(ffi_ops::tl_cuda_get_f32(grad_ptr, 9), 0.0, 1e-5);
+
+    ffi_ops::tl_cuda_free(grad_ptr);
+    ffi_ops::tl_cuda_free(loss_ptr);
+    ffi_ops::tl_cuda_free(emb_ptr);
+    ffi_ops::tl_cuda_free(idx_ptr);
+    ffi_ops::tl_cuda_free(w_ptr);
+}
