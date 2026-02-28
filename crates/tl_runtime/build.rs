@@ -23,10 +23,32 @@ fn main() {
                 println!("cargo:rustc-link-lib=dylib=cudart");
                 println!("cargo:rustc-link-lib=dylib=cuda");
             } else {
-                println!("cargo:warning=nvcc found but failed version check. Skipping CUDA kernel compilation.");
+                println!(
+                    "cargo:warning=nvcc found but failed version check. Skipping CUDA kernel compilation."
+                );
             }
         } else {
-            println!("cargo:warning=nvcc not found. Skipping CUDA kernel compilation. (This is expected if you don't have CUDA installed)");
+            panic!(
+                "\n\n\
+                ========================================\n\
+                ERROR: nvcc not found!\n\
+                ========================================\n\
+                \n\
+                CUDA feature is enabled but nvcc (NVIDIA CUDA Compiler) was not found in PATH.\n\
+                \n\
+                To fix this:\n\
+                \n\
+                1. Install CUDA Toolkit from:\n\
+                   https://developer.nvidia.com/cuda-downloads\n\
+                \n\
+                2. Add nvcc to your PATH:\n\
+                   export PATH=/usr/local/cuda/bin:$PATH\n\
+                \n\
+                3. Verify installation:\n\
+                   nvcc --version\n\
+                \n\
+                ========================================\n"
+            );
         }
     }
 }
