@@ -167,3 +167,123 @@ fn test_rope_cos_sin() {
         assert!(sin_data[i].abs() < 1e-5, "sin[0,{}]={}", i, sin_data[i]);
     }
 }
+
+// ========== RMS Norm with Weight (regression: weight was ignored) ==========
+
+#[test]
+#[serial]
+fn test_rms_norm_with_weight() {
+    // rms_norm(x) * weight が正しく計算されることを検証
+    // weight=1 の場合と weight=2 の場合で結果が異なることを確認
+    let input = CudaTensor::from_slice(&[1.0f32, 2.0, 3.0], &[1, 3], DType::F32);
+    let weight_ones = CudaTensor::from_slice(&[1.0f32, 1.0, 1.0], &[3], DType::F32);
+    let weight_scale = CudaTensor::from_slice(&[2.0f32, 3.0, 0.5], &[3], DType::F32);
+
+    // rms = sqrt((1+4+9)/3) = sqrt(14/3) ≈ 2.16
+    let rms = (14.0f32 / 3.0).sqrt();
+
+    // weight=1: rms_norm * 1 = rms_norm
+    let norm = input.rms_norm_impl(1e-5).unwrap();
+    let result_w1 = norm.mul_impl(&weight_ones).unwrap();
+    let v1 = result_w1.to_vec::<f32>();
+    approx_eq(&v1, &[1.0 / rms, 2.0 / rms, 3.0 / rms], 1e-4);
+
+    // weight=scale: rms_norm * weight ≠ rms_norm * 1
+    let norm2 = input.rms_norm_impl(1e-5).unwrap();
+    let result_ws = norm2.mul_impl(&weight_scale).unwrap();
+    let vs = result_ws.to_vec::<f32>();
+    approx_eq(
+        &vs,
+        &[
+            2.0 * 1.0 / rms, // weight[0]=2.0
+            3.0 * 2.0 / rms, // weight[1]=3.0
+            0.5 * 3.0 / rms, // weight[2]=0.5
+        ],
+        1e-4,
+    );
+
+    // 重要: weight=scale の結果が weight=ones と異なることを確認
+    // （このテストは weight 無視バグがあると v1 == vs になって失敗する）
+    assert!(
+        (vs[0] - v1[0]).abs() > 0.01,
+        "weight was not applied! v1={:?} vs={:?}",
+        v1,
+        vs
+    );
+}
+
+// ========== to_vec dtype conversion (regression: F32 tensor + to_vec::<i64>()) ==========
+
+#[test]
+#[serial]
+fn test_to_vec_dtype_conversion() {
+    // F32 テンソルに to_vec::<i64>() を呼んだ時に正しく変換されることを検証
+    // （修正前は byte_size > buffer_size で cudaMemcpy が失敗していた）
+    let t = CudaTensor::from_slice(&[1.0f32, 42.0, 100.0, 32000.0], &[4], DType::F32);
+    let i64_vals: Vec<i64> = t.to_vec::<i64>();
+    assert_eq!(i64_vals.len(), 4);
+    assert_eq!(i64_vals[0], 1, "f32(1.0) -> i64 should be 1");
+    assert_eq!(i64_vals[1], 42, "f32(42.0) -> i64 should be 42");
+    assert_eq!(i64_vals[2], 100, "f32(100.0) -> i64 should be 100");
+    assert_eq!(i64_vals[3], 32000, "f32(32000.0) -> i64 should be 32000");
+
+    // 逆方向: I64 テンソルに to_vec::<f32>() を呼ぶ
+    let t2 = CudaTensor::from_slice(&[5i64, 10, 255], &[3], DType::I64);
+    let f32_vals: Vec<f32> = t2.to_vec::<f32>();
+    assert_eq!(f32_vals.len(), 3);
+    approx_eq(&f32_vals, &[5.0, 10.0, 255.0], 1e-3);
+}
+
+// ========== apply_rope per-position (regression: all vectors used pos=0) ==========
+
+#[test]
+#[serial]
+fn test_apply_rope_per_position() {
+    // 2トークン、1ヘッドのケースで、各トークンが異なるRoPEを受けることを検証
+    // dim=4 (half_dim=2), seq_len=2
+    let (cos, sin) = CudaTensor::rope_cos_sin_impl(4, 4, 10000.0).unwrap();
+    // cos shape: [4, 2], sin shape: [4, 2]
+
+    // 最初の2行だけ使う (narrow equivalent: pos 0 and 1)
+    let cos_narrow = CudaTensor::from_slice(
+        &cos.to_vec::<f32>()[..4], // 2 positions × 2 half_dim
+        &[2, 2],
+        DType::F32,
+    );
+    let sin_narrow = CudaTensor::from_slice(&sin.to_vec::<f32>()[..4], &[2, 2], DType::F32);
+
+    // input: [2, 4] → 2トークン、各4次元
+    // 全要素を 1.0 にして、RoPE が位置ごとに異なる変換を適用するかチェック
+    let input = CudaTensor::from_slice(
+        &[1.0f32, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+        &[2, 4],
+        DType::F32,
+    );
+
+    let result = input.apply_rope_impl(&cos_narrow, &sin_narrow, 0).unwrap();
+    let v = result.to_vec::<f32>();
+
+    // pos=0: cos=[1,1], sin=[0,0] → x0*1-x1*0=1, x0*0+x1*1=1 (変化なし)
+    // pos=1: cos≠[1,1], sin≠[0,0] → 値が変わるはず
+    assert!(
+        (v[0] - 1.0).abs() < 1e-5,
+        "pos=0 should be unchanged, got {}",
+        v[0]
+    );
+
+    // pos=1 のベクトルは pos=0 と異なるはず
+    // （pos=0固定バグがあると v[0..4] == v[4..8] になる）
+    let pos0_vec = &v[0..4];
+    let pos1_vec = &v[4..8];
+    let diff: f32 = pos0_vec
+        .iter()
+        .zip(pos1_vec.iter())
+        .map(|(a, b)| (a - b).abs())
+        .sum();
+    assert!(
+        diff > 1e-5,
+        "pos=0 and pos=1 vectors should differ after RoPE! pos0={:?}, pos1={:?}",
+        pos0_vec,
+        pos1_vec
+    );
+}
