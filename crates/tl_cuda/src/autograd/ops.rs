@@ -65,6 +65,37 @@ fn get_ref(r: &TensorRef) -> &CudaTensor {
     unsafe { &*r.get() }
 }
 
+/// broadcast backward: grad shape を input shape に reduce する
+/// grad の shape が input の shape より大きい場合、broadcast 次元に沿って sum する
+fn reduce_grad_to_shape(grad: &CudaTensor, target_shape: &[usize]) -> BackendResult<CudaTensor> {
+    let grad_shape = grad.shape();
+    if grad_shape == target_shape {
+        return Ok(grad.shallow_clone());
+    }
+
+    // ランクの差分を処理: grad のランクが target より大きい場合、先頭から sum
+    let mut result = grad.shallow_clone();
+    let mut cur_shape = grad_shape.to_vec();
+
+    // ランク差があれば先頭次元を sum して消す
+    while cur_shape.len() > target_shape.len() {
+        result = result.sum_impl(0)?;
+        cur_shape.remove(0);
+    }
+
+    // 同ランクで broadcast された次元 (size==1) を sum
+    for d in 0..target_shape.len() {
+        if target_shape[d] == 1 && cur_shape[d] > 1 {
+            result = result.sum_impl(d as i32)?;
+            // sum_impl は次元を消すので unsqueeze で戻す
+            result = result.unsqueeze_impl(d)?;
+            cur_shape[d] = 1;
+        }
+    }
+
+    Ok(result)
+}
+
 // ========== 基本二項演算 ==========
 
 /// d(a+b)/da = 1, d(a+b)/db = 1
@@ -82,10 +113,9 @@ impl AddBackward {
 }
 impl GradFn for AddBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
-        Ok(vec![
-            grad_output.shallow_clone(),
-            grad_output.shallow_clone(),
-        ])
+        let ga = reduce_grad_to_shape(grad_output, get_ref(&self.a).shape())?;
+        let gb = reduce_grad_to_shape(grad_output, get_ref(&self.b).shape())?;
+        Ok(vec![ga, gb])
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.a.clone(), self.b.clone()]
@@ -108,7 +138,9 @@ impl SubBackward {
 impl GradFn for SubBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         let neg_grad = grad_output.neg_impl()?;
-        Ok(vec![grad_output.shallow_clone(), neg_grad])
+        let ga = reduce_grad_to_shape(grad_output, get_ref(&self.a).shape())?;
+        let gb = reduce_grad_to_shape(&neg_grad, get_ref(&self.b).shape())?;
+        Ok(vec![ga, gb])
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.a.clone(), self.b.clone()]
@@ -132,6 +164,8 @@ impl GradFn for MulBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         let ga = grad_output.mul_impl(get_ref(&self.b))?;
         let gb = grad_output.mul_impl(get_ref(&self.a))?;
+        let ga = reduce_grad_to_shape(&ga, get_ref(&self.a).shape())?;
+        let gb = reduce_grad_to_shape(&gb, get_ref(&self.b).shape())?;
         Ok(vec![ga, gb])
     }
     fn inputs(&self) -> Vec<TensorRef> {
@@ -160,6 +194,8 @@ impl GradFn for DivBackward {
         let b_sq = b.mul_impl(b)?;
         let neg_a = a.neg_impl()?;
         let gb = grad_output.mul_impl(&neg_a.div_impl(&b_sq)?)?;
+        let ga = reduce_grad_to_shape(&ga, a.shape())?;
+        let gb = reduce_grad_to_shape(&gb, b.shape())?;
         Ok(vec![ga, gb])
     }
     fn inputs(&self) -> Vec<TensorRef> {
