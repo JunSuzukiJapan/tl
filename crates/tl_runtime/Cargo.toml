@@ -20,7 +20,7 @@ tl_backend = { path = "../tl_backend", version = "0.3.9" }
 tl_cpu = { path = "../tl_cpu", version = "0.3.9" }
 
 # Tokenizer (for LLM support)
-tokenizers = "0.19.1"
+tokenizers = "0.22.2"
 safetensors = "0.4.1"
 
 
