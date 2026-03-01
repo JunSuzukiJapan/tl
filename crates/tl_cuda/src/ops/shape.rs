@@ -1,11 +1,12 @@
-//! 形状操作
+//! 形状操作 — reshape/unsqueeze/squeeze/contiguous は GPU buffer 共有（ゼロコピー）
+//! transpose/narrow/cat/broadcast_to は CPU フォールバック (Phase C で GPU 化)
 
 use crate::tensor::CudaTensor;
 use crate::DType;
 use tl_backend::{BackendError, BackendResult};
 
 impl CudaTensor {
-    /// リシェイプ（要素数同一）
+    /// リシェイプ — GPU buffer 共有（ゼロコピー、to_vec なし）
     pub fn reshape_impl(&self, new_shape: &[usize]) -> BackendResult<CudaTensor> {
         let old_count = self.elem_count();
         let new_count: usize = new_shape.iter().product();
@@ -18,12 +19,43 @@ impl CudaTensor {
                 new_count
             )));
         }
-        // データコピーして新しい shape を設定
-        let data = self.to_vec::<f32>();
-        Ok(CudaTensor::from_slice(&data, new_shape, self.dtype()))
+        Ok(self.view_with_shape(new_shape))
     }
 
-    /// 転置（2次元の dim0 と dim1 を入れ替え）
+    /// squeeze: 指定次元を除去 — GPU buffer 共有（ゼロコピー）
+    pub fn squeeze_impl(&self, dim: usize) -> BackendResult<CudaTensor> {
+        let shape = self.shape().to_vec();
+        if dim >= shape.len() || shape[dim] != 1 {
+            return self.clone_data();
+        }
+        let mut new_shape = shape;
+        new_shape.remove(dim);
+        if new_shape.is_empty() {
+            new_shape.push(1);
+        }
+        Ok(self.view_with_shape(&new_shape))
+    }
+
+    /// unsqueeze: 指定位置にサイズ 1 の次元を挿入 — GPU buffer 共有（ゼロコピー）
+    pub fn unsqueeze_impl(&self, dim: usize) -> BackendResult<CudaTensor> {
+        let mut new_shape = self.shape().to_vec();
+        if dim > new_shape.len() {
+            return Err(BackendError::ArgumentError(format!(
+                "unsqueeze dim {} out of range for ndim {}",
+                dim,
+                new_shape.len()
+            )));
+        }
+        new_shape.insert(dim, 1);
+        Ok(self.view_with_shape(&new_shape))
+    }
+
+    /// contiguous: メモリ配置を連続にする — GPU buffer 共有
+    pub fn contiguous_impl(&self) -> BackendResult<CudaTensor> {
+        self.clone_data()
+    }
+
+    /// 転置（CPU — GPU カーネル化は Phase C）
     pub fn transpose_impl(&self, dim0: usize, dim1: usize) -> BackendResult<CudaTensor> {
         let shape = self.shape().to_vec();
         let ndim = shape.len();
@@ -43,7 +75,6 @@ impl CudaTensor {
         let count = data.len();
         let mut result = vec![0.0f32; count];
 
-        // strides を計算
         let mut old_strides = vec![1usize; ndim];
         for d in (0..ndim - 1).rev() {
             old_strides[d] = old_strides[d + 1] * shape[d + 1];
@@ -54,16 +85,13 @@ impl CudaTensor {
         }
 
         for i in 0..count {
-            // old flat → coords
             let mut rem = i;
             let mut coords = vec![0usize; ndim];
             for d in 0..ndim {
                 coords[d] = rem / old_strides[d];
                 rem %= old_strides[d];
             }
-            // swap dims
             coords.swap(dim0, dim1);
-            // coords → new flat
             let new_idx: usize = coords
                 .iter()
                 .zip(new_strides.iter())
@@ -75,37 +103,7 @@ impl CudaTensor {
         Ok(CudaTensor::from_slice(&result, &new_shape, self.dtype()))
     }
 
-    /// squeeze: 指定次元を除去（サイズ 1 の場合のみ）
-    pub fn squeeze_impl(&self, dim: usize) -> BackendResult<CudaTensor> {
-        let shape = self.shape().to_vec();
-        if dim >= shape.len() || shape[dim] != 1 {
-            return self.clone_data();
-        }
-        let mut new_shape = shape;
-        new_shape.remove(dim);
-        if new_shape.is_empty() {
-            new_shape.push(1);
-        }
-        let data = self.to_vec::<f32>();
-        Ok(CudaTensor::from_slice(&data, &new_shape, self.dtype()))
-    }
-
-    /// unsqueeze: 指定位置にサイズ 1 の次元を挿入
-    pub fn unsqueeze_impl(&self, dim: usize) -> BackendResult<CudaTensor> {
-        let mut new_shape = self.shape().to_vec();
-        if dim > new_shape.len() {
-            return Err(BackendError::ArgumentError(format!(
-                "unsqueeze dim {} out of range for ndim {}",
-                dim,
-                new_shape.len()
-            )));
-        }
-        new_shape.insert(dim, 1);
-        let data = self.to_vec::<f32>();
-        Ok(CudaTensor::from_slice(&data, &new_shape, self.dtype()))
-    }
-
-    /// narrow: 指定次元で部分抽出
+    /// narrow: 指定次元で部分抽出（CPU — Phase C）
     pub fn narrow_impl(&self, dim: usize, start: usize, len: usize) -> BackendResult<CudaTensor> {
         let shape = self.shape().to_vec();
         let ndim = shape.len();
@@ -128,14 +126,12 @@ impl CudaTensor {
         let new_count: usize = new_shape.iter().product();
         let mut result = vec![0.0f32; new_count];
 
-        // strides
         let mut strides = vec![1usize; ndim];
         for d in (0..ndim - 1).rev() {
             strides[d] = strides[d + 1] * shape[d + 1];
         }
 
         for out_idx in 0..new_count {
-            // new flat → coords
             let mut rem = out_idx;
             let mut coords = vec![0usize; ndim];
             let mut new_strides = vec![1usize; ndim];
@@ -159,7 +155,7 @@ impl CudaTensor {
         self.narrow_impl(dim, start, len)
     }
 
-    /// cat: 指定次元で結合
+    /// cat: 指定次元で結合（CPU — Phase C）
     pub fn cat_impl(&self, other: &CudaTensor, dim: usize) -> BackendResult<CudaTensor> {
         let a_shape = self.shape().to_vec();
         let b_shape = other.shape().to_vec();
@@ -185,7 +181,6 @@ impl CudaTensor {
         let out_count: usize = out_shape.iter().product();
         let mut result = vec![0.0f32; out_count];
 
-        // strides
         let ndim = out_shape.len();
         let mut out_strides = vec![1usize; ndim];
         for d in (0..ndim - 1).rev() {
@@ -230,12 +225,7 @@ impl CudaTensor {
         Ok(CudaTensor::from_slice(&result, &out_shape, self.dtype()))
     }
 
-    /// contiguous: メモリ配置を連続にする（既に連続なのでコピー）
-    pub fn contiguous_impl(&self) -> BackendResult<CudaTensor> {
-        self.clone_data()
-    }
-
-    /// broadcast_to: 指定 shape へブロードキャスト
+    /// broadcast_to: 指定 shape へブロードキャスト（CPU — Phase C）
     pub fn broadcast_to_impl(&self, target_shape: &[usize]) -> BackendResult<CudaTensor> {
         let src_shape = self.shape();
         let data = self.to_vec::<f32>();

@@ -139,6 +139,17 @@ impl CudaTensor {
         }
     }
 
+    /// GPU buffer を共有して shape だけ変更した新テンソルを作成（ゼロコピー）
+    pub(crate) fn view_with_shape(&self, new_shape: &[usize]) -> Self {
+        CudaTensor {
+            buffer: self.buffer.clone(), // Arc clone = 参照カウント+1
+            shape: new_shape.to_vec(),
+            dtype: self.dtype,
+            device: self.device.clone(),
+            autograd: None,
+        }
+    }
+
     /// ゼロで初期化されたテンソルを作成
     pub fn zeros(shape: &[usize], dtype: DType) -> Self {
         let tensor = Self::uninit(shape, dtype);
