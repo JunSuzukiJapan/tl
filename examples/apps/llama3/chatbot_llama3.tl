@@ -191,7 +191,7 @@ fn main() {
 
     if !File::exists(tokenizer_path) {
         println("Tokenizer not found. Downloading...");
-        let tok_url = "https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct/resolve/main/tokenizer.json";
+        let tok_url = "https://huggingface.co/unsloth/Meta-Llama-3.1-8B-Instruct/resolve/main/tokenizer.json";
         if !File::download(tok_url, tokenizer_path) {
             println("Failed to download tokenizer.");
             println("Note: Llama 3.1 tokenizer may require HuggingFace authentication.");
