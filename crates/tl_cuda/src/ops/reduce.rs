@@ -1,21 +1,38 @@
-//! リダクション演算
+//! リダクション演算 — sumall は CUDA カーネル、その他は CPU フォールバック
 
+use crate::cuda_sys::cudaStream_t;
 use crate::tensor::CudaTensor;
 use crate::DType;
 use tl_backend::BackendResult;
 
+extern "C" {
+    fn launch_sum_all_kernel(x: *const f32, out: *mut f32, n: i32, stream: cudaStream_t);
+}
+
 impl CudaTensor {
-    /// 全要素の合計（スカラー返却）
+    /// 全要素の合計（スカラー返却）— GPU カーネル
     pub fn sumall_impl(&self) -> BackendResult<f32> {
-        let data = self.to_vec::<f32>();
-        Ok(data.iter().sum())
+        let n = self.elem_count();
+        let output = CudaTensor::zeros(&[1], DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_sum_all_kernel(
+                self.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                n as i32,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        let result = output.to_vec::<f32>();
+        Ok(result[0])
     }
 
-    /// 全要素の平均（スカラー返却）
+    /// 全要素の平均（スカラー返却）— GPU カーネル
     pub fn mean_all_impl(&self) -> BackendResult<f32> {
-        let data = self.to_vec::<f32>();
-        let len = data.len() as f32;
-        Ok(data.iter().sum::<f32>() / len)
+        let sum = self.sumall_impl()?;
+        let len = self.elem_count() as f32;
+        Ok(sum / len)
     }
 
     /// 全要素の合計（テンソル返却: shape=[1]）
@@ -30,21 +47,21 @@ impl CudaTensor {
         Ok(CudaTensor::from_slice(&[m], &[1], DType::F32))
     }
 
-    /// 全要素の最大値（テンソル返却）
+    /// 全要素の最大値（CPU フォールバック）
     pub fn max_all_impl(&self) -> BackendResult<CudaTensor> {
         let data = self.to_vec::<f32>();
         let max = data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         Ok(CudaTensor::from_slice(&[max], &[1], DType::F32))
     }
 
-    /// 全要素の最小値（テンソル返却）
+    /// 全要素の最小値（CPU フォールバック）
     pub fn min_all_impl(&self) -> BackendResult<CudaTensor> {
         let data = self.to_vec::<f32>();
         let min = data.iter().cloned().fold(f32::INFINITY, f32::min);
         Ok(CudaTensor::from_slice(&[min], &[1], DType::F32))
     }
 
-    /// 全要素の argmax（テンソル返却）
+    /// 全要素の argmax（CPU フォールバック）
     pub fn argmax_all_impl(&self) -> BackendResult<CudaTensor> {
         let data = self.to_vec::<f32>();
         let idx = data
@@ -56,7 +73,7 @@ impl CudaTensor {
         Ok(CudaTensor::from_slice(&[idx], &[1], DType::F32))
     }
 
-    /// 全要素の argmin（テンソル返却）
+    /// 全要素の argmin（CPU フォールバック）
     pub fn argmin_all_impl(&self) -> BackendResult<CudaTensor> {
         let data = self.to_vec::<f32>();
         let idx = data
