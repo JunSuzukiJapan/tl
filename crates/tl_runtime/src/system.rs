@@ -283,12 +283,53 @@ pub extern "C" fn tl_qtensor_matmul(
             return crate::make_tensor(result_tensor);
         }
 
-        // CUDA / その他: 融合カーネル未実装 → dequantize フォールバック
+        // CUDA: 融合カーネル (Q4_K / Q6_K) またはフォールバック
         #[cfg(not(feature = "metal"))]
         {
+            if use_fused {
+                // ========== CUDA 融合カーネルパス ==========
+                // raw Q4_K/Q6_K bytes を GPU にアップロード (キャッシュ)
+                let gpu_raw_ptr = {
+                    let cache_guard = qtensor.gpu_raw_cache.lock().unwrap();
+                    *cache_guard
+                };
+                let w_raw_ptr = if let Some(ptr_val) = gpu_raw_ptr {
+                    ptr_val as *mut std::ffi::c_void
+                } else {
+                    let raw_bytes = &qtensor.data;
+                    let raw_shape = &[raw_bytes.len()];
+                    let ptr = crate::device_ffi::create_runtime_tensor_u8(raw_bytes, raw_shape);
+                    {
+                        let mut cache_guard = qtensor.gpu_raw_cache.lock().unwrap();
+                        *cache_guard = Some(ptr as usize);
+                    }
+                    ptr
+                };
+
+                // 融合 matmul カーネル呼び出し
+                let result = match qtensor.ggml_type {
+                    crate::quantized::GGMLType::Q4_K => crate::device_ffi::cuda_mul_mv_q4_k(
+                        input as *mut std::ffi::c_void,
+                        w_raw_ptr,
+                        _n as i64,
+                        _k as i64,
+                    ),
+                    crate::quantized::GGMLType::Q6_K => crate::device_ffi::cuda_mul_mv_q6_k(
+                        input as *mut std::ffi::c_void,
+                        w_raw_ptr,
+                        _n as i64,
+                        _k as i64,
+                    ),
+                    _ => unreachable!(),
+                };
+                return result as *mut crate::OpaqueTensor;
+            }
+
+            // ========== 非融合フォールバック (dequantize → matmul) ==========
             let weight_ptr = match qtensor.dequantize_to_tensor() {
                 Ok(t) => t as *mut std::ffi::c_void,
-                Err(_e) => {
+                Err(e) => {
+                    eprintln!("Error: tl_qtensor_matmul dequantize failed: {}", e);
                     return std::ptr::null_mut();
                 }
             };

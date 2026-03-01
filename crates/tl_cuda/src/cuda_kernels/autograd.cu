@@ -1386,5 +1386,144 @@ void launch_transpose_nd_kernel(const float *input, float *output,
   transpose_nd_kernel<<<blocks, threads, 0, stream>>>(input, output, old_shape,
                                                       old_strides, new_strides,
                                                       ndim, total, dim0, dim1);
+
+} // end launch_transpose_nd_kernel
+
+} // end extern "C" block for main kernels
+
+// =====================================================================
+// 融合 Q4_K / Q6_K matmul カーネル
+// =====================================================================
+
+#include <cuda_fp16.h>
+
+__device__ inline float half_to_float_q(unsigned short h) {
+  __half hv;
+  memcpy(&hv, &h, sizeof(__half));
+  return __half2float(hv);
 }
+
+__device__ inline void get_scale_min_k4_dev(int j, const unsigned char *scales,
+                                            unsigned char *sc,
+                                            unsigned char *m) {
+  if (j < 4) {
+    *sc = scales[j] & 63;
+    *m = scales[j + 4] & 63;
+  } else {
+    *sc = (scales[j + 4] & 0xF) | ((scales[j - 4] >> 6) << 4);
+    *m = (scales[j + 4] >> 4) | ((scales[j] >> 6) << 4);
+  }
 }
+
+__global__ void mul_mv_q4_k_kernel(const float *input,
+                                   const unsigned char *w_raw, float *output,
+                                   int M, int N, int K) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  if (tid >= M * N)
+    return;
+  int m = tid / N;
+  int n = tid % N;
+  const int QK_K = 256;
+  const int BB = 144;
+  int bpr = K / QK_K;
+  float sum = 0.0f;
+  const float *xr = input + m * K;
+  for (int bi = 0; bi < bpr; bi++) {
+    const unsigned char *blk = w_raw + ((long long)n * bpr + bi) * BB;
+    unsigned short dh, dmh;
+    memcpy(&dh, blk, 2);
+    memcpy(&dmh, blk + 2, 2);
+    float d = half_to_float_q(dh);
+    float dm = half_to_float_q(dmh);
+    const unsigned char *sc = blk + 4;
+    const unsigned char *qs = blk + 16;
+    int xo = bi * QK_K;
+    int is = 0, qi = 0;
+    for (int j = 0; j < QK_K; j += 64) {
+      unsigned char s1, m1, s2, m2;
+      get_scale_min_k4_dev(is, sc, &s1, &m1);
+      get_scale_min_k4_dev(is + 1, sc, &s2, &m2);
+      float d1 = d * s1, mn1 = dm * m1;
+      float d2 = d * s2, mn2 = dm * m2;
+      for (int l = 0; l < 32; l++)
+        sum += xr[xo + j + l] * (d1 * (float)(qs[qi + l] & 0xF) - mn1);
+      for (int l = 0; l < 32; l++)
+        sum += xr[xo + j + 32 + l] * (d2 * (float)(qs[qi + l] >> 4) - mn2);
+      qi += 32;
+      is += 2;
+    }
+  }
+  output[m * N + n] = sum;
+}
+
+__global__ void mul_mv_q6_k_kernel(const float *input,
+                                   const unsigned char *w_raw, float *output,
+                                   int M, int N, int K) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  if (tid >= M * N)
+    return;
+  int m = tid / N;
+  int n = tid % N;
+  const int QK_K = 256;
+  const int BB = 210;
+  int bpr = K / QK_K;
+  float sum = 0.0f;
+  const float *xr = input + m * K;
+  for (int bi = 0; bi < bpr; bi++) {
+    const unsigned char *blk = w_raw + ((long long)n * bpr + bi) * BB;
+    unsigned short dh;
+    memcpy(&dh, blk + 208, 2);
+    float d = half_to_float_q(dh);
+    int xo = bi * QK_K;
+    int qlo = 0, qho = 128, sco = 192;
+    for (int nc = 0; nc < 2; nc++) {
+      int cb = xo + nc * 128;
+      for (int l = 0; l < 32; l++) {
+        int is = l / 16;
+        unsigned char ql_lo = blk[qlo + l];
+        unsigned char ql_hi = blk[qlo + l + 32];
+        unsigned char qhv = blk[qho + l];
+        int q1 = ((ql_lo & 0xF) | (((qhv >> 0) & 3) << 4)) - 32;
+        int q2 = ((ql_hi & 0xF) | (((qhv >> 2) & 3) << 4)) - 32;
+        int q3 = ((ql_lo >> 4) | (((qhv >> 4) & 3) << 4)) - 32;
+        int q4 = ((ql_hi >> 4) | (((qhv >> 6) & 3) << 4)) - 32;
+        float s1 = d * (float)(signed char)blk[sco + is + 0];
+        float s2 = d * (float)(signed char)blk[sco + is + 2];
+        float s3 = d * (float)(signed char)blk[sco + is + 4];
+        float s4 = d * (float)(signed char)blk[sco + is + 6];
+        sum += xr[cb + l + 0] * s1 * q1;
+        sum += xr[cb + l + 32] * s2 * q2;
+        sum += xr[cb + l + 64] * s3 * q3;
+        sum += xr[cb + l + 96] * s4 * q4;
+      }
+      qlo += 64;
+      qho += 32;
+      sco += 8;
+    }
+  }
+  output[m * N + n] = sum;
+}
+
+extern "C" {
+
+void launch_mul_mv_q4_k_kernel(const float *input, const unsigned char *w_raw,
+                               float *output, int M, int N, int K,
+                               cudaStream_t stream) {
+  int total = M * N;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  mul_mv_q4_k_kernel<<<blocks, threads, 0, stream>>>(input, w_raw, output, M, N,
+                                                     K);
+}
+
+void launch_mul_mv_q6_k_kernel(const float *input, const unsigned char *w_raw,
+                               float *output, int M, int N, int K,
+                               cudaStream_t stream) {
+  int total = M * N;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  mul_mv_q6_k_kernel<<<blocks, threads, 0, stream>>>(input, w_raw, output, M, N,
+                                                     K);
+}
+
+} // extern "C"

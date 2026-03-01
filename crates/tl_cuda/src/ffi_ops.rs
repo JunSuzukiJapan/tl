@@ -1136,3 +1136,109 @@ pub fn tl_cuda_replace_data(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
         *get_mut(a) = new_data;
     }
 }
+
+// ========== 融合 Q4_K / Q6_K matmul ==========
+
+extern "C" {
+    fn launch_mul_mv_q4_k_kernel(
+        input: *const f32,
+        w_raw: *const u8,
+        output: *mut f32,
+        m: i32,
+        n: i32,
+        k: i32,
+        stream: crate::cuda_sys::cudaStream_t,
+    );
+    fn launch_mul_mv_q6_k_kernel(
+        input: *const f32,
+        w_raw: *const u8,
+        output: *mut f32,
+        m: i32,
+        n: i32,
+        k: i32,
+        stream: crate::cuda_sys::cudaStream_t,
+    );
+}
+
+/// 融合 Q4_K matmul: input[M,K] × q4k_weight[N,K] → output[M,N]
+/// input: CudaTensor (F32), w_raw: CudaTensor (U8, raw Q4_K bytes)
+/// n, k: weight の論理次元 (output_features, input_features)
+#[no_mangle]
+pub fn tl_cuda_mul_mv_q4_k(
+    input: *mut OpaqueTensor,
+    w_raw: *mut OpaqueTensor,
+    n: i64,
+    k: i64,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let inp = get(input);
+        let wraw = get(w_raw);
+        let inp_shape = inp.shape();
+        // input は [M, K] or [K] (1D の場合 M=1)
+        let m = if inp_shape.len() >= 2 {
+            inp_shape[..inp_shape.len() - 1].iter().product::<usize>()
+        } else {
+            1
+        };
+        let out_shape = if inp_shape.len() >= 2 {
+            let mut s = inp_shape[..inp_shape.len() - 1].to_vec();
+            s.push(n as usize);
+            s
+        } else {
+            vec![n as usize]
+        };
+        let output = CudaTensor::uninit(&out_shape, DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        launch_mul_mv_q4_k_kernel(
+            inp.buffer.ptr() as *const f32,
+            wraw.buffer.ptr() as *const u8,
+            output.buffer.ptr() as *mut f32,
+            m as i32,
+            n as i32,
+            k as i32,
+            stream,
+        );
+        crate::stream::sync_stream();
+        make_tensor(output)
+    }
+}
+
+/// 融合 Q6_K matmul
+#[no_mangle]
+pub fn tl_cuda_mul_mv_q6_k(
+    input: *mut OpaqueTensor,
+    w_raw: *mut OpaqueTensor,
+    n: i64,
+    k: i64,
+) -> *mut OpaqueTensor {
+    unsafe {
+        let inp = get(input);
+        let wraw = get(w_raw);
+        let inp_shape = inp.shape();
+        let m = if inp_shape.len() >= 2 {
+            inp_shape[..inp_shape.len() - 1].iter().product::<usize>()
+        } else {
+            1
+        };
+        let out_shape = if inp_shape.len() >= 2 {
+            let mut s = inp_shape[..inp_shape.len() - 1].to_vec();
+            s.push(n as usize);
+            s
+        } else {
+            vec![n as usize]
+        };
+        let output = CudaTensor::uninit(&out_shape, DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        launch_mul_mv_q6_k_kernel(
+            inp.buffer.ptr() as *const f32,
+            wraw.buffer.ptr() as *const u8,
+            output.buffer.ptr() as *mut f32,
+            m as i32,
+            n as i32,
+            k as i32,
+            stream,
+        );
+        crate::stream::sync_stream();
+        make_tensor(output)
+    }
+}

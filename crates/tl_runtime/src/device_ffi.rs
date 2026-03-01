@@ -1197,3 +1197,35 @@ pub fn runtime_gpu_sync() {
         }
     }
 }
+
+// ========== CUDA 融合 Q4_K / Q6_K matmul ==========
+
+#[cfg(feature = "cuda")]
+unsafe extern "C" {
+    fn tl_cuda_mul_mv_q4_k(input: *mut c_void, w_raw: *mut c_void, n: i64, k: i64) -> *mut c_void;
+    fn tl_cuda_mul_mv_q6_k(input: *mut c_void, w_raw: *mut c_void, n: i64, k: i64) -> *mut c_void;
+}
+
+pub fn cuda_mul_mv_q4_k(input: *mut c_void, w_raw: *mut c_void, n: i64, k: i64) -> *mut c_void {
+    #[cfg(feature = "cuda")]
+    unsafe {
+        return tl_cuda_mul_mv_q4_k(input, w_raw, n, k);
+    }
+    #[cfg(not(feature = "cuda"))]
+    {
+        let _ = (input, w_raw, n, k);
+        std::ptr::null_mut()
+    }
+}
+
+pub fn cuda_mul_mv_q6_k(input: *mut c_void, w_raw: *mut c_void, n: i64, k: i64) -> *mut c_void {
+    #[cfg(feature = "cuda")]
+    unsafe {
+        return tl_cuda_mul_mv_q6_k(input, w_raw, n, k);
+    }
+    #[cfg(not(feature = "cuda"))]
+    {
+        let _ = (input, w_raw, n, k);
+        std::ptr::null_mut()
+    }
+}
