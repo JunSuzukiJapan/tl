@@ -460,6 +460,176 @@ __global__ void causal_mask_kernel(float* output, int size) {
 }
 
 // =====================================================================
+// transpose カーネル (任意の2次元スワップ)
+// shape/strides 情報は launch 関数側で計算して渡す
+// =====================================================================
+__global__ void transpose_2d_kernel(
+    const float* input, float* output,
+    int rows, int cols
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = rows * cols;
+    if (tid < total) {
+        int r = tid / cols;
+        int c = tid % cols;
+        output[c * rows + r] = input[r * cols + c];
+    }
+}
+
+// =====================================================================
+// broadcast binary カーネル
+// out[i] = op(a[broadcast_a(i)], b[broadcast_b(i)])
+// shape 情報は GPU constant memory に渡す
+// 簡易版: 最大8次元対応
+// =====================================================================
+__global__ void broadcast_add_kernel(
+    const float* a, const float* b, float* out,
+    const int* out_shape, const int* a_shape, const int* b_shape,
+    int ndim, int total
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid < total) {
+        int idx = tid;
+        int a_idx = 0, b_idx = 0;
+        int a_stride = 1, b_stride = 1;
+        for (int d = ndim - 1; d >= 0; d--) {
+            int coord = idx % out_shape[d];
+            idx /= out_shape[d];
+            int a_dim = a_shape[d];
+            int b_dim = b_shape[d];
+            if (a_dim > 1) a_idx += coord * a_stride;
+            if (b_dim > 1) b_idx += coord * b_stride;
+            a_stride *= a_dim;
+            b_stride *= b_dim;
+        }
+        out[tid] = a[a_idx] + b[b_idx];
+    }
+}
+
+// =====================================================================
+// reduce_axis カーネル (sum)
+// 各スレッドが1つの出力要素を計算: 軸方向に sum
+// =====================================================================
+__global__ void reduce_axis_sum_kernel(
+    const float* input, float* output,
+    int outer, int axis_size, int inner
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = outer * inner;
+    if (tid < total) {
+        int o = tid / inner;
+        int i = tid % inner;
+        float sum = 0.0f;
+        for (int k = 0; k < axis_size; k++) {
+            sum += input[o * axis_size * inner + k * inner + i];
+        }
+        output[tid] = sum;
+    }
+}
+
+__global__ void reduce_axis_max_kernel(
+    const float* input, float* output,
+    int outer, int axis_size, int inner
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = outer * inner;
+    if (tid < total) {
+        int o = tid / inner;
+        int i = tid % inner;
+        float mx = -3.402823466e+38f;
+        for (int k = 0; k < axis_size; k++) {
+            float v = input[o * axis_size * inner + k * inner + i];
+            if (v > mx) mx = v;
+        }
+        output[tid] = mx;
+    }
+}
+
+__global__ void reduce_axis_min_kernel(
+    const float* input, float* output,
+    int outer, int axis_size, int inner
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = outer * inner;
+    if (tid < total) {
+        int o = tid / inner;
+        int i = tid % inner;
+        float mn = 3.402823466e+38f;
+        for (int k = 0; k < axis_size; k++) {
+            float v = input[o * axis_size * inner + k * inner + i];
+            if (v < mn) mn = v;
+        }
+        output[tid] = mn;
+    }
+}
+
+// =====================================================================
+// narrow (slice) カーネル
+// =====================================================================
+__global__ void narrow_kernel(
+    const float* input, float* output,
+    int outer, int inner, int old_dim, int new_dim, int start
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = outer * new_dim * inner;
+    if (tid < total) {
+        int o = tid / (new_dim * inner);
+        int rem = tid % (new_dim * inner);
+        int d = rem / inner;
+        int i = rem % inner;
+        int src = o * old_dim * inner + (d + start) * inner + i;
+        output[tid] = input[src];
+    }
+}
+
+// =====================================================================
+// cat カーネル（2つのテンソルを指定次元で結合）
+// =====================================================================
+__global__ void cat_kernel(
+    const float* a, const float* b, float* output,
+    int outer, int inner, int a_dim, int b_dim
+) {
+    int total_dim = a_dim + b_dim;
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = outer * total_dim * inner;
+    if (tid < total) {
+        int o = tid / (total_dim * inner);
+        int rem = tid % (total_dim * inner);
+        int d = rem / inner;
+        int i = rem % inner;
+        if (d < a_dim) {
+            output[tid] = a[o * a_dim * inner + d * inner + i];
+        } else {
+            output[tid] = b[o * b_dim * inner + (d - a_dim) * inner + i];
+        }
+    }
+}
+
+// =====================================================================
+// broadcast_to カーネル
+// =====================================================================
+__global__ void broadcast_to_kernel(
+    const float* input, float* output,
+    const int* target_shape, const int* src_shape,
+    int ndim, int total
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid < total) {
+        int idx = tid;
+        int src_idx = 0;
+        int src_stride = 1;
+        for (int d = ndim - 1; d >= 0; d--) {
+            int coord = idx % target_shape[d];
+            idx /= target_shape[d];
+            int sd = src_shape[d];
+            if (sd > 1) src_idx += coord * src_stride;
+            src_stride *= sd;
+        }
+        output[tid] = input[src_idx];
+    }
+}
+
+// =====================================================================
 // C wrappers
 // =====================================================================
 extern "C" {
@@ -625,6 +795,67 @@ void launch_causal_mask_kernel(float* output, int size, cudaStream_t stream) {
     int threads = 256;
     int blocks = (total + threads - 1) / threads;
     causal_mask_kernel<<<blocks, threads, 0, stream>>>(output, size);
+}
+
+// --- transpose ---
+void launch_transpose_2d_kernel(const float* input, float* output,
+    int rows, int cols, cudaStream_t stream) {
+    int total = rows * cols;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    transpose_2d_kernel<<<blocks, threads, 0, stream>>>(input, output, rows, cols);
+}
+
+// --- reduce_axis ---
+void launch_reduce_axis_sum_kernel(const float* input, float* output,
+    int outer, int axis_size, int inner, cudaStream_t stream) {
+    int total = outer * inner;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    reduce_axis_sum_kernel<<<blocks, threads, 0, stream>>>(input, output, outer, axis_size, inner);
+}
+
+void launch_reduce_axis_max_kernel(const float* input, float* output,
+    int outer, int axis_size, int inner, cudaStream_t stream) {
+    int total = outer * inner;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    reduce_axis_max_kernel<<<blocks, threads, 0, stream>>>(input, output, outer, axis_size, inner);
+}
+
+void launch_reduce_axis_min_kernel(const float* input, float* output,
+    int outer, int axis_size, int inner, cudaStream_t stream) {
+    int total = outer * inner;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    reduce_axis_min_kernel<<<blocks, threads, 0, stream>>>(input, output, outer, axis_size, inner);
+}
+
+// --- narrow ---
+void launch_narrow_kernel(const float* input, float* output,
+    int outer, int inner, int old_dim, int new_dim, int start, cudaStream_t stream) {
+    int total = outer * new_dim * inner;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    narrow_kernel<<<blocks, threads, 0, stream>>>(input, output, outer, inner, old_dim, new_dim, start);
+}
+
+// --- cat ---
+void launch_cat_kernel(const float* a, const float* b, float* output,
+    int outer, int inner, int a_dim, int b_dim, cudaStream_t stream) {
+    int total = outer * (a_dim + b_dim) * inner;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    cat_kernel<<<blocks, threads, 0, stream>>>(a, b, output, outer, inner, a_dim, b_dim);
+}
+
+// --- broadcast_to ---
+void launch_broadcast_to_kernel(const float* input, float* output,
+    const int* target_shape, const int* src_shape,
+    int ndim, int total, cudaStream_t stream) {
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    broadcast_to_kernel<<<blocks, threads, 0, stream>>>(input, output, target_shape, src_shape, ndim, total);
 }
 
 }

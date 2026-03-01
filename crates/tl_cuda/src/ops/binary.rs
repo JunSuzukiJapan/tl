@@ -76,12 +76,12 @@ extern "C" {
 }
 
 impl CudaTensor {
-    /// 二項演算: 同一 shape → GPU カーネル、broadcast → CPU フォールバック
+    /// 二項演算: 同一 shape → GPU カーネル、broadcast → broadcast_to + GPU カーネル
     fn binary_op_gpu<F: Fn(f32, f32) -> f32>(
         &self,
         other: &CudaTensor,
         kernel: BinaryKernelFn,
-        cpu_op: F,
+        _cpu_op: F,
     ) -> BackendResult<CudaTensor> {
         if self.dtype() != other.dtype() {
             return Err(BackendError::TypeMismatch(format!(
@@ -111,25 +111,24 @@ impl CudaTensor {
             crate::stream::sync_stream();
             Ok(output)
         } else {
-            // broadcast → CPU フォールバック
+            // broadcast → broadcast_to_impl (GPU) で同一 shape に揃えてからカーネル適用
             let out_shape = broadcast_shape(self_shape, other_shape)?;
-            let out_count = out_shape.iter().product::<usize>();
-            let a_data = self.to_vec::<f32>();
-            let b_data = other.to_vec::<f32>();
-
-            let result_data: Vec<f32> = (0..out_count)
-                .map(|i| {
-                    let a_idx = broadcast_index(i, &out_shape, self_shape);
-                    let b_idx = broadcast_index(i, &out_shape, other_shape);
-                    cpu_op(a_data[a_idx], b_data[b_idx])
-                })
-                .collect();
-
-            Ok(CudaTensor::from_slice(
-                &result_data,
-                &out_shape,
-                self.dtype(),
-            ))
+            let a = self.broadcast_to_impl(&out_shape)?;
+            let b = other.broadcast_to_impl(&out_shape)?;
+            let n = a.elem_count();
+            let output = CudaTensor::uninit(&out_shape, DType::F32);
+            let stream = crate::stream::get_stream().raw();
+            unsafe {
+                kernel(
+                    a.buffer.ptr() as *const f32,
+                    b.buffer.ptr() as *const f32,
+                    output.buffer.ptr() as *mut f32,
+                    n as i32,
+                    stream,
+                );
+            }
+            crate::stream::sync_stream();
+            Ok(output)
         }
     }
 

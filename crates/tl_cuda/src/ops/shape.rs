@@ -1,12 +1,51 @@
-//! 形状操作 — reshape/unsqueeze/squeeze/contiguous は GPU buffer 共有（ゼロコピー）
-//! transpose/narrow/cat/broadcast_to は CPU フォールバック (Phase C で GPU 化)
+//! 形状操作 — reshape/unsqueeze/squeeze は buffer 共有、残りは GPU カーネル
 
+use crate::cuda_sys::cudaStream_t;
 use crate::tensor::CudaTensor;
 use crate::DType;
 use tl_backend::{BackendError, BackendResult};
 
+extern "C" {
+    fn launch_transpose_2d_kernel(
+        input: *const f32,
+        output: *mut f32,
+        rows: i32,
+        cols: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_narrow_kernel(
+        input: *const f32,
+        output: *mut f32,
+        outer: i32,
+        inner: i32,
+        old_dim: i32,
+        new_dim: i32,
+        start: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_cat_kernel(
+        a: *const f32,
+        b: *const f32,
+        output: *mut f32,
+        outer: i32,
+        inner: i32,
+        a_dim: i32,
+        b_dim: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_broadcast_to_kernel(
+        input: *const f32,
+        output: *mut f32,
+        target_shape: *const i32,
+        src_shape: *const i32,
+        ndim: i32,
+        total: i32,
+        stream: cudaStream_t,
+    );
+}
+
 impl CudaTensor {
-    /// リシェイプ — GPU buffer 共有（ゼロコピー、to_vec なし）
+    /// リシェイプ — GPU buffer 共有（ゼロコピー）
     pub fn reshape_impl(&self, new_shape: &[usize]) -> BackendResult<CudaTensor> {
         let old_count = self.elem_count();
         let new_count: usize = new_shape.iter().product();
@@ -22,7 +61,7 @@ impl CudaTensor {
         Ok(self.view_with_shape(new_shape))
     }
 
-    /// squeeze: 指定次元を除去 — GPU buffer 共有（ゼロコピー）
+    /// squeeze — GPU buffer 共有（ゼロコピー）
     pub fn squeeze_impl(&self, dim: usize) -> BackendResult<CudaTensor> {
         let shape = self.shape().to_vec();
         if dim >= shape.len() || shape[dim] != 1 {
@@ -36,7 +75,7 @@ impl CudaTensor {
         Ok(self.view_with_shape(&new_shape))
     }
 
-    /// unsqueeze: 指定位置にサイズ 1 の次元を挿入 — GPU buffer 共有（ゼロコピー）
+    /// unsqueeze — GPU buffer 共有（ゼロコピー）
     pub fn unsqueeze_impl(&self, dim: usize) -> BackendResult<CudaTensor> {
         let mut new_shape = self.shape().to_vec();
         if dim > new_shape.len() {
@@ -50,12 +89,12 @@ impl CudaTensor {
         Ok(self.view_with_shape(&new_shape))
     }
 
-    /// contiguous: メモリ配置を連続にする — GPU buffer 共有
+    /// contiguous — GPU buffer 共有
     pub fn contiguous_impl(&self) -> BackendResult<CudaTensor> {
         self.clone_data()
     }
 
-    /// 転置（CPU — GPU カーネル化は Phase C）
+    /// 転置 — GPU カーネル（2D 最適化、N-D は一般化）
     pub fn transpose_impl(&self, dim0: usize, dim1: usize) -> BackendResult<CudaTensor> {
         let shape = self.shape().to_vec();
         let ndim = shape.len();
@@ -69,9 +108,30 @@ impl CudaTensor {
             return self.clone_data();
         }
 
-        let data = self.to_vec::<f32>();
         let mut new_shape = shape.clone();
         new_shape.swap(dim0, dim1);
+
+        // 2D の場合は最適化カーネルを使用
+        if ndim == 2 {
+            let rows = shape[0];
+            let cols = shape[1];
+            let output = CudaTensor::uninit(&new_shape, DType::F32);
+            let stream = crate::stream::get_stream().raw();
+            unsafe {
+                launch_transpose_2d_kernel(
+                    self.buffer.ptr() as *const f32,
+                    output.buffer.ptr() as *mut f32,
+                    rows as i32,
+                    cols as i32,
+                    stream,
+                );
+            }
+            crate::stream::sync_stream();
+            return Ok(output);
+        }
+
+        // N-D: CPU フォールバック
+        let data = self.to_vec::<f32>();
         let count = data.len();
         let mut result = vec![0.0f32; count];
 
@@ -103,7 +163,7 @@ impl CudaTensor {
         Ok(CudaTensor::from_slice(&result, &new_shape, self.dtype()))
     }
 
-    /// narrow: 指定次元で部分抽出（CPU — Phase C）
+    /// narrow — GPU カーネル
     pub fn narrow_impl(&self, dim: usize, start: usize, len: usize) -> BackendResult<CudaTensor> {
         let shape = self.shape().to_vec();
         let ndim = shape.len();
@@ -120,34 +180,28 @@ impl CudaTensor {
             )));
         }
 
-        let data = self.to_vec::<f32>();
+        let outer: usize = shape[..dim].iter().product::<usize>().max(1);
+        let inner: usize = shape[dim + 1..].iter().product::<usize>().max(1);
+        let old_dim = shape[dim];
+
         let mut new_shape = shape.clone();
         new_shape[dim] = len;
-        let new_count: usize = new_shape.iter().product();
-        let mut result = vec![0.0f32; new_count];
-
-        let mut strides = vec![1usize; ndim];
-        for d in (0..ndim - 1).rev() {
-            strides[d] = strides[d + 1] * shape[d + 1];
+        let output = CudaTensor::uninit(&new_shape, DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_narrow_kernel(
+                self.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                outer as i32,
+                inner as i32,
+                old_dim as i32,
+                len as i32,
+                start as i32,
+                stream,
+            );
         }
-
-        for out_idx in 0..new_count {
-            let mut rem = out_idx;
-            let mut coords = vec![0usize; ndim];
-            let mut new_strides = vec![1usize; ndim];
-            for d in (0..ndim - 1).rev() {
-                new_strides[d] = new_strides[d + 1] * new_shape[d + 1];
-            }
-            for d in 0..ndim {
-                coords[d] = rem / new_strides[d];
-                rem %= new_strides[d];
-            }
-            coords[dim] += start;
-            let src_idx: usize = coords.iter().zip(strides.iter()).map(|(c, s)| c * s).sum();
-            result[out_idx] = data[src_idx];
-        }
-
-        Ok(CudaTensor::from_slice(&result, &new_shape, self.dtype()))
+        crate::stream::sync_stream();
+        Ok(output)
     }
 
     /// slice（narrow の別名）
@@ -155,7 +209,7 @@ impl CudaTensor {
         self.narrow_impl(dim, start, len)
     }
 
-    /// cat: 指定次元で結合（CPU — Phase C）
+    /// cat — GPU カーネル
     pub fn cat_impl(&self, other: &CudaTensor, dim: usize) -> BackendResult<CudaTensor> {
         let a_shape = self.shape().to_vec();
         let b_shape = other.shape().to_vec();
@@ -174,87 +228,73 @@ impl CudaTensor {
             }
         }
 
-        let a_data = self.to_vec::<f32>();
-        let b_data = other.to_vec::<f32>();
+        let ndim = a_shape.len();
+        let outer: usize = a_shape[..dim].iter().product::<usize>().max(1);
+        let inner: usize = a_shape[dim + 1..].iter().product::<usize>().max(1);
+        let a_dim = a_shape[dim];
+        let b_dim = b_shape[dim];
+
         let mut out_shape = a_shape.clone();
-        out_shape[dim] = a_shape[dim] + b_shape[dim];
-        let out_count: usize = out_shape.iter().product();
-        let mut result = vec![0.0f32; out_count];
-
-        let ndim = out_shape.len();
-        let mut out_strides = vec![1usize; ndim];
-        for d in (0..ndim - 1).rev() {
-            out_strides[d] = out_strides[d + 1] * out_shape[d + 1];
+        out_shape[dim] = a_dim + b_dim;
+        let output = CudaTensor::uninit(&out_shape, DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_cat_kernel(
+                self.buffer.ptr() as *const f32,
+                other.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                outer as i32,
+                inner as i32,
+                a_dim as i32,
+                b_dim as i32,
+                stream,
+            );
         }
-        let mut a_strides = vec![1usize; ndim];
-        for d in (0..ndim - 1).rev() {
-            a_strides[d] = a_strides[d + 1] * a_shape[d + 1];
-        }
-        let mut b_strides = vec![1usize; ndim];
-        for d in (0..ndim - 1).rev() {
-            b_strides[d] = b_strides[d + 1] * b_shape[d + 1];
-        }
-
-        for out_idx in 0..out_count {
-            let mut rem = out_idx;
-            let mut coords = vec![0usize; ndim];
-            for d in 0..ndim {
-                coords[d] = rem / out_strides[d];
-                rem %= out_strides[d];
-            }
-
-            if coords[dim] < a_shape[dim] {
-                let src_idx: usize = coords
-                    .iter()
-                    .zip(a_strides.iter())
-                    .map(|(c, s)| c * s)
-                    .sum();
-                result[out_idx] = a_data[src_idx];
-            } else {
-                let mut src_coords = coords.clone();
-                src_coords[dim] -= a_shape[dim];
-                let src_idx: usize = src_coords
-                    .iter()
-                    .zip(b_strides.iter())
-                    .map(|(c, s)| c * s)
-                    .sum();
-                result[out_idx] = b_data[src_idx];
-            }
-        }
-
-        Ok(CudaTensor::from_slice(&result, &out_shape, self.dtype()))
+        crate::stream::sync_stream();
+        let _ = ndim; // suppress unused warning
+        Ok(output)
     }
 
-    /// broadcast_to: 指定 shape へブロードキャスト（CPU — Phase C）
+    /// broadcast_to — GPU カーネル
     pub fn broadcast_to_impl(&self, target_shape: &[usize]) -> BackendResult<CudaTensor> {
         let src_shape = self.shape();
-        let data = self.to_vec::<f32>();
-        let out_count: usize = target_shape.iter().product();
-        let mut result = vec![0.0f32; out_count];
-
         let ndim = target_shape.len();
-        for i in 0..out_count {
-            let mut rem = i;
-            let mut src_idx = 0;
-            let mut src_stride = 1;
+        let out_count: usize = target_shape.iter().product();
 
-            for d in (0..ndim).rev() {
-                let coord = rem % target_shape[d];
-                rem /= target_shape[d];
-
-                let src_dim = if d >= ndim - src_shape.len() {
-                    src_shape[d - (ndim - src_shape.len())]
-                } else {
-                    1
-                };
-                if src_dim > 1 {
-                    src_idx += coord * src_stride;
-                }
-                src_stride *= src_dim;
-            }
-            result[i] = data[src_idx];
+        // shape を左パディングして ndim に揃える
+        let mut padded_src = vec![1i32; ndim];
+        let offset = ndim - src_shape.len();
+        for (i, &s) in src_shape.iter().enumerate() {
+            padded_src[offset + i] = s as i32;
         }
+        let target_i32: Vec<i32> = target_shape.iter().map(|&s| s as i32).collect();
 
-        Ok(CudaTensor::from_slice(&result, target_shape, self.dtype()))
+        // GPU にコピー
+        let target_gpu = CudaTensor::from_slice(
+            unsafe { std::slice::from_raw_parts(target_i32.as_ptr() as *const f32, ndim) },
+            &[ndim],
+            DType::F32,
+        );
+        let src_gpu = CudaTensor::from_slice(
+            unsafe { std::slice::from_raw_parts(padded_src.as_ptr() as *const f32, ndim) },
+            &[ndim],
+            DType::F32,
+        );
+
+        let output = CudaTensor::uninit(target_shape, DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_broadcast_to_kernel(
+                self.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                target_gpu.buffer.ptr() as *const i32,
+                src_gpu.buffer.ptr() as *const i32,
+                ndim as i32,
+                out_count as i32,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(output)
     }
 }
