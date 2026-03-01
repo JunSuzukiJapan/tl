@@ -207,6 +207,32 @@ __global__ void sum_all_kernel(const float* x, float* out, int n) {
 }
 
 // =====================================================================
+// matmul カーネル (naive: 各スレッドが C[batch,i,j] の 1 要素を計算)
+// =====================================================================
+__global__ void matmul_naive_kernel(
+    const float* A, const float* B, float* C,
+    int m, int k, int n, int batch, int b_batched
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = batch * m * n;
+    if (tid < total) {
+        int b_idx = tid / (m * n);
+        int remainder = tid % (m * n);
+        int i = remainder / n;
+        int j = remainder % n;
+
+        int a_off = b_idx * m * k;
+        int b_off = b_batched ? (b_idx * k * n) : 0;
+
+        float sum = 0.0f;
+        for (int p = 0; p < k; p++) {
+            sum += A[a_off + i * k + p] * B[b_off + p * n + j];
+        }
+        C[b_idx * m * n + i * n + j] = sum;
+    }
+}
+
+// =====================================================================
 // C wrappers
 // =====================================================================
 extern "C" {
@@ -291,6 +317,15 @@ void launch_sum_all_kernel(const float* x, float* out, int n, cudaStream_t strea
     int threads = 256;
     int blocks = (n + threads - 1) / threads;
     sum_all_kernel<<<blocks, threads, threads * sizeof(float), stream>>>(x, out, n);
+}
+
+// --- matmul ---
+void launch_matmul_kernel(const float* a, const float* b, float* c,
+    int m, int k, int n, int batch, int b_batched, cudaStream_t stream) {
+    int total = batch * m * n;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    matmul_naive_kernel<<<blocks, threads, 0, stream>>>(a, b, c, m, k, n, batch, b_batched);
 }
 
 }
