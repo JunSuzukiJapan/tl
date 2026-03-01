@@ -1,11 +1,95 @@
-//! ニューラルネットワーク演算
+//! ニューラルネットワーク演算 — 全て CUDA カーネルで GPU 上で完結
 
+use crate::cuda_sys::cudaStream_t;
 use crate::tensor::CudaTensor;
 use crate::DType;
 use tl_backend::{BackendError, BackendResult};
 
+extern "C" {
+    fn launch_conv2d_kernel(
+        input: *const f32,
+        weight: *const f32,
+        output: *mut f32,
+        n: i32,
+        c_in: i32,
+        h_in: i32,
+        w_in: i32,
+        c_out: i32,
+        kh: i32,
+        kw: i32,
+        h_out: i32,
+        w_out: i32,
+        stride_h: i32,
+        stride_w: i32,
+        pad_h: i32,
+        pad_w: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_batch_norm_kernel(
+        input: *const f32,
+        gamma: *const f32,
+        beta: *const f32,
+        mean: *const f32,
+        var: *const f32,
+        output: *mut f32,
+        n: i32,
+        c: i32,
+        spatial: i32,
+        eps: f32,
+        stream: cudaStream_t,
+    );
+    fn launch_layer_norm_kernel(
+        input: *const f32,
+        gamma: *const f32,
+        beta: *const f32,
+        output: *mut f32,
+        outer: i32,
+        norm_size: i32,
+        eps: f32,
+        stream: cudaStream_t,
+    );
+    fn launch_max_pool2d_kernel(
+        input: *const f32,
+        output: *mut f32,
+        n: i32,
+        c: i32,
+        h: i32,
+        w: i32,
+        h_out: i32,
+        w_out: i32,
+        kh: i32,
+        kw: i32,
+        stride_h: i32,
+        stride_w: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_avg_pool2d_kernel(
+        input: *const f32,
+        output: *mut f32,
+        n: i32,
+        c: i32,
+        h: i32,
+        w: i32,
+        h_out: i32,
+        w_out: i32,
+        kh: i32,
+        kw: i32,
+        stride_h: i32,
+        stride_w: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_dropout_kernel(
+        input: *const f32,
+        output: *mut f32,
+        n: i32,
+        p: f32,
+        scale: f32,
+        stream: cudaStream_t,
+    );
+}
+
 impl CudaTensor {
-    /// Conv2D: input [N,C_in,H,W] × weight [C_out,C_in,kH,kW] → [N,C_out,H_out,W_out]
+    /// Conv2D — GPU カーネル
     pub fn conv2d_impl(
         &self,
         weight: &CudaTensor,
@@ -14,13 +98,11 @@ impl CudaTensor {
     ) -> BackendResult<CudaTensor> {
         let input_shape = self.shape();
         let weight_shape = weight.shape();
-
         if input_shape.len() != 4 || weight_shape.len() != 4 {
             return Err(BackendError::ShapeMismatch(
                 "conv2d requires 4D input and weight".into(),
             ));
         }
-
         let (n, c_in, h_in, w_in) = (
             input_shape[0],
             input_shape[1],
@@ -33,68 +115,43 @@ impl CudaTensor {
             weight_shape[2],
             weight_shape[3],
         );
-
         if c_in != wc_in {
             return Err(BackendError::ShapeMismatch(format!(
-                "conv2d channel mismatch: input {} vs weight {}",
+                "conv2d channel mismatch: {} vs {}",
                 c_in, wc_in
             )));
         }
-
         let h_out = (h_in + 2 * padding.0 - kh) / stride.0 + 1;
         let w_out = (w_in + 2 * padding.1 - kw) / stride.1 + 1;
 
-        let input_data = self.to_vec::<f32>();
-        let weight_data = weight.to_vec::<f32>();
-        let mut output = vec![0.0f32; n * c_out * h_out * w_out];
-
-        for batch in 0..n {
-            for co in 0..c_out {
-                for oh in 0..h_out {
-                    for ow in 0..w_out {
-                        let mut sum = 0.0f32;
-                        for ci in 0..c_in {
-                            for khi in 0..kh {
-                                for kwi in 0..kw {
-                                    let ih = oh * stride.0 + khi;
-                                    let iw = ow * stride.1 + kwi;
-                                    let ih = ih as isize - padding.0 as isize;
-                                    let iw = iw as isize - padding.1 as isize;
-
-                                    if ih >= 0
-                                        && ih < h_in as isize
-                                        && iw >= 0
-                                        && iw < w_in as isize
-                                    {
-                                        let ih = ih as usize;
-                                        let iw = iw as usize;
-                                        let in_idx = batch * c_in * h_in * w_in
-                                            + ci * h_in * w_in
-                                            + ih * w_in
-                                            + iw;
-                                        let w_idx =
-                                            co * c_in * kh * kw + ci * kh * kw + khi * kw + kwi;
-                                        sum += input_data[in_idx] * weight_data[w_idx];
-                                    }
-                                }
-                            }
-                        }
-                        let out_idx =
-                            batch * c_out * h_out * w_out + co * h_out * w_out + oh * w_out + ow;
-                        output[out_idx] = sum;
-                    }
-                }
-            }
+        let output = CudaTensor::uninit(&[n, c_out, h_out, w_out], DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_conv2d_kernel(
+                self.buffer.ptr() as *const f32,
+                weight.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                n as i32,
+                c_in as i32,
+                h_in as i32,
+                w_in as i32,
+                c_out as i32,
+                kh as i32,
+                kw as i32,
+                h_out as i32,
+                w_out as i32,
+                stride.0 as i32,
+                stride.1 as i32,
+                padding.0 as i32,
+                padding.1 as i32,
+                stream,
+            );
         }
-
-        Ok(CudaTensor::from_slice(
-            &output,
-            &[n, c_out, h_out, w_out],
-            DType::F32,
-        ))
+        crate::stream::sync_stream();
+        Ok(output)
     }
 
-    /// Batch Normalization
+    /// Batch Normalization — GPU カーネル
     pub fn batch_norm_impl(
         &self,
         gamma: &CudaTensor,
@@ -109,36 +166,32 @@ impl CudaTensor {
                 "batch_norm requires >= 2D".into(),
             ));
         }
-        let c = shape[1];
-        let data = self.to_vec::<f32>();
-        let gamma_data = gamma.to_vec::<f32>();
-        let beta_data = beta.to_vec::<f32>();
-        let mean_data = running_mean.to_vec::<f32>();
-        let var_data = running_var.to_vec::<f32>();
-
-        let mut result = data.clone();
-        let spatial: usize = shape[2..].iter().product();
         let n = shape[0];
+        let c = shape[1];
+        let spatial: usize = shape[2..].iter().product::<usize>().max(1);
 
-        for batch in 0..n {
-            for ch in 0..c {
-                let g = gamma_data[ch];
-                let b = beta_data[ch];
-                let m = mean_data[ch];
-                let v = var_data[ch];
-                let inv_std = 1.0 / (v + eps).sqrt();
-
-                for s in 0..spatial {
-                    let idx = batch * c * spatial + ch * spatial + s;
-                    result[idx] = g * (result[idx] - m) * inv_std + b;
-                }
-            }
+        let output = CudaTensor::uninit(shape, DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_batch_norm_kernel(
+                self.buffer.ptr() as *const f32,
+                gamma.buffer.ptr() as *const f32,
+                beta.buffer.ptr() as *const f32,
+                running_mean.buffer.ptr() as *const f32,
+                running_var.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                n as i32,
+                c as i32,
+                spatial as i32,
+                eps,
+                stream,
+            );
         }
-
-        Ok(CudaTensor::from_slice(&result, shape, DType::F32))
+        crate::stream::sync_stream();
+        Ok(output)
     }
 
-    /// Layer Normalization
+    /// Layer Normalization — GPU カーネル
     pub fn layer_norm_impl(
         &self,
         gamma: &CudaTensor,
@@ -146,33 +199,28 @@ impl CudaTensor {
         eps: f32,
     ) -> BackendResult<CudaTensor> {
         let shape = self.shape();
-        let data = self.to_vec::<f32>();
-        let gamma_data = gamma.to_vec::<f32>();
-        let beta_data = beta.to_vec::<f32>();
-
-        // 最後の次元で正規化
         let norm_size = *shape.last().unwrap();
-        let outer: usize = data.len() / norm_size;
-        let mut result = vec![0.0f32; data.len()];
+        let outer = self.elem_count() / norm_size;
 
-        for o in 0..outer {
-            let offset = o * norm_size;
-            let slice = &data[offset..offset + norm_size];
-
-            let mean: f32 = slice.iter().sum::<f32>() / norm_size as f32;
-            let var: f32 =
-                slice.iter().map(|&x| (x - mean) * (x - mean)).sum::<f32>() / norm_size as f32;
-            let inv_std = 1.0 / (var + eps).sqrt();
-
-            for i in 0..norm_size {
-                result[offset + i] = gamma_data[i] * (slice[i] - mean) * inv_std + beta_data[i];
-            }
+        let output = CudaTensor::uninit(shape, DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_layer_norm_kernel(
+                self.buffer.ptr() as *const f32,
+                gamma.buffer.ptr() as *const f32,
+                beta.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                outer as i32,
+                norm_size as i32,
+                eps,
+                stream,
+            );
         }
-
-        Ok(CudaTensor::from_slice(&result, shape, DType::F32))
+        crate::stream::sync_stream();
+        Ok(output)
     }
 
-    /// Max Pooling 2D
+    /// Max Pooling 2D — GPU カーネル
     pub fn max_pool2d_impl(
         &self,
         kernel: (usize, usize),
@@ -186,38 +234,30 @@ impl CudaTensor {
         let h_out = (h - kernel.0) / stride.0 + 1;
         let w_out = (w - kernel.1) / stride.1 + 1;
 
-        let data = self.to_vec::<f32>();
-        let mut result = vec![0.0f32; n * c * h_out * w_out];
-
-        for batch in 0..n {
-            for ch in 0..c {
-                for oh in 0..h_out {
-                    for ow in 0..w_out {
-                        let mut max_val = f32::NEG_INFINITY;
-                        for kh in 0..kernel.0 {
-                            for kw in 0..kernel.1 {
-                                let ih = oh * stride.0 + kh;
-                                let iw = ow * stride.1 + kw;
-                                let idx = batch * c * h * w + ch * h * w + ih * w + iw;
-                                max_val = max_val.max(data[idx]);
-                            }
-                        }
-                        let out_idx =
-                            batch * c * h_out * w_out + ch * h_out * w_out + oh * w_out + ow;
-                        result[out_idx] = max_val;
-                    }
-                }
-            }
+        let output = CudaTensor::uninit(&[n, c, h_out, w_out], DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_max_pool2d_kernel(
+                self.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                n as i32,
+                c as i32,
+                h as i32,
+                w as i32,
+                h_out as i32,
+                w_out as i32,
+                kernel.0 as i32,
+                kernel.1 as i32,
+                stride.0 as i32,
+                stride.1 as i32,
+                stream,
+            );
         }
-
-        Ok(CudaTensor::from_slice(
-            &result,
-            &[n, c, h_out, w_out],
-            DType::F32,
-        ))
+        crate::stream::sync_stream();
+        Ok(output)
     }
 
-    /// Average Pooling 2D
+    /// Average Pooling 2D — GPU カーネル
     pub fn avg_pool2d_impl(
         &self,
         kernel: (usize, usize),
@@ -230,60 +270,50 @@ impl CudaTensor {
         let (n, c, h, w) = (shape[0], shape[1], shape[2], shape[3]);
         let h_out = (h - kernel.0) / stride.0 + 1;
         let w_out = (w - kernel.1) / stride.1 + 1;
-        let k_size = (kernel.0 * kernel.1) as f32;
 
-        let data = self.to_vec::<f32>();
-        let mut result = vec![0.0f32; n * c * h_out * w_out];
-
-        for batch in 0..n {
-            for ch in 0..c {
-                for oh in 0..h_out {
-                    for ow in 0..w_out {
-                        let mut sum = 0.0f32;
-                        for kh in 0..kernel.0 {
-                            for kw in 0..kernel.1 {
-                                let ih = oh * stride.0 + kh;
-                                let iw = ow * stride.1 + kw;
-                                let idx = batch * c * h * w + ch * h * w + ih * w + iw;
-                                sum += data[idx];
-                            }
-                        }
-                        let out_idx =
-                            batch * c * h_out * w_out + ch * h_out * w_out + oh * w_out + ow;
-                        result[out_idx] = sum / k_size;
-                    }
-                }
-            }
+        let output = CudaTensor::uninit(&[n, c, h_out, w_out], DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_avg_pool2d_kernel(
+                self.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                n as i32,
+                c as i32,
+                h as i32,
+                w as i32,
+                h_out as i32,
+                w_out as i32,
+                kernel.0 as i32,
+                kernel.1 as i32,
+                stride.0 as i32,
+                stride.1 as i32,
+                stream,
+            );
         }
-
-        Ok(CudaTensor::from_slice(
-            &result,
-            &[n, c, h_out, w_out],
-            DType::F32,
-        ))
+        crate::stream::sync_stream();
+        Ok(output)
     }
 
-    /// Dropout
+    /// Dropout — GPU カーネル
     pub fn dropout_impl(&self, p: f32, training: bool) -> BackendResult<CudaTensor> {
         if !training || p == 0.0 {
             return self.clone_data();
         }
-        let data = self.to_vec::<f32>();
+        let n = self.elem_count();
         let scale = 1.0 / (1.0 - p);
-        // 簡易実装: 決定論的ハッシュベースマスク
-        let result: Vec<f32> = data
-            .iter()
-            .enumerate()
-            .map(|(i, &x)| {
-                // 簡易的な擬似乱数（テスト用）
-                let hash = ((i as u64).wrapping_mul(2654435761) >> 16) as f32 / 65536.0;
-                if hash < p {
-                    0.0
-                } else {
-                    x * scale
-                }
-            })
-            .collect();
-        Ok(CudaTensor::from_slice(&result, self.shape(), self.dtype()))
+        let output = CudaTensor::uninit(self.shape(), DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_dropout_kernel(
+                self.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                n as i32,
+                p,
+                scale,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(output)
     }
 }

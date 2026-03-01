@@ -630,6 +630,171 @@ __global__ void broadcast_to_kernel(
 }
 
 // =====================================================================
+// conv2d カーネル
+// input[N,C_in,H,W], weight[C_out,C_in,kH,kW] → output[N,C_out,H_out,W_out]
+// =====================================================================
+__global__ void conv2d_kernel(
+    const float* input, const float* weight, float* output,
+    int n, int c_in, int h_in, int w_in,
+    int c_out, int kh, int kw,
+    int h_out, int w_out,
+    int stride_h, int stride_w, int pad_h, int pad_w
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = n * c_out * h_out * w_out;
+    if (tid < total) {
+        int batch = tid / (c_out * h_out * w_out);
+        int rem = tid % (c_out * h_out * w_out);
+        int co = rem / (h_out * w_out);
+        rem = rem % (h_out * w_out);
+        int oh = rem / w_out;
+        int ow = rem % w_out;
+
+        float sum = 0.0f;
+        for (int ci = 0; ci < c_in; ci++) {
+            for (int khi = 0; khi < kh; khi++) {
+                for (int kwi = 0; kwi < kw; kwi++) {
+                    int ih = oh * stride_h + khi - pad_h;
+                    int iw = ow * stride_w + kwi - pad_w;
+                    if (ih >= 0 && ih < h_in && iw >= 0 && iw < w_in) {
+                        int in_idx = batch * c_in * h_in * w_in + ci * h_in * w_in + ih * w_in + iw;
+                        int w_idx = co * c_in * kh * kw + ci * kh * kw + khi * kw + kwi;
+                        sum += input[in_idx] * weight[w_idx];
+                    }
+                }
+            }
+        }
+        output[tid] = sum;
+    }
+}
+
+// =====================================================================
+// batch_norm カーネル
+// input[N,C,...], gamma[C], beta[C], mean[C], var[C]
+// =====================================================================
+__global__ void batch_norm_kernel(
+    const float* input, const float* gamma, const float* beta,
+    const float* mean, const float* var, float* output,
+    int n, int c, int spatial, float eps
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = n * c * spatial;
+    if (tid < total) {
+        int ch = (tid / spatial) % c;
+        float inv_std = rsqrtf(var[ch] + eps);
+        output[tid] = gamma[ch] * (input[tid] - mean[ch]) * inv_std + beta[ch];
+    }
+}
+
+// =====================================================================
+// layer_norm カーネル (行ごと: 各スレッドが1行を処理)
+// =====================================================================
+__global__ void layer_norm_kernel(
+    const float* input, const float* gamma, const float* beta,
+    float* output, int outer, int norm_size, float eps
+) {
+    int o = blockIdx.x * blockDim.x + threadIdx.x;
+    if (o < outer) {
+        int offset = o * norm_size;
+        // mean
+        float sum = 0.0f;
+        for (int i = 0; i < norm_size; i++) sum += input[offset + i];
+        float mean = sum / (float)norm_size;
+        // var
+        float var_sum = 0.0f;
+        for (int i = 0; i < norm_size; i++) {
+            float d = input[offset + i] - mean;
+            var_sum += d * d;
+        }
+        float inv_std = rsqrtf(var_sum / (float)norm_size + eps);
+        // normalize
+        for (int i = 0; i < norm_size; i++) {
+            output[offset + i] = gamma[i] * (input[offset + i] - mean) * inv_std + beta[i];
+        }
+    }
+}
+
+// =====================================================================
+// max_pool2d カーネル
+// =====================================================================
+__global__ void max_pool2d_kernel(
+    const float* input, float* output,
+    int n, int c, int h, int w,
+    int h_out, int w_out,
+    int kh, int kw, int stride_h, int stride_w
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = n * c * h_out * w_out;
+    if (tid < total) {
+        int batch = tid / (c * h_out * w_out);
+        int rem = tid % (c * h_out * w_out);
+        int ch = rem / (h_out * w_out);
+        rem = rem % (h_out * w_out);
+        int oh = rem / w_out;
+        int ow = rem % w_out;
+
+        float mx = -3.402823466e+38f;
+        for (int ki = 0; ki < kh; ki++) {
+            for (int kj = 0; kj < kw; kj++) {
+                int ih = oh * stride_h + ki;
+                int iw = ow * stride_w + kj;
+                int idx = batch * c * h * w + ch * h * w + ih * w + iw;
+                if (input[idx] > mx) mx = input[idx];
+            }
+        }
+        output[tid] = mx;
+    }
+}
+
+// =====================================================================
+// avg_pool2d カーネル
+// =====================================================================
+__global__ void avg_pool2d_kernel(
+    const float* input, float* output,
+    int n, int c, int h, int w,
+    int h_out, int w_out,
+    int kh, int kw, int stride_h, int stride_w
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = n * c * h_out * w_out;
+    if (tid < total) {
+        int batch = tid / (c * h_out * w_out);
+        int rem = tid % (c * h_out * w_out);
+        int ch = rem / (h_out * w_out);
+        rem = rem % (h_out * w_out);
+        int oh = rem / w_out;
+        int ow = rem % w_out;
+
+        float sum = 0.0f;
+        for (int ki = 0; ki < kh; ki++) {
+            for (int kj = 0; kj < kw; kj++) {
+                int ih = oh * stride_h + ki;
+                int iw = ow * stride_w + kj;
+                int idx = batch * c * h * w + ch * h * w + ih * w + iw;
+                sum += input[idx];
+            }
+        }
+        output[tid] = sum / (float)(kh * kw);
+    }
+}
+
+// =====================================================================
+// dropout カーネル (hash-based deterministic mask)
+// =====================================================================
+__global__ void dropout_kernel(
+    const float* input, float* output,
+    int n, float p, float scale
+) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        // simple hash-based pseudo-random
+        unsigned int hash = (unsigned int)i * 2654435761u;
+        float r = (float)(hash >> 16) / 65536.0f;
+        output[i] = (r < p) ? 0.0f : input[i] * scale;
+    }
+}
+
+// =====================================================================
 // C wrappers
 // =====================================================================
 extern "C" {
@@ -856,6 +1021,66 @@ void launch_broadcast_to_kernel(const float* input, float* output,
     int threads = 256;
     int blocks = (total + threads - 1) / threads;
     broadcast_to_kernel<<<blocks, threads, 0, stream>>>(input, output, target_shape, src_shape, ndim, total);
+}
+
+// --- nn ops ---
+void launch_conv2d_kernel(const float* input, const float* weight, float* output,
+    int n, int c_in, int h_in, int w_in,
+    int c_out, int kh, int kw,
+    int h_out, int w_out,
+    int stride_h, int stride_w, int pad_h, int pad_w,
+    cudaStream_t stream) {
+    int total = n * c_out * h_out * w_out;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    conv2d_kernel<<<blocks, threads, 0, stream>>>(input, weight, output,
+        n, c_in, h_in, w_in, c_out, kh, kw, h_out, w_out,
+        stride_h, stride_w, pad_h, pad_w);
+}
+
+void launch_batch_norm_kernel(const float* input, const float* gamma, const float* beta,
+    const float* mean, const float* var, float* output,
+    int n, int c, int spatial, float eps, cudaStream_t stream) {
+    int total = n * c * spatial;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    batch_norm_kernel<<<blocks, threads, 0, stream>>>(input, gamma, beta, mean, var, output, n, c, spatial, eps);
+}
+
+void launch_layer_norm_kernel(const float* input, const float* gamma, const float* beta,
+    float* output, int outer, int norm_size, float eps, cudaStream_t stream) {
+    int threads = 256;
+    int blocks = (outer + threads - 1) / threads;
+    layer_norm_kernel<<<blocks, threads, 0, stream>>>(input, gamma, beta, output, outer, norm_size, eps);
+}
+
+void launch_max_pool2d_kernel(const float* input, float* output,
+    int n, int c, int h, int w,
+    int h_out, int w_out,
+    int kh, int kw, int stride_h, int stride_w,
+    cudaStream_t stream) {
+    int total = n * c * h_out * w_out;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    max_pool2d_kernel<<<blocks, threads, 0, stream>>>(input, output, n, c, h, w, h_out, w_out, kh, kw, stride_h, stride_w);
+}
+
+void launch_avg_pool2d_kernel(const float* input, float* output,
+    int n, int c, int h, int w,
+    int h_out, int w_out,
+    int kh, int kw, int stride_h, int stride_w,
+    cudaStream_t stream) {
+    int total = n * c * h_out * w_out;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    avg_pool2d_kernel<<<blocks, threads, 0, stream>>>(input, output, n, c, h, w, h_out, w_out, kh, kw, stride_h, stride_w);
+}
+
+void launch_dropout_kernel(const float* input, float* output,
+    int n, float p, float scale, cudaStream_t stream) {
+    int threads = 256;
+    int blocks = (n + threads - 1) / threads;
+    dropout_kernel<<<blocks, threads, 0, stream>>>(input, output, n, p, scale);
 }
 
 }
