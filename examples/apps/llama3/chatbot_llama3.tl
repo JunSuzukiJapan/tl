@@ -141,10 +141,67 @@ fn main() {
     }
 
     if !File::exists(model_path) {
-        // ...
+        println("Model file not found at:");
+        println(model_path);
+        println("Please select:");
+        println("1. Download Model (~4.9 GB)");
+        println("2. Load from another folder");
+        
+        while true {
+            let choice = read_line("Select [1/2]> ");
+            if choice == "1" {
+                println("Downloading model...");
+                println("Enter download directory path (or press Enter for default ~/.llm/models/llama3/):");
+                let dl_dir_in = read_line("Path> ");
+                let dl_dir = if dl_dir_in == "" { "~/.llm/models/llama3/" } else { dl_dir_in };
+                
+                let filename = "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf";
+                let save_path = dl_dir.concat(filename);
+                
+                let url = "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf";
+                if File::download(url, save_path) {
+                    println("Download complete.");
+                    model_path = save_path;
+                    File::write(config_path, model_path);
+                    break;
+                } else {
+                    println("Download failed.");
+                    println("Please try manual download from:");
+                    println(url);
+                    return;
+                }
+            } else {
+                if choice == "2" {
+                    let new_path = read_line("Enter model absolute path> ");
+                    if File::exists(new_path) {
+                        model_path = new_path;
+                        File::write(config_path, model_path);
+                        break;
+                    } else {
+                        println("File not found. Please try again.");
+                    }
+                } else {
+                    println("Invalid selection.");
+                }
+            }
+        }
     }
     
     let weights = Map::load(model_path);
+
+    if !File::exists(tokenizer_path) {
+        println("Tokenizer not found. Downloading...");
+        let tok_url = "https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct/resolve/main/tokenizer.json";
+        if !File::download(tok_url, tokenizer_path) {
+            println("Failed to download tokenizer.");
+            println("Note: Llama 3.1 tokenizer may require HuggingFace authentication.");
+            println("Please download manually and place at:");
+            println(tokenizer_path);
+            return;
+        }
+        println("Tokenizer downloaded.");
+    }
+
     let tok = Tokenizer::new(tokenizer_path);
     
     let cos = Tensor::rope_new_cos(128, 8192, 500000.0);
