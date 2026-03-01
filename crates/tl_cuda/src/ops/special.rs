@@ -1,4 +1,4 @@
-//! 特殊演算 — CUDA カーネルで GPU 上で完結
+//! 特殊演算 — 全て GPU カーネルで完結 (to_vec ゼロ)
 
 use crate::cuda_sys::cudaStream_t;
 use crate::tensor::CudaTensor;
@@ -64,6 +64,25 @@ extern "C" {
         vocab: i32,
         stream: cudaStream_t,
     );
+    fn launch_index_select_kernel(
+        input: *const f32,
+        indices: *const i64,
+        output: *mut f32,
+        outer: i32,
+        inner: i32,
+        old_dim: i32,
+        n_idx: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_repeat_interleave_kernel(
+        input: *const f32,
+        output: *mut f32,
+        outer: i32,
+        inner: i32,
+        old_dim: i32,
+        repeats: i32,
+        stream: cudaStream_t,
+    );
 }
 
 impl CudaTensor {
@@ -78,7 +97,7 @@ impl CudaTensor {
         };
         let axis_size = shape[axis];
         let outer: usize = shape[..axis].iter().product();
-        let inner: usize = shape[axis + 1..].iter().product();
+        let inner: usize = shape[axis + 1..].iter().product::<usize>().max(1);
 
         let output = CudaTensor::uninit(&shape, DType::F32);
         let stream = crate::stream::get_stream().raw();
@@ -112,7 +131,6 @@ impl CudaTensor {
         out_shape.push(embed_dim);
         let output = CudaTensor::uninit(&out_shape, DType::F32);
         let stream = crate::stream::get_stream().raw();
-
         unsafe {
             launch_embedding_kernel(
                 self.buffer.ptr() as *const f32,
@@ -139,7 +157,6 @@ impl CudaTensor {
         let n = logits_shape[0];
         let c = logits_shape[1];
 
-        // per-sample loss を GPU で計算
         let losses = CudaTensor::uninit(&[n], DType::F32);
         let stream = crate::stream::get_stream().raw();
         unsafe {
@@ -153,8 +170,6 @@ impl CudaTensor {
             );
         }
         crate::stream::sync_stream();
-
-        // mean を GPU で計算
         let total_loss = losses.sumall_impl()? / n as f32;
         Ok(CudaTensor::from_slice(&[total_loss], &[1], DType::F32))
     }
@@ -186,45 +201,39 @@ impl CudaTensor {
         Ok(output)
     }
 
-    /// index_select (CPU — Phase C の後で GPU 化)
+    /// index_select — GPU カーネル
     pub fn index_select_impl(
         &self,
         axis: usize,
         indices: &CudaTensor,
     ) -> BackendResult<CudaTensor> {
         let shape = self.shape().to_vec();
-        let data = self.to_vec::<f32>();
-        let idx_data: Vec<i64> = indices.to_vec();
+        let ndim = shape.len();
+        let n_idx = indices.elem_count();
+
+        let outer: usize = shape[..axis].iter().product::<usize>().max(1);
+        let inner: usize = shape[axis + 1..].iter().product::<usize>().max(1);
+        let old_dim = shape[axis];
 
         let mut out_shape = shape.clone();
-        out_shape[axis] = idx_data.len();
-        let out_count: usize = out_shape.iter().product();
-        let ndim = shape.len();
-
-        let mut strides = vec![1usize; ndim];
-        for d in (0..ndim - 1).rev() {
-            strides[d] = strides[d + 1] * shape[d + 1];
+        out_shape[axis] = n_idx;
+        let output = CudaTensor::uninit(&out_shape, DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_index_select_kernel(
+                self.buffer.ptr() as *const f32,
+                indices.buffer.ptr() as *const i64,
+                output.buffer.ptr() as *mut f32,
+                outer as i32,
+                inner as i32,
+                old_dim as i32,
+                n_idx as i32,
+                stream,
+            );
         }
-        let mut out_strides = vec![1usize; ndim];
-        for d in (0..ndim - 1).rev() {
-            out_strides[d] = out_strides[d + 1] * out_shape[d + 1];
-        }
-
-        let mut result = vec![0.0f32; out_count];
-        for out_idx in 0..out_count {
-            let mut rem = out_idx;
-            let mut coords = vec![0usize; ndim];
-            for d in 0..ndim {
-                coords[d] = rem / out_strides[d];
-                rem %= out_strides[d];
-            }
-            let orig_coord = idx_data[coords[axis]] as usize;
-            coords[axis] = orig_coord;
-            let src_idx: usize = coords.iter().zip(strides.iter()).map(|(c, s)| c * s).sum();
-            result[out_idx] = data[src_idx];
-        }
-
-        Ok(CudaTensor::from_slice(&result, &out_shape, self.dtype()))
+        crate::stream::sync_stream();
+        let _ = ndim;
+        Ok(output)
     }
 
     /// where_cond — GPU カーネル
@@ -250,39 +259,31 @@ impl CudaTensor {
         Ok(output)
     }
 
-    /// repeat_interleave (CPU — 使用頻度低)
+    /// repeat_interleave — GPU カーネル
     pub fn repeat_interleave_impl(&self, repeats: usize, axis: usize) -> BackendResult<CudaTensor> {
         let shape = self.shape().to_vec();
-        let data = self.to_vec::<f32>();
-        let ndim = shape.len();
+
+        let outer: usize = shape[..axis].iter().product::<usize>().max(1);
+        let inner: usize = shape[axis + 1..].iter().product::<usize>().max(1);
+        let old_dim = shape[axis];
 
         let mut out_shape = shape.clone();
         out_shape[axis] *= repeats;
-        let out_count: usize = out_shape.iter().product();
-
-        let mut strides = vec![1usize; ndim];
-        for d in (0..ndim - 1).rev() {
-            strides[d] = strides[d + 1] * shape[d + 1];
+        let output = CudaTensor::uninit(&out_shape, DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_repeat_interleave_kernel(
+                self.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                outer as i32,
+                inner as i32,
+                old_dim as i32,
+                repeats as i32,
+                stream,
+            );
         }
-        let mut out_strides = vec![1usize; ndim];
-        for d in (0..ndim - 1).rev() {
-            out_strides[d] = out_strides[d + 1] * out_shape[d + 1];
-        }
-
-        let mut result = vec![0.0f32; out_count];
-        for out_idx in 0..out_count {
-            let mut rem = out_idx;
-            let mut coords = vec![0usize; ndim];
-            for d in 0..ndim {
-                coords[d] = rem / out_strides[d];
-                rem %= out_strides[d];
-            }
-            coords[axis] /= repeats;
-            let src_idx: usize = coords.iter().zip(strides.iter()).map(|(c, s)| c * s).sum();
-            result[out_idx] = data[src_idx];
-        }
-
-        Ok(CudaTensor::from_slice(&result, &out_shape, self.dtype()))
+        crate::stream::sync_stream();
+        Ok(output)
     }
 
     /// one_hot — GPU カーネル

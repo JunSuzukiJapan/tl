@@ -1,4 +1,4 @@
-//! 形状操作 — reshape/unsqueeze/squeeze は buffer 共有、残りは GPU カーネル
+//! 形状操作 — 全て GPU 上で完結 (to_vec ゼロ)
 
 use crate::cuda_sys::cudaStream_t;
 use crate::tensor::CudaTensor;
@@ -40,6 +40,18 @@ extern "C" {
         src_shape: *const i32,
         ndim: i32,
         total: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_transpose_nd_kernel(
+        input: *const f32,
+        output: *mut f32,
+        old_shape: *const i32,
+        old_strides: *const i32,
+        new_strides: *const i32,
+        ndim: i32,
+        total: i32,
+        dim0: i32,
+        dim1: i32,
         stream: cudaStream_t,
     );
 }
@@ -89,12 +101,12 @@ impl CudaTensor {
         Ok(self.view_with_shape(&new_shape))
     }
 
-    /// contiguous — GPU buffer 共有
+    /// contiguous — GPU buffer clone
     pub fn contiguous_impl(&self) -> BackendResult<CudaTensor> {
         self.clone_data()
     }
 
-    /// 転置 — GPU カーネル（2D 最適化、N-D は一般化）
+    /// 転置 — GPU カーネル（2D 最適化 + N-D 汎用）
     pub fn transpose_impl(&self, dim0: usize, dim1: usize) -> BackendResult<CudaTensor> {
         let shape = self.shape().to_vec();
         let ndim = shape.len();
@@ -111,18 +123,16 @@ impl CudaTensor {
         let mut new_shape = shape.clone();
         new_shape.swap(dim0, dim1);
 
-        // 2D の場合は最適化カーネルを使用
+        // 2D の場合は最適化カーネル
         if ndim == 2 {
-            let rows = shape[0];
-            let cols = shape[1];
             let output = CudaTensor::uninit(&new_shape, DType::F32);
             let stream = crate::stream::get_stream().raw();
             unsafe {
                 launch_transpose_2d_kernel(
                     self.buffer.ptr() as *const f32,
                     output.buffer.ptr() as *mut f32,
-                    rows as i32,
-                    cols as i32,
+                    shape[0] as i32,
+                    shape[1] as i32,
                     stream,
                 );
             }
@@ -130,37 +140,55 @@ impl CudaTensor {
             return Ok(output);
         }
 
-        // N-D: CPU フォールバック
-        let data = self.to_vec::<f32>();
-        let count = data.len();
-        let mut result = vec![0.0f32; count];
+        // N-D 汎用カーネル
+        let total = self.elem_count();
 
-        let mut old_strides = vec![1usize; ndim];
+        // strides 計算
+        let mut old_strides = vec![1i32; ndim];
         for d in (0..ndim - 1).rev() {
-            old_strides[d] = old_strides[d + 1] * shape[d + 1];
+            old_strides[d] = old_strides[d + 1] * shape[d + 1] as i32;
         }
-        let mut new_strides = vec![1usize; ndim];
+        let mut new_strides = vec![1i32; ndim];
         for d in (0..ndim - 1).rev() {
-            new_strides[d] = new_strides[d + 1] * new_shape[d + 1];
+            new_strides[d] = new_strides[d + 1] * new_shape[d + 1] as i32;
         }
+        let old_shape_i32: Vec<i32> = shape.iter().map(|&s| s as i32).collect();
 
-        for i in 0..count {
-            let mut rem = i;
-            let mut coords = vec![0usize; ndim];
-            for d in 0..ndim {
-                coords[d] = rem / old_strides[d];
-                rem %= old_strides[d];
-            }
-            coords.swap(dim0, dim1);
-            let new_idx: usize = coords
-                .iter()
-                .zip(new_strides.iter())
-                .map(|(c, s)| c * s)
-                .sum();
-            result[new_idx] = data[i];
+        // GPU にアップロード
+        let shape_gpu = CudaTensor::from_slice(
+            unsafe { std::slice::from_raw_parts(old_shape_i32.as_ptr() as *const f32, ndim) },
+            &[ndim],
+            DType::F32,
+        );
+        let old_strides_gpu = CudaTensor::from_slice(
+            unsafe { std::slice::from_raw_parts(old_strides.as_ptr() as *const f32, ndim) },
+            &[ndim],
+            DType::F32,
+        );
+        let new_strides_gpu = CudaTensor::from_slice(
+            unsafe { std::slice::from_raw_parts(new_strides.as_ptr() as *const f32, ndim) },
+            &[ndim],
+            DType::F32,
+        );
+
+        let output = CudaTensor::uninit(&new_shape, DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_transpose_nd_kernel(
+                self.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                shape_gpu.buffer.ptr() as *const i32,
+                old_strides_gpu.buffer.ptr() as *const i32,
+                new_strides_gpu.buffer.ptr() as *const i32,
+                ndim as i32,
+                total as i32,
+                dim0 as i32,
+                dim1 as i32,
+                stream,
+            );
         }
-
-        Ok(CudaTensor::from_slice(&result, &new_shape, self.dtype()))
+        crate::stream::sync_stream();
+        Ok(output)
     }
 
     /// narrow — GPU カーネル
@@ -228,7 +256,6 @@ impl CudaTensor {
             }
         }
 
-        let ndim = a_shape.len();
         let outer: usize = a_shape[..dim].iter().product::<usize>().max(1);
         let inner: usize = a_shape[dim + 1..].iter().product::<usize>().max(1);
         let a_dim = a_shape[dim];
@@ -251,7 +278,6 @@ impl CudaTensor {
             );
         }
         crate::stream::sync_stream();
-        let _ = ndim; // suppress unused warning
         Ok(output)
     }
 
@@ -261,7 +287,6 @@ impl CudaTensor {
         let ndim = target_shape.len();
         let out_count: usize = target_shape.iter().product();
 
-        // shape を左パディングして ndim に揃える
         let mut padded_src = vec![1i32; ndim];
         let offset = ndim - src_shape.len();
         for (i, &s) in src_shape.iter().enumerate() {
@@ -269,7 +294,6 @@ impl CudaTensor {
         }
         let target_i32: Vec<i32> = target_shape.iter().map(|&s| s as i32).collect();
 
-        // GPU にコピー
         let target_gpu = CudaTensor::from_slice(
             unsafe { std::slice::from_raw_parts(target_i32.as_ptr() as *const f32, ndim) },
             &[ndim],
