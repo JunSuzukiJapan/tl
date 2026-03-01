@@ -425,11 +425,9 @@ __global__ void tril_kernel(const float *input, float *output, int rows,
   int tid = blockIdx.x * blockDim.x + threadIdx.x;
   int total = batch * rows * cols;
   if (tid < total) {
-    int b = tid / (rows * cols);
     int remainder = tid % (rows * cols);
     int r = remainder / cols;
     int c_idx = remainder % cols;
-    (void)b;
     output[tid] = (c_idx <= r + diagonal) ? input[tid] : 0.0f;
   }
 }
