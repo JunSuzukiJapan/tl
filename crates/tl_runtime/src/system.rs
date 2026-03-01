@@ -288,11 +288,15 @@ pub extern "C" fn tl_qtensor_matmul(
         {
             let weight_ptr = match qtensor.dequantize_to_tensor() {
                 Ok(t) => t as *mut std::ffi::c_void,
-                Err(e) => {
-                    eprintln!("Error: tl_qtensor_matmul dequantize failed: {}", e);
+                Err(_e) => {
                     return std::ptr::null_mut();
                 }
             };
+            // デバッグ: shape 確認
+            eprintln!(
+                "[DEBUG qtmatmul] qtensor.shape={:?}, ggml_type={:?}",
+                qtensor.shape, qtensor.ggml_type
+            );
             {
                 let cache_guard = qtensor.cache_transposed.lock().unwrap();
                 if let Some(ptr_val) = *cache_guard {

@@ -130,15 +130,6 @@ fn main() {
     Param::set_device(Device::Auto);
     let mut model_path = "~/.llm/models/llama3/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf";
     let tokenizer_path = "~/.llm/models/llama3/tokenizer.json";
-    
-    let config_path = "chatbot_config.txt";
-    // Try config first
-    if File::exists(config_path) {
-        let saved_path = File::read(config_path);
-        if File::exists(saved_path) {
-            model_path = saved_path;
-        }
-    }
 
     if !File::exists(model_path) {
         println("Model file not found at:");
@@ -162,7 +153,6 @@ fn main() {
                 if File::download(url, save_path) {
                     println("Download complete.");
                     model_path = save_path;
-                    File::write(config_path, model_path);
                     break;
                 } else {
                     println("Download failed.");
@@ -175,7 +165,6 @@ fn main() {
                     let new_path = read_line("Enter model absolute path> ");
                     if File::exists(new_path) {
                         model_path = new_path;
-                        File::write(config_path, model_path);
                         break;
                     } else {
                         println("File not found. Please try again.");
