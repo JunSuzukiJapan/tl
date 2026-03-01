@@ -647,21 +647,9 @@ impl GradFn for CrossEntropyBackward {
         let batch = shape[0];
         let classes = shape[1];
 
-        // softmax(logits) on GPU
+        // 全て GPU 演算で完結
         let probs = logits.softmax_impl(-1)?;
-
-        // one_hot テンソルを構築 (targets のインデックスだけ CPU で読む)
-        let target_indices = targets.to_vec::<i64>();
-        let mut one_hot_data = vec![0.0f32; batch * classes];
-        for i in 0..batch {
-            let t = target_indices[i] as usize;
-            if t < classes {
-                one_hot_data[i * classes + t] = 1.0;
-            }
-        }
-        let one_hot = CudaTensor::from_slice(&one_hot_data, shape, DType::F32);
-
-        // grad = (probs - one_hot) * (grad_output / batch) — 全て GPU 演算
+        let one_hot = targets.one_hot_impl(classes)?;
         let diff = probs.sub_impl(&one_hot)?;
         let scale = grad_output.mul_scalar_impl(1.0 / batch as f32)?;
         // scale は scalar [1]、diff は [batch, classes] → broadcast mul
@@ -690,23 +678,16 @@ impl GradFn for EmbeddingBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         let w = get_ref(&self.weight);
         let idx = get_ref(&self.indices);
+        let vocab_size = w.shape()[0];
         let embed_dim = w.shape()[1];
 
-        // indices だけ CPU で読む (小さな i64 ベクタ)
-        let idx_data = idx.to_vec::<i64>();
-
-        // grad_output の data を GPU 上で取得
-        let grad_data = grad_output.to_vec::<f32>();
-
-        // scatter_add: indices[i] の行に grad_output[i] を加算
-        let mut grad_w = vec![0.0f32; w.elem_count()];
-        for (i, &token) in idx_data.iter().enumerate() {
-            let t = token as usize;
-            for j in 0..embed_dim {
-                grad_w[t * embed_dim + j] += grad_data[i * embed_dim + j];
-            }
-        }
-        Ok(vec![CudaTensor::from_slice(&grad_w, w.shape(), DType::F32)])
+        // 全て GPU 演算で完結 — scatter_add カーネル使用
+        Ok(vec![CudaTensor::scatter_add_impl(
+            grad_output,
+            idx,
+            vocab_size,
+            embed_dim,
+        )?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.weight.clone()]
