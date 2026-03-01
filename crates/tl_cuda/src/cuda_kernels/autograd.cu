@@ -190,6 +190,84 @@ __global__ void silu_kernel(const float* x, float* y, int n) {
     if (i < n) y[i] = x[i] / (1.0f + expf(-x[i]));
 }
 
+__global__ void sin_kernel(const float* x, float* y, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) y[i] = sinf(x[i]);
+}
+
+__global__ void cos_kernel(const float* x, float* y, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) y[i] = cosf(x[i]);
+}
+
+__global__ void tan_kernel(const float* x, float* y, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) y[i] = tanf(x[i]);
+}
+
+__global__ void floor_kernel(const float* x, float* y, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) y[i] = floorf(x[i]);
+}
+
+__global__ void ceil_kernel(const float* x, float* y, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) y[i] = ceilf(x[i]);
+}
+
+__global__ void round_kernel(const float* x, float* y, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) y[i] = roundf(x[i]);
+}
+
+// =====================================================================
+// max/min reduction カーネル
+// =====================================================================
+__global__ void max_all_kernel(const float* x, float* out, int n) {
+    extern __shared__ float sdata[];
+    int tid = threadIdx.x;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    sdata[tid] = (i < n) ? x[i] : -3.402823466e+38f; // -FLT_MAX
+    __syncthreads();
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) sdata[tid] = fmaxf(sdata[tid], sdata[tid + s]);
+        __syncthreads();
+    }
+    if (tid == 0) {
+        // atomic max for float via atomicCAS
+        float val = sdata[0];
+        unsigned int* addr = (unsigned int*)out;
+        unsigned int old = *addr, assumed;
+        do {
+            assumed = old;
+            old = atomicCAS(addr, assumed,
+                __float_as_uint(fmaxf(__uint_as_float(assumed), val)));
+        } while (assumed != old);
+    }
+}
+
+__global__ void min_all_kernel(const float* x, float* out, int n) {
+    extern __shared__ float sdata[];
+    int tid = threadIdx.x;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    sdata[tid] = (i < n) ? x[i] : 3.402823466e+38f; // FLT_MAX
+    __syncthreads();
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) sdata[tid] = fminf(sdata[tid], sdata[tid + s]);
+        __syncthreads();
+    }
+    if (tid == 0) {
+        float val = sdata[0];
+        unsigned int* addr = (unsigned int*)out;
+        unsigned int old = *addr, assumed;
+        do {
+            assumed = old;
+            old = atomicCAS(addr, assumed,
+                __float_as_uint(fminf(__uint_as_float(assumed), val)));
+        } while (assumed != old);
+    }
+}
+
 // =====================================================================
 // reduce カーネル (single block for simplicity; works for small tensors)
 // =====================================================================
@@ -306,10 +384,29 @@ LAUNCH_UNARY(relu)
 LAUNCH_UNARY(tanh)
 LAUNCH_UNARY(gelu)
 LAUNCH_UNARY(silu)
+LAUNCH_UNARY(sin)
+LAUNCH_UNARY(cos)
+LAUNCH_UNARY(tan)
+LAUNCH_UNARY(floor)
+LAUNCH_UNARY(ceil)
+LAUNCH_UNARY(round)
 
 void launch_sigmoid_kernel2(const float* x, float* y, int n, cudaStream_t stream) {
     int threads = 256; int blocks = (n + threads - 1) / threads;
     sigmoid_kernel2<<<blocks, threads, 0, stream>>>(x, y, n);
+}
+
+// --- max/min reduce ---
+void launch_max_all_kernel(const float* x, float* out, int n, cudaStream_t stream) {
+    int threads = 256;
+    int blocks = (n + threads - 1) / threads;
+    max_all_kernel<<<blocks, threads, threads * sizeof(float), stream>>>(x, out, n);
+}
+
+void launch_min_all_kernel(const float* x, float* out, int n, cudaStream_t stream) {
+    int threads = 256;
+    int blocks = (n + threads - 1) / threads;
+    min_all_kernel<<<blocks, threads, threads * sizeof(float), stream>>>(x, out, n);
 }
 
 // --- reduce ---

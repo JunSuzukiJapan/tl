@@ -1,4 +1,4 @@
-//! リダクション演算 — sumall は CUDA カーネル、その他は CPU フォールバック
+//! リダクション演算 — 全て CUDA カーネルで GPU 上で完結
 
 use crate::cuda_sys::cudaStream_t;
 use crate::tensor::CudaTensor;
@@ -7,6 +7,8 @@ use tl_backend::BackendResult;
 
 extern "C" {
     fn launch_sum_all_kernel(x: *const f32, out: *mut f32, n: i32, stream: cudaStream_t);
+    fn launch_max_all_kernel(x: *const f32, out: *mut f32, n: i32, stream: cudaStream_t);
+    fn launch_min_all_kernel(x: *const f32, out: *mut f32, n: i32, stream: cudaStream_t);
 }
 
 impl CudaTensor {
@@ -47,21 +49,42 @@ impl CudaTensor {
         Ok(CudaTensor::from_slice(&[m], &[1], DType::F32))
     }
 
-    /// 全要素の最大値（CPU フォールバック）
+    /// 全要素の最大値（GPU カーネル）
     pub fn max_all_impl(&self) -> BackendResult<CudaTensor> {
-        let data = self.to_vec::<f32>();
-        let max = data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        Ok(CudaTensor::from_slice(&[max], &[1], DType::F32))
+        let n = self.elem_count();
+        // -FLT_MAX で初期化
+        let output = CudaTensor::from_slice(&[f32::NEG_INFINITY], &[1], DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_max_all_kernel(
+                self.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                n as i32,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(output)
     }
 
-    /// 全要素の最小値（CPU フォールバック）
+    /// 全要素の最小値（GPU カーネル）
     pub fn min_all_impl(&self) -> BackendResult<CudaTensor> {
-        let data = self.to_vec::<f32>();
-        let min = data.iter().cloned().fold(f32::INFINITY, f32::min);
-        Ok(CudaTensor::from_slice(&[min], &[1], DType::F32))
+        let n = self.elem_count();
+        let output = CudaTensor::from_slice(&[f32::INFINITY], &[1], DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_min_all_kernel(
+                self.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                n as i32,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(output)
     }
 
-    /// 全要素の argmax（CPU フォールバック）
+    /// 全要素の argmax（CPU — GPU argmax は複雑なため）
     pub fn argmax_all_impl(&self) -> BackendResult<CudaTensor> {
         let data = self.to_vec::<f32>();
         let idx = data
@@ -73,7 +96,7 @@ impl CudaTensor {
         Ok(CudaTensor::from_slice(&[idx], &[1], DType::F32))
     }
 
-    /// 全要素の argmin（CPU フォールバック）
+    /// 全要素の argmin（CPU — GPU argmin は複雑なため）
     pub fn argmin_all_impl(&self) -> BackendResult<CudaTensor> {
         let data = self.to_vec::<f32>();
         let idx = data

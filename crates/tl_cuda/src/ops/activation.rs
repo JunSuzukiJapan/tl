@@ -1,4 +1,4 @@
-//! 活性化関数（要素ごと）— CUDA カーネルで GPU 上で完結
+//! 活性化関数（要素ごと）— 全て CUDA カーネルで GPU 上で完結
 //!
 //! exp_impl, log_impl, sqrt_impl は unary.rs に定義済み（カーネル化済み）
 
@@ -13,6 +13,12 @@ extern "C" {
     fn launch_tanh_kernel(x: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
     fn launch_gelu_kernel(x: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
     fn launch_silu_kernel(x: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
+    fn launch_sin_kernel(x: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
+    fn launch_cos_kernel(x: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
+    fn launch_tan_kernel(x: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
+    fn launch_floor_kernel(x: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
+    fn launch_ceil_kernel(x: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
+    fn launch_round_kernel(x: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
 }
 
 impl CudaTensor {
@@ -36,70 +42,37 @@ impl CudaTensor {
         Ok(output)
     }
 
-    /// ReLU: max(0, x)
     pub fn relu_impl(&self) -> BackendResult<CudaTensor> {
         self.activation_kernel_op(launch_relu_kernel)
     }
-
-    /// Sigmoid: 1 / (1 + exp(-x))
     pub fn sigmoid_impl(&self) -> BackendResult<CudaTensor> {
         self.activation_kernel_op(launch_sigmoid_kernel2)
     }
-
-    /// Tanh
     pub fn tanh_impl(&self) -> BackendResult<CudaTensor> {
         self.activation_kernel_op(launch_tanh_kernel)
     }
-
-    /// GELU: x * 0.5 * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x³)))
     pub fn gelu_impl(&self) -> BackendResult<CudaTensor> {
         self.activation_kernel_op(launch_gelu_kernel)
     }
-
-    /// SiLU (Swish): x * sigmoid(x)
     pub fn silu_impl(&self) -> BackendResult<CudaTensor> {
         self.activation_kernel_op(launch_silu_kernel)
     }
-
-    /// Sin (CPU フォールバック — 使用頻度低)
     pub fn sin_impl(&self) -> BackendResult<CudaTensor> {
-        let data = self.to_vec::<f32>();
-        let result: Vec<f32> = data.iter().map(|&x| x.sin()).collect();
-        Ok(CudaTensor::from_slice(&result, self.shape(), self.dtype()))
+        self.activation_kernel_op(launch_sin_kernel)
     }
-
-    /// Cos (CPU フォールバック)
     pub fn cos_impl(&self) -> BackendResult<CudaTensor> {
-        let data = self.to_vec::<f32>();
-        let result: Vec<f32> = data.iter().map(|&x| x.cos()).collect();
-        Ok(CudaTensor::from_slice(&result, self.shape(), self.dtype()))
+        self.activation_kernel_op(launch_cos_kernel)
     }
-
-    /// Tan (CPU フォールバック)
     pub fn tan_impl(&self) -> BackendResult<CudaTensor> {
-        let data = self.to_vec::<f32>();
-        let result: Vec<f32> = data.iter().map(|&x| x.tan()).collect();
-        Ok(CudaTensor::from_slice(&result, self.shape(), self.dtype()))
+        self.activation_kernel_op(launch_tan_kernel)
     }
-
-    /// Floor (CPU フォールバック)
     pub fn floor_impl(&self) -> BackendResult<CudaTensor> {
-        let data = self.to_vec::<f32>();
-        let result: Vec<f32> = data.iter().map(|&x| x.floor()).collect();
-        Ok(CudaTensor::from_slice(&result, self.shape(), self.dtype()))
+        self.activation_kernel_op(launch_floor_kernel)
     }
-
-    /// Ceil (CPU フォールバック)
     pub fn ceil_impl(&self) -> BackendResult<CudaTensor> {
-        let data = self.to_vec::<f32>();
-        let result: Vec<f32> = data.iter().map(|&x| x.ceil()).collect();
-        Ok(CudaTensor::from_slice(&result, self.shape(), self.dtype()))
+        self.activation_kernel_op(launch_ceil_kernel)
     }
-
-    /// Round (CPU フォールバック)
     pub fn round_impl(&self) -> BackendResult<CudaTensor> {
-        let data = self.to_vec::<f32>();
-        let result: Vec<f32> = data.iter().map(|&x| x.round()).collect();
-        Ok(CudaTensor::from_slice(&result, self.shape(), self.dtype()))
+        self.activation_kernel_op(launch_round_kernel)
     }
 }

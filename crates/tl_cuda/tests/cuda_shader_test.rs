@@ -282,7 +282,7 @@ fn test_rms_norm() {
         &[2, 4],
         DType::F32,
     );
-    let weight = CudaTensor::ones(&[4], DType::F32);
+    // let weight = CudaTensor::ones(&[4], DType::F32);
     let output = input.rms_norm_impl(1e-5).unwrap();
     assert_eq!(output.shape(), &[2, 4]);
 
