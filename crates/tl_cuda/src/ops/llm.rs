@@ -1,34 +1,46 @@
-//! LLM 特化演算
+//! LLM 特化演算 — rms_norm/causal_mask は GPU カーネル
 
+use crate::cuda_sys::cudaStream_t;
 use crate::tensor::CudaTensor;
 use crate::DType;
 use tl_backend::{BackendError, BackendResult};
 
+extern "C" {
+    fn launch_rms_norm_kernel(
+        input: *const f32,
+        output: *mut f32,
+        outer: i32,
+        norm_size: i32,
+        eps: f32,
+        stream: cudaStream_t,
+    );
+    fn launch_causal_mask_kernel(output: *mut f32, size: i32, stream: cudaStream_t);
+}
+
 impl CudaTensor {
-    /// RMS Normalization: x * rsqrt(mean(x²) + eps)
+    /// RMS Normalization — GPU カーネル
     pub fn rms_norm_impl(&self, eps: f32) -> BackendResult<CudaTensor> {
         let shape = self.shape().to_vec();
-        let data = self.to_vec::<f32>();
         let norm_size = *shape.last().unwrap();
-        let outer = data.len() / norm_size;
-        let mut result = vec![0.0f32; data.len()];
+        let outer = self.elem_count() / norm_size;
 
-        for o in 0..outer {
-            let offset = o * norm_size;
-            let slice = &data[offset..offset + norm_size];
-
-            let rms: f32 = slice.iter().map(|&x| x * x).sum::<f32>() / norm_size as f32;
-            let inv_rms = 1.0 / (rms + eps).sqrt();
-
-            for i in 0..norm_size {
-                result[offset + i] = slice[i] * inv_rms;
-            }
+        let output = CudaTensor::uninit(&shape, DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_rms_norm_kernel(
+                self.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                outer as i32,
+                norm_size as i32,
+                eps,
+                stream,
+            );
         }
-
-        Ok(CudaTensor::from_slice(&result, &shape, DType::F32))
+        crate::stream::sync_stream();
+        Ok(output)
     }
 
-    /// RoPE cos/sin テーブル生成
+    /// RoPE cos/sin テーブル生成（CPU — テーブル生成は一度きり）
     pub fn rope_cos_sin_impl(
         seq_len: usize,
         dim: usize,
@@ -42,11 +54,8 @@ impl CudaTensor {
             for i in 0..half_dim {
                 let freq = 1.0 / freq_base.powf(2.0 * i as f32 / dim as f32);
                 let angle = pos as f32 * freq;
-                let c = angle.cos();
-                let s = angle.sin();
-
-                cos_data[pos * half_dim + i] = c;
-                sin_data[pos * half_dim + i] = s;
+                cos_data[pos * half_dim + i] = angle.cos();
+                sin_data[pos * half_dim + i] = angle.sin();
             }
         }
 
@@ -55,7 +64,7 @@ impl CudaTensor {
         Ok((cos, sin))
     }
 
-    /// RoPE 適用
+    /// RoPE 適用（CPU — 複雑な座標変換のため）
     pub fn apply_rope_impl(
         &self,
         cos: &CudaTensor,
@@ -78,8 +87,6 @@ impl CudaTensor {
             1
         };
 
-        // テンソル shape に基づいてトークン位置ごとに cos/sin を適用
-        // [batch, seq_len, num_heads, head_dim] or [seq_len, head_dim] etc.
         let (num_tokens, heads_per_token) = if shape.len() == 4 {
             (shape[1], shape[0] * shape[2])
         } else if shape.len() == 3 {
@@ -123,16 +130,14 @@ impl CudaTensor {
         Ok(CudaTensor::from_slice(&result, &shape, DType::F32))
     }
 
-    /// Causal mask: 上三角を -inf にしたマスク
+    /// Causal mask — GPU カーネル
     pub fn causal_mask_impl(size: usize) -> BackendResult<CudaTensor> {
-        let mut data = vec![0.0f32; size * size];
-        for i in 0..size {
-            for j in 0..size {
-                if j > i {
-                    data[i * size + j] = f32::NEG_INFINITY;
-                }
-            }
+        let output = CudaTensor::uninit(&[size, size], DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_causal_mask_kernel(output.buffer.ptr() as *mut f32, size as i32, stream);
         }
-        Ok(CudaTensor::from_slice(&data, &[size, size], DType::F32))
+        crate::stream::sync_stream();
+        Ok(output)
     }
 }

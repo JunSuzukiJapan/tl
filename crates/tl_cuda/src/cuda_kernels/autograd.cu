@@ -311,6 +311,155 @@ __global__ void matmul_naive_kernel(
 }
 
 // =====================================================================
+// softmax カーネル (行ごと: 各ブロックが1行を処理)
+// input[outer * axis_size * inner], output 同 shape
+// 簡易版: 各スレッドが1つの (outer, inner) ペアを処理
+// =====================================================================
+__global__ void softmax_kernel(
+    const float* input, float* output,
+    int outer, int axis_size, int inner
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = outer * inner;
+    if (tid < total) {
+        int o = tid / inner;
+        int i = tid % inner;
+        int base = o * axis_size * inner + i;
+
+        // max
+        float max_val = -3.402823466e+38f;
+        for (int k = 0; k < axis_size; k++) {
+            float v = input[base + k * inner];
+            if (v > max_val) max_val = v;
+        }
+        // exp + sum
+        float sum_exp = 0.0f;
+        for (int k = 0; k < axis_size; k++) {
+            float e = expf(input[base + k * inner] - max_val);
+            output[base + k * inner] = e;
+            sum_exp += e;
+        }
+        // normalize
+        float inv_sum = 1.0f / sum_exp;
+        for (int k = 0; k < axis_size; k++) {
+            output[base + k * inner] *= inv_sum;
+        }
+    }
+}
+
+// =====================================================================
+// embedding (gather) カーネル
+// weight[vocab, dim], indices[seq] → output[seq, dim]
+// =====================================================================
+__global__ void embedding_kernel(
+    const float* weight, const long long* indices,
+    float* output, int seq_len, int embed_dim, int vocab_size
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = seq_len * embed_dim;
+    if (tid < total) {
+        int i = tid / embed_dim;
+        int j = tid % embed_dim;
+        int idx = (int)indices[i];
+        if (idx >= 0 && idx < vocab_size) {
+            output[i * embed_dim + j] = weight[idx * embed_dim + j];
+        }
+    }
+}
+
+// =====================================================================
+// cross_entropy カーネル
+// logits[N, C], targets[N] → loss[N] (per-sample loss)
+// =====================================================================
+__global__ void cross_entropy_kernel(
+    const float* logits, const long long* targets,
+    float* losses, int n, int c
+) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        const float* row = logits + i * c;
+        // max for stability
+        float max_val = -3.402823466e+38f;
+        for (int j = 0; j < c; j++) {
+            if (row[j] > max_val) max_val = row[j];
+        }
+        float sum_exp = 0.0f;
+        for (int j = 0; j < c; j++) {
+            sum_exp += expf(row[j] - max_val);
+        }
+        int target_idx = (int)targets[i];
+        losses[i] = (max_val + logf(sum_exp)) - row[target_idx];
+    }
+}
+
+// =====================================================================
+// tril カーネル (下三角以外を 0 にする)
+// =====================================================================
+__global__ void tril_kernel(
+    const float* input, float* output,
+    int rows, int cols, int batch, int diagonal
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = batch * rows * cols;
+    if (tid < total) {
+        int b = tid / (rows * cols);
+        int remainder = tid % (rows * cols);
+        int r = remainder / cols;
+        int c_idx = remainder % cols;
+        (void)b;
+        output[tid] = (c_idx <= r + diagonal) ? input[tid] : 0.0f;
+    }
+}
+
+// =====================================================================
+// where_cond カーネル (ternary: cond > 0 ? x : y)
+// =====================================================================
+__global__ void where_cond_kernel(
+    const float* cond, const float* x, const float* y,
+    float* output, int n
+) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        output[i] = (cond[i] > 0.0f) ? x[i] : y[i];
+    }
+}
+
+// =====================================================================
+// rms_norm カーネル (行ごと: x * rsqrt(mean(x²) + eps))
+// =====================================================================
+__global__ void rms_norm_kernel(
+    const float* input, float* output,
+    int outer, int norm_size, float eps
+) {
+    int o = blockIdx.x * blockDim.x + threadIdx.x;
+    if (o < outer) {
+        int offset = o * norm_size;
+        float sum_sq = 0.0f;
+        for (int i = 0; i < norm_size; i++) {
+            float v = input[offset + i];
+            sum_sq += v * v;
+        }
+        float inv_rms = rsqrtf(sum_sq / (float)norm_size + eps);
+        for (int i = 0; i < norm_size; i++) {
+            output[offset + i] = input[offset + i] * inv_rms;
+        }
+    }
+}
+
+// =====================================================================
+// causal_mask カーネル (上三角を -inf にする)
+// =====================================================================
+__global__ void causal_mask_kernel(float* output, int size) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = size * size;
+    if (tid < total) {
+        int r = tid / size;
+        int c = tid % size;
+        output[tid] = (c > r) ? -3.402823466e+38f : 0.0f;
+    }
+}
+
+// =====================================================================
 // C wrappers
 // =====================================================================
 extern "C" {
@@ -423,6 +572,59 @@ void launch_matmul_kernel(const float* a, const float* b, float* c,
     int threads = 256;
     int blocks = (total + threads - 1) / threads;
     matmul_naive_kernel<<<blocks, threads, 0, stream>>>(a, b, c, m, k, n, batch, b_batched);
+}
+
+// --- special ops ---
+void launch_softmax_kernel(const float* input, float* output,
+    int outer, int axis_size, int inner, cudaStream_t stream) {
+    int total = outer * inner;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    softmax_kernel<<<blocks, threads, 0, stream>>>(input, output, outer, axis_size, inner);
+}
+
+void launch_embedding_kernel(const float* weight, const long long* indices,
+    float* output, int seq_len, int embed_dim, int vocab_size, cudaStream_t stream) {
+    int total = seq_len * embed_dim;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    embedding_kernel<<<blocks, threads, 0, stream>>>(weight, indices, output, seq_len, embed_dim, vocab_size);
+}
+
+void launch_cross_entropy_kernel(const float* logits, const long long* targets,
+    float* losses, int n, int c, cudaStream_t stream) {
+    int threads = 256;
+    int blocks = (n + threads - 1) / threads;
+    cross_entropy_kernel<<<blocks, threads, 0, stream>>>(logits, targets, losses, n, c);
+}
+
+void launch_tril_kernel(const float* input, float* output,
+    int rows, int cols, int batch, int diagonal, cudaStream_t stream) {
+    int total = batch * rows * cols;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    tril_kernel<<<blocks, threads, 0, stream>>>(input, output, rows, cols, batch, diagonal);
+}
+
+void launch_where_cond_kernel(const float* cond, const float* x, const float* y,
+    float* output, int n, cudaStream_t stream) {
+    int threads = 256;
+    int blocks = (n + threads - 1) / threads;
+    where_cond_kernel<<<blocks, threads, 0, stream>>>(cond, x, y, output, n);
+}
+
+void launch_rms_norm_kernel(const float* input, float* output,
+    int outer, int norm_size, float eps, cudaStream_t stream) {
+    int threads = 256;
+    int blocks = (outer + threads - 1) / threads;
+    rms_norm_kernel<<<blocks, threads, 0, stream>>>(input, output, outer, norm_size, eps);
+}
+
+void launch_causal_mask_kernel(float* output, int size, cudaStream_t stream) {
+    int total = size * size;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    causal_mask_kernel<<<blocks, threads, 0, stream>>>(output, size);
 }
 
 }

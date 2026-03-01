@@ -1,11 +1,73 @@
-//! 特殊演算
+//! 特殊演算 — CUDA カーネルで GPU 上で完結
 
+use crate::cuda_sys::cudaStream_t;
 use crate::tensor::CudaTensor;
 use crate::DType;
 use tl_backend::{BackendError, BackendResult};
 
+extern "C" {
+    fn launch_softmax_kernel(
+        input: *const f32,
+        output: *mut f32,
+        outer: i32,
+        axis_size: i32,
+        inner: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_embedding_kernel(
+        weight: *const f32,
+        indices: *const i64,
+        output: *mut f32,
+        seq_len: i32,
+        embed_dim: i32,
+        vocab_size: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_cross_entropy_kernel(
+        logits: *const f32,
+        targets: *const i64,
+        losses: *mut f32,
+        n: i32,
+        c: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_tril_kernel(
+        input: *const f32,
+        output: *mut f32,
+        rows: i32,
+        cols: i32,
+        batch: i32,
+        diagonal: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_where_cond_kernel(
+        cond: *const f32,
+        x: *const f32,
+        y: *const f32,
+        output: *mut f32,
+        n: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_one_hot_kernel(
+        indices: *const i64,
+        output: *mut f32,
+        batch: i32,
+        classes: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_scatter_add_kernel(
+        grad: *const f32,
+        indices: *const i64,
+        output: *mut f32,
+        seq_len: i32,
+        dim: i32,
+        vocab: i32,
+        stream: cudaStream_t,
+    );
+}
+
 impl CudaTensor {
-    /// Softmax: softmax(x, axis)
+    /// Softmax — GPU カーネル
     pub fn softmax_impl(&self, axis: i32) -> BackendResult<CudaTensor> {
         let shape = self.shape().to_vec();
         let ndim = shape.len();
@@ -14,45 +76,27 @@ impl CudaTensor {
         } else {
             axis as usize
         };
-        let data = self.to_vec::<f32>();
-        let count = data.len();
         let axis_size = shape[axis];
-
-        // 出力も同じ shape
-        let mut result = vec![0.0f32; count];
-
-        // 軸に沿って softmax を計算
         let outer: usize = shape[..axis].iter().product();
         let inner: usize = shape[axis + 1..].iter().product();
 
-        for o in 0..outer {
-            for i in 0..inner {
-                // max を先に求める（数値安定性）
-                let mut max_val = f32::NEG_INFINITY;
-                for k in 0..axis_size {
-                    let idx = o * axis_size * inner + k * inner + i;
-                    max_val = max_val.max(data[idx]);
-                }
-                // exp(x - max)
-                let mut sum_exp = 0.0f32;
-                for k in 0..axis_size {
-                    let idx = o * axis_size * inner + k * inner + i;
-                    let e = (data[idx] - max_val).exp();
-                    result[idx] = e;
-                    sum_exp += e;
-                }
-                // normalize
-                for k in 0..axis_size {
-                    let idx = o * axis_size * inner + k * inner + i;
-                    result[idx] /= sum_exp;
-                }
-            }
+        let output = CudaTensor::uninit(&shape, DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_softmax_kernel(
+                self.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                outer as i32,
+                axis_size as i32,
+                inner as i32,
+                stream,
+            );
         }
-
-        Ok(CudaTensor::from_slice(&result, &shape, DType::F32))
+        crate::stream::sync_stream();
+        Ok(output)
     }
 
-    /// Embedding lookup
+    /// Embedding lookup — GPU カーネル
     pub fn embedding_impl(&self, indices: &CudaTensor) -> BackendResult<CudaTensor> {
         let weight_shape = self.shape();
         if weight_shape.len() != 2 {
@@ -62,33 +106,29 @@ impl CudaTensor {
         }
         let vocab_size = weight_shape[0];
         let embed_dim = weight_shape[1];
-
-        let weight_data = self.to_vec::<f32>();
-        let index_data: Vec<i64> = indices.to_vec();
-
-        let batch_size = index_data.len();
-        let mut result = vec![0.0f32; batch_size * embed_dim];
-
-        for (i, &idx) in index_data.iter().enumerate() {
-            let idx = idx as usize;
-            if idx >= vocab_size {
-                return Err(BackendError::IndexOutOfBounds(format!(
-                    "index {} >= vocab_size {}",
-                    idx, vocab_size
-                )));
-            }
-            let src_start = idx * embed_dim;
-            result[i * embed_dim..(i + 1) * embed_dim]
-                .copy_from_slice(&weight_data[src_start..src_start + embed_dim]);
-        }
+        let seq_len = indices.elem_count();
 
         let mut out_shape = indices.shape().to_vec();
         out_shape.push(embed_dim);
+        let output = CudaTensor::uninit(&out_shape, DType::F32);
+        let stream = crate::stream::get_stream().raw();
 
-        Ok(CudaTensor::from_slice(&result, &out_shape, DType::F32))
+        unsafe {
+            launch_embedding_kernel(
+                self.buffer.ptr() as *const f32,
+                indices.buffer.ptr() as *const i64,
+                output.buffer.ptr() as *mut f32,
+                seq_len as i32,
+                embed_dim as i32,
+                vocab_size as i32,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(output)
     }
 
-    /// Cross entropy loss
+    /// Cross entropy loss — GPU カーネル
     pub fn cross_entropy_impl(&self, target: &CudaTensor) -> BackendResult<CudaTensor> {
         let logits_shape = self.shape();
         if logits_shape.len() != 2 {
@@ -99,25 +139,27 @@ impl CudaTensor {
         let n = logits_shape[0];
         let c = logits_shape[1];
 
-        let logits_data = self.to_vec::<f32>();
-        let target_data: Vec<i64> = target.to_vec();
-
-        let mut total_loss = 0.0f32;
-        for i in 0..n {
-            // max for numerical stability
-            let row = &logits_data[i * c..(i + 1) * c];
-            let max_val = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-            let sum_exp: f32 = row.iter().map(|&x| (x - max_val).exp()).sum();
-            let log_sum_exp = max_val + sum_exp.ln();
-            let target_idx = target_data[i] as usize;
-            total_loss += log_sum_exp - row[target_idx];
+        // per-sample loss を GPU で計算
+        let losses = CudaTensor::uninit(&[n], DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_cross_entropy_kernel(
+                self.buffer.ptr() as *const f32,
+                target.buffer.ptr() as *const i64,
+                losses.buffer.ptr() as *mut f32,
+                n as i32,
+                c as i32,
+                stream,
+            );
         }
-        total_loss /= n as f32;
+        crate::stream::sync_stream();
 
+        // mean を GPU で計算
+        let total_loss = losses.sumall_impl()? / n as f32;
         Ok(CudaTensor::from_slice(&[total_loss], &[1], DType::F32))
     }
 
-    /// 下三角行列
+    /// 下三角行列 — GPU カーネル
     pub fn tril_impl(&self, diagonal: i32) -> BackendResult<CudaTensor> {
         let shape = self.shape();
         if shape.len() < 2 {
@@ -127,24 +169,24 @@ impl CudaTensor {
         let cols = shape[shape.len() - 1];
         let batch: usize = shape[..shape.len() - 2].iter().product::<usize>().max(1);
 
-        let data = self.to_vec::<f32>();
-        let mut result = data.clone();
-
-        for b in 0..batch {
-            for r in 0..rows {
-                for c in 0..cols {
-                    let idx = b * rows * cols + r * cols + c;
-                    if (c as i32) > (r as i32) + diagonal {
-                        result[idx] = 0.0;
-                    }
-                }
-            }
+        let output = CudaTensor::uninit(shape, DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_tril_kernel(
+                self.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                rows as i32,
+                cols as i32,
+                batch as i32,
+                diagonal,
+                stream,
+            );
         }
-
-        Ok(CudaTensor::from_slice(&result, shape, self.dtype()))
+        crate::stream::sync_stream();
+        Ok(output)
     }
 
-    /// index_select
+    /// index_select (CPU — Phase C の後で GPU 化)
     pub fn index_select_impl(
         &self,
         axis: usize,
@@ -185,24 +227,30 @@ impl CudaTensor {
         Ok(CudaTensor::from_slice(&result, &out_shape, self.dtype()))
     }
 
-    /// where_cond
+    /// where_cond — GPU カーネル
     pub fn where_cond_impl(
         cond: &CudaTensor,
         x: &CudaTensor,
         y: &CudaTensor,
     ) -> BackendResult<CudaTensor> {
-        let cond_data = cond.to_vec::<f32>();
-        let x_data = x.to_vec::<f32>();
-        let y_data = y.to_vec::<f32>();
-        let result: Vec<f32> = cond_data
-            .iter()
-            .zip(x_data.iter().zip(y_data.iter()))
-            .map(|(&c, (&xv, &yv))| if c > 0.0 { xv } else { yv })
-            .collect();
-        Ok(CudaTensor::from_slice(&result, x.shape(), x.dtype()))
+        let n = x.elem_count();
+        let output = CudaTensor::uninit(x.shape(), DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_where_cond_kernel(
+                cond.buffer.ptr() as *const f32,
+                x.buffer.ptr() as *const f32,
+                y.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                n as i32,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(output)
     }
 
-    /// repeat_interleave
+    /// repeat_interleave (CPU — 使用頻度低)
     pub fn repeat_interleave_impl(&self, repeats: usize, axis: usize) -> BackendResult<CudaTensor> {
         let shape = self.shape().to_vec();
         let data = self.to_vec::<f32>();
@@ -237,38 +285,26 @@ impl CudaTensor {
         Ok(CudaTensor::from_slice(&result, &out_shape, self.dtype()))
     }
 
-    /// one_hot: i64 インデックステンソル → f32 one-hot テンソル
-    /// indices [batch] → output [batch, num_classes]
+    /// one_hot — GPU カーネル
     pub fn one_hot_impl(&self, num_classes: usize) -> BackendResult<CudaTensor> {
         let batch = self.elem_count();
         let out_shape = vec![batch, num_classes];
         let output = CudaTensor::zeros(&out_shape, DType::F32);
-
-        // CUDA カーネルで GPU 上で完結
-        extern "C" {
-            fn launch_one_hot_kernel(
-                indices: *const i64,
-                output: *mut f32,
-                batch: i32,
-                classes: i32,
-                stream: crate::cuda_sys::cudaStream_t,
-            );
-        }
+        let stream = crate::stream::get_stream().raw();
         unsafe {
             launch_one_hot_kernel(
                 self.buffer.ptr() as *const i64,
                 output.buffer.ptr() as *mut f32,
                 batch as i32,
                 num_classes as i32,
-                crate::stream::get_stream().raw(),
+                stream,
             );
         }
         crate::stream::sync_stream();
         Ok(output)
     }
 
-    /// scatter_add: grad[seq, dim] + indices[seq] → output[vocab, dim]
-    /// output[indices[i]] += grad[i] (行単位)
+    /// scatter_add — GPU カーネル
     pub fn scatter_add_impl(
         grad: &CudaTensor,
         indices: &CudaTensor,
@@ -278,19 +314,7 @@ impl CudaTensor {
         let seq_len = indices.elem_count();
         let out_shape = vec![vocab_size, embed_dim];
         let output = CudaTensor::zeros(&out_shape, DType::F32);
-
-        // CUDA カーネルで GPU 上で完結
-        extern "C" {
-            fn launch_scatter_add_kernel(
-                grad: *const f32,
-                indices: *const i64,
-                output: *mut f32,
-                seq_len: i32,
-                dim: i32,
-                vocab: i32,
-                stream: crate::cuda_sys::cudaStream_t,
-            );
-        }
+        let stream = crate::stream::get_stream().raw();
         unsafe {
             launch_scatter_add_kernel(
                 grad.buffer.ptr() as *const f32,
@@ -299,7 +323,7 @@ impl CudaTensor {
                 seq_len as i32,
                 embed_dim as i32,
                 vocab_size as i32,
-                crate::stream::get_stream().raw(),
+                stream,
             );
         }
         crate::stream::sync_stream();
