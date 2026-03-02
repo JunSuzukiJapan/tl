@@ -367,14 +367,36 @@ pub struct OpaqueKVCache {
     )>,
 }
 
+/// テンソルポインタに対して Arc RC+1 を行い、新しいポインタを返す。
+/// V5.0 Strategy: テンソルは Arc<UnsafeCell<CpuTensor>> で管理されており、
+/// Arc::from_raw で復元 → Arc::clone (RC+1) → 両方を Arc::into_raw で戻す。
+fn tensor_arc_retain(ptr: *mut crate::OpaqueTensor) -> *mut crate::OpaqueTensor {
+    if ptr.is_null() {
+        return ptr;
+    }
+    unsafe {
+        let arc =
+            std::sync::Arc::from_raw(ptr as *const std::cell::UnsafeCell<crate::OpaqueTensor>);
+        let cloned = std::sync::Arc::clone(&arc);
+        // 元の Arc を戻す（所有権を返す）
+        std::sync::Arc::into_raw(arc);
+        // 新しい Arc をポインタとして返す
+        std::sync::Arc::into_raw(cloned) as *mut crate::OpaqueTensor
+    }
+}
+
 impl Drop for OpaqueKVCache {
     fn drop(&mut self) {
         for (k_opt, v_opt) in &self.layers {
             if let Some(k) = k_opt {
-                crate::memory_ffi::tl_tensor_release_safe(*k);
+                if !k.is_null() {
+                    crate::memory_ffi::tl_tensor_release_safe(*k);
+                }
             }
             if let Some(v) = v_opt {
-                crate::memory_ffi::tl_tensor_release_safe(*v);
+                if !v.is_null() {
+                    crate::memory_ffi::tl_tensor_release_safe(*v);
+                }
             }
         }
     }
@@ -409,7 +431,13 @@ pub extern "C" fn tl_kv_cache_get_k(cache_ptr: i64, layer: i64) -> *mut crate::O
     let cache = unsafe { &*(cache_ptr as *mut OpaqueKVCache) };
     let idx = layer as usize;
     if idx < cache.layers.len() {
-        cache.layers[idx].0.unwrap_or(std::ptr::null_mut())
+        match cache.layers[idx].0 {
+            Some(ptr) if !ptr.is_null() => {
+                // Arc RC+1: JIT が戻り値を auto-release しても cache 側のコピーは有効
+                tensor_arc_retain(ptr)
+            }
+            _ => std::ptr::null_mut(),
+        }
     } else {
         std::ptr::null_mut()
     }
@@ -424,7 +452,13 @@ pub extern "C" fn tl_kv_cache_get_v(cache_ptr: i64, layer: i64) -> *mut crate::O
     let cache = unsafe { &*(cache_ptr as *mut OpaqueKVCache) };
     let idx = layer as usize;
     if idx < cache.layers.len() {
-        cache.layers[idx].1.unwrap_or(std::ptr::null_mut())
+        match cache.layers[idx].1 {
+            Some(ptr) if !ptr.is_null() => {
+                // Arc RC+1: JIT が戻り値を auto-release しても cache 側のコピーは有効
+                tensor_arc_retain(ptr)
+            }
+            _ => std::ptr::null_mut(),
+        }
     } else {
         std::ptr::null_mut()
     }
@@ -447,25 +481,29 @@ pub extern "C" fn tl_kv_cache_update(
     while cache.layers.len() <= idx {
         cache.layers.push((None, None));
     }
-    // テンソルをcloneしてcacheが独立コピーを保持する
-    // (JITの自動メモリ管理で元テンソルが解放されてもcache内は有効)
-    let k_clone = if !k.is_null() {
-        Some(
-            crate::device_ffi::tl_device_tensor_clone(k as *mut std::ffi::c_void)
-                as *mut crate::OpaqueTensor,
-        )
+    // 古い値を解放
+    if let Some(old_k) = cache.layers[idx].0 {
+        if !old_k.is_null() {
+            crate::memory_ffi::tl_tensor_release_safe(old_k);
+        }
+    }
+    if let Some(old_v) = cache.layers[idx].1 {
+        if !old_v.is_null() {
+            crate::memory_ffi::tl_tensor_release_safe(old_v);
+        }
+    }
+    // Arc RC+1 でキャッシュに保存（JITの自動解放とは独立した参照）
+    let k_retained = if !k.is_null() {
+        Some(tensor_arc_retain(k))
     } else {
         None
     };
-    let v_clone = if !v.is_null() {
-        Some(
-            crate::device_ffi::tl_device_tensor_clone(v as *mut std::ffi::c_void)
-                as *mut crate::OpaqueTensor,
-        )
+    let v_retained = if !v.is_null() {
+        Some(tensor_arc_retain(v))
     } else {
         None
     };
-    cache.layers[idx] = (k_clone, v_clone);
+    cache.layers[idx] = (k_retained, v_retained);
 }
 
 // ========== 追加 System 関数 ==========
