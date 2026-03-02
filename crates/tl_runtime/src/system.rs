@@ -379,7 +379,7 @@ fn tensor_arc_retain(ptr: *mut crate::OpaqueTensor) -> *mut crate::OpaqueTensor 
             std::sync::Arc::from_raw(ptr as *const std::cell::UnsafeCell<crate::OpaqueTensor>);
         let cloned = std::sync::Arc::clone(&arc);
         // 元の Arc を戻す（所有権を返す）
-        std::sync::Arc::into_raw(arc);
+        let _ = std::sync::Arc::into_raw(arc);
         // 新しい Arc をポインタとして返す
         std::sync::Arc::into_raw(cloned) as *mut crate::OpaqueTensor
     }
