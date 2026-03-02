@@ -127,14 +127,44 @@ impl CudaTensor {
         let embed_dim = weight_shape[1];
         let seq_len = indices.elem_count();
 
+        // indices が F32 の場合、i64 に変換 (.tl は全値を f32 で保持)
+        let i64_indices = if indices.dtype() == DType::F32 {
+            // GPU → CPU → convert → GPU (seq_len は小さいので問題なし)
+            let f32_bytes = seq_len * 4;
+            let mut f32_host = vec![0f32; seq_len];
+            unsafe {
+                crate::cuda_sys::cudaMemcpy(
+                    f32_host.as_mut_ptr() as *mut std::ffi::c_void,
+                    indices.buffer.ptr(),
+                    f32_bytes,
+                    crate::cuda_sys::cudaMemcpyKind::cudaMemcpyDeviceToHost,
+                );
+            }
+            let i64_host: Vec<i64> = f32_host.iter().map(|&v| v as i64).collect();
+            let t = CudaTensor::uninit(&[seq_len], DType::I64);
+            let i64_bytes = seq_len * 8;
+            unsafe {
+                crate::cuda_sys::cudaMemcpy(
+                    t.buffer.ptr(),
+                    i64_host.as_ptr() as *const std::ffi::c_void,
+                    i64_bytes,
+                    crate::cuda_sys::cudaMemcpyKind::cudaMemcpyHostToDevice,
+                );
+            }
+            Some(t)
+        } else {
+            None
+        };
+        let actual_indices = i64_indices.as_ref().unwrap_or(indices);
+
         let mut out_shape = indices.shape().to_vec();
         out_shape.push(embed_dim);
-        let output = CudaTensor::uninit(&out_shape, DType::F32);
+        let output = CudaTensor::zeros(&out_shape, DType::F32);
         let stream = crate::stream::get_stream().raw();
         unsafe {
             launch_embedding_kernel(
                 self.buffer.ptr() as *const f32,
-                indices.buffer.ptr() as *const i64,
+                actual_indices.buffer.ptr() as *const i64,
                 output.buffer.ptr() as *mut f32,
                 seq_len as i32,
                 embed_dim as i32,

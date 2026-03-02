@@ -322,6 +322,7 @@ pub extern "C" fn tl_qtensor_matmul(
                     ),
                     _ => unreachable!(),
                 };
+
                 return result as *mut crate::OpaqueTensor;
             }
 

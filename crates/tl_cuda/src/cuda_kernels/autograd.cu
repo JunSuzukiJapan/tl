@@ -1,5 +1,6 @@
 #include <cuda_runtime.h>
 #include <math.h>
+#include <stdio.h>
 
 // =====================================================================
 // one_hot カーネル
@@ -388,6 +389,8 @@ __global__ void embedding_kernel(const float *weight, const long long *indices,
     int idx = (int)indices[i];
     if (idx >= 0 && idx < vocab_size) {
       output[i * embed_dim + j] = weight[idx * embed_dim + j];
+    } else {
+      output[i * embed_dim + j] = 0.0f;
     }
   }
 }
@@ -1510,20 +1513,44 @@ void launch_mul_mv_q4_k_kernel(const float *input, const unsigned char *w_raw,
                                float *output, int M, int N, int K,
                                cudaStream_t stream) {
   int total = M * N;
+  if (total <= 0 || K <= 0) {
+    fprintf(stderr, "[CUDA] mul_mv_q4_k: invalid dims M=%d N=%d K=%d\n", M, N,
+            K);
+    return;
+  }
   int threads = 256;
   int blocks = (total + threads - 1) / threads;
   mul_mv_q4_k_kernel<<<blocks, threads, 0, stream>>>(input, w_raw, output, M, N,
                                                      K);
+  cudaError_t err = cudaPeekAtLastError();
+  if (err != cudaSuccess) {
+    fprintf(
+        stderr,
+        "[CUDA ERROR] mul_mv_q4_k launch failed: %s (blocks=%d, total=%d)\n",
+        cudaGetErrorString(err), blocks, total);
+  }
 }
 
 void launch_mul_mv_q6_k_kernel(const float *input, const unsigned char *w_raw,
                                float *output, int M, int N, int K,
                                cudaStream_t stream) {
   int total = M * N;
+  if (total <= 0 || K <= 0) {
+    fprintf(stderr, "[CUDA] mul_mv_q6_k: invalid dims M=%d N=%d K=%d\n", M, N,
+            K);
+    return;
+  }
   int threads = 256;
   int blocks = (total + threads - 1) / threads;
   mul_mv_q6_k_kernel<<<blocks, threads, 0, stream>>>(input, w_raw, output, M, N,
                                                      K);
+  cudaError_t err = cudaPeekAtLastError();
+  if (err != cudaSuccess) {
+    fprintf(
+        stderr,
+        "[CUDA ERROR] mul_mv_q6_k launch failed: %s (blocks=%d, total=%d)\n",
+        cudaGetErrorString(err), blocks, total);
+  }
 }
 
 } // extern "C"
