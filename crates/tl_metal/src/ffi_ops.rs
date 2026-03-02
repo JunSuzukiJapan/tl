@@ -805,16 +805,21 @@ pub fn tl_metal_tril(t: *mut OpaqueTensor, diagonal: i64) -> *mut OpaqueTensor {
 pub fn tl_metal_get(t: *mut OpaqueTensor, idx: i64) -> f32 {
     if t.is_null() { return 0.0; }
     let tensor = unsafe { &*t };
-    let vec: Vec<f32> = tensor.to_vec();
-    vec.get(idx as usize).copied().unwrap_or(0.0)
+    let idx = idx as usize;
+    if idx >= tensor.elem_count() { return 0.0; }
+    // GPU 演算の完了を保証してからバッファ直読み（全要素コピー不要）
+    crate::command_stream::sync_stream();
+    unsafe { *(tensor.buffer().contents() as *const f32).add(idx) }
 }
 
 #[no_mangle]
 pub fn tl_metal_item(t: *mut OpaqueTensor) -> f32 {
     if t.is_null() { return 0.0; }
     let tensor = unsafe { &*t };
-    let vec: Vec<f32> = tensor.to_vec();
-    vec.first().copied().unwrap_or(0.0)
+    if tensor.elem_count() == 0 { return 0.0; }
+    // GPU 演算の完了を保証してからバッファ直読み
+    crate::command_stream::sync_stream();
+    unsafe { *(tensor.buffer().contents() as *const f32) }
 }
 
 #[no_mangle]
@@ -822,13 +827,15 @@ pub fn tl_metal_get_f32_md(t: *mut OpaqueTensor, idx0: i64, idx1: i64) -> f32 {
     if t.is_null() { return 0.0; }
     let tensor = unsafe { &*t };
     let shape = tensor.shape();
-    let vec: Vec<f32> = tensor.to_vec();
-    if shape.len() >= 2 {
-        let idx = (idx0 as usize) * shape[1] + (idx1 as usize);
-        vec.get(idx).copied().unwrap_or(0.0)
+    let idx = if shape.len() >= 2 {
+        (idx0 as usize) * shape[1] + (idx1 as usize)
     } else {
-        vec.get(idx0 as usize).copied().unwrap_or(0.0)
-    }
+        idx0 as usize
+    };
+    if idx >= tensor.elem_count() { return 0.0; }
+    // GPU 演算の完了を保証してからバッファ直読み
+    crate::command_stream::sync_stream();
+    unsafe { *(tensor.buffer().contents() as *const f32).add(idx) }
 }
 
 #[no_mangle]
@@ -849,7 +856,6 @@ pub fn tl_metal_set_f32_md(
     let idx_slice = unsafe { std::slice::from_raw_parts(indices, rank) };
     
     let mut linear_idx = 0usize;
-    // let _stride = 1usize;
     // stride 計算 (row-major)
     if !shape.is_empty() {
         let mut strides = vec![1; rank];
@@ -867,12 +873,16 @@ pub fn tl_metal_set_f32_md(
         }
     }
 
-    let mut data: Vec<f32> = tensor.to_vec();
-    if linear_idx < data.len() {
-        data[linear_idx] = value;
+    // GPU バッファの clone を作成してから直接書き込み（全要素Vec化不要）
+    let res = tensor.clone_data().unwrap_or_else(|_| tensor.shallow_clone());
+    let count = res.elem_count();
+    if linear_idx < count {
+        crate::command_stream::sync_stream();
+        unsafe {
+            let ptr = res.buffer().contents() as *mut f32;
+            *ptr.add(linear_idx) = value;
+        }
     }
-    
-    let res = MetalTensor::from_slice(&data, shape, tensor.dtype());
     make_tensor(res)
 }
 
@@ -1391,12 +1401,10 @@ pub fn tl_metal_get_shape(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
 pub fn tl_metal_get_f32(t: *mut OpaqueTensor, idx: usize) -> f32 {
     if t.is_null() { return 0.0; }
     let tensor = unsafe { &*t };
-    let data = tensor.to_vec();
-    if idx < data.len() {
-        data[idx]
-    } else {
-        0.0
-    }
+    if idx >= tensor.elem_count() { return 0.0; }
+    // GPU 演算の完了を保証してからバッファ直読み（全要素コピー不要）
+    crate::command_stream::sync_stream();
+    unsafe { *(tensor.buffer().contents() as *const f32).add(idx) }
 }
 
 #[no_mangle]
@@ -1408,10 +1416,12 @@ pub fn tl_metal_get_i64(t: *mut OpaqueTensor, idx: usize) -> i64 {
 pub fn tl_metal_set_f32(t: *mut OpaqueTensor, idx: usize, val: f32) {
     if t.is_null() { return; }
     let tensor = unsafe { &mut *t };
-    let mut data = tensor.to_vec();
-    if idx < data.len() {
-        data[idx] = val;
-        *tensor = MetalTensor::from_slice(&data, tensor.shape(), DType::F32);
+    if idx >= tensor.elem_count() { return; }
+    // GPU バッファに直接書き込み（全要素Vec化不要）
+    crate::command_stream::sync_stream();
+    unsafe {
+        let ptr = tensor.buffer().contents() as *mut f32;
+        *ptr.add(idx) = val;
     }
 }
 
@@ -1419,12 +1429,10 @@ pub fn tl_metal_set_f32(t: *mut OpaqueTensor, idx: usize, val: f32) {
 pub fn tl_metal_item_i64(t: *mut OpaqueTensor) -> i64 {
     if t.is_null() { return 0; }
     let tensor = unsafe { &*t };
-    let data: Vec<f32> = tensor.to_vec();
-    if !data.is_empty() {
-        data[0] as i64
-    } else {
-        0
-    }
+    if tensor.elem_count() == 0 { return 0; }
+    // GPU 演算の完了を保証してからバッファ直読み
+    crate::command_stream::sync_stream();
+    unsafe { *(tensor.buffer().contents() as *const f32) as i64 }
 }
 
 // ========== 基本演算 ==========

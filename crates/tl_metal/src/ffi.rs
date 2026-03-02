@@ -59,18 +59,9 @@ pub extern "C" fn tl_metal_data(t: *mut OpaqueTensor) -> *mut c_void {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
     
-    // GPU -> CPU コピーを行い、スレッドローカルキャッシュに保持。
-    // 前回のバッファは自動解放されるため、mem::forget によるリークを回避。
-    thread_local! {
-        static LAST_DATA_BUFFER: std::cell::RefCell<Option<Box<[f32]>>> = 
-            std::cell::RefCell::new(None);
-    }
-    
-    let vec: Vec<f32> = tensor.to_vec();
-    let boxed_slice = vec.into_boxed_slice();
-    let ptr = boxed_slice.as_ptr() as *mut c_void;
-    LAST_DATA_BUFFER.with(|cell| {
-        *cell.borrow_mut() = Some(boxed_slice);
-    });
-    ptr
+    // StorageModeShared バッファは CPU/GPU 共有メモリなので、
+    // sync_stream() 後に contents() ポインタを直接返せる。
+    // 全要素 Vec コピーとスレッドローカルキャッシュが不要に。
+    crate::command_stream::sync_stream();
+    tensor.buffer().contents() as *mut c_void
 }
