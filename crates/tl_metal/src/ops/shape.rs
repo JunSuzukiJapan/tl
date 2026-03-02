@@ -225,7 +225,7 @@ impl MetalTensor {
             return Ok(result);
         }
 
-        // N-D テンソル → CPU フォールバック（ストライドベースのインデックスマッピング）
+        // N-D テンソル → sync_stream + contents() 直操作（全要素 Vec コピー不要）
         let ndim = shape.len();
         let mut new_shape = shape.to_vec();
         new_shape.swap(dim0, dim1);
@@ -243,25 +243,27 @@ impl MetalTensor {
         }
 
         let total_elems: usize = shape.iter().product();
-        let src_data: Vec<f32> = self.to_vec();
-        let mut dst_data = vec![0.0f32; total_elems];
+        let result = MetalTensor::uninit(&new_shape, MetalTensor::dtype(self));
 
-        for src_idx in 0..total_elems {
-            // src_idx → 多次元座標
-            let mut remaining = src_idx;
-            let mut coords = vec![0usize; ndim];
-            for d in 0..ndim {
-                coords[d] = remaining / src_strides[d];
-                remaining %= src_strides[d];
+        crate::command_stream::sync_stream();
+        unsafe {
+            let src_ptr = self.buffer().contents() as *const f32;
+            let dst_ptr = result.buffer().contents() as *mut f32;
+            
+            for src_idx in 0..total_elems {
+                let mut remaining = src_idx;
+                let mut coords = [0usize; 8]; // 最大8次元
+                for d in 0..ndim {
+                    coords[d] = remaining / src_strides[d];
+                    remaining %= src_strides[d];
+                }
+                coords.swap(dim0, dim1);
+                let dst_idx: usize = (0..ndim).map(|d| coords[d] * dst_strides[d]).sum();
+                *dst_ptr.add(dst_idx) = *src_ptr.add(src_idx);
             }
-            // dim0 と dim1 の座標を入れ替え
-            coords.swap(dim0, dim1);
-            // 新しいインデックスを計算
-            let dst_idx: usize = coords.iter().zip(dst_strides.iter()).map(|(c, s)| c * s).sum();
-            dst_data[dst_idx] = src_data[src_idx];
         }
 
-        Ok(MetalTensor::from_slice(&dst_data, &new_shape, MetalTensor::dtype(self)))
+        Ok(result)
     }
 
     

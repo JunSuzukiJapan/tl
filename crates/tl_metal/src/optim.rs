@@ -1,4 +1,7 @@
 //! オプティマイザ（SGD, Adam, AdamW）
+//!
+//! sync_stream + contents() バッファ直操作により to_vec()/from_slice() を排除。
+//! StorageModeShared バッファの CPU/GPU 共有メモリを活用。
 
 use crate::{MetalTensor, DType};
 
@@ -29,24 +32,31 @@ impl SGD {
             }
         }
         
+        crate::command_stream::sync_stream();
+        
         for (i, (param, grad)) in params.iter_mut().zip(grads.iter()).enumerate() {
-            let mut param_data = param.to_vec::<f32>();
-            let grad_data = grad.to_vec::<f32>();
-            let mut vel_data = self.velocities[i].to_vec::<f32>();
+            let n = param.elem_count();
+            let shape = param.shape().to_vec();
             
-            for j in 0..param_data.len() {
-                // Weight decay
-                let g = grad_data[j] + self.weight_decay * param_data[j];
+            unsafe {
+                let p_ptr = param.buffer().contents() as *mut f32;
+                let g_ptr = grad.buffer().contents() as *const f32;
+                let v_ptr = self.velocities[i].buffer().contents() as *mut f32;
                 
-                // Momentum
-                vel_data[j] = self.momentum * vel_data[j] + g;
-                
-                // Update
-                param_data[j] -= self.learning_rate * vel_data[j];
+                for j in 0..n {
+                    // Weight decay
+                    let g = *g_ptr.add(j) + self.weight_decay * *p_ptr.add(j);
+                    
+                    // Momentum
+                    *v_ptr.add(j) = self.momentum * *v_ptr.add(j) + g;
+                    
+                    // Update
+                    *p_ptr.add(j) -= self.learning_rate * *v_ptr.add(j);
+                }
             }
             
-            *param = MetalTensor::from_slice(&param_data, param.shape(), DType::F32);
-            self.velocities[i] = MetalTensor::from_slice(&vel_data, grad.shape(), DType::F32);
+            // shape が変わらないのでバッファ再確保不要（in-place 更新）
+            let _ = shape;
         }
     }
 }
@@ -95,33 +105,35 @@ impl Adam {
         let bias_correction1 = 1.0 - self.beta1.powi(self.t as i32);
         let bias_correction2 = 1.0 - self.beta2.powi(self.t as i32);
         
+        crate::command_stream::sync_stream();
+        
         for (i, (param, grad)) in params.iter_mut().zip(grads.iter()).enumerate() {
-            let mut param_data = param.to_vec::<f32>();
-            let grad_data = grad.to_vec::<f32>();
-            let mut m_data = self.m[i].to_vec::<f32>();
-            let mut v_data = self.v[i].to_vec::<f32>();
+            let n = param.elem_count();
             
-            for j in 0..param_data.len() {
-                // 勾配にweight decayを適用
-                let g = grad_data[j] + self.weight_decay * param_data[j];
+            unsafe {
+                let p_ptr = param.buffer().contents() as *mut f32;
+                let g_ptr = grad.buffer().contents() as *const f32;
+                let m_ptr = self.m[i].buffer().contents() as *mut f32;
+                let v_ptr = self.v[i].buffer().contents() as *mut f32;
                 
-                // 一次モーメント更新
-                m_data[j] = self.beta1 * m_data[j] + (1.0 - self.beta1) * g;
-                
-                // 二次モーメント更新
-                v_data[j] = self.beta2 * v_data[j] + (1.0 - self.beta2) * g * g;
-                
-                // バイアス補正
-                let m_hat = m_data[j] / bias_correction1;
-                let v_hat = v_data[j] / bias_correction2;
-                
-                // パラメータ更新
-                param_data[j] -= self.learning_rate * m_hat / (v_hat.sqrt() + self.eps);
+                for j in 0..n {
+                    // 勾配にweight decayを適用
+                    let g = *g_ptr.add(j) + self.weight_decay * *p_ptr.add(j);
+                    
+                    // 一次モーメント更新
+                    *m_ptr.add(j) = self.beta1 * *m_ptr.add(j) + (1.0 - self.beta1) * g;
+                    
+                    // 二次モーメント更新
+                    *v_ptr.add(j) = self.beta2 * *v_ptr.add(j) + (1.0 - self.beta2) * g * g;
+                    
+                    // バイアス補正
+                    let m_hat = *m_ptr.add(j) / bias_correction1;
+                    let v_hat = *v_ptr.add(j) / bias_correction2;
+                    
+                    // パラメータ更新
+                    *p_ptr.add(j) -= self.learning_rate * m_hat / (v_hat.sqrt() + self.eps);
+                }
             }
-            
-            *param = MetalTensor::from_slice(&param_data, param.shape(), DType::F32);
-            self.m[i] = MetalTensor::from_slice(&m_data, grad.shape(), DType::F32);
-            self.v[i] = MetalTensor::from_slice(&v_data, grad.shape(), DType::F32);
         }
     }
 }
@@ -169,56 +181,70 @@ impl AdamW {
         let bias_correction1 = 1.0 - self.beta1.powi(self.t as i32);
         let bias_correction2 = 1.0 - self.beta2.powi(self.t as i32);
         
+        crate::command_stream::sync_stream();
+        
         for (i, (param, grad)) in params.iter_mut().zip(grads.iter()).enumerate() {
-            let mut param_data = param.to_vec::<f32>();
-            let grad_data = grad.to_vec::<f32>();
-            let mut m_data = self.m[i].to_vec::<f32>();
-            let mut v_data = self.v[i].to_vec::<f32>();
+            let n = param.elem_count();
             
-            for j in 0..param_data.len() {
-                // AdamW: weight decay を勾配に含めずに直接パラメータに適用
-                param_data[j] *= 1.0 - self.learning_rate * self.weight_decay;
+            unsafe {
+                let p_ptr = param.buffer().contents() as *mut f32;
+                let g_ptr = grad.buffer().contents() as *const f32;
+                let m_ptr = self.m[i].buffer().contents() as *mut f32;
+                let v_ptr = self.v[i].buffer().contents() as *mut f32;
                 
-                // 一次モーメント更新
-                m_data[j] = self.beta1 * m_data[j] + (1.0 - self.beta1) * grad_data[j];
-                
-                // 二次モーメント更新
-                v_data[j] = self.beta2 * v_data[j] + (1.0 - self.beta2) * grad_data[j] * grad_data[j];
-                
-                // バイアス補正
-                let m_hat = m_data[j] / bias_correction1;
-                let v_hat = v_data[j] / bias_correction2;
-                
-                // パラメータ更新
-                param_data[j] -= self.learning_rate * m_hat / (v_hat.sqrt() + self.eps);
+                for j in 0..n {
+                    // AdamW: weight decay を勾配に含めずに直接パラメータに適用
+                    *p_ptr.add(j) *= 1.0 - self.learning_rate * self.weight_decay;
+                    
+                    let g = *g_ptr.add(j);
+                    
+                    // 一次モーメント更新
+                    *m_ptr.add(j) = self.beta1 * *m_ptr.add(j) + (1.0 - self.beta1) * g;
+                    
+                    // 二次モーメント更新
+                    *v_ptr.add(j) = self.beta2 * *v_ptr.add(j) + (1.0 - self.beta2) * g * g;
+                    
+                    // バイアス補正
+                    let m_hat = *m_ptr.add(j) / bias_correction1;
+                    let v_hat = *v_ptr.add(j) / bias_correction2;
+                    
+                    // パラメータ更新
+                    *p_ptr.add(j) -= self.learning_rate * m_hat / (v_hat.sqrt() + self.eps);
+                }
             }
-            
-            *param = MetalTensor::from_slice(&param_data, param.shape(), DType::F32);
-            self.m[i] = MetalTensor::from_slice(&m_data, grad.shape(), DType::F32);
-            self.v[i] = MetalTensor::from_slice(&v_data, grad.shape(), DType::F32);
         }
     }
 }
 
 /// 勾配クリッピング
 pub fn clip_grad_norm(grads: &mut [MetalTensor], max_norm: f32) -> f32 {
-    // 全勾配のL2ノルムを計算
+    crate::command_stream::sync_stream();
+
+    // 全勾配のL2ノルムを計算（バッファ直読み）
     let mut total_norm_sq = 0.0f32;
     for grad in grads.iter() {
-        let data = grad.to_vec::<f32>();
-        for val in data {
-            total_norm_sq += val * val;
+        let n = grad.elem_count();
+        unsafe {
+            let ptr = grad.buffer().contents() as *const f32;
+            for i in 0..n {
+                let val = *ptr.add(i);
+                total_norm_sq += val * val;
+            }
         }
     }
     let total_norm = total_norm_sq.sqrt();
     
-    // クリッピング
+    // クリッピング（バッファ直書き込み）
     if total_norm > max_norm {
         let clip_coef = max_norm / (total_norm + 1e-6);
         for grad in grads.iter_mut() {
-            let data = grad.to_vec::<f32>();
-            let clipped: Vec<f32> = data.iter().map(|x| x * clip_coef).collect();
-            *grad = MetalTensor::from_slice(&clipped, grad.shape(), DType::F32);
+            let n = grad.elem_count();
+            unsafe {
+                let ptr = grad.buffer().contents() as *mut f32;
+                for i in 0..n {
+                    *ptr.add(i) *= clip_coef;
+                }
+            }
         }
     }
     

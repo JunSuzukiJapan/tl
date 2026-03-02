@@ -931,11 +931,17 @@ pub fn tl_metal_repeat_interleave(t: *mut OpaqueTensor, repeats: usize, dim: usi
 pub fn tl_metal_sample(t: *mut OpaqueTensor, temp: f32, top_p: f32) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
-    let logits: Vec<f32> = tensor.to_vec();
+    let n = tensor.elem_count();
     
-    if logits.is_empty() {
+    if n == 0 {
         return make_tensor(MetalTensor::from_slice(&[0.0f32], &[1], DType::F32));
     }
+
+    // GPU バッファから直接スライスとして読み取り（Vec ヒープ確保不要）
+    crate::command_stream::sync_stream();
+    let logits: &[f32] = unsafe {
+        std::slice::from_raw_parts(tensor.buffer().contents() as *const f32, n)
+    };
 
     // 温度適用 + softmax
     let temp = if temp <= 0.0 { 1e-8 } else { temp };
@@ -967,7 +973,6 @@ pub fn tl_metal_sample(t: *mut OpaqueTensor, temp: f32, top_p: f32) -> *mut Opaq
     use rand::Rng;
     let mut rng = rand::thread_rng();
     let r: f32 = rng.gen();
-    // let mut acc = 0.0f32;
     let mut chosen = top_indices[0];
     let mut acc = 0.0f32;
     for &idx in top_indices {
