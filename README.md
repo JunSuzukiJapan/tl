@@ -7,7 +7,7 @@ A tensor logic programming language with first-class tensor support, JIT-compile
 - **Logic Programming**: Datalog-style rules with tensor integration.
 - **Hybrid Execution**: Logic terms can access tensor data (`data[i]`).
 - **JIT Compilation**: High-performance execution using LLVM (Inkwell).
-- **GPU Support**: Metal (macOS) backend supported. CUDA support is planned for the future.
+- **GPU Support**: Metal (macOS) and CUDA (Linux) backends with automatic platform detection.
 - **Optimization**: Aggressive JIT optimization and fast logic inference.
 
 ## Installation
@@ -20,8 +20,9 @@ cargo install tl-lang
 
 This installs the `tl` command.
 
-## Prerequisites (macOS)
-Before building, ensure you have the required dependencies installed via Homebrew.
+## Prerequisites
+
+### macOS (Metal backend)
 
 1. **Install LLVM 18 and OpenSSL**:
    ```bash
@@ -29,19 +30,46 @@ Before building, ensure you have the required dependencies installed via Homebre
    ```
 
 2. **Configure Environment Variables**:
-   Add the following to your shell configuration (e.g., `~/.zshrc`) to help the build system find LLVM 18:
+   Add the following to your shell configuration (e.g., `~/.zshrc`):
    ```bash
    export LLVM_SYS_181_PREFIX=$(brew --prefix llvm@18)
    ```
    Reload your shell (`source ~/.zshrc`) before running cargo commands.
+
+### Linux (CUDA backend)
+
+1. **Install LLVM 18**:
+   ```bash
+   # Ubuntu/Debian
+   wget https://apt.llvm.org/llvm.sh
+   chmod +x llvm.sh
+   sudo ./llvm.sh 18
+   sudo apt-get install libllvm18 llvm-18-dev
+   ```
+
+2. **Install CUDA Toolkit** (12.x recommended):
+   ```bash
+   # Follow NVIDIA's official guide for your distribution
+   # https://developer.nvidia.com/cuda-downloads
+   ```
+
+3. **Configure Environment Variables**:
+   ```bash
+   export LLVM_SYS_181_PREFIX=/usr/lib/llvm-18
+   export CUDA_PATH=/usr/local/cuda
+   export PATH=$CUDA_PATH/bin:$PATH
+   export LD_LIBRARY_PATH=$CUDA_PATH/lib64:$LD_LIBRARY_PATH
+   ```
 
 ## Build & Run
 ```bash
 # Run a specific example
 cargo run -- examples/hybrid_test.tl
 
-# Use GPU (Metal on macOS)
-cargo run --features metal -- examples/gpu_test.tl
+# GPU backend is auto-detected:
+#   macOS -> Metal
+#   Linux -> CUDA
+cargo run --release -- examples/readme_n_queens.tl
 ```
 
 > [!WARNING]
