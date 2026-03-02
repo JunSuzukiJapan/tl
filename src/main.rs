@@ -9,8 +9,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tl_lang::compiler::codegen::CodeGenerator;
-use tl_lang::compiler::error::{format_error_with_source, TlError};
-use tl_lang::compiler::inference::{forward_chain, query, GroundAtom, Value};
+use tl_lang::compiler::error::{TlError, format_error_with_source};
+use tl_lang::compiler::inference::{GroundAtom, Value, forward_chain, query};
 use tl_lang::compiler::semantics::SemanticAnalyzer;
 
 #[derive(Parser)]
@@ -39,7 +39,7 @@ struct Cli {
     emit_llvm: bool,
 
     /// Device (cpu, metal, cuda, auto)
-    #[arg(short, long, default_value = "auto")]
+    #[arg(short, long, default_value = "cpu")]
     device: String,
 
     /// Arguments to pass to the TL program (after --)
@@ -55,7 +55,6 @@ struct Cli {
     verbose: u8,
 }
 
-
 fn main() -> Result<()> {
     // env_logger::init(); // Moved to after CLI parse to use verbose flag
     let cli = Cli::parse();
@@ -66,28 +65,38 @@ fn main() -> Result<()> {
     builder.filter_level(log::LevelFilter::Warn);
     // Suppress tokenizers crate warnings (ID mismatch etc)
     builder.filter_module("tokenizers", log::LevelFilter::Error);
-    
+
     // Override with CLI verbose level
     match cli.verbose {
-        0 => { 
+        0 => {
             // Check RUST_LOG env var if no -v flag
-             if std::env::var("RUST_LOG").is_ok() {
-                  builder.parse_default_env();
-             }
-        } 
-        1 => { builder.filter_level(log::LevelFilter::Info); }
-        2 => { builder.filter_level(log::LevelFilter::Debug); }
-        _ => { builder.filter_level(log::LevelFilter::Trace); }
+            if std::env::var("RUST_LOG").is_ok() {
+                builder.parse_default_env();
+            }
+        }
+        1 => {
+            builder.filter_level(log::LevelFilter::Info);
+        }
+        2 => {
+            builder.filter_level(log::LevelFilter::Debug);
+        }
+        _ => {
+            builder.filter_level(log::LevelFilter::Trace);
+        }
     };
 
     builder.init();
 
     // Set device environment variable
     if std::env::var("TL_DEVICE").is_err() {
-        unsafe { std::env::set_var("TL_DEVICE", &cli.device); }
+        unsafe {
+            std::env::set_var("TL_DEVICE", &cli.device);
+        }
     }
     if cli.mem_log {
-        unsafe { std::env::set_var("TL_MEM_LOG", "1"); }
+        unsafe {
+            std::env::set_var("TL_MEM_LOG", "1");
+        }
     }
 
     let mut source_files = Vec::new();
@@ -111,8 +120,12 @@ fn main() -> Result<()> {
 
     // Load builtins
     let builtins = load_builtins().context("Failed to load builtins")?;
-    log::info!("Loaded builtins: {} structs, {} impls", builtins.structs.len(), builtins.impls.len());
-    
+    log::info!(
+        "Loaded builtins: {} structs, {} impls",
+        builtins.structs.len(),
+        builtins.impls.len()
+    );
+
     // Determine mode
     let is_compile_mode = cli.compile || cli.output.is_some() || cli.save_asm || cli.emit_llvm;
 
@@ -209,7 +222,6 @@ fn main() -> Result<()> {
                 }
                 log::info!("Generated assembly: {:?}", asm_path);
             } else if !cli.emit_llvm {
-
                 let obj_path = file.with_extension("o");
                 if let Err(e) = codegen.emit_object_file(&obj_path) {
                     log::error!("Failed to emit object file for {:?}: {}", file, e);
@@ -227,7 +239,11 @@ fn main() -> Result<()> {
             .unwrap_or(false);
 
         // Link Step (only if compiling and not just saving asm, and not explicitly outputting object)
-        if (cli.compile || cli.output.is_some()) && !cli.save_asm && !cli.emit_llvm && !output_is_object {
+        if (cli.compile || cli.output.is_some())
+            && !cli.save_asm
+            && !cli.emit_llvm
+            && !output_is_object
+        {
             let mut link_args = Vec::new();
             link_args.extend(
                 generated_objects
@@ -400,8 +416,8 @@ fn main() -> Result<()> {
         // Monomorphization (JIT)
         let mut monomorphizer = tl_lang::compiler::monomorphize::Monomorphizer::new();
         if let Err(e) = monomorphizer.run(&mut combined_module) {
-             print_tl_error_with_source(&e, &combined_source, None);
-             std::process::exit(1);
+            print_tl_error_with_source(&e, &combined_source, None);
+            std::process::exit(1);
         }
         // TRACE removed;
 
@@ -425,7 +441,6 @@ fn main() -> Result<()> {
         }
         eprintln!("[DEBUG] compile_module completed");
         // TRACE removed;
-
 
         if std::env::var("TL_DUMP_IR").is_ok() {
             codegen.dump_ir();
@@ -464,8 +479,7 @@ fn run_logic_program(
     module: &tl_lang::compiler::ast::Module,
     ctx: &tl_lang::compiler::inference::TensorContext,
 ) {
-
-use tl_lang::compiler::ast::{Atom, ExprKind};
+    use tl_lang::compiler::ast::{Atom, ExprKind};
 
     log::info!("Executing logic program...");
 
@@ -489,8 +503,6 @@ use tl_lang::compiler::ast::{Atom, ExprKind};
         }
         rules.push(rule.clone());
     }
-
-
 
     log::info!("Initial facts: {}", initial_facts.len());
     log::info!("Rules: {}", rules.len());
@@ -643,21 +655,21 @@ fn load_module_recursive(
         match load_module_recursive(import_path, visited) {
             Ok((submodule, _)) => {
                 if is_wildcard {
-                     // Merge content into current module
-                     module.structs.extend(submodule.structs);
-                     module.enums.extend(submodule.enums);
-                     module.impls.extend(submodule.impls);
-                     module.functions.extend(submodule.functions);
-                     module.tensor_decls.extend(submodule.tensor_decls);
-                     module.relations.extend(submodule.relations);
-                     module.rules.extend(submodule.rules);
-                     module.queries.extend(submodule.queries);
-                     // module.imports.extend(submodule.imports); // Should we merge imports? Recursive loading handles it?
-                     // If submodule had imports, they are already loaded into submodule.submodules.
-                     // We need to merge submodules too!
-                     module.submodules.extend(submodule.submodules);
+                    // Merge content into current module
+                    module.structs.extend(submodule.structs);
+                    module.enums.extend(submodule.enums);
+                    module.impls.extend(submodule.impls);
+                    module.functions.extend(submodule.functions);
+                    module.tensor_decls.extend(submodule.tensor_decls);
+                    module.relations.extend(submodule.relations);
+                    module.rules.extend(submodule.rules);
+                    module.queries.extend(submodule.queries);
+                    // module.imports.extend(submodule.imports); // Should we merge imports? Recursive loading handles it?
+                    // If submodule had imports, they are already loaded into submodule.submodules.
+                    // We need to merge submodules too!
+                    module.submodules.extend(submodule.submodules);
                 } else {
-                     module.submodules.insert(import_name.clone(), submodule);
+                    module.submodules.insert(import_name.clone(), submodule);
                 }
             }
             Err(e) => return Err(e),
@@ -681,7 +693,6 @@ fn load_builtins() -> Result<tl_lang::compiler::ast::Module> {
         builtin_types::vec::SOURCE,
         builtin_types::hashmap::SOURCE,
         builtin_types::option::SOURCE,
-
         builtin_types::result::SOURCE,
         builtin_types::llm::SOURCE,
     ];
@@ -698,20 +709,20 @@ fn load_builtins() -> Result<tl_lang::compiler::ast::Module> {
         imports: vec![],
         submodules: std::collections::HashMap::new(),
     };
-    
+
     for (i, src) in sources.iter().enumerate() {
-         let m = tl_lang::compiler::parser::parse_from_source(src)
+        let m = tl_lang::compiler::parser::parse_from_source(src)
             .map_err(|e| anyhow::anyhow!("Failed to parse builtin {}: {:?}", i, e))?;
-         
-         combined.structs.extend(m.structs);
-         combined.enums.extend(m.enums);
-         combined.impls.extend(m.impls);
-         combined.functions.extend(m.functions);
-         combined.tensor_decls.extend(m.tensor_decls);
-         combined.relations.extend(m.relations);
-         combined.rules.extend(m.rules);
-         combined.queries.extend(m.queries);
+
+        combined.structs.extend(m.structs);
+        combined.enums.extend(m.enums);
+        combined.impls.extend(m.impls);
+        combined.functions.extend(m.functions);
+        combined.tensor_decls.extend(m.tensor_decls);
+        combined.relations.extend(m.relations);
+        combined.rules.extend(m.rules);
+        combined.queries.extend(m.queries);
     }
-    
+
     Ok(combined)
 }

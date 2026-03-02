@@ -1,6 +1,6 @@
 
 // --- Struct Definitions ---
-struct Linear { w: Tensor<f32, 2> }
+struct Linear { w: Tensor<i8, 2> }
 struct RMSNorm { w: Tensor<f32, 1>, e: f32 }
 struct MLP { g: Linear, u: Linear, d: Linear }
 struct Attention { q: Linear, k: Linear, v: Linear, o: Linear }
@@ -8,12 +8,9 @@ struct Block { an: RMSNorm, ffn: RMSNorm, at: Attention, mlp: MLP }
 
 // --- App Impls ---
 impl Linear {
-    fn from_map(m: Map, k: String) -> Linear { 
-        let t: Tensor<f32, 2> = m.get(k);
-        Linear { w: t.transpose_2d(0, 1) } 
-    }
+    fn from_map(m: Map, k: String) -> Linear { Linear { w: m.get_quantized(k) } }
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> { 
-        x.matmul(self.w) 
+        x.matmul_quantized(self.w) 
     }
 }
 
@@ -119,60 +116,20 @@ fn main() {
 
     let mut model_path = "~/.llm/models/tinyllama/tinyllama-1.1b-chat-q4_0.gguf";
     let tokenizer_path = "~/.llm/models/tinyllama/tokenizer.json";
-    let config_path = "chatbot_config.txt";
-
-    // Try config first
-    if File::exists(config_path) {
-        let saved_path = File::read(config_path);
-        if File::exists(saved_path) {
-            model_path = saved_path;
-        }
-    }
 
     if !File::exists(model_path) {
         println("Model file not found at:");
         println(model_path);
-        println("Please select:");
-        println("1. Download Model");
-        println("2. Load from another folder");
+        println("Downloading model...");
         
-        while true {
-            let choice = read_line("Select [1/2]> ");
-            if choice == "1" {
-                println("Downloading model...");
-                println("Enter download directory path (or press Enter for default ~/.llm/models/):");
-                let dl_dir_in = read_line("Path> ");
-                let dl_dir = if dl_dir_in == "" { "~/.llm/models/" } else { dl_dir_in };
-                
-                let filename = "tinyllama-1.1b-chat-q4_0.gguf";
-                let save_path = dl_dir.concat(filename);
-                
-                let url = "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf";
-                if File::download(url, save_path) {
-                    println("Download complete.");
-                    model_path = save_path;
-                    File::write(config_path, model_path);
-                    break;
-                } else {
-                    println("Download failed.");
-                    println("Please try manual download from:");
-                    println(url);
-                    return;
-                }
-            } else {
-                if choice == "2" {
-                    let new_path = read_line("Enter model absolute path> ");
-                    if File::exists(new_path) {
-                        model_path = new_path;
-                        File::write(config_path, model_path);
-                        break;
-                    } else {
-                        println("File not found. Please try again.");
-                    }
-                } else {
-                    println("Invalid selection.");
-                }
-            }
+        let url = "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf";
+        if File::download(url, model_path) {
+            println("Download complete.");
+        } else {
+            println("Download failed.");
+            println("Please try manual download from:");
+            println(url);
+            return;
         }
     }
 
@@ -193,9 +150,12 @@ fn main() {
     let sin = Tensor::rope_new_sin(64, 2048, 10000.0);
     let on = RMSNorm::new(weights, "output_norm.weight");
     let emb: Tensor<f32, 2> = weights.get("token_embd.weight");
-    // Load output.weight (Q6_K) properly instead of reusing token_embd
-    let oh_w: Tensor<f32, 2> = weights.get("output.weight");
-    let oh = Linear { w: oh_w.transpose_2d(0, 1) };
+    // Load output.weight as quantized
+    let oh_w: Tensor<i8, 2> = weights.get_quantized("output.weight");
+
+    println("Loaded output norm");
+    println("Loaded output head");
+    println("Loaded embedding");
 
     // Pre-load blocks (Unrolled for perf/safety)
     let b0 = Block::from_map(weights, 0);
@@ -266,7 +226,7 @@ fn main() {
             x = b19.forward(x, cos, sin, batch_len, cache, 19, start_pos);
             x = b20.forward(x, cos, sin, batch_len, cache, 20, start_pos);
             x = b21.forward(x, cos, sin, batch_len, cache, 21, start_pos);
-            let lo = oh.forward(on.forward(x));
+            let lo = on.forward(x).matmul_quantized(oh_w);
             let nxt = lo.narrow(0, batch_len - 1, 1).sample(0.5, 0.9);
             let tid = nxt.item_i64();
             let s_nxt = tok.decode(nxt);
