@@ -1,17 +1,17 @@
 use crate::OpaqueTensor;
 
-#[cfg(feature = "cuda")]
+#[cfg(target_os = "linux")]
 use crate::make_tensor;
-#[cfg(feature = "cuda")]
+#[cfg(target_os = "linux")]
 use candle_core::Tensor;
 
 // FFI declaration for the C wrapper functions
-#[cfg(feature = "cuda")]
+#[cfg(target_os = "linux")]
 extern "C" {
     fn launch_sigmoid_kernel(x: *const f32, y: *mut f32, n: i32, stream: *mut std::ffi::c_void);
 }
 
-#[cfg(feature = "cuda")]
+#[cfg(target_os = "linux")]
 use candle_core::cuda_backend::cudarc::driver::sys::CUstream;
 
 /// Applies sigmoid using custom CUDA kernel
@@ -20,7 +20,7 @@ use candle_core::cuda_backend::cudarc::driver::sys::CUstream;
 #[allow(unused_variables)]
 /// @ffi_sig (Tensor*) -> Tensor*
 pub extern "C" fn tl_cuda_sigmoid(t: *const OpaqueTensor) -> *mut OpaqueTensor {
-    #[cfg(feature = "cuda")]
+    #[cfg(target_os = "linux")]
     unsafe {
         if t.is_null() {
             return std::ptr::null_mut();
@@ -80,7 +80,7 @@ pub extern "C" fn tl_cuda_sigmoid(t: *const OpaqueTensor) -> *mut OpaqueTensor {
         }
     }
 
-    #[cfg(not(feature = "cuda"))]
+    #[cfg(not(target_os = "linux"))]
     {
         eprintln!("Error: CUDA feature not enabled");
     }

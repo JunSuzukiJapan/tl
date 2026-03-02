@@ -53,11 +53,11 @@ pub use memory_ffi::{
 
 // GPU FFI: device_ffi 経由で呼び出すため、直接 re-export は最小限に留める
 // 互換性のため残すが、新コードでは device_ffi ヘルパーを使うこと
-#[cfg(feature = "metal")]
+#[cfg(target_os = "macos")]
 pub use tl_metal::ffi::{
     tl_metal_clone, tl_metal_data, tl_metal_numel, tl_metal_release,
 };
-#[cfg(feature = "cuda")]
+#[cfg(target_os = "linux")]
 pub use tl_cuda::ffi::{
     tl_cuda_clone as tl_metal_clone,
     tl_cuda_data as tl_metal_data,
@@ -178,15 +178,15 @@ use std::sync::OnceLock;
 
 // ========== バックエンド切替: cfg feature ==========
 
-#[cfg(feature = "metal")]
+#[cfg(target_os = "macos")]
 use tl_metal::MetalTensor;
 
 /// OpaqueTensor はバックエンドのテンソル型のエイリアス
-#[cfg(feature = "metal")]
+#[cfg(target_os = "macos")]
 pub type OpaqueTensor = tl_metal::MetalTensor;
-#[cfg(feature = "cuda")]
+#[cfg(target_os = "linux")]
 pub type OpaqueTensor = tl_cuda::CudaTensor;
-#[cfg(not(any(feature = "metal", feature = "cuda")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub type OpaqueTensor = tl_cpu::CpuTensor;
 
 // ========== ユーティリティ ==========
@@ -206,25 +206,25 @@ fn mem_trace_enabled() -> bool {
 /// release (Arc::from_raw) と対をなす。
 /// 重要: Box::into_raw(Box::new(Tensor)) を直接使ってはいけない。
 /// Box と Arc はメモリレイアウトが異なるため、ヒープ破損を引き起こす。
-#[cfg(feature = "metal")]
+#[cfg(target_os = "macos")]
 pub fn make_tensor(t: MetalTensor) -> *mut OpaqueTensor {
     let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(t));
     std::sync::Arc::into_raw(arc) as *mut OpaqueTensor
 }
 
-#[cfg(feature = "cuda")]
+#[cfg(target_os = "linux")]
 pub fn make_tensor(t: tl_cuda::CudaTensor) -> *mut OpaqueTensor {
     // CUDA: Box::into_raw で OpaqueTensor ポインタに変換
     Box::into_raw(Box::new(t))
 }
 
-#[cfg(not(any(feature = "metal", feature = "cuda")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn make_tensor(t: tl_cpu::CpuTensor) -> *mut OpaqueTensor {
     Box::into_raw(Box::new(t))
 }
 
 /// 互換性のためのエイリアス
-#[cfg(feature = "metal")]
+#[cfg(target_os = "macos")]
 #[inline(always)]
 pub fn make_metal_tensor(t: MetalTensor) -> *mut OpaqueTensor {
     make_tensor(t)
@@ -257,11 +257,11 @@ fn return_ptr_or_null(
 #[unsafe(no_mangle)]
 /// @ffi_sig () -> void
 pub extern "C" fn tl_runtime_init() {
-    #[cfg(feature = "metal")]
+    #[cfg(target_os = "macos")]
     println!("Runtime device initialized: Metal");
-    #[cfg(feature = "cuda")]
+    #[cfg(target_os = "linux")]
     println!("Runtime device initialized: CUDA");
-    #[cfg(not(any(feature = "metal", feature = "cuda")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     println!("Runtime device initialized: CPU-only");
 }
 
@@ -309,8 +309,8 @@ pub extern "C" fn tl_tensor_print(t: *mut OpaqueTensor) {
 
 /// デバッグ: Metal バックエンドの make/release カウンタをダンプ
 pub fn debug_dump_metal_counters(label: &str) {
-    #[cfg(feature = "metal")]
+    #[cfg(target_os = "macos")]
     tl_metal::ffi_ops::debug_dump_counters(label);
-    #[cfg(not(feature = "metal"))]
+    #[cfg(not(target_os = "macos"))]
     eprintln!("[DEBUG] debug_dump_metal_counters: not a metal build (label={})", label);
 }

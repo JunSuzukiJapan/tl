@@ -241,7 +241,7 @@ pub extern "C" fn tl_qtensor_matmul(
 
         // ========== 融合カーネルパス (Q4_K / Q6_K) ==========
         // Metal 固有: mul_mv_q4_k / mul_mv_q6_k カーネル
-        #[cfg(feature = "metal")]
+        #[cfg(target_os = "macos")]
         {
             // GPU raw buffer キャッシュチェック
             let gpu_raw_ptr = {
@@ -284,7 +284,7 @@ pub extern "C" fn tl_qtensor_matmul(
         }
 
         // CUDA: 融合カーネル (Q4_K / Q6_K) またはフォールバック
-        #[cfg(not(feature = "metal"))]
+        #[cfg(not(target_os = "macos"))]
         {
             if use_fused {
                 // ========== CUDA 融合カーネルパス ==========

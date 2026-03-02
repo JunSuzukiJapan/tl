@@ -7,9 +7,9 @@ use std::ffi::c_void;
 use std::sync::OnceLock;
 use tl_backend::{BackendResult, IDevice};
 use tl_cpu::device_impl::CpuDevice;
-#[cfg(feature = "cuda")]
+#[cfg(target_os = "linux")]
 use tl_cuda::device_impl::CudaDeviceImpl;
-#[cfg(feature = "metal")]
+#[cfg(target_os = "macos")]
 use tl_metal::device_impl::MetalDeviceImpl;
 
 /// TL_DEVICE 環境変数のキャッシュ
@@ -89,15 +89,15 @@ where
     let device: &dyn IDevice = if is_cpu() {
         &CpuDevice
     } else {
-        #[cfg(feature = "metal")]
+        #[cfg(target_os = "macos")]
         {
             &MetalDeviceImpl
         }
-        #[cfg(feature = "cuda")]
+        #[cfg(target_os = "linux")]
         {
             &CudaDeviceImpl
         }
-        #[cfg(not(any(feature = "metal", feature = "cuda")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             &CpuDevice
         }
@@ -1025,16 +1025,16 @@ pub fn create_runtime_tensor_f32(data: &[f32], shape: &[usize]) -> *mut c_void {
     if is_cpu() {
         tl_cpu::ffi::tl_cpu_tensor_new(data.as_ptr(), shape.len(), shape.as_ptr()) as *mut c_void
     } else {
-        #[cfg(feature = "metal")]
+        #[cfg(target_os = "macos")]
         {
             tl_metal::ffi_ops::tl_metal_new(data.as_ptr(), shape.len(), shape.as_ptr())
                 as *mut c_void
         }
-        #[cfg(feature = "cuda")]
+        #[cfg(target_os = "linux")]
         {
             tl_cuda::ffi_ops::tl_cuda_new(data.as_ptr(), shape.len(), shape.as_ptr()) as *mut c_void
         }
-        #[cfg(not(any(feature = "metal", feature = "cuda")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             tl_cpu::ffi::tl_cpu_tensor_new(data.as_ptr(), shape.len(), shape.as_ptr())
                 as *mut c_void
@@ -1052,18 +1052,18 @@ pub fn read_runtime_tensor_to_f32_vec(t: *mut c_void) -> Vec<f32> {
         let tensor = unsafe { &*(t as *mut tl_cpu::CpuTensor) };
         tensor.data_f32().to_vec()
     } else {
-        #[cfg(feature = "metal")]
+        #[cfg(target_os = "macos")]
         {
             let tensor = unsafe { &*(t as *const std::cell::UnsafeCell<tl_metal::MetalTensor>) };
             unsafe { (*tensor.get()).to_vec::<f32>() }
         }
-        #[cfg(feature = "cuda")]
+        #[cfg(target_os = "linux")]
         {
             let tensor =
                 unsafe { &*(t as *const std::cell::UnsafeCell<tl_cuda::tensor::CudaTensor>) };
             unsafe { (*tensor.get()).to_vec::<f32>() }
         }
-        #[cfg(not(any(feature = "metal", feature = "cuda")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             let tensor = unsafe { &*(t as *mut tl_cpu::CpuTensor) };
             tensor.data_f32().to_vec()
@@ -1082,18 +1082,18 @@ pub fn read_runtime_tensor_to_i64_vec(t: *mut c_void) -> Vec<i64> {
         // CPU テンソルは f32 で格納されるため、f32 → i64 変換
         tensor.data_f32().iter().map(|&v| v as i64).collect()
     } else {
-        #[cfg(feature = "metal")]
+        #[cfg(target_os = "macos")]
         {
             let tensor = unsafe { &*(t as *const std::cell::UnsafeCell<tl_metal::MetalTensor>) };
             unsafe { (*tensor.get()).to_vec::<i64>() }
         }
-        #[cfg(feature = "cuda")]
+        #[cfg(target_os = "linux")]
         {
             let tensor =
                 unsafe { &*(t as *const std::cell::UnsafeCell<tl_cuda::tensor::CudaTensor>) };
             unsafe { (*tensor.get()).to_vec::<i64>() }
         }
-        #[cfg(not(any(feature = "metal", feature = "cuda")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             let tensor = unsafe { &*(t as *mut tl_cpu::CpuTensor) };
             tensor.data_f32().iter().map(|&v| v as i64).collect()
@@ -1109,17 +1109,17 @@ pub fn create_runtime_tensor_u8(data: &[u8], shape: &[usize]) -> *mut c_void {
         tl_cpu::ffi::tl_cpu_tensor_new(f32_data.as_ptr(), shape.len(), shape.as_ptr())
             as *mut c_void
     } else {
-        #[cfg(feature = "metal")]
+        #[cfg(target_os = "macos")]
         {
             let tensor = tl_metal::MetalTensor::from_slice(data, shape, tl_metal::DType::U8);
             crate::make_tensor(tensor) as *mut c_void
         }
-        #[cfg(feature = "cuda")]
+        #[cfg(target_os = "linux")]
         {
             let tensor = tl_cuda::CudaTensor::from_slice(data, shape, tl_cuda::DType::U8);
             crate::make_tensor(tensor) as *mut c_void
         }
-        #[cfg(not(any(feature = "metal", feature = "cuda")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             let f32_data: Vec<f32> = data.iter().map(|&b| b as f32).collect();
             tl_cpu::ffi::tl_cpu_tensor_new(f32_data.as_ptr(), shape.len(), shape.as_ptr())
@@ -1134,17 +1134,17 @@ pub fn create_runtime_zeros(shape: &[usize]) -> *mut c_void {
         let data = vec![0.0f32; shape.iter().product()];
         tl_cpu::ffi::tl_cpu_tensor_new(data.as_ptr(), shape.len(), shape.as_ptr()) as *mut c_void
     } else {
-        #[cfg(feature = "metal")]
+        #[cfg(target_os = "macos")]
         {
             let tensor = tl_metal::MetalTensor::zeros(shape, tl_metal::DType::F32);
             crate::make_tensor(tensor) as *mut c_void
         }
-        #[cfg(feature = "cuda")]
+        #[cfg(target_os = "linux")]
         {
             let tensor = tl_cuda::CudaTensor::zeros(shape, tl_cuda::DType::F32);
             crate::make_tensor(tensor) as *mut c_void
         }
-        #[cfg(not(any(feature = "metal", feature = "cuda")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             let data = vec![0.0f32; shape.iter().product()];
             tl_cpu::ffi::tl_cpu_tensor_new(data.as_ptr(), shape.len(), shape.as_ptr())
@@ -1163,15 +1163,15 @@ pub fn release_runtime_tensor(ptr: *mut c_void) {
             let _ = Box::from_raw(ptr as *mut tl_cpu::CpuTensor);
         }
     } else {
-        #[cfg(feature = "metal")]
+        #[cfg(target_os = "macos")]
         {
             tl_metal::ffi::tl_metal_release(ptr as *mut tl_metal::MetalTensor);
         }
-        #[cfg(feature = "cuda")]
+        #[cfg(target_os = "linux")]
         {
             tl_cuda::ffi::tl_cuda_release(ptr as *mut tl_cuda::CudaTensor);
         }
-        #[cfg(not(any(feature = "metal", feature = "cuda")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             unsafe {
                 let _ = Box::from_raw(ptr as *mut tl_cpu::CpuTensor);
@@ -1183,7 +1183,7 @@ pub fn release_runtime_tensor(ptr: *mut c_void) {
 /// GPU Sync ヘルパー
 pub fn runtime_gpu_sync() {
     if !is_cpu() {
-        #[cfg(feature = "metal")]
+        #[cfg(target_os = "macos")]
         {
             if let Some(device) = tl_metal::device::try_get_device() {
                 let cmd = device.command_queue().new_command_buffer();
@@ -1191,7 +1191,7 @@ pub fn runtime_gpu_sync() {
                 cmd.wait_until_completed();
             }
         }
-        #[cfg(feature = "cuda")]
+        #[cfg(target_os = "linux")]
         {
             // TODO: CUDA 同期 (cudaDeviceSynchronize)
         }
@@ -1200,18 +1200,18 @@ pub fn runtime_gpu_sync() {
 
 // ========== CUDA 融合 Q4_K / Q6_K matmul ==========
 
-#[cfg(feature = "cuda")]
+#[cfg(target_os = "linux")]
 unsafe extern "C" {
     fn tl_cuda_mul_mv_q4_k(input: *mut c_void, w_raw: *mut c_void, n: i64, k: i64) -> *mut c_void;
     fn tl_cuda_mul_mv_q6_k(input: *mut c_void, w_raw: *mut c_void, n: i64, k: i64) -> *mut c_void;
 }
 
 pub fn cuda_mul_mv_q4_k(input: *mut c_void, w_raw: *mut c_void, n: i64, k: i64) -> *mut c_void {
-    #[cfg(feature = "cuda")]
+    #[cfg(target_os = "linux")]
     unsafe {
         return tl_cuda_mul_mv_q4_k(input, w_raw, n, k);
     }
-    #[cfg(not(feature = "cuda"))]
+    #[cfg(not(target_os = "linux"))]
     {
         let _ = (input, w_raw, n, k);
         std::ptr::null_mut()
@@ -1219,11 +1219,11 @@ pub fn cuda_mul_mv_q4_k(input: *mut c_void, w_raw: *mut c_void, n: i64, k: i64) 
 }
 
 pub fn cuda_mul_mv_q6_k(input: *mut c_void, w_raw: *mut c_void, n: i64, k: i64) -> *mut c_void {
-    #[cfg(feature = "cuda")]
+    #[cfg(target_os = "linux")]
     unsafe {
         return tl_cuda_mul_mv_q6_k(input, w_raw, n, k);
     }
-    #[cfg(not(feature = "cuda"))]
+    #[cfg(not(target_os = "linux"))]
     {
         let _ = (input, w_raw, n, k);
         std::ptr::null_mut()

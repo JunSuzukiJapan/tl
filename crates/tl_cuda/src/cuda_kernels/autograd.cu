@@ -475,7 +475,7 @@ __global__ void causal_mask_kernel(float *output, int size) {
   if (tid < total) {
     int r = tid / size;
     int c = tid % size;
-    output[tid] = (c > r) ? -3.402823466e+38f : 0.0f;
+    output[tid] = (c > r) ? (-1.0f / 0.0f) : 0.0f; // -inf
   }
 }
 

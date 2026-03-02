@@ -1,71 +1,46 @@
-//! CUDA Backend FFI Operations
-//!
-//! tl_metal/src/ffi_ops.rs と同等の実装（V5.0 Arc ベースメモリ管理）。
-
 use crate::autograd::ops::*;
 use crate::tensor::{CudaTensor, TensorRef};
 use crate::DType;
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use tl_backend::ffi_helpers::FfiCounters;
 use tl_backend::BackendResult;
 
 type OpaqueTensor = CudaTensor;
 
-// === デバッグカウンタ ===
-pub static MAKE_COUNT: AtomicUsize = AtomicUsize::new(0);
-pub static RELEASE_COUNT: AtomicUsize = AtomicUsize::new(0);
-pub static ACQUIRE_COUNT: AtomicUsize = AtomicUsize::new(0);
+// === デバッグカウンタ（共通実装を使用）===
+pub static FFI_COUNTERS: FfiCounters = FfiCounters::new();
+
+// 後方互換性のためのアクセサ
+pub static MAKE_COUNT: &AtomicUsize = &FFI_COUNTERS.make;
+pub static RELEASE_COUNT: &AtomicUsize = &FFI_COUNTERS.release;
+pub static ACQUIRE_COUNT: &AtomicUsize = &FFI_COUNTERS.acquire;
 
 /// デバッグ: カウンタをリセット
 #[no_mangle]
 pub extern "C" fn tl_cuda_debug_reset_counters() {
-    MAKE_COUNT.swap(0, Ordering::SeqCst);
-    RELEASE_COUNT.swap(0, Ordering::SeqCst);
-    ACQUIRE_COUNT.swap(0, Ordering::SeqCst);
+    FFI_COUNTERS.reset();
 }
 
 /// 内部ヘルパー: CudaTensor を Arc で包んでポインタを返す（V5.0 メモリ管理）
 pub fn make_tensor(t: CudaTensor) -> *mut OpaqueTensor {
-    MAKE_COUNT.fetch_add(1, Ordering::Relaxed);
-    let arc = Arc::new(UnsafeCell::new(t));
-    Arc::into_raw(arc) as *mut OpaqueTensor
+    tl_backend::ffi_helpers::make_tensor(t, &FFI_COUNTERS)
 }
 
 /// Arc RC-1: raw pointer から Arc を復元し、drop で RC を減らす。
 pub fn release_if_live(t: *mut OpaqueTensor) {
-    if t.is_null() {
-        return;
-    }
-    RELEASE_COUNT.fetch_add(1, Ordering::Relaxed);
-    unsafe {
-        let _ = Arc::from_raw(t as *const UnsafeCell<CudaTensor>);
-    }
+    tl_backend::ffi_helpers::release_if_live(t, &FFI_COUNTERS)
 }
 
 /// Arc RC+1: raw pointer の参照カウントを 1 増やす。
 pub fn acquire_tensor(t: *mut OpaqueTensor) {
-    if t.is_null() {
-        return;
-    }
-    ACQUIRE_COUNT.fetch_add(1, Ordering::Relaxed);
-    unsafe {
-        let arc = Arc::from_raw(t as *const UnsafeCell<CudaTensor>);
-        let cloned = arc.clone(); // RC+1
-        let _ = Arc::into_raw(arc); // 元のポインタを維持
-        std::mem::forget(cloned); // RC+1 を維持（drop しない）
-    }
+    tl_backend::ffi_helpers::acquire_tensor(t, &FFI_COUNTERS)
 }
 
 /// BackendResult を安全にポインタに変換するヘルパー
 fn make_result(result: BackendResult<CudaTensor>) -> *mut OpaqueTensor {
-    match result {
-        Ok(t) => make_tensor(t),
-        Err(e) => {
-            eprintln!("CUDA Backend FFI Error: {}", e);
-            std::ptr::null_mut()
-        }
-    }
+    tl_backend::ffi_helpers::make_result(result, &FFI_COUNTERS, "CUDA")
 }
 
 /// raw ポインタから CudaTensor への不変参照取得

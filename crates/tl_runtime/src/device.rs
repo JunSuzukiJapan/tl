@@ -44,7 +44,7 @@ impl DeviceManager {
     fn init_device(requested_device: &str) -> Result<(Device, DeviceType), RuntimeError> {
         // Explicit requests should never silently fall back.
         if requested_device == "cuda" {
-            #[cfg(feature = "cuda")]
+            #[cfg(target_os = "linux")]
             {
                 info!("Initializing Runtime: CUDA backend selected.");
                 return match Device::new_cuda(0) {
@@ -55,7 +55,7 @@ impl DeviceManager {
                     ))),
                 };
             }
-            #[cfg(not(feature = "cuda"))]
+            #[cfg(not(target_os = "linux"))]
             {
                 return Err(RuntimeError::DeviceError(
                     "CUDA requested but 'cuda' feature not enabled.".to_string(),
@@ -64,7 +64,7 @@ impl DeviceManager {
         }
 
         if requested_device == "metal" {
-            #[cfg(feature = "metal")]
+            #[cfg(target_os = "macos")]
             {
                 info!("Initializing Runtime: Metal backend selected.");
                 return match Device::new_metal(0) {
@@ -84,7 +84,7 @@ impl DeviceManager {
                     }
                 };
             }
-            #[cfg(not(feature = "metal"))]
+            #[cfg(not(target_os = "macos"))]
             {
                 return Err(RuntimeError::DeviceError(
                     "Metal requested but 'metal' feature not enabled.".to_string(),
@@ -94,7 +94,7 @@ impl DeviceManager {
 
         // Auto: Priority CUDA -> Metal -> CPU.
         if requested_device == "auto" && candle_core::utils::cuda_is_available() {
-            #[cfg(feature = "cuda")]
+            #[cfg(target_os = "linux")]
             {
                 info!("Initializing Runtime: CUDA backend selected.");
                 if let Ok(device) = Device::new_cuda(0) {
@@ -104,7 +104,7 @@ impl DeviceManager {
         }
 
         if requested_device == "auto" && candle_core::utils::metal_is_available() {
-            #[cfg(feature = "metal")]
+            #[cfg(target_os = "macos")]
             {
                 info!("Initializing Runtime: Metal backend selected.");
                 if let Ok(device) = Device::new_metal(0) {
@@ -141,7 +141,7 @@ impl DeviceManager {
     }
 }
 
-#[cfg(feature = "metal")]
+#[cfg(target_os = "macos")]
 fn check_metal_health(device: &Device) -> bool {
     let t_cpu = match candle_core::Tensor::new(&[1.0f32], &candle_core::Device::Cpu) {
         Ok(t) => t,

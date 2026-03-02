@@ -3,7 +3,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     // Only build CUDA kernels if the 'cuda' feature is enabled
-    #[cfg(feature = "cuda")]
+    #[cfg(target_os = "linux")]
     {
         // check if nvcc is installed
         let output = std::process::Command::new("nvcc").arg("--version").output();
