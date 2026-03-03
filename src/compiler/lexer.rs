@@ -15,7 +15,7 @@ use std::fmt;
 
 #[derive(Logos, Debug, PartialEq, Clone)]
 #[logos(skip r"[ \t\n\f]+")] // Skip whitespace
-#[logos(skip r"//.*")]       // Skip line comments
+#[logos(skip r"//[^\r\n]*")] // Skip line comments
 #[logos(skip r"/\*([^*]|\*+[^*/])*\*+/")] // Skip block comments
 pub enum Token {
     // Keywords
@@ -68,7 +68,6 @@ pub enum Token {
     #[token("self")]
     Self_,
 
-
     // Types (primitive types also act as keywords in some context)
     #[token("f32")]
     F32Type,
@@ -110,7 +109,8 @@ pub enum Token {
     IntLiteral(i64),
 
     #[regex(r"-?[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?", |lex| lex.slice().parse().ok())]
-    #[regex(r"-?[0-9]+[eE][+-]?[0-9]+", |lex| lex.slice().parse().ok())] // Scientific notation without dot
+    #[regex(r"-?[0-9]+[eE][+-]?[0-9]+", |lex| lex.slice().parse().ok())]
+    // Scientific notation without dot
     FloatLiteral(f64),
 
     #[regex(r#""([^"\\]|\\[\s\S])*""#, |lex| {
@@ -156,7 +156,7 @@ pub enum Token {
     DoubleColon,
     #[token("..")]
     Range,
-    
+
     // Operators
     #[token("+")]
     Plus,
@@ -197,14 +197,14 @@ pub enum Token {
     LArrow,
     #[token(":-")]
     Entails,
-    
+
     #[token("_")]
     Underscore,
     #[token("?")]
     Question,
     #[token("$")]
     Dollar,
-    
+
     #[token("+=")]
     PlusAssign,
     #[token("-=")]
@@ -215,7 +215,6 @@ pub enum Token {
     SlashAssign,
     #[token("%=")]
     PercentAssign,
-
     // Error
     // Logos automatically handles errors but we can have an explicit Error variant if needed.
     // For now we rely on Result from lexer iteration.
@@ -232,7 +231,12 @@ pub struct Span {
 
 impl Span {
     pub fn new(start: usize, end: usize, line: usize, column: usize) -> Self {
-        Span { start, end, line, column }
+        Span {
+            start,
+            end,
+            line,
+            column,
+        }
     }
 }
 
@@ -246,12 +250,12 @@ pub struct SpannedToken {
 pub fn tokenize(input: &str) -> Vec<Result<SpannedToken, String>> {
     let mut tokens = Vec::new();
     let mut lex = Token::lexer(input);
-    
+
     // Simple line tracking
     // We can pre-calculate line start indices for O(1) lookup or track as we go.
     // Since Logos jumps around or slices, we might need global offset.
     // Logos `span()` gives byte range absolute to input.
-    
+
     // Let's build a line_index: Vec<usize> of line start offsets.
     let mut line_starts = vec![0];
     for (i, c) in input.char_indices() {
@@ -259,26 +263,26 @@ pub fn tokenize(input: &str) -> Vec<Result<SpannedToken, String>> {
             line_starts.push(i + 1);
         }
     }
-    
+
     while let Some(token_res) = lex.next() {
         let span = lex.span(); // byte range
         let start = span.start;
         let end = span.end;
-        
+
         // Find line from start offset using binary search
         let line_idx = match line_starts.binary_search(&start) {
             Ok(i) => i,
             Err(i) => i - 1,
         };
-        
+
         let line = line_idx + 1;
         let line_start = line_starts[line_idx];
         // Column is char count from line_start to start.
         // We need to count chars, not bytes, for column.
         let column = input[line_start..start].chars().count() + 1;
-        
+
         let span_info = Span::new(start, end, line, column);
-        
+
         match token_res {
             Ok(t) => tokens.push(Ok(SpannedToken {
                 token: t,
@@ -287,7 +291,7 @@ pub fn tokenize(input: &str) -> Vec<Result<SpannedToken, String>> {
             Err(_) => tokens.push(Err(format!("Invalid token at {:?}", span_info))),
         }
     }
-    
+
     tokens
 }
 
@@ -303,36 +307,53 @@ mod tests {
     #[test]
     fn test_keywords_and_identifiers() {
         let input = "fn main let mut match_errors";
-        let tokens: Vec<Token> = tokenize(input).into_iter().map(|r| r.unwrap().token).collect();
-        assert_eq!(tokens, vec![
-            Token::Fn,
-            Token::Identifier("main".to_string()),
-            Token::Let,
-            Token::Mut,
-            Token::Identifier("match_errors".to_string()), // Critical test case
-        ]);
+        let tokens: Vec<Token> = tokenize(input)
+            .into_iter()
+            .map(|r| r.unwrap().token)
+            .collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Fn,
+                Token::Identifier("main".to_string()),
+                Token::Let,
+                Token::Mut,
+                Token::Identifier("match_errors".to_string()), // Critical test case
+            ]
+        );
     }
 
     #[test]
     fn test_snake_case_identifiers() {
         let input = "from_int String::from_int";
-        let tokens: Vec<Token> = tokenize(input).into_iter().map(|r| r.unwrap().token).collect();
-        assert_eq!(tokens, vec![
-            Token::Identifier("from_int".to_string()),
-            Token::StringType,
-            Token::DoubleColon,
-            Token::Identifier("from_int".to_string()),
-        ]);
+        let tokens: Vec<Token> = tokenize(input)
+            .into_iter()
+            .map(|r| r.unwrap().token)
+            .collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Identifier("from_int".to_string()),
+                Token::StringType,
+                Token::DoubleColon,
+                Token::Identifier("from_int".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn test_literals() {
         let input = "42 3.14 \"hello\"";
-        let tokens: Vec<Token> = tokenize(input).into_iter().map(|r| r.unwrap().token).collect();
+        let tokens: Vec<Token> = tokenize(input)
+            .into_iter()
+            .map(|r| r.unwrap().token)
+            .collect();
         assert_eq!(tokens.len(), 3);
         assert_eq!(tokens[0], Token::IntLiteral(42));
         match &tokens[1] {
-            Token::FloatLiteral(v) => assert!((v - 3.14).abs() < 1e-10, "expected ~3.14, got {}", v),
+            Token::FloatLiteral(v) => {
+                assert!((v - 3.14).abs() < 1e-10, "expected ~3.14, got {}", v)
+            }
             other => panic!("expected FloatLiteral, got {:?}", other),
         }
         assert_eq!(tokens[2], Token::StringLiteral("hello".to_string()));
@@ -341,45 +362,63 @@ mod tests {
     #[test]
     fn test_logic_tokens() {
         let input = "? $ :- <-";
-        let tokens: Vec<Token> = tokenize(input).into_iter().map(|r| r.unwrap().token).collect();
-        assert_eq!(tokens, vec![
-            Token::Question,
-            Token::Dollar,
-            Token::Entails,
-            Token::LArrow,
-        ]);
+        let tokens: Vec<Token> = tokenize(input)
+            .into_iter()
+            .map(|r| r.unwrap().token)
+            .collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Question,
+                Token::Dollar,
+                Token::Entails,
+                Token::LArrow,
+            ]
+        );
     }
 
     #[test]
     fn test_complex_floats() {
         let input = "1.0 10.5e-10 -0.5 3.14E+2";
-        let tokens: Vec<Token> = tokenize(input).into_iter().map(|r| r.unwrap().token).collect();
-        assert_eq!(tokens, vec![
-            Token::FloatLiteral(1.0),
-            Token::FloatLiteral(10.5e-10),
-            Token::FloatLiteral(-0.5),
-            Token::FloatLiteral(3.14E+2),
-        ]);
+        let tokens: Vec<Token> = tokenize(input)
+            .into_iter()
+            .map(|r| r.unwrap().token)
+            .collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::FloatLiteral(1.0),
+                Token::FloatLiteral(10.5e-10),
+                Token::FloatLiteral(-0.5),
+                Token::FloatLiteral(3.14E+2),
+            ]
+        );
     }
 
     #[test]
     fn test_operators_combinations() {
         let input = "== = != ! <= < >= > && || .. .";
-        let tokens: Vec<Token> = tokenize(input).into_iter().map(|r| r.unwrap().token).collect();
-        assert_eq!(tokens, vec![
-            Token::Eq,
-            Token::Assign,
-            Token::Ne,
-            Token::Not,
-            Token::Le,
-            Token::Lt,
-            Token::Ge,
-            Token::Gt,
-            Token::And,
-            Token::Or,
-            Token::Range,
-            Token::Dot,
-        ]);
+        let tokens: Vec<Token> = tokenize(input)
+            .into_iter()
+            .map(|r| r.unwrap().token)
+            .collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Eq,
+                Token::Assign,
+                Token::Ne,
+                Token::Not,
+                Token::Le,
+                Token::Lt,
+                Token::Ge,
+                Token::Gt,
+                Token::And,
+                Token::Or,
+                Token::Range,
+                Token::Dot,
+            ]
+        );
     }
 
     #[test]
@@ -391,29 +430,38 @@ mod tests {
                but lines starting with // are skipped */
             let y = 20;
         "#;
-        let tokens: Vec<Token> = tokenize(input).into_iter().map(|r| r.unwrap().token).collect();
-        assert_eq!(tokens, vec![
-            Token::Let,
-            Token::Identifier("x".to_string()),
-            Token::Assign,
-            Token::IntLiteral(10),
-            Token::SemiColon, // Added missing semicolon
-            Token::Let,
-            Token::Identifier("y".to_string()),
-            Token::Assign,
-            Token::IntLiteral(20),
-            Token::SemiColon, // Added missing semicolon
-        ]);
+        let tokens: Vec<Token> = tokenize(input)
+            .into_iter()
+            .map(|r| r.unwrap().token)
+            .collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Let,
+                Token::Identifier("x".to_string()),
+                Token::Assign,
+                Token::IntLiteral(10),
+                Token::SemiColon, // Added missing semicolon
+                Token::Let,
+                Token::Identifier("y".to_string()),
+                Token::Assign,
+                Token::IntLiteral(20),
+                Token::SemiColon, // Added missing semicolon
+            ]
+        );
     }
-    
+
     #[test]
     fn test_string_escapes_recognition() {
         // Note: The lexer currently trims quotes but doesn't decode escapes in the Value.
         // It just recognizes the string literal token.
         let input = r#""hello world" "escaped\"quote""#;
-        let tokens: Vec<Token> = tokenize(input).into_iter().map(|r| r.unwrap().token).collect();
-        
-        // We verify that it tokenizes as StringLiteral, checking content is secondary 
+        let tokens: Vec<Token> = tokenize(input)
+            .into_iter()
+            .map(|r| r.unwrap().token)
+            .collect();
+
+        // We verify that it tokenizes as StringLiteral, checking content is secondary
         // until we implement full escape processing.
         match &tokens[0] {
             Token::StringLiteral(s) => assert_eq!(s, "hello world"),
@@ -424,22 +472,22 @@ mod tests {
             _ => panic!("Expected StringLiteral"),
         }
     }
-    
+
     #[test]
     fn test_spans_and_lines() {
         let input = "a\nb\n  c";
         let results = tokenize(input);
-        
+
         let t1 = results[0].as_ref().unwrap();
         assert_eq!(t1.token, Token::Identifier("a".to_string()));
         assert_eq!(t1.span.line, 1);
         assert_eq!(t1.span.column, 1);
-        
+
         let t2 = results[1].as_ref().unwrap();
         assert_eq!(t2.token, Token::Identifier("b".to_string()));
         assert_eq!(t2.span.line, 2);
         assert_eq!(t2.span.column, 1);
-        
+
         let t3 = results[2].as_ref().unwrap();
         assert_eq!(t3.token, Token::Identifier("c".to_string()));
         assert_eq!(t3.span.line, 3);
