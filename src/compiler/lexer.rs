@@ -15,7 +15,7 @@ use std::fmt;
 
 #[derive(Logos, Debug, PartialEq, Clone)]
 #[logos(skip r"[ \t\n\f]+")] // Skip whitespace
-#[logos(skip r"//[^\r\n]*")] // Skip line comments
+#[logos(skip(r"//[^\r\n]*", allow_greedy = true))] // Skip line comments
 #[logos(skip r"/\*([^*]|\*+[^*/])*\*+/")] // Skip block comments
 pub enum Token {
     // Keywords
