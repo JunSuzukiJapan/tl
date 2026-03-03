@@ -1,6 +1,6 @@
 [package]
 name = "tl-lang"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 license = "MIT"
 description = "A differentiable programming language with tensor support for machine learning"
@@ -17,8 +17,8 @@ path = "src/main.rs"
 members = ["crates/tl_runtime", "crates/tl_metal", "crates/tl_backend", "crates/tl_cpu", "crates/tl_cuda"]
 
 [dependencies]
-tl_runtime = { path = "crates/tl_runtime", version = "0.4.0" }
-tl_cpu = { path = "crates/tl_cpu", version = "0.4.0" }
+tl_runtime = { path = "crates/tl_runtime", version = "0.4.1" }
+tl_cpu = { path = "crates/tl_cpu", version = "0.4.1" }
 
 # CLI & Error Handling
 clap = { version = "4.5.4", features = ["derive"] }

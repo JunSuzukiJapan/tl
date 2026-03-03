@@ -1,6 +1,6 @@
 [package]
 name = "tl_cuda"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 description = "CUDA GPU tensor library for TL"
 license = "MIT"
@@ -9,7 +9,7 @@ authors = ["Jun Suzuki"]
 
 [dependencies]
 rand = "0.8"
-tl_backend = { path = "../tl_backend", version = "0.4.0" }
+tl_backend = { path = "../tl_backend", version = "0.4.1" }
 
 [dev-dependencies]
 serial_test = "3"
