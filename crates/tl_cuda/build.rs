@@ -32,9 +32,6 @@ fn main() {
     let lib_path = format!("{}/lib64", cuda_path);
     let nvcc_path = format!("{}/bin/nvcc", cuda_path);
 
-    // GPU の compute capability を自動検出
-    let gpu_arch = detect_gpu_arch();
-
     // CUDA カーネルのコンパイル
     let nvcc_exists = std::path::Path::new(&nvcc_path).exists()
         || std::process::Command::new("nvcc")
@@ -49,22 +46,31 @@ fn main() {
         let mut build = cc::Build::new();
         build.cuda(true).cudart("shared");
 
-        // 検出されたアーキテクチャ、またはフォールバック
-        let arch = gpu_arch.unwrap_or_else(|| "75".to_string());
-        let gencode = format!("arch=compute_{},code=sm_{}", arch, arch);
-        build.flag("-gencode").flag(&gencode);
+        // Fat Binary: 複数アーキテクチャの SASS を生成（不特定多数の GPU に対応）
+        // sm_75: RTX 20XX / T4
+        // sm_80: A100 / RTX 30XX (GA100)
+        // sm_86: RTX 30XX (GA102/GA104)
+        // sm_89: RTX 40XX (Ada Lovelace)
+        // sm_90: H100 (Hopper)
+        let target_archs = ["75", "80", "86", "89", "90"];
+        for arch in &target_archs {
+            let gencode = format!("arch=compute_{},code=sm_{}", arch, arch);
+            build.flag("-gencode").flag(&gencode);
+        }
 
-        // PTX も生成して forward compatibility を確保
-        let gencode_ptx = format!("arch=compute_{},code=compute_{}", arch, arch);
-        build.flag("-gencode").flag(&gencode_ptx);
+        // PTX フォールバック: 将来の GPU (RTX 50XX 等) でも JIT コンパイルで動作
+        build
+            .flag("-gencode")
+            .flag("arch=compute_75,code=compute_75");
 
         build
             .file("src/cuda_kernels/autograd.cu")
             .compile("tl_cuda_autograd_kernels");
 
         println!(
-            "cargo:warning=CUDA kernels compiled for sm_{} with {}",
-            arch, nvcc_path
+            "cargo:warning=CUDA kernels compiled as fat binary (sm_{}) with {}",
+            target_archs.join(", sm_"),
+            nvcc_path
         );
     } else {
         println!("cargo:warning=nvcc not found at {} or in PATH.", nvcc_path);
@@ -79,32 +85,4 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CUDA_PATH");
     println!("cargo:rerun-if-env-changed=CUDA_HOME");
     println!("cargo:rerun-if-changed=src/cuda_kernels/autograd.cu");
-}
-
-/// nvidia-smi で GPU の compute capability を検出
-fn detect_gpu_arch() -> Option<String> {
-    // nvidia-smi で GPU 名を取得し、compute capability をマッピング
-    let output = std::process::Command::new("nvidia-smi")
-        .arg("--query-gpu=compute_cap")
-        .arg("--format=csv,noheader,nounits")
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let cap = String::from_utf8_lossy(&output.stdout);
-    let cap = cap.trim();
-    if cap.is_empty() {
-        return None;
-    }
-
-    // "8.6" → "86", "7.5" → "75"
-    let arch = cap.replace('.', "");
-    println!(
-        "cargo:warning=Detected GPU compute capability: {} (sm_{})",
-        cap, arch
-    );
-    Some(arch)
 }
