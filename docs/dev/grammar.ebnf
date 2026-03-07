@@ -36,6 +36,8 @@ item          ::= function_def
                 | struct_def
                 | enum_def
                 | impl_block
+                | trait_def
+                | trait_impl
                 | use_decl
                 | mod_decl
                 | tensor_decl_stmt
@@ -72,6 +74,19 @@ enum_variant  ::= ident "(" type_list ")"               /* Tuple variant */
 
 /* Implementation Block */
 impl_block    ::= "impl" [ generic_params ] type "{" { function_def } "}" ;
+
+/* Trait Definition */
+trait_def     ::= [ "pub" ] "trait" ident [ generic_params ] "{" { trait_item } "}" ;
+trait_item    ::= trait_method
+                | "type" ident ";" ;                       /* Associated type */
+
+trait_method  ::= "fn" ident "(" [ fn_args ] ")" [ "->" type ] ( block | ";" ) ;
+                /* block = default body; ";" = abstract signature */
+
+/* Trait Implementation Block */
+trait_impl    ::= "impl" [ generic_params_with_bounds ] path [ generic_args ] "for" type [ where_clause ] "{" { trait_impl_item } "}" ;
+trait_impl_item ::= function_def
+                  | "type" ident "=" type ";" ;            /* Associated type binding */
 
 /* Module & Use Declarations */
 mod_decl      ::= "mod" ident ";" ;
@@ -252,6 +267,16 @@ path          ::= ident [ generic_args ] { "::" ident [ generic_args ] } ;
 
 generic_params ::= "<" ident_list ">" ;
 generic_args   ::= "<" type_list ">" ;
+
+/* Generic Parameters with Trait Bounds */
+generic_params_with_bounds ::= "<" generic_param_bound { "," generic_param_bound } ">" ;
+generic_param_bound        ::= ident [ ":" trait_bound { "+" trait_bound } ] ;
+
+trait_bound   ::= ident [ generic_args ] ;     /* e.g. Display, Iterator<i64> */
+
+/* Where Clause */
+where_clause  ::= "where" where_predicate { "," where_predicate } ;
+where_predicate ::= ident ":" trait_bound { "+" trait_bound } ;
 
 ident_list     ::= ident { "," ident } ;
 type_list      ::= type { "," type } ;
