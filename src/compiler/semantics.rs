@@ -2014,6 +2014,39 @@ impl SemanticAnalyzer {
                             Type::UnifiedType { ref type_args, .. } if !type_args.is_empty() => {
                                 type_args[0].clone()
                             }
+                            Type::Struct(_, _) => {
+                                // ── Iterable trait ベースの型推論 ──
+                                let t_name = iter_type.get_base_name();
+                                let has_iterable = self.type_traits.get(&t_name)
+                                    .map(|ts| ts.iter().any(|t| t == "Iterable"))
+                                    .unwrap_or(false);
+
+                                // Iterable traitか、len/get メソッドがある型
+                                let get_method = self.methods.get(&t_name)
+                                    .and_then(|ms| ms.get("get"));
+
+                                if let Some(m) = get_method {
+                                    // getメソッドの戻り型からelement typeを推論
+                                    let struct_args = if let Type::Struct(_, args) = &iter_type { args.clone() } else { vec![] };
+                                    let struct_def_generics = self.structs.get(&t_name).map(|s| s.generics.clone()).unwrap_or_default();
+                                    let mut subst = std::collections::HashMap::new();
+                                    for (i, g) in struct_def_generics.iter().enumerate() {
+                                        if i < struct_args.len() {
+                                            subst.insert(g.clone(), struct_args[i].clone());
+                                        }
+                                    }
+                                    self.substitute_generics(&m.return_type, &subst)
+                                } else {
+                                    let hint = if !has_iterable { " (hint: implement trait Iterable<T> for this type)" } else { "" };
+                                    return self.err(
+                                        SemanticError::TypeMismatch {
+                                            expected: Type::Tensor(Box::new(Type::F32), 1),
+                                            found: Type::Struct(format!("{}{}", t_name, hint), vec![]),
+                                        },
+                                        Some(stmt.span.clone()),
+                                    );
+                                }
+                            }
                             _ => {
                                 return self.err(
                                     SemanticError::TypeMismatch {
@@ -5090,125 +5123,54 @@ impl SemanticAnalyzer {
                     Type::Tensor(inner, _rank) => Ok(Type::Tensor(inner, 0)), // Return 0-rank Tensor (Scalar)
                     Type::Struct(name, _) if name == "Tensor" => Ok(Type::Tensor(Box::new(Type::F32), 0)), // Return 0-rank Tensor (Scalar) to allow method calls
                     Type::Struct(_, _) => {
-                         // Generic Struct Indexing -> Treat as .get()
-                         // We verify that .get() exists and check types.
-                         // But we also want to Desugar for CodeGen.
-                         // Since we can't rewrite AST in-place easily, we can't?
-                         // Actually we CAN if we use the take/replace trick generally.
-                         // But I am inside the match arm of `expr.inner`.
-                         
-                         // Error: I cannot perform complete generic resolution here without rewriting AST to MethodCall, 
-                         // because MethodCall logic (inference, default args, etc) is huge.
-                         // Duplicating it is bad.
-                         
-                         // Recommendation: Change `check_expr` structure to allow rewriting.
-                         // Or, since I am restricted to this block:
-                         // I will return a special error or result that tells the caller to rewrite? No.
-                         
-                         // Minimal fix: Just enforce `.get` signature here manually?
-                         // "get" takes self + index?
-                         // If I assume `get` is standard, I can just type check it.
-                         // codegen/expr.rs will then need to generate call to `get`.
-                         
-                         // Check if `get` method exists
-                        //  let method_name = "get".to_string();
-                         // Lookup method logic... (duplicate of MethodCall logic simplified)
-                         
-                         // BUT `codegen/expr.rs` MUST also handle this.
-                         // If I verify here, and codegen emits `get` call, it works.
-                         
-                         // Let's check `get` signature.
-                         // Resolving method...
                          let t_name = target_type.get_base_name();
-                         // index メソッドを優先し、なければ get メソッドにフォールバック
-                         let method_sig = if let Some(methods) = self.methods.get(&t_name) {
-                             methods.get("index").or_else(|| methods.get("get"))
+
+                         // ── trait Index ベースの解決 ──
+                         // 型が Index trait を実装しているか確認
+                         let has_index_trait = self.type_traits.get(&t_name)
+                             .map(|ts| ts.iter().any(|t| t == "Index"))
+                             .unwrap_or(false);
+
+                         // trait Indexが実装済み → index メソッドを使用
+                         // 未実装 → self.methods の index/get にフォールバック（後方互換）
+                         let method_sig = if has_index_trait {
+                             self.methods.get(&t_name).and_then(|ms| ms.get("index"))
                          } else {
-                             None
+                             // フォールバック: duck-typed index/get メソッド
+                             if let Some(methods) = self.methods.get(&t_name) {
+                                 methods.get("index").or_else(|| methods.get("get"))
+                             } else {
+                                 None
+                             }
                          };
                          
                          if let Some(m) = method_sig {
-                               // Verify args
-                               // Expected: index/get(self, index...) - self はカウントに含まない
-                               // m.args のうち "self" を除外した数 == indices の数
+                               // 引数数検証 (self を除く)
                                let non_self_args = m.args.iter().filter(|(name, _)| name != "self").count();
                                
-                               // Simplified check for now (assuming 1 index usually)
                                if non_self_args != indices.len() {
-                                    let method_name = if self.methods.get(&t_name).and_then(|ms| ms.get("index")).is_some() { "index" } else { "get" };
+                                    let method_name = if has_index_trait { "index" } else if self.methods.get(&t_name).and_then(|ms| ms.get("index")).is_some() { "index" } else { "get" };
                                     return self.err(SemanticError::ArgumentCountMismatch { expected: non_self_args, found: indices.len(), name: format!("{}::{}", t_name, method_name) }, Some(target.span.clone()));
                                }
                               
-                              // Check index types
-                              // Needs to resolve generic types of `get`?
-                              // If `Vec<T>`, `get(i64) -> T`.
-                              // Standard unification required?
-                              // Yes. This is why Desugaring is best.
-                              
-                              // Since I cannot change AST here easily due to borrow,
-                              // I will stick to validating it roughly and let CodeGen generate `get`.
-                              // Return type:
-                              // We need to substitute generics to get return type.
-                              // This code duplication suggests I should Refactor `check_expr` to handle this before match.
-                              // But I will apply "Desugaing" phase before check? No.
-                              
-                              // I'll take the hit and attempt AST rewrite by returning early from match?
-                              // Impossible.
-                              
-                              // Wait, I can use `target` (mutable ref) and `indices` (ref).
-                              // I can't write to `expr`.
-                              
-                              // ALTERNATIVE:
-                              // Move the entire IndexAccess logic to a separate helper that consumes `expr`.
-                              // But `check_expr` structure is a big match.
-                              
-                              // OK, I'll modify the `semantics.rs` to just do the generic check (simplified) 
-                              // and verify `codegen` does the right thing.
-                              // I'll check return type from signature.
-                              
-                              // For `Vec<T>`, `get` returns `T`.
-                              // Code below implements simplified generic substitution.
-                              
-                              // 1. Get Struct Generics from Type
-                              let struct_args = if let Type::Struct(_, args) = &target_type { args.clone() } else { vec![] };
-                              let struct_def_generics = self.structs.get(&t_name).map(|s| s.generics.clone()).unwrap_or_default();
-                              
-                              let mut subst = std::collections::HashMap::new();
-                              for (i, g) in struct_def_generics.iter().enumerate() {
-                                   if i < struct_args.len() {
-                                       subst.insert(g.clone(), struct_args[i].clone());
-                                   }
-                              }
-                              
-                              // 2. Check Input Args
-                              for (_i, _idx) in indices.iter().enumerate() {
-                                  // We can't check_expr(&mut idx) because idx is &Expr (from ref indices).
-                                  // This is a problem! `check_expr` requires mutability.
-                                  // Note: The original code `ExprKind::IndexAccess(target, _indices)` ignored indices check?
-                                  // Ah, `_indices` was unused in the original `Tensor` match arm because Tensor indexing return inner type directly?
-                                  // No, Tensor indexing IS valid.
-                                  // Wait, the original code (Line 4314) had `_indices`!
-                                  // IT DID NOT CHECK INDICES!
-                                  // That means `vec[i]` was barely checked?
-                                  // Or `check_expr` logic was incomplete?
-                                  // Line 4335 for UnOp::Neg calls `check_expr`.
-                                  // But `IndexAccess` didn't check indices? 
-                                  // This implies existing compiler is loose on indices.
-                                  
-                                  // We MUST check indices types. But indices is immutable ref in pattern `ref indices`.
-                                  // `ExprKind` definition: `IndexAccess(Box<Expr>, Vec<Expr>)`.
-                                  // I matched `ref indices`.
-                                  // I can match `ref mut indices`!
-                                  // `ExprKind::IndexAccess(ref mut target, ref mut indices)`
-                                  
-                              }
-                              
-                              // 3. Return substituted return type
-                              let ret_ty = self.substitute_generics(&m.return_type, &subst);
-                              Ok(ret_ty)
-                              
+                               // ジェネリック型の置換マップ構築
+                               let struct_args = if let Type::Struct(_, args) = &target_type { args.clone() } else { vec![] };
+                               let struct_def_generics = self.structs.get(&t_name).map(|s| s.generics.clone()).unwrap_or_default();
+                               
+                               let mut subst = std::collections::HashMap::new();
+                               for (i, g) in struct_def_generics.iter().enumerate() {
+                                    if i < struct_args.len() {
+                                        subst.insert(g.clone(), struct_args[i].clone());
+                                    }
+                               }
+                               
+                               // 戻り型を置換して返却
+                               let ret_ty = self.substitute_generics(&m.return_type, &subst);
+                               Ok(ret_ty)
+                               
                          } else {
-                              self.err(SemanticError::MethodNotFound { type_name: t_name, method_name: "get".into() }, Some(target.span.clone()))
+                              let trait_hint = if has_index_trait { "" } else { " (hint: implement trait Index<Idx, Output> for this type)" };
+                              self.err(SemanticError::MethodNotFound { type_name: format!("{}{}", t_name, trait_hint), method_name: "index".into() }, Some(target.span.clone()))
                          }
                     }
                     Type::Array(inner, _size) => {

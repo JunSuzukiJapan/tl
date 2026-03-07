@@ -1931,30 +1931,47 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     _ => return Err("Invalid tensor_len return".into()),
                                 }
                             }
+                            Type::Struct(name, _) | Type::UnifiedType { base_name: name, .. } => {
+                                // Struct/UnifiedType: dispatch to len() method
+                                let mangled_name = match &iter_ty {
+                                    Type::UnifiedType { mangled_name, .. } => mangled_name.clone(),
+                                    _ => name.clone(),
+                                };
+                                let len_fn_name = format!("tl_{}_len", mangled_name);
+                                let len_fn = self.module.get_function(&len_fn_name)
+                                    .ok_or_else(|| format!("{} not found (does this type implement Iterable?)", len_fn_name))?;
+                                let len_call = self.builder
+                                    .build_call(len_fn, &[iter_val.into()], "struct_len")
+                                    .map_err(|e| e.to_string())?;
+                                match len_call.try_as_basic_value() {
+                                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                                    _ => return Err(format!("Invalid {} return", len_fn_name)),
+                                }
+                            }
                             _ => {
                                 return Err(
-                                    "For loop iterator must be a tensor, array, or range".into()
+                                    "For loop iterator must be a tensor, struct with Iterable trait, or range".into()
                                 )
                             }
                         };
 
-                        // Store tensor/array pointer for use in body
-                        let tensor_ptr = iter_val.into_pointer_value();
-                        let tensor_alloca = self
+                        // Store iterator pointer for use in body
+                        let iter_ptr = iter_val.into_pointer_value();
+                        let iter_alloca = self
                             .builder
                             .build_alloca(
                                 self.context.ptr_type(inkwell::AddressSpace::default()),
-                                "for_tensor",
+                                "for_iter",
                             )
                             .map_err(|e| e.to_string())?;
                         self.builder
-                            .build_store(tensor_alloca, tensor_ptr)
+                            .build_store(iter_alloca, iter_ptr)
                             .map_err(|e| e.to_string())?;
 
-                        // Register tensor alloca for later use
+                        // Register iterator alloca for later use
                         self.variables.last_mut().unwrap().insert(
                             "__for_tensor__".to_string(),
-                            (tensor_alloca.into(), iter_ty.clone(), super::CLEANUP_NONE),
+                            (iter_alloca.into(), iter_ty.clone(), super::CLEANUP_NONE),
                         );
 
                         (i64_type.const_int(0, false), len, true)
@@ -2095,7 +2112,47 @@ impl<'ctx> CodeGenerator<'ctx> {
                             }
                         }
 
-                        _ => unreachable!(),
+                        Type::Struct(ref name, _) | Type::UnifiedType { base_name: ref name, .. } => {
+                            // Struct/UnifiedType: dispatch to get() method
+                            let mangled_name = match &iter_ty {
+                                Type::UnifiedType { mangled_name, .. } => mangled_name.clone(),
+                                _ => name.clone(),
+                            };
+                            let get_fn_name = format!("tl_{}_get", mangled_name);
+                            let get_fn = self.module.get_function(&get_fn_name)
+                                .ok_or_else(|| format!("{} not found (does this type implement Iterable?)", get_fn_name))?;
+                            let get_call = self.builder
+                                .build_call(
+                                    get_fn,
+                                    &[tensor_ptr.into(), phi.as_basic_value().into()],
+                                    "struct_elem",
+                                )
+                                .map_err(|e| e.to_string())?;
+                            
+                            match get_call.try_as_basic_value() {
+                                inkwell::values::ValueKind::Basic(v) => {
+                                    // 戻り値の型を推定: get_fn の戻り型から
+                                    let ret_ty = get_fn.get_type().get_return_type();
+                                    if let Some(rt) = ret_ty {
+                                        if rt.is_int_type() {
+                                            (v, Type::I64)
+                                        } else if rt.is_float_type() {
+                                            (v, Type::F32)
+                                        } else {
+                                            // ptr type → Struct return
+                                            // Element type should be determined by semantics
+                                            // For now return generic struct pointer
+                                            (v, Type::Void)
+                                        }
+                                    } else {
+                                        (v, Type::Void)
+                                    }
+                                }
+                                _ => return Err(format!("Invalid {} return", get_fn_name)),
+                            }
+                        }
+
+                        _ => return Err(format!("Unsupported for-loop iterator type: {:?}", iter_ty)),
                     }
                 } else {
                     // Range iteration: loop var is the index
