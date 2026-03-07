@@ -1414,6 +1414,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 body: vec![],
                 generics: vec![],
                 is_extern: false,
+                is_pub: false,
             };
             synthetic_main = Some(syn_main);
             // We can't push reference to local variable easily here due to lifetimes.

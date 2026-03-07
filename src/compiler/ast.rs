@@ -274,6 +274,7 @@ pub struct FunctionDef {
     pub body: Vec<Stmt>,
     pub generics: Vec<String>, // <T>
     pub is_extern: bool,
+    pub is_pub: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -281,6 +282,7 @@ pub struct StructDef {
     pub name: String,
     pub fields: Vec<(String, Type)>,
     pub generics: Vec<String>, // <T>
+    pub is_pub: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -309,6 +311,7 @@ pub struct EnumDef {
     pub name: String,
     pub variants: Vec<VariantDef>,
     pub generics: Vec<String>,
+    pub is_pub: bool,
 }
 
 pub type Stmt = Spanned<StmtKind>;
@@ -390,7 +393,7 @@ pub enum ExprKind {
     StringLiteral(String),
     CharLiteral(char),
     Tuple(Vec<Expr>),            // (a, b, c)
-    Range(Box<Expr>, Box<Expr>), // start..end
+    Range(Option<Box<Expr>>, Option<Box<Expr>>), // start..end, start.., ..end, ..
     TensorComprehension {
         indices: Vec<String>,
         clauses: Vec<ComprehensionClause>,
@@ -483,6 +486,9 @@ pub enum BinOp {
     Ge,
     And,
     Or, // Logical
+    BitAnd, // &
+    BitOr,  // |
+    BitXor, // ^
 }
 
 
@@ -492,7 +498,6 @@ pub enum UnOp {
     Neg,
     Not,
     Query,
-    Ref,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -1,7 +1,8 @@
 /* TL Language Grammar Definition (EBNF) */
 
 /*
- * Note: This grammar describes the structure of the TL language.
+ * Note: This grammar describes the structure of the TL language
+ * as implemented in src/compiler/parser.rs and src/compiler/lexer.rs.
  * It uses a standard EBNF notation.
  * - { ... } indicates repetition (0 or more times).
  * - [ ... ] indicates optional elements.
@@ -15,12 +16,14 @@
 /* ========================================================================== */
 
 /* Identifiers */
-ident         ::= ? [a-zA-Z_][a-zA-Z0-9_]* ? ;
+ident         ::= ? [a-zA-Z][a-zA-Z0-9_]* | _[a-zA-Z0-9_]+ ? ;
 
 /* Literals */
 int_lit       ::= ? -?[0-9]+ ? ;
-float_lit     ::= ? -?[0-9]+\.[0-9]+([eE][+-]?[0-9]+)? ? ;
+float_lit     ::= ? -?[0-9]+\.[0-9]+([eE][+-]?[0-9]+)? ?
+                | ? -?[0-9]+[eE][+-]?[0-9]+ ? ;
 string_lit    ::= ? "..." ? ;
+char_lit      ::= ? '.' ? ;
 bool_lit      ::= "true" | "false" ;
 
 /* ========================================================================== */
@@ -36,7 +39,8 @@ item          ::= function_def
                 | use_decl
                 | mod_decl
                 | tensor_decl_stmt
-                | datalog_rule ;
+                | datalog_rule
+                | stmt ;                /* Top-level statements (script mode) */
 
 /* ========================================================================== */
 /* Declarations                                                               */
@@ -60,17 +64,18 @@ struct_field  ::= ident ":" type ;
 /* Enum Definition */
 enum_def      ::= [ "pub" ] "enum" ident [ generic_params ] "{" [ enum_variants ] "}" ;
 enum_variants ::= enum_variant { "," enum_variant } [ "," ] ;
-enum_variant  ::= ident [ "(" type_list ")" ]     /* Tuple variant */
-                | ident [ "{" struct_fields "}" ] /* Struct variant */
-                | ident                           /* Unit variant */
+enum_variant  ::= ident "(" type_list ")"               /* Tuple variant */
+                | ident "{" struct_fields "}"             /* Struct variant */
+                | ident "[" type ";" int_lit "]"          /* Array variant */
+                | ident                                   /* Unit variant */
                 ;
 
 /* Implementation Block */
 impl_block    ::= "impl" [ generic_params ] type "{" { function_def } "}" ;
 
 /* Module & Use Declarations */
-mod_decl      ::= [ "pub" ] "mod" ident ";" ;
-use_decl      ::= [ "pub" ] "use" use_path ";" ;
+mod_decl      ::= "mod" ident ";" ;
+use_decl      ::= "use" use_path ";" ;
 
 use_path      ::= use_segment { "::" use_segment } ;
 use_segment   ::= ident | "*" ;
@@ -79,15 +84,17 @@ use_segment   ::= ident | "*" ;
 datalog_rule  ::= datalog_atom ( ":-" datalog_body ( "." | ";" ) | ( "." | ";" ) ) ;
 
 datalog_body  ::= logic_literal { "," logic_literal } ;
-logic_literal ::= [ "not" | "!" ] datalog_atom ;
+logic_literal ::= [ "!" | "not" ] datalog_atom ;
 datalog_atom  ::= ( ident | "true" | "false" ) [ "(" expr_list ")" ] ;
+
+/* Tensor Declaration (standalone) */
+tensor_decl_stmt ::= "tensor" ident ":" type [ "=" expr ] ";" ;
 
 /* ========================================================================== */
 /* Statements                                                                 */
 /* ========================================================================== */
 
 stmt          ::= let_stmt
-                | tensor_decl_stmt
                 | assign_stmt
                 | return_stmt
                 | while_stmt
@@ -95,17 +102,22 @@ stmt          ::= let_stmt
                 | for_stmt
                 | break_stmt
                 | continue_stmt
+                | match_stmt
                 | expr_stmt ;
 
 /* Variable Declaration */
 let_stmt      ::= "let" [ "mut" ] ident [ ":" type ] "=" expr ";"
                 | "let" [ "mut" ] ident "[" ident_list "]" "=" expr ";" ; /* Sugar for tensor comprehension */
 
-tensor_decl_stmt ::= [ "pub" ] "tensor" ident ":" type [ "=" expr ] ";" ;
-
 /* Assignment */
-assign_stmt   ::= expr assign_op expr ";" ;
+assign_stmt   ::= lvalue assign_op expr ";" ;
 assign_op     ::= "=" | "+=" | "-=" | "*=" | "/=" | "%=" ;
+
+lvalue        ::= ( ident | "self" ) { lvalue_postfix } ;
+lvalue_postfix ::= "[" expr { "," expr } "]"      /* Index Access */
+                 | "." ident                        /* Field Access */
+                 | "." int_lit                      /* Tuple Field Access */
+                 ;
 
 /* Flow Control Statements */
 return_stmt   ::= "return" [ expr ] ";" ;
@@ -116,40 +128,44 @@ while_stmt    ::= "while" expr block ;
 loop_stmt     ::= "loop" block ;
 for_stmt      ::= "for" ident "in" expr block ;
 
+/* Match Statement (wraps match expr; semicolon optional) */
+match_stmt    ::= match_expr [ ";" ] ;
+
 /* Expression Statement */
-expr_stmt     ::= expr [ ";" ] ; /* Semicolon optional for block-like expressions */
+expr_stmt     ::= expr [ ";" ] ; /* Semicolon optional for block-like expressions (if, match, block) */
 
 /* ========================================================================== */
 /* Expressions                                                                */
 /* ========================================================================== */
 
-expr          ::= block
-                | if_expr
-                | match_expr
-                | range_expr ;
+expr          ::= range_expr ;
 
 block         ::= "{" { stmt } [ expr ] "}" ;
 
 if_expr       ::= "if" expr block [ "else" ( block | if_expr ) ]
                 | "if" "let" pattern "=" expr block [ "else" ( block | if_expr ) ] ;
 
-match_expr    ::= "match" expr "{" { match_arm } "}" ;
+match_expr    ::= "match" expr_no_struct "{" { match_arm } "}" ;
 match_arm     ::= pattern "=>" expr [ "," ] ;
+
+/* Expression without top-level struct literal (used for match scrutinee) */
+expr_no_struct ::= range_expr ; /* same chain but struct init is disabled */
 
 /* Precedence Hierarchy (Lowest to Highest) */
 
-range_expr    ::= logic_or [ ".." [ logic_or ] ]
-                | ".." [ logic_or ] ;
+range_expr    ::= logic_or [ ".." [ logic_or ] ]   /* expr..expr, expr.. */
+                | ".." [ logic_or ]                  /* ..expr, .. */
+                ;
 
 logic_or      ::= logic_and { "||" logic_and } ;
-logic_and     ::= comparison { "&&" comparison } ;
-
-comparison    ::= bitwise_or { cmp_op bitwise_or } ;
-cmp_op        ::= "==" | "!=" | "<" | ">" | "<=" | ">=" ;
+logic_and     ::= bitwise_or { "&&" bitwise_or } ;
 
 bitwise_or    ::= bitwise_xor { "|" bitwise_xor } ;
 bitwise_xor   ::= bitwise_and { "^" bitwise_and } ;
-bitwise_and   ::= term { "&" term } ;
+bitwise_and   ::= comparison { "&" comparison } ;
+
+comparison    ::= term { cmp_op term } ;
+cmp_op        ::= "==" | "!=" | "<" | ">" | "<=" | ">=" ;
 
 term          ::= factor { term_op factor } ;
 term_op       ::= "+" | "-" ;
@@ -159,50 +175,74 @@ factor_op     ::= "*" | "/" | "%" ;
 
 cast_expr     ::= unary { "as" type } ;
 
-unary         ::= ( "-" | "!" | "not" ) unary
+unary         ::= ( "-" | "!" | "not" | "?" ) unary
                 | postfix ;
 
 postfix       ::= atom { postfix_op } ;
-postfix_op    ::= "(" [ expr_list ] ")"   /* Function Call */
-                | "[" expr "]"            /* Indexing */
-                | "." ident               /* Field Access or Method literal */
+postfix_op    ::= "(" [ expr_list ] ")"   /* Function / Method Call */
+                | "[" expr { "," expr } "]" /* Indexing (multi-index) */
+                | "." ident               /* Field Access or Method target */
+                | "." int_lit             /* Tuple Access (.0, .1, ...) */
+                | "?"                     /* Try operator */
                 ;
 
 /* Atomic Expressions */
-atom          ::= int_lit | float_lit | string_lit | bool_lit
+atom          ::= int_lit | float_lit | string_lit | char_lit | bool_lit
                 | ident
-                | path_expr               /* Variable, Static Call, Struct Init, Enum Variant */
+                | path_expr               /* Static Call, Struct Init, Enum Variant */
                 | "self"
-                | "(" expr ")"
-                | tensor_comp_or_lit ;
+                | "$" ident               /* Logic Variable */
+                | "_"                     /* Wildcard */
+                | "(" expr_or_tuple ")"
+                | tensor_comp_or_lit
+                | block
+                | if_expr
+                | match_expr ;
 
-path_expr     ::= primitive_type "::" ident "(" [ expr_list ] ")"
-                | path [ "{" struct_init_fields "}" ] ; /* Struct Init if followed by braces, else Path/Call */
+expr_or_tuple ::= /* empty */
+                | expr { "," expr } ;     /* (expr) = grouping, (expr, expr, ...) = tuple */
+
+path_expr     ::= primitive_type "::" ident "(" [ expr_list ] ")"  /* Primitive static call */
+                | path [ "{" struct_init_fields "}" ]               /* Struct Init or path */
+                | path "(" [ expr_list ] ")"                        /* Static method call */
+                | path ;                                            /* Enum variant (unit) */
 
 struct_init_fields ::= ident ":" expr { "," ident ":" expr } [ "," ] ;
 
 /* Tensor Literals & Comprehensions */
 tensor_comp_or_lit ::= "[" tensor_inner "]" ;
 
-tensor_inner  ::= expr_list /* Literal: [1, 2, 3] */
-                | ident_list "|" comp_clauses ; /* Comprehension: [i, j | i+j] */
+tensor_inner  ::= expr_list                          /* Literal: [1, 2, 3] */
+                | ident_list "|" comp_clauses ;      /* Comprehension: [i, j | ...] */
 
-comp_clauses  ::= comp_item { "," comp_item } ;
+comp_clauses  ::= comp_item { "," comp_item } [ "," ] [ block ] ;
 comp_item     ::= ident "<-" expr /* Generator */
-                | expr ;          /* Condition or Body */
+                | expr ;          /* Condition */
 
 /* ========================================================================== */
 /* Types                                                                      */
 /* ========================================================================== */
 
 type          ::= primitive_type
-                | path
-                | tensor_type ;
+                | tensor_type
+                | ptr_type
+                | array_type
+                | tuple_type
+                | path ;
 
-primitive_type ::= "i64" | "f64" | "u8" | "bool" | "void" | "string";
+primitive_type ::= "f32" | "f64"
+                 | "i8" | "i16" | "i32" | "i64"
+                 | "u8" | "u16" | "u32" | "u64"
+                 | "bool" | "usize" | "void"
+                 | "String" | "Char" ;
 
-tensor_type   ::= "tensor" "<" type "," dims ">" ;
-dims          ::= expr_list ;
+tensor_type   ::= "Tensor" "<" type "," int_lit ">" ;
+
+ptr_type      ::= "ptr" "<" type ">" ;
+
+array_type    ::= "[" type ";" int_lit "]" ;
+
+tuple_type    ::= "(" [ type { "," type } ] ")" ;
 
 path          ::= ident [ generic_args ] { "::" ident [ generic_args ] } ;
 
@@ -222,8 +262,12 @@ pattern       ::= "_"
                 | literal
                 | path [ pattern_data ] ;
 
-pattern_data  ::= "(" ident_list ")"          /* Tuple Variant Pattern */
+pattern_data  ::= "(" pattern_var_list ")"    /* Tuple Variant Pattern */
                 | "{" pattern_fields "}"      /* Struct Variant Pattern */
                 ;                             /* Unit Variant (no data) */
 
-pattern_fields ::= ident [ ":" ident ] { "," ident [ ":" ident ] } [ "," ] ;
+pattern_var_list ::= pattern_var { "," pattern_var } ;
+pattern_var      ::= ident | "_" ;
+
+pattern_fields ::= pattern_field { "," pattern_field } [ "," ] ;
+pattern_field  ::= ident [ ":" ident ] ;   /* Shorthand: { field } == { field: field } */

@@ -85,6 +85,7 @@ pub fn load_all_builtins(codegen: &mut CodeGenerator) {
     let device_enum = crate::compiler::ast::EnumDef {
         name: "Device".to_string(),
         generics: vec![],
+        is_pub: false,
         variants: vec![
             crate::compiler::ast::VariantDef {
                 name: "Auto".to_string(),

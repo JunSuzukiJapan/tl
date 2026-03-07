@@ -3345,30 +3345,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                             _ => Err("Not only on bool".into()),
                         }
                     }
-                    UnOp::Ref => {
-                        // Ref operator: &expr
-                        // Always get address. Do not return value directly.
-                        // Reference types removed from spec - return Ptr instead
-                         // For scalars (L-Value vs R-Value logic)
-                        if let ExprKind::Variable(name) = &expr.inner {
-                            // Variable: Get address from variables map
-                             for scope in self.variables.iter().rev() {
-                                if let Some((var_val, _, _)) = scope.get(name) {
-                                     // var_val is the Alloca (Pointer) - return as Ptr type
-                                     return Ok((var_val.as_basic_value_enum(), Type::Ptr(Box::new(ty))));
-                                }
-                             }
-                             return Err(format!("Variable {} not found for Ref", name));
-                        } else {
-                            // R-Value: Store to temp, return address as Ptr
-                            let current_block = self.builder.get_insert_block().unwrap();
-                            let func = current_block.get_parent().unwrap();
-                            let alloca = self.create_entry_block_alloca(func, "ref_tmp", &ty)?;
-                            
-                            self.builder.build_store(alloca, val).map_err(|e| e.to_string())?;
-                            return Ok((alloca.into(), Type::Ptr(Box::new(ty))));
-                        }
-                    }
 
                     UnOp::Query => {
                         // Logic Query: check if result tensor is non-empty

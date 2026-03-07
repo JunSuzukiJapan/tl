@@ -277,6 +277,7 @@ impl SemanticAnalyzer {
         let device_enum = EnumDef {
             name: "Device".to_string(),
             generics: vec![],
+            is_pub: false,
             variants: vec![
                 VariantDef {
                     name: "Auto".to_string(),
@@ -1313,8 +1314,8 @@ impl SemanticAnalyzer {
                     }
                 }
                 ExprKind::Range(a, b) => {
-                    collect_vars(a, out);
-                    collect_vars(b, out);
+                    if let Some(a) = a { collect_vars(a, out); }
+                    if let Some(b) = b { collect_vars(b, out); }
                 }
                 ExprKind::As(inner, _) => collect_vars(inner, out),
                 _ => {}
@@ -1787,7 +1788,7 @@ impl SemanticAnalyzer {
                 // Check if iterator is range(start, end)
                 // This is a special case for the compiler intrinsic 'range'
                 let elem_type = match &mut iterator.inner {
-                    ExprKind::Range(start, end) => {
+                    ExprKind::Range(Some(start), Some(end)) => {
                         let start_ty = self.check_expr(start.as_mut())?;
                         let end_ty = self.check_expr(end.as_mut())?;
                         if !matches!(start_ty, Type::I64 | Type::I32)
@@ -3149,25 +3150,29 @@ impl SemanticAnalyzer {
                 }
             }
             ExprKind::Range(start, end) => {
-                let s_ty = self.check_expr(start)?;
-                let e_ty = self.check_expr(end)?;
-                if !matches!(s_ty, Type::I64 | Type::I32) {
-                    return self.err(
-                        SemanticError::TypeMismatch {
-                            expected: Type::I64,
-                            found: s_ty,
-                        },
-                        Some(start.span.clone()),
-                    );
+                if let Some(start) = start {
+                    let s_ty = self.check_expr(start)?;
+                    if !matches!(s_ty, Type::I64 | Type::I32) {
+                        return self.err(
+                            SemanticError::TypeMismatch {
+                                expected: Type::I64,
+                                found: s_ty,
+                            },
+                            Some(start.span.clone()),
+                        );
+                    }
                 }
-                if !matches!(e_ty, Type::I64 | Type::I32) {
-                    return self.err(
-                        SemanticError::TypeMismatch {
-                            expected: Type::I64,
-                            found: e_ty,
-                        },
-                        Some(end.span.clone()),
-                    );
+                if let Some(end) = end {
+                    let e_ty = self.check_expr(end)?;
+                    if !matches!(e_ty, Type::I64 | Type::I32) {
+                        return self.err(
+                            SemanticError::TypeMismatch {
+                                expected: Type::I64,
+                                found: e_ty,
+                            },
+                            Some(end.span.clone()),
+                        );
+                    }
                 }
                 // Range expression itself doesn't evaluate to a runtime value outside of for-loops yet,
                 // but we return Void or a placeholder.
@@ -5098,10 +5103,6 @@ impl SemanticAnalyzer {
                         // Query returns a probability score (Tensor<f32, 0>)
                         // Previously this was the behavior, allowing .item() > 0.5 checks.
                         Ok(Type::Tensor(Box::new(Type::F32), 0))
-                    }
-                    UnOp::Ref => {
-                        // Reference types removed from spec - return inner type for now
-                        Ok(t)
                     }
                 }
             }

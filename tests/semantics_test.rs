@@ -202,8 +202,8 @@ fn test_for_loop_range() {
     let mut stmt = Spanned::dummy(StmtKind::For {
         loop_var: "i".to_string(),
         iterator: Spanned::dummy(ExprKind::Range(
-            Box::new(expr_int(0)),
-            Box::new(expr_int(10)),
+            Some(Box::new(expr_int(0))),
+            Some(Box::new(expr_int(10))),
         )),
         body: vec![],
     });
@@ -218,8 +218,8 @@ fn test_for_loop_range() {
     let mut body_check_stmt = Spanned::dummy(StmtKind::For {
         loop_var: "i".to_string(),
         iterator: Spanned::dummy(ExprKind::Range(
-            Box::new(expr_int(0)),
-            Box::new(expr_int(10)),
+            Some(Box::new(expr_int(0))),
+            Some(Box::new(expr_int(10))),
         )),
         body: vec![Spanned::dummy(StmtKind::Let {
             name: "check".to_string(),

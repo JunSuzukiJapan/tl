@@ -29,6 +29,7 @@ fn create_generic_function(name: &str, param: &str) -> FunctionDef {
             Stmt::dummy(StmtKind::Return(Some(Expr::dummy(ExprKind::Variable("arg".to_string())))))
         ],
         is_extern: false,
+        is_pub: false,
     }
 }
 
@@ -53,6 +54,7 @@ fn test_basic_function_instantiation() {
         return_type: Type::Void,
         body: main_stmts,
         is_extern: false,
+        is_pub: false,
     };
     module.functions.push(main_func);
 
@@ -89,6 +91,7 @@ fn test_deduplication() {
         return_type: Type::Void,
         body: main_stmts,
         is_extern: false,
+        is_pub: false,
     };
     module.functions.push(main_func);
 

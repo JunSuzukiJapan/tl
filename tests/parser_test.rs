@@ -194,12 +194,73 @@ fn test_cast() {
 
 #[test]
 fn test_range() {
-    if let ExprKind::Range(start, end) = p_expr("0..10") {
+    if let ExprKind::Range(Some(start), Some(end)) = p_expr("0..10") {
         assert_eq!(start.inner, ExprKind::Int(0));
         assert_eq!(end.inner, ExprKind::Int(10));
     } else {
         panic!("Expected Range");
     }
+}
+
+#[test]
+fn test_half_open_range() {
+    // start..
+    if let ExprKind::Range(Some(start), None) = p_expr("5..") {
+        assert_eq!(start.inner, ExprKind::Int(5));
+    } else {
+        panic!("Expected Range(Some, None)");
+    }
+    // ..end
+    if let ExprKind::Range(None, Some(end)) = p_expr("..10") {
+        assert_eq!(end.inner, ExprKind::Int(10));
+    } else {
+        panic!("Expected Range(None, Some)");
+    }
+}
+
+#[test]
+fn test_bitwise_ops() {
+    // Basic bitwise AND
+    if let ExprKind::BinOp(l, BinOp::BitAnd, r) = p_expr("3 & 5") {
+        assert_eq!(l.inner, ExprKind::Int(3));
+        assert_eq!(r.inner, ExprKind::Int(5));
+    } else {
+        panic!("Expected BitAnd");
+    }
+    // Bitwise OR
+    if let ExprKind::BinOp(_, BinOp::BitOr, _) = p_expr("3 | 5") {
+    } else {
+        panic!("Expected BitOr");
+    }
+    // Bitwise XOR
+    if let ExprKind::BinOp(_, BinOp::BitXor, _) = p_expr("3 ^ 5") {
+    } else {
+        panic!("Expected BitXor");
+    }
+    // Precedence: 1 | 2 & 3 => 1 | (2 & 3)
+    if let ExprKind::BinOp(_, BinOp::BitOr, rhs) = p_expr("1 | 2 & 3") {
+        assert!(matches!(rhs.inner, ExprKind::BinOp(_, BinOp::BitAnd, _)));
+    } else {
+        panic!("Expected BitOr with BitAnd on right");
+    }
+}
+
+#[test]
+fn test_pub_modifier() {
+    use tl_lang::compiler::parser::parse_from_source;
+    let module = parse_from_source("pub fn foo() {}").unwrap();
+    assert_eq!(module.functions.len(), 1);
+    assert!(module.functions[0].is_pub);
+    assert_eq!(module.functions[0].name, "foo");
+
+    let module2 = parse_from_source("fn bar() {}").unwrap();
+    assert!(!module2.functions[0].is_pub);
+
+    let module3 = parse_from_source("pub struct Point { x: i64 }").unwrap();
+    assert!(module3.structs[0].is_pub);
+
+    let module4 = parse_from_source("pub enum Color { Red, Green, Blue }").unwrap();
+    assert!(module4.enums[0].is_pub);
 }
 
 

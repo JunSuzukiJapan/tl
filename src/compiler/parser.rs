@@ -696,12 +696,11 @@ fn parse_cast(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserEr
 }
 
 fn parse_unary(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
-    if let Ok((rest, op_tok)) = satisfy_token(|t| matches!(t, Token::Minus | Token::Not | Token::Question | Token::Ampersand))(input) {
+    if let Ok((rest, op_tok)) = satisfy_token(|t| matches!(t, Token::Minus | Token::Not | Token::Question))(input) {
         let op = match op_tok.token {
             Token::Minus => UnOp::Neg,
             Token::Not => UnOp::Not,
             Token::Question => UnOp::Query,
-            Token::Ampersand => UnOp::Ref,
             _ => unreachable!(),
         };
         let (rest, expr) = parse_unary(rest, allow_struct)?;
@@ -785,12 +784,57 @@ fn parse_comparison(input: Input, allow_struct: bool) -> IResult<Input, Expr, Pa
     Ok((input, lhs))
 }
 
-// Logical And
-fn parse_logical_and(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
+// Bitwise And: &
+fn parse_bitwise_and(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
     let (mut input, mut lhs) = parse_comparison(input, allow_struct)?;
     loop {
-        if let Ok((rest, _)) = expect_token(Token::And)(input) {
+        if let Ok((rest, _)) = expect_token(Token::Ampersand)(input) {
             let (rest, rhs) = parse_comparison(rest, allow_struct)?;
+            lhs = Spanned::new(ExprKind::BinOp(Box::new(lhs), BinOp::BitAnd, Box::new(rhs)), crate::compiler::error::Span::default());
+            input = rest;
+        } else {
+            break;
+        }
+    }
+    Ok((input, lhs))
+}
+
+// Bitwise Xor: ^
+fn parse_bitwise_xor(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
+    let (mut input, mut lhs) = parse_bitwise_and(input, allow_struct)?;
+    loop {
+        if let Ok((rest, _)) = expect_token(Token::Caret)(input) {
+            let (rest, rhs) = parse_bitwise_and(rest, allow_struct)?;
+            lhs = Spanned::new(ExprKind::BinOp(Box::new(lhs), BinOp::BitXor, Box::new(rhs)), crate::compiler::error::Span::default());
+            input = rest;
+        } else {
+            break;
+        }
+    }
+    Ok((input, lhs))
+}
+
+// Bitwise Or: |
+fn parse_bitwise_or(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
+    let (mut input, mut lhs) = parse_bitwise_xor(input, allow_struct)?;
+    loop {
+        if let Ok((rest, _)) = expect_token(Token::Pipe)(input) {
+            let (rest, rhs) = parse_bitwise_xor(rest, allow_struct)?;
+            lhs = Spanned::new(ExprKind::BinOp(Box::new(lhs), BinOp::BitOr, Box::new(rhs)), crate::compiler::error::Span::default());
+            input = rest;
+        } else {
+            break;
+        }
+    }
+    Ok((input, lhs))
+}
+
+// Logical And
+fn parse_logical_and(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
+    let (mut input, mut lhs) = parse_bitwise_or(input, allow_struct)?;
+    loop {
+        if let Ok((rest, _)) = expect_token(Token::And)(input) {
+            let (rest, rhs) = parse_bitwise_or(rest, allow_struct)?;
             lhs = Spanned::new(ExprKind::BinOp(Box::new(lhs), BinOp::And, Box::new(rhs)), crate::compiler::error::Span::default());
             input = rest;
         } else {
@@ -817,15 +861,24 @@ fn parse_logical_or(input: Input, allow_struct: bool) -> IResult<Input, Expr, Pa
 
 // Entry for binary ops
 fn parse_binary_logic(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
-    // Range? a..b
-    // Range has lower precedence than logic? or higher?
-    // Rust: Range has lower precedence than arithmetic/logic usually?
-    // Range 0..10.
-    // Legacy parser had parse_range wrapping logical_or.
+    // Check for leading .. (half-open range)
+    if let Ok((rest, _)) = expect_token(Token::Range)(input) {
+        if let Ok((rest2, end)) = parse_logical_or(rest, allow_struct) {
+            return Ok((rest2, Spanned::new(ExprKind::Range(None, Some(Box::new(end))), crate::compiler::error::Span::default())));
+        } else {
+            // Bare ..
+            return Ok((rest, Spanned::new(ExprKind::Range(None, None), crate::compiler::error::Span::default())));
+        }
+    }
+
     let (input, start) = parse_logical_or(input, allow_struct)?;
     if let Ok((rest, _)) = expect_token(Token::Range)(input) {
-        let (rest, end) = parse_logical_or(rest, allow_struct)?;
-        Ok((rest, Spanned::new(ExprKind::Range(Box::new(start), Box::new(end)), crate::compiler::error::Span::default())))
+        // Check if followed by an expression (start..end) or bare (start..)
+        if let Ok((rest2, end)) = parse_logical_or(rest, allow_struct) {
+            Ok((rest2, Spanned::new(ExprKind::Range(Some(Box::new(start)), Some(Box::new(end))), crate::compiler::error::Span::default())))
+        } else {
+            Ok((rest, Spanned::new(ExprKind::Range(Some(Box::new(start)), None), crate::compiler::error::Span::default())))
+        }
     } else {
         Ok((input, start))
     }
@@ -1386,6 +1439,7 @@ fn parse_function_def(input: Input) -> IResult<Input, crate::compiler::ast::Func
             body,
             generics,
             is_extern,
+            is_pub: false,
         }))
     })(input)
 }
@@ -1408,6 +1462,7 @@ fn parse_struct_def(input: Input) -> IResult<Input, crate::compiler::ast::Struct
             name,
             fields,
             generics,
+            is_pub: false,
         }))
     })(input)
 }
@@ -1499,6 +1554,7 @@ fn parse_enum_def(input: Input) -> IResult<Input, crate::compiler::ast::EnumDef,
             name,
             generics,
             variants,
+            is_pub: false,
         }))
     })(rest)
 }
@@ -1623,13 +1679,21 @@ fn parse_module(input: Input) -> IResult<Input, crate::compiler::ast::Module, Pa
             continue;
         }
 
-        match parse_function_def(input) {
-            Ok((rest, f)) => { module.functions.push(f); input = rest; continue; }
+        // Try pub-eligible definitions (fn, struct, enum)
+        let is_pub = if let Some(tok) = input.first() {
+            matches!(tok.token, Token::Pub)
+        } else {
+            false
+        };
+        let def_input = if is_pub { &input[1..] } else { input };
+
+        match parse_function_def(def_input) {
+            Ok((rest, mut f)) => { f.is_pub = is_pub; module.functions.push(f); input = rest; continue; }
             Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
             Err(nom::Err::Error(_)) | Err(nom::Err::Incomplete(_)) => {}
         }
-        match parse_struct_def(input) {
-            Ok((rest, s)) => { module.structs.push(s); input = rest; continue; }
+        match parse_struct_def(def_input) {
+            Ok((rest, mut s)) => { s.is_pub = is_pub; module.structs.push(s); input = rest; continue; }
             Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
             Err(nom::Err::Error(_)) | Err(nom::Err::Incomplete(_)) => {}
         }
@@ -1664,8 +1728,8 @@ fn parse_module(input: Input) -> IResult<Input, crate::compiler::ast::Module, Pa
             Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
             Err(nom::Err::Error(_)) | Err(nom::Err::Incomplete(_)) => {}
         }
-        match parse_enum_def(input) {
-            Ok((rest, e)) => { module.enums.push(e); input = rest; continue; }
+        match parse_enum_def(def_input) {
+            Ok((rest, mut e)) => { e.is_pub = is_pub; module.enums.push(e); input = rest; continue; }
             Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
             Err(nom::Err::Error(_)) | Err(nom::Err::Incomplete(_)) => {}
         }

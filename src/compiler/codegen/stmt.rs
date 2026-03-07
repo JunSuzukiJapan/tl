@@ -1885,10 +1885,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Check if iterator is a range (BinOp with ".." conceptually - we detect 0..n pattern)
                 // Or if it's a tensor/variable
                 let (start_val, end_val, is_tensor_iter) = match &iterator.inner {
-                    ExprKind::Range(start, end) => {
+                    ExprKind::Range(Some(start), Some(end)) => {
                         let (s, _) = self.compile_expr(start)?;
                         let (e, _) = self.compile_expr(end)?;
                         (s.into_int_value(), e.into_int_value(), false)
+                    }
+                    ExprKind::Range(_, _) => {
+                        return Err("Half-open ranges are not supported in for loops".into());
                     }
                     ExprKind::FnCall(name, args) if name == "range" => {
                         // range(start, end)
@@ -2712,6 +2715,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                     BinOp::And => self.builder.build_and(l, r, "andtmp"),
                     BinOp::Or => self.builder.build_or(l, r, "ortmp"),
+                    BinOp::BitAnd => self.builder.build_and(l, r, "bitandtmp"),
+                    BinOp::BitOr => self.builder.build_or(l, r, "bitortmp"),
+                    BinOp::BitXor => self.builder.build_xor(l, r, "bitxortmp"),
                 }
                 .map_err(|e| e.to_string())?;
 
@@ -2797,6 +2803,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                         self.builder
                             .build_int_compare(inkwell::IntPredicate::NE, l, r, "neqtmp")
                     }
+                    BinOp::BitAnd => self.builder.build_and(l, r, "bitandtmp"),
+                    BinOp::BitOr => self.builder.build_or(l, r, "bitortmp"),
+                    BinOp::BitXor => self.builder.build_xor(l, r, "bitxortmp"),
                     _ => return Err("Unsupported bool op".into()),
                 }
                 .map_err(|e| e.to_string())?;

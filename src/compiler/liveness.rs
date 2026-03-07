@@ -163,8 +163,8 @@ impl LivenessAnalyzer {
                 }
             }
             ExprKind::Range(start, end) => {
-                self.visit_expr(start);
-                self.visit_expr(end);
+                if let Some(s) = start { self.visit_expr(s); }
+                if let Some(e) = end { self.visit_expr(e); }
             }
             ExprKind::IndexAccess(val, idxs) => {
                 self.visit_expr(val);

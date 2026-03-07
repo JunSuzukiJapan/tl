@@ -137,8 +137,8 @@ impl BuiltinLoader {
                 Self::transform_expr(e, enums);
             }
             ExprKind::Range(start, end) => {
-                Self::transform_expr(start, enums);
-                Self::transform_expr(end, enums);
+                if let Some(s) = start { Self::transform_expr(s, enums); }
+                if let Some(e) = end { Self::transform_expr(e, enums); }
             }
             ExprKind::StaticMethodCall(ty, method, args) => {
                 // Transform args first

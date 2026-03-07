@@ -62,7 +62,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         for clause in clauses {
             if let ComprehensionClause::Generator { name, range } = clause {
                 match &range.inner {
-                    ExprKind::Range(start, end) => {
+                    ExprKind::Range(Some(start), Some(end)) => {
                         let (start_val, _) = self.compile_expr(start)?;
                         let (end_val, _) = self.compile_expr(end)?;
                         let start_i64 = cast_value_to_i64(self, start_val, &Type::I64)?;
@@ -76,6 +76,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .unwrap();
                         index_bounds.insert(name.clone(), count);
                     }
+                    ExprKind::Range(_, _) => return Err("Generator range must be a closed range (start..end)".into()),
                     _ => return Err("Generator range must be start..end".into()),
                 }
             }
