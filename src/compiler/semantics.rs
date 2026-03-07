@@ -226,6 +226,14 @@ pub struct SemanticAnalyzer {
 
     // Type Inference Map (Undefined ID -> Concrete Type)
     inference_map: HashMap<u64, Type>,
+
+    // ── Trait Registry ──
+    /// trait名 → TraitDef
+    traits: HashMap<String, TraitDef>,
+    /// (trait名, 型名) → TraitImplBlock
+    trait_impls: HashMap<(String, String), TraitImplBlock>,
+    /// 型名 → 実装済みtrait名のリスト
+    type_traits: HashMap<String, Vec<String>>,
 }
 
 impl SemanticAnalyzer {
@@ -244,6 +252,9 @@ impl SemanticAnalyzer {
             undefined_counter: 0,
             type_manager: TypeManager::new(),
             inference_map: HashMap::new(),
+            traits: HashMap::new(),
+            trait_impls: HashMap::new(),
+            type_traits: HashMap::new(),
         };
         // Register builtin types into TypeManager
         crate::compiler::codegen::builtin_types::non_generic::primitives::register_primitive_types(&mut analyzer.type_manager);
@@ -1025,9 +1036,24 @@ impl SemanticAnalyzer {
         self.current_module = prefix.to_string();
         
 
+        // Pass 0: Register trait definitions
+        for t in &module.traits {
+            self.register_trait_def(t)?;
+        }
+
+        // Pass 0.5: Register trait impl methods
+        for ti in &mut module.trait_impls {
+            self.register_trait_impl(ti)?;
+        }
+
         // Pass 1: Register impl methods
         for i in &mut module.impls {
             self.register_impl_block(i)?;
+        }
+
+        // Pass 1.5: Check trait impl bodies
+        for ti in &mut module.trait_impls {
+            self.check_trait_impl_bodies(ti)?;
         }
 
         // Pass 2: Check impl bodies
@@ -1498,6 +1524,161 @@ impl SemanticAnalyzer {
                 struct_methods.insert(name, resolved_method);
             }
         }
+        Ok(())
+    }
+
+    // ── Trait関連セマンティクス ──
+
+    fn register_trait_def(&mut self, trait_def: &TraitDef) -> Result<(), TlError> {
+        if self.traits.contains_key(&trait_def.name) {
+            return self.err(
+                SemanticError::DuplicateDefinition(format!("trait {}", trait_def.name)),
+                None,
+            );
+        }
+        self.traits.insert(trait_def.name.clone(), trait_def.clone());
+        Ok(())
+    }
+
+    fn register_trait_impl(&mut self, ti: &mut TraitImplBlock) -> Result<(), TlError> {
+        // 1. Verify trait exists
+        let trait_def = match self.traits.get(&ti.trait_name) {
+            Some(t) => t.clone(),
+            None => {
+                return self.err(
+                    SemanticError::StructNotFound(format!("trait {} not found", ti.trait_name)),
+                    None,
+                );
+            }
+        };
+
+        // 2. Resolve target type
+        let resolved_target = self.resolve_user_type(&ti.target_type);
+        if ti.target_type != resolved_target {
+            ti.target_type = resolved_target.clone();
+        }
+        let target_name = ti.target_type.get_base_name();
+
+        // 3. Verify method signatures match trait definition
+        // (skip for generic impls as types are unknown)
+        if ti.generics.is_empty() {
+            // Check that all required methods are implemented
+            for trait_method in &trait_def.methods {
+                if trait_method.default_body.is_some() {
+                    // Default method — optional to implement
+                    continue;
+                }
+                let found = ti.methods.iter().any(|m| m.name == trait_method.name);
+                if !found {
+                    return self.err(
+                        SemanticError::DuplicateDefinition(format!(
+                            "Method `{}` required by trait `{}` not implemented for `{}`",
+                            trait_method.name, ti.trait_name, target_name
+                        )),
+                        None,
+                    );
+                }
+            }
+        }
+
+        // 4. Inject default methods that are not overridden
+        for trait_method in &trait_def.methods {
+            if let Some(default_body) = &trait_method.default_body {
+                if !ti.methods.iter().any(|m| m.name == trait_method.name) {
+                    // Inject default method as FunctionDef
+                    let mut args = trait_method.args.clone();
+                    // Replace Self with target type
+                    for (_, arg_ty) in &mut args {
+                        if let Type::Struct(n, _) = arg_ty {
+                            if n == "Self" {
+                                *arg_ty = ti.target_type.clone();
+                            }
+                        }
+                    }
+                    let injected = FunctionDef {
+                        name: trait_method.name.clone(),
+                        args,
+                        return_type: trait_method.return_type.clone(),
+                        body: default_body.clone(),
+                        generics: vec![],
+                        generic_bounds: vec![],
+                        where_clause: None,
+                        is_extern: false,
+                        is_pub: false,
+                    };
+                    ti.methods.push(injected);
+                }
+            }
+        }
+
+        // 5. Register methods into self.methods (same as regular impl)
+        let mut resolved_methods: Vec<(String, FunctionDef)> = Vec::new();
+        for method in &ti.methods {
+            let mut m = method.clone();
+            for (_, arg_ty) in &mut m.args {
+                if let &mut Type::Struct(ref n, _) = arg_ty {
+                    if n == "Self" {
+                        *arg_ty = ti.target_type.clone();
+                        continue;
+                    }
+                }
+                *arg_ty = self.resolve_user_type(arg_ty);
+            }
+            if let Type::Struct(ref n, _) = m.return_type {
+                if n == "Self" {
+                    m.return_type = ti.target_type.clone();
+                } else {
+                    m.return_type = self.resolve_user_type(&m.return_type);
+                }
+            } else {
+                m.return_type = self.resolve_user_type(&m.return_type);
+            }
+            resolved_methods.push((method.name.clone(), m));
+        }
+
+        {
+            let struct_methods = self.methods.entry(target_name.clone()).or_default();
+            for (name, resolved_method) in resolved_methods {
+                // Note: trait methods may overlap with existing methods (override scenario)
+                // For now, error on duplicate
+                if struct_methods.contains_key(&name) {
+                    return self.err(
+                        SemanticError::DuplicateDefinition(format!(
+                            "{}::{}",
+                            target_name, name
+                        )),
+                        None,
+                    );
+                }
+                struct_methods.insert(name, resolved_method);
+            }
+        }
+
+        // 6. Register in trait_impls and type_traits
+        self.trait_impls.insert(
+            (ti.trait_name.clone(), target_name.clone()),
+            ti.clone(),
+        );
+        self.type_traits
+            .entry(target_name)
+            .or_default()
+            .push(ti.trait_name.clone());
+
+        Ok(())
+    }
+
+    fn check_trait_impl_bodies(&mut self, ti: &mut TraitImplBlock) -> Result<(), TlError> {
+        // Skip body check for generic trait impls
+        if !ti.generics.is_empty() {
+            return Ok(());
+        }
+
+        let resolved_target = ti.target_type.clone();
+
+        for method in &mut ti.methods {
+            self.check_function(method, Some(resolved_target.clone()))?;
+        }
+
         Ok(())
     }
 

@@ -277,6 +277,8 @@ pub struct FunctionDef {
     pub return_type: Type,
     pub body: Vec<Stmt>,
     pub generics: Vec<String>, // <T>
+    pub generic_bounds: Vec<(String, Vec<TraitBound>)>, // <T: Trait1 + Trait2>
+    pub where_clause: Option<WhereClause>,
     pub is_extern: bool,
     pub is_pub: bool,
 }
@@ -286,6 +288,8 @@ pub struct StructDef {
     pub name: String,
     pub fields: Vec<(String, Type)>,
     pub generics: Vec<String>, // <T>
+    pub generic_bounds: Vec<(String, Vec<TraitBound>)>,
+    pub where_clause: Option<WhereClause>,
     pub is_pub: bool,
 }
 
@@ -293,7 +297,64 @@ pub struct StructDef {
 pub struct ImplBlock {
     pub target_type: Type, // Changed from String to Type to generic support (e.g. Struct<T>)
     pub generics: Vec<String>,
+    pub generic_bounds: Vec<(String, Vec<TraitBound>)>,
+    pub where_clause: Option<WhereClause>,
     pub methods: Vec<FunctionDef>,
+}
+
+// ── Trait 関連 AST ノード ──
+
+/// Trait定義: trait Iterator<T> { fn next(self) -> Option<T>; }
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitDef {
+    pub name: String,
+    pub generics: Vec<String>,
+    pub methods: Vec<TraitMethodDef>,
+    pub associated_types: Vec<String>, // 関連型名 (e.g. "Item")
+    pub is_pub: bool,
+}
+
+/// トレイトメソッド定義（シグネチャ + オプショナルなデフォルト本体）
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitMethodDef {
+    pub name: String,
+    pub args: Vec<(String, Type)>,
+    pub return_type: Type,
+    pub has_self: bool,
+    pub default_body: Option<Vec<Stmt>>, // デフォルトメソッド本体
+}
+
+/// impl Trait for Type ブロック
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitImplBlock {
+    pub trait_name: String,
+    pub trait_generics: Vec<Type>,       // impl Display for Vec<i64> の <i64>
+    pub target_type: Type,               // 実装対象の型
+    pub generics: Vec<String>,           // impl<T> の T
+    pub generic_bounds: Vec<(String, Vec<TraitBound>)>,
+    pub where_clause: Option<WhereClause>,
+    pub methods: Vec<FunctionDef>,
+    pub associated_types: Vec<(String, Type)>, // 関連型の具象化 (e.g. ("Item", I64))
+}
+
+/// トレイト境界: Display, Iterator<i64>, etc.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TraitBound {
+    pub trait_name: String,
+    pub type_args: Vec<Type>,
+}
+
+/// where句
+#[derive(Debug, Clone, PartialEq)]
+pub struct WhereClause {
+    pub predicates: Vec<WherePredicate>,
+}
+
+/// where句の述語: T: Display + Clone
+#[derive(Debug, Clone, PartialEq)]
+pub struct WherePredicate {
+    pub type_param: String,
+    pub bounds: Vec<TraitBound>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -534,6 +595,8 @@ pub struct Module {
     pub structs: Vec<StructDef>,
     pub enums: Vec<EnumDef>,
     pub impls: Vec<ImplBlock>,
+    pub traits: Vec<TraitDef>,
+    pub trait_impls: Vec<TraitImplBlock>,
     pub functions: Vec<FunctionDef>,
     pub tensor_decls: Vec<Stmt>, // StmtKind::TensorDecl
     pub relations: Vec<RelationDecl>,

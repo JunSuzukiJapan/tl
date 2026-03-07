@@ -339,6 +339,8 @@ fn main() -> Result<()> {
             structs: vec![],
             enums: vec![],
             impls: vec![],
+            traits: vec![],
+            trait_impls: vec![],
             functions: vec![],
             tensor_decls: vec![],
             relations: vec![],
@@ -358,6 +360,8 @@ fn main() -> Result<()> {
                     combined_module.structs.extend(mod_.structs);
                     combined_module.enums.extend(mod_.enums);
                     combined_module.impls.extend(mod_.impls);
+                    combined_module.traits.extend(mod_.traits);
+                    combined_module.trait_impls.extend(mod_.trait_impls);
                     combined_module.functions.extend(mod_.functions);
                     combined_module.tensor_decls.extend(mod_.tensor_decls);
                     combined_module.relations.extend(mod_.relations);
@@ -701,6 +705,8 @@ fn load_builtins() -> Result<tl_lang::compiler::ast::Module> {
         structs: vec![],
         enums: vec![],
         impls: vec![],
+        traits: vec![],
+        trait_impls: vec![],
         functions: vec![],
         tensor_decls: vec![],
         relations: vec![],

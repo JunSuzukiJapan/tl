@@ -67,6 +67,12 @@ pub enum Token {
     Enum,
     #[token("self")]
     Self_,
+    #[token("trait")]
+    Trait,
+    #[token("where")]
+    Where,
+    #[token("type")]
+    TypeKw,
 
     // Types (primitive types also act as keywords in some context)
     #[token("f32")]

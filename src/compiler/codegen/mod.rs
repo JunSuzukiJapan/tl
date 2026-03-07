@@ -1413,6 +1413,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 return_type: Type::Void,
                 body: vec![],
                 generics: vec![],
+                generic_bounds: vec![],
+                where_clause: None,
                 is_extern: false,
                 is_pub: false,
             };
@@ -1432,6 +1434,19 @@ impl<'ctx> CodeGenerator<'ctx> {
         // 3. Compile Impl Blocks (Declare Method Prototypes + Body)
         // Moved after function proto conversion so methods can call global functions
         self.compile_impl_blocks(&ast_module.impls)?;
+
+        // 3.5. Compile Trait Impl Blocks as regular impl blocks
+        // TraitImplBlock methods compile identically to ImplBlock methods
+        let trait_impl_blocks: Vec<ImplBlock> = ast_module.trait_impls.iter().map(|ti| {
+            ImplBlock {
+                target_type: ti.target_type.clone(),
+                generics: ti.generics.clone(),
+                generic_bounds: ti.generic_bounds.clone(),
+                where_clause: ti.where_clause.clone(),
+                methods: ti.methods.clone(),
+            }
+        }).collect();
+        self.compile_impl_blocks(&trait_impl_blocks)?;
 
         // 4. Compile function bodies
         for func in &functions_refs {

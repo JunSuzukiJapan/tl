@@ -1207,6 +1207,276 @@ fn parse_generic_params(input: Input) -> IResult<Input, Vec<String>, ParserError
     }
 }
 
+// ── Trait関連パーサー ──
+
+/// トレイト境界をパース: TraitName<Args> (e.g. Iterator<i64>, Display)
+fn parse_trait_bound(input: Input) -> IResult<Input, crate::compiler::ast::TraitBound, ParserError> {
+    let (input, trait_name) = identifier(input)?;
+    let (input, type_args) = if let Ok((rest, _)) = expect_token(Token::Lt)(input) {
+        let (rest, args) = separated_list1(expect_token(Token::Comma), parse_type)(rest)?;
+        let (rest, _) = expect_token(Token::Gt)(rest)?;
+        (rest, args)
+    } else {
+        (input, vec![])
+    };
+    Ok((input, crate::compiler::ast::TraitBound { trait_name, type_args }))
+}
+
+/// 境界付きジェネリックパラメータをパース: <T: Trait1 + Trait2, U: Trait3>
+fn parse_generic_params_with_bounds(input: Input) -> IResult<Input, (Vec<String>, Vec<(String, Vec<crate::compiler::ast::TraitBound>)>), ParserError> {
+    if let Ok((rest, _)) = expect_token(Token::Lt)(input) {
+        let mut params = vec![];
+        let mut bounds = vec![];
+        let mut input = rest;
+        
+        loop {
+            let (rest, name) = identifier(input)?;
+            params.push(name.clone());
+            
+            // Check for : (bounds)
+            let rest = if let Ok((r, _)) = expect_token(Token::Colon)(rest) {
+                let mut param_bounds = vec![];
+                let (r, first) = parse_trait_bound(r)?;
+                param_bounds.push(first);
+                let mut r = r;
+                // Parse additional bounds with +
+                while let Ok((r2, _)) = expect_token(Token::Plus)(r) {
+                    let (r3, bound) = parse_trait_bound(r2)?;
+                    param_bounds.push(bound);
+                    r = r3;
+                }
+                bounds.push((name, param_bounds));
+                r
+            } else {
+                rest
+            };
+            
+            // Check for comma (more params) or > (end)
+            if let Ok((r, _)) = expect_token(Token::Comma)(rest) {
+                input = r;
+            } else {
+                let (r, _) = expect_token(Token::Gt)(rest)?;
+                return Ok((r, (params, bounds)));
+            }
+        }
+    } else {
+        Ok((input, (vec![], vec![])))
+    }
+}
+
+/// where句をパース: where T: Bound1 + Bound2, U: Bound3
+fn parse_where_clause(input: Input) -> IResult<Input, crate::compiler::ast::WhereClause, ParserError> {
+    let (input, _) = expect_token(Token::Where)(input)?;
+    let mut predicates = vec![];
+    let mut input = input;
+    
+    loop {
+        let (rest, type_param) = identifier(input)?;
+        let (rest, _) = expect_token(Token::Colon)(rest)?;
+        
+        let mut bounds = vec![];
+        let (rest, first) = parse_trait_bound(rest)?;
+        bounds.push(first);
+        let mut rest = rest;
+        while let Ok((r2, _)) = expect_token(Token::Plus)(rest) {
+            let (r3, bound) = parse_trait_bound(r2)?;
+            bounds.push(bound);
+            rest = r3;
+        }
+        
+        predicates.push(crate::compiler::ast::WherePredicate { type_param, bounds });
+        
+        // Check for comma (more predicates) or end
+        if let Ok((r, _)) = expect_token(Token::Comma)(rest) {
+            // Check if next token is { (end of where clause, trailing comma)
+            if let Ok(_) = expect_token(Token::LBrace)(r) {
+                input = rest; // Don't consume the comma before {
+                break;
+            }
+            input = r;
+        } else {
+            input = rest;
+            break;
+        }
+    }
+    
+    Ok((input, crate::compiler::ast::WhereClause { predicates }))
+}
+
+/// トレイトメソッドシグネチャをパース (デフォルト本体あり/なし)
+fn parse_trait_method_sig(input: Input) -> IResult<Input, crate::compiler::ast::TraitMethodDef, ParserError> {
+    let (input, _) = expect_token(Token::Fn)(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    
+    // Handle self parameter
+    let (input, has_self) = map(opt(expect_token(Token::Self_)), |o| o.is_some())(input)?;
+    let input = if has_self {
+        opt(expect_token(Token::Comma))(input)?.0
+    } else {
+        input
+    };
+    
+    // Parse other args
+    let (input, mut args) = separated_list0(
+        expect_token(Token::Comma),
+        pair(identifier, preceded(expect_token(Token::Colon), parse_type))
+    )(input)?;
+    
+    if has_self {
+        let self_type = crate::compiler::ast::Type::Struct("Self".to_string(), vec![]);
+        args.insert(0, ("self".to_string(), self_type));
+    }
+    
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    
+    let (input, return_type) = if let Ok((rest, _)) = expect_token(Token::Arrow)(input) {
+        parse_type(rest)?
+    } else {
+        (input, Type::Void)
+    };
+    
+    // Check for default body { ... } or semicolon ;
+    let (input, default_body) = if let Ok((rest, body)) = parse_block_stmts(input) {
+        (rest, Some(body))
+    } else {
+        let (rest, _) = expect_token(Token::SemiColon)(input)?;
+        (rest, None)
+    };
+    
+    Ok((input, crate::compiler::ast::TraitMethodDef {
+        name,
+        args,
+        return_type,
+        has_self,
+        default_body,
+    }))
+}
+
+/// Trait定義をパース: [pub] trait Name<T> { method_sigs... }
+fn parse_trait_def(input: Input) -> IResult<Input, crate::compiler::ast::TraitDef, ParserError> {
+    let (input, _) = expect_token(Token::Trait)(input)?;
+    cut(|input| {
+        let (input, name) = identifier(input)?;
+        let (input, generics) = parse_generic_params(input)?;
+        let (input, _) = expect_token(Token::LBrace)(input)?;
+        
+        let mut methods = vec![];
+        let mut associated_types = vec![];
+        let mut input = input;
+        
+        loop {
+            if let Ok((rest, _)) = expect_token(Token::RBrace)(input) {
+                input = rest;
+                break;
+            }
+            
+            // Try associated type: type Item;
+            if let Ok((rest, _)) = expect_token(Token::TypeKw)(input) {
+                let (rest, type_name) = identifier(rest)?;
+                let (rest, _) = expect_token(Token::SemiColon)(rest)?;
+                associated_types.push(type_name);
+                input = rest;
+                continue;
+            }
+            
+            // Try method signature
+            let (rest, method) = parse_trait_method_sig(input)?;
+            methods.push(method);
+            input = rest;
+        }
+        
+        Ok((input, crate::compiler::ast::TraitDef {
+            name,
+            generics,
+            methods,
+            associated_types,
+            is_pub: false,
+        }))
+    })(input)
+}
+
+/// impl Trait for Type ブロックをパース
+/// 呼び出し元は既に `impl` を消費し、`for` キーワードの存在を確認済み
+fn parse_trait_impl(input: Input) -> IResult<Input, crate::compiler::ast::TraitImplBlock, ParserError> {
+    // At this point, `impl` has been consumed. We need generics, trait name, `for`, and type.
+    let (input, (generics, generic_bounds)) = parse_generic_params_with_bounds(input)?;
+    
+    // Parse trait name (and optional trait generics)
+    let (input, trait_name) = identifier(input)?;
+    let (input, trait_generics) = if let Ok((rest, _)) = expect_token(Token::Lt)(input) {
+        let (rest, args) = separated_list1(expect_token(Token::Comma), parse_type)(rest)?;
+        let (rest, _) = expect_token(Token::Gt)(rest)?;
+        (rest, args)
+    } else {
+        (input, vec![])
+    };
+    
+    // Expect `for`
+    let (input, _) = expect_token(Token::For)(input)?;
+    
+    // Parse target type
+    let (input, target_type) = parse_type(input)?;
+    
+    // Optional where clause
+    let (input, where_clause) = if let Ok((rest, wc)) = parse_where_clause(input) {
+        (rest, Some(wc))
+    } else {
+        (input, None)
+    };
+    
+    let (input, _) = expect_token(Token::LBrace)(input)?;
+    
+    let mut methods = vec![];
+    let mut associated_types = vec![];
+    let mut input = input;
+    
+    loop {
+        if let Ok((rest, _)) = expect_token(Token::RBrace)(input) {
+            input = rest;
+            break;
+        }
+        
+        // Try associated type: type Item = i64;
+        if let Ok((rest, _)) = expect_token(Token::TypeKw)(input) {
+            let (rest, type_name) = identifier(rest)?;
+            let (rest, _) = expect_token(Token::Assign)(rest)?;
+            let (rest, type_val) = parse_type(rest)?;
+            let (rest, _) = expect_token(Token::SemiColon)(rest)?;
+            associated_types.push((type_name, type_val));
+            input = rest;
+            continue;
+        }
+        
+        // Try method
+        let (rest, method) = parse_function_def(input)?;
+        methods.push(method);
+        input = rest;
+    }
+    
+    // Resolve `Self` in methods
+    for method in &mut methods {
+        for arg in &mut method.args {
+            if let crate::compiler::ast::Type::Struct(name, _) = &arg.1 {
+                if name == "Self" {
+                    arg.1 = target_type.clone();
+                }
+            }
+        }
+    }
+    
+    Ok((input, crate::compiler::ast::TraitImplBlock {
+        trait_name,
+        trait_generics,
+        target_type,
+        generics,
+        generic_bounds,
+        where_clause,
+        methods,
+        associated_types,
+    }))
+}
+
 fn parse_match_expr(input: Input) -> IResult<Input, Expr, ParserError> {
     let (input, _) = expect_token(Token::Match)(input)?;
     // Use parse_expr_no_struct_lit to avoid ambiguity with Struct Literal in scrutinee
@@ -1438,6 +1708,8 @@ fn parse_function_def(input: Input) -> IResult<Input, crate::compiler::ast::Func
             return_type,
             body,
             generics,
+            generic_bounds: vec![],
+            where_clause: None,
             is_extern,
             is_pub: false,
         }))
@@ -1462,6 +1734,8 @@ fn parse_struct_def(input: Input) -> IResult<Input, crate::compiler::ast::Struct
             name,
             fields,
             generics,
+            generic_bounds: vec![],
+            where_clause: None,
             is_pub: false,
         }))
     })(input)
@@ -1491,6 +1765,8 @@ fn parse_impl_block(input: Input) -> IResult<Input, crate::compiler::ast::ImplBl
         Ok((input, crate::compiler::ast::ImplBlock {
             target_type,
             generics,
+            generic_bounds: vec![],
+            where_clause: None,
             methods,
         }))
     })(input)
@@ -1652,6 +1928,8 @@ fn parse_module(input: Input) -> IResult<Input, crate::compiler::ast::Module, Pa
         structs: vec![],
         enums: vec![],
         impls: vec![],
+        traits: vec![],
+        trait_impls: vec![],
         functions: vec![],
         tensor_decls: vec![],
         relations: vec![],
@@ -1697,10 +1975,30 @@ fn parse_module(input: Input) -> IResult<Input, crate::compiler::ast::Module, Pa
             Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
             Err(nom::Err::Error(_)) | Err(nom::Err::Incomplete(_)) => {}
         }
-        match parse_impl_block(input) {
-            Ok((rest, i)) => { module.impls.push(i); input = rest; continue; }
+        // Trait definition: [pub] trait Name<T> { ... }
+        match parse_trait_def(def_input) {
+            Ok((rest, mut t)) => { t.is_pub = is_pub; module.traits.push(t); input = rest; continue; }
             Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
             Err(nom::Err::Error(_)) | Err(nom::Err::Incomplete(_)) => {}
+        }
+        // impl block: need to distinguish impl Type { } vs impl Trait for Type { }
+        // We try trait impl first (it looks for `for` keyword)
+        if let Some(tok) = input.first() {
+            if matches!(tok.token, Token::Impl) {
+                // Consume `impl`, then try trait_impl first
+                let after_impl = &input[1..];
+                match parse_trait_impl(after_impl) {
+                    Ok((rest, ti)) => { module.trait_impls.push(ti); input = rest; continue; }
+                    Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
+                    Err(nom::Err::Error(_)) | Err(nom::Err::Incomplete(_)) => {}
+                }
+                // Fall back to regular impl block
+                match parse_impl_block(input) {
+                    Ok((rest, i)) => { module.impls.push(i); input = rest; continue; }
+                    Err(nom::Err::Failure(e)) => return Err(nom::Err::Failure(e)),
+                    Err(nom::Err::Error(_)) | Err(nom::Err::Incomplete(_)) => {}
+                }
+            }
         }
         match parse_use_decl(input) {
             Ok((rest, u)) => { module.imports.push(u); input = rest; continue; }
@@ -1714,6 +2012,8 @@ fn parse_module(input: Input) -> IResult<Input, crate::compiler::ast::Module, Pa
                     structs: vec![],
                     enums: vec![],
                     impls: vec![],
+                    traits: vec![],
+                    trait_impls: vec![],
                     functions: vec![],
                     tensor_decls: vec![],
                     relations: vec![],

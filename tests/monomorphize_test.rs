@@ -8,6 +8,8 @@ fn create_empty_module() -> Module {
         functions: vec![],
         enums: vec![],
         impls: vec![],
+        traits: vec![],
+        trait_impls: vec![],
         tensor_decls: vec![],
         relations: vec![],
         rules: vec![],
@@ -21,6 +23,8 @@ fn create_generic_function(name: &str, param: &str) -> FunctionDef {
     FunctionDef {
         name: name.to_string(),
         generics: vec![param.to_string()],
+        generic_bounds: vec![],
+        where_clause: None,
         args: vec![
             ("arg".to_string(), Type::Struct(param.to_string(), vec![]))
         ],
@@ -50,6 +54,8 @@ fn test_basic_function_instantiation() {
     let main_func = FunctionDef {
         name: "main".to_string(),
         generics: vec![],
+        generic_bounds: vec![],
+        where_clause: None,
         args: vec![],
         return_type: Type::Void,
         body: main_stmts,
@@ -87,6 +93,8 @@ fn test_deduplication() {
     let main_func = FunctionDef {
         name: "main".to_string(),
         generics: vec![],
+        generic_bounds: vec![],
+        where_clause: None,
         args: vec![],
         return_type: Type::Void,
         body: main_stmts,
