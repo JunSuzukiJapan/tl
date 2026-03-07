@@ -7,6 +7,7 @@ pub use generic::option;
 pub use generic::result;
 pub use generic::vec;
 pub use generic::hashmap;
+pub use generic::traits;
 
 pub use non_generic::io;
 pub use non_generic::system;

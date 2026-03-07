@@ -152,6 +152,8 @@ fn main() -> Result<()> {
             ast.structs.extend(builtins.structs.clone());
             ast.enums.extend(builtins.enums.clone());
             ast.impls.extend(builtins.impls.clone());
+            ast.traits.extend(builtins.traits.clone());
+            ast.trait_impls.extend(builtins.trait_impls.clone());
             ast.functions.extend(builtins.functions.clone());
             // No need to inject imports/modules unless structured?
 
@@ -391,6 +393,8 @@ fn main() -> Result<()> {
         combined_module.structs.extend(builtins.structs.clone());
         combined_module.enums.extend(builtins.enums.clone());
         combined_module.impls.extend(builtins.impls.clone());
+        combined_module.traits.extend(builtins.traits.clone());
+        combined_module.trait_impls.extend(builtins.trait_impls.clone());
         combined_module.functions.extend(builtins.functions.clone());
 
         // DEBUG removed;
@@ -694,6 +698,7 @@ fn load_builtins() -> Result<tl_lang::compiler::ast::Module> {
     use tl_lang::compiler::codegen::builtin_types;
 
     let sources = [
+        builtin_types::traits::SOURCE,
         builtin_types::vec::SOURCE,
         builtin_types::hashmap::SOURCE,
         builtin_types::option::SOURCE,
@@ -723,6 +728,8 @@ fn load_builtins() -> Result<tl_lang::compiler::ast::Module> {
         combined.structs.extend(m.structs);
         combined.enums.extend(m.enums);
         combined.impls.extend(m.impls);
+        combined.traits.extend(m.traits);
+        combined.trait_impls.extend(m.trait_impls);
         combined.functions.extend(m.functions);
         combined.tensor_decls.extend(m.tensor_decls);
         combined.relations.extend(m.relations);
