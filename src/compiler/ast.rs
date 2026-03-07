@@ -147,6 +147,9 @@ pub enum Type {
     // Fixed-size array type: [T; N]
     Array(Box<Type>, usize),
 
+    // Range type: Range (Option<i64> based start/end)
+    Range,
+
     /// Monomorphized generic type with complete type information.
     /// Created during monomorphization, used exclusively in codegen.
     /// Carries the triple (base_name, type_args, mangled_name) inline,
@@ -198,6 +201,7 @@ impl Type {
             Type::TypeVar(_) => "TypeVar".to_string(),
             // Type::Ref(inner) => inner.get_base_name(), // REMOVED
             Type::Ptr(_inner) => "Ptr".to_string(),
+            Type::Range => "Range".to_string(),
             Type::Array(inner, _) => format!("Array_{}", inner.get_base_name()),
         }
     }

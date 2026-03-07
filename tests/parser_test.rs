@@ -219,6 +219,15 @@ fn test_half_open_range() {
 }
 
 #[test]
+fn test_bare_range_is_error() {
+    // Bare `..` should be a parse error
+    let tokens_res = tokenize("..");
+    let tokens: Vec<_> = tokens_res.into_iter().map(|r| r.unwrap()).collect();
+    let result = parse_expr(&tokens);
+    assert!(result.is_err(), "Bare `..` should be a parse error");
+}
+
+#[test]
 fn test_bitwise_ops() {
     // Basic bitwise AND
     if let ExprKind::BinOp(l, BinOp::BitAnd, r) = p_expr("3 & 5") {

@@ -1824,8 +1824,15 @@ impl SemanticAnalyzer {
                     _ => {
                         let iter_type = self.check_expr(iterator)?;
                         match iter_type {
+                            Type::Range => Type::I64,
                             Type::Tensor(t, 1) => *t,
                             Type::TensorShaped(t, _) => *t,
+                            Type::Struct(ref name, ref args) if name == "Vec" && args.len() == 1 => {
+                                args[0].clone()
+                            }
+                            Type::UnifiedType { ref type_args, .. } if !type_args.is_empty() => {
+                                type_args[0].clone()
+                            }
                             _ => {
                                 return self.err(
                                     SemanticError::TypeMismatch {
@@ -3174,9 +3181,8 @@ impl SemanticAnalyzer {
                         );
                     }
                 }
-                // Range expression itself doesn't evaluate to a runtime value outside of for-loops yet,
-                // but we return Void or a placeholder.
-                Ok(Type::Void)
+                // Range expression returns Range type
+                Ok(Type::Range)
             }
             ExprKind::Variable(name) => {
                 // 1. Try local scopes first (reverse order)

@@ -866,8 +866,8 @@ fn parse_binary_logic(input: Input, allow_struct: bool) -> IResult<Input, Expr, 
         if let Ok((rest2, end)) = parse_logical_or(rest, allow_struct) {
             return Ok((rest2, Spanned::new(ExprKind::Range(None, Some(Box::new(end))), crate::compiler::error::Span::default())));
         } else {
-            // Bare ..
-            return Ok((rest, Spanned::new(ExprKind::Range(None, None), crate::compiler::error::Span::default())));
+            // Bare .. with no start or end is an error
+            return Err(nom::Err::Failure(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Bare `..` range is not allowed. Use `start..end`, `start..`, or `..end`.".to_string()) }));
         }
     }
 

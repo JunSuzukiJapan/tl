@@ -1882,16 +1882,26 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let i64_type = self.context.i64_type();
 
-                // Check if iterator is a range (BinOp with ".." conceptually - we detect 0..n pattern)
-                // Or if it's a tensor/variable
+                // Determine iterator: range, tensor, vec, or other iterable
                 let (start_val, end_val, is_tensor_iter) = match &iterator.inner {
-                    ExprKind::Range(Some(start), Some(end)) => {
-                        let (s, _) = self.compile_expr(start)?;
-                        let (e, _) = self.compile_expr(end)?;
-                        (s.into_int_value(), e.into_int_value(), false)
-                    }
-                    ExprKind::Range(_, _) => {
-                        return Err("Half-open ranges are not supported in for loops".into());
+                    ExprKind::Range(start, end) => {
+                        // Compile start (default: 0)
+                        let s = if let Some(start_expr) = start {
+                            let (s, _) = self.compile_expr(start_expr)?;
+                            s.into_int_value()
+                        } else {
+                            i64_type.const_int(0, false)
+                        };
+                        // Compile end (default: i64::MAX with warning)
+                        let e = if let Some(end_expr) = end {
+                            let (e, _) = self.compile_expr(end_expr)?;
+                            e.into_int_value()
+                        } else {
+                            // Half-open range with no end: warn user
+                            eprintln!("Warning: for loop over half-open range (no end bound) — loop will iterate up to i64::MAX. Use `break` to exit.");
+                            i64_type.const_int(i64::MAX as u64, false)
+                        };
+                        (s, e, false)
                     }
                     ExprKind::FnCall(name, args) if name == "range" => {
                         // range(start, end)
@@ -1902,58 +1912,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let (e, _) = self.compile_expr(&args[1])?;
                         (s.into_int_value(), e.into_int_value(), false)
                     }
-                    ExprKind::Variable(_) | ExprKind::FieldAccess(_, _) => {
-                        // Assume it's a tensor or array iteration
-                        let (tensor_val, tensor_ty) = self.compile_expr(iterator)?;
-                        let len = match &tensor_ty {
-                            Type::Tensor(_, _) => {
-                                // Get tensor length
-                                let len_fn = self
-                                    .module
-                                    .get_function("tl_tensor_len")
-                                    .ok_or("tl_tensor_len not found")?;
-                                let len_call = self
-                                    .builder
-                                    .build_call(len_fn, &[tensor_val.into()], "tensor_len")
-                                    .map_err(|e| e.to_string())?;
-                                match len_call.try_as_basic_value() {
-                                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-                                    _ => return Err("Invalid tensor_len return".into()),
-                                }
-                            }
-                            _ => {
-                                return Err(
-                                    "For loop iterator must be a tensor, array, or range".into()
-                                )
-                            }
-                        };
-
-                        // Store tensor/array pointer for use in body
-                        let tensor_ptr = tensor_val.into_pointer_value();
-                        let tensor_alloca = self
-                            .builder
-                            .build_alloca(
-                                self.context.ptr_type(inkwell::AddressSpace::default()),
-                                "for_tensor",
-                            )
-                            .map_err(|e| e.to_string())?;
-                        self.builder
-                            .build_store(tensor_alloca, tensor_ptr)
-                            .map_err(|e| e.to_string())?;
-
-                        // Register tensor alloca for later use
-                        self.variables.last_mut().unwrap().insert(
-                            "__for_tensor__".to_string(),
-                            (tensor_alloca.into(), tensor_ty.clone(), super::CLEANUP_NONE),
-                        );
-
-                        (i64_type.const_int(0, false), len, true)
-                    }
                     _ => {
-                        // Try to compile as expression and check type
+                        // Tensor, Vec, or other iterable type
                         let (iter_val, iter_ty) = self.compile_expr(iterator)?;
                         let len = match &iter_ty {
                             Type::Tensor(_, _) => {
+                                // Get tensor length
                                 let len_fn = self
                                     .module
                                     .get_function("tl_tensor_len")
@@ -1974,6 +1938,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             }
                         };
 
+                        // Store tensor/array pointer for use in body
                         let tensor_ptr = iter_val.into_pointer_value();
                         let tensor_alloca = self
                             .builder
@@ -1986,6 +1951,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .build_store(tensor_alloca, tensor_ptr)
                             .map_err(|e| e.to_string())?;
 
+                        // Register tensor alloca for later use
                         self.variables.last_mut().unwrap().insert(
                             "__for_tensor__".to_string(),
                             (tensor_alloca.into(), iter_ty.clone(), super::CLEANUP_NONE),
