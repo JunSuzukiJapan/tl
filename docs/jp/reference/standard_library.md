@@ -1,110 +1,191 @@
-# TensorLogic API リファレンス
+# TensorLogic 標準ライブラリ概要
 
-このドキュメントは、現在のコンパイラ実装に基づくTensorLogic言語の標準API（グローバル関数、標準クラス、組み込み型）のリファレンスです。
+このドキュメントは、TL言語の標準ライブラリの概要です。
+詳細な API リファレンスは [functions_and_types.md](functions_and_types.md) を参照してください。
 
 ---
 
 ## 1. グローバル関数
 
 ### IO & システム
-*   **`print(value) -> void`**
-    値を標準出力に出力します（改行なし）。
-*   **`println(value) -> void`**
-    値を標準出力に出力します（改行あり）。
+- **`print(value, ...) -> void`** — 改行なし出力（`{}` フォーマット対応）
+- **`println(value, ...) -> void`** — 改行付き出力（`{}` フォーマット対応）
+- **`read_line(prompt: String) -> String`** — 標準入力から一行読み取り
+- **`panic(message: String) -> Never`** — エラーメッセージを出力してプログラム終了
+
+### コマンドライン引数
+- **`args_count() -> i64`** — コマンドライン引数の数
+- **`args_get(index: i64) -> String`** — コマンドライン引数を取得
 
 ---
 
-## 2. 標準型 & 静的メソッド（クラスメソッド）
+## 2. 組み込みジェネリック型
+
+### Vec\<T\> — 可変長配列
+```rust
+let mut v: Vec<i64> = Vec::new();
+v.push(1);
+v.push(2);
+let first = v.get(0).unwrap(); // 1
+let popped = v.pop();          // Option::Some(2)
+```
+
+| メソッド | 説明 |
+|---|---|
+| `Vec::new() -> Vec<T>` | 空の Vec を作成 |
+| `Vec::with_capacity(cap) -> Vec<T>` | 指定容量で Vec を作成 |
+| `len() -> i64` | 要素数 |
+| `capacity() -> i64` | 容量 |
+| `is_empty() -> bool` | 空か |
+| `push(item: T)` | 末尾に追加 |
+| `pop() -> Option<T>` | 末尾から取り出し |
+| `get(index) -> Option<T>` | インデックスで取得 |
+| `set(index, item: T)` | インデックスで更新 |
+
+### HashMap\<K, V\> — ハッシュマップ
+```rust
+let mut m: HashMap<String, i64> = HashMap::new();
+m.insert("key", 42);
+let val = m.get("key").unwrap(); // 42
+```
+
+| メソッド | 説明 |
+|---|---|
+| `HashMap::new() -> HashMap<K, V>` | 空の HashMap を作成 |
+| `len() -> i64` | 要素数 |
+| `is_empty() -> bool` | 空か |
+| `insert(key, value)` | 挿入 |
+| `get(key) -> Option<V>` | 検索 |
+
+### Option\<T\> — 値の有無
+```rust
+let some_val: Option<i64> = Option::Some(42);
+let none_val: Option<i64> = Option::None;
+
+match some_val {
+    Option::Some(x) => println("got: {}", x),
+    Option::None => println("none"),
+}
+```
+
+| メソッド | 説明 |
+|---|---|
+| `is_some() -> bool` | `Some` か |
+| `is_none() -> bool` | `None` か |
+| `unwrap() -> T` | 値を取得（`None` で panic） |
+| `unwrap_or(default: T) -> T` | デフォルト値付き取得 |
+
+### Result\<T, E\> — 成功/失敗
+```rust
+fn divide(a: i64, b: i64) -> Result<i64, String> {
+    if b == 0 {
+        return Result::Err("division by zero");
+    }
+    Result::Ok(a / b)
+}
+```
+
+| メソッド | 説明 |
+|---|---|
+| `is_ok() -> bool` | `Ok` か |
+| `is_err() -> bool` | `Err` か |
+| `unwrap() -> T` | 値を取得（`Err` で panic） |
+| `unwrap_err() -> E` | エラーを取得 |
+
+`?` 演算子: `Result` 型に使用でき、`Err` の場合は早期リターン。
+
+---
+
+## 3. 標準トレイト
+
+| トレイト | メソッド | 説明 |
+|---|---|---|
+| `Index<Idx, Output>` | `index(self, idx) -> Output` | `[]` 読み取りアクセス |
+| `IndexMut<Idx, Value>` | `set(self, idx, value)` | `[]` 書き込みアクセス |
+| `Iterable<T>` | `len(self) -> i64`, `get(self, index) -> T` | `for` ループ用イテレータ |
+
+---
+
+## 4. 標準クラス（静的メソッド）
 
 ### Tensor
-*   **`Tensor::zeros(shape, requires_grad) -> Tensor`**
-*   **`Tensor::randn(shape, requires_grad) -> Tensor`**
-*   **`Tensor::ones(shape, requires_grad) -> Tensor`**
-*   **`Tensor::load(path: String) -> Tensor`** — ファイルからテンソルを読み込み
+- `Tensor::zeros(shape, requires_grad) -> Tensor`
+- `Tensor::randn(shape, requires_grad) -> Tensor`
+- `Tensor::ones(shape, requires_grad) -> Tensor`
+- `Tensor::load(path: String) -> Tensor`
 
 ### Param（パラメータ管理）
-*   **`Param::save_all(path: String) -> void`** — 全パラメータを保存
-*   **`Param::load_all(path: String) -> void`** — 全パラメータを読み込み
-*   **`Param::save(target, path: String) -> void`** — 対象を保存
-*   **`Param::load(path: String) -> Tensor`** — ファイルから読み込み
-*   **`Param::add(name: String, t: Tensor) -> void`** — パラメータを追加
-*   **`Param::register(t: Tensor) -> Tensor`** — テンソルをパラメータとして登録
-*   **`Param::update_all(lr: f32) -> void`** — 全パラメータを更新
-*   **`Param::register_modules(root: Struct) -> void`** — モジュールを登録
-*   **`Param::checkpoint(method, input) -> Tensor`** — 活性化チェックポイント
-*   **`Param::set_device(device: Device) -> void`** — 計算デバイスを設定
-
-### VarBuilder
-*   **`VarBuilder::get(name: String, ...dims) -> Tensor`**
+- `Param::save_all(path) -> void` — 全パラメータ保存
+- `Param::load_all(path) -> void` — 全パラメータ読み込み
+- `Param::register(t: Tensor) -> Tensor` — テンソルをパラメータとして登録
+- `Param::update_all(lr: f32) -> void` — 全パラメータ更新
+- `Param::register_modules(root: Struct) -> void` — モジュール登録
+- `Param::checkpoint(method, input) -> Tensor` — 活性化チェックポイント
+- `Param::set_device(device) -> void` — 計算デバイス設定
 
 ### File
-*   **`File::open(path: String, mode: String) -> File`**
+- `File::open(path, mode) -> File`
+- `File::exists(path) -> bool`
+- `File::read(path) -> String`
+- `File::write(path, content) -> bool`
+- `File::download(url, dest) -> bool`
 
 ### Path
-*   **`Path::new(path: String) -> Path`**
+- `Path::new(path) -> Path`
 
 ### System
-*   **`System::time() -> f32`**
-*   **`System::sleep(seconds: f32) -> void`**
+- `System::time() -> f32`
+- `System::sleep(seconds) -> void`
+- `System::memory_mb() -> i64`
 
 ### Env
-*   **`Env::get(key: String) -> String`**
-*   **`Env::set(key: String, value: String) -> void`**
+- `Env::get(key) -> String`
+- `Env::set(key, value) -> void`
 
 ### Http
-*   **`Http::get(url: String) -> String`**
-*   **`Http::download(url: String, dest: String) -> bool`**
+- `Http::get(url) -> String`
+- `Http::download(url, dest) -> bool`
 
 ### Image
-*   **`Image::load_grayscale(path: String) -> Tensor`**
-*   **`Image::width() -> i64`**
-*   **`Image::height() -> i64`**
+- `Image::load_grayscale(path) -> Tensor`
 
 ---
 
-## 3. インスタンスメソッド
-
-### Tensor メソッド
-使用法: `tensor.method(...)`
+## 5. Tensor インスタンスメソッド（抜粋）
 
 #### 数学 (要素ごと)
 `abs()`, `neg()`, `relu()`, `gelu()`, `silu()`, `sigmoid()`, `tanh()`,
 `sin()`, `cos()`, `tan()`, `sqrt()`, `exp()`, `log()`, `pow(exp)`
 
-#### 削減 & 統計
+#### 形状 & 操作
+- `reshape(...dims)`, `transpose(dim1, dim2)`, `slice(start, len)`
+- `len()`, `dim()`, `item()`, `item_i64()`
+
+#### リダクション & 統計
 `sum(dim?)`, `mean(dim?)`, `max(dim?)`, `min(dim?)`, `argmax(dim)`, `argmin(dim)`,
 `softmax(dim)`, `log_softmax(dim)`
 
-#### 形状 & 操作
-*   **`reshape(...dims) -> Tensor`** — 形状を変更
-*   **`transpose(dim1, dim2) -> Tensor`** — 次元を転置
-*   **`slice(start, len) -> Tensor`** — スライス
-*   **`contiguous() -> Tensor`** — メモリ連続化
-*   **`len() -> i64`** — 最初の次元のサイズ
-*   **`item() -> f32`** — スカラー値を取得
-*   **`item_i64() -> i64`** — 整数スカラー値を取得
-*   **`to_i64() -> Tensor`** — i64型に変換
+#### 線形代数
+- `matmul(other)`, `tril(diagonal)`, `embedding(weights)`
+- `cross_entropy(targets)`, `conv2d(weight, padding, stride)`
+- `rms_norm(weight, eps)`, `apply_rope(cos, sin, dim)`
 
 #### 自動微分
-*   **`backward() -> void`** — 逆伝播（損失テンソルから呼び出し）
-*   **`grad() -> Tensor`** — 勾配を取得
-*   **`enable_grad() -> Tensor`** — 勾配追跡を有効化
-*   **`detach() -> Tensor`** — 計算グラフから切り離す
-*   **`clone() -> Tensor`** — テンソルを複製
+- `backward()`, `grad()`, `enable_grad()`, `detach()`, `clone()`
 
 #### デバイス
-*   **`cuda() -> Tensor`** — CUDAに移動
-*   **`cpu() -> Tensor`** — CPUに移動
+- `cuda()`, `cpu()`
 
-#### 線形代数
-*   **`matmul(other) -> Tensor`** — 行列積
-*   **`tril(diagonal) -> Tensor`** — 下三角行列
-*   **`embedding(weights) -> Tensor`** — 埋め込みルックアップ
-*   **`cross_entropy(targets) -> Tensor`** — 交差エントロピー損失
+---
 
-#### 畳み込み
-*   **`conv2d(weight, padding, stride) -> Tensor`** — 2D畳み込み
-*   **`clamp(min, max) -> Tensor`** — 値をクランプ
+## 6. スカラー型メソッド
 
-### スカラーメソッド (f32, f64)
-*   **数学:** `abs`, `sin`, `cos`, `exp`, `log`, `sqrt`, `powf`, `floor`, `ceil`, `round` など
+### String
+- `len()`, `contains(other)`, `concat(other)`, `char_at(index)`, `to_i64()`
+
+### F32 / F64
+数学関数: `abs`, `sin`, `cos`, `exp`, `log`, `sqrt`, `powf`, `floor`, `ceil`, `round` 等（全31関数）
+
+### I64 / I32
+- `abs()`, `signum()`, `is_positive()`, `is_negative()`
+- `div_euclid(x)`, `rem_euclid(x)`, `pow(x)`

@@ -25,6 +25,10 @@
 - `args_get(index: i64) -> String`  
   `index` 番目のコマンドライン引数を返します。
 
+### System (制御)
+- `panic(message: String) -> Never`  
+  エラーメッセージを出力してプログラムを終了します。
+
 ---
 
 ## 2. 標準型（静的メソッド）
@@ -34,6 +38,21 @@
 - `Tensor::randn(shape, requires_grad: bool) -> Tensor`
 - `Tensor::ones(shape, requires_grad: bool) -> Tensor`
 - `Tensor::load(path: String) -> Tensor`
+
+### Vec\<T\> (静的)
+- `Vec<T>::new() -> Vec<T>` — 空の Vec を作成
+- `Vec<T>::with_capacity(cap: i64) -> Vec<T>` — 指定容量で Vec を作成
+
+### HashMap\<K, V\> (静的)
+- `HashMap<K, V>::new() -> HashMap<K, V>` — 空の HashMap を作成
+
+### Option\<T\>（Enum）
+- `Option::Some(value: T)` — 値を保持するバリアント
+- `Option::None` — 値なしバリアント
+
+### Result\<T, E\>（Enum）
+- `Result::Ok(value: T)` — 成功値を保持するバリアント
+- `Result::Err(error: E)` — エラー値を保持するバリアント
 
 ### Param (パラメータ管理)
 - `Param::save_all(path: String, format?: String) -> void`
@@ -173,18 +192,54 @@
 
 ---
 
+### Vec\<T\> (インスタンス)
+- `len() -> i64` — 要素数を返す
+- `capacity() -> i64` — 容量を返す
+- `is_empty() -> bool` — 空かどうか
+- `push(item: T) -> void` — 末尾に要素を追加
+- `pop() -> Option<T>` — 末尾要素を取り出す
+- `get(index: i64) -> Option<T>` — インデックスで要素を取得
+- `set(index: i64, item: T) -> void` — インデックスで要素を更新
+
+---
+
+### HashMap\<K, V\> (インスタンス)
+- `len() -> i64` — 要素数を返す
+- `is_empty() -> bool` — 空かどうか
+- `insert(key: K, value: V) -> void` — キーと値のペアを挿入
+- `get(key: K) -> Option<V>` — キーで値を検索
+- `remove(key: K) -> void` — キーに対応するエントリを削除（未実装）
+
+---
+
+### Option\<T\> (インスタンス)
+- `is_some() -> bool` — `Some` かどうか
+- `is_none() -> bool` — `None` かどうか
+- `unwrap() -> T` — 値を取り出す（`None` の場合 panic）
+- `unwrap_or(default: T) -> T` — 値を取り出す（`None` の場合デフォルト値）
+
+---
+
+### Result\<T, E\> (インスタンス)
+- `is_ok() -> bool` — `Ok` かどうか
+- `is_err() -> bool` — `Err` かどうか
+- `unwrap() -> T` — 値を取り出す（`Err` の場合 panic）
+- `unwrap_err() -> E` — エラーを取り出す（`Ok` の場合 panic）
+
+`?` 演算子: `Result` 型の値に使用でき、`Err` の場合は早期リターンします。
+
+---
+
 ### 数値型 (F32, F64, I32, I64)
 
 #### F32 / F64
 単項演算:
 `abs`, `acos`, `acosh`, `asin`, `asinh`, `atan`, `atanh`, `cbrt`, `ceil`, `cos`, `cosh`,
-`exp`, `exp2`, `exp_m1`, `floor`, `fract`, `ln`, `ln_1p`, `log10`, `log2`, `recip`, `round`,
+`exp`, `exp2`, `exp_m1`, `floor`, `fract`, `ln`, `ln_1p`, `log`, `log10`, `log2`, `recip`, `round`,
 `signum`, `sin`, `sinh`, `sqrt`, `tan`, `tanh`, `to_degrees`, `to_radians`, `trunc`
 
 二項演算:
-`atan2(x)`, `copysign(x)`, `hypot(x)`, `log(x)`, `powf(x)`, `pow(x)`
-
-その他: `powi(int)`
+`atan2(x)`, `copysign(x)`, `hypot(x)`, `powf(x)`, `pow(x)`, `powi(x)`
 
 #### I64 / I32
 - `abs() -> int`
@@ -198,12 +253,13 @@
 ---
 
 ### String (文字列)
-- `len() -> i64`
-- `concat(other: String) -> String`
-- `char_at(index: i64) -> String`
-- `print() -> void`
-- `display() -> void`
-- `to_i64() -> i64`
+- `len() -> i64` — 文字列長
+- `contains(other: String) -> bool` — 部分文字列を含むか
+- `concat(other: String) -> String` — 文字列結合
+- `char_at(index: i64) -> Char` — 指定位置の文字
+- `to_i64() -> i64` — 整数にパース
+- `print() -> void` — 出力
+- `display() -> void` — 出力
 
 ---
 
@@ -223,13 +279,6 @@
 - `is_dir() -> bool`
 - `is_file() -> bool`
 - `to_string() -> String`
-- `free() -> void`
-
----
-
-### Vec<T> (ランタイムサポート限定)
-- `len() -> i64`
-- `read_i32_be(index: i64) -> i64` (Vec<u8> のみ)
 - `free() -> void`
 
 ---
