@@ -46,10 +46,10 @@ impl<'a> nom::error::ParseError<Input<'a>> for ParserError<'a> {
 }
 
 // Helper: Get Span from Input (current token or EOF)
+// ファイル名は呼び出し元 (parse_from_source 等) で TlError::with_file() を使い後付けする。
 fn get_span(input: Input) -> crate::compiler::error::Span {
     if let Some(tok) = input.first() {
-        crate::compiler::error::Span::with_file(
-            "unknown", // TODO: propagete file name using Input Context or pre-fill
+        crate::compiler::error::Span::new(
             tok.span.line,
             tok.span.column,
         )

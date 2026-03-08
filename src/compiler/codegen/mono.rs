@@ -1,5 +1,5 @@
 use super::CodeGenerator;
-use crate::compiler::ast::{Type, mangle_wrap_args, mangle_base_name, mangle_has_args, mangle_extract_args, parse_mangled_type_strs};
+use crate::compiler::ast::{Type, Expr, mangle_wrap_args, mangle_base_name, mangle_has_args, mangle_extract_args, parse_mangled_type_strs};
 use crate::compiler::mangler::MANGLER;
 use crate::compiler::ast_subst::TypeSubstitutor;
 use inkwell::types::{BasicTypeEnum, StructType};
@@ -982,7 +982,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let payload = match &variant.kind {
                             VariantKind::Unit => EnumVariantInit::Unit,
                             VariantKind::Tuple(_) => EnumVariantInit::Tuple(std::mem::take(args)),
-                            VariantKind::Struct(_) => EnumVariantInit::Unit, // TODO: struct variant
+                            VariantKind::Struct(fields) => {
+                                let field_pairs: Vec<(String, Expr)> = fields.iter()
+                                    .zip(std::mem::take(args).into_iter())
+                                    .map(|((name, _), expr)| (name.clone(), expr))
+                                    .collect();
+                                EnumVariantInit::Struct(field_pairs)
+                            }
                             VariantKind::Array(_, _) => EnumVariantInit::Tuple(std::mem::take(args)),
                         };
                         

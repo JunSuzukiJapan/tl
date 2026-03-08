@@ -2958,10 +2958,24 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let temp_name = format!("_comp_res_{}", id);
 
                 // Compile as a tensor equation: let temp[indices] = body;
-                // We pass the indices, clauses, and optional body directly.
-                // Explicit Tensor Comprehension: No implicit reduction analysis yet (TODO)
-                let empty_reduction: Vec<String> = Vec::new();
-                self.compile_tensor_equation(&temp_name, indices, &empty_reduction, clauses, body.as_deref())
+                // Implicit reduction analysis: detect indices that appear in body
+                // but not in the LHS indices (Einstein summation convention).
+                let reduction_indices: Vec<String> = if let Some(b) = body.as_deref() {
+                    let (_analyzed_free, analyzed_reduction) = self.analyze_tensor_indices(b);
+                    // Also detect generator-bound vars not in LHS as reduction
+                    let mut all_reduction = analyzed_reduction;
+                    for clause in clauses {
+                        if let ComprehensionClause::Generator { name, .. } = clause {
+                            if !indices.contains(name) && !all_reduction.contains(name) {
+                                all_reduction.push(name.clone());
+                            }
+                        }
+                    }
+                    all_reduction
+                } else {
+                    vec![]
+                };
+                self.compile_tensor_equation(&temp_name, indices, &reduction_indices, clauses, body.as_deref())
                     .map_err(|e| e.to_string())?;
 
                 // After compilation, the tensor 'temp_name' is registered in the scope.

@@ -258,8 +258,7 @@ impl IDevice for MetalDeviceImpl {
                 bytes.extend_from_slice(&val.to_le_bytes());
             }
             if let Err(e) = std::fs::write(path_str.as_ref(), &bytes) {
-                eprintln!("Failed to save tensor: {}", e);
-                // TODO: Return Err
+                return Err(BackendError::InternalError(format!("Failed to save tensor: {}", e)));
             }
         }
         Ok(())

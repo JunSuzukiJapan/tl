@@ -160,7 +160,14 @@ impl BuiltinLoader {
                         let payload = match &variant.kind {
                             VariantKind::Unit => EnumVariantInit::Unit,
                             VariantKind::Tuple(_) => EnumVariantInit::Tuple(std::mem::take(args)),
-                            VariantKind::Struct(_) => EnumVariantInit::Unit, // TODO: struct variant
+                            VariantKind::Struct(fields) => {
+                                // Map positional args to field names
+                                let field_pairs: Vec<(String, Expr)> = fields.iter()
+                                    .zip(std::mem::take(args).into_iter())
+                                    .map(|((name, _), expr)| (name.clone(), expr))
+                                    .collect();
+                                EnumVariantInit::Struct(field_pairs)
+                            }
                             VariantKind::Array(_, _) => EnumVariantInit::Tuple(std::mem::take(args)),
                         };
                         

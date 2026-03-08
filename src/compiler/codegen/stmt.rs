@@ -6,7 +6,7 @@ use inkwell::values::*;
 impl<'ctx> CodeGenerator<'ctx> {
     // Helper to infer free and reduction indices from implicit tensor equation (RHS)
     // Returns (Free Indices, Reduction Indices)
-    fn analyze_tensor_indices(&self, expr: &Expr) -> (Vec<String>, Vec<String>) {
+    pub(crate) fn analyze_tensor_indices(&self, expr: &Expr) -> (Vec<String>, Vec<String>) {
         let (free, reduction) = self.analyze_indices_recur(expr);
         
         let mut free_vec: Vec<String> = free.into_iter().collect();
@@ -1220,13 +1220,115 @@ impl<'ctx> CodeGenerator<'ctx> {
                  }
             }
 
-            Type::Enum(_name, _) => {
+            Type::Enum(name, generics) => {
                  let ptr = val.into_pointer_value();
                  let unreg_fn = self.module.get_function("tl_mem_unregister")
                     .ok_or("tl_mem_unregister not found")?;
                  let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_unreg_enum").unwrap();
                  self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
-                 // TODO: Deep unregister for Enums
+
+                 // Deep unregister: recurse into variant fields
+                 let mangled_name = if generics.is_empty() {
+                     name.clone()
+                 } else {
+                     self.mangle_type_name(name, generics)
+                 };
+
+                 let enum_def = self
+                     .enum_defs
+                     .get(&mangled_name)
+                     .or_else(|| self.enum_defs.get(name))
+                     .cloned();
+
+                 if let Some(enum_def) = enum_def {
+                     let enum_ty = self.enum_types.get(&enum_def.name)
+                         .or_else(|| self.enum_types.get(&mangled_name))
+                         .copied();
+
+                     if let Some(enum_ty) = enum_ty {
+                         let current_block = self.builder.get_insert_block().unwrap();
+                         let func = current_block.get_parent().unwrap();
+                         let after_switch = self.context.append_basic_block(func, "after_unreg_enum_switch");
+
+                         // Null check
+                         let is_null = self.builder.build_is_null(ptr, "is_null_unreg").map_err(|e| e.to_string())?;
+                         let check_block = self.context.append_basic_block(func, "unreg_enum_check");
+                         self.builder.build_conditional_branch(is_null, after_switch, check_block).map_err(|e| e.to_string())?;
+                         self.builder.position_at_end(check_block);
+
+                         // Load tag
+                         let tag_ptr = self.builder.build_struct_gep(enum_ty, ptr, 0, "tag_ptr_unreg")
+                             .map_err(|e| e.to_string())?;
+                         let tag_val = self.builder.build_load(self.context.i32_type(), tag_ptr, "tag_unreg")
+                             .map_err(|e| e.to_string())?
+                             .into_int_value();
+
+                         // Build switch
+                         let mut cases = vec![];
+                         for (i, variant) in enum_def.variants.iter().enumerate() {
+                             let case_block = self.context.append_basic_block(func, &format!("unreg_variant_{}", variant.name));
+                             cases.push((self.context.i32_type().const_int(i as u64, false), case_block));
+                         }
+                         let cases_refs: Vec<_> = cases.iter().map(|(i, b)| (*i, *b)).collect();
+                         self.builder.build_switch(tag_val, after_switch, &cases_refs).map_err(|e| e.to_string())?;
+
+                         // Populate each variant case
+                         for (i, variant) in enum_def.variants.iter().enumerate() {
+                             let case_block = cases[i].1;
+                             self.builder.position_at_end(case_block);
+
+                             let field_types_list: Vec<Type> = match &variant.kind {
+                                 crate::compiler::ast::VariantKind::Unit => vec![],
+                                 crate::compiler::ast::VariantKind::Tuple(types) => types.clone(),
+                                 crate::compiler::ast::VariantKind::Struct(fields) => fields.iter().map(|(_, t)| t.clone()).collect(),
+                                 crate::compiler::ast::VariantKind::Array(ty, size) => vec![ty.clone(); *size],
+                             };
+
+                             if !field_types_list.is_empty() {
+                                 let payload_ptr_raw = self.builder.build_struct_gep(enum_ty, ptr, 1, "payload_unreg_raw")
+                                     .map_err(|e| e.to_string())?;
+
+                                 let mut field_llvm_types: Vec<inkwell::types::BasicTypeEnum> = vec![];
+                                 for ft in &field_types_list {
+                                     let llvm_ty = match ft {
+                                         Type::F32 => self.context.f32_type().into(),
+                                         Type::I64 => self.context.i64_type().into(),
+                                         Type::Bool => self.context.bool_type().into(),
+                                         Type::Tensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) =>
+                                             self.context.ptr_type(inkwell::AddressSpace::default()).into(),
+                                         _ => self.context.i64_type().into(),
+                                     };
+                                     field_llvm_types.push(llvm_ty);
+                                 }
+                                 let variant_struct_ty = self.context.struct_type(&field_llvm_types, false);
+                                 let payload_ptr = self.builder.build_pointer_cast(
+                                     payload_ptr_raw,
+                                     self.context.ptr_type(inkwell::AddressSpace::default()),
+                                     "payload_unreg_cast",
+                                 ).unwrap();
+
+                                 for (idx, f_ty) in field_types_list.iter().enumerate() {
+                                     if matches!(f_ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_)) {
+                                         let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "field_unreg_ptr")
+                                             .map_err(|e| e.to_string())?;
+                                         let f_val = self.builder.build_load(
+                                             self.context.ptr_type(inkwell::AddressSpace::default()),
+                                             f_ptr,
+                                             "field_unreg_val",
+                                         ).map_err(|e| e.to_string())?;
+                                         self.emit_recursive_unregister(f_val, f_ty)?;
+                                     }
+                                 }
+                             }
+
+                             if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                                 self.builder.build_unconditional_branch(after_switch).unwrap();
+                             }
+                         }
+
+                         self.builder.position_at_end(after_switch);
+                     }
+                 }
             }
             _ => {}
         }

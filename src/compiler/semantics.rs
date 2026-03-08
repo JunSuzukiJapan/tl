@@ -215,7 +215,7 @@ pub struct SemanticAnalyzer {
     structs: HashMap<String, StructDef>,                    // Global struct registry
     enums: HashMap<String, EnumDef>,                        // Global enum registry
     methods: HashMap<String, HashMap<String, FunctionDef>>, // Struct methods
-    relations: HashMap<String, RelationDecl>,               // Logic relations
+    relations: HashMap<Vec<String>, RelationDecl>,           // Logic relations (keyed by path segments)
     current_return_type: Option<Type>, // Expected return type for current function
     current_module: String,            // Current module prefix (e.g. "a::b")
     loop_depth: usize,                 // Track nesting level of loops for break/continue
@@ -532,10 +532,9 @@ impl SemanticAnalyzer {
         }
     }
 
-    // TODO: Type::Path and symbol resolution currently use simple path segments.
-    // This should eventually be replaced with a proper scoping/namespace system
-    // that handles module hierarchies, visibility, and qualified names properly.
-    // For now, path segments (Vec<String>) are used instead of string "::" manipulation.
+    // NOTE: Type::Path and symbol resolution use path segments (Vec<String>).
+    // The relations map now uses Vec<String> keys for proper path-based scoping.
+    // A more advanced namespace/visibility system may be added in the future.
 
     /// Resolve a symbol path to its canonical name.
     /// Takes path segments (e.g., ["math", "Vec"]) and returns the resolved simple name.
@@ -955,41 +954,41 @@ impl SemanticAnalyzer {
 
         // Register relations
         for r in &module.relations {
-            let full_name = if prefix.is_empty() {
-                r.name.clone()
+            let full_segments: Vec<String> = if prefix.is_empty() {
+                vec![r.name.clone()]
             } else {
-                format!("{}::{}", prefix, r.name)
+                let mut segs: Vec<String> = prefix.split("::").map(|s| s.to_string()).collect();
+                segs.push(r.name.clone());
+                segs
             };
-            if self.relations.contains_key(&full_name) {
-                return self.err(SemanticError::DuplicateDefinition(full_name), None);
+            if self.relations.contains_key(&full_segments) {
+                return self.err(SemanticError::DuplicateDefinition(full_segments.join("::")), None);
             }
             let mut r_clone = r.clone();
-            r_clone.name = full_name.clone();
-            self.relations.insert(full_name, r_clone);
+            r_clone.name = full_segments.join("::");
+            self.relations.insert(full_segments, r_clone);
         }
 
         // Implicit relations from rules
         for rule in &module.rules {
-             let full_name = if prefix.is_empty() {
-                 rule.head.predicate.clone()
+             let full_segments: Vec<String> = if prefix.is_empty() {
+                 vec![rule.head.predicate.clone()]
              } else {
-                 format!("{}::{}", prefix, rule.head.predicate)
+                 let mut segs: Vec<String> = prefix.split("::").map(|s| s.to_string()).collect();
+                 segs.push(rule.head.predicate.clone());
+                 segs
              };
              
-             if !self.relations.contains_key(&full_name) {
+             if !self.relations.contains_key(&full_segments) {
                  // Register implicit relation
-                 // Infer args?
-                 // For negation_and_arith.tl, atoms are like allowed(u, p).
-                 // We don't know types. Assume Entity/I64?
-                 // Creating explicit RelationDecl
                  let args = rule.head.args.iter().enumerate().map(|(i, _)| (format!("arg{}", i), Type::I64)).collect();
                  let rel = crate::compiler::ast::RelationDecl {
-                     name: rule.head.predicate.clone(), // Use simple name in decl (though stored with full key)
+                     name: rule.head.predicate.clone(),
                      args,
                  };
                  let mut r_clone = rel.clone();
-                 r_clone.name = full_name.clone(); // Store full name
-                 self.relations.insert(full_name, r_clone);
+                 r_clone.name = full_segments.join("::");
+                 self.relations.insert(full_segments, r_clone);
                  
                  // Also add to module.relations so CodeGen sees it
                  module.relations.push(rel);
@@ -2101,29 +2100,24 @@ impl SemanticAnalyzer {
                 Ok(())
             }
             StmtKind::Use { path, alias, items } => {
-                // TODO: Currently relations map uses string keys (e.g., "facts::parent").
-                // When proper scoping is implemented, this should use path segments directly
-                // instead of joining to a string for lookup.
-                let full_prefix = path.join("::");
+                // Relations map now uses Vec<String> path segments as keys.
+                // Use path segments directly for lookup.
 
                 if !items.is_empty() {
                     // use path::{items...}
                     for item in items {
                         if item == "*" {
-                            // Glob import: import all relations starting with full_prefix::
-                            // Collect keys first to avoid borrow issues
-                            let matching_relations: Vec<String> = self
+                            // Glob import: import all relations whose path starts with the given prefix
+                            let matching_relations: Vec<(Vec<String>, String)> = self
                                 .relations
                                 .keys()
-                                .filter(|k| k.starts_with(&format!("{}::", full_prefix)))
-                                .cloned()
+                                .filter(|k| k.len() > path.len() && k[..path.len()] == path[..])
+                                .map(|k| (k.clone(), k.join("::")))
                                 .collect();
 
-                            for rel_full_name in matching_relations {
-                                // Extract simple name: e.g. facts::father -> father
-                                if let Some(simple_name) =
-                                    rel_full_name.strip_prefix(&format!("{}::", full_prefix))
-                                {
+                            for (rel_segments, rel_full_name) in matching_relations {
+                                // Extract simple name: last segment
+                                if let Some(simple_name) = rel_segments.last() {
                                     self.scopes
                                         .last_mut()
                                         .unwrap()
@@ -2132,7 +2126,9 @@ impl SemanticAnalyzer {
                             }
                         } else {
                             // import path::item as item
-                            let full_name = format!("{}::{}", full_prefix, item);
+                            let mut full_segments = path.clone();
+                            full_segments.push(item.clone());
+                            let full_name = full_segments.join("::");
                             let alias_name = item.clone();
                             self.scopes
                                 .last_mut()
@@ -2153,7 +2149,7 @@ impl SemanticAnalyzer {
                     self.scopes
                         .last_mut()
                         .unwrap()
-                        .add_alias(alias_name, full_prefix);
+                        .add_alias(alias_name, path.join("::"));
                 }
                 Ok(())
             }
@@ -2735,8 +2731,15 @@ impl SemanticAnalyzer {
                                             }
                                        }
                                    },
-                                   VariantKind::Struct(_fields) => {
-                                       // Structural variant?
+                                   VariantKind::Struct(fields) => {
+                                       // Struct variant: infer types from args matched to field defs
+                                       for (i, arg_expr) in args.iter_mut().enumerate() {
+                                            if i < fields.len() {
+                                                let param_ty = &fields[i].1;
+                                                let arg_ty = self.check_expr(arg_expr)?;
+                                                self.unify_types_for_inference(param_ty, &arg_ty, &mut inference_map);
+                                            }
+                                       }
                                    },
                                    _ => {}
                                }
@@ -2757,7 +2760,13 @@ impl SemanticAnalyzer {
                                let payload = match &variant_def.kind {
                                    VariantKind::Unit => EnumVariantInit::Unit,
                                    VariantKind::Tuple(_) => EnumVariantInit::Tuple(args),
-                                   VariantKind::Struct(_) => EnumVariantInit::Unit, // TODO: Struct variant support
+                                   VariantKind::Struct(fields) => {
+                                       let field_pairs: Vec<(String, Expr)> = fields.iter()
+                                           .zip(args.into_iter())
+                                           .map(|((name, _), expr)| (name.clone(), expr))
+                                           .collect();
+                                       EnumVariantInit::Struct(field_pairs)
+                                   }
                                    VariantKind::Array(_, _) => EnumVariantInit::Tuple(args),
                                };
 
@@ -4996,7 +5005,17 @@ impl SemanticAnalyzer {
                         }
                     }
                     return Ok(Type::Struct(name.clone(), vec![]));
-                } else if let Some(relation) = self.relations.get(name).cloned() {
+                } else if let Some(relation) = {
+                    // Look up relation by path segments
+                    let segments: Vec<String> = name.split("::").map(|s| s.to_string()).collect();
+                    self.relations.get(&segments).cloned()
+                    .or_else(|| {
+                        // Also try resolved name through aliases
+                        let resolved = self.resolve_symbol_name(name);
+                        let resolved_segments: Vec<String> = resolved.split("::").map(|s| s.to_string()).collect();
+                        self.relations.get(&resolved_segments).cloned()
+                    })
+                } {
                     // Logic Query / Relation Call
                     // relation.args gives us expected arity (excluding mask).
                     if args.len() != relation.args.len() {

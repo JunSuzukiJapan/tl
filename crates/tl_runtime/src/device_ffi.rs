@@ -1193,7 +1193,10 @@ pub fn runtime_gpu_sync() {
         }
         #[cfg(target_os = "linux")]
         {
-            // TODO: CUDA 同期 (cudaDeviceSynchronize)
+            unsafe extern "C" {
+                fn cudaDeviceSynchronize() -> i32;
+            }
+            unsafe { cudaDeviceSynchronize(); }
         }
     }
 }

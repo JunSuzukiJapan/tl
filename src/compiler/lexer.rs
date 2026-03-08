@@ -121,7 +121,26 @@ pub enum Token {
 
     #[regex(r#""([^"\\]|\\[\s\S])*""#, |lex| {
         let s = lex.slice();
-        s[1..s.len()-1].to_string() // TODO: Handle escapes properly
+        let raw = &s[1..s.len()-1];
+        let mut result = String::with_capacity(raw.len());
+        let mut chars = raw.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('n') => result.push('\n'),
+                    Some('t') => result.push('\t'),
+                    Some('r') => result.push('\r'),
+                    Some('\\') => result.push('\\'),
+                    Some('"') => result.push('"'),
+                    Some('0') => result.push('\0'),
+                    Some(other) => { result.push('\\'); result.push(other); }
+                    None => result.push('\\'),
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result
     })]
     StringLiteral(String),
 
@@ -459,22 +478,19 @@ mod tests {
 
     #[test]
     fn test_string_escapes_recognition() {
-        // Note: The lexer currently trims quotes but doesn't decode escapes in the Value.
-        // It just recognizes the string literal token.
+        // The lexer now decodes escape sequences in string literals.
         let input = r#""hello world" "escaped\"quote""#;
         let tokens: Vec<Token> = tokenize(input)
             .into_iter()
             .map(|r| r.unwrap().token)
             .collect();
 
-        // We verify that it tokenizes as StringLiteral, checking content is secondary
-        // until we implement full escape processing.
         match &tokens[0] {
             Token::StringLiteral(s) => assert_eq!(s, "hello world"),
             _ => panic!("Expected StringLiteral"),
         }
         match &tokens[1] {
-            Token::StringLiteral(s) => assert_eq!(s, r#"escaped\"quote"#),
+            Token::StringLiteral(s) => assert_eq!(s, "escaped\"quote"),
             _ => panic!("Expected StringLiteral"),
         }
     }

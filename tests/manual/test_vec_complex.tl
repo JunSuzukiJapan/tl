@@ -34,5 +34,28 @@ fn main() {
     }
     
     print("Testing Vec<String>...\n");
-    // TODO: Verify strings once basic struct works
+    let mut vs: Vec<String> = Vec::new();
+    vs.push("hello");
+    vs.push("world");
+    vs.push("tl");
+
+    if vs.len() != 3 {
+        print("FAIL: Vec<String> len mismatch\n");
+    } else {
+        print("OK: Vec<String> len\n");
+    }
+
+    let s0 = vs.get(0).unwrap();
+    if s0 != "hello" {
+        print("FAIL: Vec<String> get(0) mismatch\n");
+    } else {
+        print("OK: Vec<String> get(0)\n");
+    }
+
+    let s2 = vs.get(2).unwrap();
+    if s2 != "tl" {
+        print("FAIL: Vec<String> get(2) mismatch\n");
+    } else {
+        print("OK: Vec<String> get(2)\n");
+    }
 }

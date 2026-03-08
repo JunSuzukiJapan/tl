@@ -271,14 +271,24 @@ fn test_multiple_type_params() {
     let t2: Triple<String, i64, f32> = Triple::new("first", 2, 3.0);
     assert_eq(t2.b, 2, "Triple.b");
     
-    // TODO: Fix Triple<Vec<i64>, Option<String>, HashMap<i64, i64>> - Option_String unsupported
-    // let m: HashMap<i64, i64> = HashMap::new();
-    // m.insert(1, 10);
-    // let t3: Triple<Vec<i64>, Option<String>, HashMap<i64, i64>> = Triple::new(
-    //     Vec::new(),
-    //     Option::Some("test"),
-    //     m
-    // );
+    // Triple<Vec<i64>, Option<String>, HashMap<i64, i64>>
+    let m: HashMap<i64, i64> = HashMap::new();
+    m.insert(1, 10);
+    let t3: Triple<Vec<i64>, Option<String>, HashMap<i64, i64>> = Triple::new(
+        Vec::new(),
+        Option::Some("test"),
+        m
+    );
+    t3.a.push(42);
+    assert_eq(t3.a.len(), 1, "Triple<Vec, Option<String>, HashMap>.a.len");
+    match t3.b {
+        Option::Some(_s) => println("Triple.b = Some OK"),
+        Option::None => println("FAIL: Expected Some"),
+    }
+    match t3.c.get(1) {
+        Option::Some(v) => assert_eq(v, 10, "Triple.c.get(1)"),
+        Option::None => println("FAIL: key 1 not found in Triple.c"),
+    }
     
     println("Test 6 PASSED");
 }
