@@ -3993,7 +3993,7 @@ dependencies = [
 
 [[package]]
 name = "tl-lang"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "anyhow",
  "ariadne",
@@ -4028,11 +4028,11 @@ dependencies = [
 
 [[package]]
 name = "tl_backend"
-version = "0.4.4"
+version = "0.4.5"
 
 [[package]]
 name = "tl_cpu"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "rand 0.8.5",
  "tl_backend",
@@ -4040,7 +4040,7 @@ dependencies = [
 
 [[package]]
 name = "tl_cuda"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "cc",
  "rand 0.8.5",
@@ -4050,7 +4050,7 @@ dependencies = [
 
 [[package]]
 name = "tl_metal"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "block",
  "metal",
@@ -4066,7 +4066,7 @@ dependencies = [
 
 [[package]]
 name = "tl_runtime"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "byteorder",
  "cc",
