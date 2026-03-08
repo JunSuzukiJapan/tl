@@ -13,9 +13,14 @@ TLでは、論理ステートメントが第一級市民として扱われます
 // 構文シュガー (推奨)
 father(alice, bob).       // "alice は bob の父親である"
 is_student(charlie).      // 単項述語
+```
 
-// オプションの @ プレフィックス (レガシー/明示的)
-@father(bob, diana).
+### リレーション宣言 (Relation Declarations)
+リレーションの引数の型を明示的に宣言できます。宣言しない場合はルールや事実から自動推論されます。
+
+```rust
+relation parent(entity, entity);
+relation age(entity, i64);
 ```
 
 ### ルール (Rules)
@@ -151,3 +156,35 @@ compatible(x, y) :- is_friend(x, y), has_same_hobby(x, y).
 
 ### 自動 KB 初期化
 知識ベースを手動で初期化する必要はありません。コンパイラは、すべてのモジュール（インポートされたものを含む）から事実とルールを自動的に集約し、`main()` の開始時に推論エンジンを初期化します。
+
+## 5. 否定と算術比較
+
+### 否定 (Negation)
+ルールの本体で `not()` を使用して、事実の否定を表現できます。TLは層化否定（Stratified Negation）をサポートしています。
+
+```rust
+// 直属の上司がいない人を管理者とする
+manager(X) :- employee(X), not(has_boss(X)).
+```
+
+否定は再帰と組み合わせることができますが、否定的な循環（negative cycle）は検出され、コンパイルエラーとなります。
+
+```rust
+// これは有効（否定は異なる層にある）
+reachable(X, Y) :- edge(X, Y).
+reachable(X, Y) :- edge(X, Z), reachable(Z, Y).
+unreachable(X, Y) :- node(X), node(Y), not(reachable(X, Y)).
+```
+
+### 算術比較
+ルールの本体で算術比較を条件として使用できます。
+
+```rust
+// 18歳以上を成人とする
+adult(X) :- person(X, Age), Age >= 18.
+
+// 給与差の計算
+earns_more(X, Y) :- salary(X, Sx), salary(Y, Sy), Sx > Sy.
+```
+
+サポートされる比較演算子: `>`, `<`, `>=`, `<=`, `==`, `!=`
