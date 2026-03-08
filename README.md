@@ -159,7 +159,7 @@ fn main() {
 }
 ```
 
-For more details, see [Tensor Comprehension](docs/tensor_comprehension.md)
+For more details, see [Tensor Comprehension](docs/en/tensor_comprehension.md)
 
 ## VSCode Extension
 A syntax highlighting extension is provided in `vscode-tl`.
@@ -346,11 +346,11 @@ fn main() {
 
 ## Documentation
 
-- [Advantages of TensorLogic](docs/tensor_logic_advantages.md)
-- [Tensor Comprehension Design](docs/tensor_comprehension_design.md)
-- [Language Specification](docs/reference/language_spec.md)
-- [API Reference](docs/functions_and_types.md)
-- [Logic Programming](docs/logic_programming.md)
+- [Advantages of TensorLogic](docs/en/tensor_logic_advantages.md)
+- [Tensor Comprehension Design](docs/en/tensor_comprehension_design.md)
+- [Language Specification](docs/en/reference/language_spec.md)
+- [API Reference](docs/en/reference/functions_and_types.md)
+- [Logic Programming](docs/en/logic_programming.md)
 
 # LICENSE
 
