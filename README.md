@@ -346,6 +346,8 @@ fn main() {
 
 ## Documentation
 
+[English](docs/en/README.md) | [日本語](docs/jp/README.md) | [中文](docs/zh/README.md) | [한국어](docs/ko/README.md) | [Français](docs/fr/README.md) | [Deutsch](docs/de/README.md) | [Español](docs/es/README.md) | [Português](docs/pt/README.md) | [Русский](docs/ru/README.md) | [العربية](docs/ar/README.md)
+
 - [Advantages of TensorLogic](docs/en/tensor_logic_advantages.md)
 - [Tensor Comprehension Design](docs/en/tensor_comprehension_design.md)
 - [Language Specification](docs/en/reference/language_spec.md)
